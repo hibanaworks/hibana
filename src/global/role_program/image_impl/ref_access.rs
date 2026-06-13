@@ -1,6 +1,6 @@
 use super::super::{
-    BlobPtr, LaneSetView, LaneSteps, PackedLaneRange, RoleCompiledCounts, RoleImageColumns,
-    RoleImageRef, RoleLaneImage, RuntimeRoleFacts, RuntimeRoleFootprint,
+    BlobPtr, LaneSetView, LaneSteps, PackedLaneRange, PackedLoopScopeRow, RoleCompiledCounts,
+    RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts, RuntimeRoleFootprint,
 };
 use crate::global::typestate::{LocalDependency, LocalNode, PackedEventConflict};
 
@@ -16,10 +16,9 @@ impl RuntimeRoleFacts {
     const MAX_ROUTE_STACK_DEPTH: usize = 0;
     const LOCAL_STEP_COUNT: usize = 1;
     const ROUTE_SCOPE_COUNT: usize = 2;
-    const PASSIVE_LINGER_ROUTE_SCOPE_COUNT: usize = 3;
-    const ACTIVE_LANE_COUNT: usize = 4;
-    const ENDPOINT_LANE_SLOT_COUNT: usize = 5;
-    const LOGICAL_LANE_COUNT: usize = 6;
+    const ACTIVE_LANE_COUNT: usize = 3;
+    const ENDPOINT_LANE_SLOT_COUNT: usize = 4;
+    const LOGICAL_LANE_COUNT: usize = 5;
 
     #[inline(always)]
     pub(crate) const fn from_counts(counts: RoleCompiledCounts) -> Self {
@@ -28,7 +27,6 @@ impl RuntimeRoleFacts {
                 compact_count(counts.max_route_stack_depth),
                 compact_count(counts.local_step_count),
                 compact_count(counts.route_scope_count),
-                compact_count(counts.passive_linger_route_scope_count),
                 compact_count(counts.active_lane_count),
                 compact_count(counts.endpoint_lane_slot_count),
                 compact_count(counts.logical_lane_count),
@@ -42,8 +40,6 @@ impl RuntimeRoleFacts {
             max_route_stack_depth: self.words[Self::MAX_ROUTE_STACK_DEPTH] as usize,
             local_step_count: self.words[Self::LOCAL_STEP_COUNT] as usize,
             route_scope_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
-            passive_linger_route_scope_count: self.words[Self::PASSIVE_LINGER_ROUTE_SCOPE_COUNT]
-                as usize,
             active_lane_count: self.words[Self::ACTIVE_LANE_COUNT] as usize,
             endpoint_lane_slot_count: self.words[Self::ENDPOINT_LANE_SLOT_COUNT] as usize,
             logical_lane_count: self.words[Self::LOGICAL_LANE_COUNT] as usize,
@@ -76,12 +72,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn lanes(self) -> RoleLaneImage {
-        RoleLaneImage::new(
-            self.columns,
-            self.blob,
-            self.active_lane_row,
-            self.first_active_lane,
-        )
+        RoleLaneImage::new(self.columns, self.blob)
     }
 
     #[inline(always)]
@@ -97,7 +88,8 @@ impl RoleImageRef {
     #[inline(always)]
     pub(crate) const fn active_lane_set(self) -> LaneSetView<'static> {
         let footprint = self.footprint();
-        self.lanes().active_lane_set(footprint.lane_word_count())
+        self.lanes()
+            .lane_bit_view(self.active_lane_row, footprint.lane_word_count())
     }
 
     #[inline(always)]
@@ -137,6 +129,11 @@ impl RoleImageRef {
     #[inline(always)]
     pub(crate) const fn route_commit_row_at(self, idx: usize) -> PackedEventConflict {
         self.lanes().route_commit_row_at(idx)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn loop_scope_row(self, slot: usize) -> Option<PackedLoopScopeRow> {
+        self.lanes().loop_scope_row(slot)
     }
 
     #[inline(always)]
@@ -202,7 +199,11 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn first_active_lane(self) -> Option<usize> {
-        self.lanes().first_active_lane()
+        if self.first_active_lane == u16::MAX {
+            None
+        } else {
+            Some(self.first_active_lane as usize)
+        }
     }
 
     #[inline(always)]

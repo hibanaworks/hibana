@@ -1,45 +1,23 @@
 use crate::{
-    control::lease::planner::LeaseCapacityBudget,
     eff::{
         EffAtom, EffKind,
         meta::{MAX_SEGMENT_EFFS, MAX_SEGMENTS},
     },
-    global::{
-        ControlDesc,
-        const_dsl::{EffList, ResolverMode, ScopeEvent, ScopeMarker, SegmentSummary},
-    },
+    global::const_dsl::{EffList, ResolverMode, ScopeEvent, ScopeMarker, SegmentSummary},
 };
 
 use super::super::images::program::{
-    CompiledProgramCounts, MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES,
-    MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS,
+    CompiledProgramCounts, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
+    MAX_COMPILED_PROGRAM_TAP_EVENTS,
 };
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(64);
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
 const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES;
 const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
-const MAX_COMPILED_POLICY_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
-const MAX_COMPILED_CONTROL_DESC_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
+const MAX_COMPILED_RESOLVER_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
 
 mod impls;
-
-#[inline(always)]
-const fn control_scope_mask_bit(scope_kind: crate::global::const_dsl::ControlScopeKind) -> u8 {
-    match scope_kind {
-        crate::global::const_dsl::ControlScopeKind::None => 0,
-        crate::global::const_dsl::ControlScopeKind::Loop => 1 << 0,
-        crate::global::const_dsl::ControlScopeKind::State => 1 << 1,
-        crate::global::const_dsl::ControlScopeKind::Topology => 1 << 2,
-        crate::global::const_dsl::ControlScopeKind::Policy => 0,
-        crate::global::const_dsl::ControlScopeKind::Route => 0,
-    }
-}
-
-#[inline(always)]
-const fn reject_dynamic_policy_unsupported() -> ! {
-    panic!("route resolver site is not supported for this control protocol event");
-}
 
 #[inline(always)]
 const fn checked_role_index(role: u8) -> usize {
@@ -75,10 +53,8 @@ struct ProgramImageSegmentData {
     atom_row_len: u16,
     scope_marker_start: u16,
     scope_marker_len: u16,
-    policy_row_start: u16,
-    policy_row_len: u16,
-    control_desc_row_start: u16,
-    control_desc_row_len: u16,
+    resolver_row_start: u16,
+    resolver_row_len: u16,
 }
 
 impl ProgramImageSegmentData {
@@ -90,10 +66,8 @@ impl ProgramImageSegmentData {
         atom_row_len: 0,
         scope_marker_start: 0,
         scope_marker_len: 0,
-        policy_row_start: 0,
-        policy_row_len: 0,
-        control_desc_row_start: 0,
-        control_desc_row_len: 0,
+        resolver_row_start: 0,
+        resolver_row_len: 0,
     };
 
     #[inline(always)]
@@ -118,7 +92,7 @@ impl ProgramAtomRow {
             from: 0,
             to: 0,
             label: 0,
-            is_control: false,
+            is_internal: false,
             resource: None,
             lane: 0,
         },
@@ -134,43 +108,22 @@ impl ProgramAtomRow {
 }
 
 #[derive(Clone, Copy)]
-struct ProgramPolicyRow {
+struct ProgramResolverRow {
     offset: u16,
-    policy: ResolverMode,
+    resolver: ResolverMode,
 }
 
-impl ProgramPolicyRow {
+impl ProgramResolverRow {
     const EMPTY: Self = Self {
         offset: u16::MAX,
-        policy: ResolverMode::Static,
+        resolver: ResolverMode::Static,
     };
 
     #[inline(always)]
-    const fn new(offset: usize, policy: ResolverMode) -> Self {
+    const fn new(offset: usize, resolver: ResolverMode) -> Self {
         Self {
             offset: ProgramImageSegmentData::compact_count(offset),
-            policy,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ProgramControlDescRow {
-    offset: u16,
-    desc: Option<ControlDesc>,
-}
-
-impl ProgramControlDescRow {
-    const EMPTY: Self = Self {
-        offset: u16::MAX,
-        desc: None,
-    };
-
-    #[inline(always)]
-    const fn new(offset: usize, desc: ControlDesc) -> Self {
-        Self {
-            offset: ProgramImageSegmentData::compact_count(offset),
-            desc: Some(desc),
+            resolver,
         }
     }
 }
@@ -183,18 +136,14 @@ struct ProgramImageValidationData {
     atom_row_len: usize,
     scope_markers: [ScopeMarker; MAX_COMPILED_SCOPE_MARKERS],
     scope_marker_len: usize,
-    policy_rows: [ProgramPolicyRow; MAX_COMPILED_POLICY_ROWS],
-    policy_row_len: usize,
-    control_desc_rows: [ProgramControlDescRow; MAX_COMPILED_CONTROL_DESC_ROWS],
-    control_desc_row_len: usize,
+    resolver_rows: [ProgramResolverRow; MAX_COMPILED_RESOLVER_ROWS],
+    resolver_row_len: usize,
 }
 
 #[derive(Clone)]
 struct ProgramImageData {
-    lease_budget: LeaseCapacityBudget,
     compiled_program_counts: CompiledProgramCounts,
     lowering_facts: ProgramLoweringFacts,
-    control_scope_mask: u8,
 }
 
 #[derive(Clone)]
@@ -237,7 +186,6 @@ struct RoleCompiledFacts {
     resident_row_count: u16,
     resident_row_lane_entry_count: u16,
     resident_row_lane_word_count: u16,
-    passive_linger_route_scope_count: u16,
     active_lane_count: u16,
     endpoint_lane_slot_count: u16,
     logical_lane_count: u16,
@@ -249,7 +197,6 @@ impl RoleCompiledFacts {
         resident_row_count: 0,
         resident_row_lane_entry_count: 0,
         resident_row_lane_word_count: 0,
-        passive_linger_route_scope_count: 0,
         active_lane_count: 0,
         endpoint_lane_slot_count: 0,
         logical_lane_count: 0,
@@ -261,7 +208,6 @@ pub(crate) struct RoleCompiledCounts {
     pub(crate) max_route_stack_depth: usize,
     pub(crate) local_step_count: usize,
     pub(crate) route_scope_count: usize,
-    pub(crate) passive_linger_route_scope_count: usize,
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,
@@ -273,9 +219,5 @@ pub(crate) struct CompiledProgramView<'a> {
     len: usize,
     atom_rows: &'a [ProgramAtomRow],
     scope_markers: &'a [ScopeMarker],
-    policy_rows: &'a [ProgramPolicyRow],
-    control_desc_rows: &'a [ProgramControlDescRow],
+    resolver_rows: &'a [ProgramResolverRow],
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-mod tests;

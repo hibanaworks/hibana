@@ -29,7 +29,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     /// Receive the first payload of a selected route arm.
     ///
     /// This consumes the branch preview on success. The message `M` must match
-    /// the selected branch label and control kind. Physical frame-label or
+    /// the selected branch label and payload family. Physical frame-label or
     /// descriptor mismatches are reported as invariant failures, not as route
     /// choices. A decode failure is terminal for the current generation.
     #[track_caller]

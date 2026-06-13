@@ -4,7 +4,6 @@ use super::super::{
     lane_slots::LaneSlotArray,
 };
 use crate::{
-    control::{cap::mint::EpochTable, types::Lane},
     endpoint::kernel::decision_state::SelectedRouteCommitRows,
     endpoint::{RecvError, RecvResult},
     global::{
@@ -13,6 +12,7 @@ use crate::{
         typestate::{EventCursor, PackedEventConflict},
     },
     rendezvous::port::Port,
+    session::types::Lane,
     transport::Transport,
 };
 
@@ -165,13 +165,8 @@ fn selected_arm_for_scope_from_parts(
     decision_state.selected_arm_for_scope_slot(scope_slot)
 }
 
-fn preview_scope_ack_token_non_consuming_from_parts<
-    'r,
-    const ROLE: u8,
-    T: Transport + 'r,
-    E: EpochTable + 'r,
->(
-    ports: &LaneSlotArray<Port<'r, T, E>>,
+fn preview_scope_ack_token_non_consuming_from_parts<'r, const ROLE: u8, T: Transport + 'r>(
+    ports: &LaneSlotArray<Port<'r, T>>,
     decision_state: &RouteState,
     cursor: &EventCursor,
     scope_id: ScopeId,
@@ -188,14 +183,13 @@ fn preview_scope_ack_token_non_consuming_from_parts<
         let pending = ports
             .get(lane_idx)
             .and_then(|port| port.as_ref())
-            .map(|port| {
+            .is_some_and(|port| {
                 port.has_pending_route_arm_selection_for_lane(
                     scope_id,
                     ROLE,
                     Lane::new(lane_idx as u32),
                 )
-            })
-            .unwrap_or(false);
+            });
         if !pending {
             next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
             continue;
@@ -220,9 +214,8 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     'r,
     const ROLE: u8,
     T: Transport + 'r,
-    E: EpochTable + 'r,
 >(
-    ports: &LaneSlotArray<Port<'r, T, E>>,
+    ports: &LaneSlotArray<Port<'r, T>>,
     decision_state: &RouteState,
     cursor: &EventCursor,
     scope_id: ScopeId,
@@ -230,10 +223,11 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     if let Some(arm) = selected_arm_for_scope_from_parts(decision_state, cursor, scope_id) {
         return Some(arm);
     }
-    let offer_lanes = cursor
-        .route_scope_offer_lane_set(scope_id)
-        .unwrap_or(LaneSetView::EMPTY);
-    preview_scope_ack_token_non_consuming_from_parts::<ROLE, T, E>(
+    let offer_lanes = match cursor.route_scope_offer_lane_set(scope_id) {
+        Some(lanes) => lanes,
+        None => LaneSetView::EMPTY,
+    };
+    preview_scope_ack_token_non_consuming_from_parts::<ROLE, T>(
         ports,
         decision_state,
         cursor,

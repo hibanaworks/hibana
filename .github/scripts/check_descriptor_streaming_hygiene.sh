@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-if rg -n 'allow\(dead_code\)|cfg_attr\([^)]*allow\(dead_code\)' src tests integration 2>/dev/null; then
+if rg -n 'allow\(dead_code\)|cfg_attr\([^)]*allow\(dead_code\)' src tests runtime 2>/dev/null; then
   echo "descriptor streaming hygiene violation: dead_code allow is forbidden" >&2
   exit 1
 fi
@@ -23,13 +23,13 @@ for forbidden_path in \
   src/global/compiled/lowering/role_scope_storage.rs
 do
   if [[ -e "${forbidden_path}" ]]; then
-    echo "descriptor streaming hygiene violation: legacy streaming/materialization owner still present -> ${forbidden_path}" >&2
+    echo "descriptor streaming hygiene violation: forbidden streaming/materialization owner still present -> ${forbidden_path}" >&2
     exit 1
   fi
 done
 
-if rg -n 'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_role_image_ref_|stream_compiled_role_descriptor_rows|rollback_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' src/global/compiled src/global/typestate src/global/role_program.rs src/global/role_program >/dev/null; then
-  echo "descriptor streaming hygiene violation: transient descriptor streaming path reintroduced" >&2
+if rg -n 'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_role_image_ref_|stream_compiled_role_descriptor_rows|requeue_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' src/global/compiled src/global/typestate src/global/role_program.rs src/global/role_program >/dev/null; then
+  echo "descriptor streaming hygiene violation: transient descriptor streaming path detected" >&2
   exit 1
 fi
 

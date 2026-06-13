@@ -30,7 +30,7 @@ fn route_arm_lane_first_last_use_resident_columns() {
 
     assert!(
         !cursor.contains("event_route_arm_for_scope("),
-        "route arm membership must not reintroduce per-event conflict walks for first/last lookup"
+        "route arm membership must not contain per-event conflict walks for first/last lookup"
     );
     assert!(
         first.contains("route_arm_lane_first_step_by_slot") && !first.contains("local_steps_len()"),

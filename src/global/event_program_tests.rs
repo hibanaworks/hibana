@@ -1,7 +1,7 @@
 //! Test local affine event-program witness semantics.
 //!
 //! This test module intentionally interprets the public choreography type AST
-//! directly instead of reusing endpoint topology helpers. It keeps the
+//! directly instead of reusing endpoint route-graph helpers. It keeps the
 //! compiled-row `LocalEventProgram` honest without becoming runtime
 //! authority.
 
@@ -149,16 +149,16 @@ impl<'a> ReferenceState<'a> {
             });
         }
         for membership in &event.conflicts {
-            match self.selected[membership.conflict] {
-                Some(arm) if arm != membership.arm => {
+            if let Some(arm) = self.selected[membership.conflict] {
+                if arm != membership.arm {
                     return Err(ReferenceCommitError::ConflictSelected {
                         conflict: membership.conflict,
                         selected: arm,
                         attempted: membership.arm,
                     });
                 }
-                Some(_selected) => {}
-                None => self.selected[membership.conflict] = Some(membership.arm),
+            } else {
+                self.selected[membership.conflict] = Some(membership.arm);
             }
         }
         self.done[event_id] = true;
@@ -400,17 +400,25 @@ mod tests {
         let mut state = program.state();
 
         assert_enabled(&state, &[1, 2, 5]);
-        state.commit_label(1).unwrap();
+        state
+            .commit_label(1)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[2, 5]);
         assert!(matches!(
             state.commit_label(4),
             Err(ReferenceCommitError::NotEnabled { label: 4 })
         ));
-        state.commit_label(2).unwrap();
+        state
+            .commit_label(2)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[4, 5]);
-        state.commit_label(4).unwrap();
+        state
+            .commit_label(4)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[5]);
-        state.commit_label(5).unwrap();
+        state
+            .commit_label(5)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[7]);
     }
 
@@ -425,7 +433,9 @@ mod tests {
         let mut state = program.state();
 
         assert_enabled(&state, &[1, 2, 3, 6]);
-        state.commit_label(1).unwrap();
+        state
+            .commit_label(1)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[2, 3]);
         assert!(matches!(
             state.commit_label(6),
@@ -435,11 +445,17 @@ mod tests {
             state.commit_label(4),
             Err(ReferenceCommitError::NotEnabled { label: 4 })
         ));
-        state.commit_label(2).unwrap();
+        state
+            .commit_label(2)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[3]);
-        state.commit_label(3).unwrap();
+        state
+            .commit_label(3)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[4]);
-        state.commit_label(4).unwrap();
+        state
+            .commit_label(4)
+            .expect("reference label must be enabled");
         assert_enabled(&state, &[7]);
     }
 
@@ -451,15 +467,21 @@ mod tests {
         let program = ReferenceLocalProgram::from_steps::<Program, 0>();
         let mut left = program.state();
         assert_enabled(&left, &[1, 2, 3]);
-        left.commit_label(1).unwrap();
+        left.commit_label(1)
+            .expect("reference label must be enabled");
         assert_enabled(&left, &[3]);
-        left.commit_label(3).unwrap();
+        left.commit_label(3)
+            .expect("reference label must be enabled");
         assert_enabled(&left, &[7]);
 
         let mut right = program.state();
-        right.commit_label(2).unwrap();
+        right
+            .commit_label(2)
+            .expect("reference label must be enabled");
         assert_enabled(&right, &[3]);
-        right.commit_label(3).unwrap();
+        right
+            .commit_label(3)
+            .expect("reference label must be enabled");
         assert_enabled(&right, &[7]);
     }
 
@@ -472,7 +494,8 @@ mod tests {
         let program = ReferenceLocalProgram::from_steps::<Program, 0>();
         let mut left = program.state();
         assert_enabled(&left, &[1, 2, 3]);
-        left.commit_label(1).unwrap();
+        left.commit_label(1)
+            .expect("reference label must be enabled");
         assert_enabled(&left, &[7]);
         assert!(matches!(
             left.commit_label(2),
@@ -494,7 +517,8 @@ mod tests {
         let program = ReferenceLocalProgram::from_steps::<Program, 0>();
         let mut left = program.state();
         assert_enabled(&left, &[1, 2, 3, 4]);
-        left.commit_label(1).unwrap();
+        left.commit_label(1)
+            .expect("reference label must be enabled");
         assert_enabled(&left, &[7]);
         for label in [2, 3, 4] {
             assert!(matches!(
@@ -514,25 +538,41 @@ mod tests {
         let program = ReferenceLocalProgram::from_steps::<Program, 0>();
         let mut left_inner_left = program.state();
         assert_enabled(&left_inner_left, &[1, 2, 3, 5, 6]);
-        left_inner_left.commit_label(3).unwrap();
+        left_inner_left
+            .commit_label(3)
+            .expect("reference label must be enabled");
         assert_enabled(&left_inner_left, &[1, 2, 5]);
-        left_inner_left.commit_label(5).unwrap();
+        left_inner_left
+            .commit_label(5)
+            .expect("reference label must be enabled");
         assert_enabled(&left_inner_left, &[1, 2]);
-        left_inner_left.commit_label(1).unwrap();
+        left_inner_left
+            .commit_label(1)
+            .expect("reference label must be enabled");
         assert_enabled(&left_inner_left, &[7]);
 
         let mut left_inner_right = program.state();
-        left_inner_right.commit_label(2).unwrap();
+        left_inner_right
+            .commit_label(2)
+            .expect("reference label must be enabled");
         assert_enabled(&left_inner_right, &[3, 5]);
-        left_inner_right.commit_label(3).unwrap();
+        left_inner_right
+            .commit_label(3)
+            .expect("reference label must be enabled");
         assert_enabled(&left_inner_right, &[5]);
-        left_inner_right.commit_label(5).unwrap();
+        left_inner_right
+            .commit_label(5)
+            .expect("reference label must be enabled");
         assert_enabled(&left_inner_right, &[7]);
 
         let mut outer_right = program.state();
-        outer_right.commit_label(6).unwrap();
+        outer_right
+            .commit_label(6)
+            .expect("reference label must be enabled");
         assert_enabled(&outer_right, &[5]);
-        outer_right.commit_label(5).unwrap();
+        outer_right
+            .commit_label(5)
+            .expect("reference label must be enabled");
         assert_enabled(&outer_right, &[7]);
     }
 

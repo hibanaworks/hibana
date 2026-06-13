@@ -23,7 +23,7 @@ fn walk_rs_files(root: &Path, files: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn local_cell_helper_stays_deleted() {
+fn local_cell_helper_stays_forbidden() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     assert!(
         !root.join("tests/support/local_only.rs").exists(),
@@ -56,15 +56,16 @@ fn tests_do_not_define_static_local_cell_state() {
 #[test]
 fn huge_runtime_helpers_do_not_use_generic_sync_cells() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for relative in ["tests/huge_choreography_runtime.rs"] {
+    {
+        let relative = "tests/huge_choreography_runtime.rs";
         let source = read(&root.join(relative));
         assert!(
             !source.contains("unsafe impl<T> Sync"),
-            "huge choreography helpers must not reintroduce blanket generic Sync shims: {relative}"
+            "huge choreography helpers must not contain blanket generic Sync impls: {relative}"
         );
         assert!(
             !source.contains("struct StaticCell"),
-            "huge choreography helpers must not reintroduce the generic StaticCell pattern: {relative}"
+            "huge choreography helpers must not contain the generic StaticCell pattern: {relative}"
         );
     }
 }

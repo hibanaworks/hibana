@@ -8,17 +8,12 @@ use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::g::{self, Msg};
-use hibana::integration::program::{RoleProgram, project};
-use hibana::integration::{
-    SessionKitStorage,
-    ids::SessionId,
-    runtime::{Config, CounterClock, DefaultLabelUniverse},
-};
+use hibana::runtime::program::{RoleProgram, project};
+use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
 use runtime_support::with_fixture;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage =
-    SessionKitStorage<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
 
 const LOCAL_ROLE: u8 = 1;
 const WORKER_ROLE: u8 = 2;
@@ -68,10 +63,7 @@ fn assert_join_blocked(rendered: &str) {
 fn alternating_route_parallel_join_uses_only_selected_arms() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::<DefaultLabelUniverse, _>::from_resources(
-                (tap_buf, slab),
-                CounterClock::new(),
-            );
+            let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
             let transport = TestTransport::default();
             let rv = cluster
                 .rendezvous(config, transport)

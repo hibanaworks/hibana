@@ -30,10 +30,16 @@ check_absent() {
 check_max_lines ".github/allowlists/lib-public-api.txt" 3
 check_max_lines ".github/allowlists/g-public-api.txt" 7
 check_max_lines ".github/allowlists/endpoint-public-api.txt" 11
-check_max_lines ".github/allowlists/integration-public-api.txt" 50
+check_max_lines ".github/allowlists/runtime-public-api.txt" 50
+
+OLD_WORD='leg''acy'
+MODE_WORD='comp''at'
+ALT_WORD='fall''back'
+RECOVERY_WORD='res''cue'
+GUESS_WORD='heur''istic'
 
 check_absent \
-  "g::advanced|binding::advanced|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner|DynamicResolution|IncomingClassification|from_fn|from_state|fallback|legacy|compat|heuristic|rescue|state machine|TransportSnapshotParts|ConfigParts|RegisteredTokenParts|ProjectionMessageSpec|ProjectionTypeFingerprint|TransportOpsError|has_fin" \
+  "g::advanced|binding::advanced|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner|DynamicResolution|IncomingClassification|from_fn|from_state|${ALT_WORD}|${OLD_WORD}|${MODE_WORD}|${GUESS_WORD}|${RECOVERY_WORD}|state machine|TransportSnapshotParts|ConfigParts|RegisteredTokenParts|ProjectionMessageSpec|ProjectionTypeFingerprint|TransportOpsError|has_fin" \
   "forbidden final-form names in public API allowlists" \
   .github/allowlists
 

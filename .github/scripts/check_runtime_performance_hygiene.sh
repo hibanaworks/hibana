@@ -50,7 +50,7 @@ require_source \
 reject_source \
   "src/global/compiled/images/image/role_descriptor_ref.rs" \
   "pub\\(crate\\) fn phase_lane_set" \
-  "resident phase lane-set accessor must not be reintroduced as a runtime frontier surface"
+  "resident phase lane-set accessor must not be detected as a runtime frontier surface"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -90,7 +90,7 @@ PY
 reject_source \
   "src/endpoint/kernel/decision_state.rs" \
   "route_scope_lane_words" \
-  "endpoint arena must not reintroduce route-scope lane-word caches"
+  "endpoint arena must not contain route-scope lane-word caches"
 
 echo "== runtime performance operation-count tests =="
 cargo +"${TOOLCHAIN}" test \

@@ -20,7 +20,7 @@ if ! rg -n 'MAX_EFF_NODES:\s*usize\s*=\s*MAX_SEGMENTS\s*\*\s*MAX_SEGMENT_EFFS' s
 fi
 
 if rg -n 'MAX_EFF_NODES:\s*usize\s*=\s*256\b|data:\s*\[EffStruct;\s*MAX_CAPACITY\]' src/eff.rs src/global/const_dsl.rs; then
-  echo "segmented lowering hygiene violation: flat single-cap EffList storage reintroduced" >&2
+  echo "segmented lowering hygiene violation: flat single-cap EffList storage detected" >&2
   exit 1
 fi
 
@@ -74,7 +74,7 @@ if ! rg -n 'pub\(crate\)[[:space:]]+const[[:space:]]+fn[[:space:]]+dense_ordinal
   exit 1
 fi
 
-if rg -n '\b(as_eff_index|eff_ordinal)\b' src/global src/endpoint src/integration.rs >/dev/null; then
+if rg -n '\b(as_eff_index|eff_ordinal)\b' src/global src/endpoint src/runtime.rs >/dev/null; then
   echo "segmented lowering hygiene violation: do not keep renamed flat EffIndex helper aliases" >&2
   exit 1
 fi
@@ -119,12 +119,12 @@ if ! rg -n 'struct ProgramImageSegmentData' src/global/compiled/lowering/driver.
   exit 1
 fi
 
-if rg -n 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|policies:\s*\[ResolverMode;\s*MAX_COMPILED_IMAGE_NODES\]|control_descs:\s*\[Option<ControlDesc>;\s*MAX_COMPILED_IMAGE_NODES\]' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
-  echo "segmented lowering hygiene violation: flat lowering validation rows reintroduced" >&2
+if rg -n 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|poli''cies:\s*\[ResolverMode;\s*MAX_COMPILED_IMAGE_NODES\]' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
+  echo "segmented lowering hygiene violation: flat lowering validation rows detected" >&2
   exit 1
 fi
 
-if ! rg -n 'segment_at\(|node_at\(|policy_at_local|control_desc_at_local' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
+if ! rg -n 'segment_at\(|node_at\(|resolver_at_local' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
   echo "segmented lowering hygiene violation: segment-local lowering view accessors are missing" >&2
   exit 1
 fi

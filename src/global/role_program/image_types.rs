@@ -20,6 +20,7 @@ pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
+pub(crate) const ROLE_IMAGE_LOOP_SCOPE_STRIDE: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -238,6 +239,74 @@ impl PackedRouteArmRow {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedLoopScopeRow(u64);
+
+impl PackedLoopScopeRow {
+    pub(crate) const EMPTY: Self = Self(u64::MAX);
+    const START_SHIFT: u32 = 16;
+    const LEN_SHIFT: u32 = 32;
+    const FIELD_MASK: u64 = 0xffff;
+
+    #[inline(always)]
+    pub(crate) const fn new(
+        scope: crate::global::const_dsl::ScopeId,
+        row: PackedLaneRange,
+    ) -> Self {
+        if scope.is_none()
+            || !matches!(scope.kind(), crate::global::const_dsl::ScopeKind::Loop)
+            || row.is_empty()
+            || row.start() > Self::FIELD_MASK as usize
+            || row.len() > Self::FIELD_MASK as usize
+        {
+            panic!("roll scope row overflow");
+        }
+        Self(
+            scope.local_ordinal() as u64
+                | ((row.start() as u64) << Self::START_SHIFT)
+                | ((row.len() as u64) << Self::LEN_SHIFT),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn raw(self) -> u64 {
+        self.0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_empty(self) -> bool {
+        self.0 == u64::MAX
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope(self) -> Option<crate::global::const_dsl::ScopeId> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(crate::global::const_dsl::ScopeId::loop_scope(
+                (self.0 & Self::FIELD_MASK) as u16,
+            ))
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_row(self) -> PackedLaneRange {
+        if self.is_empty() {
+            PackedLaneRange::EMPTY
+        } else {
+            PackedLaneRange::new(
+                ((self.0 >> Self::START_SHIFT) & Self::FIELD_MASK) as usize,
+                ((self.0 >> Self::LEN_SHIFT) & Self::FIELD_MASK) as usize,
+            )
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLocalEventRow {
     pub(crate) eff_index: u16,
     pub(crate) dependency_row: u16,
@@ -334,6 +403,7 @@ pub(crate) struct RoleImageColumns {
     pub(crate) route_arm_lane_step_rows: ColumnRange,
     pub(crate) route_commit_ranges: ColumnRange,
     pub(crate) route_commit_rows: ColumnRange,
+    pub(crate) loop_scopes: ColumnRange,
 }
 
 impl RoleImageColumns {
@@ -370,6 +440,7 @@ impl RoleImageColumns {
         );
         len = Self::max_end(len, self.route_commit_ranges, ROLE_IMAGE_LANE_RANGE_STRIDE);
         len = Self::max_end(len, self.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE);
+        len = Self::max_end(len, self.loop_scopes, ROLE_IMAGE_LOOP_SCOPE_STRIDE);
         len
     }
 }
@@ -377,12 +448,6 @@ impl RoleImageColumns {
 #[derive(Clone, Copy)]
 pub(crate) struct RoleImageBytes<const N: usize> {
     pub(super) bytes: [u8; N],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LabelUniverseViolation {
-    pub(crate) max: u8,
-    pub(crate) actual: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -399,6 +464,7 @@ pub(crate) struct RoleLaneScratch {
     pub(crate) route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) route_offer_lane_rows: [PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) route_commit_ranges: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
+    pub(crate) loop_scope_rows: [PackedLoopScopeRow; MAX_LOCAL_STEP_LANES],
     pub(crate) active_lane_row: PackedLaneRange,
     pub(crate) resident_row_len: u16,
     pub(crate) dependency_row_len: u16,
@@ -406,6 +472,7 @@ pub(crate) struct RoleLaneScratch {
     pub(crate) lane_bit_row_len: u16,
     pub(crate) route_commit_row_len: u16,
     pub(crate) route_arm_lane_step_row_len: u16,
+    pub(crate) loop_scope_row_len: u16,
     pub(crate) first_active_lane: u16,
 }
 
@@ -424,13 +491,11 @@ pub(crate) struct RoleImageRef {
 pub(crate) struct RoleLaneImage {
     pub(crate) columns: RoleImageColumns,
     pub(crate) blob: BlobPtr,
-    pub(crate) active_lane_row: PackedLaneRange,
-    pub(crate) first_active_lane: u16,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct RuntimeRoleFacts {
-    pub(crate) words: [u16; 7],
+    pub(crate) words: [u16; 6],
 }
 
 pub(crate) mod private {
@@ -446,7 +511,6 @@ pub(crate) struct RuntimeRoleFootprint {
     pub(crate) max_route_stack_depth: usize,
     pub(crate) local_step_count: usize,
     pub(crate) route_scope_count: usize,
-    pub(crate) passive_linger_route_scope_count: usize,
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,

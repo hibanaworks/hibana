@@ -131,8 +131,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn poll_recv(
         &mut self,
         logical_label: u8,
-        expects_control: bool,
-        control: Option<crate::global::ControlDesc>,
         accepts_empty_payload: bool,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
@@ -140,17 +138,15 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
         unsafe {
-            (self.ops().poll_recv)(
-                self.erased_ptr(),
-                self.handle,
+            (self.ops().poll_recv)(carrier::RecvPollRequest {
+                ptr: self.erased_ptr(),
+                handle: self.handle,
                 logical_label,
-                expects_control,
-                control,
                 accepts_empty_payload,
                 validate,
                 cx,
-                out.as_mut_ptr(),
-            );
+                out: out.as_mut_ptr(),
+            });
             out.assume_init()
         }
     }
@@ -169,26 +165,22 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn poll_decode(
         &mut self,
         logical_label: u8,
-        expects_control: bool,
-        control: Option<crate::global::ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-        synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
+        zero_payload: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
         unsafe {
-            (self.ops().poll_decode)(
-                self.erased_ptr(),
-                self.handle,
+            (self.ops().poll_decode)(carrier::DecodePollRequest {
+                ptr: self.erased_ptr(),
+                handle: self.handle,
                 logical_label,
-                expects_control,
-                control,
                 validate,
-                synthetic,
+                zero_payload,
                 cx,
-                out.as_mut_ptr(),
-            );
+                out: out.as_mut_ptr(),
+            });
             out.assume_init()
         }
     }
@@ -253,7 +245,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// Receive the next deterministic message as `M`.
     ///
     /// The projected descriptor must expect the same choreography label and
-    /// control kind as `M`. Payload decoding is exact: fixed-size payloads reject
+    /// payload family as `M`. Payload decoding is exact: fixed-size payloads reject
     /// trailing bytes, while borrowed payloads may return views tied to the
     /// endpoint borrow. A committed receive fault poisons the session generation
     /// before the error is returned.

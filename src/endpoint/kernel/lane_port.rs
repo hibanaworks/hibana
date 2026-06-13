@@ -6,7 +6,6 @@ use core::{
 };
 
 use crate::{
-    control::cap::mint::EpochTable,
     endpoint::SendError,
     rendezvous::port::Port,
     transport::{
@@ -18,6 +17,15 @@ use crate::{
 pub(crate) use crate::rendezvous::port::{
     FrameMismatch, FrameObservation, PreambleFrame, ReceivedFrame,
 };
+
+#[derive(Clone, Copy)]
+pub(super) struct FrameExpectation {
+    pub(super) session_raw: u32,
+    pub(super) lane_wire: u8,
+    pub(super) source_role: u8,
+    pub(super) peer_role: u8,
+    pub(super) label: u8,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct RawSendPayload {
@@ -40,19 +48,17 @@ impl PendingRecv {
     }
 
     #[inline]
-    fn port_key_for<'r, T, E>(port: &Port<'r, T, E>) -> *const ()
+    fn port_key_for<'r, T>(port: &Port<'r, T>) -> *const ()
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         core::ptr::from_ref(port).cast()
     }
 
     #[inline]
-    fn begin_poll<'r, T, E>(&mut self, port: &Port<'r, T, E>)
+    fn begin_poll<'r, T>(&mut self, port: &Port<'r, T>)
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         let port_key = Self::port_key_for(port);
         if self.port_key != Some(port_key) {
@@ -60,7 +66,7 @@ impl PendingRecv {
         }
         assert!(
             !port.has_unresolved_recv_frame(),
-            "transport receive frame polled while previous frame receipt is unresolved"
+            "transport receive frame polled while current frame receipt is unresolved"
         );
         self.port_key = Some(port_key);
     }
@@ -110,7 +116,10 @@ impl RawSendPayload {
     #[inline(always)]
     pub(crate) fn encode_into(
         self,
-        encode: crate::transport::wire::ErasedEncoder,
+        encode: unsafe fn(
+            *const (),
+            &mut [u8],
+        ) -> Result<usize, crate::transport::wire::CodecError>,
         scratch: &mut [u8],
     ) -> Result<usize, SendError> {
         let ptr = self
@@ -125,19 +134,17 @@ impl RawSendPayload {
 }
 
 #[inline]
-pub(super) fn scratch_ptr<'r, T, E>(port: &Port<'r, T, E>) -> *mut [u8]
+pub(super) fn scratch_ptr<'r, T>(port: &Port<'r, T>) -> *mut [u8]
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     port.scratch_ptr()
 }
 
 #[inline]
-pub(super) fn frontier_scratch_ptr<'r, T, E>(port: &Port<'r, T, E>) -> *mut [u8]
+pub(super) fn frontier_scratch_ptr<'r, T>(port: &Port<'r, T>) -> *mut [u8]
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     port.frontier_scratch_ptr()
 }
@@ -157,19 +164,14 @@ pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payl
 }
 
 #[inline(always)]
-pub(super) fn poll_recv_frame<'r, T, E>(
+pub(super) fn poll_recv_frame<'r, T>(
     pending: &mut PendingRecv,
-    port: &Port<'r, T, E>,
-    expected_session_raw: u32,
-    expected_lane_wire: u8,
-    expected_source_role: u8,
-    expected_peer_role: u8,
-    expected_label: u8,
+    port: &Port<'r, T>,
+    expected: FrameExpectation,
     cx: &mut Context<'_>,
 ) -> Poll<Result<ReceivedFrame<'r>, TransportError>>
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     let (payload, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
@@ -180,21 +182,21 @@ where
         return Poll::Ready(Ok(ReceivedFrame::from_descriptor_checked_payload(
             port,
             payload,
-            expected_source_role,
-            expected_label,
+            expected.source_role,
+            expected.label,
         )));
     };
     if let Some(kind) = observation.mismatch_expected(
-        expected_session_raw,
-        expected_lane_wire,
-        expected_source_role,
-        expected_peer_role,
-        expected_label,
+        expected.session_raw,
+        expected.lane_wire,
+        expected.source_role,
+        expected.peer_role,
+        expected.label,
     ) {
         emit_transport_mismatch_observation(
             port,
-            expected_session_raw,
-            expected_lane_wire,
+            expected.session_raw,
+            expected.lane_wire,
             FrameMismatch::new(observation, kind),
         );
         cx.waker().wake_by_ref();
@@ -202,10 +204,10 @@ where
     }
     let frame = PreambleFrame::from_accepted_payload(port, payload, observation);
     match frame.accept_parts(
-        expected_session_raw,
-        expected_peer_role,
-        expected_source_role,
-        expected_label,
+        expected.session_raw,
+        expected.peer_role,
+        expected.source_role,
+        expected.label,
     ) {
         Ok(frame) => {
             emit_transport_frame_observation(port, observation);
@@ -214,8 +216,8 @@ where
         Err(mismatch) => {
             emit_transport_mismatch_observation(
                 port,
-                expected_session_raw,
-                expected_lane_wire,
+                expected.session_raw,
+                expected.lane_wire,
                 mismatch,
             );
             cx.waker().wake_by_ref();
@@ -225,9 +227,9 @@ where
 }
 
 #[inline(always)]
-pub(super) fn poll_recv_frame_preamble<'r, T, E>(
+pub(super) fn poll_recv_frame_preamble<'r, T>(
     pending: &mut PendingRecv,
-    port: &Port<'r, T, E>,
+    port: &Port<'r, T>,
     expected_session_raw: u32,
     expected_lane_wire: u8,
     expected_peer_role: u8,
@@ -235,7 +237,6 @@ pub(super) fn poll_recv_frame_preamble<'r, T, E>(
 ) -> Poll<Result<PreambleFrame<'r>, TransportError>>
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     let (payload, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
@@ -268,14 +269,13 @@ where
 }
 
 #[inline(always)]
-fn poll_recv_payload<'r, T, E>(
+fn poll_recv_payload<'r, T>(
     pending: &mut PendingRecv,
-    port: &Port<'r, T, E>,
+    port: &Port<'r, T>,
     cx: &mut Context<'_>,
 ) -> Poll<Result<(Payload<'r>, Option<FrameObservation>), TransportError>>
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     pending.begin_poll(port);
     let transport = port.transport();
@@ -306,14 +306,13 @@ where
 
 #[cold]
 #[inline(never)]
-fn emit_transport_mismatch_observation<'r, T, E>(
-    port: &Port<'r, T, E>,
+fn emit_transport_mismatch_observation<'r, T>(
+    port: &Port<'r, T>,
     expected_session_raw: u32,
     expected_lane_wire: u8,
     mismatch: FrameMismatch,
 ) where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     let event = mismatch.tap_event(port.now32(), expected_session_raw, expected_lane_wire);
     crate::observe::core::emit(port.tap(), event);
@@ -321,10 +320,9 @@ fn emit_transport_mismatch_observation<'r, T, E>(
 
 #[cold]
 #[inline(never)]
-fn emit_transport_frame_observation<'r, T, E>(port: &Port<'r, T, E>, observation: FrameObservation)
+fn emit_transport_frame_observation<'r, T>(port: &Port<'r, T>, observation: FrameObservation)
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     let event = crate::rendezvous::port::transport_frame_tap_event(port.now32(), observation);
     crate::observe::core::emit(port.tap(), event);
@@ -349,14 +347,13 @@ where
 }
 
 #[inline]
-pub(super) fn poll_send_outgoing<'r, T, E>(
+pub(super) fn poll_send_outgoing<'r, T>(
     pending: &mut PendingSend<'r>,
-    port: &Port<'r, T, E>,
+    port: &Port<'r, T>,
     cx: &mut Context<'_>,
 ) -> Poll<Result<(), TransportError>>
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     let outgoing = pending
         .outgoing
@@ -377,10 +374,9 @@ where
 }
 
 #[inline]
-pub(super) fn cancel_send_outgoing<'r, T, E>(pending: &mut PendingSend<'r>, port: &Port<'r, T, E>)
+pub(super) fn cancel_send_outgoing<'r, T>(pending: &mut PendingSend<'r>, port: &Port<'r, T>)
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     if pending.outgoing.is_none() {
         return;
@@ -396,13 +392,12 @@ where
 }
 
 #[inline]
-pub(super) fn requeue_recv_frame<'r, T, E>(
-    port: &Port<'r, T, E>,
+pub(super) fn requeue_recv_frame<'r, T>(
+    port: &Port<'r, T>,
     frame: ReceivedFrame<'r>,
 ) -> Result<(), crate::transport::TransportError>
 where
     T: Transport + 'r,
-    E: EpochTable + 'r,
 {
     frame.requeue_on(port)
 }

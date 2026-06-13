@@ -1,4 +1,4 @@
-use hibana::integration::{
+use hibana::runtime::{
     ids::{Lane, SessionId},
     transport::PortOpen,
 };

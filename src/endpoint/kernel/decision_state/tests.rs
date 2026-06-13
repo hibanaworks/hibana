@@ -33,7 +33,7 @@ fn prepared_route_commit_rows_use_builder_capacity_not_fixed_inline_cap() {
     assert_eq!(value.selected_lane(), Some(3));
     assert!(
         builder.begin().is_ok(),
-        "value route commit rows do not hold a sealed builder value"
+        "sealing borrowed route rows must leave the builder reusable"
     );
 }
 

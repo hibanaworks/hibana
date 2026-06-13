@@ -34,10 +34,9 @@ impl CompiledProgramImage {
 
     const fn scan_into(summary: &mut Self, eff_list: &EffList) {
         let mut scope_count = 0u16;
-        let mut policy_markers_len = 0u16;
+        let mut resolver_markers_len = 0u16;
         let mut role_count = 0usize;
         let mut route_scope_ordinals = [0u64; ROUTE_SCOPE_ORDINAL_WORDS];
-        let mut lease_budget = LeaseCapacityBudget::new();
         summary.program.lowering_facts.eff_count = eff_list.len() as u16;
         let mut segment = 0usize;
         while segment < eff_list.segment_count() {
@@ -50,52 +49,28 @@ impl CompiledProgramImage {
             while local < segment_len {
                 let idx = segment_start + local;
                 let node = eff_list.node_at(idx);
-                let policy = if let Some((policy, _scope)) = eff_list.policy_with_scope(idx) {
-                    let row_idx = summary.validation.policy_row_len;
-                    if row_idx < MAX_COMPILED_POLICY_ROWS {
-                        summary.validation.policy_rows[row_idx] =
-                            ProgramPolicyRow::new(idx, policy);
-                        summary.validation.policy_row_len += 1;
-                        if summary.validation.segments[segment].policy_row_len == 0 {
-                            summary.validation.segments[segment].policy_row_start =
+                let resolver = if let Some((resolver, _scope)) = eff_list.resolver_with_scope(idx) {
+                    let row_idx = summary.validation.resolver_row_len;
+                    if row_idx < MAX_COMPILED_RESOLVER_ROWS {
+                        summary.validation.resolver_rows[row_idx] =
+                            ProgramResolverRow::new(idx, resolver);
+                        summary.validation.resolver_row_len += 1;
+                        if summary.validation.segments[segment].resolver_row_len == 0 {
+                            summary.validation.segments[segment].resolver_row_start =
                                 ProgramImageSegmentData::compact_count(row_idx);
                         }
-                        summary.validation.segments[segment].policy_row_len =
+                        summary.validation.segments[segment].resolver_row_len =
                             increment_compact_count(
-                                summary.validation.segments[segment].policy_row_len,
+                                summary.validation.segments[segment].resolver_row_len,
                             );
                     } else {
-                        panic!("CompiledProgram: policy side table exceeded");
+                        panic!("CompiledProgram: resolver side table exceeded");
                     }
-                    policy_markers_len = increment_compact_count(policy_markers_len);
-                    policy
+                    resolver_markers_len = increment_compact_count(resolver_markers_len);
+                    resolver
                 } else {
                     ResolverMode::Static
                 };
-                let mut current_control_desc = None;
-                if let Some(spec) = eff_list.control_spec_at(idx) {
-                    let desc = ControlDesc::from_static(spec).with_sites(
-                        crate::eff::EffIndex::from_dense_ordinal(idx),
-                        ControlDesc::STATIC_POLICY_SITE,
-                    );
-                    current_control_desc = Some(desc);
-                    let row_idx = summary.validation.control_desc_row_len;
-                    if row_idx < MAX_COMPILED_CONTROL_DESC_ROWS {
-                        summary.validation.control_desc_rows[row_idx] =
-                            ProgramControlDescRow::new(idx, desc);
-                        summary.validation.control_desc_row_len += 1;
-                        if summary.validation.segments[segment].control_desc_row_len == 0 {
-                            summary.validation.segments[segment].control_desc_row_start =
-                                ProgramImageSegmentData::compact_count(row_idx);
-                        }
-                        summary.validation.segments[segment].control_desc_row_len =
-                            increment_compact_count(
-                                summary.validation.segments[segment].control_desc_row_len,
-                            );
-                    } else {
-                        panic!("CompiledProgram: control descriptor side table exceeded");
-                    }
-                }
                 if matches!(node.kind, EffKind::Atom) {
                     let atom = node.atom_data();
                     summary.validation.segments[segment].atom_mask |= 1u128 << local;
@@ -125,20 +100,11 @@ impl CompiledProgramImage {
                     if to + 1 > role_count {
                         role_count = to + 1;
                     }
-                    lease_budget = lease_budget.include_atom(current_control_desc, policy);
-                    if atom.is_control {
-                        if policy.is_dynamic()
-                            && let Some(control_spec) = current_control_desc
-                            && !control_spec.supports_dynamic_resolver()
-                        {
-                            reject_dynamic_policy_unsupported();
-                        }
-                        if atom.resource.is_some() {
-                            summary.program.compiled_program_counts.resources += 1;
-                        }
-                    }
-                    if policy.is_dynamic() {
-                        summary.program.compiled_program_counts.dynamic_policy_sites += 1;
+                    if resolver.is_dynamic() {
+                        summary
+                            .program
+                            .compiled_program_counts
+                            .dynamic_resolver_sites += 1;
                     }
                 }
                 local += 1;
@@ -200,23 +166,8 @@ impl CompiledProgramImage {
                         summary.program.lowering_facts.route_scope_count = increment_compact_count(
                             summary.program.lowering_facts.route_scope_count,
                         );
-                        summary.program.compiled_program_counts.route_controls =
+                        summary.program.compiled_program_counts.route_resolvers =
                             summary.program.lowering_facts.route_scope_count as usize;
-                        if marker.linger
-                            && let Some(controller_role) = marker.controller_role
-                        {
-                            let mut role_idx = 0usize;
-                            while role_idx < summary.roles.facts.len() {
-                                if role_idx != controller_role as usize {
-                                    summary.roles.facts[role_idx]
-                                        .passive_linger_route_scope_count = increment_compact_count(
-                                        summary.roles.facts[role_idx]
-                                            .passive_linger_route_scope_count,
-                                    );
-                                }
-                                role_idx += 1;
-                            }
-                        }
                     }
                 }
             } else {
@@ -259,19 +210,6 @@ impl CompiledProgramImage {
             role_idx += 1;
         }
 
-        let src_control_markers = eff_list.control_markers();
-        summary.program.compiled_program_counts.controls = src_control_markers.len();
-        let mut control_idx = 0usize;
-        while control_idx < src_control_markers.len() {
-            let marker = src_control_markers[control_idx];
-            summary.program.control_scope_mask |= control_scope_mask_bit(marker.scope_kind);
-            if marker.tap_id != 0 {
-                summary.program.compiled_program_counts.tap_events += 1;
-            }
-            control_idx += 1;
-        }
-        lease_budget.validate();
-
         summary.program.lowering_facts.scope_count = scope_count;
         summary.program.lowering_facts.max_active_scope_depth = max_active_scope_depth;
         summary.program.lowering_facts.max_route_stack_depth = if max_route_depth == 0 {
@@ -279,7 +217,6 @@ impl CompiledProgramImage {
         } else {
             increment_compact_count(max_route_depth)
         };
-        summary.program.lease_budget = lease_budget;
         summary.roles.count = Self::compact_role_count(role_count);
     }
 
@@ -293,22 +230,17 @@ impl CompiledProgramImage {
                 atom_row_len: 0,
                 scope_markers: [ScopeMarker::empty(); MAX_COMPILED_SCOPE_MARKERS],
                 scope_marker_len: src_scope_markers.len(),
-                policy_rows: [ProgramPolicyRow::EMPTY; MAX_COMPILED_POLICY_ROWS],
-                policy_row_len: 0,
-                control_desc_rows: [ProgramControlDescRow::EMPTY; MAX_COMPILED_CONTROL_DESC_ROWS],
-                control_desc_row_len: 0,
+                resolver_rows: [ProgramResolverRow::EMPTY; MAX_COMPILED_RESOLVER_ROWS],
+                resolver_row_len: 0,
             },
             program: ProgramImageData {
-                lease_budget: LeaseCapacityBudget::new(),
                 compiled_program_counts: CompiledProgramCounts {
                     tap_events: 0,
                     resources: 0,
-                    controls: 0,
-                    dynamic_policy_sites: 0,
-                    route_controls: 0,
+                    dynamic_resolver_sites: 0,
+                    route_resolvers: 0,
                 },
                 lowering_facts: ProgramLoweringFacts::EMPTY,
-                control_scope_mask: 0,
             },
             roles: ProgramRoleImageData {
                 facts: [RoleCompiledFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
@@ -345,11 +277,6 @@ impl CompiledProgramImage {
     pub(crate) const fn role_lowering_counts<const ROLE: u8>(&self) -> RoleCompiledCounts {
         self.roles
             .lowering_counts::<ROLE>(self.program.lowering_facts)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn compiled_program_control_scope_mask(&self) -> u8 {
-        self.program.control_scope_mask
     }
 
     #[inline(always)]

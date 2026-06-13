@@ -1,50 +1,17 @@
 use super::{
-    CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapEntry, CapHeader, CapShot, ControlDesc, ControlOp, CpError,
-    CursorEndpoint, DescriptorDispatch, EpochTable, FrameFlags, LabelUniverse, Lane, LoopCommitRow,
-    MintConfigMarker, MintedControlToken, Payload, PendingCapRelease, PendingSendIo, PolicySlot,
-    Poll, ResidentLaneStepError, RouteArmToken, ScopeId, SendCommitOutcome, SendCommitPlan,
-    SendCommitProof, SendDescriptorTerminal, SendError, SendInitOutcome, SendMeta, SendPayloadPlan,
-    SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep, StagedControlEmission,
-    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
+    CursorEndpoint, CursorInvariantError, FrameFlags, Lane, Payload, PendingSendIo, Poll,
+    ResolverSlot, RouteArmToken, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError,
+    SendInitOutcome, SendMeta, SendProgressCommitPlan, SendResult, SendRuntimeDesc,
+    SendTransportStep, StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use crate::global::typestate::state_index_to_usize;
 
-#[derive(Clone, Copy)]
-enum SendRouteEvidenceSource {
-    None,
-    Ack,
-    Poll,
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
-    pub(crate) fn map_cp_error(err: CpError) -> SendError {
-        match err {
-            CpError::PolicyAbort { reason } => SendError::PolicyAbort { reason },
-            CpError::Topology(_)
-            | CpError::StateRestore(_)
-            | CpError::TxCommit(_)
-            | CpError::TxAbort(_)
-            | CpError::RendezvousMismatch { .. }
-            | CpError::RendezvousMissing { .. }
-            | CpError::RendezvousBusy { .. }
-            | CpError::ReplayDetected { .. }
-            | CpError::GenerationViolation { .. }
-            | CpError::ResourceExhausted { .. }
-            | CpError::Authorisation { .. }
-            | CpError::UnsupportedEffect(_)
-            | CpError::LabelOutOfUniverse { .. } => SendError::PhaseInvariant,
-        }
-    }
-
     #[inline(never)]
     fn build_send_selected_route_rows(
         &mut self,
@@ -84,13 +51,8 @@ where
         let scope_id = route_row.scope();
         let selected_arm = route_row.selected_arm();
         let route_token = self.peek_scope_ack(scope_id);
-        let source = match route_token {
-            Some(RouteArmToken::Ack(_)) => SendRouteEvidenceSource::Ack,
-            Some(RouteArmToken::Poll(_)) => SendRouteEvidenceSource::Poll,
-            Some(RouteArmToken::Resolver(_)) | None => SendRouteEvidenceSource::None,
-        };
-        match source {
-            SendRouteEvidenceSource::Ack => {
+        match route_token {
+            Some(RouteArmToken::Ack(_)) => {
                 if !self.cursor.is_route_controller(scope_id) {
                     crate::invariant();
                 }
@@ -104,7 +66,7 @@ where
                 );
                 self.emit_route_arm_selection(scope_id, RouteArmToken::from_ack(arm), lane_wire);
             }
-            SendRouteEvidenceSource::Poll => {
+            Some(RouteArmToken::Poll(_)) => {
                 let Some(arm) = super::Arm::new(selected_arm) else {
                     crate::invariant();
                 };
@@ -114,7 +76,22 @@ where
                     self.offer_lane_for_scope(scope_id),
                 );
             }
-            SendRouteEvidenceSource::None => {}
+            Some(RouteArmToken::Resolver(_)) => {
+                if self.arm_has_recv(scope_id, selected_arm) {
+                    self.consume_scope_ready_arm(scope_id, selected_arm);
+                }
+                self.clear_scope_evidence(scope_id);
+                self.port_for_lane(lane_wire as usize).clear_route_hints();
+                return;
+            }
+            None => {
+                if self.arm_has_recv(scope_id, selected_arm) {
+                    self.consume_scope_ready_arm(scope_id, selected_arm);
+                }
+                self.clear_scope_evidence(scope_id);
+                self.port_for_lane(lane_wire as usize).clear_route_hints();
+                return;
+            }
         }
 
         if self.arm_has_recv(scope_id, selected_arm) {
@@ -144,7 +121,6 @@ where
         &mut self,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
-        loop_row: LoopCommitRow,
     ) -> SendResult<SendProgressCommitPlan> {
         let preview_idx = match preview_cursor_index {
             Some(index) => state_index_to_usize(index),
@@ -152,31 +128,40 @@ where
         };
         let enabled = match self.cursor.event_enabled(
             preview_idx,
-            meta.eff_index,
-            meta.label,
-            meta.is_control,
-            meta.scope,
-            meta.route_arm,
-            meta.lane,
-            |scope| self.selected_arm_for_scope(scope),
+            crate::global::typestate::EventCommitMeta::from(meta),
+            |scope| {
+                if scope == meta.scope {
+                    meta.route_arm
+                } else {
+                    self.selected_arm_for_scope(scope)
+                }
+            },
         ) {
             Ok(enabled) => enabled,
-            Err(ResidentLaneStepError) => return Err(SendError::PhaseInvariant),
+            Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
         };
-        let route_rows = match self.build_send_selected_route_rows(preview_idx, meta) {
-            Ok(rows) => rows,
-            Err(err) => return Err(err),
-        };
+        let route_rows = self.build_send_selected_route_rows(preview_idx, meta)?;
+        let current_route_scope = meta.scope;
+        let current_route_arm = meta.route_arm;
+        let linger_cursor =
+            self.cursor
+                .send_linger_cursor_step(meta, enabled.cursor_after(), |scope| {
+                    if scope == current_route_scope {
+                        current_route_arm
+                    } else {
+                        self.selected_arm_for_scope(scope)
+                    }
+                });
         let delta = super::CommitDelta::from_meta(
             meta,
             route_rows,
             enabled.cursor_after(),
             enabled.progress_step(),
         )
-        .with_loop_row(loop_row);
+        .with_lane_relocation(linger_cursor);
         let delta = match self.prepare_commit_delta(delta) {
             Ok(delta) => delta,
-            Err(ResidentLaneStepError) => return Err(SendError::PhaseInvariant),
+            Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
         };
         Ok(SendProgressCommitPlan { delta })
     }
@@ -192,278 +177,14 @@ where
     fn stage_send_payload(
         &mut self,
         descriptor: SendRuntimeDesc,
-        plan: SendPayloadPlan<'r>,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
-    ) -> SendResult<(StagedSendPayload<'r>, Option<DescriptorDispatch>)>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        match plan {
-            SendPayloadPlan::Data => {
-                let data = payload.ok_or(SendError::PhaseInvariant)?;
-                Ok((
-                    StagedSendPayload {
-                        encoded_len: descriptor.encode_payload(data, scratch)?,
-                        control: StagedControlEmission::None,
-                    },
-                    None,
-                ))
-            }
-            SendPayloadPlan::LocalControl { token } => {
-                Self::validate_unit_control_payload(descriptor, payload, scratch)?;
-                let dispatch = token.dispatch;
-                scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
-                Ok((
-                    StagedSendPayload {
-                        encoded_len: CAP_TOKEN_LEN,
-                        control: StagedControlEmission::Registered(token.rollback),
-                    },
-                    Some(dispatch),
-                ))
-            }
-            SendPayloadPlan::MintedWireControl { token } => {
-                Self::validate_unit_control_payload(descriptor, payload, scratch)?;
-                let dispatch = token.dispatch;
-                scratch[..CAP_TOKEN_LEN].copy_from_slice(&token.token_bytes);
-                Ok((
-                    StagedSendPayload {
-                        encoded_len: CAP_TOKEN_LEN,
-                        control: StagedControlEmission::Registered(token.rollback),
-                    },
-                    Some(dispatch),
-                ))
-            }
-        }
-    }
-
-    #[inline(never)]
-    fn validate_unit_control_payload(
-        descriptor: SendRuntimeDesc,
-        payload: Option<lane_port::RawSendPayload>,
-        scratch: &mut [u8],
-    ) -> SendResult<()> {
-        let Some(data) = payload else {
-            return Ok(());
-        };
-        let encoded_len = descriptor.encode_payload(data, scratch)?;
-        if encoded_len == 0 {
-            Ok(())
-        } else {
-            Err(SendError::PhaseInvariant)
-        }
-    }
-
-    #[inline(never)]
-    pub(crate) fn mint_descriptor_token_bytes(
-        &mut self,
-        peer: u8,
-        shot: CapShot,
-        lane: Lane,
-        scope: ScopeId,
-        epoch: u16,
-        control: ControlDesc,
-        handle_bytes: [u8; CAP_HANDLE_LEN],
-    ) -> SendResult<MintedControlToken<'r>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let rendezvous = cluster
-            .get_local(&self.rendezvous_id())
-            .ok_or(SendError::PhaseInvariant)?;
-        let strategy = self.mint.as_config().strategy();
-        let mut minted_nonce = None;
-        rendezvous
-            .caps()
-            .insert_entry_with(|| {
-                let nonce = strategy.derive_nonce(rendezvous.next_nonce_seed());
-                minted_nonce = Some(nonce);
-                CapEntry::new(lane, rendezvous.next_cap_revision(), nonce)
-            })
-            .map_err(|_| SendError::PhaseInvariant)?;
-        let nonce =
-            minted_nonce.expect("cap insertion builder must run after vacant-slot preflight");
-        let rollback = PendingCapRelease::new(nonce, rendezvous.cap_release_ctx(lane));
-
-        let mut header = [0u8; crate::control::cap::mint::CAP_HEADER_LEN];
-        CapHeader::new(
-            self.sid,
-            lane,
-            peer,
-            control.resource_tag(),
-            control.op(),
-            control.path(),
-            shot,
-            control.scope_kind(),
-            control.header_flags(),
-            scope.local_ordinal(),
-            epoch,
-            handle_bytes,
-        )
-        .encode(&mut header);
-        let mut token_bytes = [0u8; crate::control::cap::mint::CAP_TOKEN_LEN];
-        token_bytes[..crate::control::cap::mint::CAP_NONCE_LEN].copy_from_slice(&nonce);
-        token_bytes[crate::control::cap::mint::CAP_NONCE_LEN
-            ..crate::control::cap::mint::CAP_NONCE_LEN + crate::control::cap::mint::CAP_HEADER_LEN]
-            .copy_from_slice(&header);
-        Ok(MintedControlToken {
-            token_bytes,
-            dispatch: DescriptorDispatch::new(control, scope, epoch),
-            rollback,
+    ) -> SendResult<StagedSendPayload>
+where {
+        let data = payload.ok_or(SendError::PhaseInvariant)?;
+        Ok(StagedSendPayload {
+            encoded_len: descriptor.encode_payload(data, scratch)?,
         })
-    }
-
-    #[inline(never)]
-    fn mint_send_control(
-        &mut self,
-        meta: SendMeta,
-        descriptor: SendRuntimeDesc,
-    ) -> SendResult<Option<MintedControlToken<'r>>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        let Some(control) = descriptor.control() else {
-            return Ok(None);
-        };
-        if matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) {
-            return Err(SendError::PhaseInvariant);
-        }
-
-        let lane = self.port_for_lane(meta.lane as usize).lane();
-        let shot = meta.shot.ok_or(SendError::PhaseInvariant)?;
-        let minted = match control.op() {
-            ControlOp::LoopContinue => {
-                self.mint_local_loop_continue_control(&meta, shot, lane, control)?
-            }
-            ControlOp::LoopBreak => {
-                self.mint_local_loop_break_control(&meta, shot, lane, control)?
-            }
-            ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
-                return Err(SendError::PhaseInvariant);
-            }
-            ControlOp::StateSnapshot
-            | ControlOp::StateRestore
-            | ControlOp::TxCommit
-            | ControlOp::TxAbort => {
-                let encode_control_handle = descriptor
-                    .encode_control_handle()
-                    .ok_or(SendError::PhaseInvariant)?;
-                let epoch = self.descriptor_send_epoch(control, lane)?;
-                self.mint_descriptor_token_bytes(
-                    meta.peer,
-                    shot,
-                    lane,
-                    meta.scope,
-                    epoch,
-                    control,
-                    encode_control_handle(self.sid, lane.as_wire(), meta.scope.raw()),
-                )?
-            }
-        };
-        Ok(Some(minted))
-    }
-
-    #[inline(never)]
-    fn mint_send_wire_control(
-        &mut self,
-        meta: SendMeta,
-        descriptor: SendRuntimeDesc,
-    ) -> SendResult<MintedControlToken<'r>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        let control = descriptor.control().ok_or(SendError::PhaseInvariant)?;
-        if !matches!(control.path(), crate::control::cap::mint::ControlPath::Wire) {
-            return Err(SendError::PhaseInvariant);
-        }
-        let lane = self.port_for_lane(meta.lane as usize).lane();
-        let epoch = self.descriptor_send_epoch(control, lane)?;
-        let handle = match control.op() {
-            ControlOp::TopologyBegin | ControlOp::TopologyAck | ControlOp::TopologyCommit => {
-                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-                cluster
-                    .topology_control_handle::<ROLE>(
-                        self.sid,
-                        self.public_rv,
-                        meta.peer,
-                        lane,
-                        control.op(),
-                    )
-                    .map_err(Self::map_cp_error)?
-            }
-            ControlOp::LoopContinue
-            | ControlOp::LoopBreak
-            | ControlOp::StateSnapshot
-            | ControlOp::StateRestore
-            | ControlOp::TxCommit
-            | ControlOp::TxAbort => {
-                return Err(SendError::PhaseInvariant);
-            }
-        };
-        self.mint_descriptor_token_bytes(
-            meta.peer,
-            control.shot(),
-            lane,
-            meta.scope,
-            epoch,
-            control,
-            handle,
-        )
-    }
-
-    #[inline]
-    fn descriptor_send_epoch(&self, control: ControlDesc, lane: Lane) -> SendResult<u16> {
-        match control.op() {
-            ControlOp::StateSnapshot => {
-                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-                let rendezvous = cluster
-                    .get_local(&self.rendezvous_id())
-                    .ok_or(SendError::PhaseInvariant)?;
-                Ok(rendezvous.lane_generation(lane).raw())
-            }
-            ControlOp::StateRestore | ControlOp::TxCommit | ControlOp::TxAbort => {
-                let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-                let rendezvous = cluster
-                    .get_local(&self.rendezvous_id())
-                    .ok_or(SendError::PhaseInvariant)?;
-                rendezvous
-                    .snapshot_generation(lane)
-                    .map(|generation| generation.raw())
-                    .ok_or(SendError::PhaseInvariant)
-            }
-            ControlOp::LoopContinue
-            | ControlOp::LoopBreak
-            | ControlOp::TopologyBegin
-            | ControlOp::TopologyAck
-            | ControlOp::TopologyCommit => Ok(0),
-        }
-    }
-
-    #[inline(never)]
-    fn reserve_descriptor_terminal_for_send(
-        &self,
-        meta: SendMeta,
-        token_bytes: Option<[u8; CAP_TOKEN_LEN]>,
-        dispatch: Option<DescriptorDispatch>,
-    ) -> SendResult<SendDescriptorTerminal<'r>> {
-        let (Some(dispatch), Some(bytes)) = (dispatch, token_bytes) else {
-            return Ok(SendDescriptorTerminal::none());
-        };
-        let cluster = self.control.cluster().ok_or(SendError::PhaseInvariant)?;
-        let ticket = cluster
-            .prepare_send_bound_descriptor_terminal(
-                self.rendezvous_id(),
-                bytes,
-                dispatch.desc,
-                self.sid,
-                Lane::new(meta.lane as u32),
-                meta.peer,
-                dispatch.scope_id,
-                dispatch.epoch,
-            )
-            .map_err(Self::map_cp_error)?;
-        Ok(SendDescriptorTerminal::terminal(ticket))
     }
 
     #[inline(never)]
@@ -471,78 +192,47 @@ where
         &mut self,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
-        control: StagedControlEmission<'r>,
-        dispatch: Option<DescriptorDispatch>,
-        token_bytes: Option<[u8; CAP_TOKEN_LEN]>,
     ) -> SendResult<SendCommitPlan<'r>> {
-        let loop_row = self.build_send_loop_commit_row(meta, &control, dispatch)?;
-        let progress =
-            self.build_send_progress_commit_plan(preview_cursor_index, meta, loop_row)?;
-        let descriptor = self.reserve_descriptor_terminal_for_send(meta, token_bytes, dispatch)?;
+        let progress = self.build_send_progress_commit_plan(preview_cursor_index, meta)?;
         Ok(SendCommitPlan {
-            control,
             proof: SendCommitProof {
-                descriptor,
                 progress,
+                _borrow: core::marker::PhantomData,
             },
         })
     }
 
     #[inline(never)]
-    fn prepare_send_payload_plan(
+    fn validate_send_payload(
         &mut self,
         meta: SendMeta,
         descriptor: SendRuntimeDesc,
         _has_payload: bool,
-    ) -> SendResult<SendPayloadPlan<'r>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
-        if meta.is_control != descriptor.expects_control() {
+    ) -> SendResult<()>
+where {
+        if meta.is_internal {
             return Err(SendError::PhaseInvariant);
         }
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return Err(SendError::PhaseInvariant);
         }
 
-        let control = descriptor.control();
-        self.evaluate_dynamic_policy(&meta, descriptor.logical_label(), control)?;
+        self.evaluate_dynamic_resolver(&meta, descriptor.logical_label())?;
 
         let lane = Lane::new(meta.lane as u32);
-        // EndpointTx policy audit is an attempt-side replay tuple for the
-        // policy input that authorized this send attempt. The observable
+        // EndpointTx resolver audit is an attempt-side replay tuple for the
+        // resolver input that authorized this send attempt. The observable
         // ENDPOINT_SEND / ENDPOINT_CONTROL event is emitted only from the
         // post-transport commit path.
-        self.emit_endpoint_policy_audit(
-            PolicySlot::EndpointTx,
+        self.emit_endpoint_resolver_audit(
+            ResolverSlot::EndpointTx,
             ids::ENDPOINT_SEND,
             self.sid.raw(),
-            Self::endpoint_policy_args(lane, meta.label, FrameFlags::empty()),
+            Self::endpoint_resolver_args(lane, meta.label, FrameFlags::empty()),
             lane,
         );
 
-        match control {
-            None => Ok(SendPayloadPlan::Data),
-            Some(control) => match control.path() {
-                crate::control::cap::mint::ControlPath::Local => {
-                    let token = self
-                        .mint_send_control(meta, descriptor)?
-                        .ok_or(SendError::PhaseInvariant)?;
-                    Ok(SendPayloadPlan::LocalControl { token })
-                }
-                crate::control::cap::mint::ControlPath::Wire => {
-                    match descriptor.control_payload_kind() {
-                        crate::global::CONTROL_PAYLOAD_WIRE_UNIT => {
-                            let token = self.mint_send_wire_control(meta, descriptor)?;
-                            Ok(SendPayloadPlan::MintedWireControl { token })
-                        }
-                        crate::global::CONTROL_PAYLOAD_LOCAL_UNIT
-                        | crate::global::CONTROL_PAYLOAD_NONE
-                        | 3..=u8::MAX => Err(SendError::PhaseInvariant),
-                    }
-                }
-            },
-        }
+        Ok(())
     }
 
     #[inline(never)]
@@ -552,35 +242,17 @@ where
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
-        plan: SendPayloadPlan<'r>,
     ) -> SendResult<SendTransportStep<'r>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
+where {
         let scratch_ptr = {
             let port = self.port_for_lane(meta.lane as usize);
             lane_port::scratch_ptr(port)
         };
-        let (staged_send, dispatch, token_bytes) = {
+        let staged_send = {
             let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
-            let (staged_send, dispatch) =
-                self.stage_send_payload(descriptor, plan, payload, scratch)?;
-            let token_bytes = if dispatch.is_some() {
-                let mut bytes = [0u8; CAP_TOKEN_LEN];
-                bytes.copy_from_slice(&scratch[..CAP_TOKEN_LEN]);
-                Some(bytes)
-            } else {
-                None
-            };
-            (staged_send, dispatch, token_bytes)
+            self.stage_send_payload(descriptor, payload, scratch)?
         };
-        let commit_plan = self.build_send_commit_plan(
-            preview_cursor_index,
-            meta,
-            staged_send.control,
-            dispatch,
-            token_bytes,
-        )?;
+        let commit_plan = self.build_send_commit_plan(preview_cursor_index, meta)?;
         let encoded_len = staged_send.encoded_len;
 
         let mut pending_transport = None;
@@ -599,7 +271,6 @@ where
                     frame_label: crate::transport::FrameLabel::new(meta.frame_label),
                     peer: meta.peer,
                     lane: port.lane().as_wire(),
-                    is_control: meta.is_control,
                 },
                 payload: payload_view,
             };
@@ -628,23 +299,15 @@ where
         preview_cursor_index: Option<StateIndex>,
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
+where {
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
         }
-        let plan = match self.prepare_send_payload_plan(meta, descriptor, payload.is_some()) {
-            Ok(plan) => plan,
-            Err(err) => return SendInitOutcome::Ready(Err(err)),
-        };
-        let step = match self.begin_send_transport(
-            descriptor,
-            preview_cursor_index,
-            meta,
-            payload,
-            plan,
-        ) {
+        if let Err(err) = self.validate_send_payload(meta, descriptor, payload.is_some()) {
+            return SendInitOutcome::Ready(Err(err));
+        }
+        let step = match self.begin_send_transport(descriptor, preview_cursor_index, meta, payload)
+        {
             Ok(step) => step,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };
@@ -677,28 +340,16 @@ where
         commit_plan: SendCommitPlan<'r>,
     ) -> SendCommitOutcome<'r> {
         let SendCommitPlan {
-            control,
             proof:
                 SendCommitProof {
-                    descriptor,
                     progress,
+                    _borrow: _,
                 },
         } = commit_plan;
-        self.finish_send_control_outcome(control);
         self.publish_send_progress_commit_plan(progress);
-        let descriptor = if descriptor.is_none() {
-            super::SendDescriptorPublication::none()
-        } else {
-            let cluster = self
-                .control
-                .cluster()
-                .expect("send descriptor publication requires its preparing cluster");
-            super::SendDescriptorPublication::new(
-                cluster.descriptor_publication_authority(),
-                descriptor,
-            )
-        };
-        SendCommitOutcome { descriptor }
+        SendCommitOutcome {
+            _borrow: core::marker::PhantomData,
+        }
     }
 
     #[inline(never)]
@@ -736,13 +387,9 @@ where
                 Poll::Ready(Ok(commit_plan))
             }
             Poll::Ready(Err(err)) => {
-                self.rollback_send_commit_plan(pending.commit_plan.take());
+                pending.commit_plan = None;
                 Poll::Ready(Err(err))
             }
         }
     }
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "tests.rs"]
-mod tests;

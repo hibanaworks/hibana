@@ -5,7 +5,7 @@
 //! waker bookkeeping it needs inside its `Tx` / `Rx` handles or shared state.
 //!
 //! Receive buffers must be exposed as borrowed views. The rendezvous layer
-//! provides a slab (see [`crate::runtime::config::Config::slab`]) that transports can pin
+//! provides a slab (see [`crate::runtime_core::config::Config::slab`]) that transports can pin
 //! behind their `Rx` handle so [`Transport::poll_recv`] yields payload views borrowed
 //! from that storage. This keeps the runtime allocation-free while allowing
 //! DMA/SHM backed zero-copy paths.
@@ -17,7 +17,7 @@
 
 use core::task::{Context, Poll};
 
-use crate::{control::types::SessionId, eff::EffIndex, transport::wire::Payload};
+use crate::{eff::EffIndex, session::types::SessionId, transport::wire::Payload};
 
 mod labels;
 
@@ -37,8 +37,6 @@ pub(crate) struct SendMeta {
     pub peer: u8,
     /// Logical lane for this message.
     pub lane: u8,
-    /// Whether this is a control message.
-    pub is_control: bool,
 }
 
 /// Transport-owned outgoing frame.
@@ -62,11 +60,6 @@ impl<'f> Outgoing<'f> {
     #[inline]
     pub const fn lane(&self) -> u8 {
         self.meta.lane
-    }
-
-    #[inline]
-    pub const fn is_control(&self) -> bool {
-        self.meta.is_control
     }
 
     #[inline]
@@ -275,16 +268,16 @@ const fn pack_frame_header(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortOpen {
     local_role: u8,
-    session_id: crate::control::types::SessionId,
-    lane: crate::control::types::Lane,
+    session_id: crate::session::types::SessionId,
+    lane: crate::session::types::Lane,
 }
 
 impl PortOpen {
     #[inline]
     pub(crate) const fn from_descriptor(
         local_role: u8,
-        session_id: crate::control::types::SessionId,
-        lane: crate::control::types::Lane,
+        session_id: crate::session::types::SessionId,
+        lane: crate::session::types::Lane,
     ) -> Self {
         Self {
             local_role,
@@ -299,7 +292,7 @@ impl PortOpen {
     }
 
     #[inline]
-    pub const fn session_id(self) -> crate::control::types::SessionId {
+    pub const fn session_id(self) -> crate::session::types::SessionId {
         self.session_id
     }
 
@@ -375,14 +368,12 @@ pub trait Transport {
     ///
     /// Implementations must make that frame observable again by a later
     /// `poll_recv` on the same `Rx` handle. A no-op requeue violates the
-    /// endpoint rollback contract: higher layers call this only after a
+    /// endpoint restore contract: higher layers call this only after a
     /// descriptor-checked operation consumed transport state that it ultimately
     /// could not commit.
     fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;
 }
 
-/// Transport context provider for resolver state access.
-pub(crate) mod context;
 /// Observability helpers for logical frame inspection.
 pub(crate) mod trace;
 /// Wire helpers: payload views and serialization traits.

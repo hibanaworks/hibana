@@ -1,15 +1,15 @@
 mod event_flow;
 mod navigation;
+mod roll;
 mod row_completion;
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
-    ControlSemanticKind, EffIndex, EventCursor, FirstRecvDispatchSpec, LaneSetView, LocalAction,
-    LocalDependency, LoopControlMeaning, LoopMetadata, LoopRole, MAX_FIRST_RECV_DISPATCH, RecvMeta,
-    RelocatableResidentLaneStep, ResidentLaneStep, ResidentLaneStepError, ResolverMode,
-    RouteOfferCursorState, ScopeId, StateIndex, as_state_index, state_index_to_usize,
+    CursorInvariantError, EffIndex, EventCursor, EventSemanticKind, FirstRecvDispatchSpec,
+    LaneSetView, LocalAction, LocalDependency, MAX_FIRST_RECV_DISPATCH, RecvMeta,
+    RelocatableResidentLaneStep, ResidentLaneStep, ResolverMode, RouteOfferCursorState, ScopeId,
+    SendMeta, StateIndex, state_index_to_usize,
 };
-use crate::control::cluster::core::DecisionSubject;
 use crate::global::role_program::PackedLaneRange;
 
 impl EventCursor {
@@ -18,9 +18,12 @@ impl EventCursor {
         &self,
         idx: usize,
         lane: u8,
-    ) -> Result<Option<RelocatableResidentLaneStep>, ResidentLaneStepError> {
+        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+    ) -> Result<Option<RelocatableResidentLaneStep>, CursorInvariantError> {
         let progress_step = self.relocatable_resident_lane_step_at_index(idx, lane as usize)?;
-        if self.relocatable_step_done(progress_step) {
+        if self.relocatable_step_done(progress_step)
+            && !self.roll_reentry_event_allows_index(idx, lane, selected_arm_for_scope)
+        {
             Ok(None)
         } else {
             Ok(Some(progress_step))
@@ -36,7 +39,14 @@ impl EventCursor {
     ) -> bool {
         let target = progress_step.0;
         if self.relocatable_step_done(progress_step) {
-            return false;
+            let Some(idx) = self.node_index_for_relocatable_step(progress_step) else {
+                return false;
+            };
+            if !self.roll_reentry_event_allows_index(idx, target.lane, |scope| {
+                selected_arm_for_scope(scope)
+            }) {
+                return false;
+            }
         }
         let mut step_idx = 0usize;
         while step_idx < target.step_idx as usize {
@@ -53,7 +63,7 @@ impl EventCursor {
                     && self.event_conflict_row_allows_with_preview(
                         self.machine().event_conflict_for_index(pending_idx),
                         preview_conflict,
-                        |scope| selected_arm_for_scope(scope),
+                        &mut selected_arm_for_scope,
                     )
                 {
                     return false;
@@ -154,21 +164,22 @@ impl EventCursor {
         self.route_scope_rows(scope_id).map(|region| region.start())
     }
 
-    pub(crate) fn decode_linger_cursor_step(
+    fn event_linger_cursor_step(
         &self,
-        meta: RecvMeta,
+        scope: ScopeId,
+        lane: u8,
+        eff_index: EffIndex,
         next_index: StateIndex,
         mut authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
-        let mut linger_scope = meta.scope;
+        let mut linger_scope = scope;
         loop {
             if self.route_scope_linger(linger_scope)
                 && let Some(arm) = authorized_arm_for_scope(linger_scope)
                 && arm == 0
-                && let Some(last_eff) = self.route_arm_lane_last_eff(linger_scope, arm, meta.lane)
-                && last_eff == meta.eff_index
-                && let Some(first_step) =
-                    self.route_arm_lane_first_step(linger_scope, arm, meta.lane)
+                && let Some(last_eff) = self.route_arm_lane_last_eff(linger_scope, arm, lane)
+                && last_eff == eff_index
+                && let Some(first_step) = self.route_arm_lane_first_step(linger_scope, arm, lane)
             {
                 return Some(first_step);
             }
@@ -181,17 +192,44 @@ impl EventCursor {
         let next_usize = state_index_to_usize(next_index);
         if let Some(region) = self.route_scope_rows_at(next_usize)
             && region.linger()
+            && next_usize == region.start()
+            && let Some(arm) = authorized_arm_for_scope(region.scope())
+            && arm == 0
+            && let Some(first_step) = self.route_arm_lane_first_step(region.scope(), arm, lane)
         {
-            if next_usize == region.start()
-                && let Some(arm) = authorized_arm_for_scope(region.scope())
-                && arm == 0
-                && let Some(first_step) =
-                    self.route_arm_lane_first_step(region.scope(), arm, meta.lane)
-            {
-                return Some(first_step);
-            }
+            return Some(first_step);
         }
         None
+    }
+
+    pub(crate) fn decode_linger_cursor_step(
+        &self,
+        meta: RecvMeta,
+        next_index: StateIndex,
+        authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<RelocatableResidentLaneStep> {
+        self.event_linger_cursor_step(
+            meta.scope,
+            meta.lane,
+            meta.eff_index,
+            next_index,
+            authorized_arm_for_scope,
+        )
+    }
+
+    pub(crate) fn send_linger_cursor_step(
+        &self,
+        meta: SendMeta,
+        next_index: StateIndex,
+        authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<RelocatableResidentLaneStep> {
+        self.event_linger_cursor_step(
+            meta.scope,
+            meta.lane,
+            meta.eff_index,
+            next_index,
+            authorized_arm_for_scope,
+        )
     }
 
     fn dependency_applies(
@@ -218,29 +256,6 @@ impl EventCursor {
         } else {
             self.enclosing_loop_scope(scope)
         }
-    }
-
-    fn try_index_for_loop_control(&self, meaning: LoopControlMeaning) -> Option<usize> {
-        for i in 0..self.machine().node_len() {
-            let node = self.machine().node(i);
-            let semantic = match node.action() {
-                LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Local { .. } => {
-                    node.control_semantic()
-                }
-                LocalAction::Terminate => continue,
-            };
-            if LoopControlMeaning::from_semantic(semantic) == Some(meaning) {
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    fn successor_index_for_loop_control(&self, meaning: LoopControlMeaning) -> usize {
-        let index = self
-            .try_index_for_loop_control(meaning)
-            .expect("loop control not found in typestate");
-        state_index_to_usize(self.machine().node(index).next())
     }
 
     pub(super) fn passive_arm_entry(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
@@ -437,6 +452,9 @@ impl EventCursor {
             && !offer_entry.is_max()
             && current_idx != state_index_to_usize(offer_entry)
         {
+            if self.route_scope_linger(scope_id) && self.current_route_arm().is_some() {
+                return true;
+            }
             return selected_arm.is_some() && self.current_route_arm() == selected_arm;
         }
         true
@@ -463,14 +481,14 @@ impl EventCursor {
         {
             return true;
         }
-        self.route_scope_rows_at(entry_idx).is_some()
+        self.checked_route_scope_rows_at(entry_idx).is_some()
     }
 
     pub(crate) fn current_route_arm_authorization(
         &self,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> Result<Option<bool>, ResidentLaneStepError> {
+    ) -> Result<Option<bool>, CursorInvariantError> {
         let Some(region) = self.route_scope_rows_at(self.index()) else {
             return Ok(None);
         };
@@ -482,6 +500,9 @@ impl EventCursor {
             return Ok(None);
         }
         if let Some(selected_arm) = selected_arm_for_scope(scope) {
+            if selected_arm != current_arm && self.route_scope_linger(scope) {
+                return Ok(Some(false));
+            }
             return Ok((selected_arm == current_arm).then_some(false));
         }
         if let Some(preview_arm) = preview_arm_for_scope(scope) {
@@ -490,7 +511,7 @@ impl EventCursor {
         if !self.is_route_controller(scope) {
             return Ok(None);
         }
-        Err(ResidentLaneStepError)
+        Err(CursorInvariantError::INVARIANT)
     }
 
     pub(crate) fn normalize_lane_offer_entry(
@@ -669,59 +690,21 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn control_semantic_at(&self, idx: usize) -> ControlSemanticKind {
-        self.machine().node(idx).control_semantic()
+    pub(crate) fn event_semantic_at(&self, idx: usize) -> EventSemanticKind {
+        self.machine().node(idx).event_semantic()
     }
 
     #[inline]
-    /// Get route controller policy metadata.
+    /// Get route controller resolver metadata.
     ///
-    /// The tuple `(ResolverMode, EffIndex, u8, DecisionSubject)` corresponds to the
+    /// The tuple `(ResolverMode, EffIndex, u8)` corresponds to the
     /// controller-provided
-    /// policy mode, the effect index of the send action that declared it, and the
-    /// resolver subject baked by projection.
-    pub(crate) fn route_scope_controller_policy(
+    /// resolver mode, the effect index of the send action that declared it, and the
+    /// decision tag baked by projection.
+    pub(crate) fn route_scope_controller_resolver(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(ResolverMode, EffIndex, u8, DecisionSubject)> {
+    ) -> Option<(ResolverMode, EffIndex, u8)> {
         self.machine().route_controller(scope_id)
-    }
-
-    // =========================================================================
-    // Loop Metadata
-    // =========================================================================
-
-    /// Get loop metadata for current scope.
-    pub(crate) fn loop_metadata_inner(&self) -> Option<LoopMetadata> {
-        let node = self.machine().node(self.idx_usize());
-        let action = node.action();
-        let role = self.machine().role();
-        let (eff_index, controller, target, role_kind) = match action {
-            LocalAction::Send {
-                eff_index, peer, ..
-            } => (eff_index, role, peer, LoopRole::Controller),
-            LocalAction::Recv {
-                eff_index, peer, ..
-            } => (eff_index, peer, role, LoopRole::Target),
-            _ => return None,
-        };
-        if LoopControlMeaning::from_semantic(node.control_semantic())
-            != Some(LoopControlMeaning::Continue)
-        {
-            return None;
-        }
-        let scope = self.node_loop_scope(self.idx_usize())?;
-        let continue_index = self.successor_index_for_loop_control(LoopControlMeaning::Continue);
-        let break_index = self.successor_index_for_loop_control(LoopControlMeaning::Break);
-        Some(LoopMetadata {
-            scope,
-            controller,
-            target,
-            role: role_kind,
-            eff_index,
-            decision_index: as_state_index(self.idx_usize()),
-            continue_index: as_state_index(continue_index),
-            break_index: as_state_index(break_index),
-        })
     }
 }

@@ -1,7 +1,5 @@
 error: cannot construct `RoleProgram<0>` with struct literal syntax due to private fields
- --> tests/ui/g-roleprogram-witness-mismatch.rs:6:27
+ --> tests/ui/g-roleprogram-witness-mismatch.rs:5:27
   |
-6 |     core::hint::black_box(RoleProgram::<0> {});
+5 |     core::hint::black_box(RoleProgram::<0> {});
   |                           ^^^^^^^^^^^^^^^^
-  |
-  = note: private fields `_private` and `image` that were not provided

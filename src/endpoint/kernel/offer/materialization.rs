@@ -7,10 +7,9 @@ use super::{
     ResolvedRouteArm,
 };
 use crate::{
-    control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::typestate::state_index_to_usize,
-    runtime::{config::Clock, consts::LabelUniverse},
+    runtime_core::config::Clock,
     transport::Transport,
 };
 
@@ -24,14 +23,10 @@ enum MaterializedTransport<'r> {
     DiscardedAndPending,
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(in crate::endpoint::kernel) fn produce_branch(
         &mut self,
@@ -39,7 +34,7 @@ where
         resolved: ResolvedRouteArm,
         profile: OfferScopeProfile,
         transport_payload: Option<lane_port::PreambleFrame<'r>>,
-    ) -> RecvResult<Option<RouteBranch<'r, ROLE, T, U, C, E, MAX_RV, Mint>>> {
+    ) -> RecvResult<Option<RouteBranch<'r, ROLE, T, C, MAX_RV>>> {
         let mut transport_payload = transport_payload;
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;
@@ -64,14 +59,7 @@ where
         };
 
         let lane_wire = meta.lane;
-        let branch_kind = self.materialized_branch_kind(
-            selection,
-            scope_id,
-            selected_arm,
-            profile,
-            preview_meta,
-            meta,
-        );
+        let branch_kind = self.materialized_branch_kind(preview_meta);
         let transport_payload_for_branch = match self.resolve_materialized_transport(
             branch_kind,
             lane_wire,
@@ -89,7 +77,7 @@ where
             cursor_index: preview_meta.cursor_index,
             eff_index: meta.eff_index,
             label: meta.label,
-            is_control: meta.is_control,
+            is_internal: meta.is_internal,
             frame_label: meta.frame_label,
             kind: branch_kind,
             profile,
@@ -98,44 +86,20 @@ where
         };
         Ok(Some(RouteBranch {
             label: meta.label,
-            staged_payload: transport_payload_for_branch
-                .map(|payload| StagedPayload::Transport { frame: payload }),
+            staged_payload: transport_payload_for_branch.map(StagedPayload::new),
             branch_meta,
             _cfg: PhantomData,
         }))
     }
 
-    fn materialized_branch_kind(
-        &self,
-        selection: OfferScopeSelection,
-        scope_id: crate::global::const_dsl::ScopeId,
-        selected_arm: u8,
-        profile: OfferScopeProfile,
-        preview_meta: super::CachedRecvMeta,
-        meta: crate::global::typestate::RecvMeta,
-    ) -> BranchKind {
-        let passive_linger_loop_label =
-            profile.is_passive() && self.is_linger_route(scope_id) && meta.semantic.is_loop();
+    fn materialized_branch_kind(&self, preview_meta: super::CachedRecvMeta) -> BranchKind {
         let cursor_index = state_index_to_usize(preview_meta.cursor_index);
         if preview_meta.is_recv_step() {
-            if passive_linger_loop_label
-                || (profile.is_passive()
-                    && meta.semantic.is_loop()
-                    && self.selection_non_wire_loop_control_recv(
-                        selection,
-                        profile.is_controller(),
-                        selected_arm,
-                        meta.label,
-                    ))
-            {
-                BranchKind::LocalControl
-            } else {
-                BranchKind::WireRecv
-            }
+            BranchKind::WireRecv
         } else if self.cursor.is_send_at(cursor_index) {
             BranchKind::ArmSendHint
         } else if self.cursor.is_local_action_at(cursor_index) {
-            BranchKind::LocalControl
+            BranchKind::LocalAction
         } else {
             BranchKind::EmptyArmTerminal
         }

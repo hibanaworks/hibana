@@ -6,7 +6,10 @@ use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::lane_word_count;
 
 fn test_scope(raw: u64) -> ScopeId {
-    ScopeId::decode_raw(raw).expect("valid test scope")
+    let Ok(ordinal) = u16::try_from(raw) else {
+        crate::invariant();
+    };
+    ScopeId::parallel(ordinal)
 }
 
 fn observed_key_storage(
@@ -51,13 +54,17 @@ fn root_frontier_table_accepts_full_u8_lane_domain_rows() {
     unsafe {
         RootFrontierTable::init_from_parts(
             table.as_mut_ptr(),
-            rows.as_mut_ptr(),
-            active.as_mut_ptr(),
-            observed.as_mut_ptr(),
-            core::ptr::null_mut(),
-            ROWS,
-            1,
-            0,
+            RootFrontierStorage {
+                rows: rows.as_mut_ptr(),
+                active_entries: active.as_mut_ptr(),
+                observed_key_slots: observed.as_mut_ptr(),
+                observed_key_offer_lanes: core::ptr::null_mut(),
+            },
+            RootFrontierCapacity {
+                row_count: ROWS,
+                pool_capacity: 1,
+                observed_key_lane_word_count: 0,
+            },
         );
     }
     let mut table = unsafe { table.assume_init() };
@@ -100,13 +107,17 @@ fn root_frontier_shared_active_pool_stays_packed_after_row_removal() {
     unsafe {
         RootFrontierTable::init_from_parts(
             table.as_mut_ptr(),
-            rows.as_mut_ptr(),
-            active.as_mut_ptr(),
-            observed.as_mut_ptr(),
-            observed_offer_lanes.as_mut_ptr(),
-            3,
-            4,
-            lane_word_count(1),
+            RootFrontierStorage {
+                rows: rows.as_mut_ptr(),
+                active_entries: active.as_mut_ptr(),
+                observed_key_slots: observed.as_mut_ptr(),
+                observed_key_offer_lanes: observed_offer_lanes.as_mut_ptr(),
+            },
+            RootFrontierCapacity {
+                row_count: 3,
+                pool_capacity: 4,
+                observed_key_lane_word_count: lane_word_count(1),
+            },
         );
     }
     let mut table = unsafe { table.assume_init() };
@@ -140,13 +151,17 @@ fn root_frontier_shared_observed_pool_stays_packed_after_row_removal() {
     unsafe {
         RootFrontierTable::init_from_parts(
             table.as_mut_ptr(),
-            rows.as_mut_ptr(),
-            active.as_mut_ptr(),
-            observed.as_mut_ptr(),
-            observed_offer_lanes.as_mut_ptr(),
-            3,
-            4,
-            lane_word_count(1),
+            RootFrontierStorage {
+                rows: rows.as_mut_ptr(),
+                active_entries: active.as_mut_ptr(),
+                observed_key_slots: observed.as_mut_ptr(),
+                observed_key_offer_lanes: observed_offer_lanes.as_mut_ptr(),
+            },
+            RootFrontierCapacity {
+                row_count: 3,
+                pool_capacity: 4,
+                observed_key_lane_word_count: lane_word_count(1),
+            },
         );
     }
     let mut table = unsafe { table.assume_init() };
@@ -187,13 +202,17 @@ fn root_frontier_observed_cache_invalidates_on_active_entry_change() {
     unsafe {
         RootFrontierTable::init_from_parts(
             table.as_mut_ptr(),
-            rows.as_mut_ptr(),
-            active.as_mut_ptr(),
-            observed.as_mut_ptr(),
-            observed_offer_lanes.as_mut_ptr(),
-            3,
-            4,
-            lane_word_count(1),
+            RootFrontierStorage {
+                rows: rows.as_mut_ptr(),
+                active_entries: active.as_mut_ptr(),
+                observed_key_slots: observed.as_mut_ptr(),
+                observed_key_offer_lanes: observed_offer_lanes.as_mut_ptr(),
+            },
+            RootFrontierCapacity {
+                row_count: 3,
+                pool_capacity: 4,
+                observed_key_lane_word_count: lane_word_count(1),
+            },
         );
     }
     let mut table = unsafe { table.assume_init() };

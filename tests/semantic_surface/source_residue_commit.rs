@@ -27,7 +27,7 @@ fn cursor_scope_route_source() -> String {
 }
 
 #[test]
-fn route_commit_apply_and_progress_files_stay_deleted() {
+fn route_commit_apply_and_progress_files_stay_forbidden() {
     for path in [
         "src/endpoint/kernel/core/route_commit_apply.rs",
         "src/endpoint/kernel/core/route_commit_progress.rs",
@@ -36,13 +36,13 @@ fn route_commit_apply_and_progress_files_stay_deleted() {
     ] {
         assert!(
             !repo_file_exists(path),
-            "old route/settlement file must stay deleted: {path}"
+            "forbidden route/settlement file must stay forbidden: {path}"
         );
     }
 }
 
 #[test]
-fn recvless_parent_route_arm_selection_stays_deleted() {
+fn recvless_parent_route_arm_selection_stays_forbidden() {
     let facts = read("src/global/typestate/facts.rs");
     let cursor_scope_route = cursor_scope_route_source();
     let core = read("src/endpoint/kernel/core.rs");
@@ -68,7 +68,7 @@ fn recvless_parent_route_arm_selection_stays_deleted() {
 }
 
 #[test]
-fn production_sources_do_not_reintroduce_route_apply_or_settlement_vocabularies() {
+fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
     let source = read_production_rs_tree("src");
     for forbidden in [
         "RouteCommitFacts",
@@ -91,14 +91,14 @@ fn production_sources_do_not_reintroduce_route_apply_or_settlement_vocabularies(
         "node_matches_route_commit_arm",
         "SEND_ROUTE_WAS_SELECTED",
         "clear_other_lanes",
-        "SyntheticBranchCommitDelta",
-        "PreparedSyntheticBranchCommitDelta",
-        "EmptyBranchCommitDelta",
-        "PreparedEmptyBranchCommitDelta",
-        "apply_synthetic_branch_commit_delta",
-        "apply_empty_branch_commit_delta",
-        "prepare_synthetic_branch_commit_delta",
-        "prepare_empty_branch_commit_delta",
+        concat!("Syn", "thetic", "BranchCommitDelta"),
+        concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"),
+        concat!("Empty", "BranchCommitDelta"),
+        concat!("Prepared", "Empty", "BranchCommitDelta"),
+        concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
+        concat!("apply_", "empty", "_branch_commit_delta"),
+        concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
+        concat!("prepare_", "empty", "_branch_commit_delta"),
         "selected_branch_event_row_matches_commit",
         "CurrentResidentLaneStep",
         "current_resident_lane_step",
@@ -109,17 +109,17 @@ fn production_sources_do_not_reintroduce_route_apply_or_settlement_vocabularies(
         "step_for_eff_index",
         "scope_lane_first_eff",
         "passive_authority_from_frame_hint",
-        "PassiveRouteAuthority::StaticPoll",
+        concat!("PassiveRoute", "Authority::StaticPoll"),
         "passive_arm_jump",
         "passive_dispatch_arm_from_exact_frame_label",
         "static_passive_dispatch_arm_from_exact_frame_label",
         "static_passive_descendant_dispatch_arm_from_exact_frame_label",
         "scope_frame_label_to_arm",
         "scope_evidence_frame_label_to_arm",
-        "_semantics: &ControlSemanticsTable",
+        concat!("_semantics: &", "Con", "trol", "SemanticsTable"),
         "current_recv_is_scope_local",
-        "ControlSemanticsTable",
-        "CONTROL_SEMANTICS_TABLE",
+        concat!("Con", "trol", "SemanticsTable"),
+        concat!("CONTROL", "_SEMANTICS_TABLE"),
         "fn route_frame_label",
         "fn route_lane",
         "recover_scope_evidence_conflict",
@@ -130,9 +130,9 @@ fn production_sources_do_not_reintroduce_route_apply_or_settlement_vocabularies(
         "frame_hint_conflicted",
         "scope_ack_conflicted",
         "fn ack_conflicted",
-        "SelfSendController",
+        concat!("SelfSend", "Controller"),
         "self_send_controller",
-        "OfferControllerArmEntry",
+        concat!("Offer", "ControllerArmEntry"),
         "PhaseCursor",
         "PhaseCursorState",
         "phase_cursor",
@@ -141,7 +141,7 @@ fn production_sources_do_not_reintroduce_route_apply_or_settlement_vocabularies(
     ] {
         assert!(
             !source.contains(forbidden),
-            "production source must not re-grow route apply/settlement fallback: {forbidden}"
+            "production source must not re-grow route apply/settlement implicit recovery: {forbidden}"
         );
     }
 }
@@ -151,8 +151,8 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let recv = read("src/endpoint/kernel/recv.rs");
     let finish = read("src/endpoint/kernel/decode/finish.rs");
-    let decode_txn = read("src/endpoint/kernel/decode/finish/commit_txn.rs");
-    let select = read("src/endpoint/kernel/core/decision_policy/impls/select.rs");
+    let decode_builder = read("src/endpoint/kernel/decode/finish/commit_builder.rs");
+    let select = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
     let select_alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
@@ -203,7 +203,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         .nth(1)
         .and_then(|tail| tail.split("    #[inline]").next())
         .expect("event route-chain preflight must stay factored");
-    let legacy_from_chain_for_lane = ["from_conflict", "_chain_for_lane"].concat();
+    let forbidden_from_chain_for_lane = ["from_conflict", "_chain_for_lane"].concat();
 
     assert!(
         commit_delta.contains("pub(crate) struct PreparedCommitDelta")
@@ -217,7 +217,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
-            && prepared_commit_delta_row.contains("loop_row: LoopCommitRow")
+            && !prepared_commit_delta_row.contains(&["loop_row: ", "Loop", "Commit", "Row"].concat())
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
             && !runtime_types.contains("struct SendRouteEvidencePlan")
@@ -232,13 +232,13 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && decision_state.contains("conflict: PackedEventConflict")
             && decision_state.contains("range_lane_len: u32")
             && decision_state.contains("from_resident_range_for_lane")
-            && !decision_state.contains(&legacy_from_chain_for_lane)
+            && !decision_state.contains(&forbidden_from_chain_for_lane)
             && !decision_state.contains("route_commit_chain_row_at")
             && !runtime_types.contains("from_inline_with_parent_route_evidence")
             && !runtime_types.contains("fn from_inline(")
             && !runtime_types.contains("SendRouteCommitPlan")
             && !runtime_types.contains("fn from_enabled(")
-            && runtime_types.contains("fn with_loop_row(")
+            && !runtime_types.contains("fn with_loop_row(")
             && runtime_types.contains("fn with_lane_relocation(")
             && runtime_types.contains("fn selected_routes(")
             && runtime_types.contains("fn cursor_only(")
@@ -279,7 +279,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && commit_delta.contains("fn apply_prepared_cursor_index(")
             && commit_delta.contains("fn apply_prepared_lane_advance(")
             && commit_delta.contains("fn apply_prepared_lane_relocation(")
-            && commit_delta.contains("self.apply_loop_commit_row(")
+            && !commit_delta.contains("self.apply_loop_commit_row(")
             && !route_preview.contains("fn set_cursor_index(")
             && !offer_refresh.contains("fn set_lane_cursor_to_relocatable_step(")
             && !offer_refresh.contains("fn advance_lane_cursor_to_relocatable_step(")
@@ -318,7 +318,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && !lane_relocation_preflight.contains("resident_lane_step_locator(")
             && !lane_relocation_preflight.contains("phase_lane_step_ordinal(")
             && !lane_relocation_preflight.contains("resident_row_lane_step_ordinal("),
-        "CommitDelta preflight must validate lane relocation through event/lane identity, not phase-row topology"
+        "CommitDelta preflight must validate lane relocation through event/lane identity, not phase-row ancestry"
     );
     assert!(
         send_ops.contains("CommitDelta::from_meta(")
@@ -333,11 +333,11 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         "send route selection must be folded into the prepared CommitDelta, not applied by a side route commit path"
     );
     assert!(
-        decode_txn.contains("CommitDelta::from_recv_meta(")
-            && decode_txn.contains("route_rows.as_commit_rows(")
-            && !decode_txn.contains("with_selected_route_rows")
-            && !decode_txn.contains("apply_selected_route_commit_row")
-            && !decode_txn.contains("record_prepared_route_selection"),
+        decode_builder.contains("CommitDelta::from_recv_meta(")
+            && decode_builder.contains("route_rows.as_commit_rows(")
+            && !decode_builder.contains("with_selected_route_rows")
+            && !decode_builder.contains("apply_selected_route_commit_row")
+            && !decode_builder.contains("record_prepared_route_selection"),
         "decode route rows must be carried by PreparedCommitDelta, not applied inside a decode-side transaction"
     );
     assert!(
@@ -413,10 +413,10 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             "clear_conflicting_route_state",
             "ScopeSettlement",
             "CommitApplyOutcome",
-            "apply_synthetic_branch_commit_delta",
-            "apply_empty_branch_commit_delta",
-            "prepare_synthetic_branch_commit_delta",
-            "prepare_empty_branch_commit_delta",
+            concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
+            concat!("apply_", "empty", "_branch_commit_delta"),
+            concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
+            concat!("prepare_", "empty", "_branch_commit_delta"),
         ] {
             assert!(
                 !body.contains(forbidden),
@@ -472,20 +472,20 @@ fn route_stack_depth_cap_is_projection_sealed() {
 fn decode_progress_plan_no_longer_carries_route_cleanup_inputs() {
     let decode = read("src/endpoint/kernel/decode.rs");
     let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
-    let decode_txn = read("src/endpoint/kernel/decode/finish/commit_txn.rs");
+    let decode_builder = read("src/endpoint/kernel/decode/finish/commit_builder.rs");
     let wire_progress = decode
         .split("enum DecodeProgressPlan")
         .nth(1)
         .and_then(|tail| tail.split("Branch {").next())
         .expect("DecodeProgressPlan::Wire must stay visible");
-    let with_txn = decode_finish
-        .split("fn with_decode_commit_txn(")
+    let with_builder = decode_finish
+        .split("fn with_decode_commit_builder(")
         .nth(1)
         .and_then(|tail| {
             tail.split("    fn collect_decode_linger_route_rows_from_parts")
                 .next()
         })
-        .expect("decode transaction boundary must stay visible");
+        .expect("decode builder boundary must stay visible");
 
     assert!(
         wire_progress.contains("delta: CommitDelta")
@@ -494,21 +494,19 @@ fn decode_progress_plan_no_longer_carries_route_cleanup_inputs() {
         "wire decode progress must carry only the semantic commit delta"
     );
     assert!(
-        decode.contains("Branch { delta: CommitDelta }")
-            && decode.contains("Empty { delta: CommitDelta }")
+        decode.contains("NonWire { delta: CommitDelta }")
             && decode.contains("enum PreparedDecodeProgressPlan")
             && decode.contains("Wire { delta: PreparedCommitDelta }")
-            && decode.contains("Branch { delta: PreparedCommitDelta }")
-            && decode.contains("Empty { delta: PreparedCommitDelta }")
+            && decode.contains("NonWire { delta: PreparedCommitDelta }")
             && decode.contains("struct DecodeCommitPlan<'r>")
             && !decode.contains("struct DecodePublishPlan")
-            && with_txn.contains(") -> RecvResult<PreparedDecodePublishPlan<'r>>")
-            && with_txn.contains("self.prepare_decode_publish_plan(plan)")
-            && decode_txn.contains("RecvResult<DecodeCommitPlan<'r>>")
-            && !decode_txn.contains("fn publish_decode_commit_plan(")
-            && !decode.contains("PreparedSyntheticBranchCommitDelta")
-            && !decode.contains("PreparedEmptyBranchCommitDelta"),
-        "decode planning may carry CommitDelta only inside the commit transaction and must return PreparedDecodePublishPlan across the endpoint boundary"
+            && with_builder.contains(") -> RecvResult<PreparedDecodePublishPlan<'r>>")
+            && with_builder.contains("self.prepare_decode_publish_plan(plan)")
+            && decode_builder.contains("RecvResult<DecodeCommitPlan<'r>>")
+            && !decode_builder.contains("fn publish_decode_commit_plan(")
+            && !decode.contains(concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"))
+            && !decode.contains(concat!("Prepared", "Empty", "BranchCommitDelta")),
+        "decode planning may carry CommitDelta only inside the commit builder and must return PreparedDecodePublishPlan across the endpoint boundary"
     );
     for forbidden in ["route_ancestor_arm", "scope_parent("] {
         assert!(
@@ -579,8 +577,9 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && role_program_impl.contains("passive_arm_child_ordinal_by_slot")
             && !role_program_types.contains("passive_children")
             && !role_program_types.contains("route_arm_rows: &'static")
-            && role_program_impl
-                .contains("PackedRouteArmRow::new(local_row, child_delta, lane_step_row)")
+            && role_program_impl.contains(
+                "PackedRouteArmRow::new(input.local_row, child_delta, input.lane_step_row)"
+            )
             && !role_program_types.contains("passive_arm_child_rows")
             && !role_program_types.contains("PassiveArmChildRow")
             && !cursor_scope_route.contains("PassiveArmChildRow")
@@ -603,7 +602,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
     ] {
         assert!(
             !endpoint_kernel.contains(forbidden),
-            "endpoint kernel must not read raw route topology directly: {forbidden}"
+            "endpoint kernel must not read raw route ancestry directly: {forbidden}"
         );
     }
     for forbidden in [

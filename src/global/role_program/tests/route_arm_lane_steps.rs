@@ -1,5 +1,9 @@
 use super::*;
 
+#[macro_use]
+#[path = "final_form_protocol_matrix.rs"]
+mod final_form_protocol_matrix;
+
 #[test]
 fn route_arm_lane_steps_are_sparse_over_actual_lanes_not_logical_lanes() {
     let program: RoleProgram<0> = project(&sparse_route_high_lane_program());

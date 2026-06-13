@@ -26,63 +26,88 @@ pub(super) struct RootFrontierTable {
     observed_key_lane_word_count: u8,
 }
 
+pub(super) struct RootFrontierStorage {
+    pub(super) rows: *mut RootFrontierState,
+    pub(super) active_entries: *mut ActiveEntrySlot,
+    pub(super) observed_key_slots: *mut FrontierObservationSlot,
+    pub(super) observed_key_offer_lanes: *mut LaneWord,
+}
+
+pub(super) struct RootFrontierCapacity {
+    pub(super) row_count: usize,
+    pub(super) pool_capacity: usize,
+    pub(super) observed_key_lane_word_count: usize,
+}
+
+pub(super) struct FrontierStateStorage {
+    pub(super) root: RootFrontierStorage,
+    pub(super) offer_entry_slots: *mut OfferEntrySlot,
+}
+
+pub(super) struct FrontierStateCapacity {
+    pub(super) root: RootFrontierCapacity,
+    pub(super) max_offer_entries: usize,
+}
+
 impl RootFrontierTable {
     unsafe fn init_from_parts(
         dst: *mut Self,
-        rows: *mut RootFrontierState,
-        active_entries: *mut ActiveEntrySlot,
-        observed_key_slots: *mut FrontierObservationSlot,
-        observed_key_offer_lanes: *mut LaneWord,
-        root_frontier_capacity: usize,
-        pool_capacity: usize,
-        observed_key_lane_word_count: usize,
+        storage: RootFrontierStorage,
+        capacity: RootFrontierCapacity,
     ) {
-        if root_frontier_capacity > u16::MAX as usize {
+        if capacity.row_count > u16::MAX as usize {
             crate::invariant();
         }
-        if pool_capacity > u8::MAX as usize {
+        if capacity.pool_capacity > u8::MAX as usize {
             crate::invariant();
         }
-        if observed_key_lane_word_count > u8::MAX as usize {
+        if capacity.observed_key_lane_word_count > u8::MAX as usize {
             crate::invariant();
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
-            core::ptr::addr_of_mut!((*dst).ptr).write(rows);
-            core::ptr::addr_of_mut!((*dst).active_entries).write(active_entries);
-            core::ptr::addr_of_mut!((*dst).observed_key_slots).write(observed_key_slots);
+            core::ptr::addr_of_mut!((*dst).ptr).write(storage.rows);
+            core::ptr::addr_of_mut!((*dst).active_entries).write(storage.active_entries);
+            core::ptr::addr_of_mut!((*dst).observed_key_slots).write(storage.observed_key_slots);
             core::ptr::addr_of_mut!((*dst).observed_key_offer_lanes)
-                .write(observed_key_offer_lanes);
-            core::ptr::addr_of_mut!((*dst).capacity).write(root_frontier_capacity as u16);
-            core::ptr::addr_of_mut!((*dst).pool_capacity).write(pool_capacity as u8);
+                .write(storage.observed_key_offer_lanes);
+            core::ptr::addr_of_mut!((*dst).capacity).write(capacity.row_count as u16);
+            core::ptr::addr_of_mut!((*dst).pool_capacity).write(capacity.pool_capacity as u8);
             core::ptr::addr_of_mut!((*dst).observed_key_lane_word_count)
-                .write(observed_key_lane_word_count as u8);
+                .write(capacity.observed_key_lane_word_count as u8);
         }
         let mut slot_idx = 0usize;
-        while slot_idx < root_frontier_capacity {
+        while slot_idx < capacity.row_count {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
-                rows.add(slot_idx).write(RootFrontierState::EMPTY);
+                storage.rows.add(slot_idx).write(RootFrontierState::EMPTY);
             }
             let base = slot_idx
-                .checked_mul(observed_key_lane_word_count)
+                .checked_mul(capacity.observed_key_lane_word_count)
                 .expect("invariant");
             let mut word_idx = 0usize;
-            while word_idx < observed_key_lane_word_count {
+            while word_idx < capacity.observed_key_lane_word_count {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
-                    observed_key_offer_lanes.add(base + word_idx).write(0);
+                    storage
+                        .observed_key_offer_lanes
+                        .add(base + word_idx)
+                        .write(0);
                 }
                 word_idx += 1;
             }
             slot_idx += 1;
         }
         let mut entry_idx = 0usize;
-        while entry_idx < pool_capacity {
+        while entry_idx < capacity.pool_capacity {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
-                active_entries.add(entry_idx).write(ActiveEntrySlot::EMPTY);
-                observed_key_slots
+                storage
+                    .active_entries
+                    .add(entry_idx)
+                    .write(ActiveEntrySlot::EMPTY);
+                storage
+                    .observed_key_slots
                     .add(entry_idx)
                     .write(FrontierObservationSlot::EMPTY);
             }
@@ -388,24 +413,24 @@ impl RootFrontierTable {
             panic!("root frontier slot out of bounds");
         }
 
-        let active_removed = self[slot_idx].active_len as usize;
-        if active_removed != 0 {
+        let active_span = self[slot_idx].active_len as usize;
+        if active_span != 0 {
             let start = self[slot_idx].active_start as usize;
             let used = self.active_pool_used();
             let mut idx = start;
-            while idx + active_removed < used {
+            while idx + active_span < used {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
                     self.active_entries
                         .add(idx)
-                        .write(*self.active_entries.add(idx + active_removed));
+                        .write(*self.active_entries.add(idx + active_span));
                     self.observed_key_slots
                         .add(idx)
-                        .write(*self.observed_key_slots.add(idx + active_removed));
+                        .write(*self.observed_key_slots.add(idx + active_span));
                 }
                 idx += 1;
             }
-            let mut clear_idx = used - active_removed;
+            let mut clear_idx = used - active_span;
             while clear_idx < used {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
@@ -423,11 +448,11 @@ impl RootFrontierTable {
         let mut idx = slot_idx + 1;
         while idx < len {
             let mut shifted = self[idx];
-            if active_removed != 0 {
-                if active_removed > shifted.active_start as usize {
+            if active_span != 0 {
+                if active_span > shifted.active_start as usize {
                     crate::invariant();
                 }
-                shifted.active_start -= active_removed as u8;
+                shifted.active_start -= active_span as u8;
             }
             self.copy_row_observed_key_lanes(idx - 1, idx);
             self[idx - 1] = shifted;
@@ -466,15 +491,8 @@ pub(super) struct FrontierState {
 impl FrontierState {
     pub(super) unsafe fn init_empty(
         dst: *mut Self,
-        root_rows: *mut RootFrontierState,
-        root_active_entries: *mut ActiveEntrySlot,
-        root_observed_key_slots: *mut FrontierObservationSlot,
-        root_observed_offer_lanes: *mut LaneWord,
-        offer_entry_slots: *mut OfferEntrySlot,
-        root_frontier_capacity: usize,
-        max_frontier_entries: usize,
-        root_observed_lane_word_count: usize,
-        max_offer_entries: usize,
+        storage: FrontierStateStorage,
+        capacity: FrontierStateCapacity,
     ) {
         unsafe {
             // SAFETY: `FrontierState` is initialized in one caller-owned endpoint
@@ -483,18 +501,13 @@ impl FrontierState {
             // safe frontier methods can observe them.
             RootFrontierTable::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).root_frontier_state),
-                root_rows,
-                root_active_entries,
-                root_observed_key_slots,
-                root_observed_offer_lanes,
-                root_frontier_capacity,
-                max_frontier_entries,
-                root_observed_lane_word_count,
+                storage.root,
+                capacity.root,
             );
             OfferEntryTable::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).offer_entry_state),
-                offer_entry_slots,
-                max_offer_entries,
+                storage.offer_entry_slots,
+                capacity.max_offer_entries,
             );
             core::ptr::addr_of_mut!((*dst).global_frontier_scratch_initialized).write(false);
         }
@@ -521,32 +534,34 @@ impl FrontierState {
 
     #[inline]
     pub(super) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {
-        self.root_frontier_slot(root)
-            .map(|slot| {
-                self.root_frontier_state
-                    .active_entry_set(slot)
-                    .occupancy_mask()
-            })
-            .unwrap_or(0)
+        match self.root_frontier_slot(root) {
+            Some(slot) => self
+                .root_frontier_state
+                .active_entry_set(slot)
+                .occupancy_mask(),
+            None => 0,
+        }
     }
 
     #[inline]
     pub(super) fn root_frontier_active_entries(&self, root: ScopeId) -> ActiveEntrySet {
-        self.root_frontier_slot(root)
-            .map(|slot| self.root_frontier_state.active_entry_set(slot))
-            .unwrap_or(ActiveEntrySet::EMPTY)
+        match self.root_frontier_slot(root) {
+            Some(slot) => self.root_frontier_state.active_entry_set(slot),
+            None => ActiveEntrySet::EMPTY,
+        }
     }
 
     #[inline]
     pub(super) fn root_frontier_observed_entries(&self, root: ScopeId) -> ObservedEntrySet {
-        self.root_frontier_slot(root)
-            .map(|slot| {
+        match self.root_frontier_slot(root) {
+            Some(slot) => {
                 let row = self.root_frontier_state[slot];
                 self.root_frontier_state
                     .observed_key(slot)
                     .observed_entries(row.observed_entries)
-            })
-            .unwrap_or(ObservedEntrySet::EMPTY)
+            }
+            None => ObservedEntrySet::EMPTY,
+        }
     }
 
     #[inline]

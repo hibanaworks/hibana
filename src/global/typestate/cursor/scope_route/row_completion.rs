@@ -6,7 +6,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
         arm: u8,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let Some(slot) = self.route_scope_slot_inner(scope_id) else {
             return false;
@@ -18,19 +18,19 @@ impl EventCursor {
         else {
             return false;
         };
-        self.event_row_set_live_events_done(row_set, |scope| selected_arm_for_scope(scope))
+        self.event_row_set_live_events_done(row_set, selected_arm_for_scope)
     }
 
     pub(super) fn dependency_row_live_events_done(
         &self,
         dependency: LocalDependency,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let row_set = self
             .machine()
             .event_program()
             .dependency_row_set(dependency);
-        self.event_row_set_live_events_done(row_set, |scope| selected_arm_for_scope(scope))
+        self.event_row_set_live_events_done(row_set, selected_arm_for_scope)
     }
 
     fn event_row_set_live_events_done(
@@ -79,11 +79,9 @@ impl EventCursor {
                 (1u32 << high) - 1
             };
             let row_mask = low_mask & high_mask;
-            let completed = self
-                .completed_event_words()
-                .get(word_idx)
-                .copied()
-                .unwrap_or(0);
+            let Some(completed) = self.completed_event_words().get(word_idx).copied() else {
+                crate::invariant();
+            };
             let mut pending = (!completed) & row_mask;
             while pending != 0 {
                 let bit = pending.trailing_zeros() as usize;
@@ -93,7 +91,7 @@ impl EventCursor {
                         row.conflict(),
                         ScopeId::none(),
                         None,
-                        |scope| selected_arm_for_scope(scope),
+                        &mut selected_arm_for_scope,
                     )
                 {
                     return false;

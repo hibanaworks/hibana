@@ -37,15 +37,14 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     }
     assert!(
         public_runtime.contains("fn start_public_op(&mut self, op: PublicActiveOp) -> bool")
-            && public_runtime.contains("PublicActiveOp::Idle =>")
+            && public_runtime.contains("self.public_active_op == PublicActiveOp::Idle")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::Poisoned;")
             && public_runtime.contains("SessionFaultKind::ProgressInvariantViolated")
             && !public_runtime.contains("fn enter_public_op(&mut self, op: PublicActiveOp) -> bool")
             && public_runtime.contains("fn transition_public_op(&mut self, from: PublicActiveOp, to: PublicActiveOp) -> bool")
             && public_runtime.contains("fn finish_public_op(&mut self, op: PublicActiveOp)")
-            && public_runtime.contains("current if current == op =>")
-            && public_runtime.contains("PublicActiveOp::Poisoned => {}")
-            && public_runtime.contains("_ => self.public_op_busy_fault()")
+            && public_runtime.contains("if self.public_active_op == op")
+            && public_runtime.contains("self.public_active_op != PublicActiveOp::Poisoned")
             && public_runtime.contains("fn clear_public_op_if_current(&mut self, op: PublicActiveOp)")
             && public_runtime.contains("fn init_public_send_state(&mut self, init: &SendInit) -> bool")
             && public_runtime.contains("if !self.start_public_op(PublicActiveOp::Send)")
@@ -101,7 +100,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && futures.contains("if self.leased && !self.completed")
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture")
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture"),
-        "Drop cleanup may remain as best-effort cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"
+        "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"
     );
     for required in [
         "forgotten_flow_leaves_endpoint_fail_closed",

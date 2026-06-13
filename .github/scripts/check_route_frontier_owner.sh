@@ -38,7 +38,7 @@ check_absent \
 
 check_absent \
   "ingress_evidence: \\[Option<|transport_payload: \\[Option<" \
-  "offer rollback regressed to anonymous mini-vec ownership" \
+  "offer restore regressed to anonymous mini-vec ownership" \
   src/endpoint/kernel/offer.rs \
   src/endpoint/kernel/offer/state.rs
 
@@ -49,17 +49,17 @@ check_absent \
 
 check_absent \
   "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_linger_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
-  "core.rs reintroduced direct route-state table mutation" \
+  "core.rs detected direct route-state table mutation" \
   src/endpoint/kernel/core.rs
 
 check_absent \
   "offer_entry_state\\[[^]]+\\][[:space:]]*=|offer_entry_state\\.get_mut\\(|global_active_entries\\.(insert_entry|remove_entry)" \
-  "core.rs reintroduced direct frontier table mutation" \
+  "core.rs detected direct frontier table mutation" \
   src/endpoint/kernel/core.rs
 
 check_absent \
-  "root_frontier_state\\[[^]]+\\][[:space:]]*=|global_frontier_observed(_epoch|_key)?[[:space:]]*=|global_offer_lane_mask[[:space:]]*=|global_offer_lane_entry_slot_masks[[:space:]]*=" \
-  "core.rs reintroduced direct frontier cache mutation" \
+  "root_frontier_state\\[[^]]+\\][[:space:]]*=|global_frontier_observed(_generation|_key)?[[:space:]]*=|global_offer_lane_mask[[:space:]]*=|global_offer_lane_entry_slot_masks[[:space:]]*=" \
+  "core.rs detected direct frontier cache mutation" \
   src/endpoint/kernel/core.rs
 
 if [[ "${FAILED}" -ne 0 ]]; then

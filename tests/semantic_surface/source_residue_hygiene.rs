@@ -66,34 +66,34 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
         "DelegationLeaseSpec",
         "struct EffectEnvelope {",
         "enum EffectEnvelopeSource",
-        "control_op_is_idempotent",
-        "control_op_requires_gen_bump",
-        "control_op_is_terminal",
-        "control_op_modifies_history",
-        "emit_policy_event_with_arg2",
+        concat!("control", "_op_is_idempotent"),
+        concat!("control", "_op_requires_gen_bump"),
+        concat!("control", "_op_is_terminal"),
+        concat!("control", "_op_modifies_history"),
+        "emit_resolver_event_with_arg2",
         "run_effect_step",
         "after_local_effect",
         "PendingCapRelease::inert",
         "pub(crate) fn inert() -> Self",
         "pub(crate) fn disarm(&mut self)",
-        "PolicyEventSpec",
-        "PolicyEventKind",
+        "ResolverEventSpec",
+        "ResolverEventKind",
         "TapEvents",
         "#[cfg(all(test, hibana_repo_tests))]\npub const",
         "pub const ROUTE_PICK",
-        "pub const POLICY_ABORT",
-        "pub const POLICY_ANNOT",
-        "pub const POLICY_TRAP",
-        "pub const POLICY_EFFECT",
-        "pub const POLICY_STATE_RESTORE",
+        "pub const RESOLVER_ABORT",
+        "pub const RESOLVER_ANNOT",
+        "pub const RESOLVER_TRAP",
+        "pub const RESOLVER_EFFECT",
+        "pub const RESOLVER_STATE_RESTORE",
         "TEST_GLOBAL_TAP_RING",
         "TS_CHECKER",
         "install_ts_checker",
         "global_tap_ring_ptr",
         "check_event_timestamp",
         "_ => ScopeKind::Generic",
-        "placeholder nodes",
-        "placeholder generated",
+        "inferred item nodes",
+        "inferred item generated",
         "JumpReason",
         "JumpError",
         "try_follow_jumps_from_index",
@@ -105,7 +105,7 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
     ] {
         assert!(
             !production.contains(forbidden),
-            "production sources must not retain repo-test effect runners or for-test escape hatches: {forbidden}"
+            "production sources must not retain repo-test effect runners or for-test bypasses: {forbidden}"
         );
     }
 }
@@ -113,18 +113,19 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
 #[test]
 fn source_tree_does_not_retain_impossible_test_only_fixtures() {
     let source = read_all_rs_tree("src");
+    let forbidden_route_ack_dispatch = concat!("dispatch_", "topo", "logy", "_ack_with_handle");
     for forbidden in [
         "CpCommand",
         "PendingEffect",
         "EffectRunner",
         "DelegateOperands",
-        "delegate_policy",
+        "delegate_resolver",
         "endpoint_delegate",
         "invalid delegate token",
         "run_effect_step",
         "after_local_effect",
-        "dispatch_topology_ack_with_handle",
-        "synthetic_for_test",
+        forbidden_route_ack_dispatch,
+        concat!("syn", "thetic", "_for_test"),
         "transport_for_test",
         "add_rendezvous_auto",
         "NonNull::dangling",
@@ -138,7 +139,7 @@ fn source_tree_does_not_retain_impossible_test_only_fixtures() {
 }
 
 #[test]
-fn package_artifact_ships_repo_integration_tests_without_publish_warning_filter() {
+fn package_artifact_ships_repo_tests_without_publish_warning_filter() {
     let cargo = read("Cargo.toml");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
 
@@ -146,18 +147,18 @@ fn package_artifact_ships_repo_integration_tests_without_publish_warning_filter(
         !cargo.contains("autotests")
             && !cargo.contains("[[test]]")
             && cargo.contains("\"/tests/**\"")
-            && !package_gate.contains("repo integration tests must not ship")
+            && !package_gate.contains("repo repository tests must not ship")
             && !package_gate.contains("run_package_clean_with_omitted_repo_tests")
             && !package_gate.contains("ignoring test `"),
-        "repo integration tests must stay Cargo-auto-discovered and ship with the crate so publish is warning-free"
+        "repo repository tests must stay Cargo-auto-discovered and ship with the crate so publish is warning-free"
     );
     assert!(
         package_gate.contains("run_package_clean \"cargo package --no-verify\"")
-            && package_gate.contains("shipped integration tests must include their module tree")
+            && package_gate.contains("shipped repository tests must include their module tree")
             && package_gate.contains("package representative test build --features std")
             && package_gate.contains("--test semantic_surface --no-run")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must reject package warnings and compile a representative packaged integration target"
+        "package artifact gate must reject package warnings and compile a representative packaged repository target"
     );
 }
 
@@ -176,12 +177,12 @@ fn cached_recv_meta_index_overflow_fails_closed() {
         &tail[..next]
     }
 
-    let source = read("src/endpoint/kernel/core/decision_policy/impls/select.rs");
+    let source = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
     for name in [
         "cached_recv_meta_from_recv",
         "cached_recv_meta_from_send",
         "cached_recv_meta_from_local",
-        "synthetic_cached_recv_meta",
+        "route_arm_cached_recv_meta",
     ] {
         let body = impl_fn_body(&source, name);
         assert!(

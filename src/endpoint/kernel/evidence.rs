@@ -24,11 +24,8 @@ pub(super) struct ScopeLoopMeta {
 impl ScopeLoopMeta {
     pub(super) const FLAG_SCOPE_ACTIVE: u8 = 1;
     pub(super) const FLAG_SCOPE_LINGER: u8 = 1 << 1;
-    pub(super) const FLAG_CONTROL_SCOPE: u8 = 1 << 2;
     pub(super) const FLAG_CONTINUE_HAS_RECV: u8 = 1 << 3;
     pub(super) const FLAG_BREAK_HAS_RECV: u8 = 1 << 4;
-
-    pub(super) const EMPTY: Self = Self { flags: 0 };
 
     #[inline]
     pub(super) fn scope_active(self) -> bool {
@@ -41,13 +38,8 @@ impl ScopeLoopMeta {
     }
 
     #[inline]
-    pub(super) fn control_scope(self) -> bool {
-        (self.flags & Self::FLAG_CONTROL_SCOPE) != 0
-    }
-
-    #[inline]
     pub(super) fn loop_label_scope(self) -> bool {
-        self.control_scope() || self.scope_linger()
+        self.scope_linger()
     }
 
     #[inline]
@@ -61,15 +53,6 @@ impl ScopeLoopMeta {
     }
 
     #[inline]
-    pub(super) fn arm_has_recv(self, arm: u8) -> bool {
-        match arm {
-            0 => self.continue_has_recv(),
-            1 => self.break_has_recv(),
-            2..=u8::MAX => crate::invariant(),
-        }
-    }
-
-    #[inline]
     pub(super) fn recvless_ready(self) -> bool {
         (self.scope_active() || self.scope_linger())
             && (!self.continue_has_recv() || !self.break_has_recv())
@@ -78,7 +61,6 @@ impl ScopeLoopMeta {
 
 #[derive(Clone, Copy)]
 pub(super) struct ScopeFrameLabelMeta {
-    pub(super) loop_meta: ScopeLoopMeta,
     pub(super) recv_frame_label: u8,
     pub(super) recv_arm: u8,
     pub(super) controller_frame_labels: [u8; 2],
@@ -95,7 +77,6 @@ impl ScopeFrameLabelMeta {
     pub(super) const FLAG_CURRENT_RECV_BINDING_EXCLUDED: u8 = 1 << 4;
 
     pub(super) const EMPTY: Self = Self {
-        loop_meta: ScopeLoopMeta::EMPTY,
         recv_frame_label: 0,
         recv_arm: 0,
         controller_frame_labels: [0; 2],
@@ -103,11 +84,6 @@ impl ScopeFrameLabelMeta {
         evidence_arm_frame_label_masks: [FrameLabelMask::EMPTY; 2],
         flags: 0,
     };
-
-    #[inline]
-    pub(super) fn loop_meta(self) -> ScopeLoopMeta {
-        self.loop_meta
-    }
 
     #[inline]
     pub(super) fn evidence_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {

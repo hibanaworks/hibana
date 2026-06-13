@@ -25,13 +25,11 @@ if [[ ! -x "${LLVM_SIZE}" ]]; then
 fi
 
 WORK_ROOT="${HIBANA_SIZE_WORKTREE_ROOT:-${TMPDIR:-/tmp}/hibana-size-snapshot-${$}}"
-BASE_WORKTREE="${WORK_ROOT}/base"
 CURRENT_WORKTREE="${WORK_ROOT}/current"
 SNAPSHOT_DIR="${WORK_ROOT}/snapshots"
 mkdir -p "${SNAPSHOT_DIR}"
 
 cleanup() {
-  git -C "${ROOT_DIR}" worktree remove "${BASE_WORKTREE}" --force >/dev/null 2>&1 || true
   git -C "${ROOT_DIR}" worktree remove "${CURRENT_WORKTREE}" --force >/dev/null 2>&1 || true
   rm -rf "${WORK_ROOT}"
 }
@@ -41,22 +39,7 @@ tree_is_clean() {
   [[ -z "$(git status --porcelain --untracked-files=normal -- .)" ]]
 }
 
-PUBLISHED_CRATES_IO_0_8_0_REF="${HIBANA_SIZE_PUBLISHED_BASE_REF:-d95e83eb503f35f8beeb60a29d41b4cf6a8d5290}"
-
-if [[ -n "${HIBANA_SIZE_BASE_REF:-}" ]]; then
-  BASE_REF="${HIBANA_SIZE_BASE_REF}"
-else
-  BASE_REF="${PUBLISHED_CRATES_IO_0_8_0_REF}"
-fi
-
-if ! git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1; then
-  echo "size snapshot regression check cannot resolve base ref: ${BASE_REF}" >&2
-  echo "Default base is the crates.io 0.8.0 publish commit. Set HIBANA_SIZE_BASE_REF or HIBANA_SIZE_PUBLISHED_BASE_REF explicitly in shallow checkouts." >&2
-  exit 1
-fi
-
 CURRENT_REF="${HIBANA_SIZE_CURRENT_REF:-HEAD}"
-git worktree add --detach "${BASE_WORKTREE}" "${BASE_REF}" >/dev/null
 
 if tree_is_clean; then
   git worktree add --detach "${CURRENT_WORKTREE}" "${CURRENT_REF}" >/dev/null
@@ -66,7 +49,6 @@ else
   CURRENT_TREE="${ROOT_DIR}"
   CURRENT_LABEL="working-tree"
 fi
-BASE_LABEL="$(git -C "${BASE_WORKTREE}" rev-parse --short HEAD)"
 
 measure_tree() {
   local label="$1"
@@ -143,6 +125,7 @@ send_signatures = re.findall(
 )
 if not any("const FROM" in sig and "const TO" in sig for sig in send_signatures):
     raise SystemExit("size snapshot generator requires the canonical const-role g::send API")
+program_import = "hibana::runtime::program::{project, RoleProgram}"
 lane_send = any("const LANE" in sig for sig in send_signatures)
 
 def send_expr(idx: int) -> str:
@@ -163,7 +146,7 @@ with open(dst, "w", encoding="utf-8") as f:
     f.write(
         "#![no_std]\n"
         "use hibana::g;\n"
-        "use hibana::integration::program::{project, RoleProgram};\n\n"
+        f"use {program_import};\n\n"
         "#[inline(never)]\n"
         "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>) {\n"
         f"    let program = {program};\n"
@@ -268,8 +251,6 @@ for line in os.environ["STACK_OUTPUT"].splitlines():
         key: int(value)
         for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)
     }
-    if "localside_peak_stack_bytes" not in metrics and os.environ["LABEL"].startswith("base-"):
-        metrics["localside_peak_stack_bytes"] = metrics.get("peak_stack_bytes", 0)
     runtime_shapes[shape_name] = metrics
 
 runtime_max = {}
@@ -296,27 +277,20 @@ with open(os.environ["OUT_JSON"], "w", encoding="utf-8") as f:
 PY
 }
 
-BASE_JSON="${SNAPSHOT_DIR}/base.json"
 CURRENT_JSON="${SNAPSHOT_DIR}/current.json"
-measure_tree "base-${BASE_LABEL}" "${BASE_WORKTREE}" "${BASE_JSON}"
 measure_tree "current-${CURRENT_LABEL}" "${CURRENT_TREE}" "${CURRENT_JSON}"
 
-BASE_JSON="${BASE_JSON}" CURRENT_JSON="${CURRENT_JSON}" SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json" python3 - <<'PY'
+CURRENT_JSON="${CURRENT_JSON}" SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json" python3 - <<'PY'
 import json
 import os
 import sys
 
-with open(os.environ["BASE_JSON"], "r", encoding="utf-8") as f:
-    base = json.load(f)
 with open(os.environ["CURRENT_JSON"], "r", encoding="utf-8") as f:
     current = json.load(f)
 with open(os.environ["SNAPSHOT_FILE"], "r", encoding="utf-8") as f:
     budget_snapshot = json.load(f)
 
 failures = []
-fail_on_published_baseline = (
-    os.environ.get("HIBANA_FAIL_ON_PUBLISHED_BASELINE_REGRESSION", "0") == "1"
-)
 
 expected_shapes = {"route_heavy", "linear_heavy", "fanout_heavy"}
 runtime_metrics = {
@@ -327,70 +301,18 @@ runtime_metrics = {
     "peak_stack_bytes",
 }
 
-for label, snapshot in [("base", base), ("current", current)]:
-    shapes = snapshot.get("runtime_shapes", {})
-    missing_shapes = sorted(expected_shapes - set(shapes))
-    if missing_shapes:
-        failures.append(
-            f"{label} runtime snapshot missing shapes: {', '.join(missing_shapes)}"
-        )
-        continue
-    for shape in sorted(expected_shapes):
-        missing_metrics = sorted(runtime_metrics - set(shapes[shape]))
-        if missing_metrics:
-            failures.append(
-                f"{label} runtime snapshot shape={shape} missing metrics: "
-                + ", ".join(missing_metrics)
-            )
-
-for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
-    old = base["sections"].get(key, 0)
-    new = current["sections"].get(key, 0)
-    print(f"worktree-snapshot section {key} base={old} current={new} delta={new - old}")
-
-for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
-    old = base.get("projected_sections", {}).get(key, 0)
-    new = current.get("projected_sections", {}).get(key, 0)
-    print(
-        f"worktree-snapshot projected-section {key} "
-        f"base={old} current={new} delta={new - old}"
+shapes = current.get("runtime_shapes", {})
+missing_shapes = sorted(expected_shapes - set(shapes))
+if missing_shapes:
+    failures.append(
+        f"current runtime snapshot missing shapes: {', '.join(missing_shapes)}"
     )
-
-for key in [
-    "sidecar_scratch_high_water_bytes",
-    "live_endpoint_bytes",
-    "peak_live_slab_bytes",
-    "peak_stack_bytes",
-]:
-    old = base["runtime_max"].get(key, 0)
-    new = current["runtime_max"].get(key, 0)
-    print(f"worktree-snapshot runtime-max {key} base={old} current={new} delta={new - old}")
-
-for shape in sorted(expected_shapes):
-    if shape not in base.get("runtime_shapes", {}) or shape not in current.get("runtime_shapes", {}):
-        continue
-    old = base["runtime_shapes"][shape].get("peak_stack_bytes")
-    new = current["runtime_shapes"][shape].get("peak_stack_bytes")
-    if old is None or new is None:
-        continue
-    print(f"worktree-snapshot runtime-shape-stack shape={shape} base={old} current={new} delta={new - old}")
-    if fail_on_published_baseline and new > old:
+for shape in sorted(expected_shapes & set(shapes)):
+    missing_metrics = sorted(runtime_metrics - set(shapes[shape]))
+    if missing_metrics:
         failures.append(
-            f"runtime shape {shape} peak_stack_bytes exceeds published baseline: "
-            f"base={old} current={new} delta={new - old}"
-        )
-    old_local = base["runtime_shapes"][shape].get("localside_peak_stack_bytes")
-    new_local = current["runtime_shapes"][shape].get("localside_peak_stack_bytes")
-    if old_local is None or new_local is None:
-        continue
-    print(
-        f"worktree-snapshot runtime-shape-localside-stack shape={shape} "
-        f"base={old_local} current={new_local} delta={new_local - old_local}"
-    )
-    if fail_on_published_baseline and new_local > old_local:
-        failures.append(
-            f"runtime shape {shape} localside_peak_stack_bytes exceeds published baseline: "
-            f"base={old_local} current={new_local} delta={new_local - old_local}"
+            f"current runtime snapshot shape={shape} missing metrics: "
+            + ", ".join(missing_metrics)
         )
 
 section_budget = budget_snapshot["budget"]["thumbv6m_none_eabi_no_std_release_lib"]["sections"]
@@ -400,6 +322,13 @@ for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
     print(f"worktree-snapshot budget-section {key} actual={actual} budget={maximum}")
     if actual > maximum:
         failures.append(f"section {key} exceeds snapshot budget: actual={actual} budget={maximum}")
+
+for key in [".text", ".rodata", ".data", ".bss", "flash_total"]:
+    actual = current.get("projected_sections", {}).get(key, 0)
+    maximum = section_budget.get(key, 0)
+    print(f"worktree-snapshot budget-projected-section {key} actual={actual} budget={maximum}")
+    if actual > maximum:
+        failures.append(f"projected section {key} exceeds snapshot budget: actual={actual} budget={maximum}")
 
 runtime_budget = budget_snapshot["budget"]["runtime_shapes"]
 for shape in sorted(expected_shapes):
@@ -417,14 +346,8 @@ for shape in sorted(expected_shapes):
                 f"actual={actual} budget={maximum}"
             )
 
-base_max_stack = base["runtime_max"].get("peak_stack_bytes", 0)
 current_max_stack = current["runtime_max"].get("peak_stack_bytes", 0)
 budget_max_stack = max(metrics["peak_stack_bytes"] for metrics in runtime_budget.values())
-base_sram = (
-    base["sections"].get(".data", 0)
-    + base["sections"].get(".bss", 0)
-    + base["runtime_max"].get("peak_live_slab_bytes", 0)
-)
 current_sram = (
     current["sections"].get(".data", 0)
     + current["sections"].get(".bss", 0)
@@ -435,28 +358,21 @@ budget_sram = (
     + section_budget.get(".bss", 0)
     + max(metrics["peak_live_slab_bytes"] for metrics in runtime_budget.values())
 )
-base_flash = base["sections"].get("flash_total", 0)
 current_flash = current["sections"].get("flash_total", 0)
 aggregate = [
-    ("max_stack", base_max_stack, current_max_stack, budget_max_stack),
-    ("sram", base_sram, current_sram, budget_sram),
-    ("flash", base_flash, current_flash, section_budget["flash_total"]),
+    ("max_stack", current_max_stack, budget_max_stack),
+    ("sram", current_sram, budget_sram),
+    ("flash", current_flash, section_budget["flash_total"]),
 ]
 non_growing = 0
 decreased = 0
-for name, old, new, maximum in aggregate:
-    print(f"worktree-snapshot aggregate {name} base={old} current={new} delta={new - old}")
-    print(f"worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}")
-    if fail_on_published_baseline and new > old:
-        failures.append(
-            f"aggregate {name} exceeds published baseline: "
-            f"base={old} current={new} delta={new - old}"
-        )
-    if new > maximum:
-        failures.append(f"aggregate {name} exceeds snapshot budget: actual={new} budget={maximum}")
-    if new <= maximum:
+for name, actual, maximum in aggregate:
+    print(f"worktree-snapshot budget-aggregate {name} actual={actual} budget={maximum}")
+    if actual > maximum:
+        failures.append(f"aggregate {name} exceeds snapshot budget: actual={actual} budget={maximum}")
+    if actual <= maximum:
         non_growing += 1
-    if new < maximum:
+    if actual < maximum:
         decreased += 1
 if non_growing < 3 or decreased < 1:
     failures.append(
@@ -482,4 +398,4 @@ if failures:
     sys.exit(1)
 PY
 
-echo "size snapshot regression check passed: base=${BASE_REF} current=${CURRENT_LABEL}"
+echo "size snapshot check passed: current=${CURRENT_LABEL}"

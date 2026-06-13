@@ -34,7 +34,7 @@ ROUTE_TOKEN_BLOCK="$(
   ' src/endpoint/kernel/authority.rs
 )"
 if rg -n "RouteAuthoritySource" src/endpoint/kernel/authority.rs >/dev/null; then
-  echo "RouteAuthoritySource enum must stay deleted" >&2
+  echo "RouteAuthoritySource enum must stay forbidden" >&2
   FAILED=1
 elif [[ -z "${ROUTE_TOKEN_BLOCK}" ]]; then
   echo "RouteArmToken enum block not found" >&2
@@ -91,7 +91,7 @@ check_absent "transport_payload_len|transport_payload_lane|ProbeBinding \\{" \
   src/endpoint/kernel/core
 
 check_absent "ingress_evidence: \\[Option<|transport_payload: \\[Option<" \
-  "offer rollback regressed to anonymous mini-vec ownership" \
+  "offer restore regressed to anonymous mini-vec ownership" \
   src/endpoint/kernel/offer.rs \
   src/endpoint/kernel/offer/state.rs
 
@@ -121,19 +121,19 @@ do
 done
 
 check_absent "payload_view\\(" \
-  "received transport frame payload view reintroduced instead of intent-specific frame operations" \
+  "received transport frame payload view detected instead of intent-specific frame operations" \
   src/endpoint src/rendezvous/port.rs
 
 check_absent "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_linger_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
-  "core.rs reintroduced direct route-state table mutation" \
+  "core.rs detected direct route-state table mutation" \
   src/endpoint/kernel/core.rs
 
 check_absent "offer_entry_state\\[[^]]+\\][[:space:]]*=|offer_entry_state\\.get_mut\\(|global_active_entries\\.(insert_entry|remove_entry)" \
-  "core.rs reintroduced direct frontier table mutation" \
+  "core.rs detected direct frontier table mutation" \
   src/endpoint/kernel/core.rs
 
-check_absent "root_frontier_state\\[[^]]+\\][[:space:]]*=|global_frontier_observed(_epoch|_key)?[[:space:]]*=|global_offer_lane_mask[[:space:]]*=|global_offer_lane_entry_slot_masks[[:space:]]*=" \
-  "core.rs reintroduced direct frontier cache mutation" \
+check_absent "root_frontier_state\\[[^]]+\\][[:space:]]*=|global_frontier_observed(_generation|_key)?[[:space:]]*=|global_offer_lane_mask[[:space:]]*=|global_offer_lane_entry_slot_masks[[:space:]]*=" \
+  "core.rs detected direct frontier cache mutation" \
   src/endpoint/kernel/core.rs
 
 for forbidden in \
@@ -145,7 +145,7 @@ for forbidden in \
   "fn refresh_frontier_observation_cache(" \
   "fn compose_frontier_observed_entries(" \
   "fn offer_refresh_mask(" \
-  "fn next_frontier_observation_epoch(" \
+  "fn next_frontier_observation_generation(" \
   "fn offer_entry_candidate_from_observation(" \
   "fn refresh_offer_entry_state(" \
   "fn sync_lane_offer_state(" \

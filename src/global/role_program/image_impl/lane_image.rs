@@ -1,31 +1,20 @@
 use super::super::{
     BlobPtr, ColumnRange, LaneSetView, LaneSteps, PackedLaneRange, PackedLocalEventRow,
-    PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE,
-    ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE,
-    RoleLaneImage, RouteArmLaneStepRow,
+    PackedLoopScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
+    ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
+    ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_LOOP_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
 };
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
 impl RoleLaneImage {
-    const NO_ACTIVE_LANE: u16 = u16::MAX;
     const ROUTE_SCOPE_ROW_EMPTY: u16 = u16::MAX;
     const ROUTE_SCOPE_ROW_LINGER: u16 = 1 << 15;
     const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_LINGER - 1;
 
     #[inline(always)]
-    pub(crate) const fn new(
-        columns: super::super::RoleImageColumns,
-        blob: BlobPtr,
-        active_lane_row: PackedLaneRange,
-        first_active_lane: u16,
-    ) -> Self {
-        Self {
-            columns,
-            blob,
-            active_lane_row,
-            first_active_lane,
-        }
+    pub(crate) const fn new(columns: super::super::RoleImageColumns, blob: BlobPtr) -> Self {
+        Self { columns, blob }
     }
 
     #[inline(always)]
@@ -113,7 +102,11 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn lane_bit_view(&self, range: PackedLaneRange, word_len: usize) -> LaneSetView<'static> {
+    pub(super) const fn lane_bit_view(
+        &self,
+        range: PackedLaneRange,
+        word_len: usize,
+    ) -> LaneSetView<'static> {
         if range.is_absent_or_zero_len() {
             LaneSetView::from_bytes(core::ptr::null(), 0, word_len)
         } else {
@@ -131,11 +124,6 @@ impl RoleLaneImage {
                 word_len,
             )
         }
-    }
-
-    #[inline(always)]
-    pub(super) const fn active_lane_set(&self, word_len: usize) -> LaneSetView<'static> {
-        self.lane_bit_view(self.active_lane_row, word_len)
     }
 
     #[inline(always)]
@@ -278,6 +266,17 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
+    pub(crate) const fn loop_scope_row(&self, slot: usize) -> Option<PackedLoopScopeRow> {
+        match self.read_u64(self.columns.loop_scopes, slot, ROLE_IMAGE_LOOP_SCOPE_STRIDE) {
+            Some(raw) => {
+                let row = PackedLoopScopeRow::from_raw(raw);
+                if row.is_empty() { None } else { Some(row) }
+            }
+            None => None,
+        }
+    }
+
+    #[inline(always)]
     const fn route_scope_row(&self, slot: usize) -> Option<u16> {
         self.read_u16(self.columns.route_scopes, slot, ROLE_IMAGE_U16_STRIDE)
     }
@@ -414,15 +413,6 @@ impl RoleLaneImage {
             pos += 1;
         }
         None
-    }
-
-    #[inline(always)]
-    pub(super) const fn first_active_lane(&self) -> Option<usize> {
-        if self.first_active_lane == Self::NO_ACTIVE_LANE {
-            None
-        } else {
-            Some(self.first_active_lane as usize)
-        }
     }
 
     #[inline(always)]

@@ -51,7 +51,7 @@ for forbidden_path in \
   src/global/typestate/route_facts.rs
 do
   if [[ -e "${forbidden_path}" ]]; then
-    echo "summary authority hygiene violation: legacy typestate lowering owner still present -> ${forbidden_path}" >&2
+    echo "summary authority hygiene violation: forbidden typestate lowering owner still present -> ${forbidden_path}" >&2
     FAILED=1
   fi
 done
@@ -80,7 +80,7 @@ check_required \
   src/g.rs
 
 check_required \
-  "let _ = const { validate_choreography::<Steps>() };" \
+  "const { validate_choreography::<Steps>() };" \
   "project must force projection validation before role image escape" \
   src/g.rs
 
@@ -109,7 +109,7 @@ ROLE_DEBUG_FACTS_PATTERN='Role''Debug''Facts'
 ROLE_DEBUG_FOOTPRINT_PATTERN='Role''Debug''Footprint'
 check_absent \
   "\\b${ROLE_IMAGE_SOURCE_PATTERN}\\b|\\b${ROLE_DEBUG_FACTS_PATTERN}\\b|\\b${ROLE_DEBUG_FOOTPRINT_PATTERN}\\b|compiled_program_image\\(|program_image\\(|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
-  "test/debug-only role source metadata, lowering-image backpointer, or measurement helper reintroduced" \
+  "test/debug-only role source metadata, lowering-image backpointer, or measurement helper detected" \
   src/g src/global/role_program src/global/compiled/images/image/role_descriptor_ref.rs
 
 check_required \

@@ -4,14 +4,14 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
-    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferAuthorityPath, OfferResolveState,
-    PolicySlot, RecvError, RecvResult, ResolveTokenOutcome, ResolvedFrameHint, ResolvedRouteArm,
-    RouteArmCommitEvidence, RouteArmToken, RouteResolveStep, Transport,
+    Clock, CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome,
+    FrontierDeferRequest, FrontierVisitSet, OfferAuthorityPath, OfferResolveState, RecvError,
+    RecvResult, ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
+    RouteResolveStep, Transport,
 };
 pub(super) struct RouteAuthorityResolution {
     pub(super) route_token: RouteArmToken,
-    pub(super) resolved_hint_frame: Option<ResolvedFrameHint>,
+    pub(super) frame_hint: FrameHintResolution,
     pub(super) commit_evidence: RouteArmCommitEvidence,
 }
 
@@ -31,20 +31,16 @@ enum RouteResolveOutcome {
     RestartFrontier,
 }
 
-enum PassiveRouteAuthorityOutcome {
-    Authority(RouteArmToken, Option<ResolvedFrameHint>),
-    EvidenceOnly(Option<ResolvedFrameHint>),
+enum PassiveRouteResolutionOutcome {
+    Authority(RouteArmToken, FrameHintResolution),
+    EvidenceOnly(FrameHintResolution),
     RestartFrontier,
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(super) fn resolve_token(
         &mut self,
@@ -96,14 +92,16 @@ where
         let profile = state.facts.profile;
         let scope_id = selection.scope_id;
 
-        let resolved_hint_frame = self
-            .peek_scope_frame_hint_with_lane(scope_id)
-            .map(|_| ResolvedFrameHint::scope_evidence());
+        let frame_hint = if self.peek_scope_frame_hint_with_lane(scope_id).is_some() {
+            FrameHintResolution::resolved()
+        } else {
+            FrameHintResolution::unresolved()
+        };
         if let Some(route_token) = self.peek_scope_ack(scope_id) {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                 RouteAuthorityResolution {
                     route_token,
-                    resolved_hint_frame,
+                    frame_hint,
                     commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                 },
             )));
@@ -116,7 +114,7 @@ where
                     Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
                         RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                             route_token,
-                            resolved_hint_frame,
+                            frame_hint,
                             commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                         }),
                     )),
@@ -135,14 +133,14 @@ where
                     pending_recv,
                     frontier_visited,
                     cx,
-                    resolved_hint_frame,
+                    frame_hint,
                 ),
             OfferAuthorityPath::LocalSources => self.poll_route_authority_after_local_sources_miss(
                 state,
                 pending_recv,
                 frontier_visited,
                 cx,
-                resolved_hint_frame,
+                frame_hint,
             ),
         }
     }
@@ -153,38 +151,31 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        resolved_hint_frame: Option<ResolvedFrameHint>,
+        frame_hint: FrameHintResolution,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
-        match self.passive_evidence_authority(
-            state,
-            pending_recv,
-            frontier_visited,
-            cx,
-            resolved_hint_frame,
-        ) {
+        match self.passive_evidence_authority(state, pending_recv, frontier_visited, cx, frame_hint)
+        {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::RestartFrontier)) => {
+            Poll::Ready(Ok(PassiveRouteResolutionOutcome::RestartFrontier)) => {
                 Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
             }
-            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(
-                route_token,
-                resolved_hint_frame,
-            ))) => Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
-                RouteAuthorityResolution {
-                    route_token,
-                    resolved_hint_frame,
-                    commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
-                },
-            ))),
-            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::EvidenceOnly(resolved_hint_frame))) => {
-                self.collect_route_authority_after_passive_evidence_only(
+            Poll::Ready(Ok(PassiveRouteResolutionOutcome::Authority(route_token, frame_hint))) => {
+                Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
+                    RouteAuthorityResolution {
+                        route_token,
+                        frame_hint,
+                        commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
+                    },
+                )))
+            }
+            Poll::Ready(Ok(PassiveRouteResolutionOutcome::EvidenceOnly(frame_hint))) => self
+                .collect_route_authority_after_passive_evidence_only(
                     state,
                     pending_recv,
                     frontier_visited,
                     cx,
-                    resolved_hint_frame,
-                )
-            }
+                    frame_hint,
+                ),
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
@@ -195,36 +186,40 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        resolved_hint_frame: Option<ResolvedFrameHint>,
+        frame_hint: FrameHintResolution,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
-        if state.facts.profile.is_dynamic() {
-            match self.passive_dynamic_resolver_authority(state, pending_recv, frontier_visited, cx)
-            {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => {
-                    return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
-                        RouteAuthorityResolution {
-                            route_token,
-                            resolved_hint_frame,
-                            commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
-                        },
-                    )));
-                }
-                Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
-                    return Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier));
-                }
-                Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => {}
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-            }
+        if !state.facts.profile.is_dynamic() {
+            return self.poll_route_authority_after_local_sources_miss(
+                state,
+                pending_recv,
+                frontier_visited,
+                cx,
+                frame_hint,
+            );
         }
 
-        self.poll_route_authority_after_local_sources_miss(
-            state,
-            pending_recv,
-            frontier_visited,
-            cx,
-            resolved_hint_frame,
-        )
+        match self.passive_dynamic_resolver_authority(state, pending_recv, frontier_visited, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
+                RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
+                    route_token,
+                    frame_hint,
+                    commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
+                }),
+            )),
+            Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
+                Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
+            }
+            Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => self
+                .poll_route_authority_after_local_sources_miss(
+                    state,
+                    pending_recv,
+                    frontier_visited,
+                    cx,
+                    frame_hint,
+                ),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        }
     }
 
     fn poll_route_authority_after_local_sources_miss(
@@ -233,11 +228,11 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        resolved_hint_frame: Option<ResolvedFrameHint>,
+        frame_hint: FrameHintResolution,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         if state.facts.profile.is_passive()
             && !state.ingress.has_transport()
-            && resolved_hint_frame.is_none()
+            && !frame_hint.is_resolved()
         {
             match self.defer_missing_route_authority(
                 state,
@@ -260,7 +255,7 @@ where
             Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
                 RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                     route_token,
-                    resolved_hint_frame,
+                    frame_hint,
                     commit_evidence: RouteArmCommitEvidence::PollFrame,
                 }),
             )),
@@ -282,34 +277,36 @@ where
         let selection = state.selection();
         let scope_id = selection.scope_id;
         loop {
-            let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
-            let resolver_step =
-                match self.prepare_route_arm_selection_from_resolver(scope_id, &decision_signals) {
-                    Ok(step) => step,
-                    Err(err) => return Poll::Ready(Err(err)),
-                };
+            let resolver_step = match self.prepare_route_arm_selection_from_resolver(scope_id) {
+                Ok(step) => step,
+                Err(err) => return Poll::Ready(Err(err)),
+            };
             match resolver_step {
                 RouteResolveStep::Resolved(resolver_arm) => {
                     return Poll::Ready(Ok(RouteResolveOutcome::Token(
                         RouteArmToken::from_resolver(resolver_arm),
                     )));
                 }
-                RouteResolveStep::Abort(reason) => {
-                    return Poll::Ready(Err(RecvError::PolicyAbort { reason }));
+                RouteResolveStep::Reject(resolver_id) => {
+                    return Poll::Ready(Err(RecvError::ResolverReject { resolver_id }));
                 }
-                RouteResolveStep::Deferred { source } => {
+                RouteResolveStep::NoAuthority => {
+                    return Poll::Ready(Ok(RouteResolveOutcome::NoAuthority));
+                }
+                RouteResolveStep::Deferred => {
                     match self.on_frontier_defer(
                         &mut state.progress,
-                        scope_id,
-                        selection.frontier_parallel_root,
-                        source,
-                        DeferReason::Unsupported,
-                        selection.offer_lane,
-                        state.ingress.has_transport(),
-                        None,
+                        FrontierDeferRequest {
+                            scope_id,
+                            current_parallel: selection.frontier_parallel_root,
+                            reason: DeferReason::Unsupported,
+                            offer_lane: selection.offer_lane,
+                            ingress_ready: state.ingress.has_transport(),
+                            selected_arm: None,
+                        },
                         frontier_visited,
                     ) {
-                        FrontierDeferOutcome::Continue => {}
+                        FrontierDeferOutcome::Continue => continue,
                         FrontierDeferOutcome::Yielded => {
                             return Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier));
                         }
@@ -326,8 +323,8 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        resolved_hint_frame: Option<ResolvedFrameHint>,
-    ) -> Poll<RecvResult<PassiveRouteAuthorityOutcome>> {
+        frame_hint: FrameHintResolution,
+    ) -> Poll<RecvResult<PassiveRouteResolutionOutcome>> {
         let selection = state.selection();
         let offer_lanes = self.offer_lane_set_for_scope(selection.scope_id);
         match self.poll_passive_route_evidence(
@@ -335,7 +332,7 @@ where
                 selection,
                 offer_lanes,
                 profile: state.facts.profile,
-                resolved_hint_frame,
+                frame_hint,
             },
             PassiveRouteEvidenceContext::new(
                 &mut state.ingress,
@@ -347,20 +344,18 @@ where
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::RestartFrontier)) => {
-                Poll::Ready(Ok(PassiveRouteAuthorityOutcome::RestartFrontier))
+                Poll::Ready(Ok(PassiveRouteResolutionOutcome::RestartFrontier))
             }
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
-                authority,
-                resolved_hint_frame,
-            })) => Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(
-                authority.into_route_token(),
-                resolved_hint_frame,
+                route_token,
+                frame_hint,
+            })) => Poll::Ready(Ok(PassiveRouteResolutionOutcome::Authority(
+                route_token,
+                frame_hint,
             ))),
-            Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly {
-                resolved_hint_frame,
-            })) => Poll::Ready(Ok(PassiveRouteAuthorityOutcome::EvidenceOnly(
-                resolved_hint_frame,
-            ))),
+            Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly { frame_hint })) => {
+                Poll::Ready(Ok(PassiveRouteResolutionOutcome::EvidenceOnly(frame_hint)))
+            }
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
@@ -374,32 +369,28 @@ where
     ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         let scope_id = selection.scope_id;
-        let decision_signals = self.policy_signals_for_slot(PolicySlot::Decision);
-        let resolver_step =
-            match self.prepare_route_arm_selection_from_resolver(scope_id, &decision_signals) {
-                Ok(step) => step,
-                Err(err) => return Poll::Ready(Err(err)),
-            };
+        let resolver_step = match self.prepare_route_arm_selection_from_resolver(scope_id) {
+            Ok(step) => step,
+            Err(err) => return Poll::Ready(Err(err)),
+        };
         match resolver_step {
             RouteResolveStep::Resolved(resolver_arm) => Poll::Ready(Ok(
                 RouteResolveOutcome::Token(RouteArmToken::from_resolver(resolver_arm)),
             )),
-            RouteResolveStep::Abort(reason) => {
-                if reason != 0 {
-                    Poll::Ready(Err(RecvError::PolicyAbort { reason }))
-                } else {
-                    Poll::Ready(Ok(RouteResolveOutcome::NoAuthority))
-                }
+            RouteResolveStep::Reject(resolver_id) => {
+                Poll::Ready(Err(RecvError::ResolverReject { resolver_id }))
             }
-            RouteResolveStep::Deferred { source } => match self.on_frontier_defer(
+            RouteResolveStep::NoAuthority => Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)),
+            RouteResolveStep::Deferred => match self.on_frontier_defer(
                 &mut state.progress,
-                scope_id,
-                selection.frontier_parallel_root,
-                source,
-                DeferReason::Unsupported,
-                selection.offer_lane,
-                state.ingress.has_transport(),
-                None,
+                FrontierDeferRequest {
+                    scope_id,
+                    current_parallel: selection.frontier_parallel_root,
+                    reason: DeferReason::Unsupported,
+                    offer_lane: selection.offer_lane,
+                    ingress_ready: state.ingress.has_transport(),
+                    selected_arm: None,
+                },
                 frontier_visited,
             ) {
                 FrontierDeferOutcome::Continue => Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)),
@@ -429,8 +420,7 @@ where
             && state
                 .ingress
                 .transport_lane_wire()
-                .map(|lane| lane != selection.offer_lane)
-                .unwrap_or(false)
+                .is_some_and(|lane| lane != selection.offer_lane)
         {
             return Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier));
         }
@@ -463,13 +453,14 @@ where
         let selection = state.selection();
         match self.on_frontier_defer(
             &mut state.progress,
-            selection.scope_id,
-            selection.frontier_parallel_root,
-            DeferSource::Resolver,
-            DeferReason::NoEvidence,
-            selection.offer_lane,
-            has_ingress,
-            None,
+            FrontierDeferRequest {
+                scope_id: selection.scope_id,
+                current_parallel: selection.frontier_parallel_root,
+                reason: DeferReason::NoEvidence,
+                offer_lane: selection.offer_lane,
+                ingress_ready: has_ingress,
+                selected_arm: None,
+            },
             frontier_visited,
         ) {
             FrontierDeferOutcome::Continue | FrontierDeferOutcome::Yielded => {

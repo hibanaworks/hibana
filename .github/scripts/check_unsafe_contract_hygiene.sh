@@ -4,14 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-integration_rs="$(cat src/integration.rs src/integration/session_kit.rs)"
+runtime_rs="$(cat src/runtime.rs src/runtime/session_kit.rs)"
 port_rs="$(
   cat src/rendezvous/port.rs
   if [[ -d src/rendezvous/port ]]; then
     find src/rendezvous/port -type f -name '*.rs' -print0 | sort -z | xargs -0 cat
   fi
 )"
-capability_rs="$(cat src/rendezvous/capability.rs)"
 lane_port_rs="$(cat src/endpoint/kernel/lane_port.rs)"
 route_table_rs="$(
   cat src/rendezvous/tables/route_table.rs
@@ -24,16 +23,14 @@ eff_rs="$(cat src/eff.rs)"
 
 for unsafe_owner in \
   src/rendezvous/tables.rs \
-  src/control/cluster/core.rs \
+  src/session/cluster/core.rs \
   src/rendezvous/core.rs \
   src/endpoint/carrier.rs \
   src/endpoint/kernel/frontier.rs \
   src/endpoint/kernel/decision_state.rs \
   src/endpoint/kernel/frontier_state.rs \
   src/rendezvous/association.rs \
-  src/rendezvous/capability.rs \
-  src/global/const_dsl.rs \
-  src/observe/tests/normalise.rs
+  src/global/const_dsl.rs
 do
   if ! grep -q "# Unsafe Owner Contract" "${unsafe_owner}"; then
     echo "unsafe-heavy owner missing module-level unsafe owner contract: ${unsafe_owner}" >&2
@@ -112,7 +109,7 @@ for path in Path("src").rglob("*.rs"):
             missing.append(f"{text_path}:{idx + 1}: unsafe block missing local SAFETY contract")
             continue
         if any(phrase in window for phrase in generic_phrases):
-            generic.append(f"{text_path}:{idx + 1}: unsafe block uses the generic SAFETY escape hatch")
+            generic.append(f"{text_path}:{idx + 1}: unsafe block uses the generic SAFETY bypass")
 
 if missing:
     print("unsafe contract hygiene violation: every production unsafe block needs a local SAFETY contract", file=__import__("sys").stderr)
@@ -120,30 +117,30 @@ if missing:
         print(item, file=__import__("sys").stderr)
     raise SystemExit(1)
 if generic:
-    print("unsafe contract hygiene violation: SAFETY comments must name owner/lifetime/aliasing facts instead of the generic escape hatch", file=__import__("sys").stderr)
+    print("unsafe contract hygiene violation: SAFETY comments must name owner/lifetime/aliasing facts instead of the generic bypass", file=__import__("sys").stderr)
     for item in generic:
         print(item, file=__import__("sys").stderr)
     raise SystemExit(1)
 PY
 
-if [[ "${integration_rs}" == *"pub unsafe fn init_in_place"* ]]; then
+if [[ "${runtime_rs}" == *"pub unsafe fn init_in_place"* ]]; then
   echo "resident init_in_place public surface must be the safe wrapper only" >&2
   exit 1
 fi
 
-if [[ "${integration_rs}" == *"pub fn init_in_place"* ]] \
-  || [[ "${integration_rs}" == *"pub fn init_resident_in_place"* ]]; then
+if [[ "${runtime_rs}" == *"pub fn init_in_place"* ]] \
+  || [[ "${runtime_rs}" == *"pub fn init_resident_in_place"* ]]; then
   echo "SessionKit construction must not expose raw MaybeUninit lifecycle APIs" >&2
   exit 1
 fi
 
-if [[ "${integration_rs}" == *"ResidentSessionKit"* ]]; then
+if [[ "${runtime_rs}" == *"ResidentSessionKit"* ]]; then
   echo "SessionKit construction must not expose a thin resident wrapper" >&2
   exit 1
 fi
 
-if [[ "${integration_rs}" != *"pub struct SessionKitStorage"* ]] \
-  || [[ "${integration_rs}" != *"pub fn init(&mut self) -> &SessionKit"* ]]; then
+if [[ "${runtime_rs}" != *"pub struct SessionKitStorage"* ]] \
+  || [[ "${runtime_rs}" != *"pub fn init(&mut self) -> &SessionKit"* ]]; then
   echo "SessionKit construction must expose only the safe Pico-class storage owner" >&2
   exit 1
 fi
@@ -162,7 +159,7 @@ for required in \
   "received transport frames must be committed, explicitly requeued, or explicitly discarded" \
   "received transport frame dropped without explicit commit, requeue, or discard" \
   "received transport frame requeued on a different lane" \
-  "transport receive frame polled while previous frame receipt is unresolved" \
+  "transport receive frame polled while current frame receipt is unresolved" \
   "transport receive frame receipt is no longer current" \
   "received transport frame requeued on a different endpoint port" \
   "received transport frame requeued on a different Rx handle" \
@@ -200,19 +197,6 @@ if rg -n "port_key: u(8|16|32|64|size)|port_identity|\\.addr\\(\\)" \
   echo "transport frame receipt must not use lossy integer-compressed or exposed Rx identities" >&2
   exit 1
 fi
-
-for required in \
-  "SAFETY: \`bind_from_storage\` and \`migrate_from_storage\` are the only" \
-  "rendezvous registered-token owner" \
-  "Option<CapEntry>" \
-  "failed cleanup attempts leave lifecycle clocks still" \
-  "release scans in bounds and clears at most the matching nonce"
-do
-  if [[ "${capability_rs}" != *"${required}"* ]]; then
-    echo "CapTable release mutation must document slot owner and initialized-entry invariants: ${required}" >&2
-    exit 1
-  fi
-done
 
 for required in \
   'SAFETY: `Port` owns the Rx handle for this lane.' \

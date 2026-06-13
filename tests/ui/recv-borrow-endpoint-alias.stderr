@@ -1,10 +1,11 @@
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
-  --> tests/ui/recv-borrow-endpoint-alias.rs:34:22
+  --> tests/ui/recv-borrow-endpoint-alias.rs:35:22
    |
-33 |     let payload = futures::executor::block_on(endpoint.recv::<g::Msg<7, FramePayload>>()).unwrap();
+33 |     let payload = futures::executor::block_on(endpoint.recv::<g::Msg<7, FramePayload>>())
    |                                               -------- first mutable borrow occurs here
-34 |     let flow_again = endpoint.flow::<g::Msg<8, u8>>().unwrap();
+34 |         .expect("fixture setup");
+35 |     let flow_again = endpoint.flow::<g::Msg<8, u8>>().expect("fixture setup");
    |                      ^^^^^^^^ second mutable borrow occurs here
-35 |     core::hint::black_box(&flow_again);
-36 |     core::hint::black_box(&payload);
+36 |     core::hint::black_box(&flow_again);
+37 |     core::hint::black_box(&payload);
    |                           -------- first borrow later used here

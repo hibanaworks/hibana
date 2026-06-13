@@ -1,5 +1,5 @@
 use hibana::g::{self, Msg};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 use super::{localside, route_localside};
 const CTRL_TO_WORKER_U8_LOGICAL: u8 = 1;

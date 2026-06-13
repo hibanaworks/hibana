@@ -4,18 +4,14 @@ mod evidence;
 mod planner;
 
 use super::{
-    Clock, CursorEndpoint, EpochTable, FrontierVisitSet, LabelUniverse, MintConfigMarker,
-    OfferFrontierFacts, OfferScopeSelection, RecvResult, Transport, profile::OfferEntryPosition,
+    Clock, CursorEndpoint, FrontierVisitSet, OfferFrontierFacts, OfferScopeSelection, RecvResult,
+    Transport, profile::OfferEntryPosition,
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(super) fn prepare_frontier_facts(
         &mut self,

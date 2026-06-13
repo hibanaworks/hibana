@@ -120,22 +120,6 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn loop_table_slots(&self) -> usize {
-        self.endpoint_lane_slot_count()
-            .checked_mul(self.footprint().passive_linger_route_scope_count)
-            .expect("invariant")
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_cap_entries(&self) -> usize {
-        self.footprint()
-            .active_lane_count
-            .checked_mul(4)
-            .expect("invariant")
-            .max(4)
-    }
-
-    #[inline(always)]
     pub(crate) fn max_route_stack_depth(&self) -> usize {
         self.footprint().max_route_stack_depth
     }

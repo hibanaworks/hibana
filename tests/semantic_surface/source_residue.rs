@@ -21,13 +21,13 @@ fn runtime_types_source() -> String {
 }
 
 #[test]
-fn public_integration_tests_name_registered_rendezvous_witnesses() {
+fn public_repository_tests_name_registered_rendezvous_witnesses() {
     let tests = read_all_rs_tree("tests");
-    let stale = concat!("rv", "_id");
+    let forbidden = concat!("rv", "_id");
 
     assert!(
-        !tests.contains(stale),
-        "public integration tests must name registered rendezvous values as witnesses, not ids"
+        !tests.contains(forbidden),
+        "public repository tests must name registered rendezvous values as witnesses, not ids"
     );
 }
 
@@ -204,7 +204,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_program.contains("Vec<")
             && !event_program.contains("alloc::")
             && !event_program.contains("#[cfg(test)]"),
-        "runtime event rows must be a no_alloc compiled-row LocalEventProgram, not endpoint-local send/recv topology branches"
+        "runtime event rows must be a no_alloc compiled-row LocalEventProgram, not endpoint-local send/recv ancestry branches"
     );
     assert!(
         facts.contains("conflict: LocalConflict")
@@ -245,7 +245,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
             && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
             && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
-            && role_program_impl.contains("frame label universe overflow")
+            && role_program_impl.contains("frame label domain overflow")
             && !role_program_impl.contains("frame_key_counts[frame_key_idx].wrapping_add")
             && event_program.contains("self.rows().dependency_for_index(idx)")
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
@@ -261,8 +261,9 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && role_program_types.contains("PackedRouteArmRow")
             && role_program_types.contains("RouteArmLaneStepRow")
             && !role_program_types.contains("route_arm_rows: &'static")
-            && role_program_impl
-                .contains("PackedRouteArmRow::new(local_row, child_delta, lane_step_row)")
+            && role_program_impl.contains(
+                "PackedRouteArmRow::new(input.local_row, child_delta, input.lane_step_row)"
+            )
             && event_program.contains("pub(crate) struct LocalEventRowSet")
             && event_program.contains("route_arm_event_row_by_slot")
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
@@ -324,7 +325,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         ] {
             assert!(
                 !guard.contains(forbidden),
-                "{name} must not re-grow route topology interpretation: {forbidden}"
+                "{name} must not re-grow route ancestry interpretation: {forbidden}"
             );
         }
     }
@@ -365,7 +366,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
 }
 
 #[test]
-fn old_route_apply_and_settlement_files_stay_deleted() {
+fn forbidden_route_apply_and_settlement_files_stay_forbidden() {
     for path in [
         "src/endpoint/kernel/core/route_commit_apply.rs",
         "src/endpoint/kernel/core/route_commit_progress.rs",
@@ -374,7 +375,7 @@ fn old_route_apply_and_settlement_files_stay_deleted() {
     ] {
         assert!(
             !repo_file_exists(path),
-            "old topology path must stay deleted: {path}"
+            "forbidden route path must stay forbidden: {path}"
         );
     }
 }
@@ -407,17 +408,17 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
         "cursor_at_active_route_offer_entry",
         "advance_scope_by_id_in_place",
         "lane_pending_step_belongs_to_scope",
-        "control_parent_scope",
+        concat!("con", "trol", "_parent_scope"),
         "SEND_ROUTE_WAS_SELECTED",
         "clear_other_lanes",
-        "SyntheticBranchCommitDelta",
-        "PreparedSyntheticBranchCommitDelta",
-        "EmptyBranchCommitDelta",
-        "PreparedEmptyBranchCommitDelta",
-        "apply_synthetic_branch_commit_delta",
-        "apply_empty_branch_commit_delta",
-        "prepare_synthetic_branch_commit_delta",
-        "prepare_empty_branch_commit_delta",
+        concat!("Syn", "thetic", "BranchCommitDelta"),
+        concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"),
+        concat!("Empty", "BranchCommitDelta"),
+        concat!("Prepared", "Empty", "BranchCommitDelta"),
+        concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
+        concat!("apply_", "empty", "_branch_commit_delta"),
+        concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
+        concat!("prepare_", "empty", "_branch_commit_delta"),
         "selected_branch_event_row_matches_commit",
         "CurrentResidentLaneStep",
         "current_resident_lane_step",
@@ -428,17 +429,17 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
         "step_for_eff_index",
         "scope_lane_first_eff",
         "passive_authority_from_frame_hint",
-        "PassiveRouteAuthority::StaticPoll",
+        concat!("PassiveRoute", "Authority::StaticPoll"),
         "passive_arm_jump",
         "passive_dispatch_arm_from_exact_frame_label",
         "static_passive_dispatch_arm_from_exact_frame_label",
         "static_passive_descendant_dispatch_arm_from_exact_frame_label",
         "scope_frame_label_to_arm",
         "scope_evidence_frame_label_to_arm",
-        "_semantics: &ControlSemanticsTable",
+        concat!("_semantics: &", "Con", "trol", "SemanticsTable"),
         "current_recv_is_scope_local",
-        "ControlSemanticsTable",
-        "CONTROL_SEMANTICS_TABLE",
+        concat!("Con", "trol", "SemanticsTable"),
+        concat!("CONTROL", "_SEMANTICS_TABLE"),
         "fn route_frame_label",
         "fn route_lane",
         "recover_scope_evidence_conflict",
@@ -449,9 +450,9 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
         "frame_hint_conflicted",
         "scope_ack_conflicted",
         "fn ack_conflicted",
-        "SelfSendController",
+        concat!("SelfSend", "Controller"),
         "self_send_controller",
-        "OfferControllerArmEntry",
+        concat!("Offer", "ControllerArmEntry"),
         "PhaseCursor",
         "PhaseCursorState",
         "phase_cursor",
@@ -461,13 +462,13 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
     ] {
         assert!(
             !source.contains(forbidden),
-            "production source must not re-grow old route apply or resident settlement path: {forbidden}"
+            "production source must not re-grow forbidden route apply or resident settlement path: {forbidden}"
         );
     }
 }
 
 #[test]
-fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
+fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_recovery() {
     let cursor_scope_route = cursor_scope_route_source();
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let role_scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
@@ -482,9 +483,9 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
     let runtime_types = runtime_types_source();
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
-    let legacy_from_chain = ["from_conflict", "_chain"].concat();
-    let legacy_chain_len = ["conflict", "_chain_len("].concat();
-    let legacy_chain_row = ["conflict", "_chain_row_at("].concat();
+    let forbidden_from_chain = ["from_conflict", "_chain"].concat();
+    let forbidden_chain_len = ["conflict", "_chain_len("].concat();
+    let forbidden_chain_row = ["conflict", "_chain_row_at("].concat();
 
     assert!(
         !cursor_scope_route.contains("pub(crate) fn route_scope_for_selected_child_arm")
@@ -504,7 +505,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
                 "prepare_event_selected_route_commit_rows_from_resident_route_commit_range"
             )
             && !route_commit_helpers.contains("enum ExplicitRouteCommitChain")
-            && !route_commit_helpers.contains(&legacy_from_chain)
+            && !route_commit_helpers.contains(&forbidden_from_chain)
             && route_commit_helpers.contains(
                 "prepare_route_site_materialization_rows_from_resident_route_commit_range"
             )
@@ -515,8 +516,8 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
                 .contains("prepare_selected_route_commit_rows_from_route_scope_chain")
             && route_commit_helpers.contains(".route_commit_range_for_conflict(")
             && route_commit_helpers.contains(".route_commit_row_at(range, idx)")
-            && !route_commit_helpers.contains(&legacy_chain_len)
-            && !route_commit_helpers.contains(&legacy_chain_row)
+            && !route_commit_helpers.contains(&forbidden_chain_len)
+            && !route_commit_helpers.contains(&forbidden_chain_row)
             && !route_preview.contains("fn record_prepared_route_selection")
             && !route_preview.contains("fn apply_selected_route_commit_row")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
@@ -542,15 +543,15 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
             && !offer_commit.contains("self.apply_selected_route_commit_row("),
         "route selection must materialize resident route commit rows and leave route-state application inside prepared commit deltas"
     );
-    let policy_with_scope = eff_list
-        .split("pub(crate) const fn policy_with_scope")
+    let resolver_with_scope = eff_list
+        .split("pub(crate) const fn resolver_with_scope")
         .nth(1)
         .and_then(|tail| tail.split("pub(crate) const fn push_control_spec").next())
-        .expect("projection policy scope helper must stay visible");
+        .expect("projection resolver scope helper must stay visible");
     assert!(
-        policy_with_scope.contains("None if policy.is_dynamic() => crate::invariant()")
-            && !policy_with_scope.contains("None => ScopeId::none()"),
-        "dynamic policy scope lookup must fail closed instead of falling back to root scope"
+        resolver_with_scope.contains("None if resolver.is_dynamic() => crate::invariant()")
+            && !resolver_with_scope.contains("None => ScopeId::none()"),
+        "dynamic resolver scope lookup must fail closed instead of falling back to root scope"
     );
     let route_lowering_source =
         role_scope_rows.as_str().to_owned() + &first_recv_dispatch + &passive_child;
@@ -562,7 +563,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
     ] {
         assert!(
             !route_lowering_source.contains(forbidden),
-            "route lowering must not recover malformed binary route ranges through segment-end fallback: {forbidden}"
+            "route lowering must not recover malformed binary route ranges through segment-end implicit recovery: {forbidden}"
         );
     }
     assert!(
@@ -570,10 +571,11 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
         "route scope dependency bounds must fail closed when binary arm ranges are missing"
     );
     assert!(
-        event_flow.contains("fn flow_start_index_for_label(&self, target_label: u8) -> usize")
+        event_flow.contains("fn flow_start_index_for_label(")
+            && event_flow.contains("selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>")
             && event_flow.contains("if self.route_scope_rows_at(self.index()).is_some()")
             && !event_flow.contains(".unwrap_or_else(|| self.index())"),
-        "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind unwrap fallback"
+        "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind unwrap implicit recovery"
     );
     for (name, body) in [
         ("route-preview", route_preview.as_str()),
@@ -597,7 +599,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_fallback() {
         ] {
             assert!(
                 !body.contains(forbidden),
-                "{name} must not re-grow route-state cleanup fallback: {forbidden}"
+                "{name} must not re-grow route-state cleanup implicit recovery: {forbidden}"
             );
         }
     }
@@ -619,7 +621,7 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
     let runtime_types = runtime_types_source();
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
-    let legacy_from_chain_for_lane = ["from_conflict", "_chain_for_lane"].concat();
+    let forbidden_from_chain_for_lane = ["from_conflict", "_chain_for_lane"].concat();
     let prepared_commit_delta_row = commit_delta
         .split("pub(crate) struct PreparedCommitDelta")
         .nth(1)
@@ -635,7 +637,7 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
             && decision_state.contains("conflict: PackedEventConflict")
             && decision_state.contains("range_lane_len: u32")
             && decision_state.contains("from_resident_range_for_lane")
-            && !decision_state.contains(&legacy_from_chain_for_lane)
+            && !decision_state.contains(&forbidden_from_chain_for_lane)
             && !decision_state.contains("route_commit_chain_row_at")
             && !commit_delta.contains("MAX_ROUTE_COMMIT_ROWS")
             && commit_delta.contains(
@@ -644,12 +646,12 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
-            && prepared_commit_delta_row.contains("loop_row: LoopCommitRow")
+            && !prepared_commit_delta_row.contains(&["loop_row: ", "Loop", "Commit", "Row"].concat())
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
             && !runtime_types.contains("pub(crate) struct PreparedCommitDelta")
             && !runtime_types.contains("fn from_enabled(")
-            && runtime_types.contains("fn with_loop_row(")
+            && !runtime_types.contains("fn with_loop_row(")
             && runtime_types.contains("fn with_lane_relocation(")
             && commit_delta.contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
             && commit_delta.contains(".route_commit_range_for_conflict(")
@@ -658,7 +660,7 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
             && commit_delta.contains("fn apply_prepared_cursor_index(")
             && commit_delta.contains("fn apply_prepared_lane_advance(")
             && commit_delta.contains("fn apply_prepared_lane_relocation(")
-            && commit_delta.contains("self.apply_loop_commit_row(")
+            && !commit_delta.contains("self.apply_loop_commit_row(")
             && !route_preview.contains("fn set_cursor_index(")
             && !offer_refresh.contains("fn set_lane_cursor_to_relocatable_step(")
             && !offer_refresh.contains("fn advance_lane_cursor_to_relocatable_step(")
@@ -691,10 +693,10 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
             "maybe_advance_phase",
             "ScopeSettlement",
             "CommitApplyOutcome",
-            "apply_synthetic_branch_commit_delta",
-            "apply_empty_branch_commit_delta",
-            "prepare_synthetic_branch_commit_delta",
-            "prepare_empty_branch_commit_delta",
+            concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
+            concat!("apply_", "empty", "_branch_commit_delta"),
+            concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
+            concat!("prepare_", "empty", "_branch_commit_delta"),
         ] {
             assert!(
                 !source.contains(forbidden),

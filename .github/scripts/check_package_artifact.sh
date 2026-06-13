@@ -197,7 +197,7 @@ while stack:
 
 if missing:
     print(
-        "package artifact check failed: shipped integration tests must include their module tree",
+        "package artifact check failed: shipped repository tests must include their module tree",
         file=sys.stderr,
     )
     for item in missing:

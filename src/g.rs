@@ -19,18 +19,15 @@
 //! ```
 //!
 //! Labels identify choreography messages and route branches. They do not encode
-//! transport demux or control semantics.
+//! transport demux or hidden runtime semantics.
 //!
-//! Dynamic branch policy is supplied by integration resolvers. Runtime hints or
+//! Dynamic branch resolver is supplied by runtime resolvers. Runtime hints or
 //! payload contents do not create route authority by themselves.
 
 mod source;
 mod terms;
 
 use core::marker::PhantomData;
-
-use crate::control::cap::mint::{ControlOp, ControlPath};
-use crate::global::{MessageRuntime, StaticControlDesc};
 
 pub use crate::global::Message;
 pub(crate) use source::{ProgramSourceData, ProgramTerm};
@@ -44,187 +41,19 @@ mod role_projection;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
 
-/// Control protocol event descriptor.
-///
-/// `ControlMsg` is carried by [`send`] like any other choreography event, but it
-/// lowers to Hibana control rows instead of an application payload row. `Kind`
-/// is one of the sealed marker types in [`control`]; callers cannot define new
-/// control descriptors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ControlMsg<const LOGICAL_LABEL: u8, Kind>(PhantomData<Kind>);
-
-const _: ControlMsg<0, ()> = ControlMsg(PhantomData);
-
-/// Built-in control protocol event kinds.
-///
-/// These marker types are intentionally closed. They name protocol events that
-/// Hibana can lower into control metadata without exposing raw descriptor
-/// construction or capability-token layout.
-pub mod control {
-    use crate::control::{
-        cap::{
-            atomic_codecs::SessionLaneHandle,
-            mint::{CAP_HANDLE_LEN, CapShot, ControlOp, LocalControlKind},
-            resource_kinds::LoopDecisionHandle,
-        },
-        types::{Lane, SessionId},
-    };
-    use crate::global::const_dsl::{ControlScopeKind, ScopeId};
-    use crate::observe::ids;
-
-    /// Local loop-continue protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct LoopContinue;
-
-    /// Local loop-break protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct LoopBreak;
-
-    /// Local state-snapshot protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct StateSnapshot;
-
-    /// Local state-restore protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct StateRestore;
-
-    /// Local transaction-commit protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct TxnCommit;
-
-    /// Local transaction-abort protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct TxnAbort;
-
-    /// Distributed topology-begin protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct TopologyBegin;
-
-    /// Distributed topology-ack protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct TopologyAck;
-
-    /// Distributed topology-commit protocol event.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct TopologyCommit;
-
-    fn encode_session_lane_handle(sid: SessionId, lane: Lane) -> [u8; CAP_HANDLE_LEN] {
-        SessionLaneHandle::new(sid.raw(), lane.as_wire() as u16).to_bytes()
-    }
-
-    impl LocalControlKind for LoopContinue {
-        const TAG: u8 = 0x40;
-        const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
-        const TAP_ID: u16 = ids::LOOP_DECISION;
-        const SHOT: CapShot = CapShot::One;
-        const OP: ControlOp = ControlOp::LoopContinue;
-
-        fn encode_local_handle(
-            sid: SessionId,
-            lane: Lane,
-            _scope: ScopeId,
-        ) -> [u8; CAP_HANDLE_LEN] {
-            LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
-        }
-    }
-
-    impl LocalControlKind for LoopBreak {
-        const TAG: u8 = 0x41;
-        const SCOPE: ControlScopeKind = ControlScopeKind::Loop;
-        const TAP_ID: u16 = ids::LOOP_DECISION;
-        const SHOT: CapShot = CapShot::One;
-        const OP: ControlOp = ControlOp::LoopBreak;
-
-        fn encode_local_handle(
-            sid: SessionId,
-            lane: Lane,
-            _scope: ScopeId,
-        ) -> [u8; CAP_HANDLE_LEN] {
-            LoopDecisionHandle::new(sid.raw(), lane.as_wire()).encode()
-        }
-    }
-
-    impl LocalControlKind for StateSnapshot {
-        const TAG: u8 = 0x42;
-        const SCOPE: ControlScopeKind = ControlScopeKind::State;
-        const TAP_ID: u16 = ids::STATE_SNAPSHOT_REQ;
-        const SHOT: CapShot = CapShot::One;
-        const OP: ControlOp = ControlOp::StateSnapshot;
-
-        fn encode_local_handle(
-            sid: SessionId,
-            lane: Lane,
-            _scope: ScopeId,
-        ) -> [u8; CAP_HANDLE_LEN] {
-            encode_session_lane_handle(sid, lane)
-        }
-    }
-
-    impl LocalControlKind for StateRestore {
-        const TAG: u8 = 0x43;
-        const SCOPE: ControlScopeKind = ControlScopeKind::State;
-        const TAP_ID: u16 = ids::STATE_RESTORE_REQ;
-        const SHOT: CapShot = CapShot::One;
-        const OP: ControlOp = ControlOp::StateRestore;
-
-        fn encode_local_handle(
-            sid: SessionId,
-            lane: Lane,
-            _scope: ScopeId,
-        ) -> [u8; CAP_HANDLE_LEN] {
-            encode_session_lane_handle(sid, lane)
-        }
-    }
-
-    impl LocalControlKind for TxnCommit {
-        const TAG: u8 = 0x44;
-        const SCOPE: ControlScopeKind = ControlScopeKind::State;
-        const TAP_ID: u16 = ids::POLICY_COMMIT;
-        const SHOT: CapShot = CapShot::One;
-        const OP: ControlOp = ControlOp::TxCommit;
-
-        fn encode_local_handle(
-            sid: SessionId,
-            lane: Lane,
-            _scope: ScopeId,
-        ) -> [u8; CAP_HANDLE_LEN] {
-            encode_session_lane_handle(sid, lane)
-        }
-    }
-
-    impl LocalControlKind for TxnAbort {
-        const TAG: u8 = 0x45;
-        const SCOPE: ControlScopeKind = ControlScopeKind::State;
-        const TAP_ID: u16 = ids::POLICY_TX_ABORT;
-        const SHOT: CapShot = CapShot::One;
-        const OP: ControlOp = ControlOp::TxAbort;
-
-        fn encode_local_handle(
-            sid: SessionId,
-            lane: Lane,
-            _scope: ScopeId,
-        ) -> [u8; CAP_HANDLE_LEN] {
-            encode_session_lane_handle(sid, lane)
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum ProgramSourceError {
     RouteArmHead,
     RouteDuplicateLabel,
     RouteControllerMismatch,
-    LoopRouteArmOrder,
-    LoopRouteArmPair,
     LoopBodyEmpty,
     ParallelEmpty,
     ParallelConflict,
     ResolverIdReserved,
     ResolverTargetNotRoute,
-    ResolverUnsupportedControlSite,
-    ProjectionRoutePolicyMismatch,
-    ProjectionRoutePolicyMissing,
+    ProjectionRouteResolverMismatch,
+    ProjectionRouteResolverMissing,
     ProjectionRouteUnprojectable,
 }
 
@@ -233,41 +62,40 @@ impl ProgramSourceError {
         match status {
             0 => None,
             1 => Some(Self::ResolverTargetNotRoute),
-            3 => Some(Self::ResolverUnsupportedControlSite),
-            2 | 4..=u8::MAX => crate::invariant(),
+            2..=u8::MAX => crate::invariant(),
         }
     }
 }
 
 pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
-    match error as u8 {
-        0 => panic!("g::route arms must begin with a visible action"),
-        1 => panic!("route arms reuse the same label"),
-        2 => panic!("route arms use different first visible controllers"),
-        3 => panic!("loop routes must order arms as continue then break"),
-        4 => panic!("loop routes must pair continue and break control arms"),
-        5 => panic!("loop body must contain at least one step"),
-        6 => {
+    match error {
+        ProgramSourceError::RouteArmHead => {
+            panic!("g::route arms must begin with a visible action")
+        }
+        ProgramSourceError::RouteDuplicateLabel => panic!("route arms reuse the same label"),
+        ProgramSourceError::RouteControllerMismatch => {
+            panic!("route arms use different first visible controllers")
+        }
+        ProgramSourceError::LoopBodyEmpty => panic!("loop body must contain at least one step"),
+        ProgramSourceError::ParallelEmpty => {
             panic!("g::par(left, right) arms must be non-empty protocol fragments")
         }
-        7 => {
+        ProgramSourceError::ParallelConflict => {
             panic!("parallel lanes must use disjoint (role, lane) pairs")
         }
-        8 => {
+        ProgramSourceError::ResolverIdReserved => {
             panic!("route resolver id u16::MAX is reserved")
         }
-        9 => {
+        ProgramSourceError::ResolverTargetNotRoute => {
             panic!("route resolver can only be attached to a route")
         }
-        10 => panic!("route resolver site is not supported"),
-        11 => panic!("route resolver mismatch"),
-        12 => panic!("route resolver missing"),
-        13 => panic!(concat!(
+        ProgramSourceError::ProjectionRouteResolverMismatch => panic!("route resolver mismatch"),
+        ProgramSourceError::ProjectionRouteResolverMissing => panic!("route resolver missing"),
+        ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
             "Route unprojectable for this role: arms not mergeable, ",
             "wire dispatch non-deterministic, ",
             "and no route resolver provided",
         )),
-        14..=u8::MAX => crate::invariant(),
     }
 }
 
@@ -293,72 +121,6 @@ impl<Steps> Program<Steps> {
     }
 }
 
-#[derive(Clone, Copy)]
-#[repr(u8)]
-pub(crate) enum MessageControlContractError {
-    MissingDescriptor,
-    DescriptorTagReserved,
-    LoopScope,
-    LoopPath,
-    ControlPathMismatch,
-}
-
-impl MessageControlContractError {
-    pub(crate) const fn message(self) -> &'static str {
-        match self {
-            Self::MissingDescriptor => "control message missing descriptor",
-            Self::DescriptorTagReserved => "control descriptor tag 0 is reserved",
-            Self::LoopScope => "loop control messages require loop scope",
-            Self::LoopPath => "loop control messages require local path",
-            Self::ControlPathMismatch => "control descriptor path does not match message roles",
-        }
-    }
-}
-
-const fn control_descriptor_contract_error(
-    spec: StaticControlDesc,
-) -> Option<MessageControlContractError> {
-    if spec.resource_tag() == 0 {
-        return Some(MessageControlContractError::DescriptorTagReserved);
-    }
-    if matches!(spec.op(), ControlOp::LoopContinue | ControlOp::LoopBreak) {
-        if !matches!(
-            spec.scope_kind(),
-            crate::global::const_dsl::ControlScopeKind::Loop
-        ) {
-            return Some(MessageControlContractError::LoopScope);
-        }
-        if !matches!(spec.path(), ControlPath::Local) {
-            return Some(MessageControlContractError::LoopPath);
-        }
-    }
-    None
-}
-
-const fn unit_control_payload_contract_error(
-    spec: StaticControlDesc,
-) -> Option<MessageControlContractError> {
-    if let Some(error) = control_descriptor_contract_error(spec) {
-        return Some(error);
-    }
-    if !matches!(spec.path(), ControlPath::Local) {
-        return Some(MessageControlContractError::ControlPathMismatch);
-    }
-    None
-}
-
-const fn unit_wire_control_payload_contract_error(
-    spec: StaticControlDesc,
-) -> Option<MessageControlContractError> {
-    if let Some(error) = control_descriptor_contract_error(spec) {
-        return Some(error);
-    }
-    if !matches!(spec.path(), ControlPath::Wire) {
-        return Some(MessageControlContractError::ControlPathMismatch);
-    }
-    None
-}
-
 pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>() -> Option<&'static str>
 {
     if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
@@ -367,59 +129,7 @@ pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>() -> 
     None
 }
 
-pub(crate) const fn message_control_contract_error<M>() -> Option<MessageControlContractError>
-where
-    M: Message,
-{
-    if !<M as MessageRuntime>::CONTROL_PAYLOAD {
-        return None;
-    }
-    let Some(spec) = StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL) else {
-        return Some(MessageControlContractError::MissingDescriptor);
-    };
-    match <M as MessageRuntime>::CONTROL_PAYLOAD_KIND {
-        crate::global::CONTROL_PAYLOAD_LOCAL_UNIT => unit_control_payload_contract_error(spec),
-        crate::global::CONTROL_PAYLOAD_WIRE_UNIT => unit_wire_control_payload_contract_error(spec),
-        _ => crate::invariant(),
-    }
-}
-
-pub(crate) const fn send_control_contract_error<const FROM: u8, const TO: u8, M>()
--> Option<MessageControlContractError>
-where
-    M: Message,
-{
-    if let Some(error) = message_control_contract_error::<M>() {
-        return Some(error);
-    }
-    if !<M as MessageRuntime>::CONTROL_PAYLOAD {
-        return None;
-    }
-    let Some(spec) = StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL) else {
-        return Some(MessageControlContractError::MissingDescriptor);
-    };
-    let is_self_send = FROM == TO;
-    match spec.path() {
-        ControlPath::Local => {
-            if is_self_send {
-                None
-            } else {
-                Some(MessageControlContractError::ControlPathMismatch)
-            }
-        }
-        ControlPath::Wire => {
-            if is_self_send {
-                Some(MessageControlContractError::ControlPathMismatch)
-            } else {
-                None
-            }
-        }
-    }
-}
-
 /// Construct a single send step from `FROM` to `TO` carrying `M`.
-///
-/// Internal control descriptors are checked at this choreography boundary.
 pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
 where
     M: Message,
@@ -428,11 +138,19 @@ where
         if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
             panic!("{}", ROLE_INDEX_ERROR);
         }
-        if let Some(error) = send_control_contract_error::<FROM, TO, M>() {
-            panic!("{}", error.message());
-        }
     }
     Program::new()
+}
+
+/// Mark this choreography fragment as a reentry scope.
+///
+/// A rolled fragment may be entered again after the fragment has completed.
+/// The fragment's following continuation remains the natural exit path.
+impl<Steps> Program<Steps> {
+    pub const fn roll(self) -> Program<Roll<Steps>> {
+        let _ = self;
+        Program::new()
+    }
 }
 
 /// Sequentially compose two protocol fragments.
@@ -471,13 +189,11 @@ impl<LeftSteps, RightSteps> Program<Route<LeftSteps, RightSteps>> {
     ///
     /// This is for routes decided by external local state rather than by the
     /// first protocol message in each arm. The resolver is attached to the
-    /// route site itself. Built-in local control heads such as loop
-    /// continue/break remain ordinary choreography events when they are the
-    /// branch authority.
+    /// route site itself.
     pub const fn resolve<const RESOLVER_ID: u16>(
         self,
     ) -> Program<Resolve<Route<LeftSteps, RightSteps>, RESOLVER_ID>> {
-        if RESOLVER_ID == crate::global::ControlDesc::STATIC_POLICY_SITE {
+        if RESOLVER_ID == u16::MAX {
             panic!("route resolver id u16::MAX is reserved");
         }
         let _ = self;
@@ -508,7 +224,7 @@ where
     }
     let source = source_data.eff_list();
     if let Some(error) = ProgramSourceError::from_dynamic_resolver_source_status(
-        source.dynamic_policy_source_status(),
+        source.dynamic_resolver_source_status(),
     ) {
         panic_choreography_error(error);
     }
@@ -536,6 +252,9 @@ pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
 /// Explicit route resolver witness.
 pub struct Resolve<Inner, const RESOLVER_ID: u16>(PhantomData<Inner>);
 
+/// Reentry-scope witness.
+pub struct Roll<Inner>(PhantomData<Inner>);
+
 pub(crate) fn project<const ROLE: u8, Steps>(
     program: &Program<Steps>,
 ) -> crate::global::role_program::RoleProgram<ROLE>
@@ -543,7 +262,7 @@ where
     Steps: ProgramTerm,
 {
     let _ = program;
-    let _ = const { validate_choreography::<Steps>() };
+    const { validate_choreography::<Steps>() };
     let image = const {
         if ROLE >= ROLE_DOMAIN_SIZE {
             panic!("{}", ROLE_INDEX_ERROR);

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "policy": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and Pico-class aggregate SRAM must keep at least 64 bytes of headroom. The hibana_0_6_0_baseline block records the clean 0.6.0 source snapshot used for reviewer comparison.",
+  "description": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and Pico-class aggregate SRAM must keep at least 64 bytes of headroom.",
   "toolchain": "1.95.0",
   "host": "aarch64-apple-darwin",
   "flash_measurement": {
@@ -15,41 +15,6 @@
     "features": "std",
     "test_filter": "large_choreography_runtime_peak_metrics",
     "test_args": "--ignored --nocapture --test-threads=1"
-  },
-  "hibana_0_6_0_baseline": {
-    "git": "d120dd87f62c9fda922cf2142d3396c9cd629f1e",
-    "thumbv6m_none_eabi_no_std_release_lib": {
-      "sections": {
-        ".text": 154624,
-        ".rodata": 15341,
-        ".data": 0,
-        ".bss": 0,
-        "flash_total": 169965
-      }
-    },
-    "runtime_shapes": {
-      "route_heavy": {
-        "sidecar_scratch_high_water_bytes": 3291,
-        "live_endpoint_bytes": 4592,
-        "peak_live_slab_bytes": 7883,
-        "localside_peak_stack_bytes": 7967,
-        "peak_stack_bytes": 7967
-      },
-      "linear_heavy": {
-        "sidecar_scratch_high_water_bytes": 2719,
-        "live_endpoint_bytes": 3904,
-        "peak_live_slab_bytes": 6635,
-        "localside_peak_stack_bytes": 6399,
-        "peak_stack_bytes": 6399
-      },
-      "fanout_heavy": {
-        "sidecar_scratch_high_water_bytes": 3291,
-        "live_endpoint_bytes": 4896,
-        "peak_live_slab_bytes": 8187,
-        "localside_peak_stack_bytes": 7903,
-        "peak_stack_bytes": 7903
-      }
-    }
   },
   "budget": {
     "thumbv6m_none_eabi_no_std_release_lib": {

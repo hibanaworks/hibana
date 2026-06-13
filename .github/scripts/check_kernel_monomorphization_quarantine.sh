@@ -52,7 +52,7 @@ endpoint = "\n".join(
 flow = read("src/endpoint/flow.rs")
 
 for required in [
-    "pub(crate) struct MsgRuntimeCore",
+    "pub(crate) struct MsgCore",
     "pub(crate) struct SendRuntimeDesc",
     "pub(crate) struct RecvRuntimeDesc",
     "pub(crate) struct DecodeRuntimeDesc",
@@ -79,7 +79,7 @@ for name, trait_name in [
     if f"#[inline(never)]\npub(crate) fn {name}" not in core:
         fail(f"{name} must remain an out-of-line shared runtime kernel symbol")
     if not re.search(rf"pub\(crate\)\s+fn\s+{name}\s*<\s*'r\s*>\s*\(\s*endpoint:\s*&mut dyn {trait_name}<'r>", core):
-        fail(f"{name} must be a transport/integration-erased kernel entry point")
+        fail(f"{name} must be a transport/runtime-erased kernel entry point")
 
 for required in [
     "fn prepare_recv_kernel_descriptor(",
@@ -113,27 +113,26 @@ if not poll_public_recv or not all(
     for required in [
         "kernel_recv(",
         "logical_label",
-        "expects_control",
         "accepts_empty_payload",
         "recv_state",
         "cx",
     ]
 ):
-    fail("generic poll_public_recv must delegate to non-generic kernel_recv with control-kind evidence")
-if "kernel_decode(self, descriptor, control, &mut decode_state, cx)" not in public_runtime:
+    fail("generic poll_public_recv must delegate to non-generic kernel_recv with label and payload evidence")
+if "kernel_decode(self, descriptor, &mut decode_state, cx)" not in public_runtime:
     fail("generic poll_public_decode must delegate to non-generic kernel_decode")
 
 if re.search(
     r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",
     core + runtime_types + read("src/endpoint/kernel/recv.rs") + decode,
 ):
-    fail("old per-operation message descriptor names must not return")
+    fail("forbidden per-operation message descriptor names must not return")
 
 if "MsgRuntimeDesc" in core + runtime_types + endpoint + flow:
     fail("MsgRuntimeDesc hid operation-specific descriptor meaning")
 
-if re.search(r"send_descriptor_.*unused", flow):
-    fail("send runtime descriptors must not carry dummy validate/synthetic callbacks")
+if re.search(r"send_descriptor_.*" "un" "used", flow):
+    fail("send runtime descriptors must not carry inert validate/zero_payload callbacks")
 
 for path, source in [
     ("src/endpoint.rs", endpoint),

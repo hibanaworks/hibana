@@ -1,9 +1,8 @@
 use super::{
-    CapTable, Cell, Clock, EpochPortGuard, Guard, LabelUniverse, Lane, LaneGuard, PhantomData,
-    Port, PortInit, RawEvent, Rendezvous, RendezvousError, SessionId, TapRing, Transport, emit,
+    Cell, Clock, Guard, Lane, LaneGuard, Port, PortInit, Rendezvous, RendezvousError, SessionId,
+    TapRing, Transport, emit, events,
 };
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
-    Rendezvous<'rv, 'cfg, T, U, C, E>
+impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
 where
     'cfg: 'rv,
 {
@@ -18,19 +17,8 @@ where
         &self.tap
     }
 
-    #[inline]
-    pub(crate) fn offer_progress_policy(&self) -> crate::runtime::config::OfferProgressPolicy {
-        self.offer_progress_policy
-    }
-
     pub(crate) fn now32(&self) -> u32 {
         self.clock.now32()
-    }
-
-    /// Access the capability table for token registration.
-    #[inline]
-    pub(crate) fn caps(&self) -> &CapTable {
-        &self.caps
     }
 
     pub(crate) fn activate_lane_attachment(
@@ -44,21 +32,12 @@ where
         if self.session_fault(sid).is_some() {
             return Err(RendezvousError::SessionPoisoned { sid });
         }
-        let attach_ready_sid = self.topology.attach_ready_sid(lane);
         let first_attach = match self.assoc.get_sid(lane) {
             None => {
-                if let Some(reserved_sid) = attach_ready_sid
-                    && reserved_sid != sid
-                {
-                    return Err(RendezvousError::LaneBusy { lane });
-                }
                 self.assoc.register(lane, sid);
                 true
             }
             Some(existing) if existing == sid => {
-                if attach_ready_sid.is_some() {
-                    return Err(RendezvousError::LaneBusy { lane });
-                }
                 self.assoc
                     .increment(lane, sid)
                     .expect("lane attachment count overflow");
@@ -73,23 +52,15 @@ where
             // Emit lane_open_tap_event_id() for the lane's inaugural attachment.
             emit(
                 self.tap(),
-                RawEvent::new(
+                events::raw_event(
                     self.clock.now32(),
-                    crate::control::cluster::effects::lane_open_tap_event_id(),
+                    crate::session::cluster::effects::lane_open_tap_event_id(),
                 )
                 .with_arg0(sid.raw())
                 .with_arg1(lane.raw()),
             );
 
-            if attach_ready_sid == Some(sid) {
-                self.topology.reset_lane(lane);
-                self.state_snapshots.reset_lane(lane);
-                self.reset_lane_recycled_state(lane);
-            } else {
-                self.r#gen.reset_lane(lane);
-                self.state_snapshots.reset_lane(lane);
-                self.reset_lane_recycled_state(lane);
-            }
+            self.reset_lane_recycled_state(lane);
         }
         Ok(())
     }
@@ -101,7 +72,7 @@ where
         role: u8,
         role_count: u8,
         active_leases: &'a Cell<u32>,
-    ) -> Result<EpochPortGuard<'a, T, U, C>, RendezvousError>
+    ) -> Result<(Port<'a, T>, LaneGuard<'a, T, C>), RendezvousError>
     where
         'rv: 'a,
     {
@@ -112,7 +83,6 @@ where
             transport: &self.transport,
             tap: self.tap(),
             clock: &self.clock,
-            loops: &self.loops,
             routes: &self.routes,
             slab: self.slab,
             image_frontier: core::ptr::addr_of!(self.image_frontier),
@@ -125,7 +95,6 @@ where
             rv_id: self.id,
             tx,
             rx,
-            _epoch: PhantomData,
         });
         let guard =
             LaneGuard::new_detached((self as *const Self).cast::<()>(), lane, active_leases);
@@ -133,6 +102,6 @@ where
     }
 
     // ============================================================================
-    // Capability methods
+    // Port witness methods
     // ============================================================================
 }

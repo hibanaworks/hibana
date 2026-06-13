@@ -168,7 +168,7 @@ for name, maximum in budget.items():
         sys.exit(1)
 PY
 else
-  echo "fixed snapshot thumb budget check skipped by explicit override; worktree regression gate still runs"
+  echo "fixed snapshot thumb budget check skipped by explicit override; worktree size snapshot still runs"
 fi
 
 echo "== final-form future/layout sizes =="
@@ -333,7 +333,7 @@ write_protocol_artifact_source() {
 #![no_main]
 
 use core::panic::PanicInfo;
-use hibana::{g, integration::program::{project, RoleProgram}};
+use hibana::{g, runtime::program::{project, RoleProgram}};
 use hibana::g::Msg;
 
 include!("final_form_protocol_matrix.rs");
@@ -626,7 +626,7 @@ for name in sorted(expected):
     full_ladder_floor = row["full_bucket_floor_bytes"] * selected_bucket_count
     if rodata >= full_ladder_floor:
         print(
-            f"final-form measurement violation: {name} rodata={rodata} is compatible with retaining every bucket ladder entry",
+            f"final-form measurement violation: {name} rodata={rodata} still retains every bucket ladder entry",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -764,11 +764,11 @@ if sram_headroom < min_sram_headroom:
     sys.exit(1)
 PY
 else
-  echo "fixed snapshot runtime budget check skipped by explicit override; worktree regression gate still runs"
+  echo "fixed snapshot runtime budget check skipped by explicit override; worktree size snapshot still runs"
 fi
 
-if [[ "${HIBANA_SKIP_WORKTREE_SIZE_REGRESSION:-0}" != "1" ]]; then
-  echo "== final-form worktree size regression =="
+if [[ "${HIBANA_SKIP_WORKTREE_SIZE_SNAPSHOT:-0}" != "1" ]]; then
+  echo "== final-form worktree size snapshot =="
   HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1 \
     bash "${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh"
 fi

@@ -37,8 +37,8 @@ run_stable_gate "surface hygiene" \
 if [[ "${RUN_SURFACE_TESTS}" -eq 1 ]]; then
   run_stable_gate "root surface" \
     cargo +"${TOOLCHAIN}" test -p hibana --test root_surface --features std
-  run_stable_gate "integration surface" \
-    cargo +"${TOOLCHAIN}" test -p hibana --test integration_surface --features std
+  run_stable_gate "runtime surface" \
+    cargo +"${TOOLCHAIN}" test -p hibana --test runtime_surface --features std
   run_stable_gate "public surface guards" \
     cargo +"${TOOLCHAIN}" test -p hibana --test public_surface_guards --features std
   run_stable_gate "docs surface" \

@@ -2,9 +2,8 @@
 
 use super::super::frontier::FrontierKind;
 use super::first_recv_dispatch::FirstRecvDispatchCache;
-use crate::control::cap::mint::CapShot;
 use crate::eff::EffIndex;
-use crate::global::compiled::images::ControlSemanticKind;
+use crate::global::compiled::images::EventSemanticKind;
 use crate::global::const_dsl::{ResolverMode, ScopeId};
 use crate::global::typestate::{RecvMeta, StateIndex, state_index_to_usize};
 
@@ -46,6 +45,44 @@ impl FrontierObservationDomain {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub(in crate::endpoint::kernel) struct CachedRouteArm(u8);
+
+impl CachedRouteArm {
+    const NONE: u8 = u8::MAX;
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn none() -> Self {
+        Self(Self::NONE)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn some(arm: u8) -> Self {
+        if arm == Self::NONE {
+            crate::invariant();
+        }
+        Self(arm)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn from_option(arm: Option<u8>) -> Self {
+        match arm {
+            Some(arm) => Self::some(arm),
+            None => Self::none(),
+        }
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn as_option(self) -> Option<u8> {
+        if self.0 == Self::NONE {
+            None
+        } else {
+            Some(self.0)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::endpoint::kernel) struct CachedRecvMeta {
     pub(in crate::endpoint::kernel) cursor_index: StateIndex,
     pub(in crate::endpoint::kernel) eff_index: EffIndex,
@@ -53,14 +90,13 @@ pub(in crate::endpoint::kernel) struct CachedRecvMeta {
     pub(in crate::endpoint::kernel) label: u8,
     pub(in crate::endpoint::kernel) frame_label: u8,
     pub(in crate::endpoint::kernel) resource: Option<u8>,
-    pub(in crate::endpoint::kernel) semantic: ControlSemanticKind,
-    pub(in crate::endpoint::kernel) is_control: bool,
+    pub(in crate::endpoint::kernel) semantic: EventSemanticKind,
+    pub(in crate::endpoint::kernel) is_internal: bool,
     pub(in crate::endpoint::kernel) next: StateIndex,
     pub(in crate::endpoint::kernel) scope: ScopeId,
-    pub(in crate::endpoint::kernel) route_arm: u8,
+    pub(in crate::endpoint::kernel) route_arm: CachedRouteArm,
     pub(in crate::endpoint::kernel) is_choice_determinant: bool,
-    pub(in crate::endpoint::kernel) shot: Option<CapShot>,
-    pub(in crate::endpoint::kernel) policy: ResolverMode,
+    pub(in crate::endpoint::kernel) resolver: ResolverMode,
     pub(in crate::endpoint::kernel) lane: u8,
     pub(in crate::endpoint::kernel) flags: u8,
 }
@@ -75,14 +111,13 @@ impl CachedRecvMeta {
         label: 0,
         frame_label: 0,
         resource: None,
-        semantic: ControlSemanticKind::Other,
-        is_control: false,
+        semantic: EventSemanticKind::Other,
+        is_internal: false,
         next: StateIndex::MAX,
         scope: ScopeId::none(),
-        route_arm: u8::MAX,
+        route_arm: CachedRouteArm::none(),
         is_choice_determinant: false,
-        shot: None,
-        policy: ResolverMode::static_mode(),
+        resolver: ResolverMode::static_mode(),
         lane: 0,
         flags: 0,
     };
@@ -106,13 +141,12 @@ impl CachedRecvMeta {
                 frame_label: self.frame_label,
                 resource: self.resource,
                 semantic: self.semantic,
-                is_control: self.is_control,
+                is_internal: self.is_internal,
                 next: state_index_to_usize(self.next),
                 scope: self.scope,
-                route_arm: (self.route_arm != u8::MAX).then_some(self.route_arm),
+                route_arm: self.route_arm.as_option(),
                 is_choice_determinant: self.is_choice_determinant,
-                shot: self.shot,
-                policy: self.policy,
+                resolver: self.resolver,
                 lane: self.lane,
             },
         ))

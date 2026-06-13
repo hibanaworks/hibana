@@ -189,8 +189,31 @@ impl LocalEventProgram {
     #[inline(always)]
     pub(crate) fn route_scope_linger(self, scope_id: ScopeId) -> bool {
         self.route_scope_slot(scope_id)
-            .map(|slot| self.rows().route_scope_linger_by_slot(slot))
-            .unwrap_or(false)
+            .is_some_and(|slot| self.rows().route_scope_linger_by_slot(slot))
+    }
+
+    #[inline(always)]
+    pub(crate) fn loop_scope_row_by_slot(self, slot: usize) -> Option<(ScopeId, LocalEventRowSet)> {
+        let row = self.rows().loop_scope_row(slot)?;
+        let scope = row.scope()?;
+        let events = LocalEventRowSet::from_packed(row.event_row())?;
+        Some((scope, events))
+    }
+
+    #[inline(always)]
+    pub(crate) fn loop_scope_row(self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
+        if scope_id.is_none() || !matches!(scope_id.kind(), ScopeKind::Loop) {
+            return None;
+        }
+        let target = scope_id.local_ordinal();
+        let mut slot = 0usize;
+        while let Some((scope, row)) = self.loop_scope_row_by_slot(slot) {
+            if scope.local_ordinal() == target {
+                return Some(row);
+            }
+            slot += 1;
+        }
+        None
     }
 
     #[inline(always)]
@@ -355,6 +378,11 @@ impl LocalEventRowSet {
     pub(crate) const fn end(self) -> usize {
         self.end as usize
     }
+
+    #[inline(always)]
+    pub(crate) const fn len(self) -> usize {
+        self.end() - self.start()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -381,7 +409,7 @@ impl LocalEventRow {
         self,
         eff_index: EffIndex,
         label: u8,
-        is_control: bool,
+        is_internal: bool,
         scope: ScopeId,
         route_arm: Option<u8>,
         lane: u8,
@@ -393,21 +421,21 @@ impl LocalEventRow {
             LocalAction::Send {
                 eff_index: row_eff,
                 label: row_label,
-                is_control: row_control,
+                is_internal: row_control,
                 ..
             }
             | LocalAction::Recv {
                 eff_index: row_eff,
                 label: row_label,
-                is_control: row_control,
+                is_internal: row_control,
                 ..
             }
             | LocalAction::Local {
                 eff_index: row_eff,
                 label: row_label,
-                is_control: row_control,
+                is_internal: row_control,
                 ..
-            } => row_eff == eff_index && row_label == label && row_control == is_control,
+            } => row_eff == eff_index && row_label == label && row_control == is_internal,
             LocalAction::Terminate => false,
         }
     }

@@ -1,4 +1,4 @@
-//! Offer preview state and rollback ownership.
+//! Offer preview state and restore ownership.
 
 use super::ingress::OfferFrontierFacts;
 use super::{OfferProgressState, OfferScopeSelection, ResolvePendingState};
@@ -113,12 +113,12 @@ pub(super) enum OfferExecution<'a> {
     },
 }
 
-pub(in crate::endpoint::kernel) struct OfferRollbackItems<'r> {
+pub(in crate::endpoint::kernel) struct OfferDetachedIngress<'r> {
     pub(in crate::endpoint::kernel) carried_transport_payload: Option<lane_port::PreambleFrame<'r>>,
     pub(in crate::endpoint::kernel) stage_transport_payload: Option<lane_port::PreambleFrame<'r>>,
 }
 
-impl OfferRollbackItems<'_> {
+impl OfferDetachedIngress<'_> {
     #[inline]
     pub(in crate::endpoint::kernel) fn discard_terminal(&mut self) {
         if let Some(payload) = self.carried_transport_payload.take() {
@@ -157,14 +157,16 @@ impl<'r> OfferState<'r> {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn take_rollback_items(&mut self) -> OfferRollbackItems<'r> {
+    pub(in crate::endpoint::kernel) fn take_detached_ingress(
+        &mut self,
+    ) -> OfferDetachedIngress<'r> {
         let carried_transport_payload = self.take_carried_ingress().into_transport();
-        let mut items = OfferRollbackItems {
+        let mut items = OfferDetachedIngress {
             carried_transport_payload,
             stage_transport_payload: None,
         };
         match core::mem::replace(&mut self.execution, OfferExecution::Uninitialized) {
-            OfferExecution::Uninitialized | OfferExecution::Selecting { .. } => {}
+            OfferExecution::Uninitialized | OfferExecution::Selecting { .. } => return items,
             OfferExecution::Collecting { stage, .. } => {
                 items.stage_transport_payload = stage.ingress.into_transport();
             }
@@ -177,7 +179,7 @@ impl<'r> OfferState<'r> {
 
     #[inline]
     pub(in crate::endpoint::kernel) fn discard_terminal(&mut self) {
-        let mut rollback = self.take_rollback_items();
-        rollback.discard_terminal();
+        let mut detached = self.take_detached_ingress();
+        detached.discard_terminal();
     }
 }

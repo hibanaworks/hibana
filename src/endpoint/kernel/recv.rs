@@ -4,24 +4,17 @@ use core::task::Poll;
 
 use super::{
     core::{
-        CommitDelta, CursorEndpoint, LoopCommitRow, PreparedCommitDelta, RecvRuntimeDesc,
+        CommitDelta, CursorEndpoint, PreparedCommitDelta, RecvRuntimeDesc,
         prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     },
     lane_port,
 };
 use crate::{
-    control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
-    global::{
-        ControlDesc,
-        typestate::{
-            LoopMetadata, LoopRole, RecvMeta, ResidentLaneStepError, StateIndex,
-            state_index_to_usize,
-        },
-    },
+    global::typestate::{CursorInvariantError, StateIndex, state_index_to_usize},
     observe::ids,
-    policy_runtime::PolicySlot,
-    runtime::{config::Clock, consts::LabelUniverse},
+    resolver_audit::ResolverSlot,
+    runtime_core::config::Clock,
     transport::{
         Transport,
         trace::TapFrameMeta,
@@ -90,58 +83,14 @@ pub(crate) struct RecvDescriptor {
     pub(crate) lane_wire: u8,
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
-    fn recv_loop_ack_row(&self, meta: RecvMeta) -> RecvResult<LoopCommitRow> {
-        if !meta.semantic.is_loop() {
-            return Ok(LoopCommitRow::EMPTY);
-        }
-        let Some(LoopMetadata {
-            scope: scope_id,
-            controller,
-            target,
-            role,
-            ..
-        }) = self.cursor.loop_metadata_inner()
-        else {
-            return Ok(LoopCommitRow::EMPTY);
-        };
-        if role != LoopRole::Target || target != ROLE {
-            return Err(RecvError::PhaseInvariant);
-        }
-        if meta.peer != controller {
-            return Err(RecvError::PeerMismatch {
-                expected: controller,
-                actual: meta.peer,
-            });
-        }
-        let lane_idx = meta.lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let idx = Self::loop_index(scope_id).ok_or(RecvError::PhaseInvariant)?;
-        let port = self.port_for_lane(lane_idx);
-        let lane = port.lane();
-        Ok(LoopCommitRow::ack(
-            scope_id,
-            idx,
-            meta.lane,
-            ROLE,
-            port.loop_table().has_decision(lane, idx),
-        ))
-    }
-
     fn prepare_recv_descriptor(
         &mut self,
         target_label: u8,
-        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> RecvResult<PreparedRecv> {
         let idx = self
@@ -162,23 +111,17 @@ where
                 actual: target_label,
             });
         }
-        if let Some(arm) = meta.route_arm {
-            if let Some(selected) = self.selected_arm_for_scope(meta.scope)
-                && selected != arm
-            {
-                return Err(RecvError::PhaseInvariant);
-            }
+        if let Some(arm) = meta.route_arm
+            && let Some(selected) = self.selected_arm_for_scope(meta.scope)
+            && selected != arm
+        {
+            return Err(RecvError::PhaseInvariant);
         }
         if self
             .cursor
             .event_enabled(
                 idx,
-                meta.eff_index,
-                meta.label,
-                meta.is_control,
-                meta.scope,
-                meta.route_arm,
-                meta.lane,
+                crate::global::typestate::EventCommitMeta::from(meta),
                 |scope| self.selected_arm_for_scope(scope),
             )
             .is_err()
@@ -198,10 +141,9 @@ where
         let runtime = RecvRuntimeDesc::new(
             target_label,
             crate::transport::FrameLabel::new(meta.frame_label),
-            expects_control,
             accepts_empty_payload,
         );
-        if meta.is_control != runtime.expects_control() {
+        if meta.is_internal {
             return Err(RecvError::PhaseInvariant);
         }
         Ok(PreparedRecv {
@@ -220,11 +162,13 @@ where
         let frame = match self.poll_accepted_transport_frame(
             pending_recv,
             desc.lane_idx,
-            desc.sid_raw,
-            desc.lane_wire,
-            desc.meta.peer,
-            ROLE,
-            desc.meta.frame_label,
+            lane_port::FrameExpectation {
+                session_raw: desc.sid_raw,
+                lane_wire: desc.lane_wire,
+                source_role: desc.meta.peer,
+                peer_role: ROLE,
+                label: desc.meta.frame_label,
+            },
             cx,
         ) {
             Poll::Pending => return Poll::Pending,
@@ -251,7 +195,6 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
-        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let meta = desc.meta;
@@ -259,7 +202,7 @@ where
             payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
-        if meta.is_control != erased.expects_control() {
+        if meta.is_internal {
             payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
@@ -271,19 +214,13 @@ where
         if let Err(err) = validate(payload) {
             return Err(RecvError::Codec(err));
         }
-        self.validate_inbound_wire_control(desc, control, payload)?;
         let enabled = match self.cursor.event_enabled(
             state_index_to_usize(desc.cursor_index),
-            meta.eff_index,
-            meta.label,
-            meta.is_control,
-            meta.scope,
-            meta.route_arm,
-            meta.lane,
+            crate::global::typestate::EventCommitMeta::from(meta),
             |scope| self.selected_arm_for_scope(scope),
         ) {
             Ok(enabled) => enabled,
-            Err(ResidentLaneStepError) => {
+            Err(CursorInvariantError::INVARIANT) => {
                 return Err(RecvError::PhaseInvariant);
             }
         };
@@ -323,16 +260,10 @@ where
             route_rows,
             enabled.cursor_after(),
             enabled.progress_step(),
-        )
-        .with_loop_row(match self.recv_loop_ack_row(meta) {
-            Ok(row) => row,
-            Err(err) => {
-                return Err(err);
-            }
-        });
+        );
         let delta = match self.prepare_commit_delta(delta) {
             Ok(delta) => delta,
-            Err(ResidentLaneStepError) => {
+            Err(CursorInvariantError::INVARIANT) => {
                 return Err(RecvError::PhaseInvariant);
             }
         };
@@ -352,16 +283,16 @@ where
         } = plan;
         let meta = desc.meta;
 
-        self.emit_endpoint_policy_audit(
-            PolicySlot::EndpointRx,
+        self.emit_endpoint_resolver_audit(
+            ResolverSlot::EndpointRx,
             ids::ENDPOINT_RECV,
             desc.sid_raw,
-            Self::endpoint_policy_args(
-                crate::control::types::Lane::new(meta.lane as u32),
+            Self::endpoint_resolver_args(
+                crate::session::types::Lane::new(meta.lane as u32),
                 meta.label,
                 FrameFlags::empty(),
             ),
-            crate::control::types::Lane::new(meta.lane as u32),
+            crate::session::types::Lane::new(meta.lane as u32),
         );
 
         let logical_meta = TapFrameMeta::new(
@@ -372,7 +303,7 @@ where
             FrameFlags::empty(),
         );
         let scope_trace = self.scope_trace(meta.scope);
-        let event_id = if meta.is_control {
+        let event_id = if meta.is_internal {
             ids::ENDPOINT_CONTROL
         } else {
             ids::ENDPOINT_RECV
@@ -388,32 +319,27 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
-        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        let plan = self.build_recv_commit_plan(desc, payload_source, erased, control, validate)?;
+        let plan = self.build_recv_commit_plan(desc, payload_source, erased, validate)?;
         let payload = self.publish_recv_commit_plan(plan)?;
         Ok(payload)
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint> super::core::RecvKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> super::core::RecvKernelEndpoint<'r>
+    for CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     #[inline]
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
-        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> RecvResult<PreparedRecv> {
-        self.prepare_recv_descriptor(label, expects_control, accepts_empty_payload)
+        self.prepare_recv_descriptor(label, accepts_empty_payload)
     }
 
     #[inline]
@@ -434,9 +360,8 @@ where
         desc: RecvDescriptor,
         payload_source: RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
-        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_recv_payload(desc, payload_source, erased, control, validate)
+        self.finish_recv_payload(desc, payload_source, erased, validate)
     }
 }

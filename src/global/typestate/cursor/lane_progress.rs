@@ -1,6 +1,6 @@
 use super::{
-    CursorRefresh, EVENT_CURSOR_NO_STATE, EventCursor, LocalAction, RelocatableResidentLaneStep,
-    ResidentLaneStep, ResidentLaneStepError, StateIndex, state_index_to_usize,
+    CursorInvariantError, CursorRefresh, EVENT_CURSOR_NO_STATE, EventCursor, LocalAction,
+    RelocatableResidentLaneStep, ResidentLaneStep, StateIndex, state_index_to_usize,
 };
 impl EventCursor {
     /// Find a pending lane-head event with the given label.
@@ -134,9 +134,9 @@ impl EventCursor {
         &self,
         lane_idx: usize,
         step_idx: usize,
-    ) -> Result<(usize, u16), ResidentLaneStepError> {
+    ) -> Result<(usize, u16), CursorInvariantError> {
         if lane_idx >= self.logical_lane_count() || step_idx >= self.local_steps_len() {
-            return Err(ResidentLaneStepError);
+            return Err(CursorInvariantError::INVARIANT);
         }
         let mut row_idx = 0usize;
         while self.machine().resident_row_min_start(row_idx).is_some() {
@@ -145,7 +145,7 @@ impl EventCursor {
             }
             row_idx += 1;
         }
-        Err(ResidentLaneStepError)
+        Err(CursorInvariantError::INVARIANT)
     }
 
     fn event_lane_step_matches(&self, step_idx: usize, lane_idx: usize) -> bool {
@@ -170,18 +170,19 @@ impl EventCursor {
         &self,
         idx: usize,
         lane_idx: usize,
-    ) -> Result<RelocatableResidentLaneStep, ResidentLaneStepError> {
+    ) -> Result<RelocatableResidentLaneStep, CursorInvariantError> {
         if lane_idx >= self.logical_lane_count() || lane_idx > u8::MAX as usize {
-            return Err(ResidentLaneStepError);
+            return Err(CursorInvariantError::INVARIANT);
         }
         let target_state = StateIndex::from_usize(idx);
         let mut step_idx = 0usize;
         while step_idx < self.local_steps_len() {
             if self.machine().state_for_step_index(step_idx) == Some(target_state) {
                 if !self.event_lane_step_matches(step_idx, lane_idx) {
-                    return Err(ResidentLaneStepError);
+                    return Err(CursorInvariantError::INVARIANT);
                 }
-                let step_idx_u16 = u16::try_from(step_idx).map_err(|_| ResidentLaneStepError)?;
+                let step_idx_u16 =
+                    u16::try_from(step_idx).map_err(|_| CursorInvariantError::INVARIANT)?;
                 return Ok(RelocatableResidentLaneStep(ResidentLaneStep {
                     step_idx: step_idx_u16,
                     lane: lane_idx as u8,
@@ -189,7 +190,7 @@ impl EventCursor {
             }
             step_idx += 1;
         }
-        Err(ResidentLaneStepError)
+        Err(CursorInvariantError::INVARIANT)
     }
 
     #[inline(always)]
@@ -214,6 +215,15 @@ impl EventCursor {
     ) -> CursorRefresh {
         let target = target.0;
         let lane_idx = target.lane as usize;
+        let roll_reentry = if self.local_event_done(target.step_idx as usize)
+            && let Some(scope) =
+                self.roll_reentry_scope_for_step(RelocatableResidentLaneStep(target))
+        {
+            self.clear_roll_scope_events_for_reentry(scope);
+            true
+        } else {
+            false
+        };
         let Ok((row_idx, ordinal)) =
             self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
         else {
@@ -222,7 +232,7 @@ impl EventCursor {
         self.mark_local_event_done(target.step_idx as usize);
         let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
         let next = usize::from(ordinal) + 1;
-        if next > self.lane_cursors()[lane_idx] as usize {
+        if roll_reentry || next > self.lane_cursors()[lane_idx] as usize {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(next);
             self.refresh_current_step_label_code(lane_idx);
         }

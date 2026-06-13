@@ -3,19 +3,15 @@ use super::super::super::frontier::{
     frontier_global_observed_state_ptr_from_storage,
 };
 use super::{
-    ActiveEntrySet, CursorEndpoint, EpochTable, FrontierKind, FrontierObservationDomain,
-    FrontierObservationKey, LabelUniverse, MintConfigMarker, ObservedEntrySet,
-    OfferEntryObservedState, ScopeId, Transport, cached_offer_entry_observed_state,
-    checked_state_index, state_index_to_usize,
+    ActiveEntrySet, CursorEndpoint, FrontierKind, FrontierObservationDomain,
+    FrontierObservationKey, ObservedEntrySet, OfferEntryObservedState, ScopeId,
+    cached_offer_entry_observed_state, checked_state_index, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+use crate::transport::Transport;
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     pub(super) fn cached_active_entries_len(cached_key: FrontierObservationKey) -> usize {
@@ -50,9 +46,7 @@ where
         let mut remaining_slots = active_entries.occupancy_mask();
         let mut inserted = None;
         while let Some(slot_idx) = Self::next_slot_in_mask(&mut remaining_slots) {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                return None;
-            };
+            let entry_idx = active_entries.entry_at(slot_idx)?;
             if Self::cached_active_entries_contains(cached_key, entry_idx) {
                 continue;
             }
@@ -64,7 +58,7 @@ where
         inserted
     }
 
-    pub(in crate::endpoint::kernel) fn structural_removed_entry_idx(
+    pub(in crate::endpoint::kernel) fn structural_detached_entry_idx(
         active_entries: ActiveEntrySet,
         cached_key: FrontierObservationKey,
     ) -> Option<usize> {
@@ -74,20 +68,20 @@ where
             return None;
         }
         let mut slot_idx = 0usize;
-        let mut removed = None;
+        let mut detached_entry = None;
         while slot_idx < cached_len {
             let entry_idx = state_index_to_usize(cached_key.entry_state(slot_idx));
             if active_entries.slot_for_entry(entry_idx).is_some() {
                 slot_idx += 1;
                 continue;
             }
-            if removed.is_some() {
+            if detached_entry.is_some() {
                 return None;
             }
-            removed = Some(entry_idx);
+            detached_entry = Some(entry_idx);
             slot_idx += 1;
         }
-        removed
+        detached_entry
     }
 
     pub(in crate::endpoint::kernel) fn structural_replaced_entry_idx(
@@ -102,9 +96,7 @@ where
         let mut remaining_slots = active_entries.occupancy_mask();
         let mut inserted = None;
         while let Some(slot_idx) = Self::next_slot_in_mask(&mut remaining_slots) {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                return None;
-            };
+            let entry_idx = active_entries.entry_at(slot_idx)?;
             if Self::cached_active_entries_contains(cached_key, entry_idx) {
                 continue;
             }
@@ -164,24 +156,24 @@ where
     pub(in crate::endpoint::kernel) fn move_slot_in_array<V: Copy>(
         array: &mut [V],
         len: usize,
-        old_slot_idx: usize,
+        source_slot_idx: usize,
         new_slot_idx: usize,
     ) {
         if len > array.len() {
             crate::invariant();
         }
-        if old_slot_idx == new_slot_idx || old_slot_idx >= len || new_slot_idx >= len {
+        if source_slot_idx == new_slot_idx || source_slot_idx >= len || new_slot_idx >= len {
             return;
         }
-        let value = array[old_slot_idx];
-        if old_slot_idx < new_slot_idx {
-            let mut slot_idx = old_slot_idx;
+        let value = array[source_slot_idx];
+        if source_slot_idx < new_slot_idx {
+            let mut slot_idx = source_slot_idx;
             while slot_idx < new_slot_idx {
                 array[slot_idx] = array[slot_idx + 1];
                 slot_idx += 1;
             }
         } else {
-            let mut slot_idx = old_slot_idx;
+            let mut slot_idx = source_slot_idx;
             while slot_idx > new_slot_idx {
                 array[slot_idx] = array[slot_idx - 1];
                 slot_idx -= 1;
@@ -259,9 +251,10 @@ where
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
-        let parallel_root = self
-            .offer_entry_parallel_root(entry_idx)
-            .unwrap_or(ScopeId::none());
+        let parallel_root = match self.offer_entry_parallel_root(entry_idx) {
+            Some(root) => root,
+            None => ScopeId::none(),
+        };
         let domain = if parallel_root.is_none() {
             FrontierObservationDomain::global()
         } else {
@@ -318,8 +311,10 @@ where
         };
         if observation_key
             .slot(observation_slot_idx)
-            .route_change_epoch
-            != self.port_for_lane(representative_lane).route_change_epoch()
+            .route_change_generation
+            != self
+                .port_for_lane(representative_lane)
+                .route_change_generation()
         {
             return false;
         }
@@ -360,10 +355,10 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn advance_frontier_observation_epoch(&mut self) {
+    pub(in crate::endpoint::kernel) fn advance_frontier_observation_generation(&mut self) {
         let next = self
             .global_frontier_observed_state()
-            .observation_epoch
+            .observation_generation
             .wrapping_add(1);
         if next == 0 {
             if self.frontier_state.global_frontier_scratch_initialized {
@@ -379,13 +374,14 @@ where
                 unsafe {
                     frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout).write(
                         GlobalFrontierObservedState {
-                            observation_epoch: 1,
+                            observation_generation: 1,
                             ..GlobalFrontierObservedState::EMPTY
                         },
                     );
                 }
             } else {
-                self.global_frontier_observed_state_mut().observation_epoch = 1;
+                self.global_frontier_observed_state_mut()
+                    .observation_generation = 1;
             }
             let len = self.frontier_state.root_frontier_len();
             let mut idx = 0usize;
@@ -399,7 +395,8 @@ where
                 idx += 1;
             }
         } else {
-            self.global_frontier_observed_state_mut().observation_epoch = next;
+            self.global_frontier_observed_state_mut()
+                .observation_generation = next;
         }
     }
 

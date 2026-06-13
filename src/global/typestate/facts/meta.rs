@@ -1,8 +1,7 @@
 use crate::{
-    control::cap::mint::CapShot,
     eff::EffIndex,
     global::{
-        compiled::images::ControlSemanticKind,
+        compiled::images::EventSemanticKind,
         const_dsl::{ResolverMode, ScopeId},
     },
 };
@@ -17,53 +16,65 @@ pub struct SendMeta {
     pub label: u8,
     pub frame_label: u8,
     pub resource: Option<u8>,
-    pub semantic: ControlSemanticKind,
-    pub is_control: bool,
+    pub semantic: EventSemanticKind,
+    pub is_internal: bool,
     pub next: usize,
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
-    pub shot: Option<CapShot>,
-    policy: ResolverMode,
+    pub(crate) resolver: ResolverMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
 }
 
 impl SendMeta {
+    #[inline(always)]
+    pub(crate) const fn resolver(&self) -> ResolverMode {
+        self.resolver
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EventCommitMeta {
+    pub(crate) eff_index: EffIndex,
+    pub(crate) label: u8,
+    pub(crate) is_internal: bool,
+    pub(crate) scope: ScopeId,
+    pub(crate) route_arm: Option<u8>,
+    pub(crate) lane: u8,
+}
+
+impl EventCommitMeta {
+    #[inline(always)]
     pub(crate) const fn new(
         eff_index: EffIndex,
-        peer: u8,
         label: u8,
-        frame_label: u8,
-        resource: Option<u8>,
-        semantic: ControlSemanticKind,
-        is_control: bool,
-        next: usize,
+        is_internal: bool,
         scope: ScopeId,
         route_arm: Option<u8>,
-        shot: Option<CapShot>,
-        policy: ResolverMode,
         lane: u8,
     ) -> Self {
         Self {
             eff_index,
-            peer,
             label,
-            frame_label,
-            resource,
-            semantic,
-            is_control,
-            next,
+            is_internal,
             scope,
             route_arm,
-            shot,
-            policy,
             lane,
         }
     }
+}
 
+impl From<SendMeta> for EventCommitMeta {
     #[inline(always)]
-    pub(crate) const fn policy(&self) -> ResolverMode {
-        self.policy
+    fn from(meta: SendMeta) -> Self {
+        Self::new(
+            meta.eff_index,
+            meta.label,
+            meta.is_internal,
+            meta.scope,
+            meta.route_arm,
+            meta.lane,
+        )
     }
 }
 
@@ -75,17 +86,30 @@ pub(crate) struct RecvMeta {
     pub label: u8,
     pub frame_label: u8,
     pub resource: Option<u8>,
-    pub semantic: ControlSemanticKind,
-    pub is_control: bool,
+    pub semantic: EventSemanticKind,
+    pub is_internal: bool,
     pub next: usize,
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
     /// Whether this recv is a choice determinant (first recv of a route arm).
     pub is_choice_determinant: bool,
-    pub shot: Option<CapShot>,
-    pub policy: ResolverMode,
+    pub resolver: ResolverMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
+}
+
+impl From<RecvMeta> for EventCommitMeta {
+    #[inline(always)]
+    fn from(meta: RecvMeta) -> Self {
+        Self::new(
+            meta.eff_index,
+            meta.label,
+            meta.is_internal,
+            meta.scope,
+            meta.route_arm,
+            meta.lane,
+        )
+    }
 }
 
 /// Metadata for a local action derived from typestate.
@@ -95,19 +119,14 @@ pub(crate) struct LocalMeta {
     pub label: u8,
     pub frame_label: u8,
     pub resource: Option<u8>,
-    pub semantic: ControlSemanticKind,
-    pub is_control: bool,
+    pub semantic: EventSemanticKind,
+    pub is_internal: bool,
     pub next: usize,
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
-    pub shot: Option<CapShot>,
-    pub policy: ResolverMode,
+    pub resolver: ResolverMode,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
-}
-
-pub(crate) const fn as_state_index(idx: usize) -> StateIndex {
-    StateIndex::from_usize(idx)
 }
 
 pub(crate) const fn state_index_to_usize(index: StateIndex) -> usize {

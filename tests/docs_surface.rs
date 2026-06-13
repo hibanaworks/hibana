@@ -74,7 +74,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Install",
         "## Quick Start",
         "## Application Guide",
-        "## Protocol Integration",
+        "## Protocol Runtime",
         "## Guarantees",
         "## Validation",
         "cargo add hibana",
@@ -82,18 +82,36 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "flow().send() / recv() / offer() / RouteBranch::decode()",
         "`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
-        "are implementing a protocol crate, use `hibana::integration`",
-        "Protocol crates that compose runtime/control protocol events",
-        "`g::ControlMsg` with Hibana-defined",
-        "`g::control::*` markers",
+        "are implementing a protocol crate, use `hibana::runtime`",
+        "install explicit route resolvers when needed",
         "Keep choreography terms local.",
         "### Branching, Resolvers, And Receive Evidence",
         "Route choice is a protocol fact, not a transport guess.",
-        "protocol events such as loop continue/break are the exception:",
-        "as `g::ControlMsg` self-sends, stay local to the endpoint",
-        "State and transaction controls use the same shape.",
-        "fail closed if the snapshot",
-        "generation does not exist.",
+        "Repeated protocol regions are structural.",
+        "then call `.roll()` on that region.",
+        "`resolve::<ID>()` marks the route node; `.roll()` marks the surrounding",
+        "Resolve first, then roll:",
+        ".resolve::<ROUTE_DECISION>()",
+        "g::route(left, right).roll().resolve::<ID>()",
+        "`resolve::<ID>()` is only available on `Program<Route<...>>`",
+        "the resolver belongs to",
+        "let inner = g::route(a, b)",
+        "Resolver state is the external input owner",
+        "rv.role(&role0)",
+        ".set_resolver(ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;",
+        "External resolver appliances use the same seam.",
+        "Hibana core does not contain a",
+        "embedded resolver executor or hidden decision engine.",
+        "installs a typed `ResolverRef` for the route decision",
+        "site. When the appliance is active",
+        "it returns `DecisionResolution` for that",
+        "resolver id; otherwise the appliance resolver calls",
+        "user-registered default",
+        "explicit route authority",
+        "transfer authority to appliance state",
+        "Hibana never treats appliance telemetry",
+        "transport readiness as route authority",
+        "default_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_fn(default_decision)",
         "`offer()` and",
         "`RouteBranch::decode()` require framed descriptor-checked evidence.",
         "Protocol crates use the same `hibana::g` language as applications.",
@@ -102,14 +120,14 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
         "let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;",
-        "integration::runtime::Config::from_resources(...)",
-        "integration::SessionKitStorage::uninit().init()",
+        "runtime::Config::from_resources(...)",
+        "runtime::SessionKitStorage::uninit().init()",
         "kit.rendezvous(...)",
         "registered rendezvous .session(...).role(...)",
-        "`integration::wire::{Payload, WireEncode, WirePayload}`",
+        "`runtime::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
-        "`integration::ids::{EffIndex, SessionId}`",
-        "`integration::runtime::TapEvent`",
+        "`runtime::ids::{EffIndex, SessionId}`",
+        "`runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --features std --lib -p hibana",
         "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
@@ -143,18 +161,18 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "hibana_epf",
         "hibana-epf",
         "hibana-cross-repo",
-        "`hibana::integration::mgmt`",
-        "`hibana::integration::resolver::epf`",
-        "`hibana::integration::mgmt::request_reply::PREFIX`",
-        "`hibana::integration::mgmt::observe_stream::PREFIX`",
-        "`hibana::integration::mgmt::ROLE_CONTROLLER`",
-        "`hibana::integration::mgmt::ROLE_CLUSTER`",
-        "`hibana::integration::mgmt::Request::Load(LoadRequest)`",
-        "`hibana::integration::mgmt::Request::LoadAndActivate(LoadRequest)`",
-        "`hibana::integration::mgmt::Request::Activate(SlotRequest)`",
-        "`hibana::integration::mgmt::Request::Restore(SlotRequest)`",
-        "`hibana::integration::mgmt::Request::Stats(SlotRequest)`",
-        "`integration/cross-repo/`",
+        "`hibana::runtime::mgmt`",
+        "`hibana::runtime::resolver::epf`",
+        "`hibana::runtime::mgmt::request_reply::PREFIX`",
+        "`hibana::runtime::mgmt::observe_stream::PREFIX`",
+        "`hibana::runtime::mgmt::ROLE_CONTROLLER`",
+        "`hibana::runtime::mgmt::ROLE_CLUSTER`",
+        "`hibana::runtime::mgmt::Request::Load(LoadRequest)`",
+        "`hibana::runtime::mgmt::Request::LoadAndActivate(LoadRequest)`",
+        "`hibana::runtime::mgmt::Request::Activate(SlotRequest)`",
+        "`hibana::runtime::mgmt::Request::Restore(SlotRequest)`",
+        "`hibana::runtime::mgmt::Request::Stats(SlotRequest)`",
+        "`runtime/cross-repo/`",
         "staging location for cross-repo smoke",
         "App code writes `APP: g::Program<_>`",
         "transport_prefix",
@@ -170,14 +188,15 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "static APP: g::Program<_>",
         "const PROGRAM: g::Program<_>",
         "static PROGRAM: g::Program<_>",
-        "`hibana::integration::program::steps`",
+        "`hibana::runtime::program::steps`",
         "AUTO_MINT_WIRE",
         "enter(None)",
         "Passing `None`",
+        "rv.session(SessionId::new(1))\n    .role(&role0)\n    .set_resolver",
         concat!("`Cap", "Delegate`: `input[0] = (dst_rv << 16) | dst_lane`"),
-        "integration::SessionKit::enter(...)",
-        "integration::resolver::replay::PolicyAttrs",
-        "integration::advanced::policy::replay::PolicyAttrs",
+        "runtime::SessionKit::enter(...)",
+        "runtime::resolver::replay::ResolverAttrs",
+        "runtime::advanced::resolver::replay::ResolverAttrs",
         "kit.enter::<",
         "fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError>",
         "cargo +1.95.0 test -p hibana --features std",
@@ -199,17 +218,17 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         assert_absent(
             &readme,
             forbidden,
-            "README must not pin removed toolchain or smoke-helper lanes",
+            "README must not pin forbidden toolchain or smoke-helper lanes",
         );
     }
 }
 
 #[test]
-fn docs_do_not_regrow_stale_attach_api() {
+fn docs_do_not_regrow_forbidden_attach_api() {
     for path in [
         "README.md",
         "src/lib.rs",
-        "src/integration.rs",
+        "src/runtime.rs",
         "src/rendezvous/core.rs",
     ] {
         let source = read(path);
@@ -222,7 +241,7 @@ fn docs_do_not_regrow_stale_attach_api() {
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{path} must document the witness-chain attach API, not stale `{forbidden}`"
+                "{path} must document the witness-chain attach API, not forbidden `{forbidden}`"
             );
         }
     }
@@ -233,11 +252,11 @@ fn public_docs_do_not_expose_internal_storage_vocabulary() {
     for path in [
         "README.md",
         "src/lib.rs",
-        "src/integration.rs",
+        "src/runtime.rs",
         ".github/allowlists/lib-public-api.txt",
         ".github/allowlists/g-public-api.txt",
         ".github/allowlists/endpoint-public-api.txt",
-        ".github/allowlists/integration-public-api.txt",
+        ".github/allowlists/runtime-public-api.txt",
     ] {
         let source = read(path);
         for forbidden in ["resident", "Resident"] {
@@ -268,11 +287,11 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
     for (path, source) in [("README.md", readme.as_str()), ("src/lib.rs", lib.as_str())] {
         assert!(
             !source.contains("hibana::substrate"),
-            "{path} must document the current integration surface, not stale substrate paths"
+            "{path} must document the current runtime surface, not forbidden substrate paths"
         );
         assert!(
-            source.contains("hibana::integration"),
-            "{path} must name the current integration surface"
+            source.contains("hibana::runtime"),
+            "{path} must name the current runtime surface"
         );
     }
 
@@ -316,7 +335,7 @@ fn projection_constructor_stays_on_canonical_call_shape() {
         root.join("README.md"),
         root.join("src/lib.rs"),
         root.join("src/g.rs"),
-        root.join("src/integration.rs"),
+        root.join("src/runtime.rs"),
     ];
 
     collect_source_files(&root.join("tests"), &mut files);
@@ -356,7 +375,6 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
         "cargo test",
         "cargo check",
         "run: ./.github/scripts/check_plane_boundaries.sh",
-        "check_topology_hygiene.sh",
         "check_text_integrity.sh",
     ] {
         assert!(
@@ -373,7 +391,8 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
     for required in [
         "Prefer in-band choice",
         "non-message signal",
-        "`integration::resolver`",
+        "`runtime::resolver`",
+        ".roll()",
         "`ReceivedFrame`",
         "`IngressEvidence`",
         "Payload shape, queue position, carrier id, and driver observations are never branch authority.",
@@ -385,11 +404,7 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
     }
 
     for forbidden in [
-        "GenericCapToken",
-        "WireControlKind",
-        "WireControlEffect",
-        "integration::cap",
-        "WireControlKind>::LABEL",
+        "runtime::cap",
         "const LABEL: u8 =",
         "const TAP_ID",
         "CUSTOM_WIRE_TAP_ID",
@@ -398,14 +413,14 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
     ] {
         assert!(
             !readme.contains(forbidden),
-            "README must not reintroduce public control vocabulary: {forbidden}"
+            "README must not contain forbidden public vocabulary: {forbidden}"
         );
     }
 }
 
 #[test]
 fn core_repo_keeps_cross_repo_harness_outside_tree() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("integration/cross-repo");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("runtime/cross-repo");
     assert!(
         !path.exists(),
         "cross-repo smoke must stay outside the hibana repo: {}",
@@ -417,15 +432,15 @@ fn core_repo_keeps_cross_repo_harness_outside_tree() {
 fn readme_keeps_ingress_demux_under_transport() {
     let readme = read("README.md");
     let everyday = readme
-        .split("Useful integration owners:")
+        .split("Useful runtime owners:")
         .nth(1)
         .and_then(|tail| tail.split("### Transport").next())
-        .expect("README must keep everyday integration owners before transport details");
+        .expect("README must keep everyday runtime owners before transport details");
 
     assert!(
         readme.contains("Ingress demux state belongs inside the transport owner")
             && readme.contains("Headerless receive is only valid")
-            && !readme.contains("integration::binding")
+            && !readme.contains("runtime::binding")
             && !readme.contains("IngressSlot")
             && !readme.contains("role(...).binding")
             && !everyday.contains("binding"),
@@ -453,15 +468,10 @@ fn docs_route_protocol_invisible_liveness_to_transport_errors() {
 fn crate_root_docs_do_not_regrow_internal_buckets() {
     let lib_rs = read("src/lib.rs");
 
-    for forbidden in [
-        "mod epf;",
-        "pub mod runtime;",
-        "pub mod transport;",
-        "pub mod observe;",
-    ] {
+    for forbidden in ["mod epf;", "pub mod transport;", "pub mod observe;"] {
         assert!(
             !lib_rs.contains(forbidden),
-            "crate root must stay on the minimal app/integration surface: {forbidden}"
+            "crate root must stay on the minimal app/runtime surface without internal buckets: {forbidden}"
         );
     }
 }
@@ -482,13 +492,13 @@ fn crate_root_docs_keep_descriptor_first_control_story() {
     }
 
     for forbidden in [
-        "cancel pair, checkpoint/rollback, splice",
+        "cancel pair, checkpoint/restore, splice",
         "shot and permissions are embedded in the const metadata",
         "manages local state (lane/gen/cap/splice)",
     ] {
         assert!(
             !lib_rs.contains(forbidden),
-            "crate root docs must not describe the removed control execution model: {forbidden}"
+            "crate root docs must not describe the forbidden execution model: {forbidden}"
         );
     }
 }

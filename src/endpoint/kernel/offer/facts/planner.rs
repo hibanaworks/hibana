@@ -1,13 +1,12 @@
 use super::super::{
-    Clock, CursorEndpoint, EpochTable, LabelUniverse, MintConfigMarker, OfferScopeProfile,
-    OfferScopeSelection, RouteArmToken, ScopeArmMaterializationMeta, Transport,
+    Clock, CursorEndpoint, OfferScopeProfile, OfferScopeSelection, RouteArmToken,
+    ScopeArmMaterializationMeta, Transport,
     profile::{
-        OfferArmRecvEvidence, OfferAuthorityRole, OfferControllerCursorArm,
-        OfferControllerReadiness, OfferControllerSkipEvidence, OfferControllerSkipReadiness,
-        OfferCursorReadiness, OfferEarlyDecisionReadiness, OfferEntryPosition,
-        OfferMaterializationReadiness, OfferPassiveAckEvidence, OfferPassiveEvidence,
-        OfferPassiveReadiness, OfferPassiveReadySignal, OfferPassiveRecvEvidence,
-        OfferRouteScopeKind,
+        OfferArmRecvEvidence, OfferControllerCursorArm, OfferControllerSkipEvidence,
+        OfferControllerSkipReadiness, OfferCursorReadiness, OfferEarlyDecisionReadiness,
+        OfferEntryPosition, OfferMaterializationReadiness, OfferPassiveAckEvidence,
+        OfferPassiveEvidence, OfferPassiveReadiness, OfferPassiveReadySignal,
+        OfferPassiveRecvEvidence,
     },
 };
 use super::evidence::OfferIngressEvidence;
@@ -20,14 +19,10 @@ struct OfferIngressPlannerInput {
     cursor: OfferCursorReadiness,
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(super) fn offer_ingress_evidence(
         &mut self,
@@ -62,16 +57,17 @@ where
         &self,
         scope_id: crate::global::const_dsl::ScopeId,
     ) -> OfferScopeProfile {
-        let role = if self.cursor.is_route_controller(scope_id) {
-            OfferAuthorityRole::Controller
-        } else {
-            OfferAuthorityRole::Passive
-        };
-        let kind = match self.cursor.route_scope_controller_policy(scope_id) {
-            Some((policy, _, _, _)) if policy.is_dynamic() => OfferRouteScopeKind::Dynamic,
-            Some(_) | None => OfferRouteScopeKind::Static,
-        };
-        OfferScopeProfile::from_evidence(role, kind)
+        let is_controller = self.cursor.is_route_controller(scope_id);
+        let is_dynamic = self
+            .cursor
+            .route_scope_controller_resolver(scope_id)
+            .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
+        match (is_controller, is_dynamic) {
+            (true, true) => OfferScopeProfile::ControllerDynamic,
+            (true, false) => OfferScopeProfile::ControllerStatic,
+            (false, true) => OfferScopeProfile::PassiveDynamic,
+            (false, false) => OfferScopeProfile::PassiveStatic,
+        }
     }
 
     fn controller_static_ingress_evidence(
@@ -111,9 +107,7 @@ where
             entry: input.entry,
             cursor: input.cursor,
             early_decision: self.passive_early_decision_readiness(&input),
-            controller: OfferControllerReadiness {
-                skip: OfferControllerSkipReadiness::NeedsTransport,
-            },
+            controller: OfferControllerSkipReadiness::NeedsTransport,
             passive: self.passive_static_readiness(&input),
         }
     }
@@ -127,9 +121,7 @@ where
             entry: input.entry,
             cursor: input.cursor,
             early_decision: self.passive_early_decision_readiness(&input),
-            controller: OfferControllerReadiness {
-                skip: OfferControllerSkipReadiness::NeedsTransport,
-            },
+            controller: OfferControllerSkipReadiness::NeedsTransport,
             passive: self.passive_dynamic_readiness(&input),
         }
     }
@@ -137,21 +129,17 @@ where
     fn controller_static_readiness(
         &self,
         input: &OfferIngressPlannerInput,
-    ) -> OfferControllerReadiness {
+    ) -> OfferControllerSkipReadiness {
         let profile = OfferScopeProfile::ControllerStatic;
-        OfferControllerReadiness {
-            skip: profile.controller_skip_readiness(self.controller_skip_evidence(input)),
-        }
+        profile.controller_skip_readiness(self.controller_skip_evidence(input))
     }
 
     fn controller_dynamic_readiness(
         &self,
         input: &OfferIngressPlannerInput,
-    ) -> OfferControllerReadiness {
+    ) -> OfferControllerSkipReadiness {
         let profile = OfferScopeProfile::ControllerDynamic;
-        OfferControllerReadiness {
-            skip: profile.controller_skip_readiness(self.controller_skip_evidence(input)),
-        }
+        profile.controller_skip_readiness(self.controller_skip_evidence(input))
     }
 
     fn controller_skip_evidence(
@@ -180,15 +168,15 @@ where
         &self,
         input: &OfferIngressPlannerInput,
     ) -> OfferMaterializationReadiness {
-        match self.selected_arm_for_scope(input.selection.scope_id) {
-            Some(arm)
-                if self
-                    .arm_requires_materialization_ready_evidence(input.selection.scope_id, arm)
-                    && !self.scope_has_ready_arm(input.selection.scope_id, arm) =>
-            {
-                OfferMaterializationReadiness::Pending
-            }
-            Some(_) | None => OfferMaterializationReadiness::Ready,
+        let Some(arm) = self.selected_arm_for_scope(input.selection.scope_id) else {
+            return OfferMaterializationReadiness::Ready;
+        };
+        if self.arm_requires_materialization_ready_evidence(input.selection.scope_id, arm)
+            && !self.scope_has_ready_arm(input.selection.scope_id, arm)
+        {
+            OfferMaterializationReadiness::Pending
+        } else {
+            OfferMaterializationReadiness::Ready
         }
     }
 
@@ -261,19 +249,16 @@ where
         &self,
         input: &OfferIngressPlannerInput,
     ) -> OfferEarlyDecisionReadiness {
-        let decision = match input.preview_route_arm_selection {
-            Some(token)
-                if self
-                    .arm_recv_evidence(
-                        input.selection.scope_id,
-                        token.arm().as_u8(),
-                        input.materialization,
-                    )
-                    .is_recvless() =>
-            {
-                Some(token)
-            }
-            Some(_) | None => None,
+        let Some(token) = input.preview_route_arm_selection else {
+            return self.arm_decision_readiness(input, None);
+        };
+        let decision = match self.arm_recv_evidence(
+            input.selection.scope_id,
+            token.arm().as_u8(),
+            input.materialization,
+        ) {
+            OfferArmRecvEvidence::Recvless => Some(token),
+            OfferArmRecvEvidence::HasRecv => None,
         };
         self.arm_decision_readiness(input, decision)
     }

@@ -4,6 +4,19 @@ use super::super::{
 };
 use crate::global::typestate::{LocalConflict, PackedEventConflict};
 
+#[derive(Clone, Copy)]
+pub(super) struct RouteArmProjectionRowInput<'a> {
+    pub(super) markers: &'a [ScopeMarker],
+    pub(super) view_len: usize,
+    pub(super) route_slot: usize,
+    pub(super) route_scope: ScopeId,
+    pub(super) arm: u8,
+    pub(super) local_row: PackedLaneRange,
+    pub(super) lane_step_row: PackedLaneRange,
+    pub(super) arm_start: usize,
+    pub(super) arm_end: usize,
+}
+
 impl RoleLaneScratch {
     #[inline(always)]
     pub(super) const fn same_scope(left: ScopeId, right: ScopeId) -> bool {
@@ -373,45 +386,37 @@ impl RoleLaneScratch {
     #[inline(always)]
     pub(super) const fn push_route_arm_projection_row(
         &mut self,
-        markers: &[ScopeMarker],
-        view_len: usize,
-        route_slot: usize,
-        route_scope: ScopeId,
-        arm: u8,
-        local_row: PackedLaneRange,
-        lane_step_row: PackedLaneRange,
-        arm_start: usize,
-        arm_end: usize,
+        input: RouteArmProjectionRowInput<'_>,
     ) {
-        let row_idx = route_slot * 2 + arm as usize;
+        let row_idx = input.route_slot * 2 + input.arm as usize;
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route arm projection row overflow");
         }
         let child_delta = match Self::passive_arm_child_scope(
-            markers,
-            view_len,
-            route_scope,
-            arm,
-            arm_start,
-            arm_end,
+            input.markers,
+            input.view_len,
+            input.route_scope,
+            input.arm,
+            input.arm_start,
+            input.arm_end,
         ) {
             Some(child_scope) => {
-                if Self::same_scope(child_scope, route_scope) {
+                if Self::same_scope(child_scope, input.route_scope) {
                     panic!("passive route child scope must be a strict descendant");
                 }
-                let Some(child_slot) = Self::route_scope_slot_for_scope(markers, child_scope)
+                let Some(child_slot) = Self::route_scope_slot_for_scope(input.markers, child_scope)
                 else {
                     panic!("passive route child scope missing route row slot");
                 };
-                if child_slot <= route_slot {
+                if child_slot <= input.route_slot {
                     panic!("passive route child scope must follow parent route slot");
                 }
-                Some(child_slot - route_slot)
+                Some(child_slot - input.route_slot)
             }
             None => None,
         };
         self.route_arm_rows[row_idx] =
-            PackedRouteArmRow::new(local_row, child_delta, lane_step_row);
+            PackedRouteArmRow::new(input.local_row, child_delta, input.lane_step_row);
     }
 
     #[inline(always)]

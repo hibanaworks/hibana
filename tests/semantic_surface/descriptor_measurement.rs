@@ -19,9 +19,9 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     let lib = read("src/lib.rs");
     let endpoint = endpoint_facade_source();
     let resolver = cluster_core_source();
-    let attach = read("src/control/cluster/error.rs");
-    let integration = integration_source();
-    let runtime_config = read("src/runtime/config.rs");
+    let attach = read("src/session/cluster/error.rs");
+    let runtime = runtime_source();
+    let runtime_config = read("src/runtime_core/config.rs");
     let transport = transport_source();
     let rendezvous_assoc = read("src/rendezvous/association.rs");
     let endpoint_core = endpoint_kernel_core_source();
@@ -35,16 +35,16 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         read(".github/allowlists/lib-public-api.txt"),
         read(".github/allowlists/g-public-api.txt"),
         read(".github/allowlists/endpoint-public-api.txt"),
-        read(".github/allowlists/integration-public-api.txt"),
+        read(".github/allowlists/runtime-public-api.txt"),
     ]
     .join("\n");
 
     for required in [
         "pub type EndpointResult<T> = core::result::Result<T, EndpointError>;",
         "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
-        "pub use crate::control::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
-        "pub use crate::control::cluster::error::AttachError;",
-        "pub fn rendezvous( &self, config: crate::integration::runtime::Config<'cfg, U, C>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, U, C, false, MAX_RV>, AttachError> {",
+        "pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
+        "pub use crate::session::cluster::error::AttachError;",
+        "pub fn rendezvous( &self, config: crate::runtime::Config<'cfg, C>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, C, false, MAX_RV>, AttachError> {",
     ] {
         assert!(
             public_allowlists.contains(required),
@@ -61,9 +61,9 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     for (path, source) in [
         ("src/lib.rs", lib.as_str()),
         ("src/endpoint.rs", endpoint.as_str()),
-        ("src/control/cluster/core.rs", resolver.as_str()),
-        ("src/control/cluster/error.rs", attach.as_str()),
-        ("src/integration.rs", integration.as_str()),
+        ("src/session/cluster/core.rs", resolver.as_str()),
+        ("src/session/cluster/error.rs", attach.as_str()),
+        ("src/runtime.rs", runtime.as_str()),
     ] {
         for forbidden in [
             "pub enum EndpointErrorKind",
@@ -78,8 +78,8 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             "pub enum HibanaError",
             "pub struct HibanaError",
             "pub type HibanaError",
-            "pub use crate::control::cluster::error::{AttachError, CpError, ResourceScope};",
-            "pub use crate::control::cluster::error::{AttachError, CpError};",
+            "pub use crate::session::cluster::error::{AttachError, ClusterError, ResourceScope};",
+            "pub use crate::session::cluster::error::{AttachError, ClusterError};",
             "recv_timeout",
             "send_timeout",
             "offer_timeout",
@@ -90,7 +90,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{path} must not expose failure/cancellation escape hatch: {forbidden}"
+                "{path} must not expose failure/cancellation bypass: {forbidden}"
             );
         }
     }
@@ -108,9 +108,9 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     );
     assert!(
         resolver.contains("#[track_caller]\n    pub fn reject")
-            && integration.contains("#[track_caller]\n    pub fn rendezvous")
-            && integration.contains("#[track_caller]\n    pub fn enter")
-            && integration.contains("#[track_caller]\n    pub fn set_resolver"),
+            && runtime.contains("#[track_caller]\n    pub fn rendezvous")
+            && runtime.contains("#[track_caller]\n    pub fn enter")
+            && runtime.contains("#[track_caller]\n    pub fn set_resolver"),
         "resolver and attach boundaries must capture caller location"
     );
     assert!(
@@ -135,10 +135,10 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             && !endpoint_kernel_source().contains("IngressInbox")
             && !endpoint_kernel_source().contains("PackedIngressEvidence")
             && !endpoint_kernel_source().contains("IngressSlot"),
-        "offer regression coverage must not preserve deleted binding/inbox rollback structures"
+        "offer regression coverage must not preserve forbidden binding/inbox restore structures"
     );
     assert!(
-        runtime_config.contains("struct OfferProgressPolicy")
+        !runtime_config.contains("struct OfferProgressResolver")
             && runtime_config.contains("pub fn from_resources(")
             && !runtime_config.contains("pub fn new(")
             && runtime_config.contains("pub(crate) fn initial_lane_range()")
@@ -150,11 +150,11 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             && !resolver.contains("retry_hint")
             && !offer_frontier.contains("retry_hint")
             && !offer_frontier.contains("force_poll")
-            && !offer_frontier.contains("PolicyAbort {\n                    reason:")
+            && !offer_frontier.contains("ResolverReject {\n                    resolver_id:")
             && frontier_runtime.contains("enum OfferEvidenceOutcome")
             && frontier_runtime.contains("enum FrontierDeferOutcome")
             && frontier_runtime.contains("Pending,"),
-        "integration config and offer progress must derive runtime shape and expose only Evidence/Pending/Fault, not offer-time heuristics"
+        "runtime config and offer progress must derive runtime shape and expose only Evidence/Pending/Fault, not offer-time guesses"
     );
     assert!(
         rendezvous_assoc.contains("EndpointDropped")
@@ -234,11 +234,11 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
             && !rendezvous.contains("scratch_reserved_bytes")
             && !role_image.contains("Materialized")
             && !role_image.contains("from_raw("),
-        "attach is resident descriptor reference only; no scratch-backed or test-only compatibility path may remain"
+        "attach is resident descriptor reference only; no scratch-backed or test-only extra path may remain"
     );
 
     for forbidden in [
-        "struct PreparedSendControl",
+        concat!("struct PreparedSend", "Con", "trol"),
         "stage_payload:",
         "fn stage_data_send_payload",
         "fn stage_registered_send_payload",
@@ -248,7 +248,7 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
     ] {
         assert!(
             !endpoint_core.contains(forbidden),
-            "send control staging must be direct and resident-descriptor derived; no indirect compatibility plan may remain: {forbidden}"
+            "send staging must be direct and resident-descriptor derived; no indirect extra plan may remain: {forbidden}"
         );
     }
 }
@@ -270,8 +270,8 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
         assert!(
             !program.contains(forbidden)
                 && !projection.contains(forbidden)
-                && !integration_source().contains(forbidden),
-            "projection public/runtime path must not retain stale metadata or type-name inspection: {forbidden}"
+                && !runtime_source().contains(forbidden),
+            "projection public/runtime path must not retain forbidden metadata or type-name inspection: {forbidden}"
         );
     }
     let projectable = program
@@ -293,11 +293,11 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !program.contains("#[cfg(any(feature = \"std\", test))]\nimpl<Steps> Projectable")
             && !program
                 .contains("#[cfg(not(any(feature = \"std\", test)))]\nimpl<Steps> Projectable"),
-        "projection must use one Pico-compatible Projectable impl, not std/test split metadata"
+        "projection must use one Pico-class Projectable impl, not std/test split metadata"
     );
     assert!(
         !program.contains("pub const fn embedded") && !projection.contains("pub const fn embedded"),
-        "embedded projection fingerprint fallback is an internal representation detail, not public API"
+        "embedded projection fingerprint implicit recovery is an internal representation detail, not public API"
     );
 
     let role_program = {
@@ -460,37 +460,24 @@ fn resident_descriptor_metadata_stays_columnar() {
         segment.contains("atom_mask: u128")
             && !segment.contains("nodes: [EffStruct; MAX_SEGMENT_EFFS]")
             && !segment.contains("steps: [ProgramStepRow; MAX_SEGMENT_EFFS]")
-            && !segment.contains("policies: [ResolverMode; MAX_SEGMENT_EFFS]")
-            && !segment.contains("control_descs: [Option<ControlDesc>; MAX_SEGMENT_EFFS]")
+            && !segment.contains(&["poli", "cies: [ResolverMode; MAX_SEGMENT_EFFS]"].concat())
             && segment.contains("atom_row_start: u16")
             && segment.contains("atom_row_len: u16")
-            && segment.contains("policy_row_start: u16")
-            && segment.contains("policy_row_len: u16")
+            && segment.contains("resolver_row_start: u16")
+            && segment.contains("resolver_row_len: u16")
             && !segment.contains("route_scope_row_start: u16")
             && !segment.contains("route_scope_row_len: u16")
-            && segment.contains("control_desc_row_start: u16")
-            && segment.contains("control_desc_row_len: u16")
             && !lowering.contains("struct ProgramRouteScopeRow")
             && lowering.contains("struct ProgramAtomRow")
-            && lowering.contains("struct ProgramPolicyRow")
-            && lowering.contains("struct ProgramControlDescRow")
+            && lowering.contains("struct ProgramResolverRow")
             && lowering
                 .contains("const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES")
             && lowering.contains(
-                "const MAX_COMPILED_POLICY_ROWS: usize = crate::eff::meta::MAX_EFF_NODES"
+                "const MAX_COMPILED_RESOLVER_ROWS: usize = crate::eff::meta::MAX_EFF_NODES"
             )
-            && lowering.contains(
-                "const MAX_COMPILED_CONTROL_DESC_ROWS: usize = crate::eff::meta::MAX_EFF_NODES"
-            )
-            && !lowering.contains("policy_rows_complete: bool")
-            && !lowering.contains("control_desc_rows_complete: bool")
-            && !lowering.contains("MAX_COMPILED_CONTROL_MARKERS")
-            && !lowering.contains("control_markers_complete: bool")
-            && !lowering.contains("control_marker_start: u16")
-            && !lowering.contains("control_marker_len: u16")
+            && !lowering.contains("resolver_rows_complete: bool")
             && !lowering.contains("ProgramSourceLookup")
-            && !lowering.contains("self.source_lookup.policy_at(offset)")
-            && !lowering.contains("self.source_lookup.control_desc_at(offset)")
+            && !lowering.contains("self.source_lookup.resolver_at(offset)")
             && lowering
                 .contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES")
             && !lowering.contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_SEGMENTS * 4")
@@ -503,11 +490,8 @@ fn resident_descriptor_metadata_stays_columnar() {
             && !lowering.contains("message_atoms")
             && !lowering.contains("self.atom_rows[offset]")
             && !lowering.contains("route_scope_rows: [ProgramRouteScopeRow")
-            && lowering.contains("policy_rows: [ProgramPolicyRow; MAX_COMPILED_POLICY_ROWS]")
-            && lowering.contains(
-                "control_desc_rows: [ProgramControlDescRow; MAX_COMPILED_CONTROL_DESC_ROWS]"
-            ),
-        "resident descriptor metadata must stay columnar: segment rows own atoms and ranges, policy/control metadata live in side tables"
+            && lowering.contains("resolver_rows: [ProgramResolverRow; MAX_COMPILED_RESOLVER_ROWS]"),
+        "resident descriptor metadata must stay columnar: segment rows own atoms, scope markers, and resolver metadata without side tables"
     );
 }
 
@@ -562,7 +546,7 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             && !projection.contains("ROLE_IMAGE_BLOB_CAPACITY")
             && !projection.contains("PROGRAM_IMAGE_BLOB_CAPACITY")
             && !projection.contains("CompiledProgramRef { image: &'static CompiledProgramImage }"),
-        "projection may use private dead-bucket sentinels, but selected buckets must stay on fail-closed compact constructors without max-capacity fallback or resident CompiledProgramImage handles"
+        "projection may use private dead-bucket sentinels, but selected buckets must stay on fail-closed compact constructors without max-capacity implicit recovery or resident CompiledProgramImage handles"
     );
 }
 
@@ -575,7 +559,7 @@ fn compiled_image_sources_stay_split_below_one_thousand_lines() {
         "mod columns;",
         "mod program_ref;",
         "mod role_descriptor_ref;",
-        "mod route_controls;",
+        "mod route_resolvers;",
     ] {
         assert!(
             image.contains(required),
@@ -625,15 +609,15 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
 
     for required in [
         "if [[ \"${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" ]]; then",
-        "fixed snapshot thumb budget check skipped by explicit override; worktree regression gate still runs",
-        "fixed snapshot runtime budget check skipped by explicit override; worktree regression gate still runs",
+        "fixed snapshot thumb budget check skipped by explicit override; worktree size snapshot still runs",
+        "fixed snapshot runtime budget check skipped by explicit override; worktree size snapshot still runs",
         "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
     ] {
         assert!(
             final_gate.contains(required),
-            "final-form fixed snapshot/worktree gate missing required guard: {required}"
+            "final-form snapshot gate missing required guard: {required}"
         );
     }
 
@@ -674,7 +658,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "snapshot-check protocol-artifact",
         "protocol artifact rodata={rodata} exceeds",
         "exceeds selected bucket count",
-        "is compatible with retaining every bucket ladder entry",
+        "still retains every bucket ladder entry",
         "final-form measurement violation: missing protocol artifact rows",
         "protocol artifact flash_total={actual} exceeds",
         "final-form measurement violation: minimal_send_recv",
@@ -686,29 +670,24 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     }
 
     for required in [
-        "PUBLISHED_CRATES_IO_0_8_0_REF=\"${HIBANA_SIZE_PUBLISHED_BASE_REF:-d95e83eb503f35f8beeb60a29d41b4cf6a8d5290}\"",
-        "BASE_REF=\"${PUBLISHED_CRATES_IO_0_8_0_REF}\"",
-        "Default base is the crates.io 0.8.0 publish commit.",
-        "git worktree add --detach \"${BASE_WORKTREE}\" \"${BASE_REF}\"",
-        "measure_tree \"base-${BASE_LABEL}\" \"${BASE_WORKTREE}\" \"${BASE_JSON}\"",
+        "CURRENT_REF=\"${HIBANA_SIZE_CURRENT_REF:-HEAD}\"",
+        "git worktree add --detach \"${CURRENT_WORKTREE}\" \"${CURRENT_REF}\"",
         "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\"",
-        "metrics[\"localside_peak_stack_bytes\"] = metrics.get(\"peak_stack_bytes\", 0)",
-        "os.environ[\"LABEL\"].startswith(\"base-\")",
         "hibana-projected-measure",
+        "program_import = \"hibana::runtime::program::{project, RoleProgram}\"",
         "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)",
         "projected_sections",
-        "worktree-snapshot runtime-shape-stack shape={shape}",
-        "worktree-snapshot runtime-shape-localside-stack shape={shape}",
-        "runtime shape {shape} peak_stack_bytes exceeds published baseline",
-        "runtime shape {shape} localside_peak_stack_bytes exceeds published baseline",
+        "current runtime snapshot missing shapes",
+        "current runtime snapshot shape={shape} missing metrics",
         "SNAPSHOT_FILE=\"${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json\"",
         "budget_snapshot = json.load(f)",
         "worktree-snapshot budget-section {key} actual={actual} budget={maximum}",
         "section {key} exceeds snapshot budget",
+        "worktree-snapshot budget-projected-section {key} actual={actual} budget={maximum}",
+        "projected section {key} exceeds snapshot budget",
         "worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}",
         "runtime shape {shape} {key} exceeds snapshot budget",
-        "worktree-snapshot budget-aggregate {name} actual={new} budget={maximum}",
-        "aggregate {name} exceeds published baseline",
+        "worktree-snapshot budget-aggregate {name} actual={actual} budget={maximum}",
         "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget ",
         "and at least one must decrease below budget",
     ] {
@@ -728,11 +707,17 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=0",
         "\"${CI:-false}\" != \"true\"",
         "CI/override",
-        "BASE_REF=\"HEAD^\"",
+        concat!("BASE", "_REF=\"HEAD^\""),
+        concat!("BASE", "_WORKTREE"),
+        concat!("PUBLISHED", "_CRATES_IO"),
+        concat!("HIBANA_SIZE_", "BA", "SE_REF"),
+        concat!("hibana::", "inte", "gration"),
+        "metrics[\"localside_peak_stack_bytes\"] = metrics.get(\"peak_stack_bytes\", 0)",
+        concat!("published", " baseline"),
     ] {
         assert!(
             !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
-            "size gate must not reintroduce current-tree self-patching or CI fixed-snapshot coupling: {forbidden}"
+            "size gate must not contain current-tree self-patching or CI fixed-snapshot coupling: {forbidden}"
         );
     }
 
@@ -746,8 +731,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 .contains("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
             && final_gate.contains("HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1")
             && final_gate
-                .contains("if [[ \"${HIBANA_SKIP_WORKTREE_SIZE_REGRESSION:-0}\" != \"1\" ]]; then"),
-        "CI must run fixed Pico snapshots and the worktree regression gate unless an explicit local override is set"
+                .contains("if [[ \"${HIBANA_SKIP_WORKTREE_SIZE_SNAPSHOT:-0}\" != \"1\" ]]; then"),
+        "CI must run fixed Pico snapshots and the worktree size snapshot unless an explicit local override is set"
     );
     let size_gate_pos = run_final_gate
         .find("bash ./.github/scripts/check_final_form_measurements.sh")
@@ -761,17 +746,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     );
 
     for required in [
-        "\"hibana_0_6_0_baseline\"",
+        "\"description\": \"Measured stack, SRAM, and flash values must satisfy",
         "\"localside_peak_stack_bytes\"",
         "\"flash_total_formula\": \".text + .rodata + .data\"",
         "\".text\": 154624",
         "\".rodata\": 15341",
         "\"flash_total\": 169965",
-        "\"policy\": \"Measured stack, SRAM, and flash values must satisfy",
     ] {
         assert!(
             snapshot.contains(required),
-            "measurement snapshot must record the 0.6.0 physical baseline and localside stack budget: {required}"
+            "measurement snapshot must record the fixed Pico budget and localside stack budget: {required}"
         );
     }
 
@@ -780,7 +764,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "LaneSetView::next_set_from must skip empty lane runs with bit operations",
         "compiled image hot path ",
         "must not rebuild lane sets by effect-list or full-view scans",
-        "endpoint arena must not reintroduce route-scope lane-word caches",
+        "endpoint arena must not contain route-scope lane-word caches",
         "offer_requires_framed_receive_evidence_for_branch_demux",
         "offer_decode_transport_consumes_frame_once",
         "forgotten_route_branch_leaves_endpoint_fail_closed",

@@ -4,7 +4,7 @@
 //! suffixes are not mergeable, so projection must reject the route.
 
 use hibana::g::{self};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 fn main() {
     let arm0 = g::seq(

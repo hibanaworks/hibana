@@ -1,6 +1,6 @@
 use super::{
-    EventCursor, LocalAction, LocalMeta, LocalNode, PassiveArmNavigation, RecvMeta, ScopeId,
-    SendMeta, StateIndex, state_index_to_usize,
+    EventCursor, LocalAction, LocalMeta, LocalNode, RecvMeta, ScopeId, SendMeta, StateIndex,
+    state_index_to_usize,
 };
 impl EventCursor {
     /// Current typestate index.
@@ -47,7 +47,7 @@ impl EventCursor {
     /// cursor's current node, keeping route-arm navigation tied to descriptor
     /// facts chosen by the caller.
     ///
-    /// Returns `PassiveArmNavigation::WithinArm` containing the arm entry index.
+    /// Returns the arm entry index.
     /// For τ-eliminated arms with no cross-role content, returns the ArmEmpty terminal row.
     ///
     /// Navigation uses the projected passive arm-entry authority. τ-eliminated
@@ -58,11 +58,11 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
         target_arm: u8,
-    ) -> Option<PassiveArmNavigation> {
+    ) -> Option<StateIndex> {
         if !self.is_route_controller(scope_id)
             && let Some(entry_idx) = self.passive_arm_entry(scope_id, target_arm)
         {
-            Some(PassiveArmNavigation::WithinArm { entry: entry_idx })
+            Some(entry_idx)
         } else {
             None
         }
@@ -107,6 +107,11 @@ impl EventCursor {
     }
 
     #[inline(always)]
+    pub(crate) fn checked_node_scope_id_at(&self, idx: usize) -> Option<ScopeId> {
+        Some(self.machine().checked_node(idx)?.scope())
+    }
+
+    #[inline(always)]
     pub(crate) fn route_arm_at(&self, idx: usize) -> Option<u8> {
         self.machine().node(idx).route_arm()
     }
@@ -140,26 +145,24 @@ impl EventCursor {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy,
+                is_internal,
+                resolver,
                 lane,
-            } => Some(SendMeta::new(
+            } => Some(SendMeta {
                 eff_index,
                 peer,
                 label,
                 frame_label,
                 resource,
-                node.control_semantic(),
-                is_control,
-                state_index_to_usize(node.next()),
-                node.scope(),
-                node.route_arm(),
-                shot,
-                policy,
+                semantic: node.event_semantic(),
+                is_internal,
+                next: state_index_to_usize(node.next()),
+                scope: node.scope(),
+                route_arm: node.route_arm(),
+                resolver,
                 lane,
-            )),
-            _ => None,
+            }),
+            LocalAction::Recv { .. } | LocalAction::Local { .. } | LocalAction::Terminate => None,
         }
     }
 
@@ -172,9 +175,8 @@ impl EventCursor {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy,
+                is_internal,
+                resolver,
                 lane,
             } => Some(RecvMeta {
                 eff_index,
@@ -182,17 +184,16 @@ impl EventCursor {
                 label,
                 frame_label,
                 resource,
-                semantic: node.control_semantic(),
-                is_control,
+                semantic: node.event_semantic(),
+                is_internal,
                 next: state_index_to_usize(node.next()),
                 scope: node.scope(),
                 route_arm: node.route_arm(),
                 is_choice_determinant: node.is_choice_determinant(),
-                shot,
-                policy,
+                resolver,
                 lane,
             }),
-            _ => None,
+            LocalAction::Send { .. } | LocalAction::Local { .. } | LocalAction::Terminate => None,
         }
     }
 
@@ -204,25 +205,23 @@ impl EventCursor {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy,
+                is_internal,
+                resolver,
                 lane,
             } => Some(LocalMeta {
                 eff_index,
                 label,
                 frame_label,
                 resource,
-                semantic: node.control_semantic(),
-                is_control,
+                semantic: node.event_semantic(),
+                is_internal,
                 next: state_index_to_usize(node.next()),
                 scope: node.scope(),
                 route_arm: node.route_arm(),
-                shot,
-                policy,
+                resolver,
                 lane,
             }),
-            _ => None,
+            LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Terminate => None,
         }
     }
 }

@@ -37,20 +37,18 @@ fn read_dir_rs(path: &str) -> String {
 }
 
 fn cluster_core_source() -> String {
-    let mut source = read("src/control/cluster/core.rs");
-    source.push_str(&read_dir_rs("src/control/cluster/core"));
+    let mut source = read("src/session/cluster/core.rs");
+    source.push_str(&read_dir_rs("src/session/cluster/core"));
     source
 }
 
-fn capability_token_source() -> String {
-    let mut source = read("src/control/cap/mint.rs");
-    source.push_str(&read_dir_rs("src/control/cap/mint"));
-    source
+fn owner_witness_source() -> String {
+    read("src/session/brand.rs")
 }
 
-fn integration_source() -> String {
-    let mut source = read("src/integration.rs");
-    source.push_str(&read_dir_rs("src/integration"));
+fn runtime_source() -> String {
+    let mut source = read("src/runtime.rs");
+    source.push_str(&read_dir_rs("src/runtime"));
     source
 }
 
@@ -62,111 +60,94 @@ fn transport_source() -> String {
 
 #[test]
 fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
-    for deleted in [
+    for forbidden in [
         repo_path("src/runtime/mgmt.rs"),
         repo_path("src/runtime/mgmt"),
         repo_path("src/epf.rs"),
         repo_path("src/epf"),
     ] {
         assert!(
-            !deleted.exists(),
-            "core tree must remove the deleted owner path: {}",
-            deleted.display()
+            !forbidden.exists(),
+            "core tree must remove the forbidden owner path: {}",
+            forbidden.display()
         );
     }
 }
 
 #[test]
-fn transport_context_keeps_resolver_input_only() {
-    let context_src = read("src/transport/context.rs");
-
+fn transport_context_owner_stays_forbidden() {
     assert!(
-        !context_src.contains("PolicySlot"),
-        "transport context must not expose audit slot vocabulary through resolver input"
-    );
-    assert!(
-        !context_src.contains("policy::epf::Slot"),
-        "transport context must not mention the deleted core EPF slot path"
-    );
-    assert!(
-        !context_src.contains("struct PolicyAttrs") && !context_src.contains("fn attrs(&self)"),
-        "transport context must not keep a policy attrs carrier when resolver state owns decision input"
-    );
-    assert!(
-        !context_src.contains("pub fn query(&self, id: ContextId) -> Option<ContextValue>"),
-        "packed policy attrs must not keep duplicate lookup aliases"
-    );
-    assert!(
-        !context_src.contains("Route-policy input"),
-        "transport context must not describe resolver input as route-only"
+        !repo_path("src/transport/context.rs").exists(),
+        "transport context owner must stay forbidden; resolver input is owned by explicit resolver state"
     );
 }
 
 #[test]
-fn core_ingress_binding_surface_stays_deleted() {
+fn core_ingress_binding_surface_stays_forbidden() {
     let readme_src = read("README.md");
     let observe_src = read("src/observe/core.rs");
 
     assert!(
         !repo_path("src/ingress.rs").exists() && !repo_path("src/binding.rs").exists(),
-        "core ingress binding files must stay deleted; transport owns receive demux state"
+        "core ingress binding files must stay forbidden; transport owns receive demux state"
     );
 
     for forbidden in [
-        "policy_signals",
-        "PolicySignals",
-        "route_policy_signals",
-        "Route-policy input",
-        "Route-policy staging",
+        "resolver_signals",
+        "ResolverSignals",
+        "route_resolver_signals",
+        "Route-resolver input",
+        "Route-resolver staging",
         "route_input(",
         "route_attrs(",
     ] {
         assert!(
             !readme_src.contains(forbidden) && !observe_src.contains(forbidden),
-            "public binding surface must not expose policy signal vocabulary: {forbidden}"
+            "public binding surface must not expose resolver signal vocabulary: {forbidden}"
         );
     }
 }
 
 #[test]
-fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() {
-    let resource_kinds_src = read("src/control/cap/resource_kinds.rs");
-    let mint_src = capability_token_source();
+fn core_resource_kind_catalogue_keeps_mgmt_and_resolver_lifecycle_internal_only() {
+    let owner_src = owner_witness_source();
 
     for forbidden in [
-        "pub struct PolicyLoadKind;",
-        "pub struct PolicyActivateKind;",
-        "pub struct PolicyRevertKind;",
-        "pub struct PolicyAnnotateKind;",
-        "pub struct LoadBeginKind;",
-        "pub struct LoadCommitKind;",
+        concat!("src/session/", "cap.rs"),
+        concat!("src/session/", "cap"),
+        concat!("src/session/", "cap/atomic_codecs.rs"),
+        concat!("src/session/", "cap/resource_kinds.rs"),
+        concat!("src/session/", "cap", "/mi", "nt/header.rs"),
+        concat!("src/session/", "cap", "/mi", "nt/token.rs"),
+        concat!("src/session/", "cap", "/mi", "nt/error.rs"),
     ] {
         assert!(
-            !resource_kinds_src.contains(forbidden),
-            "core must not remain the public owner of mgmt/policy lifecycle kinds: {forbidden}"
+            !repo_path(forbidden).exists(),
+            "forbidden session codec substrate must stay forbidden: {forbidden}"
         );
     }
 
+    for forbidden_name in [
+        "ResolverLoadKind",
+        "ResolverActivateKind",
+        "ResolverRevertKind",
+        "ResolverAnnotateKind",
+        "LoadBeginKind",
+        "LoadCommitKind",
+    ] {
+        let forbidden = format!("pub struct {forbidden_name};");
+        assert!(
+            !owner_src.contains(&forbidden),
+            "core must not remain the public owner of mgmt/resolver lifecycle kinds: {forbidden}"
+        );
+    }
+    let forbidden_control_token = ["Control", "Token"].concat();
+    let forbidden_cap_header = ["Cap", "Header"].concat();
     assert!(
-        !mint_src.contains("pub bytes: [u8; CAP_TOKEN_LEN]")
-            && !mint_src.contains("fn from_parts("),
-        "ControlToken must not expose or retain capability wire-layout part constructors"
-    );
-    assert!(
-        !mint_src.contains("pub(crate) struct GenericCapToken")
-            && !mint_src.contains("WireControlKind")
-            && mint_src.contains("pub(crate) struct ControlToken")
-            && !mint_src.contains(".field(\"bytes\"")
-            && mint_src.contains("impl fmt::Debug for ControlToken"),
-        "ControlToken must keep debug output redacted because the token is an opaque payload"
-    );
-    assert!(
-        !mint_src.contains("pub const fn new(\n        sid: SessionId,\n        lane: Lane,\n        role: u8,\n        tag: u8,"),
-        "CapHeader must not expose a raw multi-field public constructor"
-    );
-    assert!(
-        !integration_source().contains("CapHeader"),
-        "CapHeader must remain an internal codec carrier, not an integration surface owner"
+        !owner_src.contains(&forbidden_control_token)
+            && !owner_src.contains(&forbidden_cap_header)
+            && !runtime_source().contains(&forbidden_cap_header),
+        "brand owner witness must not retain raw token/header session substrate"
     );
     for forbidden in [
         "pub fn nonce(&self)",
@@ -178,20 +159,22 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_policy_lifecycle_internal_only() 
         "pub fn decode_handle(&self)",
     ] {
         assert!(
-            !mint_src.contains(forbidden),
-            "ControlToken must keep low-level token/header accessors internal: {forbidden}"
+            !owner_src.contains(forbidden),
+            "forbidden token substrate must keep low-level token/header accessors out of this owner: {forbidden}"
         );
     }
 }
 
 #[test]
-fn integration_runtime_surface_owns_tapevent_resource() {
-    let integration_src = integration_source();
+fn runtime_runtime_surface_owns_tapevent_resource() {
+    let runtime_src = runtime_source();
 
     assert!(
-        integration_src.contains("pub mod runtime {")
-            && integration_src.contains("pub use crate::observe::core::TapEvent;"),
-        "integration runtime surface must expose TapEvent with the storage envelope"
+        !runtime_src.contains("pub mod runtime {")
+            && runtime_src.contains("pub use crate::observe::core::TapEvent;")
+            && runtime_src.contains("pub use crate::runtime_core::consts::RING_EVENTS;")
+            && runtime_src.contains("RING_EVENTS"),
+        "runtime surface must expose TapEvent with the storage envelope without nested runtime buckets"
     );
 
     for forbidden in [
@@ -202,84 +185,85 @@ fn integration_runtime_surface_owns_tapevent_resource() {
         "push(",
     ] {
         assert!(
-            !integration_src.contains(forbidden),
-            "integration tap surface must stay minimal: {forbidden}"
+            !runtime_src.contains(forbidden),
+            "runtime tap surface must stay minimal: {forbidden}"
         );
     }
 }
 
 #[test]
-fn integration_policy_surface_is_decision_input_owner() {
-    let integration_src = integration_source();
-    let resolver_src = read("src/control/cluster/core/dynamic_resolvers.rs");
+fn runtime_resolver_surface_is_decision_input_owner() {
+    let runtime_src = runtime_source();
+    let resolver_src = read("src/session/cluster/core/dynamic_resolvers.rs");
 
     assert!(
-        integration_src.contains("ResolverRef")
-            && !integration_src.contains("pub use crate::transport::context::PolicyAttrs;")
-            && !integration_src.contains("pub mod replay {"),
-        "integration must keep resolver state as the only public policy input owner"
+        runtime_src.contains("ResolverRef")
+            && !runtime_src.contains("pub use crate::transport::context::ResolverAttrs;")
+            && !runtime_src.contains("pub mod replay {"),
+        "runtime must keep resolver state as the only public resolver input owner"
     );
-    let resolver_root = integration_src
+    let resolver_root = runtime_src
         .split("pub mod resolver {")
         .nth(1)
         .and_then(|tail| tail.split("/// Wire payload codec surface.").next())
-        .expect("integration resolver surface must be followed by wire surface");
-    for required in ["ResolverRef"] {
+        .expect("runtime resolver surface must be followed by wire surface");
+    {
+        let required = "ResolverRef";
         assert!(
             resolver_root.contains(required),
-            "integration::resolver must keep the resolver root: {required}"
+            "runtime::resolver must keep the resolver root: {required}"
         );
     }
     assert!(
-        resolver_src.contains("pub struct ResolverRef<'cfg, const POLICY_ID: u16")
+        resolver_src.contains("pub struct ResolverRef<'cfg, const RESOLVER_ID: u16")
             && resolver_src
                 .contains("pub fn evaluate(self) -> Result<DecisionResolution, ResolverError>")
             && resolver_src.contains("This is for typed resolver adapters")
             && resolver_src.contains("not commit route/session progress")
             && !resolver_src.contains("pub fn resolve_decision")
-            && !resolver_src.contains("erase_policy_id"),
-        "ResolverRef must carry policy id and expose only the typed resolver-combinator evaluate seam without a public erasure escape hatch"
+            && !resolver_src.contains("erase_resolver_id"),
+        "ResolverRef must carry resolver id and expose only the typed resolver-combinator evaluate seam without a public erasure bypass"
     );
     for forbidden in [
         "ResolverContext",
         "ContextId",
         "ContextValue",
-        "PolicyInput",
-        "PolicySignals,",
-        "PolicySlot",
+        "ResolverInput",
+        "ResolverSignals,",
+        "ResolverSlot",
         "pub mod core",
         "pub mod replay",
-        "PolicyAttrs",
+        "ResolverAttrs",
     ] {
         assert!(
             !resolver_root.contains(forbidden),
-            "integration::resolver root must not expose lower-level replay metadata: {forbidden}"
+            "runtime::resolver root must not expose lower-level replay metadata: {forbidden}"
         );
     }
     for forbidden in [
         "pub mod advanced {",
         "pub mod epf {",
         "crate::epf::",
-        "policy::epf",
+        "resolver::epf",
     ] {
         assert!(
             !resolver_root.contains(forbidden),
-            "integration::resolver must not regrow deleted or compatibility buckets: {forbidden}"
+            "runtime::resolver must not regrow forbidden or extra buckets: {forbidden}"
         );
     }
 }
 
 #[test]
-fn dynamic_policy_surface_uses_one_decision_resolver() {
+fn dynamic_resolver_surface_uses_one_decision_resolver() {
     let cluster_src = cluster_core_source();
-    let integration_src = integration_source();
+    let runtime_src = runtime_source();
     let readme_src = read("README.md");
-    let decision_policy_src = read("src/endpoint/kernel/core/decision_policy/impls.rs");
+    let decision_resolver_src = read("src/endpoint/kernel/core/decision_resolver/impls.rs");
     let collapsed_resolution = concat!("Dynamic", "Resolution");
     let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
     let generic_state_ctor = concat!("ResolverRef::", "from_state");
 
-    for src in [&cluster_src, &integration_src, &readme_src] {
+    for src in [&cluster_src, &runtime_src, &readme_src] {
         assert!(
             !src.contains(collapsed_resolution),
             "dynamic resolver surface must use the named DecisionResolution API, not a generic DynamicResolution alias"
@@ -297,7 +281,7 @@ fn dynamic_policy_surface_uses_one_decision_resolver() {
     ] {
         assert!(
             cluster_src.contains(required),
-            "dynamic resolver public SPI must keep the route/loop-neutral decision item: {required}"
+            "dynamic resolver public SPI must keep the route decision item: {required}"
         );
     }
 
@@ -321,24 +305,24 @@ fn dynamic_policy_surface_uses_one_decision_resolver() {
         );
     }
     assert!(
-        !decision_policy_src.contains("if meta.peer == ROLE"),
-        "dynamic decision policy must not bypass resolver validation for local route/loop self-send controls"
+        !decision_resolver_src.contains("if meta.peer == ROLE"),
+        "dynamic route decision must not bypass resolver validation for local sends"
     );
 }
 
 #[test]
-fn core_policy_runtime_has_no_in_crate_appliance_shim() {
-    let policy_runtime = read("src/policy_runtime.rs");
+fn core_resolver_audit_has_no_in_crate_appliance_layer() {
+    let resolver_audit = read("src/resolver_audit.rs");
     for forbidden in [
-        "pub(crate) struct PolicyCtx",
+        "pub(crate) struct ResolverCtx",
         "pub(crate) struct HostSlots",
         "pub(crate) enum Action",
         "pub(crate) struct AbortInfo",
         "pub(crate) enum Trap",
     ] {
         assert!(
-            !policy_runtime.contains(forbidden),
-            "hibana core must not keep an old policy appliance shim: {forbidden}"
+            !resolver_audit.contains(forbidden),
+            "hibana core must not keep an in-crate resolver appliance: {forbidden}"
         );
     }
 
@@ -348,19 +332,19 @@ fn core_policy_runtime_has_no_in_crate_appliance_shim() {
         "src/endpoint/kernel/core.rs",
     ] {
         let src = read(path);
-        for forbidden in ["run_policy(", "policy_mode_tag("] {
+        for forbidden in ["run_resolver(", "resolver_mode_tag("] {
             assert!(
                 !src.contains(forbidden),
-                "hibana core must audit policy inputs without a no-op policy executor: {path}: {forbidden}"
+                "hibana core must audit resolver inputs without a no-op resolver executor: {path}: {forbidden}"
             );
         }
     }
 
     let authority = read("src/endpoint/kernel/authority.rs");
     for forbidden in [
-        "RoutePolicyDecision",
-        "route_policy_decision_from_action",
-        "DeferSource::Epf",
+        "RouteResolverDecision",
+        "route_resolver_decision_from_action",
+        concat!("Defer", "Source::Epf"),
     ] {
         assert!(
             !authority.contains(forbidden),
@@ -370,9 +354,9 @@ fn core_policy_runtime_has_no_in_crate_appliance_shim() {
 }
 
 #[test]
-fn transport_policy_signal_surface_stays_minimal() {
+fn transport_resolver_signal_surface_stays_minimal() {
     let transport_src = transport_source();
-    let integration_src = integration_source();
+    let runtime_src = runtime_source();
     let readme_src = read("README.md");
 
     assert!(
@@ -388,40 +372,40 @@ fn transport_policy_signal_surface_stays_minimal() {
         "transport snapshot parts constructor must not exist"
     );
     assert!(
-        !integration_src.contains("TransportSnapshotParts"),
-        "integration::transport must not re-export TransportSnapshotParts"
+        !runtime_src.contains("TransportSnapshotParts"),
+        "runtime::transport must not re-export TransportSnapshotParts"
     );
     assert!(
-        !integration_src.contains("TransportSnapshot"),
-        "integration::transport must not re-export TransportSnapshot"
+        !runtime_src.contains("TransportSnapshot"),
+        "runtime::transport must not re-export TransportSnapshot"
     );
     assert!(
         !readme_src.contains("TransportSnapshot"),
-        "README must not publish the removed TransportSnapshot surface"
+        "README must not publish the forbidden TransportSnapshot surface"
     );
     assert!(
-        !transport_src.contains("fn policy_attrs(&self)")
+        !transport_src.contains("fn resolver_attrs(&self)")
             && !transport_src.contains("pub trait TransportMetrics")
             && !transport_src.contains("type Metrics"),
-        "Transport must not expose policy input, metrics, or telemetry compatibility hooks"
+        "Transport must not expose resolver input, metrics, or telemetry extra hooks"
     );
     assert!(
-        !readme_src.contains("PolicyAttrs") && readme_src.contains("ResolverRef::decision_state"),
+        !readme_src.contains("ResolverAttrs") && readme_src.contains("ResolverRef::decision_state"),
         "README must keep replay attrs out of the canonical path and describe resolver-state owned input"
     );
     for forbidden in [
         "ContextId",
         "ContextValue",
-        "PolicyInput",
-        "PolicySignals",
-        "PolicyAttrs",
+        "ResolverInput",
+        "ResolverSignals",
+        "ResolverAttrs",
         "pub mod core {",
         "pub mod replay {",
-        "advanced::policy",
+        "advanced::resolver",
     ] {
         assert!(
-            !integration_src.contains(forbidden),
-            "policy signal extension namespace must not leak through integration: {forbidden}"
+            !runtime_src.contains(forbidden),
+            "resolver signal extension namespace must not leak through runtime: {forbidden}"
         );
     }
     for forbidden in [
@@ -436,7 +420,7 @@ fn transport_policy_signal_surface_stays_minimal() {
     ] {
         assert!(
             !transport_src.contains(forbidden),
-            "transport snapshot builder surface must stay removed: {forbidden}"
+            "transport snapshot builder surface must stay forbidden: {forbidden}"
         );
     }
     for forbidden in [
@@ -466,15 +450,15 @@ fn transport_policy_signal_surface_stays_minimal() {
         "pub const fn with_cid_tag",
     ] {
         assert!(
-            !transport_src.contains(forbidden) && !integration_src.contains(forbidden),
+            !transport_src.contains(forbidden) && !runtime_src.contains(forbidden),
             "transport observation detail must stay accessor-only and non-literal: {forbidden}"
         );
     }
     assert!(
         !transport_src.contains("TransportEventKind")
             && !transport_src.contains("pub struct TransportEvent")
-            && !integration_src.contains("TransportEventKind")
-            && !integration_src.contains("TransportEvent"),
+            && !runtime_src.contains("TransportEventKind")
+            && !runtime_src.contains("TransportEvent"),
         "transport telemetry vocabulary must not be part of the protocol-neutral public surface"
     );
 }

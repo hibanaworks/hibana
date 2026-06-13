@@ -10,7 +10,14 @@ check_absent() {
   local pattern="$1"
   local label="$2"
   shift 2
-  if rg -n -U "${pattern}" --glob '!src/endpoint/kernel/test_support/**' "$@"; then
+  local paths=()
+  local path
+  for path in "$@"; do
+    if [[ -e "${path}" ]]; then
+      paths+=("${path}")
+    fi
+  done
+  if [[ ${#paths[@]} -gt 0 ]] && rg -n -U "${pattern}" --glob '!src/endpoint/kernel/test_support/**' "${paths[@]}"; then
     echo "exact layout hygiene violation: ${label}" >&2
     FAILED=1
   fi
@@ -43,30 +50,30 @@ for forbidden_path in \
   src/global/typestate/route_facts.rs
 do
   if [[ -e "${forbidden_path}" ]]; then
-    echo "exact layout hygiene violation: legacy exact-layout owner still present -> ${forbidden_path}" >&2
+    echo "exact layout hygiene violation: forbidden exact-layout owner still present -> ${forbidden_path}" >&2
     FAILED=1
   fi
 done
 
 check_absent \
   "RoleImageLayoutInput|ProgramLayoutFacts|RoleLayoutFacts" \
-  "legacy split role layout owners reintroduced" \
+  "forbidden split role layout owners detected" \
   src
 
 check_absent \
   "EndpointArenaLayout::new\\(" \
-  "legacy multi-argument endpoint arena layout constructor reintroduced" \
+  "forbidden multi-argument endpoint arena layout constructor detected" \
   src
 
 check_absent \
   "PUBLIC_ATTACH_TAIL_FLOOR|IMAGE_BANK_EXPANSION_TAIL_FLOOR|PUBLIC_ENDPOINT_ATTACH_TAIL_FLOOR" \
-  "public endpoint storage must be sized from resident role footprints, not tail-floor heuristics" \
+  "public endpoint storage must be sized from resident role footprints, not tail-floor guesses" \
   src/rendezvous/core.rs
 
 check_absent \
   "MAX_EFF_NODES" \
   "runtime layout must not reserve endpoint storage from global effect-node ceilings" \
-  src/rendezvous/core.rs src/endpoint src/control \
+  src/rendezvous/core.rs src/endpoint src/session \
   --glob '!**/*tests.rs'
 
 check_absent \
@@ -78,7 +85,7 @@ check_absent \
 check_absent \
   "while lane_idx < MAX_LANES|if lane_idx >= MAX_LANES|while logical_idx < MAX_LANES" \
   "runtime hot paths must not regress to fixed MAX_LANES lane scans" \
-  src/endpoint src/rendezvous src/control src/global/typestate
+  src/endpoint src/rendezvous src/session src/global/typestate
 
 check_absent \
   "active_route_lane_mask: RoleLaneMask|lane_linger_mask: RoleLaneMask|lane_offer_linger_mask: RoleLaneMask|active_offer_mask: RoleLaneMask|nonempty_mask: RoleLaneMask|observed_offer_lane_mask: RoleLaneMask|global_frontier_observed_offer_lane_mask: RoleLaneMask" \
@@ -87,7 +94,7 @@ check_absent \
 
 check_absent \
   "RoleLoweringScratch|LoweringLeaseMode|with_lowering_lease|MaterializedRoleImage|RoleImageSlice::from_raw\\(|CompiledProgramRef::from_raw\\(" \
-  "attach/runtime layout must not keep lowering scratch or raw materialization fallbacks" \
+  "attach/runtime layout must not keep lowering scratch or raw materialization alternates" \
   src
 
 check_required \
@@ -101,7 +108,7 @@ check_required \
   src/global/role_program/image_types.rs
 
 check_required \
-  "words: [u16; 7]," \
+  "words: [u16; 6]," \
   "RuntimeRoleFacts must stay a compact runtime-only word array" \
   src/global/role_program/image_types.rs
 
@@ -120,22 +127,19 @@ check_absent \
 
 check_absent \
   "\\bEndpointHandle\\b|\\bEndpointResource\\b|endpoint_identity\\(|endpoint_header\\(|raw_header\\(|const fn handle\\(&self\\)|fn handle\\(&self\\)" \
-  "capability mint source must not retain endpoint-identity test fixtures or raw debug accessors" \
-  src/control/cap/mint.rs src/control/cap/mint
+  "brand owner witness source must not retain endpoint-identity test fixtures or raw debug accessors" \
+  src/session/brand.rs
 
-check_absent \
-  "fn bytes_are_zero|LoopDecisionHandle::decode|pub\\(crate\\) fn encode_session_lane_handle|pub\\(crate\\) const fn mint_session_lane_handle|TAG_STATE_SNAPSHOT_CONTROL|TAG_TOPOLOGY_BEGIN_CONTROL" \
-  "production control capability codecs must not retain test-only encode or fixture-tag helpers" \
-  src/control/cap/resource_kinds.rs src/control/cap/atomic_codecs.rs
-
-check_absent \
-  "pub\\(crate\\) fn encode\\(self\\) -> \\[u8; CAP_HANDLE_LEN\\]" \
-  "production topology handle codec must not retain its test-only reverse encoder" \
-  src/control/cap/atomic_codecs.rs
+DELETED_SESSION_CAP_DIR="src/session/""cap"
+if [[ -e "${DELETED_SESSION_CAP_DIR}" ]]; then
+  echo "${DELETED_SESSION_CAP_DIR}" >&2
+  echo "exact-layout hygiene violation: forbidden session token codec owner detected" >&2
+  FAILED=1
+fi
 
 check_absent \
   "pub\\(crate\\) struct RoleFacts\\b|\\bRoleFacts\\b \\{|words: \\[u16; 14\\]" \
-  "production role image must not keep legacy 14-word RoleFacts" \
+  "production role image must not keep forbidden 14-word RoleFacts" \
   src/global/role_program src/g
 
 check_required \

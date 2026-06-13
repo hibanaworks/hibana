@@ -5,7 +5,7 @@ mod blob_storage;
 mod columns;
 mod program_ref;
 mod role_descriptor_ref;
-mod route_controls;
+mod route_resolvers;
 
 pub(crate) use self::{
     blob_storage::ProgramImageBytes, program_ref::CompiledProgramRef,
@@ -14,8 +14,8 @@ pub(crate) use self::{
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_CONTROL_DESC_STRIDE, PROGRAM_IMAGE_POLICY_STRIDE,
-    PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE, ProgramColumnRange,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_RESOLVER_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    ProgramColumnRange,
 };
 /// Sealed runtime owner for role-local immutable compiled facts within a compiled program ref.
 #[derive(Clone, Copy)]
@@ -69,16 +69,6 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     #[inline(always)]
     pub(crate) fn route_table_lane_slots(&self) -> usize {
         self.descriptor.route_table_lane_slots()
-    }
-
-    #[inline(always)]
-    pub(crate) fn loop_table_slots(&self) -> usize {
-        self.descriptor.loop_table_slots()
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_cap_entries(&self) -> usize {
-        self.descriptor.resident_cap_entries()
     }
 
     #[inline(always)]

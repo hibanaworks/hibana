@@ -1,5 +1,5 @@
 use hibana::g::{self};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 fn main() {
     let left = g::send::<0, 1, g::Msg<3, ()>>();

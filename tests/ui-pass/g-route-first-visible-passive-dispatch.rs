@@ -1,5 +1,5 @@
 use hibana::g::{self, Msg};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 fn main() {
     let left_arm = g::send::<0, 1, Msg<3, ()>>();

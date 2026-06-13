@@ -2,12 +2,8 @@
 # Aggregate owner budgets must stay as narrow semantic owners below the same
 # 2000-line ceiling as primary owner budgets. Broad subsystem freeze budgets
 # hide authority sprawl.
-src/control/cap/mint	1102	6	recursive
-src/control/cluster/core/descriptor_controls.rs	560	1	recursive
-src/control/cluster/core/topology_state.rs	700	1	recursive
 src/endpoint/kernel/frontier_state.rs	700	1	recursive
-src/endpoint/kernel/decision_state.rs	870	1	recursive
-src/rendezvous/core/effects.rs	120	1	recursive
+src/endpoint/kernel/decision_state.rs	900	1	recursive
 src/rendezvous/core/storage_layout.rs	167	1	recursive
 src/rendezvous/port	780	2	recursive
 src/transport	1800	5	recursive

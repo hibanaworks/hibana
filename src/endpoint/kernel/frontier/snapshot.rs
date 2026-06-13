@@ -219,7 +219,6 @@ impl EvidenceFingerprint {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OfferProgressState {
-    pub(crate) policy: crate::runtime::config::OfferProgressPolicy,
     pub(crate) last_fingerprint: Option<EvidenceFingerprint>,
 }
 
@@ -231,9 +230,8 @@ pub(crate) enum OfferEvidenceOutcome {
 
 impl OfferProgressState {
     #[inline]
-    pub(crate) fn new(policy: crate::runtime::config::OfferProgressPolicy) -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
-            policy,
             last_fingerprint: None,
         }
     }

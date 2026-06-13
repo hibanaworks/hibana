@@ -458,7 +458,6 @@ mod tests {
             max_route_stack_depth,
             local_step_count: 0,
             route_scope_count,
-            passive_linger_route_scope_count: 0,
             active_lane_count,
             endpoint_lane_slot_count,
             logical_lane_count,
@@ -501,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_arena_does_not_reintroduce_route_scope_lane_cache() {
+    fn endpoint_arena_does_not_contain_route_scope_lane_cache() {
         let mut base = test_footprint(4, 65, 65, 2, 16);
         base.route_scope_count = 0;
         let base_layout = EndpointArenaLayout::from_footprint(base);

@@ -1,9 +1,8 @@
-use super::{Context, NonNull, OutSlot, PackedEndpointHandle, Payload, Poll, RawPayload};
-impl<'cfg, T, U, C, const MAX_RV: usize> crate::integration::SessionKit<'cfg, T, U, C, MAX_RV>
+use super::{Context, DecodePollRequest, NonNull, OutSlot, PackedEndpointHandle, Poll, RawPayload};
+impl<'cfg, T, C, const MAX_RV: usize> crate::runtime::SessionKit<'cfg, T, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse + 'cfg,
-    C: crate::runtime::config::Clock + 'cfg,
+    C: crate::runtime_core::config::Clock + 'cfg,
 {
     pub(super) unsafe fn reset_public_offer_state_raw<const ROLE: u8>(
         ptr: NonNull<()>,
@@ -92,18 +91,17 @@ where
     }
 
     pub(super) unsafe fn poll_decode_public_endpoint<const ROLE: u8>(
-        ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-        logical_label: u8,
-        expects_control: bool,
-        control: Option<crate::global::ControlDesc>,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        synthetic: for<'a> fn(
-            &'a mut [u8],
-        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
-        cx: &mut Context<'_>,
-        out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
+        request: DecodePollRequest<'_, '_>,
     ) {
+        let DecodePollRequest {
+            ptr,
+            handle,
+            logical_label,
+            validate,
+            zero_payload,
+            cx,
+            out,
+        } = request;
         let poll = unsafe {
             // SAFETY: this raw callback has exclusive access to the carrier
             // endpoint slot selected by `handle` for the duration of the call.
@@ -113,14 +111,8 @@ where
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| match kernel.poll_public_decode(
-                    logical_label,
-                    expects_control,
-                    control,
-                    validate,
-                    synthetic,
-                    cx,
-                ) {
+                |kernel| match kernel.poll_public_decode(logical_label, validate, zero_payload, cx)
+                {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),

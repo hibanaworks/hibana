@@ -75,10 +75,10 @@ for path in [
     "src/global/typestate/route_facts.rs",
 ]:
     if (root / path).exists():
-        fail(f"legacy lowering/materialization owner still present: {path}")
+        fail(f"forbidden lowering/materialization owner still present: {path}")
 
 cluster = strip_cfg_test_modules(
-    read("src/control/cluster/core.rs") + "\n" + read_rs_tree("src/control/cluster/core")
+    read("src/session/cluster/core.rs") + "\n" + read_rs_tree("src/session/cluster/core")
 )
 rendezvous = strip_cfg_test_modules(
     read("src/rendezvous/core.rs") + "\n" + read_rs_tree("src/rendezvous/core")
@@ -111,7 +111,7 @@ for forbidden in [
     "CompiledRoleImage",
 ]:
     for path, source in [
-        ("src/control/cluster/core.rs", cluster),
+        ("src/session/cluster/core.rs", cluster),
         ("src/rendezvous/core.rs", rendezvous),
         ("src/rendezvous/port.rs", port),
         ("src/global/compiled/images/image.rs", role_image),
@@ -211,7 +211,7 @@ if role_validation < 0 or role_dispatch < 0 or role_program_publication < 0:
 if not (role_validation < role_dispatch < role_program_publication):
     fail("g project entry must validate the public role before selecting a resident descriptor image")
 if '16..=u8::MAX => panic!("{}", ROLE_INDEX_ERROR)' not in project_body:
-    fail("g project entry must fail closed for unreachable out-of-domain descriptor arms")
+    fail("g project entry must fail closed for out-of-domain descriptor arms")
 for role in range(16):
     required = f"role_projection_image_for::<{role}, Steps>()"
     if required not in project_body:
@@ -256,8 +256,8 @@ for required in [
         fail(f"SessionKit attach path is not resident-descriptor-first: {required}")
 
 for path in [
-    "src/control/cluster/core.rs",
-    "src/control/cluster/core",
+    "src/session/cluster/core.rs",
+    "src/session/cluster/core",
     "src/rendezvous/core.rs",
     "src/rendezvous/core",
     "src/rendezvous/port.rs",

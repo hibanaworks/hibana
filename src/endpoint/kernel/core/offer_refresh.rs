@@ -1,16 +1,11 @@
 use super::{
-    ActiveEntrySet, CursorEndpoint, CursorRefresh, EpochTable, LabelUniverse, LaneOfferState,
-    MintConfigMarker, OfferEntryStaticSummary, ScopeId, StateIndex, Transport,
-    state_index_to_usize,
+    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, OfferEntryStaticSummary,
+    ScopeId, StateIndex, Transport, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {
@@ -30,9 +25,10 @@ where
         &self,
         current_parallel: Option<ScopeId>,
     ) -> ActiveEntrySet {
-        current_parallel
-            .map(|root| self.root_frontier_active_entries(root))
-            .unwrap_or(self.global_active_entries())
+        match current_parallel {
+            Some(root) => self.root_frontier_active_entries(root),
+            None => self.global_active_entries(),
+        }
     }
 
     pub(in crate::endpoint::kernel) fn detach_lane_from_root_frontier(
@@ -150,9 +146,8 @@ where
         let is_controller = self.cursor.is_route_controller(scope_id);
         let is_dynamic = self
             .cursor
-            .route_scope_controller_policy(scope_id)
-            .map(|(policy, _, _, _)| policy.is_dynamic())
-            .unwrap_or(false);
+            .route_scope_controller_resolver(scope_id)
+            .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
         let static_facts = Self::frontier_static_facts_at(
             &self.cursor,
             scope_id,
@@ -167,8 +162,10 @@ where
         if is_dynamic {
             flags |= LaneOfferState::FLAG_DYNAMIC;
         }
-        let parallel_root =
-            Self::parallel_scope_root(&self.cursor, scope_id).unwrap_or(ScopeId::none());
+        let parallel_root = match Self::parallel_scope_root(&self.cursor, scope_id) {
+            Some(root) => root,
+            None => ScopeId::none(),
+        };
         Some(LaneOfferState {
             scope: scope_id,
             entry: StateIndex::from_usize(entry_idx),
@@ -186,12 +183,9 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
-        let Some(scope) = self
+        let scope = self
             .decision_state
-            .active_linger_scope_for_lane(lane_idx, |scope| self.is_linger_route(scope))
-        else {
-            return None;
-        };
+            .active_linger_scope_for_lane(lane_idx, |scope| self.is_linger_route(scope))?;
         self.cursor.active_linger_offer_entry(scope)
     }
 }

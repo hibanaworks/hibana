@@ -9,14 +9,14 @@ use core::{
     task::{Context, Poll},
 };
 
-use super::tables::{LoopDisposition, LoopTable, RouteTable};
+use super::tables::RouteTable;
 use crate::{
-    control::types::{Lane, RendezvousId, SessionId},
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
     observe::core::TapRing,
-    policy_runtime::{self, PolicySlot},
-    runtime::config::Clock,
+    resolver_audit::{self, ResolverSlot},
+    runtime_core::config::Clock,
+    session::types::{Lane, RendezvousId, SessionId},
     transport::{FrameLabelMask, Transport},
 };
 
@@ -67,11 +67,7 @@ use self::{recv_frame::RecvFrameReceiptState, route_hints::RouteHintQueue};
 /// that transport handles remain affine. Endpoint methods keep the mutable
 /// borrow for the duration of a single `.await`, but exclusivity is preserved
 /// because owning endpoints themselves are affine.
-pub(crate) struct Port<
-    'r,
-    T: Transport,
-    E: crate::control::cap::mint::EpochTable = crate::control::cap::mint::EpochTbl,
-> {
+pub(crate) struct Port<'r, T: Transport> {
     transport: &'r T,
     tx: UnsafeCell<T::Tx<'r>>,
     rx: UnsafeCell<T::Rx<'r>>,
@@ -89,24 +85,15 @@ pub(crate) struct Port<
     tap: *const TapRing<'static>,
     tap_marker: PhantomData<&'r TapRing<'r>>,
     clock: &'r dyn Clock,
-    loops: *const LoopTable,
-    loops_marker: PhantomData<&'r LoopTable>,
     routes: *const RouteTable,
     routes_marker: PhantomData<&'r RouteTable>,
     recv_frame_receipt: RecvFrameReceiptState,
-    _epoch: PhantomData<E>,
 }
 
-pub(crate) struct PortInit<
-    'r,
-    'tap,
-    T: Transport,
-    E: crate::control::cap::mint::EpochTable = crate::control::cap::mint::EpochTbl,
-> {
+pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub transport: &'r T,
     pub tap: &'tap TapRing<'tap>,
     pub clock: &'tap dyn Clock,
-    pub loops: &'tap LoopTable,
     pub routes: &'tap RouteTable,
     pub slab: *mut [u8],
     pub image_frontier: *const u32,
@@ -119,10 +106,9 @@ pub(crate) struct PortInit<
     pub rv_id: RendezvousId,
     pub tx: T::Tx<'r>,
     pub rx: T::Rx<'r>,
-    pub _epoch: PhantomData<E>,
 }
 
-impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T, E> {
+impl<'r, T: Transport + 'r> Port<'r, T> {
     #[inline(always)]
     const fn frontier_scratch_align() -> usize {
         FrontierScratchLayout::new(0, 0, 0).total_align()
@@ -148,7 +134,7 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
         )
     }
 
-    pub(crate) fn new<'tap>(init: PortInit<'r, 'tap, T, E>) -> Self
+    pub(crate) fn new<'tap>(init: PortInit<'r, 'tap, T>) -> Self
     where
         'tap: 'r,
     {
@@ -156,7 +142,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             transport,
             tap,
             clock,
-            loops,
             routes,
             slab,
             image_frontier,
@@ -169,7 +154,6 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             rv_id,
             tx,
             rx,
-            _epoch,
         } = init;
         #[cfg(all(not(test), not(feature = "std")))]
         {
@@ -194,12 +178,9 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
             tap: (tap as *const TapRing<'tap>).cast::<TapRing<'static>>(),
             tap_marker: PhantomData,
             clock,
-            loops: loops as *const LoopTable,
-            loops_marker: PhantomData,
             routes: routes as *const RouteTable,
             routes_marker: PhantomData,
             recv_frame_receipt: RecvFrameReceiptState::new(),
-            _epoch: PhantomData,
         }
     }
 
@@ -245,28 +226,10 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn loop_table(&self) -> &LoopTable {
-        // SAFETY: `loops` points to the rendezvous-local LoopTable bound for
-        // this port and outliving every lane port reference.
-        unsafe { &*self.loops }
-    }
-
-    #[inline]
     pub(crate) fn route_table(&self) -> &RouteTable {
         // SAFETY: `routes` points to the rendezvous-local RouteTable bound for
         // this port and outliving every lane port reference.
         unsafe { &*self.routes }
-    }
-
-    #[inline]
-    pub(crate) fn record_loop_decision(&self, idx: u8, disposition: LoopDisposition) -> u16 {
-        self.loop_table()
-            .record(self.lane, self.role, idx, disposition)
-    }
-
-    #[inline]
-    pub(crate) fn ack_loop_decision(&self, idx: u8, role: u8) {
-        self.loop_table().acknowledge(self.lane, role, idx);
     }
 
     #[inline]
@@ -314,8 +277,8 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn route_change_epoch(&self) -> u16 {
-        self.route_table().change_epoch()
+    pub(crate) fn route_change_generation(&self) -> u16 {
+        self.route_table().change_generation()
     }
 
     #[inline]
@@ -422,10 +385,10 @@ impl<'r, T: Transport, E: crate::control::cap::mint::EpochTable + 'r> Port<'r, T
     }
 
     #[inline]
-    pub(crate) fn policy_digest(&self, slot: PolicySlot) -> u32 {
+    pub(crate) fn resolver_digest(&self, slot: ResolverSlot) -> u32 {
         match slot {
-            PolicySlot::EndpointRx | PolicySlot::EndpointTx | PolicySlot::Decision => {
-                policy_runtime::POLICY_DIGEST_NONE
+            ResolverSlot::EndpointRx | ResolverSlot::EndpointTx | ResolverSlot::Decision => {
+                resolver_audit::RESOLVER_DIGEST_NONE
             }
         }
     }

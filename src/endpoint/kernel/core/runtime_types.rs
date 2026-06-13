@@ -1,19 +1,11 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    CAP_HANDLE_LEN, ControlDesc, CursorEndpoint, EndpointArenaLayout, EpochTable, LabelUniverse,
-    LaneGuard, MintConfigMarker, Payload, PendingCapRelease, Port, SendDescriptorPublication,
-    SendDescriptorTerminal, SendError, SendMeta, SendPreview, SendResult, SessionId, StateIndex,
-    Transport, lane_port,
+    CursorEndpoint, EndpointArenaLayout, LaneGuard, Payload, Port, SendError, SendMeta,
+    SendPreview, SendResult, StateIndex, Transport, lane_port,
 };
 
-pub(crate) enum StagedControlEmission<'rv> {
-    None,
-    Registered(PendingCapRelease<'rv>),
-}
-
-pub(crate) struct StagedSendPayload<'rv> {
+pub(crate) struct StagedSendPayload {
     pub(crate) encoded_len: usize,
-    pub(crate) control: StagedControlEmission<'rv>,
 }
 
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
@@ -21,46 +13,15 @@ pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
 }
 
 mod commit;
-pub(crate) use commit::{
-    CommitDelta, CommitEventRow, CommitRow, LoopCommitDisposition, LoopCommitRow,
-};
+pub(crate) use commit::{CommitDelta, CommitEventRow, CommitRow};
 
 pub(crate) struct SendCommitProof<'rv> {
-    pub(in crate::endpoint::kernel::core) descriptor: SendDescriptorTerminal<'rv>,
     pub(in crate::endpoint::kernel::core) progress: SendProgressCommitPlan,
+    pub(in crate::endpoint::kernel::core) _borrow: core::marker::PhantomData<&'rv ()>,
 }
 
 pub(crate) struct SendCommitPlan<'rv> {
-    pub(in crate::endpoint::kernel::core) control: StagedControlEmission<'rv>,
     pub(in crate::endpoint::kernel::core) proof: SendCommitProof<'rv>,
-}
-
-pub(crate) struct SendRollbackPlan<'rv> {
-    pub(in crate::endpoint::kernel::core) control: StagedControlEmission<'rv>,
-    pub(in crate::endpoint::kernel::core) descriptor: SendDescriptorTerminal<'rv>,
-}
-
-impl<'rv> SendCommitPlan<'rv> {
-    #[inline(always)]
-    pub(in crate::endpoint) fn into_rollback_parts(
-        self,
-    ) -> (StagedControlEmission<'rv>, SendDescriptorTerminal<'rv>) {
-        let Self { control, proof } = self;
-        let SendCommitProof {
-            descriptor,
-            progress: _,
-        } = proof;
-        (control, descriptor)
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint) fn into_rollback_plan(self) -> SendRollbackPlan<'rv> {
-        let (control, descriptor) = self.into_rollback_parts();
-        SendRollbackPlan {
-            control,
-            descriptor,
-        }
-    }
 }
 
 pub(crate) struct PendingSendIo<'r> {
@@ -87,31 +48,22 @@ pub(crate) enum SendInitOutcome<'r> {
 }
 
 pub(crate) struct SendCommitOutcome<'rv> {
-    pub(crate) descriptor: SendDescriptorPublication<'rv>,
+    pub(crate) _borrow: core::marker::PhantomData<&'rv ()>,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct MsgFlags(u8);
 
 impl MsgFlags {
-    const EXPECTS_CONTROL: u8 = 1 << 0;
-    const ACCEPTS_EMPTY_PAYLOAD: u8 = 1 << 1;
+    const ACCEPTS_EMPTY_PAYLOAD: u8 = 1 << 0;
 
     #[inline(always)]
-    pub(crate) const fn new(expects_control: bool, accepts_empty_payload: bool) -> Self {
+    pub(crate) const fn new(accepts_empty_payload: bool) -> Self {
         let mut bits = 0u8;
-        if expects_control {
-            bits |= Self::EXPECTS_CONTROL;
-        }
         if accepts_empty_payload {
             bits |= Self::ACCEPTS_EMPTY_PAYLOAD;
         }
         Self(bits)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn expects_control(self) -> bool {
-        self.0 & Self::EXPECTS_CONTROL != 0
     }
 
     #[inline(always)]
@@ -122,24 +74,23 @@ impl MsgFlags {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct MsgRuntimeCore {
+pub(crate) struct MsgCore {
     logical_label: crate::transport::LogicalLabel,
     frame_label: crate::transport::FrameLabel,
     flags: MsgFlags,
 }
 
-impl MsgRuntimeCore {
+impl MsgCore {
     #[inline]
     pub(crate) const fn new(
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
-        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> Self {
         Self {
             logical_label: crate::transport::LogicalLabel::new(logical_label),
             frame_label,
-            flags: MsgFlags::new(expects_control, accepts_empty_payload),
+            flags: MsgFlags::new(accepts_empty_payload),
         }
     }
 
@@ -154,11 +105,6 @@ impl MsgRuntimeCore {
     }
 
     #[inline]
-    pub(crate) const fn expects_control(self) -> bool {
-        self.flags.expects_control()
-    }
-
-    #[inline]
     pub(crate) const fn accepts_empty_payload(self) -> bool {
         self.flags.accepts_empty_payload()
     }
@@ -167,7 +113,7 @@ impl MsgRuntimeCore {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct RecvRuntimeDesc {
-    pub(crate) core: MsgRuntimeCore,
+    pub(crate) core: MsgCore,
 }
 
 impl RecvRuntimeDesc {
@@ -175,27 +121,16 @@ impl RecvRuntimeDesc {
     pub(crate) const fn new(
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
-        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> Self {
         Self {
-            core: MsgRuntimeCore::new(
-                logical_label,
-                frame_label,
-                expects_control,
-                accepts_empty_payload,
-            ),
+            core: MsgCore::new(logical_label, frame_label, accepts_empty_payload),
         }
     }
 
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
-    }
-
-    #[inline]
-    pub(crate) const fn expects_control(self) -> bool {
-        self.core.expects_control()
     }
 
     #[inline]
@@ -207,9 +142,10 @@ impl RecvRuntimeDesc {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct DecodeRuntimeDesc {
-    pub(crate) core: MsgRuntimeCore,
+    pub(crate) core: MsgCore,
     validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-    synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
+    zero_payload:
+        for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
 }
 
 impl DecodeRuntimeDesc {
@@ -217,16 +153,16 @@ impl DecodeRuntimeDesc {
     pub(crate) const fn new(
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
-        expects_control: bool,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        synthetic: for<'a> fn(
+        zero_payload: for<'a> fn(
             &'a mut [u8],
-        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
+        )
+            -> Result<Payload<'a>, crate::transport::wire::CodecError>,
     ) -> Self {
         Self {
-            core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
+            core: MsgCore::new(logical_label, frame_label, false),
             validate,
-            synthetic,
+            zero_payload,
         }
     }
 
@@ -238,11 +174,6 @@ impl DecodeRuntimeDesc {
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
-    }
-
-    #[inline]
-    pub(crate) const fn expects_control(self) -> bool {
-        self.core.expects_control()
     }
 
     #[inline]
@@ -254,22 +185,20 @@ impl DecodeRuntimeDesc {
     }
 
     #[inline]
-    pub(crate) fn synthetic_payload<'a>(
+    pub(crate) fn zero_payload<'a>(
         self,
         scratch: &'a mut [u8],
     ) -> Result<Payload<'a>, crate::transport::wire::CodecError> {
-        (self.synthetic)(scratch)
+        (self.zero_payload)(scratch)
     }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct SendRuntimeDesc {
-    pub(crate) core: MsgRuntimeCore,
-    pub(crate) control: Option<ControlDesc>,
-    control_payload_kind: u8,
-    encode_payload: crate::transport::wire::ErasedEncoder,
-    encode_control_handle: Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]>,
+    pub(crate) core: MsgCore,
+    encode_payload:
+        unsafe fn(*const (), &mut [u8]) -> Result<usize, crate::transport::wire::CodecError>,
 }
 
 impl SendRuntimeDesc {
@@ -277,18 +206,14 @@ impl SendRuntimeDesc {
     pub(crate) const fn new(
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
-        expects_control: bool,
-        control: Option<ControlDesc>,
-        control_payload_kind: u8,
-        encode_payload: crate::transport::wire::ErasedEncoder,
-        encode_control_handle: Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]>,
+        encode_payload: unsafe fn(
+            *const (),
+            &mut [u8],
+        ) -> Result<usize, crate::transport::wire::CodecError>,
     ) -> Self {
         Self {
-            core: MsgRuntimeCore::new(logical_label, frame_label, expects_control, false),
-            control,
-            control_payload_kind,
+            core: MsgCore::new(logical_label, frame_label, false),
             encode_payload,
-            encode_control_handle,
         }
     }
 
@@ -300,28 +225,6 @@ impl SendRuntimeDesc {
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
-    }
-
-    #[inline]
-    pub(crate) const fn expects_control(self) -> bool {
-        self.core.expects_control()
-    }
-
-    #[inline]
-    pub(crate) const fn control(self) -> Option<ControlDesc> {
-        self.control
-    }
-
-    #[inline]
-    pub(crate) const fn control_payload_kind(self) -> u8 {
-        self.control_payload_kind
-    }
-
-    #[inline]
-    pub(crate) const fn encode_control_handle(
-        self,
-    ) -> Option<fn(SessionId, u8, u64) -> [u8; CAP_HANDLE_LEN]> {
-        self.encode_control_handle
     }
 
     #[inline]
@@ -465,37 +368,23 @@ const fn storage_checked_mul(lhs: usize, rhs: usize) -> usize {
 }
 
 #[inline]
-pub(crate) const fn cursor_endpoint_storage_layout<
-    'r,
-    const ROLE: u8,
-    T,
-    U,
-    C,
-    E,
-    const MAX_RV: usize,
-    Mint,
->(
+pub(crate) const fn cursor_endpoint_storage_layout<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
     arena_layout: &EndpointArenaLayout,
     lane_slot_count: usize,
 ) -> CursorEndpointStorageLayout
 where
     T: Transport + 'r,
-    U: LabelUniverse + 'r,
-    C: crate::runtime::config::Clock + 'r,
-    E: EpochTable + 'r,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock + 'r,
 {
-    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>>();
-    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>>();
-    let port_slots_align = core::mem::align_of::<Option<Port<'r, T, E>>>();
-    let port_slots_bytes = storage_checked_mul(
-        core::mem::size_of::<Option<Port<'r, T, E>>>(),
-        lane_slot_count,
-    );
+    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T, C, MAX_RV>>();
+    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T, C, MAX_RV>>();
+    let port_slots_align = core::mem::align_of::<Option<Port<'r, T>>>();
+    let port_slots_bytes =
+        storage_checked_mul(core::mem::size_of::<Option<Port<'r, T>>>(), lane_slot_count);
     let port_slots_offset = storage_align_up(header_bytes, port_slots_align);
-    let guard_slots_align = core::mem::align_of::<Option<LaneGuard<'r, T, U, C>>>();
+    let guard_slots_align = core::mem::align_of::<Option<LaneGuard<'r, T, C>>>();
     let guard_slots_bytes = storage_checked_mul(
-        core::mem::size_of::<Option<LaneGuard<'r, T, U, C>>>(),
+        core::mem::size_of::<Option<LaneGuard<'r, T, C>>>(),
         lane_slot_count,
     );
     let guard_slots_offset = storage_align_up(
@@ -533,15 +422,9 @@ where
 #[cfg(test)]
 mod size_tests {
     use super::*;
-    use crate::control::cluster::core::DescriptorTerminal;
 
     #[test]
     fn pending_send_commit_proof_stays_compact() {
-        assert!(
-            core::mem::size_of::<DescriptorTerminal>() <= 40,
-            "DescriptorTerminal grew to {} bytes",
-            core::mem::size_of::<DescriptorTerminal>()
-        );
         assert!(
             core::mem::size_of::<SendCommitProof<'static>>() <= 96,
             "SendCommitProof grew to {} bytes",

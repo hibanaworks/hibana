@@ -5,10 +5,7 @@
 
 use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
 
-use super::authority::{
-    Arm, DeferReason, DeferSource, LoopDecision, RouteArmToken, RouteResolveStep,
-    decision_policy_input_arg0,
-};
+use super::authority::{Arm, DeferReason, RouteArmToken, RouteResolveStep};
 use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeLoopMeta};
 use super::frontier::*;
 use super::frontier_state::FrontierState;
@@ -19,44 +16,28 @@ use super::offer::*;
 mod route_commit_helpers;
 use super::decision_state::{RouteCommitRowSetBuilder, RouteState};
 use crate::eff::EffIndex;
-use crate::global::ControlDesc;
-use crate::global::compiled::images::ControlSemanticKind;
+use crate::global::compiled::images::EventSemanticKind;
 use crate::global::const_dsl::{ResolverMode, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    CursorRefresh, EventCursor, FlowPreviewError, LoopRole, RecvMeta, RelocatableResidentLaneStep,
-    ResidentLaneStepError, SendMeta, StateIndex, state_index_to_usize,
+    CursorInvariantError, CursorRefresh, EventCursor, FlowPreviewError, RecvMeta,
+    RelocatableResidentLaneStep, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::{
-    control::types::{Lane, RendezvousId, SessionId},
-    control::{
-        cap::mint::{
-            CAP_HANDLE_LEN, CAP_TOKEN_LEN, CapHeader, CapShot, ControlOp, E0, EndpointEpoch,
-            EpochTable, EpochTbl, MintConfigMarker, Owner,
-        },
-        cap::resource_kinds::LoopDecisionHandle,
-        cluster::{
-            core::{
-                DecisionSubject, DescriptorPublicationAuthority, DescriptorTerminal,
-                DynamicPolicyResolution,
-            },
-            error::CpError,
-        },
-    },
     endpoint::{
-        RecvError, RecvResult, SendError, SendResult, affine::LaneGuard, control::SessionControlCtx,
+        RecvError, RecvResult, SendError, SendResult, affine::LaneGuard, session::SessionCtx,
     },
     observe::core::{TapEvent, emit},
     observe::scope::ScopeTrace,
     observe::{events, ids},
-    policy_runtime::{self, PolicySlot},
     rendezvous::SessionFaultKind,
-    rendezvous::{
-        capability::{CapEntry, CapReleaseCtx},
-        core::EndpointLeaseId,
-        port::Port,
+    rendezvous::{core::EndpointLeaseId, port::Port},
+    resolver_audit::{self, ResolverSlot},
+    session::{
+        brand::Owner,
+        cluster::{core::DynamicResolverResolution, error::ClusterError},
+        types::{Lane, RendezvousId, SessionId},
     },
-    runtime::consts::LabelUniverse,
     transport::{
         FrameLabelMask, Transport,
         trace::TapFrameMeta,
@@ -80,7 +61,6 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
-        expects_control: bool,
         accepts_empty_payload: bool,
     ) -> RecvResult<super::recv::PreparedRecv>;
 
@@ -97,7 +77,6 @@ pub(crate) trait RecvKernelEndpoint<'r> {
         desc: super::recv::RecvDescriptor,
         payload_source: super::recv::RecvPayloadSource<'r>,
         erased: RecvRuntimeDesc,
-        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
 }
@@ -119,7 +98,6 @@ pub(crate) trait DecodeKernelEndpoint<'r> {
     fn finish_decode_kernel(
         &mut self,
         desc: DecodeRuntimeDesc,
-        control: Option<ControlDesc>,
         prepared_meta: Option<RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>>;
@@ -150,8 +128,6 @@ pub(crate) trait SendKernelEndpoint<'r> {
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
     logical_label: u8,
-    expects_control: bool,
-    control: Option<ControlDesc>,
     accepts_empty_payload: bool,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::recv::RecvState,
@@ -160,11 +136,9 @@ pub(crate) fn kernel_recv<'r>(
     let prepared = match state.prepared() {
         Some(prepared) => prepared,
         None => {
-            let prepared = match endpoint.prepare_recv_kernel_descriptor(
-                logical_label,
-                expects_control,
-                accepts_empty_payload,
-            ) {
+            let prepared = match endpoint
+                .prepare_recv_kernel_descriptor(logical_label, accepts_empty_payload)
+            {
                 Ok(prepared) => prepared,
                 Err(err) => return Poll::Ready(Err(err)),
             };
@@ -187,7 +161,6 @@ pub(crate) fn kernel_recv<'r>(
                         prepared.descriptor,
                         payload_source,
                         prepared.runtime,
-                        control,
                         validate,
                     )
                     .map(|payload| unsafe {
@@ -208,7 +181,6 @@ pub(crate) fn kernel_recv<'r>(
 pub(crate) fn kernel_decode<'r>(
     endpoint: &mut dyn DecodeKernelEndpoint<'r>,
     desc: DecodeRuntimeDesc,
-    control: Option<ControlDesc>,
     state: &mut super::decode::DecodeState<'r>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
@@ -244,13 +216,13 @@ pub(crate) fn kernel_decode<'r>(
                 }
             };
             let branch = state.branch_mut().expect("invariant");
-            branch.staged_payload = Some(StagedPayload::Transport { frame });
+            branch.staged_payload = Some(StagedPayload::new(frame));
         }
     }
     let prepared_meta = state.prepared_meta();
     let result = {
         let branch = state.branch_mut().expect("invariant");
-        endpoint.finish_decode_kernel(desc, control, prepared_meta, branch)
+        endpoint.finish_decode_kernel(desc, prepared_meta, branch)
     };
     match result {
         Ok(payload) => {
@@ -258,7 +230,7 @@ pub(crate) fn kernel_decode<'r>(
             state.restore_on_drop = false;
             Poll::Ready(Ok(unsafe {
                 // SAFETY: committed decode payloads are staged in endpoint-resident
-                // transport/ingress storage or local synthetic scratch.
+                // transport/ingress storage or local zero scratch.
                 lane_port::endpoint_resident_payload(payload)
             }))
         }
@@ -317,15 +289,11 @@ pub(crate) fn kernel_send<'r>(
     }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint> SendKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> SendKernelEndpoint<'r>
+    for CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
-    <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
+    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     fn poll_send_init_kernel(
@@ -368,36 +336,23 @@ fn controller_arm_semantic_kind(
     cursor: &EventCursor,
     scope_id: ScopeId,
     arm: u8,
-) -> Option<ControlSemanticKind> {
+) -> Option<EventSemanticKind> {
     let (entry, _) = cursor.shared_controller_arm_entry_by_arm(scope_id, arm)?;
     Some(controller_arm_semantic_from_node(
-        cursor.control_semantic_at(state_index_to_usize(entry)),
+        cursor.event_semantic_at(state_index_to_usize(entry)),
     ))
 }
 
 #[inline]
-const fn controller_arm_semantic_from_node(kind: ControlSemanticKind) -> ControlSemanticKind {
+const fn controller_arm_semantic_from_node(kind: EventSemanticKind) -> EventSemanticKind {
     match kind {
-        ControlSemanticKind::LoopContinue => ControlSemanticKind::LoopContinue,
-        ControlSemanticKind::LoopBreak => ControlSemanticKind::LoopBreak,
-        ControlSemanticKind::DecisionArm | ControlSemanticKind::Other => {
-            ControlSemanticKind::DecisionArm
-        }
+        EventSemanticKind::DecisionArm | EventSemanticKind::Other => EventSemanticKind::DecisionArm,
     }
 }
 
-#[inline]
-const fn control_policy_is_validated_during_handle_preparation(op: ControlOp) -> bool {
-    matches!(op, ControlOp::TopologyBegin | ControlOp::TopologyAck)
-}
-
 #[cfg(all(test, hibana_repo_tests))]
-#[path = "core/decision_policy_tests.rs"]
-mod decision_policy_tests;
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "core/send_rollback_tests.rs"]
-mod send_rollback_tests;
+#[path = "core/decision_resolver_tests.rs"]
+mod decision_resolver_tests;
 
 mod commit_delta;
 mod frontier_observation;
@@ -405,16 +360,12 @@ mod frontier_select;
 mod offer_refresh;
 mod scope_evidence_logic;
 
-mod decision_policy;
+mod decision_resolver;
 mod frontier_helpers;
 mod public_types;
 mod route_preview;
 mod route_preview_flow;
 mod runtime_types;
-mod send_control_commit;
-mod send_control_ops;
-mod send_descriptor_publication;
-mod send_descriptor_terminal;
 mod send_ops;
 
 pub(crate) use super::decision_state::{
@@ -423,23 +374,14 @@ pub(crate) use super::decision_state::{
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
 pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
 pub(crate) use public_types::*;
+pub(in crate::endpoint::kernel) use route_preview::ResolverDeferAudit;
 pub(crate) use runtime_types::*;
-pub(crate) use send_descriptor_publication::*;
-pub(crate) use send_descriptor_terminal::*;
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
-    pub(crate) fn matches_session(&self, sid: SessionId) -> bool {
-        self.sid == sid
-    }
-
     /// Rendezvous id for the primary port.
     #[inline]
     pub(crate) fn rendezvous_id(&self) -> RendezvousId {
@@ -447,7 +389,7 @@ where
     }
 
     /// Get the descriptor-selected primary lane's port.
-    fn port(&self) -> &Port<'r, T, E> {
+    fn port(&self) -> &Port<'r, T> {
         if self.ports[self.primary_lane].is_none() {
             crate::invariant();
         }
@@ -455,7 +397,7 @@ where
     }
 
     /// Get port for a specific lane.
-    pub(crate) fn port_for_lane(&self, lane_idx: usize) -> &Port<'r, T, E> {
+    pub(crate) fn port_for_lane(&self, lane_idx: usize) -> &Port<'r, T> {
         if self.ports[lane_idx].is_none() {
             crate::invariant();
         }
@@ -470,15 +412,12 @@ where
         frontier_scratch_view_from_storage(scratch_ptr, layout, self.cursor.max_frontier_entries())
     }
 
-    pub(crate) fn loop_index(scope: ScopeId) -> Option<u8> {
-        u8::try_from(scope.ordinal()).ok()
-    }
-
     #[inline]
     pub(crate) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView<'static> {
-        self.cursor
-            .route_scope_offer_lane_set(scope_id)
-            .unwrap_or(LaneSetView::EMPTY)
+        match self.cursor.route_scope_offer_lane_set(scope_id) {
+            Some(lanes) => lanes,
+            None => LaneSetView::EMPTY,
+        }
     }
 
     #[inline]
@@ -515,69 +454,12 @@ where
         }
         None
     }
-
-    pub(crate) fn for_each_physical_lane(&self, mut f: impl FnMut(Lane)) {
-        let logical_lane_count = self.cursor.logical_lane_count();
-        for slot in self.ports.iter().take(logical_lane_count) {
-            if let Some(port) = slot.as_ref() {
-                f(port.lane);
-            }
-        }
-    }
-
-    pub(crate) fn invalidate_public_owner(&mut self) {
-        self.public_header.invalidate();
-        self.public_generation = 0;
-        self.public_slot_owned = false;
-    }
-
-    pub(crate) fn prepare_public_owner_revocation(
-        &mut self,
-        terminal: &mut EndpointRevocationTerminal<'r>,
-    ) {
-        terminal.set_waiter_lane(self.primary_physical_lane());
-        self.revoke_drain_public_send_terminal(terminal);
-        self.revoke_clear_public_recv_state();
-        self.revoke_clear_public_offer_state();
-        self.revoke_clear_public_decode_state();
-        if let Some(branch) = self.public_route_branch.take() {
-            branch.discard_terminal();
-        }
-        self.clear_public_op_terminal();
-    }
-
-    pub(crate) fn finish_public_owner_revocation(&mut self) {
-        if self.public_generation != 0
-            && let Some(cluster) = self.control.cluster()
-        {
-            cluster.unbind_session_role(self.sid, ROLE, self.public_rv);
-        }
-        self.invalidate_public_owner();
-        self.revoke_finish_public_send_state();
-        for port in self.ports.iter_mut() {
-            if let Some(port) = port.take() {
-                drop(port);
-            }
-        }
-        for guard in self.guards.iter_mut() {
-            if let Some(guard) = guard.as_mut() {
-                guard.detach_rendezvous();
-            }
-            if let Some(guard) = guard.take() {
-                drop(guard);
-            }
-        }
-    }
 }
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint> Drop
-    for CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> Drop for CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
     fn drop(&mut self) {
         if self.public_generation != 0 && !self.cursor.is_terminal() {
@@ -602,9 +484,8 @@ where
                 drop(g);
             }
         }
-        if self.public_generation != 0
-            && let Some(cluster) = self.control.cluster()
-        {
+        if self.public_generation != 0 {
+            let cluster = self.session.cluster();
             cluster.unbind_session_role(self.sid, ROLE, self.public_rv);
             if self.public_slot_owned {
                 cluster.release_public_endpoint_slot_owned(

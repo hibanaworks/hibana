@@ -130,10 +130,9 @@ const fn validate_first_recv_dispatch_scope<const ROLE: u8>(
         };
         if let Some(spec) =
             first_recv_dispatch_spec_for_arm::<ROLE>(eff_list, visit.root_arm, arm_start, arm_end)
+            && !push_first_recv_dispatch_spec(&mut table, &mut table_len, spec)
         {
-            if !push_first_recv_dispatch_spec(&mut table, &mut table_len, spec) {
-                return Some(ProgramSourceError::ProjectionRouteUnprojectable);
-            }
+            return Some(ProgramSourceError::ProjectionRouteUnprojectable);
         }
         if let Some(child_enter_idx) = passive_child_route_enter_index(
             scope_markers,

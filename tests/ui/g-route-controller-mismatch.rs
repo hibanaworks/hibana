@@ -1,5 +1,5 @@
 use hibana::g::{self};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 // The arms disagree on their first visible controller, so projection must reject
 // the route before it can become a projected role program.

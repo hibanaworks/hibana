@@ -19,32 +19,6 @@ pub(crate) enum ScopeEvent {
     Exit,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ControlScopeKind {
-    None = 0,
-    Loop = 1,
-    State = 2,
-    Topology = 4,
-    Policy = 6,
-    Route = 7,
-}
-
-impl ControlScopeKind {
-    #[inline]
-    pub(crate) const fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::None),
-            1 => Some(Self::Loop),
-            2 => Some(Self::State),
-            4 => Some(Self::Topology),
-            6 => Some(Self::Policy),
-            7 => Some(Self::Route),
-            _ => None,
-        }
-    }
-}
-
 /// Encoded scope identifier embedding the scope kind and its structural ordinals.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScopeId {
@@ -55,12 +29,6 @@ pub(crate) struct ScopeId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CompactScopeId {
     raw: u32,
-}
-
-impl Default for ScopeId {
-    fn default() -> Self {
-        ScopeId::none()
-    }
 }
 
 impl ScopeId {
@@ -108,17 +76,6 @@ impl ScopeId {
 
     pub(crate) const fn is_none(self) -> bool {
         self.raw == Self::NONE_RAW
-    }
-
-    pub(crate) const fn decode_raw(raw: u64) -> Option<Self> {
-        if raw == Self::NONE_RAW {
-            return Some(Self::none());
-        }
-        if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u64 {
-            None
-        } else {
-            Some(Self { raw })
-        }
     }
 
     pub(crate) const fn raw(self) -> u64 {
@@ -199,6 +156,10 @@ impl ScopeId {
 
     pub(crate) const fn route(ordinal: u16) -> Self {
         Self::new(ScopeKind::Route, ordinal)
+    }
+
+    pub(crate) const fn loop_scope(ordinal: u16) -> Self {
+        Self::new(ScopeKind::Loop, ordinal)
     }
 
     pub(crate) const fn parallel(ordinal: u16) -> Self {

@@ -1,5 +1,5 @@
 use hibana::g;
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 async fn endpoint_offer_decode_example(
     endpoint: &mut hibana::Endpoint<'_, 1>,
@@ -14,7 +14,7 @@ async fn endpoint_offer_decode_example(
             let unit = branch.decode::<g::Msg<33, ()>>().await?;
             let _ = unit;
         }
-        _ => unreachable!(),
+        label => panic!("unexpected route label {label}"),
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! Route-decision resolution state and outcomes.
 
 use super::super::authority::RouteArmToken;
-use super::ResolvedFrameHint;
+use super::FrameHintResolution;
 
 #[derive(Clone, Copy)]
 pub(super) enum ResolvePendingState {
@@ -60,7 +60,7 @@ impl RouteArmCommitEvidence {
 pub(in crate::endpoint::kernel) struct ResolvedRouteArm {
     pub(in crate::endpoint::kernel) route_token: RouteArmToken,
     pub(in crate::endpoint::kernel) selected_arm: u8,
-    pub(in crate::endpoint::kernel) resolved_hint_frame: Option<ResolvedFrameHint>,
+    pub(in crate::endpoint::kernel) frame_hint: FrameHintResolution,
     pub(in crate::endpoint::kernel) route_arm_selection_commit_evidence: RouteArmCommitEvidence,
 }
 

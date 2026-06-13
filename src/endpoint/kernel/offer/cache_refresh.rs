@@ -1,15 +1,10 @@
 use super::{
-    Clock, CursorEndpoint, EpochTable, FrontierObservationDomain, FrontierObservationKey,
-    LabelUniverse, MintConfigMarker, ScopeId, Transport,
+    Clock, CursorEndpoint, FrontierObservationDomain, FrontierObservationKey, ScopeId, Transport,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_scope(
         &mut self,
@@ -23,7 +18,7 @@ where
         let mut root_len = 0usize;
         let mut matches_scope = false;
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::next_slot_in_mask(&mut active_entries)
+            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut active_entries)
         {
             let Some(entry_idx) = global_active_entries.entry_at(slot_idx) else {
                 continue;
@@ -74,7 +69,7 @@ where
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_route_lane(
         &mut self,
         lane_idx: usize,
-        previous_change_epoch: u16,
+        captured_change_generation: u16,
     ) {
         if lane_idx >= self.cursor.logical_lane_count() {
             return;
@@ -82,7 +77,7 @@ where
         self.refresh_cached_frontier_observation_route_lane_entries(
             FrontierObservationDomain::global(),
             lane_idx,
-            previous_change_epoch,
+            captured_change_generation,
         );
         let mut slot_idx = 0usize;
         while slot_idx < self.frontier_state.root_frontier_len() {
@@ -90,7 +85,7 @@ where
             self.refresh_cached_frontier_observation_route_lane_entries(
                 FrontierObservationDomain::root(root),
                 lane_idx,
-                previous_change_epoch,
+                captured_change_generation,
             );
             slot_idx += 1;
         }

@@ -1,31 +1,24 @@
-use crate::{
-    control::{cap::mint::ControlOp, cluster::core::DecisionSubject},
-    eff::EffIndex,
-    global::{ControlDesc, const_dsl::ResolverMode},
-};
+use crate::{eff::EffIndex, global::const_dsl::ResolverMode};
 
 /// Precomputed dynamic resolver site discovered during program lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DynamicPolicySite {
+pub(crate) struct DynamicResolverSite {
     eff_index: EffIndex,
     logical_label: u8,
-    subject: Option<DecisionSubject>,
-    policy: ResolverMode,
+    resolver: ResolverMode,
 }
 
-impl DynamicPolicySite {
+impl DynamicResolverSite {
     #[inline(always)]
     pub(crate) const fn new(
         eff_index: EffIndex,
         logical_label: u8,
-        subject: Option<DecisionSubject>,
-        policy: ResolverMode,
+        resolver: ResolverMode,
     ) -> Self {
         Self {
             eff_index,
             logical_label,
-            subject,
-            policy,
+            resolver,
         }
     }
 
@@ -40,19 +33,14 @@ impl DynamicPolicySite {
     }
 
     #[inline(always)]
-    pub(crate) const fn subject(&self) -> Option<DecisionSubject> {
-        self.subject
+    pub(crate) const fn resolver(&self) -> ResolverMode {
+        self.resolver
     }
 
     #[inline(always)]
-    pub(crate) const fn policy(&self) -> ResolverMode {
-        self.policy
-    }
-
-    #[inline(always)]
-    pub(crate) const fn policy_id(&self) -> u16 {
-        match self.policy {
-            ResolverMode::Dynamic { policy_id, .. } => policy_id,
+    pub(crate) const fn resolver_id(&self) -> u16 {
+        match self.resolver {
+            ResolverMode::Dynamic { resolver_id, .. } => resolver_id,
             ResolverMode::Static => 0,
         }
     }
@@ -60,21 +48,17 @@ impl DynamicPolicySite {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum ControlSemanticKind {
+pub(crate) enum EventSemanticKind {
     Other = 0,
     DecisionArm = 1,
-    LoopContinue = 2,
-    LoopBreak = 3,
 }
 
-impl ControlSemanticKind {
+impl EventSemanticKind {
     #[inline(always)]
     pub(crate) const fn packed_bits(self) -> u8 {
         match self {
             Self::Other => 0,
             Self::DecisionArm => 1,
-            Self::LoopContinue => 2,
-            Self::LoopBreak => 3,
         }
     }
 
@@ -83,95 +67,52 @@ impl ControlSemanticKind {
         match bits {
             0 => Self::Other,
             1 => Self::DecisionArm,
-            2 => Self::LoopContinue,
-            3 => Self::LoopBreak,
-            _ => panic!("invalid packed control semantic bits"),
+            _ => panic!("invalid packed event semantic bits"),
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn from_control_op(op: Option<ControlOp>) -> Self {
-        match op {
-            Some(ControlOp::LoopContinue) => Self::LoopContinue,
-            Some(ControlOp::LoopBreak) => Self::LoopBreak,
-            Some(
-                ControlOp::StateSnapshot
-                | ControlOp::StateRestore
-                | ControlOp::TopologyBegin
-                | ControlOp::TopologyAck
-                | ControlOp::TopologyCommit
-                | ControlOp::TxCommit
-                | ControlOp::TxAbort,
-            )
-            | None => Self::Other,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn from_control_desc(desc: Option<ControlDesc>) -> Self {
-        match desc {
-            Some(desc) => Self::from_control_op(Some(desc.op())),
-            None => Self::Other,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_loop(self) -> bool {
-        matches!(self, Self::LoopContinue | Self::LoopBreak)
     }
 }
 
 pub(crate) const MAX_COMPILED_PROGRAM_TAP_EVENTS: usize = 512;
 pub(crate) const MAX_COMPILED_PROGRAM_RESOURCES: usize = 128;
 pub(crate) const MAX_COMPILED_PROGRAM_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
-pub(crate) const MAX_COMPILED_PROGRAM_CONTROLS: usize = crate::eff::meta::MAX_EFF_NODES;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledProgramCounts {
     pub(crate) tap_events: usize,
     pub(crate) resources: usize,
-    pub(crate) controls: usize,
-    pub(crate) dynamic_policy_sites: usize,
-    pub(crate) route_controls: usize,
+    pub(crate) dynamic_resolver_sites: usize,
+    pub(crate) route_resolvers: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use core::mem::size_of;
 
-    use super::{CompiledProgramCounts, ControlSemanticKind};
-    use crate::control::cap::mint::ControlOp;
-
+    use super::{CompiledProgramCounts, EventSemanticKind};
     #[test]
     fn compiled_program_counts_remain_plain_derived_counts() {
-        assert_eq!(size_of::<CompiledProgramCounts>(), 5 * size_of::<usize>());
+        assert_eq!(size_of::<CompiledProgramCounts>(), 4 * size_of::<usize>());
         let max = CompiledProgramCounts {
             tap_events: super::MAX_COMPILED_PROGRAM_TAP_EVENTS,
             resources: super::MAX_COMPILED_PROGRAM_RESOURCES,
-            controls: super::MAX_COMPILED_PROGRAM_CONTROLS,
-            dynamic_policy_sites: crate::eff::meta::MAX_EFF_NODES,
-            route_controls: crate::eff::meta::MAX_EFF_NODES,
+            dynamic_resolver_sites: crate::eff::meta::MAX_EFF_NODES,
+            route_resolvers: crate::eff::meta::MAX_EFF_NODES,
         };
         assert!(max.tap_events > 0);
         assert!(max.resources > 0);
-        assert!(max.controls > 0);
-        assert!(max.dynamic_policy_sites > 0);
-        assert!(max.route_controls > 0);
+        assert!(max.dynamic_resolver_sites > 0);
+        assert!(max.route_resolvers > 0);
     }
 
     #[test]
-    fn compiled_program_marks_loop_control_semantics_from_control_metadata() {
+    fn compiled_program_marks_route_decision_semantics() {
         assert_eq!(
-            ControlSemanticKind::from_control_op(Some(ControlOp::LoopContinue)),
-            ControlSemanticKind::LoopContinue
+            EventSemanticKind::from_packed_bits(0),
+            EventSemanticKind::Other
         );
         assert_eq!(
-            ControlSemanticKind::from_control_op(Some(ControlOp::LoopBreak)),
-            ControlSemanticKind::LoopBreak
-        );
-        assert_eq!(
-            ControlSemanticKind::from_control_op(None),
-            ControlSemanticKind::Other
+            EventSemanticKind::from_packed_bits(1),
+            EventSemanticKind::DecisionArm
         );
     }
 }

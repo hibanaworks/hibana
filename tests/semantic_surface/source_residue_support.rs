@@ -34,14 +34,14 @@ fn repo_test_support_modules_are_not_orphaned() {
         let marker = format!("#[path = \"{relative}\"]");
         assert!(
             tests_source.contains(&marker),
-            "repo test support module must be referenced by #[path] or deleted: {relative}"
+            "repo test support module must be referenced by #[path] or forbidden: {relative}"
         );
     }
 }
 
 #[test]
-fn public_surface_and_gates_do_not_retain_legacy_role_token_api() {
-    let legacy_role_token = concat!("g::", "Role<");
+fn public_surface_and_gates_do_not_retain_forbidden_role_token_api() {
+    let forbidden_role_token = concat!("g::", "Role<");
     for (name, source) in [
         ("production source", read_production_rs_tree("src")),
         ("README", read("README.md")),
@@ -59,8 +59,8 @@ fn public_surface_and_gates_do_not_retain_legacy_role_token_api() {
         ),
     ] {
         assert!(
-            !source.contains(legacy_role_token),
-            "{name} must not retain legacy public role-token API residue"
+            !source.contains(forbidden_role_token),
+            "{name} must not retain forbidden public role-token API residue"
         );
     }
 }

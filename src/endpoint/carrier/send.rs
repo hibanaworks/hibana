@@ -1,9 +1,8 @@
 use super::{Context, NonNull, OutSlot, PackedEndpointHandle, Poll};
-impl<'cfg, T, U, C, const MAX_RV: usize> crate::integration::SessionKit<'cfg, T, U, C, MAX_RV>
+impl<'cfg, T, C, const MAX_RV: usize> crate::runtime::SessionKit<'cfg, T, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse + 'cfg,
-    C: crate::runtime::config::Clock + 'cfg,
+    C: crate::runtime_core::config::Clock + 'cfg,
 {
     pub(super) unsafe fn preview_public_endpoint<const ROLE: u8>(
         ptr: NonNull<()>,

@@ -1,13 +1,5 @@
 //! Authority-path helpers for resolver/ack/poll decisions.
 
-use crate::transport::context::PolicyInput;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LoopDecision {
-    Continue,
-    Break,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Arm(u8);
 
@@ -81,35 +73,15 @@ impl RouteArmToken {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RouteResolveStep {
     Resolved(Arm),
-    Deferred { source: DeferSource },
-    Abort(u16),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DeferSource {
-    Resolver,
-}
-
-impl DeferSource {
-    const RESOLVER_AUDIT_TAG: u8 = 0x80;
-
-    #[inline]
-    pub(super) const fn as_audit_tag(self) -> u8 {
-        match self {
-            Self::Resolver => Self::RESOLVER_AUDIT_TAG,
-        }
-    }
+    Deferred,
+    NoAuthority,
+    Reject(u16),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeferReason {
     Unsupported = 1,
     NoEvidence = 2,
-}
-
-#[inline]
-pub(super) fn decision_policy_input_arg0(input: PolicyInput) -> u32 {
-    input.primary()
 }
 
 #[cfg(test)]

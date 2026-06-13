@@ -24,7 +24,7 @@ use core::{
     task::{Poll, ready},
 };
 
-use super::authority::{Arm, DeferReason, DeferSource, RouteArmToken, RouteResolveStep};
+use super::authority::{Arm, DeferReason, RouteArmToken, RouteResolveStep};
 use super::core::{CursorEndpoint, MaterializedRouteBranch};
 use super::evidence::ScopeFrameLabelMeta;
 use super::frontier::{
@@ -37,42 +37,39 @@ use super::frontier::{
     frontier_working_observation_key_view_from_storage,
 };
 use super::lane_port;
-use crate::control::cap::mint::{EpochTable, MintConfigMarker};
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::state_index_to_usize;
-use crate::policy_runtime::PolicySlot;
 use crate::rendezvous::port::Port;
-use crate::runtime::{config::Clock, consts::LabelUniverse};
+use crate::runtime_core::config::Clock;
 use crate::transport::Transport;
 
 pub(in crate::endpoint::kernel) use self::commit_types::{
     BranchCommitPlan, BranchKind, BranchMeta,
 };
 pub(in crate::endpoint::kernel) use self::frontier_types::{
-    CachedRecvMeta, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
+    CachedRecvMeta, CachedRouteArm, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
     FrontierObservationDomain, FrontierStaticFacts, ScopeArmMaterializationMeta,
 };
-use self::ingress::{OfferFrontierFacts, OfferIngressTurn};
-pub(in crate::endpoint::kernel) use self::ingress_types::{OfferScopeSelection, ResolvedFrameHint};
+use self::ingress::OfferFrontierFacts;
+pub(in crate::endpoint::kernel) use self::ingress_types::{
+    FrameHintResolution, OfferScopeSelection,
+};
 use self::profile::OfferAuthorityPath;
 pub(in crate::endpoint::kernel) use self::profile::OfferScopeProfile;
 use self::resolve_types::ResolvePendingState;
 pub(in crate::endpoint::kernel) use self::resolve_types::{
     ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence,
 };
+use self::select::FrontierDeferRequest;
 pub(in crate::endpoint::kernel) use self::state::OfferState;
 use self::state::{OfferCollectState, OfferExecution, OfferResolveState, OfferStagedIngress};
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     #[inline]
     fn discard_terminal_ingress(&mut self, state: &mut OfferState<'r>) {
@@ -99,17 +96,17 @@ where
                 );
             }
 
-            if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE) {
-                if let Some(arm) = Arm::new(arm) {
-                    self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
-                }
+            if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
+                && let Some(arm) = Arm::new(arm)
+            {
+                self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
             }
             return;
         }
-        if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE) {
-            if let Some(arm) = Arm::new(arm) {
-                self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
-            }
+        if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
+            && let Some(arm) = Arm::new(arm)
+        {
+            self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
         }
         if let Some(frame_label) =
             self.take_frame_hint_for_lane(lane_idx, suppress_hint, frame_label_meta)
@@ -162,28 +159,34 @@ where
 
     fn refresh_offer_entry_state(&mut self, entry_idx: usize) {
         if !self.offer_entry_has_active_lanes(entry_idx) {
-            let previous_root = self
+            let detached_root = match self
                 .frontier_state
                 .offer_entry_state
                 .get(entry_idx)
                 .copied()
                 .map(|state| state.parallel_root)
-                .unwrap_or(ScopeId::none());
+            {
+                Some(root) => root,
+                None => ScopeId::none(),
+            };
             self.frontier_state.clear_offer_entry_state(entry_idx);
             self.refresh_frontier_observation_caches_for_entry(
                 entry_idx,
-                previous_root,
+                detached_root,
                 ScopeId::none(),
             );
             return;
         }
-        let previous_root = self
+        let detached_root = match self
             .frontier_state
             .offer_entry_state
             .get(entry_idx)
             .copied()
             .map(|state| state.parallel_root)
-            .unwrap_or(ScopeId::none());
+        {
+            Some(root) => root,
+            None => ScopeId::none(),
+        };
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut scan_idx = active_offer_lanes.first_set(lane_limit);
@@ -200,12 +203,12 @@ where
             self.frontier_state.clear_offer_entry_state(entry_idx);
             self.refresh_frontier_observation_caches_for_entry(
                 entry_idx,
-                previous_root,
+                detached_root,
                 ScopeId::none(),
             );
             return;
         };
-        self.detach_offer_entry_from_root_frontier(entry_idx, previous_root);
+        self.detach_offer_entry_from_root_frontier(entry_idx, detached_root);
         Self::ensure_global_frontier_scratch_initialized(self);
         let mut global_active_entries = self.global_active_entries();
         global_active_entries.remove_entry(entry_idx);
@@ -214,7 +217,7 @@ where
             self.frontier_state.clear_offer_entry_state(entry_idx);
             self.refresh_frontier_observation_caches_for_entry(
                 entry_idx,
-                previous_root,
+                detached_root,
                 ScopeId::none(),
             );
             return;
@@ -239,7 +242,7 @@ where
         self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
         self.refresh_frontier_observation_caches_for_entry(
             entry_idx,
-            previous_root,
+            detached_root,
             info.parallel_root,
         );
     }
@@ -252,9 +255,13 @@ where
         let remaining_active_lanes = self.offer_entry_has_other_active_lanes(entry_idx, lane_idx);
         if !remaining_active_lanes {
             let parallel_root = if info.parallel_root.is_none() {
-                self.offer_entry_state_snapshot(entry_idx)
+                match self
+                    .offer_entry_state_snapshot(entry_idx)
                     .and_then(|_| self.offer_entry_parallel_root(entry_idx))
-                    .unwrap_or(ScopeId::none())
+                {
+                    Some(root) => root,
+                    None => ScopeId::none(),
+                }
             } else {
                 info.parallel_root
             };
@@ -295,9 +302,9 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn clear_lane_offer_state(&mut self, lane_idx: usize) {
-        let old = self.decision_state.clear_lane_offer_state(lane_idx);
-        self.detach_lane_from_offer_entry(lane_idx, old);
-        self.detach_lane_from_root_frontier(old);
+        let detached = self.decision_state.clear_lane_offer_state(lane_idx);
+        self.detach_lane_from_offer_entry(lane_idx, detached);
+        self.detach_lane_from_root_frontier(detached);
     }
 
     pub(crate) fn sync_lane_offer_state(&mut self) {
@@ -348,9 +355,9 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return;
         }
-        let old = self.decision_state.clear_lane_offer_state(lane_idx);
-        self.detach_lane_from_offer_entry(lane_idx, old);
-        self.detach_lane_from_root_frontier(old);
+        let detached = self.decision_state.clear_lane_offer_state(lane_idx);
+        self.detach_lane_from_offer_entry(lane_idx, detached);
+        self.detach_lane_from_root_frontier(detached);
         if let Some(info) = self.compute_lane_offer_state(lane_idx) {
             let is_linger = self.is_linger_route(info.scope);
             self.decision_state
@@ -370,9 +377,7 @@ where
             && let Some(ingress) =
                 ready!(self.collect_offer_ingress(pending_recv, state.facts, cx))?
         {
-            match ingress {
-                OfferIngressTurn::Transport(payload) => state.ingress.stage_transport(payload),
-            }
+            state.ingress.stage_transport(ingress);
         }
         Poll::Ready(Ok(()))
     }
@@ -457,7 +462,7 @@ where
                                 stage: OfferResolveState {
                                     facts: stage.facts,
                                     ingress: stage.ingress,
-                                    progress: OfferProgressState::new(self.offer_progress_policy),
+                                    progress: OfferProgressState::new(),
                                     pending: ResolvePendingState::ready(),
                                 },
                             };
@@ -494,20 +499,20 @@ where
                         }
                         ResolveTokenOutcome::Resolved(resolved) => {
                             if stage.facts.profile.is_passive() {
-                                match self
+                                let descended = match self
                                     .descend_selected_passive_route(stage.selection(), resolved)
                                 {
-                                    Ok(true) => {
-                                        state.carry_ingress(stage.ingress);
-                                        state.execution =
-                                            OfferExecution::Selecting { frontier_visited };
-                                        continue;
-                                    }
-                                    Ok(false) => {}
+                                    Ok(descended) => descended,
                                     Err(err) => {
                                         stage.discard_terminal();
                                         return Poll::Ready(Err(err));
                                     }
+                                };
+                                if descended {
+                                    state.carry_ingress(stage.ingress);
+                                    state.execution =
+                                        OfferExecution::Selecting { frontier_visited };
+                                    continue;
                                 }
                             }
                             let selection = stage.selection();

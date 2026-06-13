@@ -17,11 +17,10 @@ use futures::task::noop_waker_ref;
 use hibana::{
     g,
     g::Msg,
-    integration::program::{RoleProgram, project},
-    integration::{
-        SessionKitStorage,
+    runtime::program::{RoleProgram, project},
+    runtime::{
+        Config, CounterClock, SessionKitStorage,
         ids::SessionId,
-        runtime::{Config, CounterClock, DefaultLabelUniverse},
         transport::{Outgoing, ReceivedFrame, Transport},
     },
 };
@@ -30,7 +29,7 @@ use tls_ref_support::with_resident_tls_ref;
 
 const SEND_LOGICAL: u8 = 10;
 
-type TestKitStorage<T> = SessionKitStorage<'static, T, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage<T> = SessionKitStorage<'static, T, CounterClock, 2>;
 
 struct PendingSendState {
     ready: Cell<bool>,
@@ -82,7 +81,7 @@ impl Transport for PendingSendTransport {
 
     fn open<'a>(
         &'a self,
-        port: hibana::integration::transport::PortOpen,
+        port: hibana::runtime::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.inner.open(port)
     }
@@ -137,10 +136,7 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
             let worker_send_program: RoleProgram<1> = project(&send_protocol);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        hibana::integration::runtime::CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
                     TestTransport::default(),
                 )
                 .expect("register rendezvous");
@@ -187,58 +183,63 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
 
         with_fixture(|_clock, tap_buf, slab| {
-            with_resident_tls_ref(
-                &PENDING_SEND_KIT_SLOT,
-                |cluster| {
-                    let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
-                    let controller_send_program: RoleProgram<0> = project(&send_protocol);
-                    let worker_send_program: RoleProgram<1> = project(&send_protocol);
-                    let transport = PendingSendTransport {
-                        inner: TestTransport::default(),
-                        state,
-                    };
-                    let rv = cluster
-                        .rendezvous(
-                            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), hibana::integration::runtime::CounterClock::new()),
-                            transport,
-                        )
-                        .expect("register rendezvous");
-                    let sid = SessionId::new(402);
+            with_resident_tls_ref(&PENDING_SEND_KIT_SLOT, |cluster| {
+                let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
+                let controller_send_program: RoleProgram<0> = project(&send_protocol);
+                let worker_send_program: RoleProgram<1> = project(&send_protocol);
+                let transport = PendingSendTransport {
+                    inner: TestTransport::default(),
+                    state,
+                };
+                let rv = cluster
+                    .rendezvous(
+                        Config::from_resources(
+                            (tap_buf, slab),
+                            hibana::runtime::CounterClock::zero(),
+                        ),
+                        transport,
+                    )
+                    .expect("register rendezvous");
+                let sid = SessionId::new(402);
 
-                    let mut controller = rv.session(sid).role(&controller_send_program).enter()
-                        .expect("attach controller");
-                    let mut worker = rv.session(sid).role(&worker_send_program).enter()
-                        .expect("attach worker");
+                let mut controller = rv
+                    .session(sid)
+                    .role(&controller_send_program)
+                    .enter()
+                    .expect("attach controller");
+                let mut worker = rv
+                    .session(sid)
+                    .role(&worker_send_program)
+                    .enter()
+                    .expect("attach worker");
 
-                    let waker = noop_waker_ref();
-                    let mut cx = Context::from_waker(waker);
-                    {
-                        let flow = controller
-                            .flow::<Msg<SEND_LOGICAL, u32>>()
-                            .expect("initial flow preview");
-                        let mut send = pin!(flow.send(&88));
-                        assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
-                        drop(send);
-                    }
-                    assert_eq!(state.polls.get(), 1, "pending send future should poll once");
+                let waker = noop_waker_ref();
+                let mut cx = Context::from_waker(waker);
+                {
+                    let flow = controller
+                        .flow::<Msg<SEND_LOGICAL, u32>>()
+                        .expect("initial flow preview");
+                    let mut send = pin!(flow.send(&88));
+                    assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
+                }
+                assert_eq!(state.polls.get(), 1, "pending send future should poll once");
 
-                    state.set_ready(true);
-                    futures::executor::block_on(async {
-                        let () = controller
-                            .flow::<Msg<SEND_LOGICAL, u32>>()
-                            .expect("flow must remain available after cancellation")
-                            .send(&99)
-                            .await
-                            .expect("send after cancelled future");
+                state.set_ready(true);
+                futures::executor::block_on(async {
+                    let () = controller
+                        .flow::<Msg<SEND_LOGICAL, u32>>()
+                        .expect("flow must remain available after cancellation")
+                        .send(&99)
+                        .await
+                        .expect("send after cancelled future");
 
-                        let payload = worker
-                            .recv::<Msg<SEND_LOGICAL, u32>>()
-                            .await
-                            .expect("worker recv after cancelled send future");
-                        assert_eq!(payload, 99);
-                    });
-                },
-            );
+                    let payload = worker
+                        .recv::<Msg<SEND_LOGICAL, u32>>()
+                        .await
+                        .expect("worker recv after cancelled send future");
+                    assert_eq!(payload, 99);
+                });
+            });
         });
     });
 }
@@ -260,9 +261,9 @@ fn forgotten_started_send_future_leaves_flow_fail_closed() {
                 };
                 let rv = cluster
                     .rendezvous(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
+                        Config::from_resources(
                             (tap_buf, slab),
-                            hibana::integration::runtime::CounterClock::new(),
+                            hibana::runtime::CounterClock::zero(),
                         ),
                         transport,
                     )
@@ -292,7 +293,9 @@ fn forgotten_started_send_future_leaves_flow_fail_closed() {
                 core::mem::forget(send);
 
                 let err = match controller.flow::<Msg<SEND_LOGICAL, u32>>() {
-                    Ok(_) => panic!("forgotten started send future must reject the same send preview"),
+                    Ok(_) => {
+                        panic!("forgotten started send future must reject the same send preview")
+                    }
                     Err(err) => err,
                 };
                 assert_eq!(err.operation(), "flow");

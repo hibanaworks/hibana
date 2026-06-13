@@ -13,18 +13,13 @@ use core::{
 };
 
 use crate::{
-    control::cap::mint::{EpochTbl, MintConfig},
-    control::types::{Lane, RendezvousId, SessionId},
-    rendezvous::core::EndpointLeaseId,
-    transport::wire::Payload,
+    rendezvous::core::EndpointLeaseId, session::types::RendezvousId, transport::wire::Payload,
 };
 
 mod lifecycle;
 mod recv;
 mod route;
 mod send;
-
-pub(crate) struct SessionCfg<K>(pub(crate) PhantomData<fn() -> K>);
 
 #[derive(Clone, Copy)]
 pub(crate) struct RawPayload {
@@ -45,9 +40,6 @@ impl RawPayload {
         Payload::new(bytes)
     }
 }
-
-type PublicKernelEndpoint<'r, const ROLE: u8, T, U, C, const MAX_RV: usize> =
-    crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, U, C, EpochTbl, MAX_RV, MintConfig>;
 
 struct OutSlot<T> {
     ptr: *mut T,
@@ -76,6 +68,31 @@ impl OutSlot<()> {
     fn erased<T>(ptr: *mut ()) -> OutSlot<T> {
         OutSlot { ptr: ptr.cast() }
     }
+}
+
+pub(crate) struct RecvPollRequest<'a, 'cx> {
+    pub(crate) ptr: NonNull<()>,
+    pub(crate) handle: PackedEndpointHandle,
+    pub(crate) logical_label: u8,
+    pub(crate) accepts_empty_payload: bool,
+    pub(crate) validate:
+        for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
+    pub(crate) cx: &'a mut Context<'cx>,
+    pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
+}
+
+pub(crate) struct DecodePollRequest<'a, 'cx> {
+    pub(crate) ptr: NonNull<()>,
+    pub(crate) handle: PackedEndpointHandle,
+    pub(crate) logical_label: u8,
+    pub(crate) validate:
+        for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
+    pub(crate) zero_payload:
+        for<'payload> fn(
+            &'payload mut [u8],
+        ) -> Result<Payload<'payload>, crate::transport::wire::CodecError>,
+    pub(crate) cx: &'a mut Context<'cx>,
+    pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
 }
 
 #[repr(C)]
@@ -122,14 +139,6 @@ impl<'r> KernelEndpointHeader<'r> {
 pub(crate) struct EndpointOps<'r> {
     _lifetime: PhantomData<&'r ()>,
     pub(crate) drop_endpoint: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) prepare_revoke_for_session: unsafe fn(
-        ptr: NonNull<()>,
-        sid: SessionId,
-        lanes: *mut Lane,
-        lane_capacity: usize,
-        terminal: *mut (),
-    ) -> usize,
-    pub(crate) finish_revoke_for_session: unsafe fn(ptr: NonNull<()>, sid: SessionId),
     pub(crate) restore_public_route_branch:
         unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
     pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
@@ -153,36 +162,14 @@ pub(crate) struct EndpointOps<'r> {
         logical_label: u8,
         out: *mut crate::endpoint::kernel::SendPreview,
     ) -> crate::endpoint::SendResult<()>,
-    pub(crate) poll_recv: unsafe fn(
-        ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-        logical_label: u8,
-        expects_control: bool,
-        control: Option<crate::global::ControlDesc>,
-        accepts_empty_payload: bool,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        cx: &mut Context<'_>,
-        out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
-    ),
+    pub(crate) poll_recv: for<'a, 'cx> unsafe fn(RecvPollRequest<'a, 'cx>),
     pub(crate) poll_offer: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         cx: &mut Context<'_>,
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ),
-    pub(crate) poll_decode: unsafe fn(
-        ptr: NonNull<()>,
-        handle: PackedEndpointHandle,
-        logical_label: u8,
-        expects_control: bool,
-        control: Option<crate::global::ControlDesc>,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        synthetic: for<'a> fn(
-            &'a mut [u8],
-        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
-        cx: &mut Context<'_>,
-        out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
-    ),
+    pub(crate) poll_decode: for<'a, 'cx> unsafe fn(DecodePollRequest<'a, 'cx>),
     pub(crate) poll_send: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
@@ -213,16 +200,15 @@ impl PackedEndpointHandle {
     }
 }
 
-impl<'cfg, T, U, C, const MAX_RV: usize> crate::integration::SessionKit<'cfg, T, U, C, MAX_RV>
+impl<'cfg, T, C, const MAX_RV: usize> crate::runtime::SessionKit<'cfg, T, C, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    U: crate::runtime::consts::LabelUniverse + 'cfg,
-    C: crate::runtime::config::Clock + 'cfg,
+    C: crate::runtime_core::config::Clock + 'cfg,
 {
     unsafe fn public_endpoint_ptr_from_header<'r, const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> Option<*mut PublicKernelEndpoint<'r, ROLE, T, U, C, MAX_RV>>
+    ) -> Option<*mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, C, MAX_RV>>
     where
         'cfg: 'r,
     {
@@ -231,7 +217,7 @@ where
             return None;
         }
         Some(
-            ptr.cast::<PublicKernelEndpoint<'r, ROLE, T, U, C, MAX_RV>>()
+            ptr.cast::<crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, C, MAX_RV>>()
                 .as_ptr(),
         )
     }
@@ -239,7 +225,7 @@ where
     unsafe fn public_endpoint_mut_from_header<'r, const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> Option<&'r mut PublicKernelEndpoint<'r, ROLE, T, U, C, MAX_RV>>
+    ) -> Option<&'r mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, C, MAX_RV>>
     where
         'cfg: 'r,
     {
@@ -260,7 +246,7 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         missing: R,
-        f: impl FnOnce(&mut PublicKernelEndpoint<'r, ROLE, T, U, C, MAX_RV>) -> R,
+        f: impl FnOnce(&mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, C, MAX_RV>) -> R,
     ) -> R
     where
         'cfg: 'r,
@@ -279,8 +265,6 @@ where
         EndpointOps::<'cfg> {
             _lifetime: PhantomData,
             drop_endpoint: Self::drop_public_endpoint_raw::<ROLE>,
-            prepare_revoke_for_session: Self::prepare_revoke_public_endpoint_raw::<ROLE>,
-            finish_revoke_for_session: Self::finish_revoke_public_endpoint_raw::<ROLE>,
             restore_public_route_branch: Self::restore_public_route_branch_raw::<ROLE>,
             reset_public_offer_state: Self::reset_public_offer_state_raw::<ROLE>,
             init_public_offer_state: Self::init_public_offer_state_raw::<ROLE>,

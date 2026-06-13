@@ -4,19 +4,15 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
-    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferResolveState, RecvResult,
-    ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken, Transport,
+    Clock, CursorEndpoint, DeferReason, FrontierDeferOutcome, FrontierDeferRequest,
+    FrontierVisitSet, OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmCommitEvidence,
+    RouteArmToken, Transport,
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(super) fn ensure_materialization_ready(
         &mut self,
@@ -28,7 +24,7 @@ where
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let RouteAuthorityResolution {
             mut route_token,
-            resolved_hint_frame,
+            frame_hint,
             mut commit_evidence,
         } = authority;
 
@@ -43,7 +39,7 @@ where
                 commit_evidence = RouteArmCommitEvidence::PollFrame;
                 continue;
             }
-            return self.rollback_and_defer_unready_materialization(
+            return self.requeue_and_defer_unready_materialization(
                 state,
                 pending_recv,
                 frontier_visited,
@@ -54,7 +50,7 @@ where
         Poll::Ready(Ok(MaterializationReadyOutcome::Ready(ResolvedRouteArm {
             route_token,
             selected_arm,
-            resolved_hint_frame,
+            frame_hint,
             route_arm_selection_commit_evidence: commit_evidence,
         })))
     }
@@ -90,8 +86,7 @@ where
             return false;
         };
         self.route_scope_arm_lane_set_for_scope(selection.scope_id, selected_arm)
-            .map(|lanes| lanes.contains(lane as usize))
-            .unwrap_or(false)
+            .is_some_and(|lanes| lanes.contains(lane as usize))
     }
 
     fn poll_unready_resolver_authority(
@@ -109,7 +104,7 @@ where
             .map(RouteArmToken::from_poll)
     }
 
-    fn rollback_and_defer_unready_materialization(
+    fn requeue_and_defer_unready_materialization(
         &mut self,
         state: &mut OfferResolveState<'r>,
         pending_recv: &mut super::lane_port::PendingRecv,
@@ -118,10 +113,10 @@ where
         route_token: RouteArmToken,
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let selection = state.selection();
-        if let Some(payload) = state.ingress.take_transport() {
-            if let Err(err) = self.requeue_offer_transport_payload(payload) {
-                return Poll::Ready(Err(err));
-            }
+        if let Some(payload) = state.ingress.take_transport()
+            && let Err(err) = self.requeue_offer_transport_payload(payload)
+        {
+            return Poll::Ready(Err(err));
         }
         if route_token.is_resolver() {
             self.clear_scope_ack(selection.scope_id);
@@ -141,13 +136,14 @@ where
         }
         match self.on_frontier_defer(
             &mut state.progress,
-            selection.scope_id,
-            selection.frontier_parallel_root,
-            DeferSource::Resolver,
-            DeferReason::NoEvidence,
-            selection.offer_lane,
-            state.ingress.has_transport(),
-            Some(route_token.arm().as_u8()),
+            FrontierDeferRequest {
+                scope_id: selection.scope_id,
+                current_parallel: selection.frontier_parallel_root,
+                reason: DeferReason::NoEvidence,
+                offer_lane: selection.offer_lane,
+                ingress_ready: state.ingress.has_transport(),
+                selected_arm: Some(route_token.arm().as_u8()),
+            },
             frontier_visited,
         ) {
             FrontierDeferOutcome::Continue => {

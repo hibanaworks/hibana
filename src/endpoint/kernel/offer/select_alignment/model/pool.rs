@@ -151,28 +151,25 @@ impl ClassifiedOfferCandidateSets {
 
     fn outcome(self, observed_entries: ObservedEntrySet) -> OfferAlignmentOutcome {
         if self.dynamic_controllers.has_one() {
-            return self
-                .dynamic_controllers
-                .first_entry_idx(observed_entries)
-                .map(OfferAlignmentOutcome::UniqueDynamicController)
-                .unwrap_or(OfferAlignmentOutcome::AmbiguousCandidates);
+            let Some(entry_idx) = self.dynamic_controllers.first_entry_idx(observed_entries) else {
+                crate::invariant();
+            };
+            return OfferAlignmentOutcome::UniqueDynamicController(entry_idx);
         }
         if self.controllers.has_one() {
-            return self
-                .controllers
-                .first_entry_idx(observed_entries)
-                .map(OfferAlignmentOutcome::UniqueController)
-                .unwrap_or(OfferAlignmentOutcome::AmbiguousCandidates);
+            let Some(entry_idx) = self.controllers.first_entry_idx(observed_entries) else {
+                crate::invariant();
+            };
+            return OfferAlignmentOutcome::UniqueController(entry_idx);
         }
         if self.candidates.is_empty() {
             return OfferAlignmentOutcome::NoCandidate;
         }
         if self.candidates.has_one() {
-            return self
-                .candidates
-                .first_entry_idx(observed_entries)
-                .map(OfferAlignmentOutcome::UniqueCandidate)
-                .unwrap_or(OfferAlignmentOutcome::AmbiguousCandidates);
+            let Some(entry_idx) = self.candidates.first_entry_idx(observed_entries) else {
+                crate::invariant();
+            };
+            return OfferAlignmentOutcome::UniqueCandidate(entry_idx);
         }
         OfferAlignmentOutcome::AmbiguousCandidates
     }

@@ -45,7 +45,7 @@ impl WaiterSlot {
 
     #[inline]
     pub(crate) fn clear(&mut self) {
-        drop(self.take());
+        self.waker = None;
     }
 
     #[inline]
@@ -117,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn replacing_waiter_drops_previous_waker_without_waking_it() {
+    fn replacing_waiter_drops_displaced_waker_without_waking_it() {
         let first = Cell::new(0);
         let second = Cell::new(0);
         let first_waker = counting_waker(&first);

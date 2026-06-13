@@ -11,7 +11,7 @@
 
 use core::{cell::UnsafeCell, marker::PhantomData, task::Waker};
 
-use crate::control::types::{Lane, SessionId};
+use crate::session::types::{Lane, SessionId};
 
 use super::waiter::WaiterSlot;
 
@@ -22,7 +22,6 @@ pub(crate) enum SessionFaultKind {
     DecodeFailed,
     ProtocolViolation,
     EndpointDropped,
-    GenerationMismatch,
     ProgressInvariantViolated,
 }
 
@@ -37,22 +36,21 @@ impl SessionFaultKind {
             Self::DecodeFailed => 3,
             Self::ProtocolViolation => 4,
             Self::EndpointDropped => 5,
-            Self::GenerationMismatch => 6,
-            Self::ProgressInvariantViolated => 7,
+            Self::ProgressInvariantViolated => 6,
         }
     }
 
     #[inline]
     const fn decode(raw: u8) -> Option<Self> {
         match raw {
+            Self::NONE => None,
             1 => Some(Self::TransportClosed),
             2 => Some(Self::PeerReset),
             3 => Some(Self::DecodeFailed),
             4 => Some(Self::ProtocolViolation),
             5 => Some(Self::EndpointDropped),
-            6 => Some(Self::GenerationMismatch),
-            7 => Some(Self::ProgressInvariantViolated),
-            _ => None,
+            6 => Some(Self::ProgressInvariantViolated),
+            _ => panic!("session fault cell corrupt"),
         }
     }
 }
@@ -280,12 +278,12 @@ impl AssocTable {
         lane_base: u32,
         lane_slots: usize,
     ) {
-        let old_base = self.lane_base;
-        let old_slots = self.lane_slots();
-        let old_sids = self.lane_to_sid_ptr();
-        let old_counts = self.ref_counts_ptr();
-        let old_faults = self.faults_ptr();
-        let old_waiters = self.waiters_ptr();
+        let source_base = self.lane_base;
+        let source_slots = self.lane_slots();
+        let source_sids = self.lane_to_sid_ptr();
+        let source_counts = self.ref_counts_ptr();
+        let source_faults = self.faults_ptr();
+        let source_waiters = self.waiters_ptr();
         let lane_to_sid = storage.cast::<SessionId>();
         let count_offset = Self::checked_sub_usize(
             Self::align_up(
@@ -331,24 +329,26 @@ impl AssocTable {
             }
             idx += 1;
         }
-        let mut old_idx = 0usize;
-        while old_idx < old_slots {
-            let lane = old_base + old_idx as u32;
+        let mut source_idx = 0usize;
+        while source_idx < source_slots {
+            let lane = source_base + source_idx as u32;
             if lane >= lane_base {
                 let new_idx = (lane - lane_base) as usize;
                 if new_idx < lane_slots {
                     /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                     unsafe {
-                        lane_to_sid.add(new_idx).write(*old_sids.add(old_idx));
-                        ref_counts.add(new_idx).write(*old_counts.add(old_idx));
-                        faults.add(new_idx).write(*old_faults.add(old_idx));
+                        lane_to_sid.add(new_idx).write(*source_sids.add(source_idx));
+                        ref_counts
+                            .add(new_idx)
+                            .write(*source_counts.add(source_idx));
+                        faults.add(new_idx).write(*source_faults.add(source_idx));
                         waiters
                             .add(new_idx)
-                            .write(core::ptr::read(old_waiters.add(old_idx)));
+                            .write(core::ptr::read(source_waiters.add(source_idx)));
                     }
                 }
             }
-            old_idx += 1;
+            source_idx += 1;
         }
         self.lane_base = lane_base;
         self.lane_slots = lane_slots as u16;
@@ -397,7 +397,7 @@ impl AssocTable {
         (slot < self.lane_slots()).then_some(slot)
     }
 
-    /// Register a session on a lane that is currently unused.
+    /// Register a session on an empty lane slot.
     #[inline]
     pub(super) fn register(&self, lane: Lane, sid: SessionId) {
         let Some(idx) = self.lane_slot(lane) else {
@@ -466,24 +466,6 @@ impl AssocTable {
         }
     }
 
-    /// Find lane for a session ID.
-    #[inline]
-    pub(super) fn find_lane(&self, sid: SessionId) -> Option<Lane> {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
-        unsafe {
-            let sids = self.lane_to_sid_ptr();
-            let counts = self.ref_counts_ptr();
-            let mut idx = 0usize;
-            while idx < self.lane_slots() {
-                if *counts.add(idx) != 0 && *sids.add(idx) == sid {
-                    return Some(Lane::new(self.lane_base + idx as u32));
-                }
-                idx += 1;
-            }
-            None
-        }
-    }
-
     #[inline]
     pub(super) fn for_each_lane(&self, sid: SessionId, mut visit: impl FnMut(Lane)) {
         /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
@@ -547,16 +529,6 @@ impl AssocTable {
                 idx += 1;
             }
         }
-    }
-
-    /// Check if a lane is active.
-    #[inline]
-    pub(super) fn is_active(&self, lane: Lane) -> bool {
-        let Some(idx) = self.lane_slot(lane) else {
-            return false;
-        };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe { *self.ref_counts_ptr().add(idx) > 0 }
     }
 
     /// Get session ID for a lane (if registered).

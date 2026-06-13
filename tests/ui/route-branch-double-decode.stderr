@@ -1,7 +1,7 @@
 error[E0382]: use of moved value: `branch`
   --> tests/ui/route-branch-double-decode.rs:36:25
    |
-33 |     let branch = futures::executor::block_on(endpoint.offer()).unwrap();
+33 |     let branch = futures::executor::block_on(endpoint.offer()).expect("fixture setup");
    |         ------ move occurs because `branch` has type `RouteBranch<'_, '_, 0>`, which does not implement the `Copy` trait
 34 |     let first_decode = branch.decode::<g::Msg<7, FramePayload>>();
    |                               ----------------------------------- `branch` moved due to this method call

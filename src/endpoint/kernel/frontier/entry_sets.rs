@@ -322,13 +322,13 @@ impl ObservedEntrySummary {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GlobalFrontierObservedState {
     pub(crate) summary: ObservedEntrySummary,
-    pub(crate) observation_epoch: u16,
+    pub(crate) observation_generation: u16,
 }
 
 impl GlobalFrontierObservedState {
     pub(crate) const EMPTY: Self = Self {
         summary: ObservedEntrySummary::EMPTY,
-        observation_epoch: 0,
+        observation_generation: 0,
     };
 }
 
@@ -543,25 +543,25 @@ impl ObservedEntrySet {
     }
 
     pub(crate) fn move_entry_slot(&mut self, entry_idx: usize, new_slot_idx: usize) -> bool {
-        let Some(old_slot_idx) = self.slot_for_entry(entry_idx) else {
+        let Some(source_slot_idx) = self.slot_for_entry(entry_idx) else {
             return false;
         };
         let len = self.len();
-        if old_slot_idx >= len || new_slot_idx >= len {
+        if source_slot_idx >= len || new_slot_idx >= len {
             return false;
         }
-        if old_slot_idx == new_slot_idx {
+        if source_slot_idx == new_slot_idx {
             return true;
         }
-        let entry = self.slots[old_slot_idx];
-        if old_slot_idx < new_slot_idx {
-            let mut slot_idx = old_slot_idx;
+        let entry = self.slots[source_slot_idx];
+        if source_slot_idx < new_slot_idx {
+            let mut slot_idx = source_slot_idx;
             while slot_idx < new_slot_idx {
                 self.slots[slot_idx] = self.slots[slot_idx + 1];
                 slot_idx += 1;
             }
         } else {
-            let mut slot_idx = old_slot_idx;
+            let mut slot_idx = source_slot_idx;
             while slot_idx > new_slot_idx {
                 self.slots[slot_idx] = self.slots[slot_idx - 1];
                 slot_idx -= 1;
@@ -569,18 +569,18 @@ impl ObservedEntrySet {
         }
         self.slots[new_slot_idx] = entry;
         self.controller_mask =
-            Self::move_slot_mask(self.controller_mask, len, old_slot_idx, new_slot_idx);
+            Self::move_slot_mask(self.controller_mask, len, source_slot_idx, new_slot_idx);
         self.dynamic_controller_mask = Self::move_slot_mask(
             self.dynamic_controller_mask,
             len,
-            old_slot_idx,
+            source_slot_idx,
             new_slot_idx,
         );
         self.progress_mask =
-            Self::move_slot_mask(self.progress_mask, len, old_slot_idx, new_slot_idx);
+            Self::move_slot_mask(self.progress_mask, len, source_slot_idx, new_slot_idx);
         self.ready_arm_mask =
-            Self::move_slot_mask(self.ready_arm_mask, len, old_slot_idx, new_slot_idx);
-        self.ready_mask = Self::move_slot_mask(self.ready_mask, len, old_slot_idx, new_slot_idx);
+            Self::move_slot_mask(self.ready_arm_mask, len, source_slot_idx, new_slot_idx);
+        self.ready_mask = Self::move_slot_mask(self.ready_mask, len, source_slot_idx, new_slot_idx);
         true
     }
 
@@ -655,29 +655,29 @@ impl ObservedEntrySet {
 
     pub(crate) fn replace_entry_at_slot_with_frontier_mask(
         &mut self,
-        old_entry_idx: usize,
+        source_entry_idx: usize,
         new_entry_idx: usize,
         slot: FrontierObservationSlot,
         observed: OfferEntryObservedState,
         frontier_mask: u8,
     ) -> bool {
-        if old_entry_idx >= MAX_STATES || new_entry_idx >= MAX_STATES {
+        if source_entry_idx >= MAX_STATES || new_entry_idx >= MAX_STATES {
             return false;
         }
-        let Some(slot_idx) = self.slot_for_entry(old_entry_idx) else {
+        let Some(slot_idx) = self.slot_for_entry(source_entry_idx) else {
             return false;
         };
         let len = self.len();
         if slot_idx >= len {
             return false;
         }
-        let Some(old_entry) = checked_state_index(old_entry_idx) else {
+        let Some(source_entry) = checked_state_index(source_entry_idx) else {
             return false;
         };
         let Some(new_entry) = checked_state_index(new_entry_idx) else {
             return false;
         };
-        if self.slots[slot_idx].entry != old_entry {
+        if self.slots[slot_idx].entry != source_entry {
             return false;
         }
         if self.slot_for_entry(new_entry_idx).is_some() {
@@ -700,24 +700,24 @@ impl ObservedEntrySet {
     pub(crate) fn move_slot_mask(
         mask: u8,
         len: usize,
-        old_slot_idx: usize,
+        source_slot_idx: usize,
         new_slot_idx: usize,
     ) -> u8 {
         let mut remapped = 0u8;
         let mut slot_idx = 0usize;
         while slot_idx < len {
-            let source_slot = if old_slot_idx < new_slot_idx {
-                if slot_idx < old_slot_idx || slot_idx > new_slot_idx {
+            let source_slot = if source_slot_idx < new_slot_idx {
+                if slot_idx < source_slot_idx || slot_idx > new_slot_idx {
                     slot_idx
                 } else if slot_idx == new_slot_idx {
-                    old_slot_idx
+                    source_slot_idx
                 } else {
                     slot_idx + 1
                 }
-            } else if slot_idx < new_slot_idx || slot_idx > old_slot_idx {
+            } else if slot_idx < new_slot_idx || slot_idx > source_slot_idx {
                 slot_idx
             } else if slot_idx == new_slot_idx {
-                old_slot_idx
+                source_slot_idx
             } else {
                 slot_idx - 1
             };

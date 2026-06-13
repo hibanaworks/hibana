@@ -1,5 +1,5 @@
 use core::ptr;
-use hibana::integration::{
+use hibana::runtime::{
     ids::SessionId,
     transport::{FrameHeader, FrameLabel, ReceivedFrame, Transport, TransportError},
     wire::Payload,
@@ -90,7 +90,7 @@ impl<T, const N: usize> FixedQueue<T, N> {
 }
 
 pub(crate) struct FrameOwned {
-    session_id: Option<SessionId>,
+    session_id: SessionId,
     lane: u8,
     source_role: u8,
     frame_label: u8,
@@ -100,7 +100,13 @@ pub(crate) struct FrameOwned {
 }
 
 impl FrameOwned {
-    fn from_bytes(lane: u8, source_role: u8, frame_label: u8, bytes: &[u8]) -> Self {
+    fn from_bytes(
+        session_id: SessionId,
+        lane: u8,
+        source_role: u8,
+        frame_label: u8,
+        bytes: &[u8],
+    ) -> Self {
         assert!(
             bytes.len() <= TEST_FRAME_PAYLOAD_CAPACITY,
             "test transport payload exceeds fixed capacity"
@@ -108,7 +114,7 @@ impl FrameOwned {
         let mut payload = [0u8; TEST_FRAME_PAYLOAD_CAPACITY];
         payload[..bytes.len()].copy_from_slice(bytes);
         Self {
-            session_id: None,
+            session_id,
             lane,
             source_role,
             frame_label,
@@ -116,18 +122,6 @@ impl FrameOwned {
             len: bytes.len(),
             payload,
         }
-    }
-
-    fn from_bytes_with_session(
-        session_id: SessionId,
-        lane: u8,
-        source_role: u8,
-        frame_label: u8,
-        bytes: &[u8],
-    ) -> Self {
-        let mut frame = Self::from_bytes(lane, source_role, frame_label, bytes);
-        frame.session_id = Some(session_id);
-        frame
     }
 
     fn as_slice(&self) -> &[u8] {
@@ -223,15 +217,17 @@ impl TestState {
     }
 
     fn role_mut(&mut self, role: u8) -> &mut RoleState {
-        self.roles
-            .get_mut(role as usize)
-            .unwrap_or_else(|| panic!("test transport role out of range: {role}"))
+        match self.roles.get_mut(role as usize) {
+            Some(role_state) => role_state,
+            None => panic!("test transport role out of range: {role}"),
+        }
     }
 
     fn role(&self, role: u8) -> &RoleState {
-        self.roles
-            .get(role as usize)
-            .unwrap_or_else(|| panic!("test transport role out of range: {role}"))
+        match self.roles.get(role as usize) {
+            Some(role_state) => role_state,
+            None => panic!("test transport role out of range: {role}"),
+        }
     }
 
     fn enqueue(&mut self, role: u8, frame: FrameOwned) -> WaiterBatch {
@@ -356,26 +352,16 @@ std::thread_local! {
 }
 
 pub(crate) struct TestTx {
-    local_role: u8,
-    pending_role: Option<u8>,
-    pending_frame: Option<FrameOwned>,
-}
-
-impl Default for TestTx {
-    fn default() -> Self {
-        Self {
-            local_role: 0,
-            pending_role: None,
-            pending_frame: None,
-        }
-    }
+    pub(crate) session_id: SessionId,
+    pub(crate) local_role: u8,
+    pub(crate) pending_role: Option<u8>,
+    pub(crate) pending_frame: Option<FrameOwned>,
 }
 
 pub(crate) struct TestRx<'a> {
     pool: &'a TransportPool,
     slot: usize,
     role: u8,
-    session_id: SessionId,
     lane: u8,
     current: Option<FrameOwned>,
     current_hint_drained: std::cell::Cell<bool>,
@@ -429,6 +415,7 @@ impl TestTransport {
         if tx.pending_frame.is_none() {
             tx.pending_role = Some(role);
             tx.pending_frame = Some(FrameOwned::from_bytes(
+                tx.session_id,
                 lane,
                 tx.local_role,
                 frame_label,
@@ -448,7 +435,7 @@ impl TestTransport {
     ) {
         if tx.pending_frame.is_none() {
             tx.pending_role = Some(role);
-            tx.pending_frame = Some(FrameOwned::from_bytes_with_session(
+            tx.pending_frame = Some(FrameOwned::from_bytes(
                 session_id,
                 lane,
                 tx.local_role,
@@ -499,7 +486,7 @@ impl TestTransport {
         }
         let frame = rx.current.as_ref().expect("current frame");
         let header = FrameHeader::new(
-            frame.session_id.unwrap_or(rx.session_id),
+            frame.session_id,
             frame.lane,
             frame.source_role,
             rx.role,
@@ -516,7 +503,6 @@ impl TestTransport {
             pool: self.pool,
             slot: self.slot,
             role,
-            session_id: SessionId::new(0),
             lane,
             current: None,
             current_hint_drained: std::cell::Cell::new(false),
@@ -526,7 +512,6 @@ impl TestTransport {
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
 const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx_for_test;
-const _: fn(SessionId, u8, u8, u8, &[u8]) -> FrameOwned = FrameOwned::from_bytes_with_session;
 const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
     TestTransport::stage_send_with_session;
 
@@ -562,7 +547,7 @@ impl Transport for TestTransport {
 
     fn open<'a>(
         &'a self,
-        port: hibana::integration::transport::PortOpen,
+        port: hibana::runtime::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         let local_role = port.local_role();
         let session_id = port.session_id();
@@ -571,6 +556,7 @@ impl Transport for TestTransport {
             .state_with(self.slot, |state| state.ensure_role(local_role));
         (
             TestTx {
+                session_id,
                 local_role,
                 pending_role: None,
                 pending_frame: None,
@@ -579,7 +565,6 @@ impl Transport for TestTransport {
                 pool: self.pool,
                 slot: self.slot,
                 role: local_role,
-                session_id,
                 lane,
                 current: None,
                 current_hint_drained: std::cell::Cell::new(false),
@@ -590,7 +575,7 @@ impl Transport for TestTransport {
     fn poll_send<'a, 'f>(
         &self,
         tx: &'a mut Self::Tx<'a>,
-        outgoing: hibana::integration::transport::Outgoing<'f>,
+        outgoing: hibana::runtime::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>>
     where

@@ -10,9 +10,9 @@ bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
-  --test integration_surface \
+  --test runtime_surface \
   --features std \
-  integration_facade_projects_before_enter \
+  runtime_facade_projects_before_enter \
   -- \
   --exact \
   --nocapture
@@ -20,12 +20,12 @@ cargo +"${TOOLCHAIN}" test \
 TEST_BINARY="$(
   cargo +"${TOOLCHAIN}" test \
     --manifest-path "${MANIFEST_PATH}" \
-    --test integration_surface \
+    --test runtime_surface \
     --features std \
     --no-run \
     --message-format=json |
     awk -F'"' '
-      /"reason":"compiler-artifact"/ && /"name":"integration_surface"/ && /"executable":"/ {
+      /"reason":"compiler-artifact"/ && /"name":"runtime_surface"/ && /"executable":"/ {
         for (i = 1; i <= NF; i++) {
           if ($i == "executable") {
             print $(i + 2)
@@ -36,11 +36,11 @@ TEST_BINARY="$(
 )"
 
 if [[ -z "${TEST_BINARY}" ]]; then
-  echo "failed to locate integration_surface test binary" >&2
+  echo "failed to locate runtime_surface test binary" >&2
   exit 1
 fi
 
-timeout 30s "${TEST_BINARY}" integration_facade_projects_before_enter --exact --nocapture
+timeout 30s "${TEST_BINARY}" runtime_facade_projects_before_enter --exact --nocapture
 
 cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \

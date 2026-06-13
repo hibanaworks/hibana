@@ -1,34 +1,13 @@
 use super::{
-    CachedRecvMeta, ControlSemanticKind, CursorEndpoint, EpochTable, EventCursor, FrameLabelMask,
-    FrontierKind, FrontierStaticFacts, LabelUniverse, MintConfigMarker, OfferScopeSelection,
-    ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeId, ScopeLoopMeta, Transport,
-    controller_arm_semantic_kind, state_index_to_usize,
+    CachedRecvMeta, CursorEndpoint, EventCursor, FrameLabelMask, FrontierKind, FrontierStaticFacts,
+    OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeId, ScopeLoopMeta,
+    Transport, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
-    fn is_loop_control_scope(cursor: &EventCursor, scope_id: ScopeId) -> bool {
-        matches!(
-            (
-                controller_arm_semantic_kind(cursor, scope_id, 0),
-                controller_arm_semantic_kind(cursor, scope_id, 1)
-            ),
-            (
-                Some(ControlSemanticKind::LoopContinue),
-                Some(ControlSemanticKind::LoopBreak)
-            ) | (
-                Some(ControlSemanticKind::LoopBreak),
-                Some(ControlSemanticKind::LoopContinue)
-            )
-        )
-    }
-
     pub(crate) fn parallel_scope_root(cursor: &EventCursor, scope_id: ScopeId) -> Option<ScopeId> {
         cursor.parallel_scope_root(scope_id)
     }
@@ -79,9 +58,6 @@ where
         if cursor.route_scope_linger(scope_id) {
             flags |= ScopeLoopMeta::FLAG_SCOPE_LINGER;
         }
-        if Self::is_loop_control_scope(cursor, scope_id) {
-            flags |= ScopeLoopMeta::FLAG_CONTROL_SCOPE;
-        }
         if cursor.route_scope_arm_recv_index(scope_id, 0).is_some() {
             flags |= ScopeLoopMeta::FLAG_CONTINUE_HAS_RECV;
         }
@@ -108,10 +84,7 @@ where
         idx: usize,
     ) -> ScopeFrameLabelMeta {
         let is_controller = cursor.is_route_controller(scope_id);
-        let mut meta = ScopeFrameLabelMeta {
-            loop_meta,
-            ..ScopeFrameLabelMeta::EMPTY
-        };
+        let mut meta = ScopeFrameLabelMeta::EMPTY;
         if let Some(recv_meta) = cursor.try_recv_meta_at(idx)
             && recv_meta.scope == scope_id
         {
@@ -125,8 +98,6 @@ where
                     scope_id,
                     recv_meta.lane,
                     recv_meta.frame_label,
-                    loop_meta.loop_label_scope(),
-                    recv_meta.semantic,
                     arm,
                 ) {
                     meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED;
@@ -231,12 +202,11 @@ where
     ) -> ScopeArmMaterializationMeta {
         if offer_lane_idx < self.cursor.logical_lane_count() {
             let info = self.decision_state.lane_offer_state(offer_lane_idx);
-            if info.scope == scope_id {
-                if let Some(cached) = self
+            if info.scope == scope_id
+                && let Some(cached) = self
                     .offer_entry_materialization_meta(scope_id, state_index_to_usize(info.entry))
-                {
-                    return cached;
-                }
+            {
+                return cached;
             }
         }
         if let Some(offer_entry) = self.cursor.route_scope_offer_entry(scope_id) {
@@ -304,10 +274,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn ack_is_progress_evidence(
-        loop_meta: ScopeLoopMeta,
-        has_ack: bool,
-    ) -> bool {
-        has_ack && !loop_meta.control_scope()
+    pub(in crate::endpoint::kernel) fn ack_is_progress_evidence(has_ack: bool) -> bool {
+        has_ack
     }
 }

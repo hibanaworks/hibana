@@ -1,12 +1,11 @@
-//! Offer ingress collection and rollback ownership.
+//! Offer ingress collection and restore ownership.
 
 use core::task::Poll;
 
 use super::{CursorEndpoint, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress};
 use crate::{
-    control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
-    runtime::{config::Clock, consts::LabelUniverse},
+    runtime_core::config::Clock,
     transport::Transport,
 };
 
@@ -37,18 +36,10 @@ pub(super) enum OfferIngressMode {
     TransportOnly,
 }
 
-pub(super) enum OfferIngressTurn<'a> {
-    Transport(lane_port::PreambleFrame<'a>),
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(super) fn await_transport_payload_for_offer_lane(
         &mut self,
@@ -89,7 +80,7 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         facts: OfferFrontierFacts,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Option<OfferIngressTurn<'r>>>> {
+    ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
         if matches!(facts.ingress_mode, OfferIngressMode::Skip) {
             return Poll::Ready(Ok(None));
         }
@@ -100,7 +91,7 @@ where
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
         };
 
-        Poll::Ready(Ok(Some(OfferIngressTurn::Transport(frame))))
+        Poll::Ready(Ok(Some(frame)))
     }
 
     fn poll_received_transport_frame_for_offer(
@@ -122,7 +113,7 @@ where
                 lane_idx as u8,
                 cx,
             ) {
-                Poll::Pending => {}
+                Poll::Pending => continue,
                 Poll::Ready(Ok(frame)) => return Poll::Ready(Ok(frame)),
                 Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }

@@ -1,4 +1,3 @@
-use crate::global::LoopControlMeaning;
 use crate::global::const_dsl::{EffList, ResolverMode, ScopeEvent, ScopeId, ScopeKind};
 use crate::global::steps::RoleLaneMask;
 
@@ -13,8 +12,6 @@ pub(crate) struct ProgramSourceData {
     eff: EffList,
     role_lane_mask: RoleLaneMask,
     lane_span: u16,
-    cycle_scope_pending: bool,
-    tail_is_cycle_control: bool,
     error: Option<ProgramSourceError>,
 }
 
@@ -22,7 +19,6 @@ pub(crate) struct ProgramSourceData {
 pub(crate) struct RouteHead {
     pub(crate) controller: u8,
     pub(crate) label: u8,
-    pub(crate) cycle_meaning: Option<LoopControlMeaning>,
     pub(crate) error: Option<ProgramSourceError>,
 }
 
@@ -31,15 +27,11 @@ impl ProgramSourceData {
         eff: EffList,
         role_lane_mask: RoleLaneMask,
         lane_span: u16,
-        cycle_scope_pending: bool,
-        tail_is_cycle_control: bool,
     ) -> Self {
         Self {
             eff,
             role_lane_mask,
             lane_span,
-            cycle_scope_pending,
-            tail_is_cycle_control,
             error: None,
         }
     }
@@ -76,7 +68,6 @@ impl ProgramSourceData {
             return RouteHead {
                 controller: 0,
                 label: 0,
-                cycle_meaning: None,
                 error: Some(ProgramSourceError::RouteArmHead),
             };
         }
@@ -85,7 +76,6 @@ impl ProgramSourceData {
             return RouteHead {
                 controller: 0,
                 label: 0,
-                cycle_meaning: None,
                 error: Some(ProgramSourceError::RouteArmHead),
             };
         }
@@ -93,55 +83,26 @@ impl ProgramSourceData {
         RouteHead {
             controller: atom.from,
             label: atom.label,
-            cycle_meaning: LoopControlMeaning::from_control_spec(self.eff.control_spec_at(0)),
             error: None,
         }
     }
 
     pub(crate) const fn seq(self, next: Self) -> Self {
-        let mut error = Self::merge_error(self.error, next.error);
-        let next_tail_is_cycle_control = if next.eff.is_empty() {
-            self.tail_is_cycle_control
-        } else {
-            next.tail_is_cycle_control
-        };
+        let error = Self::merge_error(self.error, next.error);
         let rebased = next.eff.rebase_scopes(self.scope_budget());
-        let mut eff = self.eff;
-        let scope_budget = self.scope_budget();
-        if next.cycle_scope_pending {
-            if eff.is_empty() {
-                error = Self::merge_error(error, Some(ProgramSourceError::LoopBodyEmpty));
-                eff = eff.extend_list(rebased);
-            } else {
-                let cycle_scope = ScopeId::new(
-                    ScopeKind::Loop,
-                    add_scope_budget(scope_budget, next.scope_budget()),
-                );
-                let scoped_next = rebased.with_scope(cycle_scope);
-                eff = if self.tail_is_cycle_control {
-                    eff.with_scope(cycle_scope).extend_list(scoped_next)
-                } else {
-                    eff.extend_list(scoped_next)
-                };
-                add_scope_budget(scope_budget, add_scope_budget(next.scope_budget(), 1));
-            }
-        } else {
-            eff = eff.extend_list(rebased);
-            add_scope_budget(scope_budget, next.scope_budget());
-        }
+        let eff = self.eff.extend_list(rebased);
+        add_scope_budget(self.scope_budget(), next.scope_budget());
         Self {
             eff,
             role_lane_mask: self.role_lane_mask.union(next.role_lane_mask),
             lane_span: max_lane_span(self.lane_span, next.lane_span),
-            cycle_scope_pending: false,
-            tail_is_cycle_control: next_tail_is_cycle_control,
             error,
         }
     }
 
     pub(crate) const fn resolve_route(self, resolver_id: u16) -> Self {
         let mut error = self.error;
-        if resolver_id == crate::global::ControlDesc::STATIC_POLICY_SITE {
+        if resolver_id == u16::MAX {
             error = Self::merge_error(error, Some(ProgramSourceError::ResolverIdReserved));
         }
         let eff = if self.eff.is_empty() {
@@ -159,7 +120,7 @@ impl ProgramSourceData {
                     && matches!(marker.scope_kind, ScopeKind::Route)
                     && marker.scope_id.canonical().raw() == scope.canonical().raw()
                 {
-                    eff = eff.push_policy(
+                    eff = eff.push_resolver(
                         marker.offset,
                         ResolverMode::dynamic(resolver_id).with_scope(scope),
                     );
@@ -176,8 +137,25 @@ impl ProgramSourceData {
             eff,
             role_lane_mask: self.role_lane_mask,
             lane_span: self.lane_span,
-            cycle_scope_pending: self.cycle_scope_pending,
-            tail_is_cycle_control: self.tail_is_cycle_control,
+            error,
+        }
+    }
+
+    pub(crate) const fn roll(self) -> Self {
+        let mut error = self.error;
+        if self.eff.is_empty() {
+            error = Self::merge_error(error, Some(ProgramSourceError::LoopBodyEmpty));
+        }
+        let loop_scope = ScopeId::loop_scope(0);
+        let eff = self
+            .into_eff()
+            .rebase_scopes(1)
+            .mark_route_scopes_linger()
+            .with_scope(loop_scope);
+        Self {
+            eff,
+            role_lane_mask: self.role_lane_mask,
+            lane_span: self.lane_span,
             error,
         }
     }
@@ -186,7 +164,6 @@ impl ProgramSourceData {
         self,
         right: Self,
         controller: u8,
-        is_cycle: bool,
         route_error: Option<ProgramSourceError>,
     ) -> Self {
         let mut error = Self::merge_error(self.error, right.error);
@@ -203,19 +180,10 @@ impl ProgramSourceData {
             .rebase_scopes(right_offset)
             .with_scope(scope)
             .with_scope_controller_role(scope, controller);
-        let eff = left_eff.extend_list(right_eff);
-        let eff = if is_cycle {
-            eff.with_scope_linger(scope, true)
-        } else {
-            eff
-        };
-        let cycle_scope_pending = eff.scope_has_linger(scope);
         Self {
-            eff,
+            eff: left_eff.extend_list(right_eff),
             role_lane_mask: self.role_lane_mask.union(right.role_lane_mask),
             lane_span: max_lane_span(self.lane_span, right.lane_span),
-            cycle_scope_pending,
-            tail_is_cycle_control: right.tail_is_cycle_control,
             error,
         }
     }
@@ -241,8 +209,6 @@ impl ProgramSourceData {
             eff: left_eff.extend_list(right_eff).with_scope(parallel_scope),
             role_lane_mask: self.role_lane_mask.union(right_role_lane_mask),
             lane_span: add_lane_span(self.lane_span, right.lane_span),
-            cycle_scope_pending: false,
-            tail_is_cycle_control: right.tail_is_cycle_control,
             error,
         }
     }

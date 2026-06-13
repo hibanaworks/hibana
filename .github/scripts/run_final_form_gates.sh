@@ -23,12 +23,12 @@ bash ./.github/scripts/check_warning_free.sh
 cargo +"${TOOLCHAIN}" doc -p hibana --no-deps --document-private-items --features std
 bash ./.github/scripts/check_hibana_public_api.sh --skip-tests
 bash ./.github/scripts/check_resolver_context_surface.sh
-bash ./.github/scripts/check_no_underscore_escape_hatches.sh
+bash ./.github/scripts/check_no_underscore_discards.sh
 bash ./.github/scripts/check_unsafe_contract_hygiene.sh
 bash ./.github/scripts/check_boundary_contracts.sh --local-only
 bash ./.github/scripts/check_plane_boundaries.sh
 bash ./.github/scripts/check_mgmt_boundary.sh
-bash ./.github/scripts/check_policy_surface_hygiene.sh
+bash ./.github/scripts/check_resolver_surface_hygiene.sh
 bash ./.github/scripts/check_lowering_hygiene.sh
 bash ./.github/scripts/check_summary_authority_hygiene.sh
 bash ./.github/scripts/check_segmented_lowering_hygiene.sh
@@ -43,7 +43,6 @@ bash ./.github/scripts/check_runtime_performance_hygiene.sh
 bash ./.github/scripts/check_route_authority_taxonomy.sh
 bash ./.github/scripts/check_compiled_descriptor_authority.sh
 bash ./.github/scripts/check_route_frontier_owner.sh
-bash ./.github/scripts/check_topology_hygiene.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_subsystem_budget_gates.sh
 bash ./.github/scripts/check_huge_choreography_budget.sh

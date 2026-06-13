@@ -1,8 +1,8 @@
-error[E0432]: unresolved import `hibana::integration::ids::Lane`
+error[E0432]: unresolved import `hibana::runtime::ids::Lane`
  --> tests/ui/port-open-constructor.rs:2:11
   |
 2 |     ids::{Lane, SessionId},
-  |           ^^^^ no `Lane` in `integration::buckets::ids`
+  |           ^^^^ no `Lane` in `runtime::buckets::ids`
 
 error[E0624]: associated function `from_descriptor` is private
  --> tests/ui/port-open-constructor.rs:7:23
@@ -14,7 +14,7 @@ error[E0624]: associated function `from_descriptor` is private
   |
   | /     pub(crate) const fn from_descriptor(
   | |         local_role: u8,
-  | |         session_id: crate::control::types::SessionId,
-  | |         lane: crate::control::types::Lane,
+  | |         session_id: crate::session::types::SessionId,
+  | |         lane: crate::session::types::Lane,
   | |     ) -> Self {
   | |_____________- private associated function defined here

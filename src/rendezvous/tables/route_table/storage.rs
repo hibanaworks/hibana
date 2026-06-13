@@ -11,8 +11,9 @@
 
 use super::super::{checked_add_usize, checked_mul_usize, checked_sub_usize};
 use super::{
-    FrameLabelMask, MAX_TRACKED_ROLES, PhantomData, RouteFrame, RouteTable, RouteTableStorageParts,
-    UnsafeCell, WaiterSlot,
+    FrameLabelMask, MAX_TRACKED_ROLES, PhantomData, RouteFrame, RouteTable,
+    RouteTableStorageBinding, RouteTableStorageParts, RouteTableStorageShape, UnsafeCell,
+    WaiterSlot,
 };
 impl RouteTableStorageParts {
     unsafe fn pop_free_slot(&self) -> Option<usize> {
@@ -67,7 +68,7 @@ impl RouteTable {
             lane_heads: UnsafeCell::new(core::ptr::null_mut()),
             free_head: UnsafeCell::new(core::ptr::null_mut()),
             pending_frame_hint_masks: UnsafeCell::new(core::ptr::null_mut()),
-            change_epoch: UnsafeCell::new(0),
+            change_generation: UnsafeCell::new(0),
             waiters: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
@@ -87,7 +88,7 @@ impl RouteTable {
             core::ptr::addr_of_mut!((*dst).free_head).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).pending_frame_hint_masks)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
-            core::ptr::addr_of_mut!((*dst).change_epoch)
+            core::ptr::addr_of_mut!((*dst).change_generation)
                 .cast::<u16>()
                 .write(0);
             core::ptr::addr_of_mut!((*dst).waiters).write(UnsafeCell::new(core::ptr::null_mut()));
@@ -189,21 +190,15 @@ impl RouteTable {
         unsafe { *self.pending_frame_hint_masks.get() }
     }
 
-    pub(crate) unsafe fn bind_storage(
-        &mut self,
-        frames: *mut RouteFrame,
-        route_slots: usize,
-        lane_base: u32,
-        lane_slots: usize,
-        lane_heads: *mut u16,
-        free_head: *mut u16,
-        pending_frame_hint_masks: *mut FrameLabelMask,
-        waiters: *mut WaiterSlot,
-        reclaim_delta: usize,
-    ) {
+    unsafe fn bind_storage(&mut self, binding: RouteTableStorageBinding) {
+        let RouteTableStorageBinding {
+            parts,
+            shape,
+            reclaim_delta,
+        } = binding;
         let mut idx = 0usize;
-        while idx < route_slots {
-            let next = if idx + 1 < route_slots {
+        while idx < shape.route_slots {
+            let next = if idx + 1 < shape.route_slots {
                 (idx + 1) as u16
             } else {
                 Self::NO_FRAME
@@ -211,76 +206,71 @@ impl RouteTable {
             unsafe {
                 // SAFETY: `bind_storage` owns the route-frame backing slice for
                 // `route_slots` entries and initializes each slot exactly once.
-                frames.add(idx).write(RouteFrame::free(next));
+                parts.frames.add(idx).write(RouteFrame::free(next));
             }
             idx += 1;
         }
         let mut lane_idx = 0usize;
-        while lane_idx < lane_slots {
+        while lane_idx < shape.lane_slots {
             unsafe {
                 // SAFETY: `lane_heads` points at `lane_slots` caller-owned u16
                 // entries reserved for this `RouteTable` owner.
-                lane_heads.add(lane_idx).write(Self::NO_FRAME);
+                parts.lane_heads.add(lane_idx).write(Self::NO_FRAME);
             }
             lane_idx += 1;
         }
         unsafe {
             // SAFETY: `free_head` is the single u16 free-list head owned by this
             // route table storage layout.
-            free_head.write(if route_slots == 0 { Self::NO_FRAME } else { 0 });
+            parts.free_head.write(if shape.route_slots == 0 {
+                Self::NO_FRAME
+            } else {
+                0
+            });
         }
         let mut hint_idx = 0usize;
-        while hint_idx < lane_slots {
+        while hint_idx < shape.lane_slots {
             unsafe {
                 // SAFETY: `pending_frame_hint_masks` has one initialized slot per
                 // lane owned by this table.
-                pending_frame_hint_masks
+                parts
+                    .pending_frame_hint_masks
                     .add(hint_idx)
                     .write(FrameLabelMask::EMPTY);
             }
             hint_idx += 1;
         }
-        let waiter_count = checked_mul_usize(lane_slots, MAX_TRACKED_ROLES);
+        let waiter_count = checked_mul_usize(shape.lane_slots, MAX_TRACKED_ROLES);
         let mut waiter_idx = 0usize;
         while waiter_idx < waiter_count {
             unsafe {
                 // SAFETY: the waiter arena contains `lane_slots *
                 // MAX_TRACKED_ROLES` entries owned exclusively by this table.
-                WaiterSlot::init_empty(waiters.add(waiter_idx));
+                WaiterSlot::init_empty(parts.waiters.add(waiter_idx));
             }
             waiter_idx += 1;
         }
-        *self.frames.get_mut() = Self::encode_frames_ptr(frames, reclaim_delta);
-        self.route_slots = route_slots;
-        self.lane_base = lane_base;
-        self.lane_slots = lane_slots as u16;
-        *self.lane_heads.get_mut() = lane_heads;
-        *self.free_head.get_mut() = free_head;
-        *self.pending_frame_hint_masks.get_mut() = pending_frame_hint_masks;
-        *self.change_epoch.get_mut() = 0;
-        *self.waiters.get_mut() = waiters;
+        *self.frames.get_mut() = Self::encode_frames_ptr(parts.frames, reclaim_delta);
+        self.route_slots = shape.route_slots;
+        self.lane_base = shape.lane_base;
+        self.lane_slots = shape.lane_slots as u16;
+        *self.lane_heads.get_mut() = parts.lane_heads;
+        *self.free_head.get_mut() = parts.free_head;
+        *self.pending_frame_hint_masks.get_mut() = parts.pending_frame_hint_masks;
+        *self.change_generation.get_mut() = 0;
+        *self.waiters.get_mut() = parts.waiters;
     }
 
-    unsafe fn rebind_storage(
-        &mut self,
-        frames: *mut RouteFrame,
-        route_slots: usize,
-        lane_base: u32,
-        lane_slots: usize,
-        lane_heads: *mut u16,
-        free_head: *mut u16,
-        pending_frame_hint_masks: *mut FrameLabelMask,
-        waiters: *mut WaiterSlot,
-        reclaim_delta: usize,
-    ) {
-        *self.frames.get_mut() = Self::encode_frames_ptr(frames, reclaim_delta);
-        self.route_slots = route_slots;
-        self.lane_base = lane_base;
-        self.lane_slots = lane_slots as u16;
-        *self.lane_heads.get_mut() = lane_heads;
-        *self.free_head.get_mut() = free_head;
-        *self.pending_frame_hint_masks.get_mut() = pending_frame_hint_masks;
-        *self.waiters.get_mut() = waiters;
+    unsafe fn rebind_storage(&mut self, binding: RouteTableStorageBinding) {
+        *self.frames.get_mut() =
+            Self::encode_frames_ptr(binding.parts.frames, binding.reclaim_delta);
+        self.route_slots = binding.shape.route_slots;
+        self.lane_base = binding.shape.lane_base;
+        self.lane_slots = binding.shape.lane_slots as u16;
+        *self.lane_heads.get_mut() = binding.parts.lane_heads;
+        *self.free_head.get_mut() = binding.parts.free_head;
+        *self.pending_frame_hint_masks.get_mut() = binding.parts.pending_frame_hint_masks;
+        *self.waiters.get_mut() = binding.parts.waiters;
     }
 
     #[inline]
@@ -311,30 +301,13 @@ impl RouteTable {
         unsafe { parts.push_free_slot(idx) }
     }
 
-    unsafe fn migrate_to(
-        &self,
-        frames: *mut RouteFrame,
-        route_slots: usize,
-        lane_base: u32,
-        lane_slots: usize,
-        lane_heads: *mut u16,
-        free_head: *mut u16,
-        pending_frame_hint_masks: *mut FrameLabelMask,
-        waiters: *mut WaiterSlot,
-    ) {
-        let dst_parts = RouteTableStorageParts {
-            frames,
-            lane_heads,
-            free_head,
-            pending_frame_hint_masks,
-            waiters,
-        };
-        if lane_slots < self.lane_slots() {
+    unsafe fn migrate_to(&self, dst_parts: RouteTableStorageParts, shape: RouteTableStorageShape) {
+        if shape.lane_slots < self.lane_slots() {
             crate::invariant();
         }
         let mut idx = 0usize;
-        while idx < route_slots {
-            let next = if idx + 1 < route_slots {
+        while idx < shape.route_slots {
+            let next = if idx + 1 < shape.route_slots {
                 (idx + 1) as u16
             } else {
                 Self::NO_FRAME
@@ -346,7 +319,7 @@ impl RouteTable {
             idx += 1;
         }
         let mut lane_idx = 0usize;
-        while lane_idx < lane_slots {
+        while lane_idx < shape.lane_slots {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 dst_parts.lane_heads.add(lane_idx).write(Self::NO_FRAME);
@@ -355,9 +328,11 @@ impl RouteTable {
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
-            dst_parts
-                .free_head
-                .write(if route_slots == 0 { Self::NO_FRAME } else { 0 });
+            dst_parts.free_head.write(if shape.route_slots == 0 {
+                Self::NO_FRAME
+            } else {
+                0
+            });
         }
         let mut hint_idx = 0usize;
         while hint_idx < self.lane_slots() {
@@ -370,7 +345,7 @@ impl RouteTable {
             }
             hint_idx += 1;
         }
-        while hint_idx < lane_slots {
+        while hint_idx < shape.lane_slots {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
                 dst_parts
@@ -381,7 +356,7 @@ impl RouteTable {
             hint_idx += 1;
         }
         let mut waiter_idx = 0usize;
-        let waiter_count = checked_mul_usize(lane_slots, MAX_TRACKED_ROLES);
+        let waiter_count = checked_mul_usize(shape.lane_slots, MAX_TRACKED_ROLES);
         let src_waiter_count = checked_mul_usize(self.lane_slots(), MAX_TRACKED_ROLES);
         while waiter_idx < src_waiter_count {
             /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
@@ -436,7 +411,7 @@ impl RouteTable {
             }
             lane_idx += 1;
         }
-        if self.lane_base != lane_base {
+        if self.lane_base != shape.lane_base {
             crate::invariant();
         }
     }
@@ -452,17 +427,15 @@ impl RouteTable {
         let parts = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
         unsafe {
-            self.bind_storage(
-                parts.frames,
-                route_slots,
-                lane_base,
-                lane_slots,
-                parts.lane_heads,
-                parts.free_head,
-                parts.pending_frame_hint_masks,
-                parts.waiters,
+            self.bind_storage(RouteTableStorageBinding {
+                parts,
+                shape: RouteTableStorageShape {
+                    route_slots,
+                    lane_base,
+                    lane_slots,
+                },
                 reclaim_delta,
-            );
+            });
         }
     }
 
@@ -477,14 +450,12 @@ impl RouteTable {
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
         unsafe {
             self.migrate_to(
-                parts.frames,
-                route_slots,
-                lane_base,
-                lane_slots,
-                parts.lane_heads,
-                parts.free_head,
-                parts.pending_frame_hint_masks,
-                parts.waiters,
+                parts,
+                RouteTableStorageShape {
+                    route_slots,
+                    lane_base,
+                    lane_slots,
+                },
             );
         }
     }
@@ -500,17 +471,15 @@ impl RouteTable {
         let parts = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
         unsafe {
-            self.rebind_storage(
-                parts.frames,
-                route_slots,
-                lane_base,
-                lane_slots,
-                parts.lane_heads,
-                parts.free_head,
-                parts.pending_frame_hint_masks,
-                parts.waiters,
+            self.rebind_storage(RouteTableStorageBinding {
+                parts,
+                shape: RouteTableStorageShape {
+                    route_slots,
+                    lane_base,
+                    lane_slots,
+                },
                 reclaim_delta,
-            );
+            });
         }
     }
 

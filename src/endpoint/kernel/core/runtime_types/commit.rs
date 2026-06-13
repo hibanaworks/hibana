@@ -1,6 +1,5 @@
 use crate::{
     eff::EffIndex,
-    endpoint::kernel::authority::LoopDecision,
     endpoint::kernel::decision_state::{
         RouteOnlyCommitRowsRef, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
     },
@@ -54,88 +53,6 @@ impl CommitRow {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum LoopCommitDisposition {
-    Decision { decision: LoopDecision },
-    Ack { role: u8, local_decision: bool },
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct LoopCommitRow {
-    scope: CompactScopeId,
-    idx: u8,
-    lane: u8,
-    disposition: Option<LoopCommitDisposition>,
-}
-
-impl LoopCommitRow {
-    pub(crate) const EMPTY: Self = Self {
-        scope: CompactScopeId::none(),
-        idx: u8::MAX,
-        lane: u8::MAX,
-        disposition: None,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn decision(
-        scope: ScopeId,
-        idx: u8,
-        lane: u8,
-        decision: LoopDecision,
-    ) -> Self {
-        Self {
-            scope: CompactScopeId::from_scope_id(scope),
-            idx,
-            lane,
-            disposition: Some(LoopCommitDisposition::Decision { decision }),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn ack(
-        scope: ScopeId,
-        idx: u8,
-        lane: u8,
-        role: u8,
-        local_decision: bool,
-    ) -> Self {
-        Self {
-            scope: CompactScopeId::from_scope_id(scope),
-            idx,
-            lane,
-            disposition: Some(LoopCommitDisposition::Ack {
-                role,
-                local_decision,
-            }),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn scope(self) -> ScopeId {
-        self.scope.to_scope_id()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn idx(self) -> u8 {
-        self.idx
-    }
-
-    #[inline(always)]
-    pub(crate) const fn lane(self) -> u8 {
-        self.lane
-    }
-
-    #[inline(always)]
-    pub(crate) const fn disposition(self) -> Option<LoopCommitDisposition> {
-        self.disposition
-    }
-
-    #[inline(always)]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.disposition.is_none() || self.scope.is_none() || self.idx == u8::MAX
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(crate) struct CommitEventRow {
     row: CommitRow,
     progress_step: RelocatableResidentLaneStep,
@@ -148,7 +65,6 @@ pub(crate) struct CommitEventRow {
 pub(crate) struct CommitDelta {
     event: Option<CommitEventRow>,
     selected_routes: SelectedRouteCommitRowsRef,
-    loop_row: LoopCommitRow,
     lane_relocation: Option<RelocatableResidentLaneStep>,
     pub(crate) cursor_after: StateIndex,
 }
@@ -165,12 +81,11 @@ impl CommitDelta {
             event: Some(CommitEventRow::new(
                 meta.eff_index,
                 meta.label,
-                meta.is_control,
+                meta.is_internal,
                 CommitRow::from_send_meta(meta),
                 progress_step,
             )),
             selected_routes,
-            loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
         }
@@ -187,12 +102,11 @@ impl CommitDelta {
             event: Some(CommitEventRow::new(
                 meta.eff_index,
                 meta.label,
-                meta.is_control,
+                meta.is_internal,
                 CommitRow::from_recv_meta(meta),
                 progress_step,
             )),
             selected_routes,
-            loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
         }
@@ -202,7 +116,7 @@ impl CommitDelta {
     pub(crate) const fn from_event_row(
         eff_index: EffIndex,
         event_label: u8,
-        event_control: bool,
+        event_internal: bool,
         row: CommitRow,
         selected_routes: SelectedRouteCommitRowsRef,
         cursor_after: StateIndex,
@@ -212,12 +126,11 @@ impl CommitDelta {
             event: Some(CommitEventRow::new(
                 eff_index,
                 event_label,
-                event_control,
+                event_internal,
                 row,
                 progress_step,
             )),
             selected_routes,
-            loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
         }
@@ -228,7 +141,6 @@ impl CommitDelta {
         Self {
             event: None,
             selected_routes: rows.selected_routes(),
-            loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
         }
@@ -239,16 +151,9 @@ impl CommitDelta {
         Self {
             event: None,
             selected_routes: SelectedRouteCommitRowsRef::EMPTY,
-            loop_row: LoopCommitRow::EMPTY,
             lane_relocation: None,
             cursor_after,
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn with_loop_row(mut self, row: LoopCommitRow) -> Self {
-        self.loop_row = row;
-        self
     }
 
     #[inline(always)]
@@ -280,11 +185,6 @@ impl CommitDelta {
     #[inline(always)]
     pub(crate) const fn selected_route_lane(&self) -> Option<u8> {
         self.selected_routes.packed_selected_lane()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn loop_row(&self) -> LoopCommitRow {
-        self.loop_row
     }
 
     #[inline(always)]
@@ -330,13 +230,13 @@ impl SelectedRouteCommitSet {
 }
 
 impl CommitEventRow {
-    const CONTROL: u8 = 0b0000_0001;
+    const INTERNAL: u8 = 0b0000_0001;
 
     #[inline(always)]
     pub(crate) const fn new(
         eff_index: EffIndex,
         event_label: u8,
-        event_control: bool,
+        event_internal: bool,
         row: CommitRow,
         progress_step: RelocatableResidentLaneStep,
     ) -> Self {
@@ -345,7 +245,7 @@ impl CommitEventRow {
             progress_step,
             eff_dense: eff_index.dense_ordinal() as u16,
             event_label,
-            event_flags: if event_control { Self::CONTROL } else { 0 },
+            event_flags: if event_internal { Self::INTERNAL } else { 0 },
         }
     }
 
@@ -380,14 +280,14 @@ impl CommitEventRow {
     }
 
     #[inline(always)]
-    pub(crate) const fn event_control(self) -> bool {
-        self.event_flags & Self::CONTROL != 0
+    pub(crate) const fn event_internal(self) -> bool {
+        self.event_flags & Self::INTERNAL != 0
     }
 
     #[inline(always)]
-    pub(crate) const fn event_id(self, message: u16, control: u16) -> u16 {
-        if self.event_control() {
-            control
+    pub(crate) const fn event_id(self, message: u16, session: u16) -> u16 {
+        if self.event_internal() {
+            session
         } else {
             message
         }

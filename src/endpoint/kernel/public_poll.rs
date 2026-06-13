@@ -11,24 +11,18 @@ use super::{
     offer::OfferState,
 };
 use crate::{
-    control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult, SendError, SendResult},
-    global::ControlDesc,
-    runtime::{config::Clock, consts::LabelUniverse},
+    runtime_core::config::Clock,
     transport::{
         Transport,
         wire::{CodecError, Payload},
     },
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     #[inline]
     pub(in crate::endpoint) fn poll_public_offer(
@@ -86,8 +80,6 @@ where
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
         logical_label: u8,
-        expects_control: bool,
-        control: Option<ControlDesc>,
         accepts_empty_payload: bool,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
@@ -107,8 +99,6 @@ where
         match kernel_recv(
             self,
             logical_label,
-            expects_control,
-            control,
             accepts_empty_payload,
             validate,
             &mut recv_state,
@@ -138,12 +128,11 @@ where
     pub(in crate::endpoint) fn poll_public_decode(
         &mut self,
         logical_label: u8,
-        expects_control: bool,
-        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        synthetic: for<'a> fn(
+        zero_payload: for<'a> fn(
             &'a mut [u8],
-        ) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
+        )
+            -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
         if let Some(kind) = self.session_fault() {
@@ -170,11 +159,10 @@ where
         let descriptor = DecodeRuntimeDesc::new(
             logical_label,
             crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
-            expects_control,
             validate,
-            synthetic,
+            zero_payload,
         );
-        match kernel_decode(self, descriptor, control, &mut decode_state, cx) {
+        match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {
                 self.register_session_waiter(cx.waker());
                 self.public_decode_state = decode_state;
@@ -205,9 +193,7 @@ where
         cx: &mut core::task::Context<'_>,
         payload: Option<lane_port::RawSendPayload>,
     ) -> Poll<SendResult<SendCommitOutcome<'r>>>
-    where
-        <Mint as MintConfigMarker>::Policy: crate::control::cap::mint::AllowsEndpointMint,
-    {
+where {
         if let Some(kind) = self.session_fault() {
             self.reset_public_send_state();
             return Poll::Ready(Err(SendError::SessionFault(kind)));

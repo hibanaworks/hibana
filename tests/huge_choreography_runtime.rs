@@ -19,18 +19,12 @@ use common::TestTransport;
 use hibana::{
     Endpoint, g,
     g::Msg,
-    integration::program::{RoleProgram, project},
-    integration::{
-        SessionKitStorage,
-        ids::SessionId,
-        runtime::{Config, CounterClock, DefaultLabelUniverse},
-    },
+    runtime::program::{RoleProgram, project},
+    runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId},
 };
 
-type HugeKitStorage<'a> =
-    SessionKitStorage<'a, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
-type DeepScopeKitStorage<'a> =
-    SessionKitStorage<'a, TestTransport, DefaultLabelUniverse, CounterClock, 4>;
+type HugeKitStorage<'a> = SessionKitStorage<'a, TestTransport, CounterClock, 2>;
+type DeepScopeKitStorage<'a> = SessionKitStorage<'a, TestTransport, CounterClock, 4>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);
@@ -208,8 +202,8 @@ fn edge_lane_worker_program() -> RoleProgram<1> {
 
 #[inline(never)]
 fn run_attached_sample(
-    controller_program: &hibana::integration::program::RoleProgram<0>,
-    worker_program: &hibana::integration::program::RoleProgram<1>,
+    controller_program: &hibana::runtime::program::RoleProgram<0>,
+    worker_program: &hibana::runtime::program::RoleProgram<1>,
     route_scope_count: usize,
     expected_branch_labels: &'static [u8],
     expected_acks: &'static [u8],
@@ -224,10 +218,7 @@ fn run_attached_sample(
         let kit = kit_storage.init();
         let rv = kit
             .rendezvous(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    (tap_buf, slab),
-                    hibana::integration::runtime::CounterClock::new(),
-                ),
+                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
                 transport.clone(),
             )
             .expect("register rendezvous");
@@ -299,10 +290,7 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
         let kit = kit_storage.init();
         let rv = kit
             .rendezvous(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    (tap_buf, slab),
-                    hibana::integration::runtime::CounterClock::new(),
-                ),
+                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
                 transport.clone(),
             )
             .expect("register rendezvous");
@@ -335,10 +323,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         let kit = kit_storage.init();
         let rv = kit
             .rendezvous(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    (tap_buf, slab),
-                    hibana::integration::runtime::CounterClock::new(),
-                ),
+                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
                 transport.clone(),
             )
             .expect("register rendezvous");
@@ -406,10 +391,7 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
         let kit = kit_storage.init();
         let rv = kit
             .rendezvous(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    (tap_buf, slab),
-                    hibana::integration::runtime::CounterClock::new(),
-                ),
+                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
                 transport.clone(),
             )
             .expect("register deep-scope rendezvous");
@@ -431,10 +413,7 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
         let kit = kit_storage.init();
         let rv = kit
             .rendezvous(
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    (tap_buf, slab),
-                    hibana::integration::runtime::CounterClock::new(),
-                ),
+                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
                 transport.clone(),
             )
             .expect("register rendezvous with the full wire lane domain");

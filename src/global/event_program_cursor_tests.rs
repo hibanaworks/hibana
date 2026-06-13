@@ -27,8 +27,8 @@ fn resident_descriptor_local_labels_match_event_program_witness_for_nested_paral
     type Left = crate::g::Seq<InnerJoin, D>;
     type Program = crate::g::Seq<crate::g::Par<Left, E>, Post>;
 
-    let projected: crate::integration::program::RoleProgram<0> =
-        crate::integration::program::project(&crate::g::seq(
+    let projected: crate::runtime::program::RoleProgram<0> =
+        crate::runtime::program::project(&crate::g::seq(
             crate::g::par(
                 crate::g::seq(
                     crate::g::par(
@@ -82,6 +82,60 @@ fn production_cursor_enabled_frontier_matches_reference_for_nested_parallel_join
     trace.assert_enabled(&[5]);
     trace.commit(5);
     trace.assert_enabled(&[7]);
+}
+
+#[test]
+fn production_cursor_reenters_completed_rolled_seq_head() {
+    let rolled = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<91, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<92, ()>>(),
+    )
+    .roll();
+    let program = crate::g::seq(rolled, crate::g::send::<0, 1, crate::g::Msg<93, ()>>());
+
+    let mut runtime = ProductionCursorTrace::new::<0>(&program);
+    runtime.commit_label(91);
+    runtime.commit_label(92);
+
+    assert_eq!(
+        runtime.cursor().roll_reentry_index_for_label(91, |_| None),
+        Some(0)
+    );
+    assert!(
+        runtime.enabled_commit_at(0).is_some(),
+        "rolled head should be event-enabled after its scope completed"
+    );
+    let (meta, cursor_index) = runtime
+        .cursor()
+        .flow_preview_send_meta_for_label::<0>(91, |_| None, |_| None, |_, _| 0)
+        .expect("rolled head should be flow-previewable");
+    assert_eq!(meta.label, 91);
+    assert_eq!(state_index_to_usize(cursor_index), 0);
+}
+
+#[test]
+fn production_cursor_reenters_rolled_route_head_inside_sequence() {
+    let inner = crate::g::route(
+        crate::g::send::<0, 1, crate::g::Msg<162, ()>>(),
+        crate::g::send::<0, 1, crate::g::Msg<163, ()>>(),
+    )
+    .roll();
+    let program = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<161, ()>>(),
+        crate::g::seq(inner, crate::g::send::<1, 0, crate::g::Msg<164, ()>>()),
+    );
+
+    let mut runtime = ProductionCursorTrace::new::<0>(&program);
+    runtime.commit_label(161);
+    runtime
+        .cursor()
+        .flow_preview_send_meta_for_label::<0>(162, |_| None, |_| None, |_, _| 0)
+        .expect("rolled route head should be flow-previewable after prefix");
+    runtime.commit_label(162);
+    runtime
+        .cursor()
+        .flow_preview_send_meta_for_label::<0>(162, |_| None, |_| None, |_, _| 0)
+        .expect("rolled route head should be flow-previewable after selected arm completes");
 }
 
 #[test]
@@ -393,8 +447,8 @@ struct ProductionCursorTrace {
 
 impl ProductionCursorTrace {
     fn new<const ROLE: u8>(program: &impl Projectable) -> Self {
-        let projected: crate::integration::program::RoleProgram<ROLE> =
-            crate::integration::program::project(program);
+        let projected: crate::runtime::program::RoleProgram<ROLE> =
+            crate::runtime::program::project(program);
         let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
         let event_program = LocalEventProgram::from_rows(descriptor.local_event_rows());
         let mut cursor_storage = Box::new(MaybeUninit::<EventCursor>::uninit());
@@ -455,37 +509,39 @@ impl ProductionCursorTrace {
         self.event_program.event_row_at(idx)?;
         let lane = self.event_program.local_step_lane(idx)?;
         let node = self.event_program.node(idx);
-        let (eff_index, label, is_control) = match node.action() {
+        let (eff_index, label, is_internal) = match node.action() {
             LocalAction::Send {
                 eff_index,
                 label,
-                is_control,
+                is_internal,
                 ..
             }
             | LocalAction::Recv {
                 eff_index,
                 label,
-                is_control,
+                is_internal,
                 ..
             }
             | LocalAction::Local {
                 eff_index,
                 label,
-                is_control,
+                is_internal,
                 ..
-            } => (eff_index, label, is_control),
+            } => (eff_index, label, is_internal),
             LocalAction::Terminate => return None,
         };
         let selected = &self.selected;
         self.cursor()
             .event_enabled(
                 idx,
-                eff_index,
-                label,
-                is_control,
-                node.scope(),
-                node.route_arm(),
-                lane,
+                crate::global::typestate::EventCommitMeta::new(
+                    eff_index,
+                    label,
+                    is_internal,
+                    node.scope(),
+                    node.route_arm(),
+                    lane,
+                ),
                 |scope| selected_arm(selected, scope),
             )
             .map(|commit| {
@@ -514,14 +570,20 @@ impl ProductionCursorTrace {
                 .route_scope_conflict_by_slot(slot)
                 .to_conflict()
             {
-                Some(LocalConflict::RouteArm { scope: parent, arm }) if arm == 0 => {
-                    inner = scope;
-                    outer = parent;
+                Some(LocalConflict::RouteArm { scope: parent, arm }) => {
+                    if arm == 0 {
+                        inner = scope;
+                        outer = parent;
+                    }
                 }
-                None if outer.is_none() => {
-                    outer = scope;
+                None => {
+                    if outer.is_none() {
+                        outer = scope;
+                    }
                 }
-                _ => {}
+                Some(LocalConflict::Unconditional) | Some(LocalConflict::SharedRoute) => {
+                    panic!("route scope test expected route-arm conflict or no conflict")
+                }
             }
             slot += 1;
         }
@@ -556,11 +618,12 @@ impl ProductionCursorTrace {
     fn frame_label_for_label(&self, target_label: u8) -> u8 {
         let mut idx = 0usize;
         while idx < self.descriptor.local_len() {
-            match self.event_program.node(idx).action() {
-                LocalAction::Recv {
-                    label, frame_label, ..
-                } if label == target_label => return frame_label,
-                _ => {}
+            if let LocalAction::Recv {
+                label, frame_label, ..
+            } = self.event_program.node(idx).action()
+                && label == target_label
+            {
+                return frame_label;
             }
             idx += 1;
         }
@@ -646,11 +709,11 @@ fn reference_labels(program: &ReferenceLocalProgram) -> Vec<u8> {
 fn event_program_labels(event_program: LocalEventProgram) -> Vec<u8> {
     let mut labels = Vec::new();
     for idx in 0..event_program.local_len() {
-        match event_program.node(idx).action() {
-            LocalAction::Send { label, .. }
-            | LocalAction::Recv { label, .. }
-            | LocalAction::Local { label, .. } => labels.push(label),
-            LocalAction::Terminate => {}
+        if let LocalAction::Send { label, .. }
+        | LocalAction::Recv { label, .. }
+        | LocalAction::Local { label, .. } = event_program.node(idx).action()
+        {
+            labels.push(label);
         }
     }
     labels

@@ -14,20 +14,18 @@ use common::{TestTransport, TestTransportError};
 use futures::FutureExt;
 use hibana::g::Message;
 use hibana::g::{self, Msg};
-use hibana::integration::program::{RoleProgram, project};
-use hibana::integration::{
-    SessionKitStorage,
+use hibana::runtime::program::{RoleProgram, project};
+use hibana::runtime::{
+    Config, CounterClock, SessionKitStorage,
     ids::SessionId,
-    runtime::{Config, CounterClock, DefaultLabelUniverse},
     transport::{ReceivedFrame, Transport},
 };
 use runtime_support::with_fixture;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage =
-    SessionKitStorage<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
 type DeterministicKitStorage =
-    SessionKitStorage<'static, DeterministicRecvTransport, DefaultLabelUniverse, CounterClock, 2>;
+    SessionKitStorage<'static, DeterministicRecvTransport, CounterClock, 2>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -60,7 +58,7 @@ impl Transport for DeterministicRecvTransport {
 
     fn open<'a>(
         &'a self,
-        port: hibana::integration::transport::PortOpen,
+        port: hibana::runtime::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.0.open(port)
     }
@@ -68,7 +66,7 @@ impl Transport for DeterministicRecvTransport {
     fn poll_send<'a, 'f>(
         &self,
         tx: &'a mut Self::Tx<'a>,
-        outgoing: hibana::integration::transport::Outgoing<'f>,
+        outgoing: hibana::runtime::transport::Outgoing<'f>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>>
     where
@@ -127,10 +125,7 @@ fn with_route_fixture(
         let transport = TestTransport::default();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config =
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    (tap_buf, slab),
-                    hibana::integration::runtime::CounterClock::new(),
-                );
+                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
             let rv = cluster
                 .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
@@ -163,10 +158,7 @@ fn with_deterministic_route_fixture(
         let transport = DeterministicRecvTransport::default();
         with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
             let config =
-                Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                    (tap_buf, slab),
-                    hibana::integration::runtime::CounterClock::new(),
-                );
+                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
             let rv = cluster
                 .rendezvous(config, transport.clone())
                 .expect("register rendezvous");

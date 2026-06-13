@@ -1,7 +1,6 @@
 use super::{
-    AssocTable, CapTable, Clock, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY,
-    FreeRegion, GenTable, LabelUniverse, Lane, LoopTable, PolicyTable, Rendezvous, RouteTable,
-    StateSnapshotTable, TopologyStateTable, Transport,
+    AssocTable, Clock, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY, FreeRegion,
+    Rendezvous, RouteTable, Transport,
 };
 mod capacity;
 
@@ -13,11 +12,10 @@ mod capacity;
 // Every raw allocation returned here is aligned, range-checked against the
 // current slab frontier, and recorded in rendezvous-owned metadata before typed
 // owners bind to it. Migration paths copy initialized table entries into newly
-// allocated sidecar storage before rebinding, and old regions are tracked only
+// allocated sidecar storage before rebinding, and source regions are tracked only
 // as rendezvous-local free regions for later resident allocation.
 
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
-    Rendezvous<'rv, 'cfg, T, U, C, E>
+impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
 where
     'cfg: 'rv,
 {

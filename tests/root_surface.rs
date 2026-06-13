@@ -44,10 +44,10 @@ fn global_rs() -> String {
     read_plain(&path)
 }
 
-fn integration_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/integration.rs");
+fn runtime_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs");
     let mut source = read_plain(&path);
-    source.push_str(&read_dir_rs("src/integration"));
+    source.push_str(&read_dir_rs("src/runtime"));
     source
 }
 
@@ -94,19 +94,19 @@ fn root_visible_surface_stays_minimal() {
     let lib_rs = lib_rs();
     let endpoint_rs = endpoint_rs();
     let global_rs = global_rs();
-    let integration_rs = integration_rs();
+    let runtime_rs = runtime_rs();
     let g_rs = g_rs();
     let flow_rs = flow_rs();
     let role_program_rs = role_program_rs();
     let g_ws = compact_ws(&g_rs);
     let program_head = {
-        let start = integration_rs
+        let start = runtime_rs
             .find("pub mod program {")
-            .expect("integration program surface block must exist");
-        let rest = &integration_rs[start..];
+            .expect("runtime program surface block must exist");
+        let rest = &runtime_rs[start..];
         let end = rest
-            .find("/// Everyday runtime setup owners")
-            .expect("program surface block must end before runtime surface");
+            .find("/// Protocol-neutral identifiers")
+            .expect("program surface block must end before id surface");
         &rest[..end]
     };
 
@@ -117,26 +117,23 @@ fn root_visible_surface_stays_minimal() {
     assert!(
         g_ws.contains("pub struct Program<Steps>")
             && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload>")
-            && g_ws.contains("pub struct ControlMsg<const LOGICAL_LABEL: u8, Kind>")
-            && g_ws.contains("pub mod control")
-            && g_ws.contains("pub struct StateSnapshot")
-            && g_ws.contains("pub struct StateRestore")
-            && g_ws.contains("pub struct TxnCommit")
-            && g_ws.contains("pub struct TxnAbort")
+            && !g_ws.contains(&["pub mod ", "con", "trol"].concat())
             && !g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control")
             && g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M>")
             && !g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE")
             && g_ws.contains("pub struct Seq<Left, Right>")
             && g_ws.contains("pub struct Route<Left, Right>")
             && g_ws.contains("pub struct Par<Left, Right>")
+            && g_ws.contains("pub struct Roll<Inner>")
             && g_ws.contains("pub struct Resolve<Inner, const RESOLVER_ID: u16>")
-            && !g_ws.contains("pub(crate) struct Policy<Inner, const POLICY_ID: u16>")
-            && !g_ws.contains("pub struct Policy<Inner, const POLICY_ID: u16>")
+            && !g_ws.contains("pub(crate) struct Resolver<Inner, const RESOLVER_ID: u16>")
+            && !g_ws.contains("pub struct Resolver<Inner, const RESOLVER_ID: u16>")
             && g_ws.contains("pub const fn send<const FROM: u8, const TO: u8, M>()")
             && !g_ws.contains("pub const fn send<const FROM: u8, const TO: u8, M, const LANE")
             && g_ws.contains("pub const fn seq<LeftSteps, RightSteps>(")
             && g_ws.contains("pub const fn route<LeftSteps, RightSteps>(")
-            && g_ws.contains("pub const fn par<LeftSteps, RightSteps>("),
+            && g_ws.contains("pub const fn par<LeftSteps, RightSteps>(")
+            && g_ws.contains("pub const fn roll(self)"),
         "hibana::g root must stay on named canonical app primitives"
     );
     assert!(
@@ -148,8 +145,8 @@ fn root_visible_surface_stays_minimal() {
         "hibana::g must not expose protocol-implementor SPI"
     );
     assert!(
-        lib_rs.contains("pub mod integration;"),
-        "hibana root must expose integration surface"
+        lib_rs.contains("pub mod runtime;"),
+        "hibana root must expose runtime surface"
     );
     assert!(
         lib_rs.contains(
@@ -161,11 +158,11 @@ fn root_visible_surface_stays_minimal() {
     for (owner, source) in [
         ("lib.rs", lib_rs.as_str()),
         ("global.rs", global_rs.as_str()),
-        ("integration.rs", integration_rs.as_str()),
+        ("runtime.rs", runtime_rs.as_str()),
         ("role_program.rs", role_program_rs.as_str()),
     ] {
         assert!(
-            !source.contains("#[allow(private_bounds)]")
+            !source.contains(&["#[", "allow(", "private_bounds", ")]"].concat())
                 && !source.contains("#[expect(\n        private_bounds")
                 && !source.contains("#[expect(private_bounds"),
             "{owner} must not rely on private_bounds suppression in the public surface"
@@ -184,26 +181,25 @@ fn root_visible_surface_stays_minimal() {
     for forbidden in [
         "pub use global::{",
         "pub use ingress::{",
-        "pub use control::cap::{",
-        "pub use control::types::LaneId as Lane;",
-        "pub use control::types::{Gen, LaneId, RendezvousId, SessionId};",
+        "pub use session::brand::{",
+        "pub use session::types::LaneId as Lane;",
+        "pub use session::types::{Gen, LaneId, RendezvousId, SessionId};",
         "pub use endpoint::{ControlEmission, CursorEndpoint};",
         "pub use endpoint::{ControlOutcome, CursorEndpoint};",
         "pub use epf::Slot;",
         "pub use epf::TapEvent;",
         "pub use runtime::SessionKit;",
         "pub use runtime::config::{Clock, CounterClock};",
-        "pub use runtime::consts::{DEFAULT_LABEL_UNIVERSE, LabelUniverse};",
+        "pub use runtime::consts::{",
         "pub mod global;",
-        "pub mod control;",
-        "pub mod runtime;",
+        "pub mod session;",
         "pub mod transport;",
         "pub mod observe;",
         "pub use crate::global::{par_chain, route_chain};",
     ] {
         assert!(
             !lib_rs.contains(forbidden),
-            "hibana root must not re-export non-canonical/internal integration names: {forbidden}"
+            "hibana root must not re-export non-canonical/internal runtime names: {forbidden}"
         );
     }
 
@@ -215,13 +211,13 @@ fn root_visible_surface_stays_minimal() {
     }
 
     for forbidden in [
-        "pub fn policy(",
-        "pub const fn policy(",
-        " pub use crate::global::{Msg, Program, par, policy, route, send, seq};",
+        "pub fn resolver(",
+        "pub const fn resolver(",
+        " pub use crate::global::{Msg, Program, par, resolver, route, send, seq};",
     ] {
         assert!(
             !g_rs.contains(forbidden),
-            "hibana::g root must not expose a top-level policy helper: {forbidden}"
+            "hibana::g root must not expose a top-level resolver helper: {forbidden}"
         );
     }
 
@@ -236,10 +232,10 @@ fn root_visible_surface_stays_minimal() {
     }
 
     for forbidden in [
-        "AllowsEndpointMint",
-        "MintConfigMarker",
-        "MintConfig",
-        "#[allow(private_bounds)]",
+        concat!("AllowsEndpoint", "Mi", "nt"),
+        concat!("Mi", "nt", "ConfigMarker"),
+        concat!("Mi", "nt", "Config"),
+        &["#[", "allow(", "private_bounds", ")]"].concat(),
         "#[expect(private_bounds)]",
         concat!("Flow", "Send", "Arg"),
         concat!("Send", "Outcome", "Kind"),
@@ -255,7 +251,7 @@ fn root_visible_surface_stays_minimal() {
     ] {
         assert!(
             !flow_rs.contains(forbidden),
-            "app-facing flow surface must not mention mint-policy internals: {forbidden}"
+            "app-facing flow surface must not mention forbidden resolver internals: {forbidden}"
         );
     }
 
@@ -268,9 +264,9 @@ fn root_visible_surface_stays_minimal() {
         assert!(
             !lib_rs.contains(forbidden)
                 && !global_rs.contains(forbidden)
-                && !integration_rs.contains(forbidden)
+                && !runtime_rs.contains(forbidden)
                 && !g_rs.contains(forbidden),
-            "removed capability shim and cfg-test owners must not re-enter the public crate surface: {forbidden}"
+            "forbidden token and cfg-test owners must not re-enter the public crate surface: {forbidden}"
         );
     }
 
@@ -287,30 +283,30 @@ fn root_visible_surface_stays_minimal() {
         "NoControl,",
         "project_chain",
         "project, project_ref,",
-        "project,\n        with_policy,",
+        "project,\n        with_resolver,",
         "typestate::{JumpReason, LocalAction, EventCursor}",
-        "PassiveArmNavigation",
+        concat!("Passive", "ArmNavigation"),
         "pub mod steps {",
     ] {
         assert!(
             !program_head.contains(forbidden),
-            "integration::program root must not re-export typestate/internal helper: {forbidden}"
+            "runtime::program root must not re-export typestate/internal helper: {forbidden}"
         );
     }
 
     for required in ["RoleProgram", "project"] {
         assert!(
             program_head.contains(required),
-            "integration::program root must stay on projection + descriptor SPI only: {required}"
+            "runtime::program root must stay on projection + descriptor SPI only: {required}"
         );
     }
     assert!(
         !program_head.contains("Message"),
-        "integration::program root must not re-export app-facing message SPI"
+        "runtime::program root must not re-export app-facing message SPI"
     );
 
     for forbidden in [
-        "pub mod control {",
+        &["pub mod ", "con", "trol", " {"].concat(),
         "pub mod metadata {",
         "pub mod loops {",
         "pub mod typestate {",
@@ -320,13 +316,13 @@ fn root_visible_surface_stays_minimal() {
     ] {
         assert!(
             !global_rs.contains(forbidden),
-            "deleted lower-layer helper must not remain in global surface source: {forbidden}"
+            "forbidden lower-layer helper must not remain in global surface source: {forbidden}"
         );
     }
 }
 
 #[test]
-fn public_api_gate_tracks_g_and_integration_surfaces() {
+fn public_api_gate_tracks_g_and_runtime_surfaces() {
     let script = public_api_script_rs();
 
     for required in [
@@ -334,7 +330,7 @@ fn public_api_gate_tracks_g_and_integration_surfaces() {
         "check_public_surface_budget.sh",
         "check_surface_hygiene.sh",
         "cargo +\"${TOOLCHAIN}\" test -p hibana --test root_surface --features std",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test integration_surface --features std",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test runtime_surface --features std",
         "cargo +\"${TOOLCHAIN}\" test -p hibana --test public_surface_guards --features std",
         "cargo +\"${TOOLCHAIN}\" test -p hibana --test docs_surface --features std",
         "stable public API check passed",

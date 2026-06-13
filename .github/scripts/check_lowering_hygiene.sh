@@ -40,22 +40,22 @@ check_absent_outside() {
 
 check_absent \
   "\\bProgramFacts\\b" \
-  "legacy ProgramFacts owner or vocabulary reintroduced" \
+  "forbidden ProgramFacts owner or vocabulary detected" \
   src README.md tests
 
 check_absent \
   "budget_for_role_program\\(" \
-  "legacy role-program budget rescan helper reintroduced" \
+  "forbidden role-program budget rescan helper detected" \
   src
 
 check_absent \
   "interpret_eff_list\\(" \
-  "legacy interpret_eff_list lowering shim" \
+  "forbidden interpret_eff_list lowering bypass path" \
   src
 
 check_absent \
-  "\\.policies\\(" \
-  "direct EffList policy-marker scan" \
+  "\\.poli""cies\\(" \
+  "direct EffList resolver-marker scan" \
   src
 
 check_absent \
@@ -65,55 +65,55 @@ check_absent \
 
 check_absent \
   "\\bEffList\\b" \
-  "runtime/control layer mentions raw EffList instead of compiled facts" \
-  src/control src/endpoint src/rendezvous src/transport.rs
+  "runtime/session layer mentions raw EffList instead of compiled facts" \
+  src/session src/endpoint src/rendezvous src/transport.rs
 
 check_absent \
   "pub[[:space:]]+const[[:space:]]+fn[[:space:]]+eff_list\\(" \
-  "RoleProgram public eff_list accessor reintroduced" \
+  "RoleProgram public eff_list accessor detected" \
   src/global/role_program.rs
 
 check_absent \
   "fn[[:space:]]+machine\\(" \
-  "RoleProgram machine owner reintroduced" \
+  "RoleProgram machine owner detected" \
   src/global/role_program.rs
 
 check_absent \
   "fn[[:space:]]+lease_budget\\(" \
-  "RoleProgram lease budget accessor reintroduced" \
+  "RoleProgram lease budget accessor detected" \
   src/global/role_program.rs
 
 check_absent \
   "EventCursor::from_machine" \
-  "EventCursor::from_machine reintroduced" \
+  "EventCursor::from_machine detected" \
   src
 
 PROGRAM_STAMP_PATTERN='Program''Stamp'
 check_absent \
   "\\b${PROGRAM_STAMP_PATTERN}\\b" \
-  "production program stamp/debug identity metadata reintroduced" \
+  "production program stamp/debug identity metadata detected" \
   src
 
 check_absent \
-  "panic_repo_test\\(|pub\\([^)]*\\)[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(segment_summary|control_markers|policy_at|control_desc_at|node_at)\\(" \
+  "panic_repo_test\\(|pub\\([^)]*\\)[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(segment_summary|resolver_at|node_at)\\(" \
   "lowering production owners must not retain test-only wrapper accessors" \
   src/global/compiled/lowering
 
 check_absent \
   "cfg_attr\\(test" \
-  "test-only derives reintroduced on resident cursor state" \
+  "test-only derives detected on resident cursor state" \
   src/global/typestate/cursor.rs
 
 check_absent_outside \
   "from_eff_list\\(" \
-  "raw EffList lowering helper used outside ProjectionSeal" \
+  "raw EffList lowering helper used outside compiled lowering seal" \
   "src/global/compiled/seal.rs"
 
 check_absent_outside \
   "CompiledProgram::compile\\(" \
   "direct CompiledProgram::compile call used outside compiled owners or test-only fixtures" \
   "src/global/compiled/program.rs" \
-  "src/control/cluster/effects.rs"
+  "src/session/cluster/effects.rs"
 
 check_absent_outside \
   "CompiledRole::compile\\(" \
@@ -124,12 +124,12 @@ check_absent_outside \
 
 check_absent \
   "(enum[[:space:]]+DynamicLabelClass|fn[[:space:]]+(controller_arm_loop_meaning|controller_arm_wire_label|loop_control_meaning_from_wire_label|wire_label_for_loop_control|classify_dynamic_label)\\()|\\b(controller_arm_loop_meaning|controller_arm_wire_label|loop_control_meaning_from_wire_label|wire_label_for_loop_control|classify_dynamic_label)\\(" \
-  "deprecated endpoint raw-label semantic helpers reintroduced" \
+  "forbidden endpoint raw-label semantic helpers detected" \
   src
 
 check_absent \
   "macro_rules![[:space:]]+impl_control_resource" \
-  "public impl_control_resource macro reintroduced" \
+  "public impl_control_resource macro detected" \
   src
 
 check_absent \
@@ -140,8 +140,7 @@ check_absent \
 check_absent \
   "use[[:space:]]+crate::global::compiled::lowering::" \
   "frozen image owner imports lowering helpers directly" \
-  src/global/compiled/images/program.rs \
-  src/global/compiled/images/role.rs
+  src/global/compiled/images/program.rs
 
 check_absent \
   "struct[[:space:]]+CompiledProgramTailStorage[[:space:]]*\\{" \
@@ -164,37 +163,19 @@ check_absent \
   src/global/compiled/images/program.rs
 
 check_absent \
-  "^(fn|const fn|unsafe fn|pub\\([^)]*\\)[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+const[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(compiled_program_push_dynamic_policy_site|compiled_program_push_resource|compiled_program_route_scope_end|compiled_program_insert_route_control|compiled_program_emit_route_controls|compiled_program_emit_atom_into_slices|compiled_program_emit_atom|control_scope_mask_bit)\\(" \
+  "^(fn|const fn|unsafe fn|pub\\([^)]*\\)[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+const[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(compiled_program_push_dynamic_resolver_site|compiled_program_push_resource|compiled_program_route_scope_end|compiled_program_insert_route_resolver|compiled_program_emit_route_resolvers|compiled_program_emit_atom_into_slices|compiled_program_emit_atom|control""_scope_mask_bit)\\(" \
   "compiled-program lowering helpers leaked back into frozen image owner" \
   src/global/compiled/images/program.rs
 
-check_absent \
-  "struct[[:space:]]+CompiledRoleScopeStorage[[:space:]]*\\{" \
-  "pointer-rich compiled-role storage leaked back into frozen image owner" \
-  src/global/compiled/images/role.rs
-
-check_absent \
-  "impl[[:space:]]+CompiledRoleScopeStorage[[:space:]]*\\{" \
-  "compiled-role lowering impl leaked back into frozen image owner" \
-  src/global/compiled/images/role.rs
-
-check_absent \
-  "^(fn|unsafe fn)[[:space:]]+(build_local_steps_into|build_step_index_to_state_into|record_step_state|build_phase_image_from_steps|build_route_guards_for_steps_into|push_phase_range_to_image|route_guard_for_range|initialize_phase_image_storage)\\(" \
-  "compiled-role lowering walk helpers leaked back into frozen image owner" \
-  src/global/compiled/images/role.rs
-
-check_absent \
-  "^(fn|unsafe fn)[[:space:]]+(init_empty_role_image_ref|finalize_role_image_ref_from_typestate)\\(|(unsafe[[:space:]]+fn|pub\\(crate\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(init_empty_compiled_role|finalize_compiled_role_from_typestate|init_from_[A-Za-z0-9_]+_(for_program|with_layout))\\(" \
-  "compiled-role image mutation builder leaked back into frozen image owner" \
-  src/global/compiled/images/role.rs
-
-check_absent \
-  "pub\\(crate\\)[[:space:]]+use[[:space:]]+image_builder::init_role_image_ref" \
-  "compiled-role image builder re-export leaked back into frozen image owner" \
-  src/global/compiled/images/role.rs
+DELETED_COMPILED_ROLE_OWNER="src/global/compiled/images/""role.rs"
+if [[ -e "${DELETED_COMPILED_ROLE_OWNER}" ]]; then
+  echo "${DELETED_COMPILED_ROLE_OWNER}" >&2
+  echo "lowering hygiene violation: forbidden compiled-role owner detected" >&2
+  FAILED=1
+fi
 
 if [[ -e "src/global/compiled/facts.rs" || -e "src/global/compiled/machine.rs" ]]; then
-  echo "lowering hygiene violation: legacy compiled owners still present on disk" >&2
+  echo "lowering hygiene violation: forbidden compiled owners still present on disk" >&2
   FAILED=1
 fi
 
@@ -204,7 +185,7 @@ if [[ ! -d "src/endpoint/kernel" ]]; then
 fi
 
 if [[ -e "src/endpoint/cursor.rs" ]]; then
-  echo "lowering hygiene violation: legacy endpoint/cursor.rs owner still present" >&2
+  echo "lowering hygiene violation: forbidden endpoint/cursor.rs owner still present" >&2
   FAILED=1
 fi
 
@@ -225,7 +206,7 @@ for forbidden_path in \
   src/global/compiled/lowering/role_scope_storage.rs
 do
   if [[ -e "${forbidden_path}" ]]; then
-    echo "lowering hygiene violation: legacy lowering/typestate owner still present -> ${forbidden_path}" >&2
+    echo "lowering hygiene violation: forbidden lowering/typestate owner still present -> ${forbidden_path}" >&2
     FAILED=1
   fi
 done
@@ -239,8 +220,8 @@ for required in \
   'src/g/role_projection.rs:ProgramProjection::<Steps>::PROGRAM_REF' \
   "src/global/role_program/program.rs:image: &'static crate::global::role_program::RoleImageRef" \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
-  'src/control/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \
-  'src/control/cluster/core/session_cluster_ops.rs:program.role_image_ref().program'
+  'src/session/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \
+  'src/session/cluster/core/session_cluster_ops.rs:program.role_image_ref().program'
 do
   path="${required%%:*}"
   pattern="${required#*:}"
@@ -253,9 +234,7 @@ done
 while IFS= read -r hit; do
   [[ -z "${hit}" ]] && continue
   case "${hit}" in
-    *"src/control/cap/resource_kinds.rs:"*"macro_rules! define_control_resource_kind"*) ;;
-    *"src/control/cap/resource_kinds.rs:"*"macro_rules! decode_mask"*) ;;
-    *"src/control/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
+    *"src/session/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
     *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! impl_wire_for_int"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! push"*) ;;

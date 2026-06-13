@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `Fragment` in module `hibana::runtime::program`
+ --> tests/ui/public_fragment_boundary.rs:2:60
+  |
+2 |     let _ = core::mem::size_of::<hibana::runtime::program::Fragment<()>>();
+  |                                                            ^^^^^^^^ not found in `hibana::runtime::program`

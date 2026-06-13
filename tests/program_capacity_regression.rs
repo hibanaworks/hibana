@@ -1,7 +1,7 @@
 #![allow(long_running_const_eval)]
 
 use hibana::g::{self, Msg};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 macro_rules! visible_route {
     ($left:literal, $right:literal) => {

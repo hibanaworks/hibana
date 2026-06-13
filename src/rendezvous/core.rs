@@ -1,9 +1,8 @@
-//! Rendezvous (control plane) primitives.
+//! Rendezvous session primitives.
 //!
 //! The rendezvous component owns the association tables that map session
 //! identifiers to transport lanes. It also owns resident generation state,
-//! capability ledgers, topology reservations, endpoint leases, and lane release
-//! side effects for one rendezvous image.
+//! endpoint leases, and lane release side effects for one rendezvous image.
 //!
 //! # Unsafe Owner Contract
 //!
@@ -16,52 +15,24 @@ use core::{cell::Cell, marker::PhantomData, ops::Range, task::Waker};
 
 use super::{
     association::AssocTable,
-    capability::{CapReleaseCtx, CapTable},
-    error::{RendezvousError, StateRestoreError, TopologyError, TxAbortError, TxCommitError},
+    error::RendezvousError,
     port::{Port, PortInit},
-    tables::{
-        GenTable, LoopTable, PolicyTable, PreparedSnapshotFinalization, PreparedSnapshotRecord,
-        RouteTable, SnapshotFinalization, SnapshotFinalizeTarget, StateSnapshotTable,
-    },
-    topology::{PendingTopology, TopologyStateTable},
+    tables::RouteTable,
 };
+use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::{
-    control::{
-        automaton::txn::Txn,
-        brand::{self, Guard},
-        cap::mint::{ControlOp, NonceSeed},
-        cluster::{
-            core::TopologyOperands,
-            error::{CpError, ResourceScope},
-        },
-        types::{IncreasingGen, One},
-    },
-    eff::EffIndex,
     endpoint::affine::LaneGuard,
-    global::const_dsl::{ControlScopeKind, ResolverMode},
-    observe::core::{TapEvent, TapRing, emit},
-    observe::events::{LaneRelease, RawEvent, StateRestoreOk},
-    runtime::config::{Clock, Config, CounterClock},
-    runtime::consts::{DefaultLabelUniverse, LabelUniverse},
+    observe::{
+        core::{TapRing, emit},
+        events,
+    },
+    runtime_core::config::{Clock, Config, CounterClock},
+    session::{
+        brand::{self, Guard},
+        cluster::error::ResourceScope,
+    },
     transport::Transport,
 };
-
-use super::topology::{LocalTopologyInvariant, TopologyLeaseState, TopologySessionState};
-pub(crate) use super::topology::{
-    PreparedDestinationTopologyCommit as ReservedDestinationTopologyCommitProof,
-    PreparedSourceTopologyCommit as ReservedSourceTopologyCommitProof,
-};
-use crate::control::automaton::distributed::{TopologyAck, TopologyIntent};
-use crate::control::cluster::effects::control_op_tap_event_id;
-use crate::control::types::{Generation, Lane, RendezvousId, SessionId};
-
-type EpochPort<'a, T> = Port<'a, T, crate::control::cap::mint::EpochTbl>;
-type EpochPortGuard<'a, T, U, C> = (EpochPort<'a, T>, LaneGuard<'a, T, U, C>);
-type BrandedEpochPortGuard<'a, 'cfg, T, U, C> = (
-    EpochPort<'a, T>,
-    LaneGuard<'a, T, U, C>,
-    crate::control::brand::Guard<'cfg>,
-);
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -122,11 +93,15 @@ impl core::fmt::Display for EndpointLeaseId {
     }
 }
 
+pub(crate) struct LanePortAccess<'lease, 'cfg, T: Transport, C: Clock> {
+    pub(crate) port: Port<'lease, T>,
+    pub(crate) lane_guard: LaneGuard<'lease, T, C>,
+    pub(crate) brand: Guard<'cfg>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointResidentBudget {
     pub(crate) route_frame_slots: u16,
-    pub(crate) loop_slots: u16,
-    pub(crate) cap_entries: u16,
     pub(crate) route_lane_slots: u8,
     pub(crate) frontier_workspace_bytes: u16,
 }
@@ -134,8 +109,6 @@ pub(crate) struct EndpointResidentBudget {
 impl EndpointResidentBudget {
     pub(crate) const ZERO: Self = Self {
         route_frame_slots: 0,
-        loop_slots: 0,
-        cap_entries: 0,
         route_lane_slots: 0,
         frontier_workspace_bytes: 0,
     };
@@ -160,14 +133,10 @@ impl EndpointResidentBudget {
     pub(crate) const fn with_route_storage(
         route_frame_slots: usize,
         route_lane_slots: usize,
-        loop_slots: usize,
-        cap_entries: usize,
         frontier_workspace_bytes: usize,
     ) -> Self {
         Self {
             route_frame_slots: Self::compact_u16(route_frame_slots),
-            loop_slots: Self::compact_u16(loop_slots),
-            cap_entries: Self::compact_u16(cap_entries),
             route_lane_slots: Self::compact_u8(route_lane_slots),
             frontier_workspace_bytes: Self::compact_u16(frontier_workspace_bytes),
         }
@@ -212,14 +181,8 @@ impl FreeRegion {
     };
 }
 
-pub(crate) struct Rendezvous<
-    'rv,
-    'cfg,
-    T: Transport,
-    U: LabelUniverse = DefaultLabelUniverse,
-    C: Clock = CounterClock,
-    E: crate::control::cap::mint::EpochTable = crate::control::cap::mint::EpochTbl,
-> where
+pub(crate) struct Rendezvous<'rv, 'cfg, T: Transport, C: Clock = CounterClock>
+where
     'cfg: 'rv,
 {
     brand_marker: PhantomData<brand::Brand<'rv>>,
@@ -234,33 +197,16 @@ pub(crate) struct Rendezvous<
     endpoint_lease_reclaim_delta: u16,
     free_regions: [FreeRegion; FREE_REGION_CAPACITY],
     lane_range: Range<u32>,
-    universe_marker: PhantomData<U>,
     transport: T,
-    r#gen: GenTable,
     assoc: AssocTable,
-    state_snapshots: StateSnapshotTable,
-    topology: TopologyStateTable,
-    cap_nonce: Cell<u64>,
-    cap_revision: Cell<u64>,
-    caps: CapTable,
-    loops: LoopTable,
     routes: RouteTable,
-    policies: PolicyTable,
     clock: C,
-    offer_progress_policy: crate::runtime::config::OfferProgressPolicy,
-    _epoch_marker: PhantomData<E>,
 }
 
-mod effects;
 mod endpoint_leases;
 mod lane_lifecycle;
-mod prepared_effects;
 mod storage_layout;
 mod storage_runtime_budget;
-pub(crate) use prepared_effects::{
-    PreparedStateRestoreEffect, PreparedStateSnapshotEffect, PreparedTxAbortEffect,
-    PreparedTxCommitEffect,
-};
 
 /// RAII witness for lane access through a leased rendezvous entry.
 ///
@@ -307,7 +253,7 @@ pub(crate) use prepared_effects::{
 /// # Visibility
 ///
 /// This type is internal implementation, hidden from public docs but
-/// accessible to integration tests. Public API users obtain endpoints via the
+/// accessible to repository tests. Public API users obtain endpoints via the
 /// `SessionKit::rendezvous(...).session(...).role(...).enter(...)` witness chain.
 ///
 /// # Cluster Ownership Model
@@ -329,25 +275,14 @@ pub(crate) use prepared_effects::{
 /// - LANE_ACQUIRE tap event on lease creation (via `SessionKit::lease_port`)
 /// - LANE_RELEASE tap event on Drop
 /// - Streaming checker verifies acquire/release pairs match (similar to cancel begin/ack)
-pub(crate) struct LaneLease<'lease, 'cfg, T, U, C, const MAX_RV: usize>
+pub(crate) struct LaneLease<'lease, 'cfg, T, C, const MAX_RV: usize>
 where
     T: Transport,
-    U: LabelUniverse + 'cfg,
     C: Clock + 'cfg,
     'cfg: 'lease,
 {
     /// Borrow-bound lease over the parent rendezvous.
-    lease: Option<
-        crate::control::lease::core::RendezvousLease<
-            'lease,
-            'cfg,
-            T,
-            U,
-            C,
-            crate::control::cap::mint::EpochTbl,
-            crate::control::lease::core::FullSpec,
-        >,
-    >,
+    lease: Option<crate::session::lease::core::RendezvousLease<'lease, 'cfg, T, C>>,
     /// Session identifier.
     sid: SessionId,
     /// Lane identifier.
@@ -359,34 +294,25 @@ where
     /// Active lease counter borrowed from the parent cluster.
     active_leases: Option<&'lease core::cell::Cell<u32>>,
     /// Rendezvous brand for typed owner construction.
-    brand: crate::control::brand::Guard<'cfg>,
+    brand: crate::session::brand::Guard<'cfg>,
 }
 
-impl<'lease, 'cfg, T, U, C, const MAX_RV: usize> LaneLease<'lease, 'cfg, T, U, C, MAX_RV>
+impl<'lease, 'cfg, T, C, const MAX_RV: usize> LaneLease<'lease, 'cfg, T, C, MAX_RV>
 where
     T: Transport,
-    U: LabelUniverse,
     C: Clock,
     'cfg: 'lease,
 {
     /// Internal constructor for a rendezvous entry that has already been marked
     /// active by the lease table.
     pub(crate) fn new(
-        lease: crate::control::lease::core::RendezvousLease<
-            'lease,
-            'cfg,
-            T,
-            U,
-            C,
-            crate::control::cap::mint::EpochTbl,
-            crate::control::lease::core::FullSpec,
-        >,
+        lease: crate::session::lease::core::RendezvousLease<'lease, 'cfg, T, C>,
         sid: SessionId,
         lane: Lane,
         role: u8,
         role_count: u8,
         active_leases: &'lease core::cell::Cell<u32>,
-        brand: crate::control::brand::Guard<'cfg>,
+        brand: crate::session::brand::Guard<'cfg>,
     ) -> Self {
         Self {
             lease: Some(lease),
@@ -401,16 +327,16 @@ where
 
     pub(crate) fn into_port_guard(
         mut self,
-    ) -> Result<BrandedEpochPortGuard<'lease, 'cfg, T, U, C>, RendezvousError> {
+    ) -> Result<LanePortAccess<'lease, 'cfg, T, C>, RendezvousError> {
         let (port, guard) = {
             let lease = self.lease.as_mut().expect("invariant");
             // SAFETY: `RendezvousLease<'lease, 'cfg, ...>` holds the unique mutable
             // entry borrow for `'lease`, so reborrowing the rendezvous as shared for
             // the same `'lease` lifetime is sound as long as we do not use the lease
             // mutably while the shared reference is live.
-            let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
+            let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T, C> =
                 lease.with_rendezvous(core::ptr::from_mut);
-            let rv: &'lease Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl> =
+            let rv: &'lease Rendezvous<'cfg, 'cfg, T, C> =
                 /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*rv_ptr };
             let active_leases = *self.active_leases.as_ref().expect("invariant");
             rv.open_port_guard(
@@ -421,25 +347,28 @@ where
                 active_leases,
             )?
         };
-        drop(self.lease.take());
+        self.lease = None;
         self.active_leases = None;
-        Ok((port, guard, self.brand))
+        Ok(LanePortAccess {
+            port,
+            lane_guard: guard,
+            brand: self.brand,
+        })
     }
 
     #[inline]
     pub(crate) fn with_rendezvous_mut<R>(
         &mut self,
-        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, U, C, crate::control::cap::mint::EpochTbl>) -> R,
+        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, C>) -> R,
     ) -> R {
         let lease = self.lease.as_mut().expect("invariant");
         lease.with_rendezvous(f)
     }
 }
 
-impl<'lease, 'cfg, T, U, C, const MAX_RV: usize> Drop for LaneLease<'lease, 'cfg, T, U, C, MAX_RV>
+impl<'lease, 'cfg, T, C, const MAX_RV: usize> Drop for LaneLease<'lease, 'cfg, T, C, MAX_RV>
 where
     T: Transport,
-    U: LabelUniverse,
     C: Clock,
     'cfg: 'lease,
 {
@@ -458,57 +387,3 @@ where
 }
 
 mod access_port;
-mod cap_ledger;
-mod topology_process;
-pub(crate) use topology_process::PreparedDestinationTopologyAck;
-
-#[inline]
-fn classify_topology_ack_mismatch(expected: TopologyAck, got: TopologyAck) -> TopologyError {
-    if got.sid != expected.sid {
-        TopologyError::UnknownSession {
-            sid: SessionId::new(got.sid),
-        }
-    } else if got.src_rv != expected.src_rv {
-        TopologyError::RendezvousIdMismatch {
-            expected: expected.src_rv,
-            got: got.src_rv,
-        }
-    } else if got.dst_rv != expected.dst_rv {
-        TopologyError::RendezvousIdMismatch {
-            expected: expected.dst_rv,
-            got: got.dst_rv,
-        }
-    } else if got.src_lane != expected.src_lane {
-        TopologyError::LaneMismatch {
-            expected: expected.src_lane,
-            provided: got.src_lane,
-        }
-    } else if got.new_lane != expected.new_lane {
-        TopologyError::LaneMismatch {
-            expected: expected.new_lane,
-            provided: got.new_lane,
-        }
-    } else if got.new_gen != expected.new_gen {
-        TopologyError::StaleGeneration {
-            lane: expected.new_lane,
-            last: expected.new_gen,
-            new: got.new_gen,
-        }
-    } else if got.seq_tx != expected.seq_tx || got.seq_rx != expected.seq_rx {
-        TopologyError::SeqnoMismatch {
-            seq_tx: got.seq_tx,
-            seq_rx: got.seq_rx,
-        }
-    } else {
-        TopologyError::NoPending {
-            lane: expected.src_lane,
-        }
-    }
-}
-
-mod local_topology;
-pub(crate) use local_topology::RevokedPublicEndpoint;
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "core/tests.rs"]
-mod epf_tests;

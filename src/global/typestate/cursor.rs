@@ -4,18 +4,16 @@ use core::slice;
 
 use super::facts::{
     ARM_SHARED, FirstRecvDispatchSpec, LocalAction, LocalDependency, LocalMeta, LocalNode,
-    MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildFact, PassiveArmNavigation,
-    RecvMeta, RouteScopeRows, SendMeta, StateIndex, as_state_index, state_index_to_usize,
+    MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildFact, RecvMeta, RouteScopeRows,
+    SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
-    control::cluster::core::DecisionSubject,
     eff::EffIndex,
     global::{
-        LoopControlMeaning,
-        compiled::images::{ControlSemanticKind, RoleDescriptorRef},
+        compiled::images::{EventSemanticKind, RoleDescriptorRef},
         const_dsl::{ResolverMode, ScopeId, ScopeKind},
-        event_program::LocalEventProgram,
+        event_program::{LocalEventProgram, LocalEventRowSet},
         role_program::{LaneSetView, LaneSteps, PackedLaneRange, lane_word_count},
     },
 };
@@ -24,26 +22,6 @@ mod first_recv_dispatch;
 mod lane_progress;
 mod navigation;
 mod scope_route;
-
-/// Role perspective for a loop decision.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LoopRole {
-    Controller,
-    Target,
-}
-
-/// Metadata associated with a loop decision site.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LoopMetadata {
-    pub scope: ScopeId,
-    pub controller: u8,
-    pub target: u8,
-    pub role: LoopRole,
-    pub eff_index: EffIndex,
-    pub decision_index: StateIndex,
-    pub continue_index: StateIndex,
-    pub break_index: StateIndex,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ResidentLaneStep {
@@ -55,7 +33,13 @@ struct ResidentLaneStep {
 pub(crate) struct RelocatableResidentLaneStep(ResidentLaneStep);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ResidentLaneStepError;
+pub(crate) struct CursorInvariantError {
+    _sealed: (),
+}
+
+impl CursorInvariantError {
+    pub(crate) const INVARIANT: Self = Self { _sealed: () };
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FlowPreviewError {
@@ -208,6 +192,11 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
+    fn checked_node(&self, idx: usize) -> Option<LocalNode> {
+        self.event_program().checked_node(idx)
+    }
+
+    #[inline(always)]
     fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
         self.event_program().state_for_step_index(step_idx)
     }
@@ -286,6 +275,16 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
+    fn loop_scope_row(&self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
+        self.event_program().loop_scope_row(scope_id)
+    }
+
+    #[inline(always)]
+    fn loop_scope_row_by_slot(&self, slot: usize) -> Option<(ScopeId, LocalEventRowSet)> {
+        self.event_program().loop_scope_row_by_slot(slot)
+    }
+
+    #[inline(always)]
     fn passive_arm_entry(&self, scope_id: ScopeId, arm: u8) -> Option<StateIndex> {
         let slot = self.route_scope_dense_ordinal(scope_id)?;
         let row = self
@@ -297,9 +296,8 @@ impl EventCursorMachine {
                 LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Local { .. } => {
                     return Some(StateIndex::from_usize(idx));
                 }
-                LocalAction::Terminate => {}
+                LocalAction::Terminate => idx += 1,
             }
-            idx += 1;
         }
         None
     }
@@ -376,9 +374,8 @@ impl EventCursorMachine {
                 LocalAction::Send { label, .. } | LocalAction::Local { label, .. } => {
                     return Some((StateIndex::from_usize(idx), label));
                 }
-                LocalAction::Recv { .. } | LocalAction::Terminate => {}
+                LocalAction::Recv { .. } | LocalAction::Terminate => idx += 1,
             }
-            idx += 1;
         }
         None
     }
@@ -389,10 +386,7 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn route_controller(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<(ResolverMode, EffIndex, u8, DecisionSubject)> {
+    fn route_controller(&self, scope_id: ScopeId) -> Option<(ResolverMode, EffIndex, u8)> {
         self.program_ref().route_controller(scope_id)
     }
 }
@@ -573,10 +567,23 @@ impl EventCursor {
         }
         let word_idx = step_idx / u32::BITS as usize;
         let bit = step_idx % u32::BITS as usize;
-        self.completed_event_words()
-            .get(word_idx)
-            .map(|word| (word & (1u32 << bit)) != 0)
-            .unwrap_or(false)
+        let Some(word) = self.completed_event_words().get(word_idx) else {
+            crate::invariant();
+        };
+        (word & (1u32 << bit)) != 0
+    }
+
+    #[inline(always)]
+    fn clear_local_event_done(&mut self, step_idx: usize) {
+        if step_idx >= self.local_steps_len() {
+            return;
+        }
+        let word_idx = step_idx / u32::BITS as usize;
+        let bit = step_idx % u32::BITS as usize;
+        let Some(word) = self.completed_event_words_mut().get_mut(word_idx) else {
+            crate::invariant();
+        };
+        *word &= !(1u32 << bit);
     }
 
     #[inline(always)]
@@ -586,9 +593,10 @@ impl EventCursor {
         }
         let word_idx = step_idx / u32::BITS as usize;
         let bit = step_idx % u32::BITS as usize;
-        if let Some(word) = self.completed_event_words_mut().get_mut(word_idx) {
-            *word |= 1u32 << bit;
-        }
+        let Some(word) = self.completed_event_words_mut().get_mut(word_idx) else {
+            crate::invariant();
+        };
+        *word |= 1u32 << bit;
     }
 
     #[inline(always)]

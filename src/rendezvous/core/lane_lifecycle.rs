@@ -1,14 +1,9 @@
 use super::{
-    AssocTable, CapTable, Cell, Clock, Config, ControlScopeKind, EndpointLeaseId,
-    FREE_REGION_CAPACITY, FreeRegion, GenTable, Generation, LabelUniverse, Lane, LaneRelease,
-    LoopTable, PhantomData, PolicyTable, Rendezvous, RendezvousId, RouteTable, SessionId,
-    StateSnapshotTable, TapRing, TopologyAck, TopologyError, TopologySessionState,
-    TopologyStateTable, Transport, Waker, emit,
+    AssocTable, Clock, Config, EndpointLeaseId, FREE_REGION_CAPACITY, FreeRegion, Lane,
+    PhantomData, Rendezvous, RendezvousId, RouteTable, SessionId, TapRing, Transport, Waker, emit,
+    events,
 };
-
-mod prepared_effects;
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
-    Rendezvous<'rv, 'cfg, T, U, C, E>
+impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
 where
     'cfg: 'rv,
 {
@@ -34,17 +29,16 @@ where
     /// The returned pointer is valid for as long as the borrowed slab storage lives.
     pub(crate) unsafe fn init_in_slab_auto(
         rv_id: RendezvousId,
-        config: Config<'cfg, U, C>,
+        config: Config<'cfg, C>,
         transport: T,
     ) -> Option<*mut Self> {
         let Config {
             tap_buf,
             slab,
             clock,
-            offer_progress_policy,
             ..
         } = config;
-        let lane_range = Config::<U, C>::initial_lane_range();
+        let lane_range = Config::<C>::initial_lane_range();
         let (dst, runtime_slab) = /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */ unsafe { Self::carve_resident_storage(slab) }?;
         let image_frontier = 0u32;
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -63,79 +57,19 @@ where
                 .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
             core::ptr::addr_of_mut!((*dst).lane_range)
                 .write((lane_range.start as u32)..(lane_range.end as u32));
-            core::ptr::addr_of_mut!((*dst).universe_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).transport).write(transport);
-            GenTable::init_empty(core::ptr::addr_of_mut!((*dst).r#gen));
             AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
-            StateSnapshotTable::init_empty(core::ptr::addr_of_mut!((*dst).state_snapshots));
-            TopologyStateTable::init_empty(core::ptr::addr_of_mut!((*dst).topology));
-            core::ptr::addr_of_mut!((*dst).cap_nonce).write(Cell::new(0));
-            core::ptr::addr_of_mut!((*dst).cap_revision).write(Cell::new(0));
-            CapTable::init_empty(core::ptr::addr_of_mut!((*dst).caps));
-            LoopTable::init_empty(core::ptr::addr_of_mut!((*dst).loops));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
-            PolicyTable::init_empty(core::ptr::addr_of_mut!((*dst).policies));
             core::ptr::addr_of_mut!((*dst).clock).write(clock);
-            core::ptr::addr_of_mut!((*dst).offer_progress_policy).write(offer_progress_policy);
-            core::ptr::addr_of_mut!((*dst)._epoch_marker).write(PhantomData);
         }
         Some(dst)
     }
 }
 
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
-    Rendezvous<'rv, 'cfg, T, U, C, E>
+impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
 where
     'cfg: 'rv,
 {
-    pub(crate) fn initialise_control_scope(&self, lane: Lane, scope_kind: ControlScopeKind) {
-        match scope_kind {
-            ControlScopeKind::Loop => {
-                self.loops.reset_lane(lane);
-            }
-            ControlScopeKind::State => {
-                self.state_snapshots.reset_lane(lane);
-            }
-            ControlScopeKind::Topology => {
-                self.topology.reset_lane(lane);
-            }
-            ControlScopeKind::Policy | ControlScopeKind::Route | ControlScopeKind::None => {}
-        }
-    }
-
-    #[inline]
-    pub(crate) fn ensure_associated_session_lane(
-        &self,
-        sid: SessionId,
-        lane: Lane,
-    ) -> Result<(), TopologyError> {
-        if self.assoc.get_sid(lane) == Some(sid) {
-            Ok(())
-        } else {
-            Err(TopologyError::UnknownSession { sid })
-        }
-    }
-
-    pub(crate) fn lane_generation(&self, lane: Lane) -> Generation {
-        self.r#gen.last(lane).unwrap_or(Generation::ZERO)
-    }
-
-    pub(crate) fn snapshot_generation(&self, lane: Lane) -> Option<Generation> {
-        self.state_snapshots.last_snapshot(lane)
-    }
-
-    pub(crate) fn expected_topology_ack(
-        &self,
-        sid: SessionId,
-    ) -> Result<TopologyAck, TopologyError> {
-        self.topology.expected_ack_for_session(sid)
-    }
-
-    pub(crate) fn topology_session_state(&self, sid: SessionId) -> Option<TopologySessionState> {
-        self.topology.session_state(sid)
-    }
-
-    #[inline]
     pub(crate) fn session_fault(
         &self,
         sid: SessionId,
@@ -178,32 +112,18 @@ where
     }
 
     fn reset_lane_state(&self, lane: Lane) {
-        self.r#gen.reset_lane(lane);
-        self.state_snapshots.reset_lane(lane);
         self.reset_lane_recycled_state(lane);
     }
 
-    pub(crate) fn restore_lane_runtime_state(&self, lane: Lane, snapshot_cap_revision: u64) {
-        self.topology.reset_lane(lane);
-        self.caps
-            .restore_lane_to_revision(lane, snapshot_cap_revision);
-        self.loops.reset_lane(lane);
-        self.routes.reset_lane(lane);
-    }
-
     pub(crate) fn reset_lane_recycled_state(&self, lane: Lane) {
-        self.topology.reset_lane(lane);
-        self.caps.purge_lane(lane);
-        self.loops.reset_lane(lane);
         self.routes.reset_lane(lane);
-        self.policies.reset_lane(lane);
     }
 
     #[inline]
     pub(crate) fn emit_lane_release(&self, sid: SessionId, lane: Lane) {
         emit(
             self.tap(),
-            LaneRelease::new(
+            events::lane_release(
                 self.now32(),
                 self.id.raw() as u32,
                 sid.raw(),

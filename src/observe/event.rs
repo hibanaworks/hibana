@@ -5,20 +5,16 @@ use crate::{
     transport::wire::{CodecError, Payload, WireEncode, WirePayload, require_exact_len},
 };
 
-/// 20-byte tap record with causal key tracking for roll-π reversibility.
+/// 20-byte tap record with a compact causal key for evidence correlation.
 ///
 /// Layout: `ts32, id16, causal_key16, arg0_32, arg1_32, arg2_32`
 /// - `ts`: Timestamp (monotonic counter or wall-clock tick)
 /// - `id`: Event identifier (from `crate::observe::ids::*`)
-/// - `causal_key`: Causal key for reversible rollback tracking (roll-π)
+/// - `causal_key`: Causal key for reversible evidence correlation
 ///   - High 8 bits: role/lane index
-///   - Low 8 bits: sequence number within epoch
+///   - Low 8 bits: sequence number within the route-table generation
 /// - `arg0`, `arg1`: Context-dependent arguments (sid, gen, label, etc.)
 /// - `arg2`: Extended context (e.g., ScopeId range/nest ordinals)
-///
-/// **Future extension**: For roll-π memory tracking, `causal_key` encodes
-/// the (role, seq) pair that establishes causal dependencies. Rollback
-/// operations can reconstruct causal history by following these keys.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct TapEvent {

@@ -1,6 +1,6 @@
 use super::super::{
-    ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, PassiveArmNavigation,
-    RouteScopeRows, ScopeId, StateIndex, state_index_to_usize,
+    ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, RouteScopeRows, ScopeId, StateIndex,
+    state_index_to_usize,
 };
 use crate::global::typestate::LocalConflict;
 
@@ -13,6 +13,11 @@ impl EventCursor {
     #[inline(always)]
     pub(crate) fn route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
         self.route_scope_rows(self.node_scope_id_at(idx))
+    }
+
+    #[inline(always)]
+    pub(crate) fn checked_route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
+        self.route_scope_rows(self.checked_node_scope_id_at(idx)?)
     }
 
     #[inline(always)]
@@ -55,9 +60,7 @@ impl EventCursor {
         scope_id: ScopeId,
         arm: u8,
     ) -> Option<StateIndex> {
-        match self.follow_passive_observer_arm_for_scope(scope_id, arm)? {
-            PassiveArmNavigation::WithinArm { entry } => Some(entry),
-        }
+        self.follow_passive_observer_arm_for_scope(scope_id, arm)
     }
 
     #[inline]
@@ -94,8 +97,8 @@ impl EventCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        if let Some((policy, _, _, _)) = self.route_scope_controller_policy(scope_id)
-            && policy.is_dynamic()
+        if let Some((resolver, _, _)) = self.route_scope_controller_resolver(scope_id)
+            && resolver.is_dynamic()
         {
             return None;
         }
@@ -125,14 +128,10 @@ impl EventCursor {
         scope_id: ScopeId,
         lane: u8,
         frame_label: u8,
-        loop_label_scope: bool,
-        semantic: crate::global::compiled::images::ControlSemanticKind,
         arm: u8,
     ) -> bool {
         self.first_recv_target_for_lane_frame_label(scope_id, lane, frame_label)
-            .map(|(target_arm, _)| target_arm == arm)
-            .unwrap_or(false)
-            || (loop_label_scope && semantic.is_loop())
+            .is_some_and(|(target_arm, _)| target_arm == arm)
     }
 
     #[inline]
@@ -142,9 +141,8 @@ impl EventCursor {
     ) -> bool {
         !self.is_route_controller(scope_id)
             && !self
-                .route_scope_controller_policy(scope_id)
-                .map(|(policy, _, _, _)| policy.is_dynamic())
-                .unwrap_or(false)
+                .route_scope_controller_resolver(scope_id)
+                .is_some_and(|(resolver, _, _)| resolver.is_dynamic())
     }
 
     pub(crate) fn passive_descendant_dispatch_arm_from_exact_frame_label(
@@ -195,7 +193,7 @@ impl EventCursor {
     pub(crate) fn is_route_controller(&self, scope_id: ScopeId) -> bool {
         self.machine()
             .route_controller_role(scope_id)
-            .map_or(false, |ctrl| ctrl == self.machine().role())
+            .is_some_and(|ctrl| ctrl == self.machine().role())
     }
 
     /// Scope ID stored on the current node (no parent traversal).
@@ -392,12 +390,12 @@ impl EventCursor {
                     continue;
                 }
             };
-            if label == target_label {
-                if self.node_in_selected_route_arm(idx, scope_id, selected_arm, |candidate| {
+            if label == target_label
+                && self.node_in_selected_route_arm(idx, scope_id, selected_arm, |candidate| {
                     selected_arm_for_scope(candidate)
-                }) {
-                    return Some(idx);
-                }
+                })
+            {
+                return Some(idx);
             }
             lane_idx += 1;
         }

@@ -1,7 +1,6 @@
 //! Internal endpoint kernel split by layer.
 
 mod authority;
-mod control;
 mod core;
 mod decode;
 pub(crate) mod endpoint_init;
@@ -10,6 +9,7 @@ mod evidence_store;
 mod frontier;
 mod frontier_state;
 mod lane_port;
+mod session;
 mod lane_slots {
     pub(super) struct LaneSlotArray<T> {
         ptr: *mut Option<T>,
@@ -63,18 +63,6 @@ mod lane_slots {
         }
 
         #[inline]
-        pub(super) fn iter(&self) -> core::slice::Iter<'_, Option<T>> {
-            let len = self.len();
-            let ptr = if len == 0 {
-                core::ptr::NonNull::<Option<T>>::dangling().as_ptr()
-            } else {
-                self.ptr.cast_const()
-            };
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
-            unsafe { core::slice::from_raw_parts(ptr, len).iter() }
-        }
-
-        #[inline]
         pub(super) fn iter_mut(&mut self) -> core::slice::IterMut<'_, Option<T>> {
             let len = self.len();
             let ptr = if len == 0 {
@@ -92,16 +80,14 @@ mod lane_slots {
 
         #[inline]
         fn index(&self, index: usize) -> &Self::Output {
-            self.get(index)
-                .unwrap_or_else(|| panic!("lane slot index {index} out of range"))
+            self.get(index).expect("lane slot index out of range")
         }
     }
 
     impl<T> core::ops::IndexMut<usize> for LaneSlotArray<T> {
         #[inline]
         fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-            self.get_mut(index)
-                .unwrap_or_else(|| panic!("lane slot index {index} out of range"))
+            self.get_mut(index).expect("lane slot index out of range")
         }
     }
 
@@ -151,14 +137,10 @@ mod offer;
 mod public_ops;
 mod public_poll;
 mod recv;
-mod recv_control;
 
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
-pub(crate) use self::core::{
-    CursorEndpoint, EndpointRevocationDescriptorRollback, EndpointRevocationTerminal,
-    PostKernelDescriptorPermit, SendInit, SendPreview, SendRuntimeDesc,
-};
+pub(crate) use self::core::{CursorEndpoint, SendInit, SendPreview, SendRuntimeDesc};
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;
 pub(crate) use self::layout::EndpointArenaLayout;

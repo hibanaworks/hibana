@@ -1,18 +1,13 @@
 use super::{
-    ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, EpochTable,
-    FrontierCandidate, FrontierKind, LabelUniverse, LaneOfferState, MintConfigMarker,
-    ObservedEntrySet, OfferEntryObservedState, OfferEntryState, ScopeArmMaterializationMeta,
-    ScopeId, ScopeLoopMeta, Transport, checked_state_index, offer_entry_frontier_candidate,
-    offer_entry_observed_state, state_index_to_usize,
+    ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, FrontierCandidate,
+    FrontierKind, LaneOfferState, ObservedEntrySet, OfferEntryObservedState, OfferEntryState,
+    ScopeArmMaterializationMeta, ScopeId, Transport, checked_state_index,
+    offer_entry_frontier_candidate, offer_entry_observed_state, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_has_active_lanes(
@@ -33,8 +28,7 @@ where
             .offer_entry_state
             .get(entry_idx)
             .copied()
-            .map(|state| state.active)
-            .unwrap_or(false)
+            .is_some_and(|state| state.active)
     }
 
     #[inline]
@@ -101,18 +95,18 @@ where
                 .get(entry_idx)
                 .copied()
                 .filter(|state| state.scope_id == info.scope);
-            let selection_meta = cached_state
-                .map(|state| state.selection_meta)
-                .unwrap_or_else(|| {
-                    self.compute_offer_entry_selection_meta(
-                        info.scope,
-                        info,
-                        !self.offer_lane_set_for_scope(info.scope).is_empty(),
-                    )
-                });
-            let summary = cached_state.map(|state| state.summary).unwrap_or_else(|| {
-                self.compute_offer_entry_static_summary_from_route_state(entry_idx)
-            });
+            let selection_meta = match cached_state {
+                Some(state) => state.selection_meta,
+                None => self.compute_offer_entry_selection_meta(
+                    info.scope,
+                    info,
+                    !self.offer_lane_set_for_scope(info.scope).is_empty(),
+                ),
+            };
+            let summary = match cached_state {
+                Some(state) => state.summary,
+                None => self.compute_offer_entry_static_summary_from_route_state(entry_idx),
+            };
             return Some(OfferEntryState {
                 active: true,
                 lane_idx: lane_idx as u8,
@@ -294,10 +288,10 @@ where
             {
                 meta.controller_arm_entry[arm_idx] = entry;
                 meta.controller_arm_label[arm_idx] = label;
-                if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry)) {
-                    if recv_meta.peer != ROLE {
-                        meta.controller_cross_role_recv_mask |= 1u8 << arm_idx;
-                    }
+                if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry))
+                    && recv_meta.peer != ROLE
+                {
+                    meta.controller_cross_role_recv_mask |= 1u8 << arm_idx;
                 }
             }
             if let Some(entry) = self.cursor.route_scope_arm_recv_index(scope_id, arm)
@@ -406,16 +400,7 @@ where
     ) -> (OfferEntryObservedState, FrontierCandidate) {
         let scope_id = self.offer_entry_scope_id(entry_idx);
         let summary = self.compute_offer_entry_static_summary(entry_idx);
-        let loop_meta = if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
-            Self::scope_loop_meta_at(&self.cursor, scope_id, state_index_to_usize(info.entry))
-        } else {
-            if scope_id.is_none() {
-                ScopeLoopMeta::EMPTY
-            } else {
-                Self::scope_loop_meta_at(&self.cursor, scope_id, entry_idx)
-            }
-        };
-        let ack_is_progress = Self::ack_is_progress_evidence(loop_meta, has_ack);
+        let ack_is_progress = Self::ack_is_progress_evidence(has_ack);
         let observed = offer_entry_observed_state(
             scope_id,
             summary,
@@ -426,8 +411,10 @@ where
         let candidate = offer_entry_frontier_candidate(
             scope_id,
             entry_idx,
-            self.offer_entry_parallel_root(entry_idx)
-                .unwrap_or(ScopeId::none()),
+            match self.offer_entry_parallel_root(entry_idx) {
+                Some(root) => root,
+                None => ScopeId::none(),
+            },
             self.offer_entry_frontier(entry_idx),
             observed,
         );

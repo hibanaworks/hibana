@@ -2,8 +2,8 @@ use super::common::*;
 
 #[test]
 fn array_map_unsafe_boundaries_are_explicit_and_panic_safe() {
-    let map = read("src/control/lease/map.rs");
-    let lease_core = read("src/control/lease/core.rs");
+    let map = read("src/session/lease/map.rs");
+    let lease_core = read("src/session/lease/core.rs");
 
     assert!(
         map.contains("pub(crate) unsafe fn try_push_with")
@@ -25,12 +25,11 @@ fn array_map_unsafe_boundaries_are_explicit_and_panic_safe() {
         "ArrayMap::insert must not drop a live slot before replacement is committed"
     );
     assert!(
-        map.contains("pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool)")
-            && map.contains("V: Copy"),
-        "ArrayMap::retain must stay constrained to Copy values instead of exposing a generic panic-unsafe compactor"
+        !map.contains("pub(crate) fn retain(") && !map.contains("fn retain("),
+        "ArrayMap must not retain a generic panic-unsafe compactor"
     );
     assert!(
-        !map.contains("let old_len = self.len;\n        // compact retained entries later"),
-        "ArrayMap::retain must not reintroduce a deferred-compaction shape that leaves len stale during unwinding"
+        !map.contains("let forbidden_len = self.len;\n        // compact retained entries later"),
+        "ArrayMap::retain must not contain a deferred-compaction shape that leaves len inconsistent during unwinding"
     );
 }

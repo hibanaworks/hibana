@@ -2,7 +2,7 @@
 ///
 /// The endpoint is intentionally local-only and moves forward one descriptor
 /// step at a time. Successful sends, receives, and route decodes consume
-/// progress. Dropped send/route previews restore the endpoint to its previous
+/// progress. Dropped send/route previews restore the endpoint to its detached
 /// step. Once a committed fault is observed, the same session generation cannot
 /// produce a new continuation.
 pub struct Endpoint<'r, const ROLE: u8> {

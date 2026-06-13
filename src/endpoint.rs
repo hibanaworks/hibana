@@ -1,7 +1,7 @@
 //! Localside endpoint facade.
 //!
 //! An [`Endpoint`] is the app-facing affine executor for one projected role. It
-//! is created by [`crate::integration::SessionKit`] and then advanced with the
+//! is created by [`crate::runtime::SessionKit`] and then advanced with the
 //! four localside operations: [`Endpoint::flow`], [`Endpoint::recv`],
 //! [`Endpoint::offer`], and [`RouteBranch::decode`].
 //!
@@ -23,8 +23,6 @@ pub(crate) mod affine;
 mod branch;
 /// Crate-private carrier owners for internal endpoint type packs.
 pub(crate) mod carrier;
-/// Control-plane helpers for endpoints.
-pub(crate) mod control;
 mod error;
 /// Flow-based send API.
 pub(crate) mod flow;
@@ -33,6 +31,8 @@ mod futures;
 pub(crate) mod kernel;
 mod ops;
 mod public_types;
+/// Endpoint session binding helpers.
+pub(crate) mod session;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 

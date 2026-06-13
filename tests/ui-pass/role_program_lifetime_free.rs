@@ -1,6 +1,6 @@
 use hibana::{
     g::{self, Msg},
-    integration::program::{RoleProgram, project},
+    runtime::program::{RoleProgram, project},
 };
 
 fn main() {

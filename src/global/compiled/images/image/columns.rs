@@ -1,14 +1,9 @@
 use crate::global::compiled::lowering::CompiledProgramImage;
 
 pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 8;
-pub(crate) const PROGRAM_IMAGE_POLICY_STRIDE: usize = 8;
-pub(crate) const PROGRAM_IMAGE_CONTROL_DESC_STRIDE: usize = 12;
-pub(crate) const PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE: usize = 12;
+pub(crate) const PROGRAM_IMAGE_RESOLVER_STRIDE: usize = 8;
+pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 10;
 pub(crate) const PROGRAM_IMAGE_NO_ROUTE_CONTROLLER: u8 = u8::MAX;
-pub(crate) const PROGRAM_IMAGE_SUBJECT_NONE: u8 = u8::MAX;
-pub(crate) const PROGRAM_IMAGE_SUBJECT_ROUTE_ARM: u8 = 0;
-pub(crate) const PROGRAM_IMAGE_SUBJECT_LOOP_CONTINUE: u8 = 1;
-pub(crate) const PROGRAM_IMAGE_SUBJECT_LOOP_BREAK: u8 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -50,35 +45,25 @@ impl ProgramColumnRange {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ProgramImageColumns {
     pub(crate) atoms: ProgramColumnRange,
-    pub(crate) policies: ProgramColumnRange,
-    pub(crate) control_descs: ProgramColumnRange,
-    pub(crate) route_controls: ProgramColumnRange,
+    pub(crate) resolvers: ProgramColumnRange,
+    pub(crate) route_resolvers: ProgramColumnRange,
 }
 
 impl ProgramImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(self) -> usize {
         let mut len = self.atoms.end_offset(PROGRAM_IMAGE_ATOM_STRIDE);
-        if self.policies.end_offset(PROGRAM_IMAGE_POLICY_STRIDE) > len {
-            len = self.policies.end_offset(PROGRAM_IMAGE_POLICY_STRIDE);
+        if self.resolvers.end_offset(PROGRAM_IMAGE_RESOLVER_STRIDE) > len {
+            len = self.resolvers.end_offset(PROGRAM_IMAGE_RESOLVER_STRIDE);
         }
         if self
-            .control_descs
-            .end_offset(PROGRAM_IMAGE_CONTROL_DESC_STRIDE)
+            .route_resolvers
+            .end_offset(PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE)
             > len
         {
             len = self
-                .control_descs
-                .end_offset(PROGRAM_IMAGE_CONTROL_DESC_STRIDE);
-        }
-        if self
-            .route_controls
-            .end_offset(PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE)
-            > len
-        {
-            len = self
-                .route_controls
-                .end_offset(PROGRAM_IMAGE_ROUTE_CONTROL_STRIDE);
+                .route_resolvers
+                .end_offset(PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
         }
         len
     }
@@ -87,7 +72,6 @@ impl ProgramImageColumns {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProgramImageFacts {
     pub(crate) role_count: u8,
-    pub(crate) control_scope_mask: u8,
 }
 
 impl ProgramImageFacts {
@@ -95,7 +79,6 @@ impl ProgramImageFacts {
     pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {
         Self {
             role_count: image.compiled_program_role_count() as u8,
-            control_scope_mask: image.compiled_program_control_scope_mask(),
         }
     }
 }

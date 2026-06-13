@@ -1,17 +1,11 @@
 use super::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_CONTROL_DESC_STRIDE, PROGRAM_IMAGE_POLICY_STRIDE,
-    PROGRAM_IMAGE_SUBJECT_LOOP_BREAK, PROGRAM_IMAGE_SUBJECT_LOOP_CONTINUE,
-    PROGRAM_IMAGE_SUBJECT_NONE, PROGRAM_IMAGE_SUBJECT_ROUTE_ARM, ProgramColumnRange,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_RESOLVER_STRIDE, ProgramColumnRange,
     ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
-    control::cap::mint::{CapShot, ControlOp, ControlPath},
-    control::cluster::core::DecisionSubject,
-    control::cluster::effects::EffectEnvelopeRef,
-    eff::{EffAtom, EffIndex, EffStruct},
-    global::ControlDesc,
-    global::compiled::images::program::DynamicPolicySite,
-    global::const_dsl::{CompactScopeId, ControlScopeKind, ResolverMode},
+    eff::{EffAtom, EffStruct},
+    global::compiled::images::program::DynamicResolverSite,
+    global::const_dsl::{CompactScopeId, ResolverMode},
     global::role_program::BlobPtr,
 };
 
@@ -87,49 +81,6 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(super) const fn decode_subject(raw: u8) -> Option<DecisionSubject> {
-        match raw {
-            PROGRAM_IMAGE_SUBJECT_ROUTE_ARM => Some(DecisionSubject::RouteArm),
-            PROGRAM_IMAGE_SUBJECT_LOOP_CONTINUE => Some(DecisionSubject::LoopContinue),
-            PROGRAM_IMAGE_SUBJECT_LOOP_BREAK => Some(DecisionSubject::LoopBreak),
-            PROGRAM_IMAGE_SUBJECT_NONE => None,
-            _ => panic!("program image"),
-        }
-    }
-
-    #[inline(always)]
-    const fn control_op_from_u8(raw: u8) -> ControlOp {
-        match ControlOp::from_u8(raw) {
-            Some(op) => op,
-            None => panic!("program image"),
-        }
-    }
-
-    #[inline(always)]
-    const fn control_scope_kind_from_u8(raw: u8) -> ControlScopeKind {
-        match ControlScopeKind::from_u8(raw) {
-            Some(kind) => kind,
-            None => panic!("program image"),
-        }
-    }
-
-    #[inline(always)]
-    const fn control_path_from_u8(raw: u8) -> ControlPath {
-        match ControlPath::from_u8(raw) {
-            Some(path) => path,
-            None => panic!("program image"),
-        }
-    }
-
-    #[inline(always)]
-    const fn cap_shot_from_u8(raw: u8) -> CapShot {
-        match CapShot::from_u8(raw) {
-            Some(shot) => shot,
-            None => panic!("program image"),
-        }
-    }
-
-    #[inline(always)]
     pub(super) const fn compact_scope_from_bits(raw: u32) -> CompactScopeId {
         match CompactScopeId::decode_raw(raw) {
             Some(scope) => scope,
@@ -151,7 +102,7 @@ impl CompiledProgramRef {
                     from: self.byte_at(offset + 2),
                     to: self.byte_at(offset + 3),
                     label: self.byte_at(offset + 4),
-                    is_control: self.byte_at(offset + 5) != 0,
+                    is_internal: self.byte_at(offset + 5) != 0,
                     resource: Self::decode_resource(self.byte_at(offset + 6)),
                     lane: self.byte_at(offset + 7),
                 });
@@ -184,21 +135,24 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_policy_at(&self, eff_idx: usize) -> Option<ResolverMode> {
+    pub(crate) const fn resident_resolver_at(&self, eff_idx: usize) -> Option<ResolverMode> {
         let mut row = 0usize;
-        while row < self.columns.policies.len as usize {
-            let offset =
-                match self.column_offset(self.columns.policies, row, PROGRAM_IMAGE_POLICY_STRIDE) {
-                    Some(offset) => offset,
-                    None => return None,
-                };
+        while row < self.columns.resolvers.len as usize {
+            let offset = match self.column_offset(
+                self.columns.resolvers,
+                row,
+                PROGRAM_IMAGE_RESOLVER_STRIDE,
+            ) {
+                Some(offset) => offset,
+                None => return None,
+            };
             if self.read_u16_at(offset) as usize == eff_idx {
-                let policy_id = self.read_u16_at(offset + 2);
-                if policy_id == ControlDesc::STATIC_POLICY_SITE {
+                let resolver_id = self.read_u16_at(offset + 2);
+                if resolver_id == u16::MAX {
                     return Some(ResolverMode::Static);
                 }
                 return Some(ResolverMode::Dynamic {
-                    policy_id,
+                    resolver_id,
                     scope: Self::compact_scope_from_bits(self.read_u32_at(offset + 4)),
                 });
             }
@@ -208,76 +162,16 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_control_desc_at(&self, eff_idx: usize) -> Option<ControlDesc> {
-        let mut row = 0usize;
-        while row < self.columns.control_descs.len as usize {
-            let offset = match self.column_offset(
-                self.columns.control_descs,
-                row,
-                PROGRAM_IMAGE_CONTROL_DESC_STRIDE,
-            ) {
-                Some(offset) => offset,
-                None => return None,
-            };
-            if self.read_u16_at(offset) as usize == eff_idx {
-                return Some(ControlDesc::new(
-                    EffIndex::from_dense_ordinal(eff_idx),
-                    self.read_u16_at(offset + 2),
-                    self.read_u16_at(offset + 4),
-                    self.byte_at(offset + 6),
-                    Self::control_op_from_u8(self.byte_at(offset + 7)),
-                    Self::control_scope_kind_from_u8(self.byte_at(offset + 8)),
-                    Self::control_path_from_u8(self.byte_at(offset + 9)),
-                    Self::cap_shot_from_u8(self.byte_at(offset + 10)),
-                ));
-            }
-            row += 1;
-        }
-        None
-    }
-
-    #[inline(always)]
-    pub(crate) fn effect_envelope(&self) -> EffectEnvelopeRef<'_> {
-        EffectEnvelopeRef::from_program_ref(self)
-    }
-
-    #[inline(always)]
     pub(crate) const fn role_count(&self) -> usize {
         self.facts.role_count as usize
     }
 
     #[inline(always)]
-    pub(crate) const fn control_scope_mask(&self) -> u8 {
-        self.facts.control_scope_mask
-    }
-
-    #[inline(always)]
-    pub(crate) fn dynamic_policy_sites_for(
+    pub(crate) fn dynamic_resolver_sites_for(
         &self,
-        policy_id: u16,
-    ) -> impl Iterator<Item = DynamicPolicySite> + '_ {
-        crate::control::cluster::effects::ProgramImageDynamicPolicySiteIter::new(self)
-            .filter(move |site| site.policy_id() == policy_id)
-    }
-
-    pub(crate) fn validate_label_universe(
-        &self,
-        max: u8,
-    ) -> Result<(), crate::global::role_program::LabelUniverseViolation> {
-        if max == u8::MAX {
-            return Ok(());
-        }
-        let mut row = 0usize;
-        while row < self.columns.atoms.len as usize {
-            let offset = self
-                .column_offset(self.columns.atoms, row, PROGRAM_IMAGE_ATOM_STRIDE)
-                .expect("program image");
-            let actual = self.byte_at(offset + 4);
-            if actual > max {
-                return Err(crate::global::role_program::LabelUniverseViolation { max, actual });
-            }
-            row += 1;
-        }
-        Ok(())
+        resolver_id: u16,
+    ) -> impl Iterator<Item = DynamicResolverSite> + '_ {
+        crate::session::cluster::effects::ProgramImageDynamicResolverSiteIter::new(self)
+            .filter(move |site| site.resolver_id() == resolver_id)
     }
 }

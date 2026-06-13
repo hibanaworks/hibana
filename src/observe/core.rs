@@ -14,21 +14,14 @@
 //! This separation prevents Observer Effect feedback loops where streaming
 //! infrastructure events would otherwise flood the ring.
 //!
-use core::{
-    cell::{Cell, UnsafeCell},
-    marker::PhantomData,
-    ptr,
-};
+use core::{cell::Cell, marker::PhantomData};
 
 use crate::{
     observe::ids,
-    runtime::consts::{RING_BUFFER_SIZE, RING_EVENTS},
+    runtime_core::consts::{RING_BUFFER_SIZE, RING_EVENTS},
 };
 
 pub use crate::observe::event::{Evidence, TapEvent};
-
-#[cfg(all(test, hibana_repo_tests))]
-mod tests;
 
 /// Single-producer event ring buffer storage suited for DMA/SHM environments.
 struct RingBuffer<'a> {
@@ -36,39 +29,6 @@ struct RingBuffer<'a> {
     storage: *mut TapEvent,
     _marker: PhantomData<&'a mut [TapEvent]>,
     _no_send_sync: PhantomData<*mut ()>,
-}
-
-struct GlobalTap {
-    ring: UnsafeCell<*mut TapRing<'static>>,
-}
-
-impl GlobalTap {
-    const fn new() -> Self {
-        Self {
-            ring: UnsafeCell::new(ptr::null_mut()),
-        }
-    }
-
-    fn with_ring<R>(&self, f: impl FnOnce(&TapRing<'static>) -> R) -> Option<R> {
-        let ptr = /* SAFETY: the tap ring owns the ring buffer pointer and serializes access through its UnsafeCell owner. */ unsafe { *self.ring.get() };
-        if ptr.is_null() {
-            None
-        } else {
-            Some(
-                /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
-                unsafe { f(&*ptr) },
-            )
-        }
-    }
-}
-
-static GLOBAL_TAP: GlobalTap = GlobalTap::new();
-unsafe impl Sync for GlobalTap {}
-
-pub(crate) fn push(event: TapEvent) {
-    if let Some(()) = GLOBAL_TAP.with_ring(|ring| {
-        ring.push(event);
-    }) {}
 }
 
 pub(crate) fn emit(ring: &TapRing<'_>, event: TapEvent) {
@@ -231,11 +191,10 @@ impl<'a> TapRing<'a> {
 // # Event ID Ranges (Dual-Ring Routing)
 //
 // - `0x0000..0x00FF`: **User Ring** — application/custom events
-// - `0x0100..0x013F`: State coordination
-// - `0x0200..0x020F`: Abort / Endpoint / Topology core events
+// - `0x0100..0x013F`: Coordination events
+// - `0x0200..0x020F`: Endpoint core events
 // - `0x0210..0x021F`: Lane lifecycle
-// - `0x0220..0x022F`: Loop / Route control (LOOP_DECISION, ROUTE_ARM_SELECTION)
-// - `0x0230..0x023F`: Decision-policy staging (DECISION_PICK)
-// - `0x0400..0x041F`: Policy VM events (ABORT, ANNOT, TRAP, EFFECT, COMMIT)
-// - `0x0500`: Effect initialization (EFFECT_INIT)
+// - `0x0220..0x022F`: Route decision (ROUTE_ARM_SELECTION)
+// - `0x0230..0x023F`: Decision-resolver staging (DECISION_PICK)
+// - `0x0400..0x041F`: Resolver VM events (ABORT, ANNOT, TRAP, EFFECT, COMMIT)
 // - `0x02FF`: Misuse detection (MISUSE_RECVGUARD_DROP)

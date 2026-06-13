@@ -79,8 +79,8 @@ with open(dst, "w", encoding="utf-8") as f:
     f.write(
         '#![recursion_limit = "1024"]\n'
         "use hibana::g;\n"
-        "use hibana::integration::program::{project, RoleProgram};\n\n"
-        "use hibana::integration::wire::{CodecError, Payload as WirePayloadView, WireEncode, WirePayload};\n\n"
+        "use hibana::runtime::program::{project, RoleProgram};\n\n"
+        "use hibana::runtime::wire::{CodecError, Payload as WirePayloadView, WireEncode, WirePayload};\n\n"
         "#[derive(Clone, Copy)]\n"
         "struct Payload<const ID: u16>;\n\n"
         "impl<const ID: u16> WireEncode for Payload<ID> {\n"
@@ -96,7 +96,7 @@ with open(dst, "w", encoding="utf-8") as f:
         "    fn decode_validated_payload<'a>(_input: WirePayloadView<'a>) -> Self::Decoded<'a> {\n"
         "        Self\n"
         "    }\n"
-        "    fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<WirePayloadView<'a>, CodecError> {\n"
+        "    fn zero_payload<'a>(_scratch: &'a mut [u8]) -> Result<WirePayloadView<'a>, CodecError> {\n"
         "        Ok(WirePayloadView::new(&[]))\n"
         "    }\n"
         "}\n\n"

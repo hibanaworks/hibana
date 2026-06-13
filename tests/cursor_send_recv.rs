@@ -17,11 +17,10 @@ use std::{
 use common::{TestTransport, TestTransportError, TestTx};
 use hibana::{
     g::{self, Msg},
-    integration::program::{RoleProgram, project},
-    integration::{
-        SessionKitStorage,
+    runtime::program::{RoleProgram, project},
+    runtime::{
+        Config, CounterClock, SessionKitStorage,
         ids::SessionId,
-        runtime::{Config, CounterClock, LabelUniverse},
         transport::{IngressEvidence, Outgoing, ReceivedFrame, Transport},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
@@ -58,13 +57,7 @@ impl WirePayload for FramePayload {
     }
 }
 
-type TestKitStorage = SessionKitStorage<
-    'static,
-    TestTransport,
-    hibana::integration::runtime::DefaultLabelUniverse,
-    CounterClock,
-    2,
->;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
 
 #[derive(Clone)]
 struct PendingCancelTransport {
@@ -104,7 +97,7 @@ impl Transport for PendingCancelTransport {
 
     fn open<'a>(
         &'a self,
-        port: hibana::integration::transport::PortOpen,
+        port: hibana::runtime::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         self.inner.open(port)
     }
@@ -146,29 +139,10 @@ impl Transport for PendingCancelTransport {
     }
 }
 
-type PendingCancelKitStorage = SessionKitStorage<
-    'static,
-    PendingCancelTransport,
-    hibana::integration::runtime::DefaultLabelUniverse,
-    CounterClock,
-    2,
->;
-
-#[derive(Clone, Copy, Debug, Default)]
-struct LowLabelUniverse;
-
-impl LabelUniverse for LowLabelUniverse {
-    const MAX_LABEL: u8 = 127;
-}
-
-type LowLabelKitStorage =
-    SessionKitStorage<'static, TestTransport, LowLabelUniverse, CounterClock, 2>;
+type PendingCancelKitStorage = SessionKitStorage<'static, PendingCancelTransport, CounterClock, 2>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static LOW_LABEL_SESSION_SLOT: UnsafeCell<LowLabelKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
     static PENDING_CANCEL_SESSION_SLOT: UnsafeCell<PendingCancelKitStorage> = const {
@@ -182,15 +156,9 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
 
 #[path = "cursor_send_recv/codec_demux.rs"]
 mod codec_demux;
-#[path = "cursor_send_recv/control_lifecycle.rs"]
-mod control_lifecycle;
 #[path = "cursor_send_recv/direct_recv.rs"]
 mod direct_recv;
 #[path = "cursor_send_recv/send_recv.rs"]
 mod send_recv;
 #[path = "cursor_send_recv/session_lifecycle.rs"]
 mod session_lifecycle;
-#[path = "cursor_send_recv/socket_control.rs"]
-mod socket_control;
-#[path = "cursor_send_recv/socket_control_binding.rs"]
-mod socket_control_binding;

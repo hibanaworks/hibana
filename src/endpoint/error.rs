@@ -114,8 +114,7 @@ pub(super) enum EndpointErrorKind {
     Transport(TransportError),
     PhaseInvariant,
     LabelMismatch { expected: u8, actual: u8 },
-    PeerMismatch { expected: u8, actual: u8 },
-    PolicyAbort { reason: u16 },
+    ResolverReject { resolver_id: u16 },
     SessionFault(crate::rendezvous::SessionFaultKind),
 }
 
@@ -130,14 +129,9 @@ impl fmt::Debug for EndpointErrorKind {
                 .field("expected", expected)
                 .field("actual", actual)
                 .finish(),
-            Self::PeerMismatch { expected, actual } => formatter
-                .debug_struct("PeerMismatch")
-                .field("expected", expected)
-                .field("actual", actual)
-                .finish(),
-            Self::PolicyAbort { reason } => formatter
-                .debug_struct("PolicyAbort")
-                .field("reason", reason)
+            Self::ResolverReject { resolver_id } => formatter
+                .debug_struct("ResolverReject")
+                .field("resolver_id", resolver_id)
                 .finish(),
             Self::SessionFault(kind) => formatter.debug_tuple("SessionFault").field(kind).finish(),
         }
@@ -154,7 +148,7 @@ impl From<SendError> for EndpointErrorKind {
             SendError::LabelMismatch { expected, actual } => {
                 Self::LabelMismatch { expected, actual }
             }
-            SendError::PolicyAbort { reason } => Self::PolicyAbort { reason },
+            SendError::ResolverReject { resolver_id } => Self::ResolverReject { resolver_id },
             SendError::SessionFault(kind) => Self::SessionFault(kind),
         }
     }
@@ -170,8 +164,7 @@ impl From<RecvError> for EndpointErrorKind {
             RecvError::LabelMismatch { expected, actual } => {
                 Self::LabelMismatch { expected, actual }
             }
-            RecvError::PeerMismatch { expected, actual } => Self::PeerMismatch { expected, actual },
-            RecvError::PolicyAbort { reason } => Self::PolicyAbort { reason },
+            RecvError::ResolverReject { resolver_id } => Self::ResolverReject { resolver_id },
             RecvError::SessionFault(kind) => Self::SessionFault(kind),
         }
     }
@@ -191,8 +184,8 @@ pub(crate) enum SendError {
     PhaseInvariant,
     /// Attempted to send a message whose label does not match the typestate step.
     LabelMismatch { expected: u8, actual: u8 },
-    /// Policy VM aborted the send operation.
-    PolicyAbort { reason: u16 },
+    /// Resolver VM rejected the send operation.
+    ResolverReject { resolver_id: u16 },
     /// Current session generation has terminal fault evidence.
     SessionFault(crate::rendezvous::SessionFaultKind),
 }
@@ -208,10 +201,8 @@ pub(crate) enum RecvError {
     PhaseInvariant,
     /// Choreography logical label did not match the projected typestate step.
     LabelMismatch { expected: u8, actual: u8 },
-    /// Received frame originated from an unexpected peer role.
-    PeerMismatch { expected: u8, actual: u8 },
-    /// Policy VM aborted the receive operation.
-    PolicyAbort { reason: u16 },
+    /// Resolver VM rejected the receive operation.
+    ResolverReject { resolver_id: u16 },
     /// Current session generation has terminal fault evidence.
     SessionFault(crate::rendezvous::SessionFaultKind),
 }

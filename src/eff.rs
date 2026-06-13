@@ -13,7 +13,7 @@ pub(crate) mod meta {
 ///
 /// The upper 16 bits identify the segment and the lower 16 bits identify the
 /// segment-local effect offset. Application code never constructs this value;
-/// integration crates may inspect it as a compact stable descriptor id.
+/// runtime crates may inspect it as a compact stable descriptor id.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EffIndex(u32);
@@ -83,7 +83,7 @@ pub struct EffAtom {
     pub from: u8,
     pub to: u8,
     pub label: u8,
-    pub is_control: bool,
+    pub is_internal: bool,
     pub resource: Option<u8>,
     /// Type-level lane for parallel composition (default 0).
     pub lane: u8,
@@ -94,7 +94,7 @@ impl EffAtom {
         from: 0,
         to: 0,
         label: 0,
-        is_control: false,
+        is_internal: false,
         resource: None,
         lane: 0,
     };

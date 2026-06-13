@@ -1,16 +1,15 @@
 //! Immutable typestate facts and metadata.
 
 use crate::{
-    control::cap::mint::CapShot,
     eff::{self, EffIndex},
     global::{
-        compiled::images::ControlSemanticKind,
+        compiled::images::EventSemanticKind,
         const_dsl::{CompactScopeId, ResolverMode, ScopeId, ScopeKind},
     },
 };
 
 mod meta;
-pub(crate) use meta::{LocalMeta, RecvMeta, SendMeta, as_state_index, state_index_to_usize};
+pub(crate) use meta::{EventCommitMeta, LocalMeta, RecvMeta, SendMeta, state_index_to_usize};
 mod passive_child;
 pub(crate) use passive_child::PassiveArmChildFact;
 
@@ -204,7 +203,7 @@ impl PackedLocalDependency {
 /// This is the production conflict row used by the event cursor. It records the
 /// nearest enclosing route arm at projection time; parent route membership is
 /// represented by the route scope's own conflict row, so runtime enabled checks
-/// can walk conflict rows without interpreting scope topology.
+/// can walk conflict rows without interpreting route-scope structure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PackedEventConflict(u16);
 
@@ -217,7 +216,7 @@ impl PackedEventConflict {
     /// An event conflict row can only point through route-scope conflict rows
     /// derived from the same fixed-size local event image. The cursor uses this
     /// row capacity as its cycle guard instead of consulting runtime route
-    /// topology counts.
+    /// structure counts.
     pub(crate) const MAX_CHAIN_DEPTH: usize = eff::meta::MAX_EFF_NODES + 1;
 
     #[inline(always)]
@@ -456,17 +455,6 @@ impl FirstRecvDispatchSpec {
 /// terminal state).
 pub(crate) const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;
 
-/// Result of following a passive observer arm in a route scope.
-///
-/// With CFG-pure design, all arms, including τ-eliminated ones, have an
-/// ArmEmpty terminal row, so navigation always returns a valid entry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PassiveArmNavigation {
-    /// Jumped to a node within the arm.
-    /// For τ-eliminated arms, this points to the ArmEmpty RouteArmEnd terminal row.
-    WithinArm { entry: StateIndex },
-}
-
 /// Local action associated with a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LocalAction {
@@ -477,9 +465,8 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy: ResolverMode,
+        is_internal: bool,
+        resolver: ResolverMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -490,9 +477,8 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy: ResolverMode,
+        is_internal: bool,
+        resolver: ResolverMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -502,9 +488,8 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy: ResolverMode,
+        is_internal: bool,
+        resolver: ResolverMode,
         /// Type-level lane for parallel composition (default 0).
         lane: u8,
     },
@@ -512,7 +497,7 @@ pub(crate) enum LocalAction {
     Terminate,
 }
 
-const LOCAL_ACTION_STATIC_POLICY_ID: u16 = u16::MAX;
+const LOCAL_ACTION_STATIC_RESOLVER_ID: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PackedLocalAction {
@@ -522,9 +507,8 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy_id: u16,
+        is_internal: bool,
+        resolver_id: u16,
         lane: u8,
     },
     Recv {
@@ -533,9 +517,8 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy_id: u16,
+        is_internal: bool,
+        resolver_id: u16,
         lane: u8,
     },
     Local {
@@ -543,9 +526,8 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_control: bool,
-        shot: Option<CapShot>,
-        policy_id: u16,
+        is_internal: bool,
+        resolver_id: u16,
         lane: u8,
     },
     Terminate,
@@ -558,16 +540,15 @@ pub(crate) struct LocalAtomFacts {
     pub label: u8,
     pub frame_label: u8,
     pub resource: Option<u8>,
-    pub is_control: bool,
-    pub shot: Option<CapShot>,
-    pub policy: ResolverMode,
+    pub is_internal: bool,
+    pub resolver: ResolverMode,
     pub lane: u8,
 }
 
 /// Non-message facts compiled for a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalNodeMeta {
-    pub semantic: ControlSemanticKind,
+    pub semantic: EventSemanticKind,
     pub next: StateIndex,
     pub scope: ScopeId,
     pub route_arm: Option<u8>,
@@ -575,19 +556,19 @@ pub(crate) struct LocalNodeMeta {
 }
 
 #[inline(always)]
-const fn encode_policy_id(policy: ResolverMode) -> u16 {
-    match policy.dynamic_policy_id() {
-        Some(policy_id) => policy_id,
-        None => LOCAL_ACTION_STATIC_POLICY_ID,
+const fn encode_resolver_id(resolver: ResolverMode) -> u16 {
+    match resolver.dynamic_resolver_id() {
+        Some(resolver_id) => resolver_id,
+        None => LOCAL_ACTION_STATIC_RESOLVER_ID,
     }
 }
 
 #[inline(always)]
-const fn decode_policy(policy_id: u16, scope: CompactScopeId) -> ResolverMode {
-    if policy_id == LOCAL_ACTION_STATIC_POLICY_ID {
+const fn decode_resolver(resolver_id: u16, scope: CompactScopeId) -> ResolverMode {
+    if resolver_id == LOCAL_ACTION_STATIC_RESOLVER_ID {
         ResolverMode::Static
     } else {
-        ResolverMode::Dynamic { policy_id, scope }
+        ResolverMode::Dynamic { resolver_id, scope }
     }
 }
 
@@ -653,19 +634,19 @@ impl LocalNode {
     }
 
     #[inline(always)]
-    const fn encode_semantic(semantic: ControlSemanticKind) -> u8 {
+    const fn encode_semantic(semantic: EventSemanticKind) -> u8 {
         semantic.packed_bits() << Self::FLAG_SEMANTIC_SHIFT
     }
 
     #[inline(always)]
-    const fn decode_semantic(flags: u8) -> ControlSemanticKind {
-        ControlSemanticKind::from_packed_bits(
+    const fn decode_semantic(flags: u8) -> EventSemanticKind {
+        EventSemanticKind::from_packed_bits(
             (flags & Self::FLAG_SEMANTIC_MASK) >> Self::FLAG_SEMANTIC_SHIFT,
         )
     }
 
     #[inline(always)]
-    const fn flags(is_choice_determinant: bool, semantic: ControlSemanticKind) -> u8 {
+    const fn flags(is_choice_determinant: bool, semantic: EventSemanticKind) -> u8 {
         let mut flags = Self::encode_semantic(semantic);
         if is_choice_determinant {
             flags |= Self::FLAG_CHOICE_DETERMINANT;
@@ -682,9 +663,8 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 resource: facts.resource,
-                is_control: facts.is_control,
-                shot: facts.shot,
-                policy_id: encode_policy_id(facts.policy),
+                is_internal: facts.is_internal,
+                resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
@@ -703,9 +683,8 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 resource: facts.resource,
-                is_control: facts.is_control,
-                shot: facts.shot,
-                policy_id: encode_policy_id(facts.policy),
+                is_internal: facts.is_internal,
+                resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
@@ -723,9 +702,8 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 resource: facts.resource,
-                is_control: facts.is_control,
-                shot: facts.shot,
-                policy_id: encode_policy_id(facts.policy),
+                is_internal: facts.is_internal,
+                resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
@@ -756,9 +734,8 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy_id,
+                is_internal,
+                resolver_id,
                 lane,
             } => LocalAction::Send {
                 eff_index,
@@ -766,9 +743,8 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy: decode_policy(policy_id, self.scope),
+                is_internal,
+                resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
             PackedLocalAction::Recv {
@@ -777,9 +753,8 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy_id,
+                is_internal,
+                resolver_id,
                 lane,
             } => LocalAction::Recv {
                 eff_index,
@@ -787,9 +762,8 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy: decode_policy(policy_id, self.scope),
+                is_internal,
+                resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
             PackedLocalAction::Local {
@@ -797,18 +771,16 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy_id,
+                is_internal,
+                resolver_id,
                 lane,
             } => LocalAction::Local {
                 eff_index,
                 label,
                 frame_label,
                 resource,
-                is_control,
-                shot,
-                policy: decode_policy(policy_id, self.scope),
+                is_internal,
+                resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
             PackedLocalAction::Terminate => LocalAction::Terminate,
@@ -838,7 +810,7 @@ impl LocalNode {
     }
 
     #[inline(always)]
-    pub(crate) const fn control_semantic(&self) -> ControlSemanticKind {
+    pub(crate) const fn event_semantic(&self) -> EventSemanticKind {
         Self::decode_semantic(self.flags)
     }
 }

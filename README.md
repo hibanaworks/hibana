@@ -12,7 +12,7 @@
     <a href="#what-hibana-is">What Hibana Is</a> •
     <a href="#quick-start">Quick Start</a> •
     <a href="#application-guide">Application Guide</a> •
-    <a href="#protocol-integration">Protocol Integration</a> •
+    <a href="#runtime">Protocol Runtime</a> •
     <a href="#guarantees">Guarantees</a>
   </p>
 </div>
@@ -30,9 +30,9 @@ The complete path is:
 
 ```text
 hibana::g choreography
-  -> integration::program::project(&program)
-  -> integration::runtime::Config::from_resources(...)
-  -> integration::SessionKitStorage::uninit().init()
+  -> runtime::program::project(&program)
+  -> runtime::Config::from_resources(...)
+  -> runtime::SessionKitStorage::uninit().init()
   -> kit.rendezvous(...)
   -> registered rendezvous .session(...).role(...)
   -> role witness .enter()
@@ -45,11 +45,11 @@ There are only two public surfaces:
 | Surface | Used by | Main names |
 | --- | --- | --- |
 | Application surface | application code | `hibana::g`, `Endpoint`, `RouteBranch`, `EndpointResult`, `EndpointError` |
-| Integration surface | protocol and integration crates | `hibana::integration`, `hibana::integration::program` |
+| Runtime surface | protocol and runtime crates | `hibana::runtime`, `hibana::runtime::program` |
 
 If you are writing an application, stay on `hibana::g` and `Endpoint`. If you
-are implementing a protocol crate, use `hibana::integration` to project, attach,
-bind transport, install explicit route or loop resolvers when needed, and return endpoints.
+are implementing a protocol crate, use `hibana::runtime` to project, attach,
+bind transport, install explicit route resolvers when needed, and return endpoints.
 
 ## Install
 
@@ -111,16 +111,16 @@ variable.
 Each role must advance through its endpoint. The only evidence that may affect
 protocol progress is evidence admitted by the projected descriptor through the
 attached transport, a projected first visible route action, or an explicit
-resolver decision at a projected route or loop resolver site. Role code must not read
+resolver decision at a projected route resolver site. Role code must not read
 shared memory, shared atomics, global flags, device registers, or side-channel
-state to decide whether a route is ready, a loop continues, or a message may
+state to decide whether a route is ready, a rolled region re-enters, or a message may
 be skipped.
 
-Shared memory is especially not protocol authority. An integration crate may
+Shared memory is especially not protocol authority. A runtime crate may
 use memory, atomics, interrupts, DMA, or OS primitives as private transport or
 resolver implementation mechanics, but those mechanics must first become
-transport frames, descriptor-checked ingress evidence, or loop resolver inputs
-at explicit policy points. They never replace `flow().send()`, `recv()`,
+transport frames, descriptor-checked ingress evidence, or route resolver inputs
+at explicit resolver sites. They never replace `flow().send()`, `recv()`,
 `offer()`, or `RouteBranch::decode()`.
 
 ## Quick Start
@@ -144,7 +144,7 @@ That is the main user path:
 `flow()` and `offer()` are previews. Endpoint progress happens when
 `flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds. A failed preview
 does not move the endpoint and does not choose an alternate route. Preview
-evidence can wake or guide polling, but it cannot mint a continuation.
+evidence can wake or guide polling, but it cannot create a continuation.
 
 ## Application Guide
 
@@ -156,12 +156,9 @@ Application authors only need these names:
 - `EndpointResult<T>`
 - `EndpointError`
 
-Protocol crates that compose runtime/control protocol events into the same
-choreography additionally use `g::ControlMsg` with Hibana-defined
-`g::control::*` markers. Application payload messages normally stay on
-`g::Msg`. `ControlMsg` is a protocol surface, not an application extension
-surface: the marker set is closed by Hibana, and user-defined control kinds do
-not become messages.
+Protocol crates use the same surface. Runtime resolver and transport authority
+stay inside Hibana; choreography authors describe visible protocol traffic with
+`g::Msg` and the structural combinators.
 
 The normal choreography language is:
 
@@ -227,7 +224,7 @@ match branch.label() {
         let () = branch.decode::<g::Msg<33, ()>>().await?;
         handle_reject();
     }
-    _ => unreachable!(),
+    label => panic!("unexpected route label {label}"),
 }
 ```
 
@@ -246,7 +243,7 @@ match branch.label() {
         let bytes = branch.decode::<g::Msg<41, [u8; 8]>>().await?;
         use_bytes(bytes);
     }
-    _ => unreachable!(),
+    label => panic!("unexpected route label {label}"),
 }
 ```
 
@@ -289,7 +286,7 @@ Protocol-invisible liveness detection belongs inside the transport adapter. A
 UDP, serial, or custom carrier that decides an I/O wait is terminal must return
 `TransportError` from `poll_send(...)` or `poll_recv(...)`; Hibana converts that
 transport failure into terminal session evidence. Such watchdogs do not create
-hidden route authority, carrier recovery policy, or same-generation recovery in Hibana.
+hidden route authority, carrier recovery resolver, or same-generation recovery in Hibana.
 
 The public evidence envelopes are domain-specific:
 
@@ -324,11 +321,11 @@ parallel progress.
 Built-in exact codecs cover `()`, `bool`, integers, borrowed byte slices, and
 fixed byte arrays. Fixed-width decoders reject trailing bytes.
 
-Custom payloads implement `hibana::integration::wire::WireEncode` for sending
-and `hibana::integration::wire::WirePayload` for receiving:
+Custom payloads implement `hibana::runtime::wire::WireEncode` for sending
+and `hibana::runtime::wire::WirePayload` for receiving:
 
 ```rust
-use hibana::integration::wire::{CodecError, Payload, WireEncode, WirePayload};
+use hibana::runtime::wire::{CodecError, Payload, WireEncode, WirePayload};
 
 struct FourBytes([u8; 4]);
 
@@ -386,45 +383,68 @@ let program = g::route(
 
 When a branch is decided by a local timer, device readiness, budget, or another
 non-message signal, use an explicit resolver attached through
-`Program<Route<...>>::resolve` and `integration::resolver`. Built-in local
-protocol events such as loop continue/break are the exception: they are written
-as `g::ControlMsg` self-sends, stay local to the endpoint, and still appear as
-normal choreography events.
+`Program<Route<...>>::resolve` and `runtime::resolver`.
 
-State and transaction controls use the same shape. A snapshot starts the local
-transaction lifecycle; commit, abort, and restore are local `g::ControlMsg`
-self-sends that lower to state control rows and fail closed if the snapshot
-generation does not exist.
+Repeated protocol regions are structural. Put the re-enterable region in
+`seq`, `route`, or `par`, then call `.roll()` on that region.
 
 ```rust,ignore
-let program = g::seq(
-    g::send::<0, 0, g::ControlMsg<30, g::control::StateSnapshot>>(),
-    g::send::<0, 0, g::ControlMsg<31, g::control::TxnCommit>>(),
-);
+let body = g::seq(
+    g::send::<0, 1, g::Msg<30, Chunk>>(),
+    g::send::<1, 0, g::Msg<31, Ack>>(),
+).roll();
+
+let program = g::seq(body, g::send::<0, 1, g::Msg<32, Done>>());
 ```
 
-Topology controls are the distributed side of the same protocol surface. A
-protocol crate can author begin/ack/commit events in choreography, but they are
-not user payloads; runtime send and receive bind them to the projected session,
-lane, and topology header.
+`resolve::<ID>()` marks the route node; `.roll()` marks the surrounding
+reentry region. Resolve first, then roll:
 
 ```rust,ignore
-let program = g::seq(
-    g::send::<0, 1, g::ControlMsg<40, g::control::TopologyBegin>>(),
-    g::seq(
-        g::send::<1, 0, g::ControlMsg<41, g::control::TopologyAck>>(),
-        g::send::<0, 1, g::ControlMsg<42, g::control::TopologyCommit>>(),
-    ),
-);
+let looped = g::route(left, right)
+    .resolve::<ROUTE_DECISION>()
+    .roll();
+```
+
+This means that `ROUTE_DECISION` decides this route, and the resolved route is
+itself re-enterable. Each reentry reaches the route decision site again.
+
+To widen the repeated region, put `.roll()` on the enclosing `seq`, `route`, or
+`par`, while keeping `.resolve::<ID>()` attached to the route itself:
+
+```rust,ignore
+let body = g::seq(
+    open,
+    g::route(write_wait, proc_exit).resolve::<TRAFFIC_DECISION>(),
+).roll();
+```
+
+Here `open -> resolved route` is the loop body. The reverse order is invalid:
+
+```rust,ignore
+g::route(left, right).roll().resolve::<ID>()
+```
+
+`resolve::<ID>()` is only available on `Program<Route<...>>`; after `.roll()`,
+the type is `Program<Roll<Route<...>>>`. Semantically, the resolver belongs to
+the route decision site, not to the loop.
+
+Nested reentry follows the same rule:
+
+```rust,ignore
+let inner = g::route(a, b)
+    .resolve::<INNER_DECISION>()
+    .roll();
+
+let outer = g::seq(prefix, inner).roll();
 ```
 
 ```rust,ignore
 use hibana::g;
-use hibana::integration::ids::SessionId;
-use hibana::integration::program::{project, RoleProgram};
-use hibana::integration::resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
+use hibana::runtime::program::{project, RoleProgram};
+use hibana::runtime::resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
 
-const ROUTE_POLICY: u16 = 7;
+const ROUTE_RESOLVER: u16 = 7;
 
 struct RouteState {
     accept: bool,
@@ -439,13 +459,55 @@ fn route_decision(state: &RouteState) -> Result<DecisionResolution, ResolverErro
     Ok(DecisionResolution::Arm(arm))
 }
 
-let routed = g::route(accept_body, reject_body).resolve::<ROUTE_POLICY>();
+let routed = g::route(accept_body, reject_body).resolve::<ROUTE_RESOLVER>();
 let role0: RoleProgram<0> = project(&routed);
 let state = RouteState { accept: true };
 
-rv.session(SessionId::new(1))
-    .role(&role0)
-    .set_resolver(ResolverRef::<ROUTE_POLICY>::decision_state(&state, route_decision))?;
+rv.role(&role0)
+    .set_resolver(ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;
+```
+
+External resolver appliances use the same seam. Hibana core does not contain an
+embedded resolver executor or hidden decision engine. An appliance stays outside the core,
+owns its input state, and installs a typed `ResolverRef` for the route decision
+site. When the appliance is active, it returns `DecisionResolution` for that
+resolver id; otherwise the appliance resolver calls the user-registered default
+resolver. That default resolver is explicit route authority; it does not
+transfer authority to appliance state. Hibana never treats appliance telemetry,
+payload bytes, or transport readiness as route authority by itself.
+
+```rust,ignore
+struct ResolverAppliance {
+    loaded: bool,
+    default_resolver: ResolverRef<'static, ROUTE_RESOLVER>,
+}
+
+fn default_decision() -> Result<DecisionResolution, ResolverError> {
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
+}
+
+fn appliance_decision(
+    appliance: &ResolverAppliance,
+) -> Result<DecisionResolution, ResolverError> {
+    if appliance.loaded {
+        Ok(DecisionResolution::Arm(DecisionArm::Right))
+    } else {
+        appliance.default_resolver.evaluate()
+    }
+}
+
+let routed = g::route(default_arm, resolver_arm).resolve::<ROUTE_RESOLVER>();
+let role0: RoleProgram<0> = project(&routed);
+let appliance = ResolverAppliance {
+    loaded: true,
+    default_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_fn(default_decision),
+};
+
+rv.role(&role0)
+    .set_resolver(ResolverRef::<ROUTE_RESOLVER>::decision_state(
+        &appliance,
+        appliance_decision,
+    ))?;
 ```
 
 Receive evidence is checked against the projected descriptor. `ReceivedFrame`
@@ -453,19 +515,19 @@ uses fail-closed `IngressEvidence`: deterministic receive is valid only when a
 single active receive can be selected, while `offer()` and
 `RouteBranch::decode()` require framed descriptor-checked evidence. Payload shape, queue position, carrier id, and driver observations are never branch authority.
 
-## Protocol Integration
+## Protocol Runtime
 
 Protocol crates use the same `hibana::g` language as applications. There is
 no second composition language.
 
 ### Compose And Project
 
-A protocol crate may place transport or integration prefixes before the application
+A protocol crate may place transport or runtime prefixes before the application
 choreography, then project each role.
 
 ```rust
 use hibana::g;
-use hibana::integration::program::{project, RoleProgram};
+use hibana::runtime::program::{project, RoleProgram};
 
 let prefix = g::seq(
     g::send::<0, 1, g::Msg<1, ()>>(),
@@ -488,26 +550,26 @@ projected descriptor; it does not rediscover protocol shape.
 
 Generated protocol packages and composition facades may hide the concrete
 `Program<_>` step-list type when returning an unnamed choreography value. They
-return `impl integration::program::Projectable`, and callers still use the same
+return `impl runtime::program::Projectable`, and callers still use the same
 `project(&program)` entry. `Projectable` is a sealed choreography bound, not a
-second choreography language and not a runtime authority. It has no
-runtime-universe type parameter; facade runtimes keep their universe on their
-own storage/configuration types, not on the choreography projection bound.
+second choreography language and not a runtime authority. It has no runtime
+storage parameter; facade runtimes keep storage and configuration on their own
+types, not on the choreography projection bound.
 
 ### Attach An Endpoint
 
-The canonical integration path is borrowed and caller-provided:
+The canonical runtime path is borrowed and caller-provided:
 
 ```rust,ignore
-use hibana::integration;
-use hibana::integration::ids::SessionId;
-use hibana::integration::runtime::{Config, CounterClock, RING_EVENTS};
+use hibana::runtime;
+use hibana::runtime::ids::SessionId;
+use hibana::runtime::{Config, CounterClock, RING_EVENTS};
 
-let mut tap_buf = [integration::runtime::TapEvent::zero(); RING_EVENTS];
+let mut tap_buf = [runtime::TapEvent::zero(); RING_EVENTS];
 let mut slab = [0u8; 64 * 1024];
 
-let clock = CounterClock::new();
-let mut kit_storage = integration::SessionKitStorage::<MyTransport>::uninit();
+let clock = CounterClock::zero();
+let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 let kit = kit_storage.init();
 
 let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
@@ -525,28 +587,28 @@ domain and endpoint lease capacity are not caller-selected config. A fresh
 rendezvous starts with no materialized lane storage and no endpoint lease table.
 Role attach reads the projected descriptor, grows exactly the lane
 tables and endpoint lease entries it needs, and preserves existing session state
-if a later projected role needs a wider lane span. Integration code must not
+if a later projected role needs a wider lane span. Runtime code must not
 pass caller-chosen lane windows, endpoint counts, or deadline knobs.
 
 The protocol crate owns concrete `MyTransport` and any ingress demux state. The
 application receives only `Endpoint`.
 
-Useful integration owners:
+Useful runtime owners:
 
-- `integration::program::{project, RoleProgram}`
-- `integration::SessionKit`
-- `integration::runtime::{Config, CounterClock, DefaultLabelUniverse, LabelUniverse, RING_EVENTS}`
-- `integration::ids::{EffIndex, SessionId}`
-- `integration::transport::Transport`
-- `integration::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
-- `integration::wire::{Payload, WireEncode, WirePayload}`
-- `integration::runtime::TapEvent`
+- `runtime::program::{project, RoleProgram}`
+- `runtime::SessionKit`
+- `runtime::{Config, CounterClock, RING_EVENTS}`
+- `runtime::ids::{EffIndex, SessionId}`
+- `runtime::transport::Transport`
+- `runtime::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
+- `runtime::wire::{Payload, WireEncode, WirePayload}`
+- `runtime::TapEvent`
 
 ### Transport
 
-Implement `integration::transport::Transport` to connect Hibana to an I/O
+Implement `runtime::transport::Transport` to connect Hibana to an I/O
 system. The transport sees bytes, frame labels, and readiness; it does not own
-choreography meaning, route authority, policy inputs, telemetry, or application
+choreography meaning, route authority, resolver inputs, telemetry, or application
 cancellation semantics.
 
 Protocol-invisible carrier watchdogs belong inside `poll_send(...)` and
@@ -561,7 +623,7 @@ The transport owns:
   transport `IngressEvidence` as one receive value;
 - `cancel_send(...)` for transport cleanup when a send future is dropped after
   staging carrier state;
-- `requeue(...)` as the required rollback path for an accepted staged frame
+- `requeue(...)` as the required return path for an accepted staged frame
   that descriptor checks cannot commit.
 
 `open(port)` returns Tx/Rx handles whose lifetime is bound to the transport
@@ -592,10 +654,9 @@ carrier-local hints do not select route arms.
 
 ### Resolvers
 
-Resolvers are installed by the protocol crate for explicit route or loop
-resolution sites. Route choices are otherwise derived from projected first
-visible branch actions, including built-in local `g::ControlMsg` loop decisions
-when those are the branch head. Resolver state is the external input owner: use
+Resolvers are installed by the protocol crate for explicit route resolution
+sites. Route choices are otherwise derived from projected first visible branch
+actions. Resolver state is the external input owner: use
 `ResolverRef::decision_state(...)` when a resolver needs protocol-specific
 observations. Resolver failure rejects the step; it does not fall through to a
 different semantic path.
@@ -611,7 +672,7 @@ Core guarantees:
 - default features are empty;
 - runtime code is `no_std` and no-alloc-oriented;
 - descriptor storage is caller-provided, borrowed, static, or slab-backed;
-- route shape, duplicate labels, malformed control paths, and lane ownership
+- route shape, duplicate labels, malformed choreography paths, and lane ownership
   errors are rejected before endpoint execution;
 - runtime cursor progress is one-way and affine;
 - protocol state is affine endpoint ownership, not shared atomic or shared
@@ -619,7 +680,7 @@ Core guarantees:
 - failed sends, receives, offers, and decodes do not authorize hidden progress;
 - payload decode is exact;
 - message logical labels and transport frame labels are separate concepts;
-- control semantics are descriptor metadata, not reserved numeric labels;
+- route-decision semantics are descriptor metadata, not reserved numeric labels;
 - route authority is limited to projected facts, first visible branch actions,
   and explicit resolver decisions; descriptor-checked transport observation may
   only confirm or demux projected facts.
@@ -633,7 +694,7 @@ What application code should not do:
   authority;
 - match endpoint errors to continue the same generation on a hidden alternate path;
 - use shared memory, shared atomics, global flags, or side-channel state as
-  route readiness, loop-control, or protocol-progress authority;
+  route readiness, rolled reentry, or protocol-progress authority;
 - expose protocol-specific APIs through the `hibana` crate root.
 
 ## Validation

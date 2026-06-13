@@ -13,7 +13,7 @@
 //! The crate intentionally has two faces:
 //!
 //! - app authors use [`g`] and [`Endpoint`];
-//! - protocol implementors use [`integration`] and [`integration::program`].
+//! - protocol implementors use [`runtime`] and [`runtime::program`].
 //!
 //! Everything starts from one global choreography and ends in a small localside
 //! endpoint:
@@ -62,7 +62,7 @@
 //!         drop(branch);
 //!         endpoint.flow::<g::Msg<11, ()>>()?.send(&()).await?;
 //!     }
-//!     _ => unreachable!(),
+//!     label => panic!("unexpected route label {label}"),
 //! }
 //! ```
 //!
@@ -72,20 +72,20 @@
 //! role-local witness, bind transport state, and return an attached endpoint.
 //!
 //! ```rust,ignore
-//! use hibana::{g, integration};
-//! use hibana::integration::program::{RoleProgram, project};
+//! use hibana::{g, runtime};
+//! use hibana::runtime::program::{RoleProgram, project};
 //!
-//! let program = g::seq(transport_prefix, g::seq(integration_prefix, app));
+//! let program = g::seq(transport_prefix, app);
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut tap_buf = [integration::runtime::TapEvent::zero(); integration::runtime::RING_EVENTS];
+//! let mut tap_buf = [runtime::TapEvent::zero(); runtime::RING_EVENTS];
 //! let mut slab = [0u8; 4096];
-//! let clock = integration::runtime::CounterClock::new();
-//! let config = integration::runtime::Config::from_resources(
+//! let clock = runtime::CounterClock::zero();
+//! let config = runtime::Config::from_resources(
 //!     (&mut tap_buf, &mut slab),
 //!     clock,
 //! );
-//! let mut kit_storage = integration::SessionKitStorage::<MyTransport>::uninit();
+//! let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 //! let kit = kit_storage.init();
 //! let rv = kit.rendezvous(config, transport)?;
 //! let endpoint = rv
@@ -99,24 +99,24 @@
 //! chosen by callers. Hidden timeout fuses are not protocol API or attach
 //! config.
 //! Protocol-invisible carrier watchdogs live inside the transport adapter:
-//! terminal I/O waits are reported as [`integration::transport::TransportError`]
+//! terminal I/O waits are reported as [`runtime::transport::TransportError`]
 //! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
 //!
-//! [`integration::transport::Transport`] owns I/O readiness, wire buffers, and
-//! ingress demux evidence. [`integration::resolver`] owns dynamic resolver input.
+//! [`runtime::transport::Transport`] owns I/O readiness, wire buffers, and
+//! ingress demux evidence. [`runtime::resolver`] owns dynamic resolver input.
 //! None of those layers become app concepts.
 //!
 //! ## Payloads, receive evidence, and resolvers
 //!
-//! Payload types implement [`integration::wire::WireEncode`] for sends and
-//! [`integration::wire::WirePayload`] for receives. Decoded values may borrow from
+//! Payload types implement [`runtime::wire::WireEncode`] for sends and
+//! [`runtime::wire::WirePayload`] for receives. Decoded values may borrow from
 //! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
 //! byte slices, and fixed byte arrays.
 //!
 //! Branch choice is either an in-band protocol message, a descriptor-checked
 //! received frame, or an explicit resolver decision. Transport evidence is
 //! descriptor evidence only; it is not route authority and it does not create a
-//! public control-kind catalogue.
+//! public branch-authority catalogue.
 //!
 //! ## Guarantees
 //!
@@ -146,7 +146,7 @@ extern crate self as hibana;
 #[cfg(test)]
 extern crate std;
 
-#[cfg(all(test, hibana_repo_tests))]
+#[cfg(all(test, hibana_repo_tests, feature = "std"))]
 mod test_support;
 
 // ============================================================================
@@ -156,12 +156,12 @@ mod test_support;
 pub mod g;
 /// Global-to-Local projection (MPST theory layer)
 mod global;
-/// Protocol-neutral integration surface for protocol implementors.
-pub mod integration;
+/// Runtime surface for protocol implementors.
+pub mod runtime;
 
-mod control;
+mod session;
 
-mod runtime;
+mod runtime_core;
 
 mod transport;
 
@@ -172,7 +172,7 @@ mod endpoint;
 
 mod observe;
 
-mod policy_runtime;
+mod resolver_audit;
 
 /// Internal ingress demux bridge.
 // ============================================================================
@@ -191,11 +191,11 @@ pub(crate) const fn invariant() -> ! {
 /// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**
 ///
 /// This module contains the internal implementation of the Rendezvous descriptor evaluator.
-/// It evaluates descriptor-baked control facts and manages local control state.
+/// It evaluates descriptor-baked route facts and manages local session state.
 ///
 /// **For application code**, use:
 /// - [`Endpoint`] for localside choreography execution
-/// - [`integration::SessionKit`] for Rendezvous coordination
+/// - [`runtime::SessionKit`] for Rendezvous coordination
 ///
 /// This module stays internal; tests reach it through crate-private coverage,
 /// not through a third public face.

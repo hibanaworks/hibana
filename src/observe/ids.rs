@@ -33,7 +33,7 @@ pub const ENDPOINT_SEND: u16 = 0x0202;
 /// - `arg1`: Packed role/lane/label/flags (u32)
 pub const ENDPOINT_RECV: u16 = 0x0203;
 
-/// Endpoint control-plane event (state snapshot, state restore, abort, ...).
+/// Endpoint event whose committed choreography row is internal to Hibana.
 ///
 /// - `arg0`: Packed role/lane/label/flags (u32)
 ///
@@ -78,24 +78,6 @@ pub const TRANSPORT_FAULT_DEADLINE: u8 = 2;
 pub const TRANSPORT_FAULT_CAPACITY: u8 = 3;
 pub const TRANSPORT_FAULT_FAILED: u8 = 4;
 
-/// Topology handshake initiated.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Generation / causal context (u32)
-pub const TOPOLOGY_BEGIN: u16 = 0x0208;
-
-/// Topology handshake acknowledged.
-///
-/// - `arg0`: from_lane (u8) | to_lane (u8) << 8 | generation (u16) << 16
-/// - `arg1`: Session identifier (u32)
-pub const TOPOLOGY_ACK: u16 = 0x0209;
-
-/// Topology handshake committed.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Generation acknowledged (u32)
-pub const TOPOLOGY_COMMIT: u16 = 0x020A;
-
 // ───────────── Lane lifecycle (0x0210-0x021F) ─────────────
 
 /// Lane acquired via LaneLease (RAII lifecycle start).
@@ -118,13 +100,7 @@ pub const LANE_ACQUIRE: u16 = 0x0210;
 /// - Enables streaming verification of lane lifecycle correctness
 pub const LANE_RELEASE: u16 = 0x0211;
 
-// ───────────── Route / Loop control (0x0220-0x022F) ─────────────
-
-/// Loop decision recorded (continue/break).
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: lane<<16 | idx<<8 | disposition (1 = continue, 0 = break)
-pub const LOOP_DECISION: u16 = 0x0220;
+// ───────────── Route decision (0x0220-0x022F) ─────────────
 
 /// Route arm selection resolved via dynamic resolver.
 ///
@@ -133,110 +109,74 @@ pub const LOOP_DECISION: u16 = 0x0220;
 /// - `causal`: lane marker with decision encoded in the sequence field (0 = skip, 1 = send)
 pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 
-/// Session effect initialisation completed.
+/// Resolver audit core digest tuple.
 ///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Number of control effects/materialised resources (u32)
-pub const EFFECT_INIT: u16 = 0x0500;
-
-/// State snapshot request issued by the state-restore subsystem.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Generation marker (u32)
-pub const STATE_SNAPSHOT_REQ: u16 = 0x0130;
-
-/// State restore requested.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Target generation (u32)
-pub const STATE_RESTORE_REQ: u16 = 0x0131;
-
-/// State restore completed successfully.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Generation restored (u32)
-pub const STATE_RESTORE_OK: u16 = 0x0132;
-
-/// Policy transaction abort requested.
-///
-/// - `arg0`: Session identifier (u32)
-/// - `arg1`: Snapshot generation restored (u32)
-pub const POLICY_TX_ABORT: u16 = 0x0411;
-
-/// Policy VM slot activation scheduled after Load→Commit.
-///
-/// - `arg0`: Slot identifier (0=Forward,1=EndpointRx,2=EndpointTx,3=Rendezvous)
-/// - `arg1`: Activated version identifier
-pub const POLICY_COMMIT: u16 = 0x0405;
-
-/// Policy audit core digest tuple.
-///
-/// - `arg0`: policy_digest
+/// - `arg0`: resolver_digest
 /// - `arg1`: event_hash
 /// - `arg2`: signals_input_hash
-pub const POLICY_AUDIT: u16 = 0x0407;
+pub const RESOLVER_AUDIT: u16 = 0x0407;
 
-/// Policy audit extension digest tuple.
+/// Resolver audit extension digest tuple.
 ///
 /// - `arg0`: signals_attrs_hash
-/// - `arg1`: policy_attrs_replay_hash
+/// - `arg1`: resolver_attrs_replay_hash
 /// - `arg2`: slot/mode metadata
-pub const POLICY_AUDIT_EXT: u16 = 0x0408;
+pub const RESOLVER_AUDIT_EXT: u16 = 0x0408;
 
-/// Policy audit verdict tuple.
+/// Resolver audit verdict tuple.
 ///
 /// - `arg0`: verdict metadata (`tag<<24 | arm<<16`)
 /// - `arg1`: reject reason (0 unless `Reject`)
 /// - `arg2`: fuel_used
-pub const POLICY_AUDIT_RESULT: u16 = 0x0409;
+pub const RESOLVER_AUDIT_RESULT: u16 = 0x0409;
 
-/// Policy replay event tuple.
+/// Resolver replay event tuple.
 ///
 /// - `arg0`: triggering event id (u16 promoted to u32)
 /// - `arg1`: triggering event arg0
 /// - `arg2`: triggering event arg1
-pub(crate) const POLICY_REPLAY_EVENT: u16 = 0x040A;
+pub(crate) const RESOLVER_REPLAY_EVENT: u16 = 0x040A;
 
-/// Policy replay input tuple.
+/// Resolver replay input tuple.
 ///
-/// - `arg0`: policy_input.primary
+/// - `arg0`: resolver_input.primary
 /// - `arg1`: reserved (0)
 /// - `arg2`: reserved (0)
-pub(crate) const POLICY_REPLAY_INPUT0: u16 = 0x040B;
+pub(crate) const RESOLVER_REPLAY_INPUT0: u16 = 0x040B;
 
-/// Reserved policy replay input tuple.
+/// Reserved resolver replay input tuple.
 ///
 /// - `arg0`: reserved (0)
 /// - `arg1`: reserved (0)
 /// - `arg2`: reserved (0)
-pub(crate) const POLICY_REPLAY_INPUT1: u16 = 0x040C;
+pub(crate) const RESOLVER_REPLAY_INPUT1: u16 = 0x040C;
 
-/// Policy replay attribute tuple (latency/queue).
+/// Resolver replay attribute tuple (latency/queue).
 ///
 /// - `arg0`: latency_us (saturated to u32, 0 when unavailable)
 /// - `arg1`: queue_depth
 /// - `arg2`: reserved (0)
-pub(crate) const POLICY_REPLAY_ATTRS0: u16 = 0x040D;
+pub(crate) const RESOLVER_REPLAY_ATTRS0: u16 = 0x040D;
 
-/// Policy replay attribute tuple (presence).
+/// Resolver replay attribute tuple (presence).
 ///
 /// - `arg0`: reserved (0)
 /// - `arg1`: presence bitmask (bit0 latency, bit1 queue)
 /// - `arg2`: reserved (0)
-pub(crate) const POLICY_REPLAY_ATTRS1: u16 = 0x040E;
+pub(crate) const RESOLVER_REPLAY_ATTRS1: u16 = 0x040E;
 
-/// Policy replay event extension tuple.
+/// Resolver replay event extension tuple.
 ///
 /// - `arg0`: triggering event arg1
 /// - `arg1`: triggering event arg2
 /// - `arg2`: triggering event causal key (u16 promoted to u32)
-pub(crate) const POLICY_REPLAY_EVENT_EXT: u16 = 0x040F;
+pub(crate) const RESOLVER_REPLAY_EVENT_EXT: u16 = 0x040F;
 
-/// Policy progress/defer audit tuple.
+/// Resolver progress/defer audit tuple.
 ///
 /// - `arg0`: `defer_source<<24 | pending_flag`
 ///   (`defer_source` is not a route-arm token tap sequence)
 /// - `arg1`: `scope_slot<<16 | selected_arm<<8 | ready_arm_mask`
 ///   (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means unknown)
-/// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | ingress_ready<<1 | pending_flag`
-pub(crate) const POLICY_AUDIT_DEFER: u16 = 0x0410;
+/// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | hint_present<<2 | ingress_ready<<1 | pending_flag`
+pub(crate) const RESOLVER_AUDIT_DEFER: u16 = 0x0410;

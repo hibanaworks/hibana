@@ -16,10 +16,7 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
@@ -91,10 +88,7 @@ fn forgotten_flow_leaves_endpoint_fail_closed() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport,
                 )
                 .expect("register rendezvous");
@@ -144,10 +138,7 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport,
                 )
                 .expect("register rendezvous");
@@ -196,10 +187,7 @@ fn forgotten_recv_future_leaves_endpoint_fail_closed() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport,
                 )
                 .expect("register rendezvous");
@@ -268,10 +256,7 @@ fn send_session_fault_cancels_pending_transport_state_once() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
@@ -289,46 +274,48 @@ fn send_session_fault_cancels_pending_transport_state_once() {
                 .expect("target endpoint");
 
             let payload = FramePayload(*b"hiba");
-            let mut send_future = std::pin::pin!(
-                origin_endpoint
-                    .flow::<Msg<2, FramePayload>>()
-                    .expect("send flow")
-                    .send(&payload)
-            );
-            let waker = futures::task::noop_waker_ref();
-            let mut context = Context::from_waker(waker);
-            match send_future.as_mut().poll(&mut context) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(())) => panic!("send unexpectedly progressed"),
-                Poll::Ready(Err(error)) => {
-                    panic!("send failed before peer dropped: {error:?}");
+            {
+                let mut send_future = std::pin::pin!(
+                    origin_endpoint
+                        .flow::<Msg<2, FramePayload>>()
+                        .expect("send flow")
+                        .send(&payload)
+                );
+                let waker = futures::task::noop_waker_ref();
+                let mut context = Context::from_waker(waker);
+                if let Poll::Ready(result) = send_future.as_mut().poll(&mut context) {
+                    match result {
+                        Ok(()) => panic!("send unexpectedly progressed"),
+                        Err(error) => {
+                            panic!("send failed before peer dropped: {error:?}");
+                        }
+                    }
                 }
-            }
-            assert_eq!(
-                cancel_count.get(),
-                0,
-                "initial pending send must not cancel before a terminal fault"
-            );
+                assert_eq!(
+                    cancel_count.get(),
+                    0,
+                    "initial pending send must not cancel before a terminal fault"
+                );
 
-            drop(target_endpoint);
+                drop(target_endpoint);
 
-            match send_future.as_mut().poll(&mut context) {
-                Poll::Ready(Err(error)) => {
-                    assert_eq!(error.operation(), "send");
-                    assert!(
-                        format!("{error:?}").contains("EndpointDropped"),
-                        "send error must keep session fault evidence: {error:?}"
-                    );
+                match send_future.as_mut().poll(&mut context) {
+                    Poll::Ready(Err(error)) => {
+                        assert_eq!(error.operation(), "send");
+                        assert!(
+                            format!("{error:?}").contains("EndpointDropped"),
+                            "send error must keep session fault evidence: {error:?}"
+                        );
+                    }
+                    Poll::Ready(Ok(())) => panic!("send unexpectedly progressed after peer drop"),
+                    Poll::Pending => panic!("poisoned send remained pending"),
                 }
-                Poll::Ready(Ok(())) => panic!("send unexpectedly progressed after peer drop"),
-                Poll::Pending => panic!("poisoned send remained pending"),
+                assert_eq!(
+                    cancel_count.get(),
+                    1,
+                    "session fault send failure must cancel the pending transport send exactly once"
+                );
             }
-            assert_eq!(
-                cancel_count.get(),
-                1,
-                "session fault send failure must cancel the pending transport send exactly once"
-            );
-            drop(send_future);
             assert_eq!(
                 cancel_count.get(),
                 1,
@@ -352,10 +339,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport,
                 )
                 .expect("register rendezvous");
@@ -376,14 +360,15 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
             let wake_count = Cell::new(0);
             let waker = counting_waker(&wake_count);
             let mut context = Context::from_waker(&waker);
-            match recv_future.as_mut().poll(&mut context) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(payload)) => {
-                    core::hint::black_box(&payload);
-                    panic!("recv unexpectedly progressed before sender drop");
-                }
-                Poll::Ready(Err(error)) => {
-                    panic!("recv failed before sender drop: {error:?}");
+            if let Poll::Ready(result) = recv_future.as_mut().poll(&mut context) {
+                match result {
+                    Ok(payload) => {
+                        core::hint::black_box(&payload);
+                        panic!("recv unexpectedly progressed before sender drop");
+                    }
+                    Err(error) => {
+                        panic!("recv failed before sender drop: {error:?}");
+                    }
                 }
             }
             assert_eq!(

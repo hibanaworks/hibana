@@ -123,7 +123,10 @@ impl IndexMut<usize> for ScopeEvidenceTable {
 impl ScopeEvidenceTable {
     #[inline]
     pub(super) fn generation_for_slot(&self, slot: Option<usize>) -> u16 {
-        slot.map(|slot| self.generation(slot)).unwrap_or(0)
+        match slot {
+            Some(slot) => self.generation(slot),
+            None => 0,
+        }
     }
 
     #[inline]
@@ -199,16 +202,16 @@ impl ScopeEvidenceTable {
         frame_label: u8,
     ) -> bool {
         let evidence = &mut self[slot];
-        let previous_frame_label = evidence.hint_frame_label;
-        let previous_lane = evidence.hint_lane;
-        let previous_flags = evidence.flags;
+        let captured_frame_label = evidence.hint_frame_label;
+        let captured_lane = evidence.hint_lane;
+        let captured_flags = evidence.flags;
         evidence.hint_frame_label = frame_label;
         evidence.hint_lane = lane;
         evidence.flags |= ScopeEvidence::FLAG_HAS_HINT;
         evidence.flags &= !ScopeEvidence::FLAG_HINT_CONFLICT;
-        evidence.hint_frame_label != previous_frame_label
-            || evidence.hint_lane != previous_lane
-            || evidence.flags != previous_flags
+        evidence.hint_frame_label != captured_frame_label
+            || evidence.hint_lane != captured_lane
+            || evidence.flags != captured_flags
     }
 
     #[inline]

@@ -107,7 +107,7 @@ def check_owner_budget(path: str, max_lines: int, max_files: int, mode: str) -> 
         )
     if Path(path).is_file() and max_lines - lines > OWNER_FILE_BUDGET_MAX_SLACK:
         report(
-            f"maintainability budget violation: {path} file owner budget leaves {max_lines - lines} lines of stale slack (>{OWNER_FILE_BUDGET_MAX_SLACK}); keep owner ceilings close enough to expose future sprawl"
+            f"maintainability budget violation: {path} file owner budget leaves {max_lines - lines} lines of excess slack (>{OWNER_FILE_BUDGET_MAX_SLACK}); keep owner ceilings close enough to expose future sprawl"
         )
 
 
@@ -122,7 +122,7 @@ for path, max_lines, max_files, mode in read_manifest(".github/maintainability/o
 
 if Path(".github/maintainability/owner_budget_semantics.tsv").exists():
     report(
-        "maintainability budget violation: owner_budget_semantics.tsv reintroduces path-mirrored leaf owners; use owner_semantics.tsv for semantic owner boundaries"
+        "maintainability budget violation: owner_budget_semantics.tsv contains path-mirrored leaf owners; use owner_semantics.tsv for semantic owner boundaries"
     )
 
 aggregate_entries = read_manifest(".github/maintainability/owner_aggregate_budget.tsv")
@@ -167,7 +167,7 @@ for file in test_rs:
 for file in allowlisted:
     path = Path(file)
     if not path.is_file():
-        report(f"test fixture budget violation: stale test debt allowlist entry: {file}")
+        report(f"test fixture budget violation: forbidden test debt allowlist entry: {file}")
         continue
     lines = line_counts.get(file, len(path.read_text().splitlines()))
     if lines <= TEST_LIMIT:
@@ -186,7 +186,7 @@ if part_files:
 for path in [file for file in all_rs if file.startswith("tests/")]:
     for idx, line in enumerate(Path(path).read_text().splitlines(), 1):
         if re.search(r'#\[path = "\.\./src/test_support/', line):
-            report("test support boundary violation: integration tests must not path-import src/test_support fixtures")
+            report("test support boundary violation: repository tests must not path-import src/test_support fixtures")
             print(f"{path}:{idx}:{line}", file=os.sys.stderr)
 
 include_hits: list[str] = []
@@ -203,7 +203,6 @@ raise SystemExit(1 if failed else 0)
 PY
 
 python3 ./.github/scripts/lib/check_owner_partitions.py || FAILED=1
-bash ./.github/scripts/check_semantic_surface_shape_hygiene.sh || FAILED=1
 
 if (( FAILED != 0 )); then
   exit 1

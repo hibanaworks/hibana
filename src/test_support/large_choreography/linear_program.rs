@@ -1,6 +1,6 @@
 use super::localside;
 use hibana::g::{self, Msg};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 pub const ROUTE_SCOPE_COUNT: usize = 0;
 pub const EXPECTED_WORKER_BRANCH_LABELS: [u8; ROUTE_SCOPE_COUNT] = [];

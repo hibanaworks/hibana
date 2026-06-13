@@ -4,22 +4,17 @@ use core::task::Poll;
 
 use super::core::CursorEndpoint;
 use crate::{
-    control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::kernel::lane_port::{self, FrameMismatch},
     endpoint::{RecvError, RecvResult},
-    observe::{events::RawEvent, ids},
-    runtime::{config::Clock, consts::LabelUniverse},
+    observe::{events, ids},
+    runtime_core::config::Clock,
     transport::{Transport, TransportError},
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     #[cold]
     #[inline]
@@ -77,28 +72,15 @@ where
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
         lane_idx: usize,
-        expected_session_raw: u32,
-        expected_lane_wire: u8,
-        expected_source_role: u8,
-        expected_peer_role: u8,
-        expected_label: u8,
+        expected: lane_port::FrameExpectation,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>> {
         let port = self.port_for_lane(lane_idx);
-        match lane_port::poll_recv_frame(
-            pending_recv,
-            port,
-            expected_session_raw,
-            expected_lane_wire,
-            expected_source_role,
-            expected_peer_role,
-            expected_label,
-            cx,
-        ) {
+        match lane_port::poll_recv_frame(pending_recv, port, expected, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(frame)) => Poll::Ready(Ok(frame)),
             Poll::Ready(Err(err)) => {
-                self.emit_transport_fault_event(lane_idx, expected_lane_wire, err);
+                self.emit_transport_fault_event(lane_idx, expected.lane_wire, err);
                 Poll::Ready(Err(RecvError::Transport(err)))
             }
         }
@@ -136,7 +118,7 @@ where
     ) {
         let port = self.port_for_lane(lane_idx);
         let reason = transport_fault_reason(error);
-        let event = RawEvent::new(port.now32(), ids::TRANSPORT_FAULT)
+        let event = events::raw_event(port.now32(), ids::TRANSPORT_FAULT)
             .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
                 lane_wire, reason,
             ))

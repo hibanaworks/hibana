@@ -1,0 +1,5 @@
+error[E0599]: no method named `resolver` found for struct `Program<Steps>` in the current scope
+ --> tests/ui/g-resolver-data-send.rs:7:50
+  |
+7 |     let program = g::send::<0, 1, Msg<90, u8>>().resolver::<7>();
+  |                                                  ^^^^^^^^ method not found in `Program<hibana::g::Send<0, 1, Msg<90, u8>>>`

@@ -1,4 +1,4 @@
-use hibana::integration::wire::{CodecError, Payload, WireEncode, WirePayload};
+use hibana::runtime::wire::{CodecError, Payload, WireEncode, WirePayload};
 use hibana::{Endpoint, g};
 
 struct FramePayload([u8; 4]);
@@ -30,7 +30,7 @@ impl WirePayload for FramePayload {
 }
 
 fn branch_decode_is_affine<'r>(endpoint: &mut Endpoint<'r, 0>) {
-    let branch = futures::executor::block_on(endpoint.offer()).unwrap();
+    let branch = futures::executor::block_on(endpoint.offer()).expect("fixture setup");
     let first_decode = branch.decode::<g::Msg<7, FramePayload>>();
     core::hint::black_box(&first_decode);
     let second_decode = branch.decode::<g::Msg<7, FramePayload>>();

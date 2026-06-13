@@ -9,11 +9,10 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::{
     g::{self, Msg},
-    integration::program::{RoleProgram, project},
-    integration::{
-        SessionKit, SessionKitStorage,
+    runtime::program::{RoleProgram, project},
+    runtime::{
+        Config, CounterClock, SessionKit, SessionKitStorage, TapEvent,
         ids::SessionId,
-        runtime::{Config, CounterClock, TapEvent},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -60,20 +59,8 @@ impl WirePayload for InstallPayload {
     }
 }
 
-type TestKit = SessionKit<
-    'static,
-    TestTransport,
-    hibana::integration::runtime::DefaultLabelUniverse,
-    CounterClock,
-    2,
->;
-type TestKitStorage = SessionKitStorage<
-    'static,
-    TestTransport,
-    hibana::integration::runtime::DefaultLabelUniverse,
-    CounterClock,
-    2,
->;
+type TestKit = SessionKit<'static, TestTransport, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -95,10 +82,7 @@ fn run_local_action_flow(
     let actor_program: RoleProgram<0> = project(&program);
     let rv = cluster
         .rendezvous(
-            Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                (tap_buf, slab),
-                CounterClock::new(),
-            ),
+            Config::from_resources((tap_buf, slab), CounterClock::zero()),
             transport.clone(),
         )
         .expect("register rendezvous");

@@ -1,5 +1,0 @@
-error[E0433]: cannot find `cap` in `integration`
- --> tests/ui/public_caps_mask_reintroduction.rs:2:55
-  |
-2 |     let _ = core::mem::size_of::<hibana::integration::cap::CapsMask>();
-  |                                                       ^^^ could not find `cap` in `integration`

@@ -2,7 +2,7 @@ use super::super::{
     CompiledProgramImage, PackedLocalEventRow, RoleLaneImage, RoleLaneScratch, ScopeEvent, ScopeId,
 };
 use crate::global::{
-    compiled::images::{CompiledProgramRef, ControlSemanticKind},
+    compiled::images::{CompiledProgramRef, EventSemanticKind},
     const_dsl::ScopeKind,
     typestate::{
         LocalAtomFacts, LocalConflict, LocalNode, LocalNodeMeta, PackedEventConflict, StateIndex,
@@ -141,20 +141,11 @@ impl PackedLocalEventRow {
         let eff_idx = self.eff_index as usize;
         let atom = program.node_at(eff_idx).atom_data();
         let scope = Self::decode_scope_slot(self.scope_slot);
-        let policy = match program.resident_policy_at(eff_idx) {
-            Some(policy) => policy.with_scope(scope),
+        let resolver = match program.resident_resolver_at(eff_idx) {
+            Some(resolver) => resolver.with_scope(scope),
             None => crate::global::const_dsl::ResolverMode::Static,
         };
-        let control_desc = if atom.is_control {
-            program.resident_control_desc_at(eff_idx)
-        } else {
-            None
-        };
-        let semantic = ControlSemanticKind::from_control_desc(control_desc);
-        let shot = match control_desc {
-            Some(desc) => Some(desc.shot()),
-            None => None,
-        };
+        let semantic = EventSemanticKind::Other;
         let route_arm = match conflict.to_conflict() {
             Some(LocalConflict::RouteArm { arm, .. }) => Some(arm),
             Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
@@ -166,9 +157,8 @@ impl PackedLocalEventRow {
             label: atom.label,
             frame_label: self.frame_label,
             resource: atom.resource,
-            is_control: atom.is_control,
-            shot,
-            policy,
+            is_internal: atom.is_internal,
+            resolver,
             lane: atom.lane,
         };
         let meta = LocalNodeMeta {
@@ -283,10 +273,11 @@ impl RoleLaneScratch {
         let view = program.view();
         let mut idx = start;
         while idx < end && idx < view.len() {
-            if let Some(atom) = view.atom_at(idx) {
-                if atom.to == ROLE && atom.from != ROLE {
-                    return Some(idx);
-                }
+            if let Some(atom) = view.atom_at(idx)
+                && atom.to == ROLE
+                && atom.from != ROLE
+            {
+                return Some(idx);
             }
             idx += 1;
         }

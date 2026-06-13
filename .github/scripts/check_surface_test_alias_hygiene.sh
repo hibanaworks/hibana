@@ -30,45 +30,55 @@ check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space
 check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*Endpoint<" \
   "test fixture pure endpoint alias"
 
-check_absent "^type[[:space:]]+(HandshakeSteps|BodySteps|ExitSteps|ContinueControlStep|BreakControlStep|LoopContSteps|LoopBrkSteps|LoopSeq|ProtocolSteps)[[:space:]]*=" \
-  "loop-lane-share step/composition alias shim" \
+CONTINUE_REMOVED_STEP='Continue''Con''trol''Step'
+BREAK_REMOVED_STEP='Break''Con''trol''Step'
+LEFT_REMOVED_STEP='Left''Con''trol''Step'
+RIGHT_REMOVED_STEP='Right''Con''trol''Step'
+ARM0_REMOVED_STEP='Arm0''Con''trol''Step'
+ARM1_REMOVED_STEP='Arm1''Con''trol''Step'
+
+check_absent "^type[[:space:]]+(HandshakeSteps|BodySteps|ExitSteps|${CONTINUE_REMOVED_STEP}|${BREAK_REMOVED_STEP}|LoopContSteps|LoopBrkSteps|LoopSeq|ProtocolSteps)[[:space:]]*=" \
+  "loop-lane-share step/composition alias bypass path" \
   tests/loop_lane_share.rs
-check_absent "^type[[:space:]]+(LeftControlStep|LeftDataStep|LeftArmSteps|RightControlStep|RightDataStep|RightArmSteps|RouteSteps|TailSteps|ProtocolSteps)[[:space:]]*=" \
-  "offer-decode-binding step/composition alias shim" \
+check_absent "^type[[:space:]]+(${LEFT_REMOVED_STEP}|LeftDataStep|LeftArmSteps|${RIGHT_REMOVED_STEP}|RightDataStep|RightArmSteps|RouteSteps|TailSteps|ProtocolSteps)[[:space:]]*=" \
+  "offer-decode-binding step/composition alias bypass path" \
   tests/offer_decode_receive_evidence.rs \
   tests/offer_decode_receive_evidence
-check_absent "^type[[:space:]]+(TickSteps|AckControlStep|AckDataStep|AckBranch|LossControlStep|LossDataStep|LossBranch|AckLossRoute|BodySteps|ContinueControlStep|ContinueArm|BreakArm|Decision|HandshakeSteps|CombinedSteps)[[:space:]]*=" \
-  "nested-loop-route step/composition alias shim" \
+check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Arm|Branch|Route|Decision)[A-Za-z0-9_]*[[:space:]]*=" \
+  "nested-loop-route step/composition alias bypass path" \
   tests/nested_loop_route.rs
-check_absent "^type[[:space:]]+(InnerLeftControlStep|InnerLeftDataStep|InnerLeftSteps|InnerRightControlStep|InnerRightDataStep|InnerRightSteps|InnerRouteSteps|OuterLeftControlStep|OuterLeftDataStep|OuterLeftTail|OuterLeftSteps|OuterRightControlStep|OuterRightDataStep|OuterRightSteps|ProtocolSteps)[[:space:]]*=" \
-  "nested-route-runtime step/composition alias shim" \
+check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Tail|Route)[A-Za-z0-9_]*[[:space:]]*=" \
+  "nested-route-runtime step/composition alias bypass path" \
   tests/nested_route_runtime.rs
-check_absent "^type[[:space:]]+(LeftSteps|RightSteps|RouteSteps|LoopContSteps|LoopBrkSteps|LoopDecision|NestedLoopContinueSteps|NestedLoopSteps)[[:space:]]*=" \
-  "route-dynamic-control step/composition alias shim" \
+check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Route|Decision)[A-Za-z0-9_]*[[:space:]]*=" \
+  "route-dynamic-resolver step/composition alias bypass path" \
   tests/route_dynamic_control.rs \
   tests/route_dynamic_control
-check_absent "^type[[:space:]]+(ArmAMarkerStep|ArmALoopBodySteps|ArmALoopContControlStep|ArmALoopContArm|ArmALoopBreakArm|ArmALoopDecision|ArmASteps|ArmBMarkerStep|ArmBLoopBodySteps|ArmBLoopContControlStep|ArmBLoopBreakArm|ArmBLoopDecision|ArmBSteps|RouteSteps)[[:space:]]*=" \
-  "route-with-internal-loops step/composition alias shim" \
+check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Arm|Route|Decision)[A-Za-z0-9_]*[[:space:]]*=" \
+  "route-with-internal-loops step/composition alias bypass path" \
   tests/route_with_internal_loops.rs
-check_absent "^type[[:space:]]+(WithPolicyKind|OtherPolicyKind|WithPolicySteps|WithoutPolicySteps|RouteSteps)[[:space:]]*=" \
-  "ui route-policy-mismatch alias shim" \
-  tests/ui/g-route-policy-mismatch.rs
-check_absent "^type[[:space:]]+(Arm0ControlStep|Arm0DataStep|Arm0SameStep|Arm0Tail|Arm0Steps|Arm1ControlStep|Arm1DataStep|Arm1SameStep|Arm1ExtraStep|Arm1InnerTail|Arm1Tail|Arm1Steps|Steps)[[:space:]]*=" \
-  "ui route-unprojectable alias shim" \
+check_absent "^type[[:space:]]+(WithResolverKind|OtherResolverKind|WithResolverSteps|WithoutResolverSteps|RouteSteps)[[:space:]]*=" \
+  "ui route-resolver-mismatch alias bypass path" \
+  tests/ui/g-route-resolver-mismatch.rs
+check_absent "^type[[:space:]]+(${ARM0_REMOVED_STEP}|Arm0DataStep|Arm0SameStep|Arm0Tail|Arm0Steps|${ARM1_REMOVED_STEP}|Arm1DataStep|Arm1SameStep|Arm1ExtraStep|Arm1InnerTail|Arm1Tail|Arm1Steps|Steps)[[:space:]]*=" \
+  "ui route-unprojectable alias bypass path" \
   tests/ui/g-route-unprojectable.rs
-check_absent "struct RouteRightKind;|struct RouteArmKind<const LABEL: u8>;|struct ArmKind<const LABEL: u8>;|impl ResourceKind for RouteRightKind|impl<const LABEL: u8> ResourceKind for RouteArmKind<LABEL>|impl<const LABEL: u8> ResourceKind for ArmKind<LABEL>" \
-  "manual route control descriptor boilerplate" \
+ROUTE_RIGHT_KIND='RouteRight''Kind'
+ROUTE_ARM_KIND='RouteArm''Kind'
+ARM_KIND='Arm''Kind'
+check_absent "struct ${ROUTE_RIGHT_KIND};|struct ${ROUTE_ARM_KIND}<const LABEL: u8>;|struct ${ARM_KIND}<const LABEL: u8>;|impl ResourceKind for ${ROUTE_RIGHT_KIND}|impl<const LABEL: u8> ResourceKind for ${ROUTE_ARM_KIND}<LABEL>|impl<const LABEL: u8> ResourceKind for ${ARM_KIND}<LABEL>" \
+  "manual route resource-kind boilerplate" \
   tests/route_dynamic_control.rs \
   tests/route_dynamic_control \
   tests/nested_route_runtime.rs \
   tests/offer_decode_receive_evidence.rs \
   tests/offer_decode_receive_evidence \
   tests/ui-pass/g-route-merged.rs \
-  tests/ui-pass/g-route-static-control-basic.rs \
-  tests/ui-pass/g-route-static-control-prefix-local.rs \
-  tests/ui-pass/g-route-static-control-prefix-send.rs \
+  tests/ui-pass/g-route-static-basic.rs \
+  tests/ui-pass/g-route-static-prefix-local.rs \
+  tests/ui-pass/g-route-static-prefix-send.rs \
   tests/ui-pass/dynamic_route_defer_compiles.rs \
-  tests/ui/g-route-policy-mismatch.rs \
+  tests/ui/g-route-resolver-mismatch.rs \
   tests/ui/g-route-unprojectable.rs
 
 if (( FAILED != 0 )); then

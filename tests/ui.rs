@@ -51,11 +51,9 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-par-same-role-auto-lanes.rs");
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
     t.pass("tests/ui-pass/g-route-merged.rs");
-    t.pass("tests/ui-pass/g-route-static-control-basic.rs");
-    t.pass("tests/ui-pass/g-control-local-self-send.rs");
-    t.pass("tests/ui-pass/g-control-wire-cross-role.rs");
-    t.pass("tests/ui-pass/g-route-static-control-prefix-local.rs");
-    t.pass("tests/ui-pass/g-route-static-control-prefix-send.rs");
+    t.pass("tests/ui-pass/g-route-static-basic.rs");
+    t.pass("tests/ui-pass/g-route-static-prefix-local.rs");
+    t.pass("tests/ui-pass/g-route-static-prefix-send.rs");
     t.pass("tests/ui-pass/local_let_program_inference.rs");
     t.pass("tests/ui-pass/local_let_prefix_facade_composition.rs");
     t.pass("tests/ui-pass/local_project_without_public_steps.rs");
@@ -64,12 +62,9 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/g-generic-role-ids.rs");
 
-    t.compile_fail("tests/ui/const_program_placeholder.rs");
-    t.compile_fail("tests/ui/static_program_placeholder.rs");
     t.compile_fail("tests/ui/public_step_name_import.rs");
-    t.compile_fail("tests/ui/public_compile_link_reintroduction.rs");
-    t.compile_fail("tests/ui/public_fragment_reintroduction.rs");
-    t.compile_fail("tests/ui/public_caps_mask_reintroduction.rs");
+    t.compile_fail("tests/ui/public_compile_link_boundary.rs");
+    t.compile_fail("tests/ui/public_fragment_boundary.rs");
     t.compile_fail("tests/ui/port-open-constructor.rs");
     t.compile_fail("tests/ui/decode-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/recv-borrow-endpoint-alias.rs");

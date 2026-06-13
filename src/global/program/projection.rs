@@ -7,16 +7,16 @@ pub(crate) mod seal {
 /// Bound for hibana choreography values accepted by `project(&value)`.
 ///
 /// This is a sealed projection contract for generated protocol packages,
-/// host harnesses, small integration facades, or other composition layers that
+/// host harnesses, small runtime facades, or other composition layers that
 /// need to return `impl Projectable` without naming the internal
-/// `hibana::g::Program<_>` step-list type. Ordinary integration code should
+/// `hibana::g::Program<_>` step-list type. Ordinary runtime code should
 /// build a local `let program = ...` and call the same
-/// `integration::program::project(&program)` entry. Projection authority and
+/// `runtime::program::project(&program)` entry. Projection authority and
 /// metadata visitation stay behind Hibana's projection owner; this trait is
 /// only the sealed choreography bound.
 ///
-/// Projection is independent of the runtime label-universe type. Keep this
-/// bound parameter-free so facade APIs do not make users write a universe
+/// Projection is independent of runtime storage/configuration types. Keep this
+/// bound parameter-free so facade APIs do not make users write a runtime
 /// parameter just to hide a choreography term.
 ///
 /// The trait is not an extension point. Return hibana choreography values behind

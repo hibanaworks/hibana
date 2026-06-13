@@ -1,9 +1,8 @@
 use super::{
-    CompiledProgramView, ControlDesc, EffAtom, MAX_COMPILED_IMAGE_NODES,
-    MAX_COMPILED_PROGRAM_CONTROLS, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
-    MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS, ProgramImageData,
-    ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData, ResolverMode,
-    RoleCompiledCounts, ScopeMarker,
+    CompiledProgramView, EffAtom, MAX_COMPILED_IMAGE_NODES, MAX_COMPILED_PROGRAM_RESOURCES,
+    MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS,
+    ProgramImageData, ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData,
+    ResolverMode, RoleCompiledCounts, ScopeMarker,
 };
 
 impl<'a> CompiledProgramView<'a> {
@@ -55,34 +54,16 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_policy_at(&self, offset: usize) -> Option<ResolverMode> {
+    pub(crate) const fn resident_resolver_at(&self, offset: usize) -> Option<ResolverMode> {
         if offset < self.len {
             let (segment, _) = Self::segment_slot(offset);
             let segment = self.segments[segment];
-            let mut row_idx = segment.policy_row_start as usize;
-            let end = row_idx + segment.policy_row_len as usize;
+            let mut row_idx = segment.resolver_row_start as usize;
+            let end = row_idx + segment.resolver_row_len as usize;
             while row_idx < end {
-                let row = self.policy_rows[row_idx];
+                let row = self.resolver_rows[row_idx];
                 if row.offset as usize == offset {
-                    return Some(row.policy);
-                }
-                row_idx += 1;
-            }
-        }
-        None
-    }
-
-    #[inline(always)]
-    pub(crate) const fn resident_control_desc_at(&self, offset: usize) -> Option<ControlDesc> {
-        if offset < self.len {
-            let (segment, _) = Self::segment_slot(offset);
-            let segment = self.segments[segment];
-            let mut row_idx = segment.control_desc_row_start as usize;
-            let end = row_idx + segment.control_desc_row_len as usize;
-            while row_idx < end {
-                let row = self.control_desc_rows[row_idx];
-                if row.offset as usize == offset {
-                    return row.desc;
+                    return Some(row.resolver);
                 }
                 row_idx += 1;
             }
@@ -103,14 +84,8 @@ impl ProgramImageValidationData {
             scope_markers: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
                 core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
             },
-            policy_rows: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
-                core::slice::from_raw_parts(self.policy_rows.as_ptr(), self.policy_row_len)
-            },
-            control_desc_rows: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
-                core::slice::from_raw_parts(
-                    self.control_desc_rows.as_ptr(),
-                    self.control_desc_row_len,
-                )
+            resolver_rows: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
+                core::slice::from_raw_parts(self.resolver_rows.as_ptr(), self.resolver_row_len)
             },
         }
     }
@@ -125,19 +100,15 @@ impl ProgramImageData {
         if self.compiled_program_counts.tap_events > MAX_COMPILED_PROGRAM_TAP_EVENTS {
             panic!("CompiledProgram: MAX_TAP_EVENTS exceeded");
         }
-        if self.compiled_program_counts.dynamic_policy_sites > MAX_COMPILED_IMAGE_NODES {
-            panic!("CompiledProgram: MAX_DYNAMIC_POLICY_SITES exceeded");
+        if self.compiled_program_counts.dynamic_resolver_sites > MAX_COMPILED_IMAGE_NODES {
+            panic!("CompiledProgram: MAX_DYNAMIC_RESOLVER_SITES exceeded");
         }
-        if self.compiled_program_counts.route_controls > MAX_COMPILED_IMAGE_NODES {
-            panic!("CompiledProgram: MAX_ROUTE_CONTROLS exceeded");
-        }
-        if self.compiled_program_counts.controls > MAX_COMPILED_PROGRAM_CONTROLS {
-            panic!("CompiledProgram: MAX_CONTROLS exceeded");
+        if self.compiled_program_counts.route_resolvers > MAX_COMPILED_IMAGE_NODES {
+            panic!("CompiledProgram: MAX_ROUTE_RESOLVERS exceeded");
         }
         if scope_marker_len > MAX_COMPILED_PROGRAM_SCOPES {
             panic!("CompiledProgram: MAX_SCOPES exceeded");
         }
-        self.lease_budget.validate();
     }
 }
 
@@ -152,7 +123,6 @@ impl ProgramRoleImageData {
             max_route_stack_depth: program.max_route_stack_depth as usize,
             local_step_count: role.local_step_count as usize,
             route_scope_count: program.route_scope_count as usize,
-            passive_linger_route_scope_count: role.passive_linger_route_scope_count as usize,
             active_lane_count: role.active_lane_count as usize,
             endpoint_lane_slot_count: role.endpoint_lane_slot_count as usize,
             logical_lane_count: role.logical_lane_count as usize,

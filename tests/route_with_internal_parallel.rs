@@ -8,17 +8,12 @@ use core::cell::UnsafeCell;
 
 use common::TestTransport;
 use hibana::g::{self, Msg};
-use hibana::integration::program::{RoleProgram, project};
-use hibana::integration::{
-    SessionKitStorage,
-    ids::SessionId,
-    runtime::{Config, CounterClock, DefaultLabelUniverse},
-};
+use hibana::runtime::program::{RoleProgram, project};
+use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
 use runtime_support::with_fixture;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage =
-    SessionKitStorage<'static, TestTransport, DefaultLabelUniverse, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
 
 const ROUTE_LEFT: u8 = 145;
 const ROUTE_RIGHT: u8 = 146;
@@ -83,10 +78,7 @@ fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
 fn selected_route_arm_materializes_lanes_inside_parallel_body() {
     with_fixture(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::<DefaultLabelUniverse, _>::from_resources(
-                (tap_buf, slab),
-                CounterClock::new(),
-            );
+            let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
             let transport = TestTransport::default();
             let rv = cluster
                 .rendezvous(config, transport)

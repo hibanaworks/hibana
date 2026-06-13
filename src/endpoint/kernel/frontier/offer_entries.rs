@@ -98,14 +98,14 @@ impl RootFrontierState {
 pub(crate) struct FrontierObservationMetaSlot {
     pub(crate) entry_summary_fingerprint: u8,
     pub(crate) scope_generation: u16,
-    pub(crate) route_change_epoch: u16,
+    pub(crate) route_change_generation: u16,
 }
 
 impl FrontierObservationMetaSlot {
     pub(crate) const EMPTY: Self = Self {
         entry_summary_fingerprint: 0,
         scope_generation: 0,
-        route_change_epoch: 0,
+        route_change_generation: 0,
     };
 }
 

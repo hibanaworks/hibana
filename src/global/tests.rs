@@ -1,6 +1,6 @@
 use super::role_program::RoleProgram;
-use super::*;
 use crate::g::Program;
+use crate::global::compiled::images::PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE;
 use core::mem::size_of;
 
 #[test]
@@ -15,7 +15,7 @@ fn descriptor_first_size_gates_hold() {
         "RoleProgram<ROLE> must stay compact"
     );
     assert!(
-        size_of::<ControlDesc>() <= 16,
-        "ControlDesc must stay within the packed descriptor budget"
+        PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE <= 12,
+        "route resolver rows must stay within the packed program image budget"
     );
 }

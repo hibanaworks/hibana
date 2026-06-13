@@ -3,30 +3,22 @@
 use core::task::Waker;
 
 use super::{
-    core::{
-        CursorEndpoint, EndpointRevocationTerminal, MaterializedRouteBranch, PublicActiveOp,
-        SendInit, SendState, StagedPayload,
-    },
+    core::{CursorEndpoint, MaterializedRouteBranch, PublicActiveOp, SendInit, SendState},
     lane_port,
     offer::OfferState,
 };
 use crate::{
-    control::cap::mint::{EpochTable, MintConfigMarker},
-    control::types::Lane,
     endpoint::{RecvError, SendError},
     rendezvous::SessionFaultKind,
-    runtime::{config::Clock, consts::LabelUniverse},
+    runtime_core::config::Clock,
+    session::types::Lane,
     transport::Transport,
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn public_op_busy_fault(&mut self) {
@@ -37,45 +29,33 @@ where
     #[inline]
     #[must_use]
     pub(in crate::endpoint::kernel) fn start_public_op(&mut self, op: PublicActiveOp) -> bool {
-        match self.public_active_op {
-            PublicActiveOp::Idle => {
-                self.public_active_op = op;
-                true
-            }
-            _ => {
-                self.public_op_busy_fault();
-                false
-            }
+        if self.public_active_op == PublicActiveOp::Idle {
+            self.public_active_op = op;
+            true
+        } else {
+            self.public_op_busy_fault();
+            false
         }
     }
 
     #[inline]
     #[must_use]
     fn transition_public_op(&mut self, from: PublicActiveOp, to: PublicActiveOp) -> bool {
-        match self.public_active_op {
-            current if current == from => {
-                self.public_active_op = to;
-                true
-            }
-            PublicActiveOp::Idle => {
-                self.public_op_busy_fault();
-                false
-            }
-            _ => {
-                self.public_op_busy_fault();
-                false
-            }
+        if self.public_active_op == from {
+            self.public_active_op = to;
+            true
+        } else {
+            self.public_op_busy_fault();
+            false
         }
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn finish_public_op(&mut self, op: PublicActiveOp) {
-        match self.public_active_op {
-            current if current == op => {
-                self.public_active_op = PublicActiveOp::Idle;
-            }
-            PublicActiveOp::Poisoned => {}
-            _ => self.public_op_busy_fault(),
+        if self.public_active_op == op {
+            self.public_active_op = PublicActiveOp::Idle;
+        } else if self.public_active_op != PublicActiveOp::Poisoned {
+            self.public_op_busy_fault();
         }
     }
 
@@ -96,14 +76,12 @@ where
         &mut self,
         branch: MaterializedRouteBranch<'r>,
     ) {
-        match branch.staged_payload {
-            Some(StagedPayload::Transport { frame }) => {
-                let port = self.port_for_lane(frame.lane_idx());
-                if lane_port::requeue_recv_frame(port, frame).is_err() {
-                    self.poison_session(SessionFaultKind::TransportClosed);
-                }
+        if let Some(staged_payload) = branch.staged_payload {
+            let frame = staged_payload.into_frame();
+            let port = self.port_for_lane(frame.lane_idx());
+            if lane_port::requeue_recv_frame(port, frame).is_err() {
+                self.poison_session(SessionFaultKind::TransportClosed);
             }
-            None => {}
         }
     }
 
@@ -120,10 +98,10 @@ where
         &mut self,
         state: &mut OfferState<'r>,
     ) {
-        let rollback = state.take_rollback_items();
+        let detached = state.take_detached_ingress();
         for payload in [
-            rollback.carried_transport_payload,
-            rollback.stage_transport_payload,
+            detached.carried_transport_payload,
+            detached.stage_transport_payload,
         ]
         .into_iter()
         .flatten()
@@ -151,13 +129,6 @@ where
         }
         self.public_offer_state = OfferState::new();
         true
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn revoke_clear_public_offer_state(&mut self) {
-        self.clear_public_op_if_current(PublicActiveOp::Offer);
-        let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
-        state.discard_terminal();
     }
 
     #[inline]
@@ -200,29 +171,10 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn revoke_drain_public_send_terminal(
-        &mut self,
-        terminal: &mut EndpointRevocationTerminal<'r>,
-    ) {
-        if let SendState::Sending { pending, .. } = &mut self.public_send_state
-            && let Some(plan) = pending.commit_plan.take()
-        {
-            terminal.set_send_plan(plan);
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn revoke_finish_public_send_state(&mut self) {
-        self.clear_public_op_if_current(PublicActiveOp::Send);
-        let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
-        self.cancel_detached_send_state(state);
-    }
-
-    #[inline]
     fn cancel_detached_send_state(&mut self, state: SendState<'r>) {
         if let SendState::Sending { mut pending, .. } = state {
             let lane_idx = pending.lane_idx();
-            self.rollback_send_commit_plan(pending.commit_plan.take());
+            pending.commit_plan = None;
             let port = self.port_for_lane(lane_idx);
             lane_port::cancel_send_outgoing(&mut pending.transport, port);
         }
@@ -248,12 +200,6 @@ where
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_recv_state(&mut self) {
         self.clear_session_waiter();
-        self.clear_public_op_if_current(PublicActiveOp::Recv);
-        self.public_recv_state = super::recv::RecvState::new();
-    }
-
-    #[inline]
-    pub(in crate::endpoint) fn revoke_clear_public_recv_state(&mut self) {
         self.clear_public_op_if_current(PublicActiveOp::Recv);
         self.public_recv_state = super::recv::RecvState::new();
     }
@@ -299,20 +245,10 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn revoke_clear_public_decode_state(&mut self) {
-        self.clear_public_op_if_current(PublicActiveOp::Decode);
-        let mut state = core::mem::replace(
-            &mut self.public_decode_state,
-            super::decode::DecodeState::empty(),
-        );
-        state.discard_terminal();
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn session_fault(&self) -> Option<SessionFaultKind> {
-        self.control
+        self.session
             .cluster()
-            .and_then(|cluster| cluster.session_fault(self.public_rv, self.sid))
+            .session_fault(self.public_rv, self.sid)
     }
 
     #[inline]
@@ -320,10 +256,9 @@ where
         &self,
         cause: SessionFaultKind,
     ) -> SessionFaultKind {
-        self.control
+        self.session
             .cluster()
-            .map(|cluster| cluster.poison_session(self.public_rv, self.sid, cause))
-            .unwrap_or(cause)
+            .poison_session(self.public_rv, self.sid, cause)
     }
 
     #[inline]
@@ -334,17 +269,17 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn register_session_waiter(&self, waker: &Waker) {
         let lane = self.primary_physical_lane();
-        if let Some(cluster) = self.control.cluster() {
-            cluster.register_session_waiter(self.public_rv, self.sid, lane, waker);
-        }
+        self.session
+            .cluster()
+            .register_session_waiter(self.public_rv, self.sid, lane, waker);
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn clear_session_waiter(&self) {
         let lane = self.primary_physical_lane();
-        if let Some(cluster) = self.control.cluster() {
-            cluster.clear_session_waiter(self.public_rv, self.sid, lane);
-        }
+        self.session
+            .cluster()
+            .clear_session_waiter(self.public_rv, self.sid, lane);
     }
 
     #[inline]
@@ -354,9 +289,9 @@ where
             RecvError::SessionFault(kind) => *kind,
             RecvError::Codec(_) => SessionFaultKind::DecodeFailed,
             RecvError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
-            RecvError::LabelMismatch { .. }
-            | RecvError::PeerMismatch { .. }
-            | RecvError::PolicyAbort { .. } => SessionFaultKind::ProtocolViolation,
+            RecvError::LabelMismatch { .. } | RecvError::ResolverReject { .. } => {
+                SessionFaultKind::ProtocolViolation
+            }
         };
         self.poison_session(cause)
     }
@@ -368,7 +303,7 @@ where
             SendError::SessionFault(kind) => *kind,
             SendError::Codec(_)
             | SendError::LabelMismatch { .. }
-            | SendError::PolicyAbort { .. } => SessionFaultKind::ProtocolViolation,
+            | SendError::ResolverReject { .. } => SessionFaultKind::ProtocolViolation,
             SendError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
         };
         self.poison_session(cause)

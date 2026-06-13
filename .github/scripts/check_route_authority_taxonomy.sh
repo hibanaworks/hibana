@@ -14,7 +14,7 @@ authority = root / "src/endpoint/kernel/authority.rs"
 source = authority.read_text()
 
 if "RouteAuthoritySource" in source:
-    print("route authority taxonomy violation: source taxonomy enum must stay deleted", file=sys.stderr)
+    print("route authority taxonomy violation: source taxonomy enum must stay forbidden", file=sys.stderr)
     sys.exit(1)
 
 match = re.search(r"enum\s+RouteArmToken\s*\{(?P<body>.*?)\}", source, re.S)

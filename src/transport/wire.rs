@@ -12,7 +12,7 @@
 use core::{fmt, ops};
 
 const ERR_PAYLOAD_LEN: &str = "payload length";
-const ERR_SYNTHETIC_PAYLOAD: &str = "synthetic payload";
+const ERR_ZERO_PAYLOAD: &str = "zero payload";
 const ERR_BOOLEAN_PAYLOAD: &str = "boolean payload";
 
 /// Errors surfaced by wire encode/decode helpers.
@@ -46,10 +46,9 @@ pub trait WireEncode {
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 }
 
-pub(crate) type ErasedEncoder = unsafe fn(*const (), &mut [u8]) -> Result<usize, CodecError>;
-
 #[inline(always)]
-pub(crate) const fn erased_encoder<P: WireEncode>() -> ErasedEncoder {
+pub(crate) const fn erased_encoder<P: WireEncode>()
+-> unsafe fn(*const (), &mut [u8]) -> Result<usize, CodecError> {
     encode_erased::<P>
 }
 
@@ -78,9 +77,9 @@ pub trait WirePayload: WireEncode {
 
     /// Validate payload-local bytes before endpoint progress can commit.
     ///
-    /// Checks that require choreography descriptor context, endpoint role,
-    /// session/lane identity, or control epoch are owned by the endpoint
-    /// kernel. Those contextual checks run after payload-local validation and
+    /// Checks that require choreography descriptor context, endpoint role, or
+    /// session/lane identity are owned by the endpoint kernel. Those contextual
+    /// checks run after payload-local validation and
     /// before receive/decode progress commits.
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;
 
@@ -101,8 +100,8 @@ pub trait WirePayload: WireEncode {
     /// Provide the canonical zero payload used for non-wire local route
     /// materialization. Types that cannot represent such a payload keep the
     /// default fail-closed implementation.
-    fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        Err(CodecError::Invalid(ERR_SYNTHETIC_PAYLOAD))
+    fn zero_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        Err(CodecError::Invalid(ERR_ZERO_PAYLOAD))
     }
 }
 
@@ -127,7 +126,7 @@ impl WirePayload for () {
 
     fn decode_validated_payload<'a>(_input: Payload<'a>) -> Self::Decoded<'a> {}
 
-    fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+    fn zero_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
         Ok(Payload::new(&[]))
     }
 }
@@ -162,7 +161,7 @@ impl WirePayload for bool {
         input.as_bytes()[0] != 0
     }
 
-    fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
         if scratch.is_empty() {
             return Err(CodecError::Truncated);
         }
@@ -201,7 +200,7 @@ macro_rules! impl_wire_for_int {
                 <$ty>::from_be_bytes(buf)
             }
 
-            fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+            fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
                 if scratch.len() < $len {
                     return Err(CodecError::Truncated);
                 }
@@ -250,7 +249,7 @@ impl WirePayload for &[u8] {
         input.as_bytes()
     }
 
-    fn synthetic_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+    fn zero_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
         Ok(Payload::new(&[]))
     }
 }
@@ -285,7 +284,7 @@ impl<const N: usize> WirePayload for [u8; N] {
         buf
     }
 
-    fn synthetic_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
         if scratch.len() < N {
             return Err(CodecError::Truncated);
         }
@@ -347,30 +346,30 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_payloads_are_canonical_for_builtin_fixed_types() {
+    fn zero_payloads_are_canonical_for_builtin_fixed_types() {
         let mut scratch = [0xFF; 8];
 
         assert_eq!(
-            <() as WirePayload>::synthetic_payload(&mut scratch)
-                .expect("unit synthetic payload")
+            <() as WirePayload>::zero_payload(&mut scratch)
+                .expect("unit zero payload")
                 .as_bytes(),
             &[] as &[u8]
         );
         assert_eq!(
-            <u32 as WirePayload>::synthetic_payload(&mut scratch)
-                .expect("u32 synthetic payload")
+            <u32 as WirePayload>::zero_payload(&mut scratch)
+                .expect("u32 zero payload")
                 .as_bytes(),
             &[0, 0, 0, 0]
         );
         assert_eq!(
-            <[u8; 3] as WirePayload>::synthetic_payload(&mut scratch)
-                .expect("array synthetic payload")
+            <[u8; 3] as WirePayload>::zero_payload(&mut scratch)
+                .expect("array zero payload")
                 .as_bytes(),
             &[0, 0, 0]
         );
         assert_eq!(
-            <bool as WirePayload>::synthetic_payload(&mut scratch)
-                .expect("bool synthetic payload")
+            <bool as WirePayload>::zero_payload(&mut scratch)
+                .expect("bool zero payload")
                 .as_bytes(),
             &[0]
         );
@@ -379,9 +378,9 @@ mod tests {
 
 /// Wire-level flags for frames (no external crates).
 ///
-/// Only transport fragmentation metadata remains here; control-plane signalling
-/// stays on typed control messages so that the data plane observes a uniform
-/// message model.
+/// Only transport fragmentation metadata remains here; endpoint-internal events
+/// stay outside the frame flag domain so the data plane observes a uniform
+/// payload model.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
 #[repr(transparent)]
 pub(crate) struct FrameFlags(u8);

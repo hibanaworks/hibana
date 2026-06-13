@@ -1,7 +1,6 @@
 use super::{
-    ControlMarker, ControlScopeKind, ControlSpecMarker, EffList, EffStruct, MAX_CAPACITY,
-    MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, MessageRuntime, PolicyMarker, ResolverMode,
-    ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary, StaticControlDesc, eff,
+    EffList, EffStruct, MAX_CAPACITY, MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, ResolverMarker,
+    ResolverMode, ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary, eff,
 };
 impl Default for EffList {
     fn default() -> Self {
@@ -19,12 +18,8 @@ impl EffList {
             scope_budget: 0,
             scope_markers: [ScopeMarker::empty(); MAX_CAPACITY],
             scope_marker_len: 0,
-            control_markers: [ControlMarker::empty(); MAX_CAPACITY],
-            control_marker_len: 0,
-            policy_markers: [PolicyMarker::empty(); MAX_CAPACITY],
-            policy_marker_len: 0,
-            control_specs: [ControlSpecMarker::empty(); MAX_CAPACITY],
-            control_spec_len: 0,
+            resolver_markers: [ResolverMarker::empty(); MAX_CAPACITY],
+            resolver_marker_len: 0,
         }
     }
 
@@ -159,17 +154,17 @@ impl EffList {
             }
             idx += 1;
         }
-        let mut policy_idx = 0usize;
-        while policy_idx < self.policy_marker_len {
-            let marker = self.policy_markers[policy_idx];
-            let mut policy = marker.policy;
-            let scope = policy.scope();
+        let mut resolver_idx = 0usize;
+        while resolver_idx < self.resolver_marker_len {
+            let marker = self.resolver_markers[resolver_idx];
+            let mut resolver = marker.resolver;
+            let scope = resolver.scope();
             if !scope.is_none() {
                 let rebased = scope.add_ordinal(offset);
-                policy = policy.with_scope(rebased);
+                resolver = resolver.with_scope(rebased);
             }
-            self.policy_markers[policy_idx] = PolicyMarker::new(marker.offset, policy);
-            policy_idx += 1;
+            self.resolver_markers[resolver_idx] = ResolverMarker::new(marker.offset, resolver);
+            resolver_idx += 1;
         }
         self.scope_budget = max;
         self
@@ -233,29 +228,11 @@ impl EffList {
             );
             scope_idx += 1;
         }
-        let mut ctrl_idx = 0;
-        while ctrl_idx < other.control_marker_len {
-            let marker = other.control_markers[ctrl_idx];
-            self = self.push_control_marker(
-                base + marker.offset as usize,
-                marker.scope_kind,
-                marker.tap_id,
-            );
-            ctrl_idx += 1;
-        }
-        let mut policy_idx = 0;
-        while policy_idx < other.policy_marker_len {
-            let marker = other.policy_markers[policy_idx];
-            self = self.push_policy(base + marker.offset, marker.policy);
-            policy_idx += 1;
-        }
-        let mut spec_idx = 0;
-        while spec_idx < other.control_spec_len {
-            let spec = other.control_specs[spec_idx];
-            if let Some(control_spec) = spec.spec {
-                self = self.push_control_spec(base + spec.offset, control_spec);
-            }
-            spec_idx += 1;
+        let mut resolver_idx = 0;
+        while resolver_idx < other.resolver_marker_len {
+            let marker = other.resolver_markers[resolver_idx];
+            self = self.push_resolver(base + marker.offset, marker.resolver);
+            resolver_idx += 1;
         }
         self
     }
@@ -367,30 +344,26 @@ impl EffList {
         self
     }
 
-    pub const fn push_control_marker(
-        mut self,
-        offset: usize,
-        scope_kind: ControlScopeKind,
-        tap_id: u16,
-    ) -> Self {
-        if self.control_marker_len >= MAX_CAPACITY {
-            panic!("EffList control marker capacity exceeded");
-        }
-        let segment = Self::summary_segment_for_effect_indexed_offset(offset);
-        self.segment_summaries[segment] = self.segment_summaries[segment].with_control_marker();
-        self.control_markers[self.control_marker_len] = ControlMarker {
-            offset: ControlMarker::encode_offset(offset),
-            scope_kind,
-            tap_id,
-        };
-        self.control_marker_len += 1;
-        self
-    }
-
     pub const fn with_scope(self, scope: ScopeId) -> Self {
         let len = self.len;
         let scoped = self.push_scope_marker_outer_enter(0, scope);
         scoped.push_scope_marker(len, scope, ScopeEvent::Exit)
+    }
+
+    pub(crate) const fn mark_route_scopes_linger(mut self) -> Self {
+        let mut marker_idx = 0usize;
+        while marker_idx < self.scope_marker_len {
+            let marker = self.scope_markers[marker_idx];
+            if matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.event, ScopeEvent::Enter)
+            {
+                let mut updated = marker;
+                updated.linger = true;
+                self.scope_markers[marker_idx] = updated;
+            }
+            marker_idx += 1;
+        }
+        self
     }
 
     /// Wrap the effect list with a Route scope that has controller role information.
@@ -410,74 +383,37 @@ impl EffList {
         self.update_scope_markers(scope, None, Some(controller_role))
     }
 
-    pub(crate) const fn with_scope_linger(self, scope: ScopeId, linger: bool) -> Self {
-        self.update_scope_markers(scope, Some(linger), None)
-    }
-
-    pub const fn scope_has_linger(&self, scope: ScopeId) -> bool {
-        if scope.is_none() {
-            return false;
-        }
-        let mut marker_idx = 0usize;
-        while marker_idx < self.scope_marker_len {
-            let marker = self.scope_markers[marker_idx];
-            if marker.scope_id.raw() == scope.raw() && marker.linger {
-                return true;
-            }
-            marker_idx += 1;
-        }
-        false
-    }
-
-    pub(crate) const fn with_control(self, scope_kind: ControlScopeKind, tap_id: u16) -> Self {
-        self.push_control_marker(0, scope_kind, tap_id)
-    }
-
-    pub(crate) const fn with_policy(self, policy: ResolverMode) -> Self {
-        if self.len == 0 {
-            panic!("EffList is empty");
-        }
-        self.push_policy(self.len - 1, policy)
-    }
-
-    pub(crate) const fn with_control_spec(self, spec: StaticControlDesc) -> Self {
-        if self.len == 0 {
-            panic!("EffList is empty");
-        }
-        self.push_control_spec(self.len - 1, spec)
-    }
-
-    pub(crate) const fn push_policy(mut self, offset: usize, policy: ResolverMode) -> Self {
+    pub(crate) const fn push_resolver(mut self, offset: usize, resolver: ResolverMode) -> Self {
         if offset > self.len || offset > MAX_CAPACITY {
-            panic!("EffList policy marker offset out of bounds");
+            panic!("EffList resolver marker offset out of bounds");
         }
         let mut idx = 0usize;
-        while idx < self.policy_marker_len {
-            if self.policy_markers[idx].offset == offset {
-                self.policy_markers[idx] = PolicyMarker::new(offset, policy);
+        while idx < self.resolver_marker_len {
+            if self.resolver_markers[idx].offset == offset {
+                self.resolver_markers[idx] = ResolverMarker::new(offset, resolver);
                 return self;
             }
             idx += 1;
         }
-        if self.policy_marker_len >= MAX_CAPACITY {
-            panic!("EffList policy marker capacity exceeded");
+        if self.resolver_marker_len >= MAX_CAPACITY {
+            panic!("EffList resolver marker capacity exceeded");
         }
         let segment = Self::summary_segment_for_effect_indexed_offset(offset);
-        self.segment_summaries[segment] = self.segment_summaries[segment].with_policy_marker();
-        self.policy_markers[self.policy_marker_len] = PolicyMarker::new(offset, policy);
-        self.policy_marker_len += 1;
+        self.segment_summaries[segment] = self.segment_summaries[segment].with_resolver_marker();
+        self.resolver_markers[self.resolver_marker_len] = ResolverMarker::new(offset, resolver);
+        self.resolver_marker_len += 1;
         self
     }
 
-    pub(crate) const fn policy_at(&self, offset: usize) -> Option<ResolverMode> {
+    pub(crate) const fn resolver_at(&self, offset: usize) -> Option<ResolverMode> {
         if offset >= MAX_CAPACITY {
             crate::invariant();
         }
         let mut idx = 0usize;
-        while idx < self.policy_marker_len {
-            let marker = self.policy_markers[idx];
+        while idx < self.resolver_marker_len {
+            let marker = self.resolver_markers[idx];
             if marker.offset == offset {
-                return Some(marker.policy);
+                return Some(marker.resolver);
             }
             idx += 1;
         }
@@ -548,76 +484,31 @@ impl EffList {
         self
     }
 
-    pub(crate) const fn policy_with_scope(&self, offset: usize) -> Option<(ResolverMode, ScopeId)> {
-        match self.policy_at(offset) {
-            Some(policy) => {
-                let baked_scope = policy.scope();
+    pub(crate) const fn resolver_with_scope(
+        &self,
+        offset: usize,
+    ) -> Option<(ResolverMode, ScopeId)> {
+        match self.resolver_at(offset) {
+            Some(resolver) => {
+                let baked_scope = resolver.scope();
                 let scope = if baked_scope.is_none() {
                     match self.scope_id_for_offset(offset) {
                         Some(scope) => scope,
-                        None if policy.is_dynamic() => crate::invariant(),
+                        None if resolver.is_dynamic() => crate::invariant(),
                         None => baked_scope,
                     }
                 } else {
                     baked_scope
                 };
-                Some((policy.with_scope(scope), scope))
+                Some((resolver.with_scope(scope), scope))
             }
             None => None,
         }
     }
 
-    pub(crate) const fn push_control_spec(
-        mut self,
-        offset: usize,
-        spec: StaticControlDesc,
-    ) -> Self {
-        if offset >= MAX_CAPACITY {
-            panic!("EffList control spec offset out of bounds");
-        }
-        let mut idx = 0usize;
-        while idx < self.control_spec_len {
-            if self.control_specs[idx].offset == offset {
-                self.control_specs[idx] = ControlSpecMarker::new(offset, spec);
-                return self;
-            }
-            idx += 1;
-        }
-        if self.control_spec_len >= MAX_CAPACITY {
-            panic!("EffList control spec capacity exceeded");
-        }
-        let segment = Self::summary_segment_for_effect_indexed_offset(offset);
-        self.segment_summaries[segment] = self.segment_summaries[segment].with_control_spec();
-        self.control_specs[self.control_spec_len] = ControlSpecMarker::new(offset, spec);
-        self.control_spec_len += 1;
-        self
-    }
-
-    pub(crate) const fn control_spec_at(&self, offset: usize) -> Option<StaticControlDesc> {
-        if offset >= MAX_CAPACITY {
-            return None;
-        }
-        let mut idx = 0usize;
-        while idx < self.control_spec_len {
-            let marker = self.control_specs[idx];
-            if marker.offset == offset {
-                return marker.spec;
-            }
-            idx += 1;
-        }
-        None
-    }
-
     pub const fn scope_markers(&self) -> &[ScopeMarker] {
         /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
         unsafe { core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len) }
-    }
-
-    pub const fn control_markers(&self) -> &[ControlMarker] {
-        /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
-        unsafe {
-            core::slice::from_raw_parts(self.control_markers.as_ptr(), self.control_marker_len)
-        }
     }
 }
 
@@ -629,23 +520,13 @@ where
     if let Some(message) = crate::g::role_pair_contract_error::<FROM, TO>() {
         panic!("{}", message);
     }
-    let spec = StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL);
     let atom = eff::EffAtom {
         from: FROM,
         to: TO,
         label: <M as Message>::LOGICAL_LABEL,
-        is_control: spec.is_some(),
-        resource: match spec {
-            Some(rule) => Some(rule.resource_tag()),
-            None => None,
-        },
+        is_internal: false,
+        resource: None,
         lane: LANE,
     };
-    let mut list = EffList::new().push(EffStruct::atom(atom));
-    if let Some(rule) = spec {
-        list = list.with_control(rule.scope_kind(), rule.tap_id());
-        list = list.with_control_spec(rule);
-        list = list.with_policy(ResolverMode::static_mode());
-    }
-    list
+    EffList::new().push(EffStruct::atom(atom))
 }

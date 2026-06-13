@@ -14,7 +14,7 @@ use core::{
 use crate::{
     endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
     g::Message,
-    global::{ControlDesc, MessageRuntime},
+    global::MessageRuntime,
     transport::{FrameLabel, wire::WireEncode},
 };
 
@@ -47,22 +47,10 @@ pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRunti
 where
     M: Message,
 {
-    const {
-        if let Some(error) = crate::g::message_control_contract_error::<M>() {
-            panic!("{}", error.message());
-        }
-    }
-    let control =
-        crate::global::StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL)
-            .map(ControlDesc::from_static);
     kernel::SendRuntimeDesc::new(
         <M as Message>::LOGICAL_LABEL,
         frame_label,
-        <M as MessageRuntime>::CONTROL_PAYLOAD,
-        control,
-        <M as MessageRuntime>::CONTROL_PAYLOAD_KIND,
         <M as MessageRuntime>::ENCODE_PAYLOAD,
-        <M as MessageRuntime>::ENCODE_CONTROL_HANDLE,
     )
 }
 
@@ -86,7 +74,7 @@ where
     #[inline]
     /// Send this flow's message and consume the send preview on success.
     ///
-    /// Pass the projected payload by reference. Endpoint-owned control evidence
+    /// Pass the projected payload by reference. Endpoint-owned session evidence
     /// is internal; application flows send only protocol payloads.
     /// If the committed send fails, the returned [`crate::EndpointError`] is
     /// terminal evidence for this generation, not permission to repeat the
@@ -147,9 +135,8 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
         };
         match poll {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(outcome)) => {
+            Poll::Ready(Ok(_outcome)) => {
                 self.endpoint = core::ptr::null_mut();
-                outcome.descriptor.publish();
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(err)) => {

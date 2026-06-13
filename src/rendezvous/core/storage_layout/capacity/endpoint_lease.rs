@@ -1,9 +1,7 @@
-use super::super::{
-    Clock, EndpointLeaseId, EndpointLeaseSlot, LabelUniverse, Rendezvous, Transport,
-};
+use super::super::{Clock, EndpointLeaseId, EndpointLeaseSlot, Rendezvous, Transport};
+use crate::session::cluster::error::ResourceScope;
 
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
-    Rendezvous<'rv, 'cfg, T, U, C, E>
+impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
 where
     'cfg: 'rv,
 {
@@ -44,11 +42,6 @@ where
     }
 
     #[inline]
-    pub(crate) const fn endpoint_lease_capacity(&self) -> EndpointLeaseId {
-        self.endpoint_lease_capacity
-    }
-
-    #[inline]
     pub(crate) fn next_endpoint_lease_generation(slot: &mut EndpointLeaseSlot) -> u32 {
         let next = slot.generation.wrapping_add(1);
         if next == 0 { 1 } else { next }
@@ -59,30 +52,38 @@ where
         capacity.checked_mul(core::mem::size_of::<EndpointLeaseSlot>())
     }
 
-    pub(crate) fn ensure_endpoint_lease_capacity(&mut self, required_slots: usize) -> Option<()> {
+    pub(crate) fn ensure_endpoint_lease_capacity(
+        &mut self,
+        required_slots: usize,
+    ) -> Result<(), ResourceScope> {
         let current = usize::from(self.endpoint_lease_capacity);
         if required_slots <= current {
-            return Some(());
+            return Ok(());
         }
-        let endpoint_lease_capacity = EndpointLeaseId::try_from(required_slots).ok()?;
-        let bytes = Self::endpoint_lease_storage_bytes(required_slots)?;
-        let old_ptr = self.endpoint_leases;
-        let old_bytes = Self::endpoint_lease_storage_bytes(current)?;
-        let old_reclaim_delta = usize::from(self.endpoint_lease_reclaim_delta);
-        let (storage, reclaim_delta) = self.allocate_external_persistent_sidecar_bytes(
-            bytes,
-            core::mem::align_of::<EndpointLeaseSlot>(),
-        )?;
+        let endpoint_lease_capacity =
+            EndpointLeaseId::try_from(required_slots).map_err(|_| ResourceScope::EndpointLease)?;
+        let bytes = Self::endpoint_lease_storage_bytes(required_slots)
+            .ok_or(ResourceScope::EndpointLease)?;
+        let source_ptr = self.endpoint_leases;
+        let source_bytes =
+            Self::endpoint_lease_storage_bytes(current).ok_or(ResourceScope::EndpointLease)?;
+        let source_reclaim_delta = usize::from(self.endpoint_lease_reclaim_delta);
+        let (storage, reclaim_delta) = self
+            .allocate_external_persistent_sidecar_bytes(
+                bytes,
+                core::mem::align_of::<EndpointLeaseSlot>(),
+            )
+            .ok_or(ResourceScope::EndpointLease)?;
         let Ok(reclaim_delta_u16) = u16::try_from(reclaim_delta) else {
             self.free_external_persistent_sidecar_bytes(storage, bytes, reclaim_delta);
-            return None;
+            return Err(ResourceScope::EndpointLease);
         };
         let new_ptr = storage.cast::<EndpointLeaseSlot>();
         let mut idx = 0usize;
         while idx < required_slots {
             let slot = if idx < current {
                 /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                unsafe { *old_ptr.add(idx) }
+                unsafe { *source_ptr.add(idx) }
             } else {
                 EndpointLeaseSlot::EMPTY
             };
@@ -95,14 +96,14 @@ where
         self.endpoint_leases = new_ptr;
         self.endpoint_lease_capacity = endpoint_lease_capacity;
         self.endpoint_lease_reclaim_delta = reclaim_delta_u16;
-        if !old_ptr.is_null() && old_bytes != 0 {
+        if !source_ptr.is_null() && source_bytes != 0 {
             self.free_external_persistent_sidecar_bytes(
-                old_ptr.cast::<u8>(),
-                old_bytes,
-                old_reclaim_delta,
+                source_ptr.cast::<u8>(),
+                source_bytes,
+                source_reclaim_delta,
             );
         }
-        Some(())
+        Ok(())
     }
 
     #[inline]
@@ -113,21 +114,6 @@ where
     ) -> Option<(usize, usize)> {
         let slot = self.endpoint_lease(lease_slot, generation)?;
         Some((slot.offset as usize, slot.len as usize))
-    }
-
-    #[inline]
-    pub(crate) fn public_endpoint_lease_by_index(
-        &self,
-        idx: usize,
-    ) -> Option<(EndpointLeaseId, u32)> {
-        if idx >= usize::from(self.endpoint_lease_capacity) {
-            return None;
-        }
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-        if !slot.occupied || !slot.public_endpoint {
-            return None;
-        }
-        Some((EndpointLeaseId::try_from(idx).ok()?, slot.generation))
     }
 
     #[inline]
@@ -159,35 +145,6 @@ where
         required
     }
 
-    pub(crate) fn resident_loop_slots_floor(&self) -> usize {
-        let mut required = 0usize;
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                required = core::cmp::max(required, slot.resident_budget.loop_slots as usize);
-            }
-            idx += 1;
-        }
-        required
-    }
-
-    #[inline]
-    pub(crate) fn resident_cap_entries_floor(&self) -> usize {
-        let mut required = self.caps.live_count();
-        let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
-                required = required
-                    .checked_add(slot.resident_budget.cap_entries as usize)
-                    .expect("invariant");
-            }
-            idx += 1;
-        }
-        required
-    }
-
     #[inline]
     pub(crate) fn resident_frontier_workspace_floor(&self) -> usize {
         let mut required = 0usize;
@@ -209,19 +166,21 @@ where
     pub(crate) fn ensure_frontier_workspace_capacity(
         &mut self,
         required_bytes: usize,
-    ) -> Option<()> {
+    ) -> Result<(), ResourceScope> {
         if required_bytes > u32::MAX as usize {
-            return None;
+            return Err(ResourceScope::EndpointLease);
         }
         if required_bytes <= self.frontier_workspace_bytes as usize {
-            return Some(());
+            return Ok(());
         }
-        let floor = (self.image_frontier as usize).checked_add(required_bytes)?;
+        let floor = (self.image_frontier as usize)
+            .checked_add(required_bytes)
+            .ok_or(ResourceScope::EndpointLease)?;
         if floor > self.endpoint_storage_floor() {
-            return None;
+            return Err(ResourceScope::EndpointLease);
         }
         self.set_frontier_workspace_bytes(required_bytes as u32);
-        Some(())
+        Ok(())
     }
 
     #[inline]

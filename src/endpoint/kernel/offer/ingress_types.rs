@@ -2,18 +2,33 @@
 
 use crate::global::const_dsl::ScopeId;
 
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct ResolvedFrameHint;
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(in crate::endpoint::kernel) enum FrameHintResolution {
+    Unresolved,
+    Resolved,
+}
 
-impl ResolvedFrameHint {
+impl FrameHintResolution {
     #[inline]
-    pub(in crate::endpoint::kernel) const fn scope_evidence() -> Self {
-        Self
+    pub(in crate::endpoint::kernel) const fn unresolved() -> Self {
+        Self::Unresolved
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) const fn staged_transport() -> Self {
-        Self
+    pub(in crate::endpoint::kernel) const fn resolved() -> Self {
+        Self::Resolved
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn is_resolved(self) -> bool {
+        matches!(self, Self::Resolved)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn record(&mut self, observed: Self) {
+        if observed.is_resolved() {
+            *self = Self::Resolved;
+        }
     }
 }
 

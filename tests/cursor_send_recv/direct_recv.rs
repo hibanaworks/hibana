@@ -1,9 +1,9 @@
 use super::*;
 
-#[derive(Clone, Copy, Default)]
-struct DeadlineRecvTransport;
-
-struct DeadlineTx;
+#[derive(Clone, Copy)]
+struct DeadlineRecvTransport {
+    error: hibana::runtime::transport::TransportError,
+}
 
 struct DeadlineRx {
     session_id: SessionId,
@@ -12,9 +12,9 @@ struct DeadlineRx {
 }
 
 impl Transport for DeadlineRecvTransport {
-    type Error = hibana::integration::transport::TransportError;
+    type Error = hibana::runtime::transport::TransportError;
     type Tx<'a>
-        = DeadlineTx
+        = ()
     where
         Self: 'a;
     type Rx<'a>
@@ -24,10 +24,10 @@ impl Transport for DeadlineRecvTransport {
 
     fn open<'a>(
         &'a self,
-        port: hibana::integration::transport::PortOpen,
+        port: hibana::runtime::transport::PortOpen,
     ) -> (Self::Tx<'a>, Self::Rx<'a>) {
         (
-            DeadlineTx,
+            (),
             DeadlineRx {
                 session_id: port.session_id(),
                 lane: port.lane(),
@@ -39,7 +39,7 @@ impl Transport for DeadlineRecvTransport {
     fn poll_send<'a, 'f>(
         &self,
         _tx: &'a mut Self::Tx<'a>,
-        _outgoing: hibana::integration::transport::Outgoing<'f>,
+        _outgoing: hibana::runtime::transport::Outgoing<'f>,
         _context: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>>
     where
@@ -54,9 +54,7 @@ impl Transport for DeadlineRecvTransport {
         _context: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         core::hint::black_box((rx.session_id.raw(), rx.lane, rx.role));
-        Poll::Ready(Err(
-            hibana::integration::transport::TransportError::Deadline,
-        ))
+        Poll::Ready(Err(self.error))
     }
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
@@ -66,13 +64,7 @@ impl Transport for DeadlineRecvTransport {
     }
 }
 
-type DeadlineKitStorage = SessionKitStorage<
-    'static,
-    DeadlineRecvTransport,
-    hibana::integration::runtime::DefaultLabelUniverse,
-    CounterClock,
-    2,
->;
+type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport, CounterClock, 2>;
 
 std::thread_local! {
     static DEADLINE_SESSION_SLOT: UnsafeCell<DeadlineKitStorage> = const {
@@ -90,10 +82,7 @@ fn cursor_recv_can_return_borrowed_frame_views() {
             let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
@@ -135,11 +124,10 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (unsafe { &mut *tap_ptr }, slab),
-                        CounterClock::new(),
-                    ),
-                    DeadlineRecvTransport,
+                    Config::from_resources((unsafe { &mut *tap_ptr }, slab), CounterClock::zero()),
+                    DeadlineRecvTransport {
+                        error: hibana::runtime::transport::TransportError::Deadline,
+                    },
                 )
                 .expect("register rendezvous");
 
@@ -161,11 +149,11 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
         let fault = unsafe { &*tap_ptr }
             .iter()
             .copied()
-            .find(|event| event.id == hibana::integration::tap::TRANSPORT_FAULT)
+            .find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
             .expect("deadline must emit transport fault evidence");
         assert_eq!(
             fault.evidence().reason(),
-            hibana::integration::tap::TRANSPORT_FAULT_DEADLINE
+            hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE
         );
         assert_eq!(fault.arg0, 73);
     });
@@ -174,8 +162,13 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
 #[test]
 fn transport_poll_recv_returns_frame_header_with_payload() {
     let transport = TestTransport::default();
-    let mut tx = TestTx::default();
     let sid = SessionId::new(94);
+    let mut tx = TestTx {
+        session_id: sid,
+        local_role: 0,
+        pending_role: None,
+        pending_frame: None,
+    };
     transport.stage_send_with_session(&mut tx, sid, 1, 0, 6, b"peek");
     assert!(matches!(
         transport.poll_send_staged(&mut tx),
@@ -219,10 +212,7 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (unsafe { &mut *tap_ptr }, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((unsafe { &mut *tap_ptr }, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
@@ -235,7 +225,12 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
                 .enter()
                 .expect("target endpoint");
 
-            let mut bad_tx = TestTx::default();
+            let mut bad_tx = TestTx {
+                session_id: bad_sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
             transport.stage_send_with_session(&mut bad_tx, bad_sid, 1, 0, 0, b"bad!");
             assert!(matches!(
                 transport.poll_send_staged(&mut bad_tx),
@@ -245,22 +240,25 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
             let mut recv = core::pin::pin!(target_endpoint.recv::<Msg<1, FramePayload>>());
             let waker = futures::task::noop_waker_ref();
             let mut context = Context::from_waker(waker);
-            match recv.as_mut().poll(&mut context) {
-                Poll::Pending => {}
-                Poll::Ready(Ok(_)) => panic!("session mismatch must not commit recv"),
-                Poll::Ready(Err(error)) => {
-                    panic!("session mismatch must stay pending until a transport fault: {error:?}")
+            if let Poll::Ready(result) = recv.as_mut().poll(&mut context) {
+                match result {
+                    Ok(_) => panic!("session mismatch must not commit recv"),
+                    Err(error) => {
+                        panic!(
+                            "session mismatch must stay pending until a transport fault: {error:?}"
+                        )
+                    }
                 }
             }
 
             let mismatch = unsafe { &*tap_ptr }
                 .iter()
                 .copied()
-                .find(|event| event.id == hibana::integration::tap::TRANSPORT_MISMATCH)
+                .find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
                 .expect("session mismatch must emit transport mismatch evidence");
             assert_eq!(
                 mismatch.evidence().reason(),
-                hibana::integration::tap::TRANSPORT_MISMATCH_SESSION
+                hibana::runtime::tap::TRANSPORT_MISMATCH_SESSION
             );
             assert_eq!(mismatch.arg0, sid.raw());
             assert_eq!(mismatch.arg1, bad_sid.raw());
@@ -269,7 +267,12 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
                 "mismatched frames must emit TransportMismatch only, not duplicate TransportFrame"
             );
 
-            let mut good_tx = TestTx::default();
+            let mut good_tx = TestTx {
+                session_id: sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
             transport.stage_send_with_session(&mut good_tx, sid, 1, 0, 0, b"good");
             assert!(matches!(
                 transport.poll_send_staged(&mut good_tx),

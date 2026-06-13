@@ -1,5 +1,5 @@
-error[E0432]: unresolved import `hibana::integration::program::steps`
- --> tests/ui/public_step_name_import.rs:1:35
+error[E0432]: unresolved import `hibana::runtime::program::steps`
+ --> tests/ui/public_step_name_import.rs:1:31
   |
-1 | use hibana::integration::program::steps::StepNil;
-  |                                   ^^^^^ could not find `steps` in `program`
+1 | use hibana::runtime::program::steps::StepNil;
+  |                               ^^^^^ could not find `steps` in `program`

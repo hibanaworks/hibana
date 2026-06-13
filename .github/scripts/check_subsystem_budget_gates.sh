@@ -13,7 +13,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  control::cluster::core::tests::resident_shape::pico2_resident_component_sizes \
+  session::cluster::core::tests::resident_shape::pico2_resident_component_sizes \
   -- \
   --exact \
   --nocapture
@@ -22,7 +22,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  control::cluster::core::tests::resident_shape::huge_shape_matrix_resident_bytes_stay_measured_and_local \
+  session::cluster::core::tests::resident_shape::huge_shape_matrix_resident_bytes_stay_measured_and_local \
   -- \
   --exact \
   --nocapture
@@ -36,12 +36,12 @@ cargo +"${TOOLCHAIN}" test \
   --exact \
   --nocapture
 
-# Send/policy hot-path ownership.
+# Send/resolver hot-path ownership.
 cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  endpoint::kernel::core::decision_policy_tests::decision_policy_input_arg0_defaults_to_zero \
+  endpoint::kernel::core::decision_resolver_tests::empty_resolver_audit_input_is_explicit \
   -- \
   --exact \
   --nocapture
@@ -50,7 +50,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \
-  dynamic_policy_surface_uses_one_decision_resolver \
+  dynamic_resolver_surface_uses_one_decision_resolver \
   -- \
   --exact \
   --nocapture
@@ -59,7 +59,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \
-  transport_context_keeps_resolver_input_only \
+  transport_context_owner_stays_forbidden \
   -- \
   --exact \
   --nocapture

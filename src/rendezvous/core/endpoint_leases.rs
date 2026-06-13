@@ -1,9 +1,7 @@
 use super::{
-    Clock, EndpointLeaseId, EndpointLeaseSlot, EndpointResidentBudget, LabelUniverse, Rendezvous,
-    Transport,
+    Clock, EndpointLeaseId, EndpointLeaseSlot, EndpointResidentBudget, Rendezvous, Transport,
 };
-impl<'rv, 'cfg, T: Transport, U: LabelUniverse, C: Clock, E: crate::control::cap::mint::EpochTable>
-    Rendezvous<'rv, 'cfg, T, U, C, E>
+impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
 where
     'cfg: 'rv,
 {
@@ -39,7 +37,7 @@ where
         }
         if !has_empty_slot {
             let required_slots = usize::from(self.endpoint_lease_capacity).checked_add(1)?;
-            self.ensure_endpoint_lease_capacity(required_slots)?;
+            self.ensure_endpoint_lease_capacity(required_slots).ok()?;
         }
         let (slab_ptr, slab_len) = self.slab_ptr_and_len();
         let slab_base = slab_ptr as usize;

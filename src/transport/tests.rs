@@ -90,10 +90,9 @@ impl Transport for WakerAwareTransport {
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    // Rollback contract exemption: WakerAwareTransport only exercises direct poll_recv
-    // waker storage.
     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
-        unreachable!("WakerAwareTransport does not exercise endpoint rollback")
+        self.state.set_ready();
+        Ok(())
     }
 }
 
@@ -125,7 +124,7 @@ unsafe fn flag_waker(flag: &Cell<bool>) -> Waker {
 #[test]
 fn frame_header_preserves_full_wire_domain() {
     let header = FrameHeader::new(
-        crate::control::types::SessionId::new(u32::MAX),
+        crate::session::types::SessionId::new(u32::MAX),
         u8::MAX,
         u8::MAX,
         u8::MAX,
@@ -146,8 +145,8 @@ fn recv_future_records_waker_and_wakes() {
     let mut rx = transport
         .open(PortOpen::from_descriptor(
             0,
-            crate::control::types::SessionId::new(0),
-            crate::control::types::Lane::new(0),
+            crate::session::types::SessionId::new(0),
+            crate::session::types::Lane::new(0),
         ))
         .1;
 

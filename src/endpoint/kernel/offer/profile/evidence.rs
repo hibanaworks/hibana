@@ -6,13 +6,6 @@ pub(in crate::endpoint::kernel::offer) enum OfferArmRecvEvidence {
     Recvless,
 }
 
-impl OfferArmRecvEvidence {
-    #[inline]
-    pub(in crate::endpoint::kernel::offer) const fn is_recvless(self) -> bool {
-        matches!(self, Self::Recvless)
-    }
-}
-
 impl OfferEarlyDecisionReadiness {
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn from_arm_evidence(

@@ -10,10 +10,7 @@ fn cursor_send_and_recv_roundtrip() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
@@ -58,10 +55,7 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
@@ -135,10 +129,7 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");
@@ -164,11 +155,11 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
             );
             let waker = futures::task::noop_waker_ref();
             let mut context = Context::from_waker(waker);
-            match Future::poll(send_future.as_mut(), &mut context) {
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(error)) => panic!("first send failed: {error:?}"),
-                Poll::Pending => panic!("first send must be ready"),
-            }
+            let first_poll = Future::poll(send_future.as_mut(), &mut context);
+            assert!(
+                matches!(first_poll, Poll::Ready(Ok(()))),
+                "first send must be ready: {first_poll:?}"
+            );
 
             let repoll = catch_unwind(AssertUnwindSafe(|| {
                 let _ = Future::poll(send_future.as_mut(), &mut context);
@@ -212,10 +203,7 @@ fn flow_error_captures_public_callsite() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources(
-                        (tap_buf, slab),
-                        CounterClock::new(),
-                    ),
+                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
                     transport.clone(),
                 )
                 .expect("register rendezvous");

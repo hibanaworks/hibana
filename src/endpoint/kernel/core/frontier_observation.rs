@@ -4,22 +4,17 @@ use super::super::frontier::{
     GlobalFrontierObservedState, frontier_global_observed_state_ptr_from_storage,
 };
 use super::{
-    ActiveEntrySet, CursorEndpoint, EpochTable, FrontierKind, FrontierObservationDomain,
-    FrontierObservationKey, FrontierScratchLayout, LabelUniverse, MintConfigMarker,
-    ObservedEntrySet, OfferEntryObservedState, ScopeId, Transport,
-    cached_offer_entry_observed_state, checked_state_index,
+    ActiveEntrySet, CursorEndpoint, FrontierKind, FrontierObservationDomain,
+    FrontierObservationKey, FrontierScratchLayout, ObservedEntrySet, OfferEntryObservedState,
+    ScopeId, Transport, cached_offer_entry_observed_state, checked_state_index,
     frontier_cached_observation_key_view_from_storage,
     frontier_global_active_entries_view_from_storage, frontier_observed_entries_view_from_storage,
     lane_port, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn global_frontier_scratch_parts(
@@ -102,12 +97,12 @@ where
             return FrontierObservationKey::EMPTY;
         }
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
-        let key = frontier_cached_observation_key_view_from_storage(
+
+        frontier_cached_observation_key_view_from_storage(
             scratch_ptr,
             layout,
             frontier_entry_capacity,
-        );
-        key
+        )
     }
 
     #[inline]
@@ -253,28 +248,28 @@ where
         let new_slot_idx = active_entries.slot_for_entry(entry_idx)?;
         let len = active_entries.len();
         let entry = checked_state_index(entry_idx)?;
-        let mut old_slot_idx = 0usize;
-        while old_slot_idx < len {
-            if cached_key.entry_state(old_slot_idx) == entry {
+        let mut source_slot_idx = 0usize;
+        while source_slot_idx < len {
+            if cached_key.entry_state(source_slot_idx) == entry {
                 break;
             }
-            old_slot_idx += 1;
+            source_slot_idx += 1;
         }
-        if old_slot_idx >= len || old_slot_idx == new_slot_idx {
+        if source_slot_idx >= len || source_slot_idx == new_slot_idx {
             return None;
         }
         let mut slot_idx = 0usize;
         while slot_idx < len {
             let shifted = if slot_idx == new_slot_idx {
-                cached_key.entry_state(old_slot_idx)
-            } else if old_slot_idx < new_slot_idx
-                && slot_idx >= old_slot_idx
+                cached_key.entry_state(source_slot_idx)
+            } else if source_slot_idx < new_slot_idx
+                && slot_idx >= source_slot_idx
                 && slot_idx < new_slot_idx
             {
                 cached_key.entry_state(slot_idx + 1)
-            } else if old_slot_idx > new_slot_idx
+            } else if source_slot_idx > new_slot_idx
                 && slot_idx > new_slot_idx
-                && slot_idx <= old_slot_idx
+                && slot_idx <= source_slot_idx
             {
                 cached_key.entry_state(slot_idx - 1)
             } else {
@@ -285,7 +280,7 @@ where
             }
             slot_idx += 1;
         }
-        Some((old_slot_idx, new_slot_idx))
+        Some((source_slot_idx, new_slot_idx))
     }
 
     pub(in crate::endpoint::kernel) fn cached_entry_slot_insert(
@@ -324,7 +319,7 @@ where
         Some(insert_slot_idx)
     }
 
-    pub(in crate::endpoint::kernel) fn cached_entry_slot_remove(
+    pub(in crate::endpoint::kernel) fn detached_cached_entry_slot(
         active_entries: ActiveEntrySet,
         cached_key: FrontierObservationKey,
         entry_idx: usize,
@@ -332,29 +327,29 @@ where
         let len = active_entries.len();
         let cached_len = len + 1;
         let entry = checked_state_index(entry_idx)?;
-        let mut removed_slot_idx = 0usize;
-        while removed_slot_idx < cached_len {
-            if cached_key.entry_state(removed_slot_idx) == entry {
+        let mut detached_slot_idx = 0usize;
+        while detached_slot_idx < cached_len {
+            if cached_key.entry_state(detached_slot_idx) == entry {
                 break;
             }
-            removed_slot_idx += 1;
+            detached_slot_idx += 1;
         }
-        if removed_slot_idx >= cached_len {
+        if detached_slot_idx >= cached_len {
             return None;
         }
         let mut active_slot_idx = 0usize;
         while active_slot_idx < len {
-            let removed = if active_slot_idx < removed_slot_idx {
+            let projected_state = if active_slot_idx < detached_slot_idx {
                 cached_key.entry_state(active_slot_idx)
             } else {
                 cached_key.entry_state(active_slot_idx + 1)
             };
-            if active_entries.entry_state(active_slot_idx) != removed {
+            if active_entries.entry_state(active_slot_idx) != projected_state {
                 return None;
             }
             active_slot_idx += 1;
         }
-        Some(removed_slot_idx)
+        Some(detached_slot_idx)
     }
 
     pub(in crate::endpoint::kernel) fn cached_entry_slot_replace(
@@ -384,8 +379,8 @@ where
             slot_idx += 1;
         }
         let slot_idx = replaced_slot_idx?;
-        let old_entry_idx = state_index_to_usize(cached_key.entry_state(slot_idx));
+        let source_entry_idx = state_index_to_usize(cached_key.entry_state(slot_idx));
         let new_entry_idx = state_index_to_usize(active_entries.entry_state(slot_idx));
-        Some((slot_idx, old_entry_idx, new_entry_idx))
+        Some((slot_idx, source_entry_idx, new_entry_idx))
     }
 }

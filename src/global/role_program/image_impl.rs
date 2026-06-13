@@ -1,8 +1,9 @@
 use super::{
     CompiledProgramImage, LANE_DOMAIN_BYTES, MAX_LOCAL_STEP_LANES, MAX_RESIDENT_LANE_BIT_BYTES,
     MAX_RESIDENT_ROW_BOUNDARY_ROWS, MAX_RESIDENT_ROW_LANE_ROWS, MAX_ROUTE_ARM_LANE_ROWS,
-    MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, PackedLocalEventRow, PackedRouteArmRow,
-    RoleLaneScratch, ScopeEvent, ScopeId, ScopeKind, lane_byte_count, lane_byte_index,
+    MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, PackedLocalEventRow, PackedLoopScopeRow,
+    PackedRouteArmRow, RoleLaneScratch, ScopeEvent, ScopeId, ScopeKind, lane_byte_count,
+    lane_byte_index,
 };
 use crate::global::typestate::{
     LocalConflict, LocalDependency, PackedEventConflict, PackedLocalDependency,
@@ -10,8 +11,11 @@ use crate::global::typestate::{
 mod blob_image;
 mod event_rows;
 mod lane_image;
+mod loop_rows;
 mod ref_access;
 mod scope_rows;
+
+use scope_rows::RouteArmProjectionRowInput;
 
 impl RoleLaneScratch {
     const NO_ACTIVE_LANE: u16 = u16::MAX;
@@ -55,8 +59,8 @@ impl RoleLaneScratch {
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
             let marker = markers[marker_idx];
-            match marker.scope_kind {
-                ScopeKind::Parallel => match marker.event {
+            if matches!(marker.scope_kind, ScopeKind::Parallel) {
+                match marker.event {
                     ScopeEvent::Enter => {
                         if parallel_len >= MAX_LOCAL_STEP_LANES
                             || parallel_depth >= MAX_LOCAL_STEP_LANES
@@ -88,12 +92,9 @@ impl RoleLaneScratch {
                         }
                         parallel_ends[parallel_idx] = marker.offset;
                     }
-                },
-                ScopeKind::Route => {
-                    has_route = true;
                 }
-                ScopeKind::Loop => {}
-                ScopeKind::Generic => {}
+            } else if matches!(marker.scope_kind, ScopeKind::Route) {
+                has_route = true;
             }
             marker_idx += 1;
         }
@@ -161,16 +162,16 @@ impl RoleLaneScratch {
         let mut local_len = 0usize;
         let mut eff_idx = 0usize;
         while eff_idx < view.len() {
-            if let Some(atom) = view.atom_at(eff_idx) {
-                if atom.from == ROLE || atom.to == ROLE {
-                    if eff_idx >= start_eff && eff_idx < end_eff {
-                        if local_start == usize::MAX {
-                            local_start = local_step;
-                        }
-                        local_len += 1;
+            if let Some(atom) = view.atom_at(eff_idx)
+                && (atom.from == ROLE || atom.to == ROLE)
+            {
+                if eff_idx >= start_eff && eff_idx < end_eff {
+                    if local_start == usize::MAX {
+                        local_start = local_step;
                     }
-                    local_step += 1;
+                    local_len += 1;
                 }
+                local_step += 1;
             }
             eff_idx += 1;
         }
@@ -375,7 +376,12 @@ impl RoleLaneScratch {
     }
 
     #[inline(always)]
-    const fn local_row_has_prior_lane(&self, row: PackedLaneRange, pos: usize, lane: u8) -> bool {
+    const fn local_row_already_contains_lane(
+        &self,
+        row: PackedLaneRange,
+        pos: usize,
+        lane: u8,
+    ) -> bool {
         let mut scan = row.start();
         while scan < pos && scan < MAX_LOCAL_STEP_LANES {
             if self.local_step_lanes[scan] == lane {
@@ -393,7 +399,7 @@ impl RoleLaneScratch {
         let end = local_row.end();
         while pos < end && pos < MAX_LOCAL_STEP_LANES {
             let lane = self.local_step_lanes[pos];
-            if !self.local_row_has_prior_lane(local_row, pos, lane) {
+            if !self.local_row_already_contains_lane(local_row, pos, lane) {
                 len += 1;
             }
             pos += 1;
@@ -433,10 +439,10 @@ impl RoleLaneScratch {
         let target = scope.local_ordinal();
         let mut slot = 0usize;
         while slot < MAX_ROUTE_SCOPE_LANE_ROWS {
-            if let Some(ordinal) = Self::route_scope_ordinal_from_row(self.route_scope_rows[slot]) {
-                if ordinal == target {
-                    return Some(slot);
-                }
+            if let Some(ordinal) = Self::route_scope_ordinal_from_row(self.route_scope_rows[slot])
+                && ordinal == target
+            {
+                return Some(slot);
             }
             slot += 1;
         }
@@ -566,17 +572,17 @@ impl RoleLaneScratch {
                     let (start, end) = ranges[arm];
                     let (local_row, lane_step_row) = self
                         .append_route_arm_lane_row::<ROLE>(program, route_slot, arm, start, end);
-                    self.push_route_arm_projection_row(
+                    self.push_route_arm_projection_row(RouteArmProjectionRowInput {
                         markers,
                         view_len,
                         route_slot,
-                        scope,
-                        arm as u8,
+                        route_scope: scope,
+                        arm: arm as u8,
                         local_row,
                         lane_step_row,
-                        start,
-                        end,
-                    );
+                        arm_start: start,
+                        arm_end: end,
+                    });
                     self.append_route_commit_range(route_slot, arm as u8);
                     arm += 1;
                 }
@@ -642,6 +648,7 @@ impl RoleLaneScratch {
             route_arm_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
             route_offer_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_SCOPE_LANE_ROWS],
             route_commit_ranges: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
+            loop_scope_rows: [PackedLoopScopeRow::EMPTY; MAX_LOCAL_STEP_LANES],
             active_lane_row: PackedLaneRange::EMPTY,
             resident_row_len: 0,
             dependency_row_len: 0,
@@ -649,6 +656,7 @@ impl RoleLaneScratch {
             lane_bit_row_len: 0,
             route_commit_row_len: 0,
             route_arm_lane_step_row_len: 0,
+            loop_scope_row_len: 0,
             first_active_lane: Self::NO_ACTIVE_LANE,
         };
         let view = program.view();
@@ -671,7 +679,7 @@ impl RoleLaneScratch {
                     {
                         let frame_count = frame_key_counts[frame_key_idx];
                         if frame_count > u8::MAX as u16 {
-                            panic!("frame label universe overflow");
+                            panic!("frame label domain overflow");
                         }
                         frame_label = frame_count as u8;
                         frame_key_counts[frame_key_idx] = frame_count + 1;
@@ -716,6 +724,7 @@ impl RoleLaneScratch {
             lanes.append_lane_bit_row_for_local_range(PackedLaneRange::new(0, step));
         lanes.push_resident_rows::<ROLE>(program);
         lanes.push_route_arm_lane_rows::<ROLE>(program);
+        lanes.push_loop_scope_rows::<ROLE>(program);
         lanes
     }
 }
@@ -748,5 +757,10 @@ impl RoleLaneScratch {
     #[inline(always)]
     pub(crate) const fn route_commit_row_len(&self) -> usize {
         self.route_commit_row_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn loop_scope_row_len(&self) -> usize {
+        self.loop_scope_row_len as usize
     }
 }

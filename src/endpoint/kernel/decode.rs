@@ -11,8 +11,8 @@ pub(crate) use state::DecodeState;
 use super::decision_state::RouteState;
 use super::{
     core::{
-        BranchPreviewView, CommitDelta, CursorEndpoint, DecodeRuntimeDesc, LoopCommitRow,
-        MaterializedRouteBranch, PreparedCommitDelta,
+        BranchPreviewView, CommitDelta, CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch,
+        PreparedCommitDelta,
         prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range,
         scope_slot_for_route_from_cursor,
     },
@@ -21,13 +21,11 @@ use super::{
     offer::{BranchCommitPlan, BranchKind},
 };
 use crate::{
-    control::cap::mint::{EpochTable, MintConfigMarker},
     endpoint::{RecvError, RecvResult},
     global::typestate::{
-        EventCursor, LoopMetadata, LoopRole, RecvMeta, RelocatableResidentLaneStep, StateIndex,
-        state_index_to_usize,
+        EventCursor, RecvMeta, RelocatableResidentLaneStep, StateIndex, state_index_to_usize,
     },
-    runtime::{config::Clock, consts::LabelUniverse},
+    runtime_core::config::Clock,
     transport::{Transport, wire::Payload},
 };
 
@@ -40,8 +38,7 @@ struct EndpointRxAuditPlan {
 #[derive(Clone, Copy)]
 enum DecodeProgressPlan {
     Wire { delta: CommitDelta },
-    Branch { delta: CommitDelta },
-    Empty { delta: CommitDelta },
+    NonWire { delta: CommitDelta },
 }
 
 #[derive(Clone, Copy)]
@@ -59,8 +56,7 @@ struct DecodeCommitPlan<'r> {
 
 enum PreparedDecodeProgressPlan {
     Wire { delta: PreparedCommitDelta },
-    Branch { delta: PreparedCommitDelta },
-    Empty { delta: PreparedCommitDelta },
+    NonWire { delta: PreparedCommitDelta },
 }
 
 struct PreparedDecodePublishPlan<'r> {
@@ -70,18 +66,15 @@ struct PreparedDecodePublishPlan<'r> {
     committed_payload: Payload<'r>,
 }
 
-struct DecodeCommitTxn<'txn, 'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
+struct DecodeCommitBuilder<'build, 'r, const ROLE: u8, T, C, const MAX_RV: usize>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
-    cursor: &'txn EventCursor,
-    decision_state: &'txn mut RouteState,
+    cursor: &'build EventCursor,
+    decision_state: &'build mut RouteState,
     route_rows: Option<SelectedRouteCommitRows>,
-    _role: core::marker::PhantomData<(&'r T, U, C, E, Mint)>,
+    _role: core::marker::PhantomData<(&'r T, C)>,
 }
 
 #[inline]

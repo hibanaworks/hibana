@@ -1,20 +1,13 @@
-use super::{
-    Clock, CursorEndpoint, EpochTable, FrontierObservationDomain, LabelUniverse, MintConfigMarker,
-    RecvError, RecvResult, Transport,
-};
+use super::{Clock, CursorEndpoint, FrontierObservationDomain, RecvError, RecvResult, Transport};
 
 mod candidates;
 mod model;
 use self::model::{CurrentOfferAuthority, CurrentOfferEntry, OfferAlignmentCandidateInput};
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(in crate::endpoint::kernel) fn align_cursor_to_selected_scope(&mut self) -> RecvResult<()> {
         let node_scope = self.cursor.node_scope_id();
@@ -38,8 +31,7 @@ where
         if current_scope_selected
             && self
                 .current_scope_selection_meta(node_scope, current_idx, current_frontier_state)
-                .map(|meta| meta.is_route_entry())
-                .unwrap_or(false)
+                .is_some_and(|meta| meta.is_route_entry())
         {
             return Ok(());
         }
@@ -119,16 +111,16 @@ where
         if candidates.current_can_remain_after_alignment(current_frontier_state) {
             return Ok(());
         }
-        if !current_entry.is_route_entry() {
-            if let Some(entry_idx) = reentry_ready_entry_idx {
-                if entry_idx != self.cursor.index() {
-                    self.commit_cursor_realign_index(entry_idx)
-                        .map_err(|_| RecvError::PhaseInvariant)?;
-                    self.sync_lane_offer_state();
-                    return self.align_cursor_to_selected_scope();
-                }
-                return Ok(());
+        if !current_entry.is_route_entry()
+            && let Some(entry_idx) = reentry_ready_entry_idx
+        {
+            if entry_idx != self.cursor.index() {
+                self.commit_cursor_realign_index(entry_idx)
+                    .map_err(|_| RecvError::PhaseInvariant)?;
+                self.sync_lane_offer_state();
+                return self.align_cursor_to_selected_scope();
             }
+            return Ok(());
         }
         Err(RecvError::PhaseInvariant)
     }

@@ -12,7 +12,7 @@ mod localside;
 #[path = "support/large_choreography/route_localside.rs"]
 mod route_localside;
 
-use hibana::integration::program::RoleProgram;
+use hibana::runtime::program::RoleProgram;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     futures::executor::block_on(future)

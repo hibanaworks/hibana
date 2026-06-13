@@ -1,15 +1,14 @@
 use super::{
-    Clock, CursorEndpoint, DeferReason, DeferSource, EpochTable, FrontierDeferOutcome,
-    FrontierVisitSet, LabelUniverse, MintConfigMarker, OfferProgressState, OfferResolveState,
+    Clock, CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome,
+    FrontierDeferRequest, FrontierVisitSet, OfferProgressState, OfferResolveState,
     OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    ResolvePendingState, ResolveTokenOutcome, ResolvedFrameHint, RouteArmToken, Transport,
-    lane_port,
+    ResolvePendingState, ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput<'a> {
     pub(super) selection: OfferScopeSelection,
     pub(super) offer_lanes: crate::global::role_program::LaneSetView<'a>,
     pub(super) profile: OfferScopeProfile,
-    pub(super) resolved_hint_frame: Option<ResolvedFrameHint>,
+    pub(super) frame_hint: FrameHintResolution,
 }
 
 pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
@@ -20,17 +19,13 @@ pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
 
 pub(super) enum PassiveRouteEvidenceOutcome {
     Authority {
-        authority: PassiveRouteAuthority,
-        resolved_hint_frame: Option<ResolvedFrameHint>,
+        route_token: RouteArmToken,
+        frame_hint: FrameHintResolution,
     },
     EvidenceOnly {
-        resolved_hint_frame: Option<ResolvedFrameHint>,
+        frame_hint: FrameHintResolution,
     },
     RestartFrontier,
-}
-
-pub(super) enum PassiveRouteAuthority {
-    Ack(RouteArmToken),
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -81,23 +76,10 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 }
 
-impl PassiveRouteAuthority {
-    #[inline]
-    pub(super) fn into_route_token(self) -> RouteArmToken {
-        match self {
-            Self::Ack(token) => token,
-        }
-    }
-}
-
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(super) fn poll_resolve_pending_state(
         &mut self,
@@ -146,22 +128,23 @@ where
             selection,
             offer_lanes,
             profile,
-            mut resolved_hint_frame,
+            mut frame_hint,
         } = input;
         let scope_id = selection.scope_id;
         let frontier_parallel_root = selection.frontier_parallel_root;
         let offer_lane = selection.offer_lane;
         let mut wire_turn = PassiveWireTurn::Unpolled;
         loop {
-            if let Some(frame_hint) =
-                self.refresh_passive_scope_evidence(selection, offer_lanes, profile, &mut state)?
-            {
-                resolved_hint_frame = Some(frame_hint);
-            }
+            frame_hint.record(self.refresh_passive_scope_evidence(
+                selection,
+                offer_lanes,
+                profile,
+                &mut state,
+            )?);
             if let Some(token) = self.peek_scope_ack(scope_id) {
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
-                    authority: PassiveRouteAuthority::Ack(token),
-                    resolved_hint_frame,
+                    route_token: token,
+                    frame_hint,
                 }));
             }
 
@@ -169,7 +152,7 @@ where
                 break;
             }
 
-            if resolved_hint_frame.is_some() && wire_turn.has_polled() {
+            if frame_hint.is_resolved() && wire_turn.has_polled() {
                 break;
             }
 
@@ -182,24 +165,26 @@ where
             }
 
             if !wire_turn.has_polled() {
-                if let Some(frame_hint) =
-                    self.poll_passive_wire_turn(selection, pending_recv, &mut state, cx)?
-                {
-                    resolved_hint_frame = Some(frame_hint);
-                }
+                frame_hint.record(self.poll_passive_wire_turn(
+                    selection,
+                    pending_recv,
+                    &mut state,
+                    cx,
+                )?);
                 wire_turn = PassiveWireTurn::Polled;
                 continue;
             }
 
             match self.on_frontier_defer(
                 state.progress,
-                scope_id,
-                frontier_parallel_root,
-                DeferSource::Resolver,
-                DeferReason::NoEvidence,
-                offer_lane,
-                state.has_transport(),
-                None,
+                FrontierDeferRequest {
+                    scope_id,
+                    current_parallel: frontier_parallel_root,
+                    reason: DeferReason::NoEvidence,
+                    offer_lane,
+                    ingress_ready: state.has_transport(),
+                    selected_arm: None,
+                },
                 state.frontier_visited,
             ) {
                 FrontierDeferOutcome::Continue => break,
@@ -209,9 +194,7 @@ where
                 FrontierDeferOutcome::Pending => return Poll::Pending,
             }
         }
-        Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly {
-            resolved_hint_frame,
-        }))
+        Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly { frame_hint }))
     }
 
     fn refresh_passive_scope_evidence(
@@ -220,11 +203,11 @@ where
         offer_lanes: crate::global::role_program::LaneSetView<'_>,
         profile: OfferScopeProfile,
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
-    ) -> RecvResult<Option<ResolvedFrameHint>> {
+    ) -> RecvResult<FrameHintResolution> {
         let scope_id = selection.scope_id;
         if let Some(frame_lane) = state.transport_lane_wire() {
             let Some(frame_label) = state.transport_frame_label_raw() else {
-                return Ok(None);
+                return Ok(FrameHintResolution::unresolved());
             };
             let frame_label_meta = self.selection_frame_label_meta(selection);
             if frame_label_meta
@@ -237,9 +220,9 @@ where
                     frame_label,
                     frame_label_meta,
                 );
-                return Ok(Some(ResolvedFrameHint::staged_transport()));
+                return Ok(FrameHintResolution::resolved());
             }
-            return Ok(None);
+            return Ok(FrameHintResolution::unresolved());
         }
 
         let frame_label_meta = self.selection_frame_label_meta(selection);
@@ -253,9 +236,13 @@ where
             return Err(RecvError::PhaseInvariant);
         }
 
-        Ok(self
-            .peek_scope_frame_hint_with_lane(scope_id)
-            .map(|_| ResolvedFrameHint::scope_evidence()))
+        Ok(
+            if self.peek_scope_frame_hint_with_lane(scope_id).is_some() {
+                FrameHintResolution::resolved()
+            } else {
+                FrameHintResolution::unresolved()
+            },
+        )
     }
 
     fn poll_passive_wire_turn(
@@ -264,7 +251,7 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> RecvResult<Option<ResolvedFrameHint>> {
+    ) -> RecvResult<FrameHintResolution> {
         let recv_lane_idx = selection.offer_lane as usize;
         let recv_lane = recv_lane_idx as u8;
         let frame = match self.poll_received_transport_frame_for_lane(
@@ -273,7 +260,7 @@ where
             recv_lane,
             cx,
         ) {
-            Poll::Pending => return Ok(None),
+            Poll::Pending => return Ok(FrameHintResolution::unresolved()),
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Err(err),
         };
@@ -284,10 +271,17 @@ where
             .frame_hint_mask()
             .contains_frame_label(observed_frame_label)
         {
-            return Ok(Some(ResolvedFrameHint::staged_transport()));
+            return Ok(FrameHintResolution::resolved());
         }
-        Ok(self
-            .peek_scope_frame_hint_with_lane(selection.scope_id)
-            .map(|_| ResolvedFrameHint::scope_evidence()))
+        Ok(
+            if self
+                .peek_scope_frame_hint_with_lane(selection.scope_id)
+                .is_some()
+            {
+                FrameHintResolution::resolved()
+            } else {
+                FrameHintResolution::unresolved()
+            },
+        )
     }
 }

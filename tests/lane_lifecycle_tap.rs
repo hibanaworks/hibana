@@ -11,23 +11,13 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::{
     g::{self, Msg},
-    integration::program::{RoleProgram, project},
-    integration::{
-        SessionKitStorage,
-        ids::SessionId,
-        runtime::{Config, TapEvent},
-    },
+    runtime::program::{RoleProgram, project},
+    runtime::{Config, SessionKitStorage, TapEvent, ids::SessionId},
 };
 use runtime_support::{RING_EVENTS, with_fixture};
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<
-    'static,
-    TestTransport,
-    hibana::integration::runtime::DefaultLabelUniverse,
-    hibana::integration::runtime::CounterClock,
-    2,
->;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, hibana::runtime::CounterClock, 2>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -55,14 +45,16 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
         let transport = TestTransport::default();
         let tap_ptr = tap_buf as *mut [TapEvent; runtime_support::RING_EVENTS];
         let slab_ptr = slab as *mut [u8];
-        let (expected_rv, expected_sid, expected_lane) = with_resident_tls_ref(
-            &SESSION_SLOT,
-            |cluster| {
+        let (expected_rv, expected_sid, expected_lane) =
+            with_resident_tls_ref(&SESSION_SLOT, |cluster| {
                 let tap_buf = unsafe { &mut *tap_ptr };
                 let slab = unsafe { &mut *slab_ptr };
                 let rv = cluster
                     .rendezvous(
-                        Config::<hibana::integration::runtime::DefaultLabelUniverse, _>::from_resources((tap_buf, slab), hibana::integration::runtime::CounterClock::new()),
+                        Config::from_resources(
+                            (tap_buf, slab),
+                            hibana::runtime::CounterClock::zero(),
+                        ),
                         transport.clone(),
                     )
                     .expect("register rendezvous");
@@ -77,8 +69,7 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                 core::hint::black_box(&endpoint);
 
                 (1u32, sid.raw(), 0)
-            },
-        );
+            });
 
         let events = unsafe { &*tap_ptr };
         let mut acquire_count = 0usize;

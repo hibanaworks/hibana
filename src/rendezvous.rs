@@ -1,17 +1,14 @@
-//! Rendezvous descriptor evaluator for `control::cluster::effects::ControlOp`.
+//! Rendezvous session/lane owner.
 //!
-//! This module is a low-level building block used by the control plane and
-//! runtime. Prefer the higher-level APIs in `control` and `runtime` unless you
-//! need direct access to rendezvous tables or ports.
+//! This module is a low-level building block used by the session runtime.
+//! Prefer the higher-level APIs in `runtime` unless you need direct access to
+//! rendezvous tables or ports.
 
 mod association;
-pub(crate) mod capability;
 pub(crate) mod core;
 pub(crate) mod error;
 pub(crate) mod port;
 pub(crate) mod tables;
-mod topology;
 mod waiter;
 
 pub(crate) use association::SessionFaultKind;
-pub(crate) use topology::TopologySessionState;

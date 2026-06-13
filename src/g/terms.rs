@@ -1,60 +1,17 @@
-use super::{Par, ProgramSourceData, ProgramSourceError, ProgramTerm, Resolve, Route, Send, Seq};
-use crate::global::LoopControlMeaning;
+use super::{
+    Par, ProgramSourceData, ProgramSourceError, ProgramTerm, Resolve, Roll, Route, Send, Seq,
+};
 use crate::global::steps::RoleLaneMask;
-
-#[derive(Clone, Copy)]
-struct CycleRouteValidation {
-    is_cycle: bool,
-    error: Option<ProgramSourceError>,
-}
-
-const fn is_binary_cycle_route(
-    left: Option<LoopControlMeaning>,
-    right: Option<LoopControlMeaning>,
-) -> CycleRouteValidation {
-    match (left, right) {
-        (Some(LoopControlMeaning::Continue), Some(LoopControlMeaning::Break)) => {
-            CycleRouteValidation {
-                is_cycle: true,
-                error: None,
-            }
-        }
-        (Some(LoopControlMeaning::Break), Some(LoopControlMeaning::Continue))
-        | (Some(LoopControlMeaning::Continue), Some(LoopControlMeaning::Continue))
-        | (Some(LoopControlMeaning::Break), Some(LoopControlMeaning::Break)) => {
-            CycleRouteValidation {
-                is_cycle: false,
-                error: Some(ProgramSourceError::LoopRouteArmOrder),
-            }
-        }
-        (Some(LoopControlMeaning::Continue | LoopControlMeaning::Break), None)
-        | (None, Some(LoopControlMeaning::Continue | LoopControlMeaning::Break)) => {
-            CycleRouteValidation {
-                is_cycle: false,
-                error: Some(ProgramSourceError::LoopRouteArmPair),
-            }
-        }
-        (None, None) => CycleRouteValidation {
-            is_cycle: false,
-            error: None,
-        },
-    }
-}
 
 impl<const FROM: u8, const TO: u8, M> ProgramTerm for Send<FROM, TO, M>
 where
     M: crate::global::Message,
 {
     const PROGRAM_SOURCE: ProgramSourceData = {
-        let control = crate::global::StaticControlDesc::from_runtime_tuple(
-            <M as crate::global::MessageRuntime>::CONTROL,
-        );
         ProgramSourceData::from_parts(
             crate::global::const_dsl::const_send_typed::<FROM, TO, M, 0>(),
             RoleLaneMask::empty().with_role(FROM, 0).with_role(TO, 0),
             1,
-            false,
-            LoopControlMeaning::from_control_spec(control).is_some(),
         )
     };
 }
@@ -91,9 +48,7 @@ where
                 Some(ProgramSourceError::RouteControllerMismatch),
             );
         }
-        let cycle = is_binary_cycle_route(left_head.cycle_meaning, right_head.cycle_meaning);
-        route_error = ProgramSourceData::merge_error(route_error, cycle.error);
-        left.route_with_controller(right, left_head.controller, cycle.is_cycle, route_error)
+        left.route_with_controller(right, left_head.controller, route_error)
     };
 }
 
@@ -113,4 +68,11 @@ where
 {
     const PROGRAM_SOURCE: ProgramSourceData =
         <Route<Left, Right> as ProgramTerm>::PROGRAM_SOURCE.resolve_route(RESOLVER_ID);
+}
+
+impl<Inner> ProgramTerm for Roll<Inner>
+where
+    Inner: ProgramTerm,
+{
+    const PROGRAM_SOURCE: ProgramSourceData = <Inner as ProgramTerm>::PROGRAM_SOURCE.roll();
 }

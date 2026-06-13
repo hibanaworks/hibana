@@ -12,10 +12,10 @@
 //! No returned slice outlives `self`, and no method exposes mutable aliases to
 //! those rows while a shared prefix view exists.
 mod eff_list;
-mod eff_list_policy;
+mod eff_list_resolver;
 
 use crate::eff::{self, EffStruct};
-use crate::global::{Message, MessageRuntime, StaticControlDesc};
+use crate::global::Message;
 
 const MAX_SEGMENT_EFFS: usize = eff::meta::MAX_SEGMENT_EFFS;
 const MAX_SEGMENTS: usize = eff::meta::MAX_SEGMENTS;
@@ -24,13 +24,13 @@ const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
 mod scope;
 
 pub(crate) use self::eff_list::const_send_typed;
-pub(crate) use self::scope::{CompactScopeId, ControlScopeKind, ScopeEvent, ScopeId, ScopeKind};
+pub(crate) use self::scope::{CompactScopeId, ScopeEvent, ScopeId, ScopeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResolverMode {
     Static,
     Dynamic {
-        policy_id: u16,
+        resolver_id: u16,
         scope: CompactScopeId,
     },
 }
@@ -42,33 +42,30 @@ impl ResolverMode {
 
     /// Create a dynamic resolver marker with the given resolver id.
     ///
-    /// Route decisions are evaluated from the projected descriptor and the
+    /// Route decisions are evaluated from the projected route site and the
     /// registered resolver.
-    ///
-    /// The actual control operation (route or loop) is determined by the baked
-    /// control descriptor metadata, not by the proof term itself.
     ///
     /// Public choreography authors do not name this lowering hook directly.
     /// ```rust,ignore
     /// fn resolve_decision(
     ///     state: &DecisionState,
-    /// ) -> Result<hibana::integration::resolver::DecisionResolution, hibana::integration::resolver::ResolverError> {
-    ///     Ok(hibana::integration::resolver::DecisionResolution::Arm(state.preferred_arm))
+    /// ) -> Result<hibana::runtime::resolver::DecisionResolution, hibana::runtime::resolver::ResolverError> {
+    ///     Ok(hibana::runtime::resolver::DecisionResolution::Arm(state.preferred_arm))
     /// }
     ///
     /// let decision_state = DecisionState {
-    ///     preferred_arm: hibana::integration::resolver::DecisionArm::Left,
+    ///     preferred_arm: hibana::runtime::resolver::DecisionArm::Left,
     /// };
     ///
-    /// rv.role(&controller).set_resolver::<MY_POLICY_ID>(
-    ///     hibana::integration::resolver::ResolverRef::decision_state(&decision_state, resolve_decision),
+    /// rv.role(&controller).set_resolver::<MY_RESOLVER_ID>(
+    ///     hibana::runtime::resolver::ResolverRef::decision_state(&decision_state, resolve_decision),
     /// )?;
     /// ```
     ///
-    /// [`SessionKit::rendezvous`]: crate::integration::SessionKit::rendezvous
-    pub(crate) const fn dynamic(policy_id: u16) -> Self {
+    /// [`SessionKit::rendezvous`]: crate::runtime::SessionKit::rendezvous
+    pub(crate) const fn dynamic(resolver_id: u16) -> Self {
         Self::Dynamic {
-            policy_id,
+            resolver_id,
             scope: CompactScopeId::none(),
         }
     }
@@ -77,51 +74,47 @@ impl ResolverMode {
         matches!(self, Self::Dynamic { .. })
     }
 
-    pub(crate) const fn is_static(self) -> bool {
-        matches!(self, Self::Static)
-    }
-
-    pub(crate) const fn dynamic_policy_id(self) -> Option<u16> {
+    pub(crate) const fn dynamic_resolver_id(self) -> Option<u16> {
         match self {
-            Self::Dynamic { policy_id, .. } => Some(policy_id),
-            _ => None,
+            Self::Dynamic { resolver_id, .. } => Some(resolver_id),
+            Self::Static => None,
         }
     }
 
     pub(crate) const fn scope(self) -> ScopeId {
         match self {
             Self::Dynamic { scope, .. } => scope.to_scope_id(),
-            _ => ScopeId::none(),
+            Self::Static => ScopeId::none(),
         }
     }
 
     pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
         match self {
-            Self::Dynamic { policy_id, .. } => Self::Dynamic {
-                policy_id,
+            Self::Dynamic { resolver_id, .. } => Self::Dynamic {
+                resolver_id,
                 scope: CompactScopeId::from_scope_id(scope),
             },
-            other => other,
+            Self::Static => Self::Static,
         }
     }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct PolicyMarker {
+pub(crate) struct ResolverMarker {
     pub(crate) offset: usize,
-    pub(crate) policy: ResolverMode,
+    pub(crate) resolver: ResolverMode,
 }
 
-impl PolicyMarker {
+impl ResolverMarker {
     const fn empty() -> Self {
         Self {
             offset: 0,
-            policy: ResolverMode::Static,
+            resolver: ResolverMode::Static,
         }
     }
 
-    const fn new(offset: usize, policy: ResolverMode) -> Self {
-        Self { offset, policy }
+    const fn new(offset: usize, resolver: ResolverMode) -> Self {
+        Self { offset, resolver }
     }
 }
 
@@ -150,61 +143,13 @@ impl ScopeMarker {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct ControlMarker {
-    pub offset: u16,
-    pub scope_kind: ControlScopeKind,
-    pub tap_id: u16,
-}
-
-impl ControlMarker {
-    const fn encode_offset(offset: usize) -> u16 {
-        if offset > u16::MAX as usize {
-            panic!("control marker offset overflow");
-        }
-        offset as u16
-    }
-
-    pub const fn empty() -> Self {
-        Self {
-            offset: 0,
-            scope_kind: ControlScopeKind::None,
-            tap_id: 0,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ControlSpecMarker {
-    pub(crate) offset: usize,
-    pub(crate) spec: Option<StaticControlDesc>,
-}
-
-impl ControlSpecMarker {
-    const fn empty() -> Self {
-        Self {
-            offset: 0,
-            spec: None,
-        }
-    }
-
-    const fn new(offset: usize, spec: StaticControlDesc) -> Self {
-        Self {
-            offset,
-            spec: Some(spec),
-        }
-    }
-}
-
 /// Segment-local summary for effect rows and metadata markers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SegmentSummary {
     eff_len: u16,
     scope_marker_len: u16,
     route_scope_enter_len: u16,
-    control_marker_len: u16,
-    policy_marker_len: u16,
-    control_spec_len: u16,
+    resolver_marker_len: u16,
 }
 
 impl SegmentSummary {
@@ -212,9 +157,7 @@ impl SegmentSummary {
         eff_len: 0,
         scope_marker_len: 0,
         route_scope_enter_len: 0,
-        control_marker_len: 0,
-        policy_marker_len: 0,
-        control_spec_len: 0,
+        resolver_marker_len: 0,
     };
 
     #[inline(always)]
@@ -241,20 +184,8 @@ impl SegmentSummary {
     }
 
     #[inline(always)]
-    const fn with_control_marker(mut self) -> Self {
-        self.control_marker_len = Self::bump(self.control_marker_len);
-        self
-    }
-
-    #[inline(always)]
-    const fn with_policy_marker(mut self) -> Self {
-        self.policy_marker_len = Self::bump(self.policy_marker_len);
-        self
-    }
-
-    #[inline(always)]
-    const fn with_control_spec(mut self) -> Self {
-        self.control_spec_len = Self::bump(self.control_spec_len);
+    const fn with_resolver_marker(mut self) -> Self {
+        self.resolver_marker_len = Self::bump(self.resolver_marker_len);
         self
     }
 }
@@ -268,13 +199,6 @@ pub struct EffList {
     scope_budget: u16,
     scope_markers: [ScopeMarker; MAX_CAPACITY],
     scope_marker_len: usize,
-    control_markers: [ControlMarker; MAX_CAPACITY],
-    control_marker_len: usize,
-    policy_markers: [PolicyMarker; MAX_CAPACITY],
-    policy_marker_len: usize,
-    control_specs: [ControlSpecMarker; MAX_CAPACITY],
-    control_spec_len: usize,
+    resolver_markers: [ResolverMarker; MAX_CAPACITY],
+    resolver_marker_len: usize,
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-mod tests;

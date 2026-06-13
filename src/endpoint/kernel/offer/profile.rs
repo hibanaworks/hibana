@@ -20,18 +20,6 @@ pub(in crate::endpoint::kernel) enum OfferScopeProfile {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum OfferAuthorityRole {
-    Controller,
-    Passive,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum OfferRouteScopeKind {
-    Static,
-    Dynamic,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum OfferAuthorityPath {
     ControllerResolver,
     PassiveEvidence,
@@ -88,11 +76,6 @@ pub(super) enum OfferControllerSkipReadiness {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct OfferControllerReadiness {
-    pub(super) skip: OfferControllerSkipReadiness,
-}
-
-#[derive(Clone, Copy)]
 pub(super) enum OfferPassiveReadiness {
     ReadyArmOrFrameHint,
     DynamicScopeWithoutRecv,
@@ -106,7 +89,7 @@ pub(super) struct OfferRouteShape {
     pub(super) entry: OfferEntryPosition,
     pub(super) cursor: OfferCursorReadiness,
     pub(super) early_decision: OfferEarlyDecisionReadiness,
-    pub(super) controller: OfferControllerReadiness,
+    pub(super) controller: OfferControllerSkipReadiness,
     pub(super) passive: OfferPassiveReadiness,
 }
 
@@ -142,7 +125,7 @@ impl OfferRouteShape {
     #[inline]
     const fn controller_can_skip_recv(self) -> bool {
         if matches!(
-            self.controller.skip,
+            self.controller,
             OfferControllerSkipReadiness::BlockedByMaterialization
         ) {
             return false;
@@ -150,7 +133,7 @@ impl OfferRouteShape {
         match (self.entry, self.cursor) {
             (OfferEntryPosition::RouteEntry, _) => {
                 self.profile.is_dynamic()
-                    || matches!(self.controller.skip, OfferControllerSkipReadiness::Ready)
+                    || matches!(self.controller, OfferControllerSkipReadiness::Ready)
                     || self.early_decision.available()
             }
             (OfferEntryPosition::AfterRouteEntry, OfferCursorReadiness::NonRecv) => true,
@@ -170,18 +153,6 @@ impl OfferRouteShape {
 }
 
 impl OfferScopeProfile {
-    #[inline]
-    pub(super) const fn from_evidence(role: OfferAuthorityRole, kind: OfferRouteScopeKind) -> Self {
-        match (role, kind) {
-            (OfferAuthorityRole::Controller, OfferRouteScopeKind::Dynamic) => {
-                Self::ControllerDynamic
-            }
-            (OfferAuthorityRole::Controller, OfferRouteScopeKind::Static) => Self::ControllerStatic,
-            (OfferAuthorityRole::Passive, OfferRouteScopeKind::Dynamic) => Self::PassiveDynamic,
-            (OfferAuthorityRole::Passive, OfferRouteScopeKind::Static) => Self::PassiveStatic,
-        }
-    }
-
     #[inline]
     pub(super) const fn is_controller(self) -> bool {
         matches!(self, Self::ControllerStatic | Self::ControllerDynamic)

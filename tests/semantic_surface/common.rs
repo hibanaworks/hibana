@@ -99,15 +99,9 @@ pub(crate) fn read_all_rs_tree(path: &str) -> String {
     read_rs_tree_filtered(path, true)
 }
 
-pub(crate) fn capability_token_source() -> String {
-    let mut source = read("src/control/cap/mint.rs");
-    source.push_str(&read_production_dir_rs("src/control/cap/mint"));
-    source
-}
-
 pub(crate) fn cluster_core_source() -> String {
-    let mut source = read("src/control/cluster/core.rs");
-    source.push_str(&read_production_rs_tree("src/control/cluster/core"));
+    let mut source = read("src/session/cluster/core.rs");
+    source.push_str(&read_production_rs_tree("src/session/cluster/core"));
     source
 }
 
@@ -137,9 +131,9 @@ pub(crate) fn compiled_image_source() -> String {
     source
 }
 
-pub(crate) fn integration_source() -> String {
-    let mut source = read("src/integration.rs");
-    source.push_str(&read_production_dir_rs("src/integration"));
+pub(crate) fn runtime_source() -> String {
+    let mut source = read("src/runtime.rs");
+    source.push_str(&read_production_dir_rs("src/runtime"));
     source
 }
 
@@ -165,59 +159,4 @@ pub(crate) fn transport_source() -> String {
     let mut source = read("src/transport.rs");
     source.push_str(&read_production_dir_rs("src/transport"));
     source
-}
-
-fn read_test_with_modules(root_path: &str, module_dir: &str) -> String {
-    let mut source = read(root_path);
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(module_dir);
-    let mut parts = Vec::new();
-    collect_test_rs_files(&root, &mut parts);
-    parts.sort();
-    for part in parts {
-        source.push_str(
-            &fs::read_to_string(&part)
-                .unwrap_or_else(|err| panic!("read {} failed: {err}", part.display())),
-        );
-    }
-    source
-}
-
-fn collect_test_rs_files(dir: &Path, parts: &mut Vec<PathBuf>) {
-    let entries =
-        fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()));
-    for entry in entries {
-        let path = entry
-            .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
-            .path();
-        if path.is_dir() {
-            collect_test_rs_files(&path, parts);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-            parts.push(path);
-        }
-    }
-}
-
-pub(crate) fn cursor_send_recv_tests_source() -> String {
-    read_test_with_modules("tests/cursor_send_recv.rs", "tests/cursor_send_recv")
-}
-
-pub(crate) fn lines(path: &str) -> Vec<String> {
-    read(path)
-        .lines()
-        .map(normalize_ws)
-        .filter(|line| !line.is_empty())
-        .collect()
-}
-
-pub(crate) fn normalize_ws(input: impl AsRef<str>) -> String {
-    let mut normalized = String::new();
-    let mut first = true;
-    for part in input.as_ref().split_whitespace() {
-        if !first {
-            normalized.push(' ');
-        }
-        first = false;
-        normalized.push_str(part);
-    }
-    normalized
 }

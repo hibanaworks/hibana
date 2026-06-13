@@ -18,7 +18,3 @@ pub(crate) mod events;
 
 /// Scope trace helpers.
 pub(crate) mod scope;
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "observe/tests/normalise.rs"]
-mod normalise;

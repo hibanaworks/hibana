@@ -8,8 +8,7 @@ use core::cell::Cell;
 
 use super::Port;
 use crate::{
-    control::cap::mint::EpochTable,
-    observe::{core::TapEvent, events::RawEvent, ids},
+    observe::{core::TapEvent, events, ids},
     transport::{FrameHeader, Transport, wire::Payload},
 };
 
@@ -101,7 +100,7 @@ impl RecvFrameReceiptState {
     fn issue(&self, port_key: *const ()) -> PortRecvFrameReceipt {
         assert!(
             !self.outstanding.replace(true),
-            "transport receive frame polled while previous frame receipt is unresolved",
+            "transport receive frame polled while current frame receipt is unresolved",
         );
         PortRecvFrameReceipt {
             port_key,
@@ -286,7 +285,7 @@ impl FrameMismatch {
         expected_lane_wire: u8,
     ) -> TapEvent {
         let reason = self.kind.tap_reason();
-        RawEvent::new(now32, ids::TRANSPORT_MISMATCH)
+        events::raw_event(now32, ids::TRANSPORT_MISMATCH)
             .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
                 expected_lane_wire,
                 reason,
@@ -299,7 +298,7 @@ impl FrameMismatch {
 
 #[inline]
 pub(crate) fn transport_frame_tap_event(now32: u32, observation: FrameObservation) -> TapEvent {
-    RawEvent::new(now32, ids::TRANSPORT_FRAME)
+    events::raw_event(now32, ids::TRANSPORT_FRAME)
         .with_arg0(observation.session_raw())
         .with_arg1(observation.meta())
         .with_arg2(0)
@@ -351,8 +350,8 @@ impl ObservedSourceLabel {
 
 impl<'r> ReceivedFrameCore<'r> {
     #[inline]
-    fn from_payload<T, E>(
-        port: &Port<'r, T, E>,
+    fn from_payload<T>(
+        port: &Port<'r, T>,
         payload: Payload<'r>,
         source_role: u8,
         label: u8,
@@ -360,7 +359,6 @@ impl<'r> ReceivedFrameCore<'r> {
     ) -> Self
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         Self {
             payload,
@@ -417,13 +415,9 @@ impl<'r> ReceivedFrameCore<'r> {
     }
 
     #[inline]
-    fn requeue_on<T, E>(
-        mut self,
-        port: &Port<'r, T, E>,
-    ) -> Result<(), crate::transport::TransportError>
+    fn requeue_on<T>(mut self, port: &Port<'r, T>) -> Result<(), crate::transport::TransportError>
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         self.assert_matches_port(port);
         let transport = port.transport();
@@ -457,10 +451,9 @@ impl<'r> ReceivedFrameCore<'r> {
     }
 
     #[inline]
-    fn assert_matches_port<T, E>(&self, port: &Port<'r, T, E>)
+    fn assert_matches_port<T>(&self, port: &Port<'r, T>)
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         assert_eq!(
             self.lane_wire(),
@@ -482,14 +475,13 @@ impl Drop for ReceivedFrameCore<'_> {
 
 impl<'r> PreambleFrame<'r> {
     #[inline(always)]
-    pub(crate) fn from_accepted_payload<T, E>(
-        port: &Port<'r, T, E>,
+    pub(crate) fn from_accepted_payload<T>(
+        port: &Port<'r, T>,
         payload: Payload<'r>,
         observed: FrameObservation,
     ) -> Self
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         let observed_source_label = ObservedSourceLabel::from_observation(observed);
         Self {
@@ -561,13 +553,12 @@ impl<'r> PreambleFrame<'r> {
     }
 
     #[inline]
-    pub(crate) fn requeue_on<T, E>(
+    pub(crate) fn requeue_on<T>(
         self,
-        port: &Port<'r, T, E>,
+        port: &Port<'r, T>,
     ) -> Result<(), crate::transport::TransportError>
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         self.core.requeue_on(port)
     }
@@ -580,15 +571,14 @@ const fn source_label(source_role: u8, label: u8) -> u16 {
 
 impl<'r> ReceivedFrame<'r> {
     #[inline(always)]
-    pub(crate) fn from_descriptor_checked_payload<T, E>(
-        port: &Port<'r, T, E>,
+    pub(crate) fn from_descriptor_checked_payload<T>(
+        port: &Port<'r, T>,
         payload: Payload<'r>,
         source_role: u8,
         label: u8,
     ) -> Self
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         Self {
             core: ReceivedFrameCore::from_payload(
@@ -640,13 +630,12 @@ impl<'r> ReceivedFrame<'r> {
     }
 
     #[inline]
-    pub(crate) fn requeue_on<T, E>(
+    pub(crate) fn requeue_on<T>(
         self,
-        port: &Port<'r, T, E>,
+        port: &Port<'r, T>,
     ) -> Result<(), crate::transport::TransportError>
     where
         T: Transport + 'r,
-        E: EpochTable + 'r,
     {
         self.core.requeue_on(port)
     }

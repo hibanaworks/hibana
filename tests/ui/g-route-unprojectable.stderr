@@ -1,8 +1,8 @@
 error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no route resolver provided
  --> src/g.rs
   |
-  |     let _ = const { validate_choreography::<Steps>() };
-  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<1, hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<118, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<119, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<77, ()>>>>>>>::{constant#0}` failed inside this call
+  |     const { validate_choreography::<Steps>() };
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<1, hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<118, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<119, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<77, ()>>>>>>>::{constant#0}` failed inside this call
   |
 note: inside `g::validate_choreography::<Route<Seq<hibana::g::Send<0, 2, Msg<118, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 2, Msg<119, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
  --> src/g.rs
@@ -12,12 +12,13 @@ note: inside `g::validate_choreography::<Route<Seq<hibana::g::Send<0, 2, Msg<118
 note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
   |
-  = note: the failure occurred here
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
   |
  ::: src/g.rs
   |
-  |           13 => panic!(concat!(
-  |  _______________-
+  |           ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
+  |  _____________________________________________________________-
   | |             "Route unprojectable for this role: arms not mergeable, ",
   | |             "wire dispatch non-deterministic, ",
   | |             "and no route resolver provided",
@@ -27,8 +28,8 @@ note: inside `g::panic_choreography_error`
 note: erroneous constant encountered
  --> src/g.rs
   |
-  |     let _ = const { validate_choreography::<Steps>() };
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     const { validate_choreography::<Steps>() };
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 2, Msg<118, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 2, Msg<119, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
  --> src/global/program.rs

@@ -1,7 +1,7 @@
 //! First-visible route projection test (compile-pass).
 
 use hibana::g::{self};
-use hibana::integration::program::{RoleProgram, project};
+use hibana::runtime::program::{RoleProgram, project};
 
 fn main() {
     let route = g::route(

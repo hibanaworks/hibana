@@ -73,10 +73,11 @@ impl FrameLabelMask {
                 word2: bit,
                 ..Self::EMPTY
             },
-            _ => Self {
+            3 => Self {
                 word3: bit,
                 ..Self::EMPTY
             },
+            _ => panic!("frame label shard overflow"),
         }
     }
 
@@ -87,7 +88,8 @@ impl FrameLabelMask {
             0 => (self.word0 & bit) != 0,
             1 => (self.word1 & bit) != 0,
             2 => (self.word2 & bit) != 0,
-            _ => (self.word3 & bit) != 0,
+            3 => (self.word3 & bit) != 0,
+            _ => panic!("frame label shard overflow"),
         }
     }
 

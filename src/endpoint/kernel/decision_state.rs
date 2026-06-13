@@ -46,7 +46,7 @@ impl SelectedRouteCommitRow {
     }
 
     pub(in crate::endpoint::kernel) const fn is_empty(self) -> bool {
-        matches!(self.conflict.to_conflict(), None)
+        self.conflict.to_conflict().is_none()
     }
 
     #[inline(always)]
@@ -509,7 +509,7 @@ impl LaneOfferStateView {
         let Some(dense) = self.lane_dense_ordinal(lane_idx) else {
             return LaneOfferState::EMPTY;
         };
-        if dense >= self.len as usize {
+        if dense >= self.len {
             return LaneOfferState::EMPTY;
         }
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
@@ -519,7 +519,7 @@ impl LaneOfferStateView {
     #[inline]
     fn get_mut(&mut self, lane_idx: usize) -> Option<&mut LaneOfferState> {
         let dense = self.lane_dense_ordinal(lane_idx)?;
-        if dense >= self.len as usize {
+        if dense >= self.len {
             return None;
         }
         Some(
@@ -542,78 +542,97 @@ pub(super) struct RouteState {
     active_offer_lanes: LaneSet,
 }
 
+pub(super) struct RouteStateStorage {
+    pub(super) route_arm_storage: *mut RouteArmState,
+    pub(super) lane_offer_state_storage: *mut LaneOfferState,
+    pub(super) scope_evidence_slots: *mut ScopeEvidenceSlot,
+    pub(super) scope_selected_arms: *mut RouteScopeSelectedArmSlot,
+    pub(super) lane_dense_by_lane: *mut DenseLaneOrdinal,
+    pub(super) lane_route_arm_lens: *mut u8,
+    pub(super) lane_linger_counts: *mut u8,
+    pub(super) lane_linger_words: *mut LaneWord,
+    pub(super) lane_offer_linger_words: *mut LaneWord,
+    pub(super) active_offer_lane_words: *mut LaneWord,
+}
+
+pub(super) struct RouteStateCapacity {
+    pub(super) lane_slot_count: usize,
+    pub(super) active_lane_count: usize,
+    pub(super) lane_word_count: usize,
+    pub(super) lane_offer_state_count: usize,
+    pub(super) route_frame_depth: usize,
+    pub(super) scope_evidence_count: usize,
+    pub(super) scope_selected_arm_count: usize,
+}
+
+struct SelectedRoutePreflight {
+    lane_idx: usize,
+    scope: ScopeId,
+    scope_slot: usize,
+    arm: u8,
+    is_linger: bool,
+    effective_arm: u8,
+    effective_refs: u16,
+}
+
 impl RouteState {
     pub(super) unsafe fn init_empty(
         dst: *mut Self,
-        route_arm_storage: *mut RouteArmState,
-        lane_offer_state_storage: *mut LaneOfferState,
-        scope_evidence_slots: *mut ScopeEvidenceSlot,
-        scope_selected_arms: *mut RouteScopeSelectedArmSlot,
-        lane_dense_by_lane: *mut DenseLaneOrdinal,
-        lane_slot_count: usize,
-        lane_route_arm_lens: *mut u8,
-        lane_linger_counts: *mut u8,
-        lane_linger_words: *mut LaneWord,
-        lane_offer_linger_words: *mut LaneWord,
-        active_offer_lane_words: *mut LaneWord,
-        active_lane_count: usize,
-        lane_word_count: usize,
-        lane_offer_state_count: usize,
-        route_frame_depth: usize,
-        scope_evidence_count: usize,
-        scope_selected_arm_count: usize,
+        storage: RouteStateStorage,
+        capacity: RouteStateCapacity,
     ) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             RouteArmStackView::init(
                 core::ptr::addr_of_mut!((*dst).lane_route_arms),
-                route_arm_storage,
-                lane_dense_by_lane,
-                lane_slot_count,
-                active_lane_count,
-                route_frame_depth,
+                storage.route_arm_storage,
+                storage.lane_dense_by_lane,
+                capacity.lane_slot_count,
+                capacity.active_lane_count,
+                capacity.route_frame_depth,
             );
             LaneOfferStateView::init(
                 core::ptr::addr_of_mut!((*dst).lane_offer_states),
-                lane_offer_state_storage,
-                lane_dense_by_lane,
-                lane_slot_count,
-                lane_offer_state_count,
+                storage.lane_offer_state_storage,
+                storage.lane_dense_by_lane,
+                capacity.lane_slot_count,
+                capacity.lane_offer_state_count,
             );
             ScopeEvidenceTable::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).scope_evidence),
-                scope_evidence_slots,
-                scope_evidence_count,
+                storage.scope_evidence_slots,
+                capacity.scope_evidence_count,
             );
-            core::ptr::addr_of_mut!((*dst).scope_selected_arms).write(scope_selected_arms);
+            core::ptr::addr_of_mut!((*dst).scope_selected_arms).write(storage.scope_selected_arms);
             core::ptr::addr_of_mut!((*dst).scope_selected_arm_count)
-                .write(scope_selected_arm_count);
-            core::ptr::addr_of_mut!((*dst).lane_route_arm_lens).write(lane_route_arm_lens);
-            core::ptr::addr_of_mut!((*dst).lane_linger_counts).write(lane_linger_counts);
+                .write(capacity.scope_selected_arm_count);
+            core::ptr::addr_of_mut!((*dst).lane_route_arm_lens).write(storage.lane_route_arm_lens);
+            core::ptr::addr_of_mut!((*dst).lane_linger_counts).write(storage.lane_linger_counts);
             LaneSet::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).lane_linger_lanes),
-                lane_linger_words,
-                lane_word_count,
+                storage.lane_linger_words,
+                capacity.lane_word_count,
             );
             LaneSet::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).lane_offer_linger_lanes),
-                lane_offer_linger_words,
-                lane_word_count,
+                storage.lane_offer_linger_words,
+                capacity.lane_word_count,
             );
             LaneSet::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).active_offer_lanes),
-                active_offer_lane_words,
-                lane_word_count,
+                storage.active_offer_lane_words,
+                capacity.lane_word_count,
             );
             let mut lane_idx = 0usize;
-            while lane_idx < active_lane_count {
-                lane_route_arm_lens.add(lane_idx).write(0);
-                lane_linger_counts.add(lane_idx).write(0);
+            while lane_idx < capacity.active_lane_count {
+                storage.lane_route_arm_lens.add(lane_idx).write(0);
+                storage.lane_linger_counts.add(lane_idx).write(0);
                 lane_idx += 1;
             }
             let mut scope_idx = 0usize;
-            while scope_idx < scope_selected_arm_count {
-                scope_selected_arms
+            while scope_idx < capacity.scope_selected_arm_count {
+                storage
+                    .scope_selected_arms
                     .add(scope_idx)
                     .write(RouteScopeSelectedArmSlot::EMPTY);
                 scope_idx += 1;
@@ -623,44 +642,45 @@ impl RouteState {
 
     #[inline]
     pub(super) fn lane_route_arm_len(&self, lane_idx: usize) -> usize {
-        self.lane_offer_states
-            .lane_dense_ordinal(lane_idx)
-            .map(|dense| /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize })
-            .unwrap_or(0)
+        match self.lane_offer_states.lane_dense_ordinal(lane_idx) {
+            Some(dense) => {
+                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                unsafe { *self.lane_route_arm_lens.add(dense) as usize }
+            }
+            None => 0,
+        }
     }
 
     fn preflight_selected_route_with_effective_slot(
         &self,
-        lane_idx: usize,
-        scope: ScopeId,
-        scope_slot: usize,
-        arm: u8,
-        is_linger: bool,
-        effective_arm: u8,
-        effective_refs: u16,
+        input: SelectedRoutePreflight,
     ) -> Option<SelectedRouteCommitRow> {
-        let dense = self.lane_offer_states.lane_dense_ordinal(lane_idx)?;
-        if scope_slot > u16::MAX as usize {
+        let dense = self.lane_offer_states.lane_dense_ordinal(input.lane_idx)?;
+        if input.scope_slot > u16::MAX as usize {
             return None;
         }
         let len = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
         let mut idx = 0usize;
         while idx < len {
-            let current = self.lane_route_arms.get(lane_idx, idx);
-            if current.scope == scope {
-                if current.arm == arm || (effective_refs == 1 && effective_arm == current.arm) {
-                    return Some(SelectedRouteCommitRow::new(scope, arm));
+            let current = self.lane_route_arms.get(input.lane_idx, idx);
+            if current.scope == input.scope {
+                if current.arm == input.arm
+                    || (input.effective_refs == 1 && input.effective_arm == current.arm)
+                {
+                    return Some(SelectedRouteCommitRow::new(input.scope, input.arm));
                 }
                 return None;
             }
             idx += 1;
         }
 
-        if len >= self.lane_route_arms.depth() && is_linger {
+        if len >= self.lane_route_arms.depth() && input.is_linger {
             return None;
         }
-        if effective_refs == 0 || (effective_arm == arm && effective_refs != u16::MAX) {
-            Some(SelectedRouteCommitRow::new(scope, arm))
+        if input.effective_refs == 0
+            || (input.effective_arm == input.arm && input.effective_refs != u16::MAX)
+        {
+            Some(SelectedRouteCommitRow::new(input.scope, input.arm))
         } else {
             None
         }
@@ -678,9 +698,15 @@ impl RouteState {
             return None;
         }
         let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.scope_selected_arms.add(scope_slot) };
-        self.preflight_selected_route_with_effective_slot(
-            lane_idx, scope, scope_slot, arm, is_linger, slot.arm, slot.refs,
-        )
+        self.preflight_selected_route_with_effective_slot(SelectedRoutePreflight {
+            lane_idx,
+            scope,
+            scope_slot,
+            arm,
+            is_linger,
+            effective_arm: slot.arm,
+            effective_refs: slot.refs,
+        })
     }
 
     pub(super) fn apply_prepared_route_selection(
@@ -815,13 +841,13 @@ impl RouteState {
 
     #[inline]
     pub(super) fn clear_lane_offer_state(&mut self, lane_idx: usize) -> LaneOfferState {
-        let old = self.lane_offer_state(lane_idx);
+        let detached = self.lane_offer_state(lane_idx);
         if let Some(state) = self.lane_offer_state_mut(lane_idx) {
             *state = LaneOfferState::EMPTY;
         }
         self.active_offer_lanes.remove(lane_idx);
         self.lane_offer_linger_lanes.remove(lane_idx);
-        old
+        detached
     }
 
     #[inline]

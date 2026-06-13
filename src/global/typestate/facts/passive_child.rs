@@ -18,13 +18,12 @@ impl PassiveArmChildFact {
         if route_scope.is_none() || !matches!(route_scope.kind(), ScopeKind::Route) || arm > 1 {
             return None;
         }
-        if let Some(child_scope) = child_route_scope {
-            if child_scope.is_none()
+        if let Some(child_scope) = child_route_scope
+            && (child_scope.is_none()
                 || !matches!(child_scope.kind(), ScopeKind::Route)
-                || child_scope.canonical_raw() == route_scope.canonical_raw()
-            {
-                return None;
-            }
+                || child_scope.canonical_raw() == route_scope.canonical_raw())
+        {
+            return None;
         }
         Some(Self {
             route_scope,

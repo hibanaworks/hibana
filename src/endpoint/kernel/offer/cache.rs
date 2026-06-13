@@ -1,17 +1,13 @@
 use super::{
-    Clock, CursorEndpoint, EpochTable, FrontierObservationDomain, FrontierObservationKey,
-    FrontierObservationSlot, LabelUniverse, MintConfigMarker, ObservedEntrySet, ScopeId, Transport,
-    checked_state_index, frontier_observed_entries_view_from_storage,
+    Clock, CursorEndpoint, FrontierObservationDomain, FrontierObservationKey,
+    FrontierObservationSlot, ObservedEntrySet, ScopeId, Transport, checked_state_index,
+    frontier_observed_entries_view_from_storage,
     frontier_working_observation_key_view_from_storage, lane_port, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
     C: Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
 {
     pub(in crate::endpoint::kernel) fn refresh_cached_frontier_observation_entry(
         &mut self,
@@ -57,7 +53,7 @@ where
             return false;
         }
         *cached_key.slot_mut(slot_idx) = observation_key.slot(slot_idx);
-        self.advance_frontier_observation_epoch();
+        self.advance_frontier_observation_generation();
         Self::store_frontier_observation(self, domain, cached_key, cached_observed_entries);
         true
     }
@@ -101,8 +97,8 @@ where
         {
             return false;
         }
-        let Some((old_slot_idx, new_slot_idx)) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::cached_entry_slot_move(
+        let Some((source_slot_idx, new_slot_idx)) =
+            CursorEndpoint::<ROLE, T, C, MAX_RV>::cached_entry_slot_move(
                 active_entries,
                 cached_key,
                 entry_idx,
@@ -113,10 +109,10 @@ where
         if !cached_observed_entries.move_entry_slot(entry_idx, new_slot_idx) {
             return false;
         }
-        CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::move_slot_in_array(
+        CursorEndpoint::<ROLE, T, C, MAX_RV>::move_slot_in_array(
             &mut cached_key.slots,
             active_entries.len(),
-            old_slot_idx,
+            source_slot_idx,
             new_slot_idx,
         );
         if !cached_key.entries_equal(&observation_key) {
@@ -141,7 +137,7 @@ where
         if cached_key.slots != observation_key.slots {
             return false;
         }
-        self.advance_frontier_observation_epoch();
+        self.advance_frontier_observation_generation();
         Self::store_frontier_observation(self, domain, cached_key, cached_observed_entries);
         true
     }
@@ -164,13 +160,11 @@ where
         if cached_key == FrontierObservationKey::EMPTY {
             return false;
         }
-        let Some(insert_slot_idx) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::cached_entry_slot_insert(
-                active_entries,
-                cached_key,
-                entry_idx,
-            )
-        else {
+        let Some(insert_slot_idx) = CursorEndpoint::<ROLE, T, C, MAX_RV>::cached_entry_slot_insert(
+            active_entries,
+            cached_key,
+            entry_idx,
+        ) else {
             return false;
         };
         let lane_limit = self.cursor.logical_lane_count();
@@ -196,7 +190,7 @@ where
         let Some(entry) = checked_state_index(entry_idx) else {
             return false;
         };
-        CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::insert_slot_in_array(
+        CursorEndpoint::<ROLE, T, C, MAX_RV>::insert_slot_in_array(
             &mut cached_key.slots,
             len,
             insert_slot_idx,
@@ -228,12 +222,12 @@ where
         ) {
             return false;
         }
-        self.advance_frontier_observation_epoch();
+        self.advance_frontier_observation_generation();
         Self::store_frontier_observation(self, domain, cached_key, cached_observed_entries);
         true
     }
 
-    pub(super) fn refresh_removed_frontier_observation_entry(
+    pub(super) fn refresh_detached_frontier_observation_entry(
         &mut self,
         domain: FrontierObservationDomain,
         entry_idx: usize,
@@ -245,8 +239,8 @@ where
         if cached_key == FrontierObservationKey::EMPTY {
             return false;
         }
-        let Some(removed_slot_idx) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::cached_entry_slot_remove(
+        let Some(detached_slot_idx) =
+            CursorEndpoint::<ROLE, T, C, MAX_RV>::detached_cached_entry_slot(
                 active_entries,
                 cached_key,
                 entry_idx,
@@ -274,10 +268,10 @@ where
             return false;
         }
         let cached_len = cached_key.len();
-        CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::remove_slot_from_array(
+        CursorEndpoint::<ROLE, T, C, MAX_RV>::remove_slot_from_array(
             &mut cached_key.slots,
             cached_len,
-            removed_slot_idx,
+            detached_slot_idx,
             FrontierObservationSlot::EMPTY,
         );
         cached_key.set_offer_lanes(observation_key.offer_lanes());
@@ -285,7 +279,7 @@ where
         {
             return false;
         }
-        self.advance_frontier_observation_epoch();
+        self.advance_frontier_observation_generation();
         Self::store_frontier_observation(self, domain, cached_key, cached_observed_entries);
         true
     }
@@ -304,8 +298,8 @@ where
         {
             return false;
         }
-        let Some((slot_idx, old_entry_idx, new_entry_idx)) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::cached_entry_slot_replace(
+        let Some((slot_idx, source_entry_idx, new_entry_idx)) =
+            CursorEndpoint::<ROLE, T, C, MAX_RV>::cached_entry_slot_replace(
                 active_entries,
                 cached_key,
                 entry_idx,
@@ -323,7 +317,7 @@ where
             return false;
         }
         if !cached_observed_entries.replace_entry_at_slot_with_frontier_mask(
-            old_entry_idx,
+            source_entry_idx,
             new_entry_idx,
             FrontierObservationSlot {
                 entry: observation_key.entry_state(slot_idx),
@@ -340,7 +334,7 @@ where
         {
             return false;
         }
-        self.advance_frontier_observation_epoch();
+        self.advance_frontier_observation_generation();
         Self::store_frontier_observation(self, domain, cached_key, cached_observed_entries);
         true
     }
@@ -366,9 +360,7 @@ where
         let mut remaining_entries = active_entries.occupancy_mask();
         let mut patched = false;
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::next_slot_in_mask(
-                &mut remaining_entries,
-            )
+            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
         {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
@@ -393,8 +385,8 @@ where
             let Some(lane_idx) = self.offer_entry_representative_lane_idx(entry_idx) else {
                 return;
             };
-            let route_change_epoch = self.port_for_lane(lane_idx).route_change_epoch();
-            if cached_key.slot(slot_idx).route_change_epoch != route_change_epoch {
+            let route_change_generation = self.port_for_lane(lane_idx).route_change_generation();
+            if cached_key.slot(slot_idx).route_change_generation != route_change_generation {
                 return;
             }
             if !self.recompute_offer_entry_observation_with_frontier_mask(
@@ -409,7 +401,7 @@ where
         if !patched {
             return;
         }
-        self.advance_frontier_observation_epoch();
+        self.advance_frontier_observation_generation();
         Self::store_frontier_observation(self, domain, cached_key, cached_observed_entries);
     }
 
@@ -417,13 +409,13 @@ where
         &mut self,
         domain: FrontierObservationDomain,
         lane_idx: usize,
-        previous_change_epoch: u16,
+        captured_change_generation: u16,
     ) {
         if lane_idx >= self.cursor.logical_lane_count() {
             return;
         }
-        let route_change_epoch = self.port_for_lane(lane_idx).route_change_epoch();
-        if route_change_epoch == previous_change_epoch {
+        let route_change_generation = self.port_for_lane(lane_idx).route_change_generation();
+        if route_change_generation == captured_change_generation {
             return;
         }
         let active_entries = Self::frontier_observation_active_entries(self, domain);
@@ -441,9 +433,7 @@ where
         let mut remaining_entries = active_entries.occupancy_mask();
         let mut patched = false;
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, U, C, E, MAX_RV, Mint>::next_slot_in_mask(
-                &mut remaining_entries,
-            )
+            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
         {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
@@ -465,7 +455,7 @@ where
             {
                 return;
             }
-            if cached_key.slot(slot_idx).route_change_epoch == route_change_epoch {
+            if cached_key.slot(slot_idx).route_change_generation == route_change_generation {
                 continue;
             }
             if !self.recompute_offer_entry_observation_with_frontier_mask(
@@ -474,13 +464,13 @@ where
             ) {
                 return;
             }
-            cached_key.slot_mut(slot_idx).route_change_epoch = route_change_epoch;
+            cached_key.slot_mut(slot_idx).route_change_generation = route_change_generation;
             patched = true;
         }
         if !patched {
             return;
         }
-        self.advance_frontier_observation_epoch();
+        self.advance_frontier_observation_generation();
         Self::store_frontier_observation(self, domain, cached_key, cached_observed_entries);
     }
 }

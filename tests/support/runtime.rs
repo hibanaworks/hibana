@@ -1,11 +1,11 @@
 use core::cell::UnsafeCell;
-use hibana::integration::runtime::{CounterClock, TapEvent};
+use hibana::runtime::{CounterClock, TapEvent};
 
 pub(crate) const RING_EVENTS: usize = 128;
 const FIXTURE_SLAB_CAPACITY: usize = 1_048_576;
 
 std::thread_local! {
-    static FIXTURE_CLOCK: CounterClock = const { CounterClock::new() };
+    static FIXTURE_CLOCK: CounterClock = const { CounterClock::zero() };
     static FIXTURE_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
         const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
     static FIXTURE_SLAB: UnsafeCell<[u8; FIXTURE_SLAB_CAPACITY]> =

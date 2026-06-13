@@ -2,7 +2,7 @@ use super::{
     Endpoint, EndpointError, EndpointOp, EndpointResult, ErrorLocation, RecvResult, RouteBranch,
     carrier,
 };
-use crate::global::{ControlDesc, MessageRuntime};
+use crate::global::MessageRuntime;
 use crate::transport::wire::{CodecError, Payload};
 use core::{
     future::Future,
@@ -144,10 +144,8 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
     fn poll_raw(
         &mut self,
         logical_label: u8,
-        expects_control: bool,
-        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-        synthetic: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
+        zero_payload: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         if self.completed {
@@ -158,14 +156,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
             return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
         }
         let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_decode(
-            logical_label,
-            expects_control,
-            control,
-            validate,
-            synthetic,
-            cx,
-        ) {
+        match endpoint.poll_decode(logical_label, validate, zero_payload, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.completed = true;
@@ -195,8 +186,6 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     fn poll_raw(
         &mut self,
         logical_label: u8,
-        expects_control: bool,
-        control: Option<ControlDesc>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -210,8 +199,6 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
         match endpoint.poll_recv(
             logical_label,
-            expects_control,
-            control,
             self.flags.accepts_empty_payload(),
             validate,
             cx,
@@ -235,11 +222,6 @@ where
 {
     #[inline]
     pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>, location: ErrorLocation) -> Self {
-        const {
-            if let Some(error) = crate::g::message_control_contract_error::<M>() {
-                panic!("{}", error.message());
-            }
-        }
         Self {
             raw: RawDecodeFuture::new(branch),
             location,
@@ -254,11 +236,6 @@ where
 {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
-        const {
-            if let Some(error) = crate::g::message_control_contract_error::<M>() {
-                panic!("{}", error.message());
-            }
-        }
         let accepts_empty_payload = <M as MessageRuntime>::ACCEPTS_EMPTY_PAYLOAD;
         Self {
             raw: RawRecvFuture::new(endpoint, accepts_empty_payload),
@@ -278,11 +255,8 @@ where
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
-            <M as MessageRuntime>::CONTROL_PAYLOAD,
-            crate::global::StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL)
-                .map(ControlDesc::from_static),
             <M as MessageRuntime>::validate_payload,
-            <M as MessageRuntime>::synthetic_payload,
+            <M as MessageRuntime>::zero_payload,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
@@ -310,9 +284,6 @@ where
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
-            <M as MessageRuntime>::CONTROL_PAYLOAD,
-            crate::global::StaticControlDesc::from_runtime_tuple(<M as MessageRuntime>::CONTROL)
-                .map(ControlDesc::from_static),
             <M as MessageRuntime>::validate_payload,
             cx,
         ) {

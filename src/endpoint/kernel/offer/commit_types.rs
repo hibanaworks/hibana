@@ -43,8 +43,8 @@ pub(crate) struct BranchMeta {
     pub(crate) eff_index: EffIndex,
     /// Event label for the previewed branch step.
     pub(crate) label: u8,
-    /// Whether the previewed branch step is a control event.
-    pub(crate) is_control: bool,
+    /// Whether the previewed branch step is a session event.
+    pub(crate) is_internal: bool,
     /// Transport/ingress discriminator expected for this branch.
     pub(crate) frame_label: u8,
     /// Branch dispatch category for decode() dispatch.
@@ -63,9 +63,9 @@ pub(crate) struct BranchMeta {
 pub(crate) enum BranchKind {
     /// Normal wire recv: payload comes from transport/ingress.
     WireRecv,
-    /// Synthetic endpoint-local control that does not go on wire.
+    /// Endpoint-local action that does not go on wire.
     /// Decode from zero buffer; route commit uses meta fields directly.
-    LocalControl,
+    LocalAction,
     /// Arm starts with Send operation (passive observer scenario).
     /// The driver should continue on the same borrowed endpoint with `flow().send()`.
     ArmSendHint,

@@ -1,16 +1,12 @@
 use super::{
-    Arm, CursorEndpoint, EpochTable, FlowPreviewError, LabelUniverse, MintConfigMarker,
-    PublicActiveOp, ScopeId, SendError, SendResult, Transport,
+    Arm, CursorEndpoint, FlowPreviewError, PublicActiveOp, ScopeId, SendError, SendResult,
+    Transport,
 };
 
-impl<'r, const ROLE: u8, T, U, C, E, const MAX_RV: usize, Mint>
-    CursorEndpoint<'r, ROLE, T, U, C, E, MAX_RV, Mint>
+impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
-    U: LabelUniverse,
-    C: crate::runtime::config::Clock,
-    E: EpochTable,
-    Mint: MintConfigMarker,
+    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     fn preview_flow_arm_for_scope(&self, scope_id: ScopeId) -> Option<u8> {
@@ -21,12 +17,7 @@ where
             return Some(arm);
         }
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        if offer_lanes
-            .first_set(self.cursor.logical_lane_count())
-            .is_none()
-        {
-            return None;
-        }
+        offer_lanes.first_set(self.cursor.logical_lane_count())?;
         self.preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
             .map(|token| token.arm().as_u8())
             .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))

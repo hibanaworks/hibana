@@ -64,9 +64,9 @@ def load_partitions() -> dict[Path, list[Path]]:
         parent = Path(parent_raw)
         child = Path(child_raw)
         if not parent.exists() or not parent.is_dir():
-            fail(f"stale owner partition parent: {parent}")
+            fail(f"forbidden owner partition parent: {parent}")
         if not child.exists():
-            fail(f"stale owner partition child: {child}")
+            fail(f"forbidden owner partition child: {child}")
         try:
             child.relative_to(parent)
         except ValueError:
@@ -96,7 +96,7 @@ def load_semantic_owners() -> dict[Path, tuple[str, str]]:
         responsibility = parts[2].strip()
         path_slug = "-".join(owner_path.parts)
         if not owner_path.exists() or not owner_path.is_dir():
-            fail(f"stale semantic owner path: {owner_path}")
+            fail(f"forbidden semantic owner path: {owner_path}")
         if (
             owner_name in {"src", "tests", owner_path.name}
             or owner_name == path_slug
@@ -146,7 +146,7 @@ def main() -> int:
             file=sys.stderr,
         )
         for parent in extra_semantics:
-            print(f"  stale semantic owner: {parent}", file=sys.stderr)
+            print(f"  forbidden semantic owner: {parent}", file=sys.stderr)
         failed = True
 
     dirs_to_check = checked_dirs()
@@ -158,7 +158,7 @@ def main() -> int:
         if lines <= LIMIT:
             if parent in partitions:
                 print(
-                    f"maintainability budget violation: stale owner partition for {parent}; owner has {lines} lines (<= {LIMIT})",
+                    f"maintainability budget violation: forbidden owner partition for {parent}; owner has {lines} lines (<= {LIMIT})",
                     file=sys.stderr,
                 )
                 failed = True
@@ -174,10 +174,10 @@ def main() -> int:
         covered: dict[Path, Path] = {}
         for child in partitions[parent]:
             for source in owner_files(child):
-                previous = covered.setdefault(source, child)
-                if previous != child:
+                existing = covered.setdefault(source, child)
+                if existing != child:
                     print(
-                        f"maintainability budget violation: {source} is covered twice in {parent}: {previous} and {child}",
+                        f"maintainability budget violation: {source} is covered twice in {parent}: {existing} and {child}",
                         file=sys.stderr,
                     )
                     failed = True
