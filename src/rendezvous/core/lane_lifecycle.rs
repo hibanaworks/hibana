@@ -1,7 +1,7 @@
 use super::{
     AssocTable, Clock, Config, EndpointLeaseId, FREE_REGION_CAPACITY, FreeRegion, Lane,
-    PhantomData, Rendezvous, RendezvousId, RouteTable, SessionId, TapRing, Transport, Waker, emit,
-    events,
+    LaneRelease, PhantomData, Rendezvous, RendezvousId, RouteTable, SessionId, TapRing, Transport,
+    Waker, emit, events,
 };
 impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
 where
@@ -101,18 +101,14 @@ where
         self.assoc.clear_waiter(sid, lane);
     }
 
-    pub(crate) fn release_lane(&self, lane: Lane) -> Option<SessionId> {
-        let sid = self.assoc.get_sid(lane)?;
-        let remaining = self.assoc.decrement(lane, sid)?;
+    pub(crate) fn release_lane(&self, lane: Lane) -> LaneRelease {
+        let sid = crate::invariant_some(self.assoc.get_sid(lane));
+        let remaining = crate::invariant_some(self.assoc.decrement(lane, sid));
         if remaining > 0 {
-            return None;
+            return LaneRelease::StillHeld;
         }
-        self.reset_lane_state(lane);
-        Some(sid)
-    }
-
-    fn reset_lane_state(&self, lane: Lane) {
         self.reset_lane_recycled_state(lane);
+        LaneRelease::Released(sid)
     }
 
     pub(crate) fn reset_lane_recycled_state(&self, lane: Lane) {

@@ -1,7 +1,8 @@
 use super::{
-    Endpoint, EndpointError, EndpointOp, EndpointResult, ErrorLocation, RecvResult, RouteBranch,
-    futures::{DecodeFuture, OfferFuture, RawOfferFuture, RawOfferLease},
+    Endpoint, EndpointError, EndpointOp, EndpointResult, RecvResult, RouteBranch,
+    futures::{DecodeFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
 };
+use crate::diag::Callsite;
 use core::{
     future::Future,
     pin::Pin,
@@ -39,7 +40,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     where
         M: crate::g::Message,
     {
-        DecodeFuture::<'e, 'r, ROLE, M>::new(self, ErrorLocation::caller())
+        DecodeFuture::<'e, 'r, ROLE, M>::new(self, Callsite::caller())
     }
 }
 
@@ -66,31 +67,32 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
         let endpoint_ptr = core::ptr::from_mut(endpoint);
         /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
-        let leased = unsafe { endpoint.init_public_offer_state() };
+        let lease = unsafe { endpoint.init_public_offer_state() };
         Self {
             endpoint: endpoint_ptr,
-            lease: RawOfferLease::new(leased),
+            lease: OfferFutureLease::from_public_lease(lease),
             _borrow: core::marker::PhantomData,
         }
     }
 
     #[inline]
     pub(super) fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
-        if self.lease.completed() {
-            crate::invariant();
-        }
-        if !self.lease.leased() {
-            self.lease.mark_completed();
-            return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
+        match self.lease {
+            OfferFutureLease::Completed => crate::invariant(),
+            OfferFutureLease::Rejected => {
+                self.lease = OfferFutureLease::Completed;
+                return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
+            }
+            OfferFutureLease::RestoreOnDrop => {}
         }
         match /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { (&mut *self.endpoint).poll_offer(cx) } {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => {
-                self.lease.mark_completed();
+                self.lease = OfferFutureLease::Completed;
                 Poll::Ready(Err(err))
             }
             Poll::Ready(Ok(label)) => {
-                self.lease.mark_completed();
+                self.lease = OfferFutureLease::Completed;
                 Poll::Ready(Ok(label))
             }
         }
@@ -99,7 +101,7 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
+    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: Callsite) -> Self {
         Self {
             raw: RawOfferFuture::new(endpoint),
             location,
@@ -128,7 +130,7 @@ impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> Drop for RawOfferFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if self.lease.must_restore_on_drop() {
+        if self.lease == OfferFutureLease::RestoreOnDrop {
             /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
             unsafe {
                 (&mut *self.endpoint).reset_public_offer_state();

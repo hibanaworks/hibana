@@ -5,7 +5,7 @@ use super::super::core::BranchPreviewView;
 use super::super::decision_state::SelectedRouteCommitRowsRef;
 use super::profile::OfferScopeProfile;
 use super::resolve_types::RouteArmCommitEvidence;
-use crate::eff::EffIndex;
+use crate::eff::{EffIndex, EventOrigin};
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{RecvMeta, StateIndex};
 
@@ -39,12 +39,12 @@ pub(crate) struct BranchMeta {
     pub(crate) lane_wire: u8,
     /// Exact typestate node selected by `offer()` for this branch.
     pub(crate) cursor_index: StateIndex,
-    /// EffIndex of the previewed resident branch step. Ignored by empty arms.
+    /// EffIndex of the previewed resident branch step. Ignored by terminal arms.
     pub(crate) eff_index: EffIndex,
     /// Event label for the previewed branch step.
     pub(crate) label: u8,
-    /// Whether the previewed branch step is a session event.
-    pub(crate) is_internal: bool,
+    /// Origin of the previewed branch step.
+    pub(crate) origin: EventOrigin,
     /// Transport/ingress discriminator expected for this branch.
     pub(crate) frame_label: u8,
     /// Branch dispatch category for decode() dispatch.
@@ -69,7 +69,7 @@ pub(crate) enum BranchKind {
     /// Arm starts with Send operation (passive observer scenario).
     /// The driver should continue on the same borrowed endpoint with `flow().send()`.
     ArmSendHint,
-    /// Empty arm leading to terminal (e.g., empty break arm).
+    /// Terminal arm without a resident receive/send event.
     /// Decode succeeds with zero buffer; cursor advances to scope end.
-    EmptyArmTerminal,
+    TerminalArm,
 }

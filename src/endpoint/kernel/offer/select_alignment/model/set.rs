@@ -60,7 +60,7 @@ impl OfferEntryMask {
     }
 
     #[inline]
-    const fn unique_or_empty(self) -> Self {
+    const fn retain_singleton(self) -> Self {
         if self.has_one() { self } else { Self::empty() }
     }
 
@@ -148,11 +148,11 @@ impl OfferEntrySet {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn unique_or_empty(
+    pub(in crate::endpoint::kernel::offer::select_alignment) const fn retain_singleton(
         self,
     ) -> Self {
         Self {
-            storage: self.storage.unique_or_empty(),
+            storage: self.storage.retain_singleton(),
         }
     }
 

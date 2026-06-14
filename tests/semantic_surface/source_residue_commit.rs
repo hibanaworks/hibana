@@ -141,7 +141,7 @@ fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
     ] {
         assert!(
             !source.contains(forbidden),
-            "production source must not re-grow route apply/settlement implicit recovery: {forbidden}"
+            "production source must not re-grow route apply/settlement repair path: {forbidden}"
         );
     }
 }
@@ -217,7 +217,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
-            && !prepared_commit_delta_row.contains(&["loop_row: ", "Loop", "Commit", "Row"].concat())
+            && !prepared_commit_delta_row.contains(&["roll_row: ", "Roll", "Commit", "Row"].concat())
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
             && !runtime_types.contains("struct SendRouteEvidencePlan")
@@ -238,7 +238,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && !runtime_types.contains("fn from_inline(")
             && !runtime_types.contains("SendRouteCommitPlan")
             && !runtime_types.contains("fn from_enabled(")
-            && !runtime_types.contains("fn with_loop_row(")
+            && !runtime_types.contains("fn with_roll_row(")
             && runtime_types.contains("fn with_lane_relocation(")
             && runtime_types.contains("fn selected_routes(")
             && runtime_types.contains("fn cursor_only(")
@@ -280,6 +280,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && commit_delta.contains("fn apply_prepared_lane_advance(")
             && commit_delta.contains("fn apply_prepared_lane_relocation(")
             && !commit_delta.contains("self.apply_loop_commit_row(")
+            && !commit_delta.contains("self.apply_roll_commit_row(")
             && !route_preview.contains("fn set_cursor_index(")
             && !offer_refresh.contains("fn set_lane_cursor_to_relocatable_step(")
             && !offer_refresh.contains("fn advance_lane_cursor_to_relocatable_step(")
@@ -304,7 +305,7 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
             && !decision_state.contains(
                 "pub(in crate::endpoint::kernel) const fn new(scope: ScopeId, selected_arm: u8)"
             ),
-        "SelectedRouteCommitRow must be a route-state-owner-only canonical (route_scope, arm) row, not a runtime lane/slot/linger record"
+        "SelectedRouteCommitRow must be a route-state-owner-only canonical (route_scope, arm) row, not a runtime lane/slot/reentry record"
     );
     assert!(
         event_chain_preflight.contains("routes.len() != range.len()")
@@ -451,8 +452,8 @@ fn route_stack_depth_cap_is_projection_sealed() {
             && decision_state.contains("depth: u8")
             && decision_state.contains("range_lane_len: u32")
             && decision_state.contains("range.len() > u8::MAX as usize")
-            && decision_state.contains("panic!(\"route arm stack depth overflow\")"),
-        "route stack depth must be rejected by projection seal before endpoint runtime init; runtime u8 panics are defensive only"
+            && decision_state.contains("crate::invariant();"),
+        "route stack depth must be rejected by projection seal before endpoint runtime init; runtime u8 guards are defensive only"
     );
     assert!(
         lowering_seal.contains("validate_first_recv_dispatch_capacity::<ROLE>(view, eff_list)")
@@ -482,7 +483,7 @@ fn decode_progress_plan_no_longer_carries_route_cleanup_inputs() {
         .split("fn with_decode_commit_builder(")
         .nth(1)
         .and_then(|tail| {
-            tail.split("    fn collect_decode_linger_route_rows_from_parts")
+            tail.split("    fn collect_decode_reentry_route_rows_from_parts")
                 .next()
         })
         .expect("decode builder boundary must stay visible");

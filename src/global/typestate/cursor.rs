@@ -12,7 +12,7 @@ use crate::{
     eff::EffIndex,
     global::{
         compiled::images::{EventSemanticKind, RoleDescriptorRef},
-        const_dsl::{ResolverMode, ScopeId, ScopeKind},
+        const_dsl::{RouteResolver, ScopeId, ScopeKind},
         event_program::{LocalEventProgram, LocalEventRowSet},
         role_program::{LaneSetView, LaneSteps, PackedLaneRange, lane_word_count},
     },
@@ -111,7 +111,7 @@ pub(crate) enum CursorRefresh {
 // =============================================================================
 // =============================================================================
 
-const EVENT_CURSOR_NO_STATE: StateIndex = StateIndex::MAX;
+const EVENT_CURSOR_STATE_NONE: StateIndex = StateIndex::ABSENT;
 
 #[derive(Debug)]
 struct EventCursorMachine {
@@ -243,8 +243,8 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn enclosing_loop(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        matches!(scope_id.kind(), ScopeKind::Loop).then_some(scope_id)
+    fn enclosing_roll(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        matches!(scope_id.kind(), ScopeKind::Roll).then_some(scope_id)
     }
 
     #[inline(always)]
@@ -270,18 +270,18 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn route_scope_linger(&self, scope_id: ScopeId) -> bool {
-        self.event_program().route_scope_linger(scope_id)
+    fn route_scope_reentry(&self, scope_id: ScopeId) -> bool {
+        self.event_program().route_scope_reentry(scope_id)
     }
 
     #[inline(always)]
-    fn loop_scope_row(&self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
-        self.event_program().loop_scope_row(scope_id)
+    fn roll_scope_row(&self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
+        self.event_program().roll_scope_row(scope_id)
     }
 
     #[inline(always)]
-    fn loop_scope_row_by_slot(&self, slot: usize) -> Option<(ScopeId, LocalEventRowSet)> {
-        self.event_program().loop_scope_row_by_slot(slot)
+    fn roll_scope_row_by_slot(&self, slot: usize) -> Option<(ScopeId, LocalEventRowSet)> {
+        self.event_program().roll_scope_row_by_slot(slot)
     }
 
     #[inline(always)]
@@ -319,7 +319,7 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn route_scope_offer_entry_by_slot(&self, slot: usize) -> Option<StateIndex> {
+    fn route_scope_offer_entry_by_slot(&self, slot: usize) -> StateIndex {
         let mut start = usize::MAX;
         let mut arm = 0u8;
         while arm <= 1 {
@@ -334,9 +334,9 @@ impl EventCursorMachine {
             arm += 1;
         }
         if start == usize::MAX {
-            Some(StateIndex::MAX)
+            StateIndex::ABSENT
         } else {
-            Some(StateIndex::from_usize(start))
+            StateIndex::from_usize(start)
         }
     }
 
@@ -386,7 +386,7 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn route_controller(&self, scope_id: ScopeId) -> Option<(ResolverMode, EffIndex, u8)> {
+    fn route_controller(&self, scope_id: ScopeId) -> Option<(RouteResolver, EffIndex, u8)> {
         self.program_ref().route_controller(scope_id)
     }
 }

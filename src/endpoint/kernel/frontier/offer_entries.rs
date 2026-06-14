@@ -12,7 +12,7 @@ impl OfferLaneEntrySlotMasks {
     #[inline]
     pub(crate) const fn from_parts(ptr: *mut u8, len: usize) -> Self {
         if len > u16::MAX as usize {
-            panic!("offer lane slot mask length overflow");
+            crate::invariant();
         }
         Self {
             ptr,
@@ -68,7 +68,7 @@ impl Index<usize> for OfferLaneEntrySlotMasks {
 pub(crate) struct RootFrontierState {
     pub(crate) root: ScopeId,
     pub(crate) observed_entries: ObservedEntrySummary,
-    pub(crate) observed_key_present: bool,
+    pub(crate) observed_key_state: ObservedKeyState,
     pub(crate) active_start: u8,
     pub(crate) active_len: u8,
 }
@@ -77,20 +77,39 @@ impl RootFrontierState {
     pub(crate) const EMPTY: Self = Self {
         root: ScopeId::none(),
         observed_entries: ObservedEntrySummary::EMPTY,
-        observed_key_present: false,
+        observed_key_state: ObservedKeyState::Absent,
         active_start: 0,
         active_len: 0,
     };
 
     #[inline]
     pub(crate) fn observed_key_valid(self) -> bool {
-        self.observed_key_present
+        self.observed_key_state.is_present()
     }
 
     #[inline]
     pub(crate) fn clear_observed_key_cache(&mut self) {
         self.observed_entries = ObservedEntrySummary::EMPTY;
-        self.observed_key_present = false;
+        self.observed_key_state = ObservedKeyState::Absent;
+    }
+
+    #[inline]
+    pub(crate) fn mark_observed_key_cached(&mut self) {
+        self.observed_key_state = ObservedKeyState::Present;
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ObservedKeyState {
+    Absent = 0,
+    Present = 1,
+}
+
+impl ObservedKeyState {
+    #[inline]
+    pub(crate) const fn is_present(self) -> bool {
+        matches!(self, Self::Present)
     }
 }
 
@@ -117,7 +136,7 @@ pub(crate) struct FrontierObservationSlot {
 
 impl FrontierObservationSlot {
     pub(crate) const EMPTY: Self = Self {
-        entry: StateIndex::MAX,
+        entry: StateIndex::ABSENT,
         meta: FrontierObservationMetaSlot::EMPTY,
     };
 }
@@ -197,7 +216,7 @@ impl FrontierObservationKey {
     #[inline]
     pub(crate) fn entry_state(&self, idx: usize) -> StateIndex {
         if idx >= self.slots.capacity() {
-            return StateIndex::MAX;
+            return StateIndex::ABSENT;
         }
         self.slots[idx].entry
     }
@@ -309,7 +328,7 @@ pub(crate) fn cached_frontier_observation_slots_len(
 ) -> usize {
     let mut len = 0usize;
     while len < slots.capacity() {
-        if slots[len].entry.is_max() {
+        if slots[len].entry.is_absent() {
             break;
         }
         len += 1;
@@ -318,15 +337,15 @@ pub(crate) fn cached_frontier_observation_slots_len(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct OfferEntryStaticSummary {
+pub(crate) struct OfferEntrySummary {
     pub(crate) frontier_mask: u8,
     pub(crate) flags: u8,
 }
 
-impl OfferEntryStaticSummary {
+impl OfferEntrySummary {
     pub(crate) const FLAG_CONTROLLER: u8 = 1;
     pub(crate) const FLAG_DYNAMIC: u8 = 1 << 1;
-    pub(crate) const FLAG_STATIC_READY: u8 = 1 << 2;
+    pub(crate) const FLAG_INTRINSIC_READY: u8 = 1 << 2;
 
     pub(crate) const EMPTY: Self = Self {
         frontier_mask: 0,
@@ -342,8 +361,8 @@ impl OfferEntryStaticSummary {
         if info.is_dynamic() {
             self.flags |= Self::FLAG_DYNAMIC;
         }
-        if info.static_ready() {
-            self.flags |= Self::FLAG_STATIC_READY;
+        if info.intrinsic_ready() {
+            self.flags |= Self::FLAG_INTRINSIC_READY;
         }
     }
 
@@ -358,8 +377,8 @@ impl OfferEntryStaticSummary {
     }
 
     #[inline]
-    pub(crate) fn static_ready(self) -> bool {
-        (self.flags & Self::FLAG_STATIC_READY) != 0
+    pub(crate) fn intrinsic_ready(self) -> bool {
+        (self.flags & Self::FLAG_INTRINSIC_READY) != 0
     }
 
     #[inline]
@@ -370,25 +389,56 @@ impl OfferEntryStaticSummary {
 
 #[derive(Clone, Copy)]
 pub(crate) struct OfferEntryState {
-    pub(crate) active: bool,
+    presence: OfferEntryPresence,
     pub(crate) lane_idx: u8,
     pub(crate) parallel_root: ScopeId,
     pub(crate) frontier: FrontierKind,
     pub(crate) scope_id: ScopeId,
     pub(crate) selection_meta: CurrentScopeSelectionMeta,
-    pub(crate) summary: OfferEntryStaticSummary,
+    pub(crate) summary: OfferEntrySummary,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum OfferEntryPresence {
+    Inactive,
+    Active,
 }
 
 impl OfferEntryState {
     pub(crate) const EMPTY: Self = Self {
-        active: false,
+        presence: OfferEntryPresence::Inactive,
         lane_idx: u8::MAX,
         parallel_root: ScopeId::none(),
         frontier: FrontierKind::Route,
         scope_id: ScopeId::none(),
         selection_meta: CurrentScopeSelectionMeta::EMPTY,
-        summary: OfferEntryStaticSummary::EMPTY,
+        summary: OfferEntrySummary::EMPTY,
     };
+
+    #[inline]
+    pub(crate) const fn active(
+        lane_idx: u8,
+        parallel_root: ScopeId,
+        frontier: FrontierKind,
+        scope_id: ScopeId,
+        selection_meta: CurrentScopeSelectionMeta,
+        summary: OfferEntrySummary,
+    ) -> Self {
+        Self {
+            presence: OfferEntryPresence::Active,
+            lane_idx,
+            parallel_root,
+            frontier,
+            scope_id,
+            selection_meta,
+            summary,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn is_active(self) -> bool {
+        matches!(self.presence, OfferEntryPresence::Active)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -399,7 +449,7 @@ pub(crate) struct OfferEntrySlot {
 
 impl OfferEntrySlot {
     pub(crate) const EMPTY: Self = Self {
-        entry: StateIndex::MAX,
+        entry: StateIndex::ABSENT,
         state: OfferEntryState::EMPTY,
     };
 }
@@ -443,7 +493,7 @@ impl OfferEntryTable {
         let mut len = 0usize;
         let capacity = self.slots.capacity();
         while len < capacity {
-            if self.slots[len].entry.is_max() {
+            if self.slots[len].entry.is_absent() {
                 break;
             }
             len += 1;
@@ -484,7 +534,7 @@ impl OfferEntryTable {
         if !self.has_storage() {
             return;
         }
-        if !state.active {
+        if !state.is_active() {
             self.clear(entry_idx);
             return;
         }
@@ -511,19 +561,17 @@ impl OfferEntryTable {
     }
 
     fn ensure_entry_mut(&mut self, entry_idx: usize) -> &mut OfferEntryState {
-        assert!(
-            self.has_storage(),
-            "offer entry table mutation requires caller-owned storage"
-        );
+        if !self.has_storage() {
+            crate::invariant();
+        }
         if let Some(slot_idx) = self.slot_for_entry(entry_idx) {
             return &mut self.slots[slot_idx].state;
         }
-        let entry = checked_state_index(entry_idx).expect("offer entry index must fit StateIndex");
+        let entry = crate::invariant_some(checked_state_index(entry_idx));
         let len = self.len();
-        assert!(
-            len < self.slots.capacity(),
-            "offer entry table overflow: distinct offer entries must fit compiled capacity"
-        );
+        if len >= self.slots.capacity() {
+            crate::invariant();
+        }
         let mut insert_idx = 0usize;
         while insert_idx < len && self.slots[insert_idx].entry.raw() < entry.raw() {
             insert_idx += 1;
@@ -546,8 +594,7 @@ impl Index<usize> for OfferEntryTable {
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        self.get(index)
-            .expect("offer entry index must have resident offer-entry state")
+        crate::invariant_some(self.get(index))
     }
 }
 
@@ -592,11 +639,6 @@ impl OfferEntryObservedState {
     pub(crate) fn has_ready_arm_evidence(self) -> bool {
         (self.flags & Self::FLAG_READY_ARM) != 0
     }
-
-    #[inline]
-    pub(crate) fn ready(self) -> bool {
-        (self.flags & Self::FLAG_READY) != 0
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -623,23 +665,24 @@ impl FrontierCandidate {
     };
 
     #[inline]
-    pub(crate) const fn pack_flags(
-        is_controller: bool,
-        is_dynamic: bool,
-        has_evidence: bool,
-        ready: bool,
-    ) -> u8 {
-        (if is_controller {
+    pub(crate) const fn flags_from_observed(observed: OfferEntryObservedState) -> u8 {
+        (if (observed.flags & OfferEntryObservedState::FLAG_CONTROLLER) != 0 {
             Self::FLAG_CONTROLLER
         } else {
             0
-        }) | (if is_dynamic { Self::FLAG_DYNAMIC } else { 0 })
-            | (if has_evidence {
-                Self::FLAG_HAS_EVIDENCE
-            } else {
-                0
-            })
-            | (if ready { Self::FLAG_READY } else { 0 })
+        }) | (if (observed.flags & OfferEntryObservedState::FLAG_DYNAMIC) != 0 {
+            Self::FLAG_DYNAMIC
+        } else {
+            0
+        }) | (if (observed.flags & OfferEntryObservedState::FLAG_PROGRESS) != 0 {
+            Self::FLAG_HAS_EVIDENCE
+        } else {
+            0
+        }) | (if (observed.flags & OfferEntryObservedState::FLAG_READY) != 0 {
+            Self::FLAG_READY
+        } else {
+            0
+        })
     }
 
     #[inline]

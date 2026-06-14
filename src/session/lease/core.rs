@@ -14,7 +14,7 @@
 
 use core::{marker::PhantomData, ptr, ptr::NonNull};
 
-use crate::rendezvous::core::Rendezvous;
+use crate::rendezvous::core::{LaneRelease, Rendezvous};
 use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::{runtime_core::config::Clock, session::lease::map::ArrayMap, transport::Transport};
 
@@ -27,28 +27,11 @@ pub(crate) struct RendezvousTable<'cfg, T: Transport, C: Clock, const MAX_RV: us
     entries: ArrayMap<RendezvousId, RendezvousEntry<'cfg, T, C>, MAX_RV>,
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> Default for RendezvousTable<'cfg, T, C, MAX_RV>
-where
-    T: Transport,
-    C: Clock,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<'cfg, T, C, const MAX_RV: usize> RendezvousTable<'cfg, T, C, MAX_RV>
 where
     T: Transport,
     C: Clock,
 {
-    /// Construct an empty rendezvous table.
-    pub(crate) const fn new() -> Self {
-        Self {
-            entries: ArrayMap::new(),
-        }
-    }
-
     /// Initialize an empty rendezvous table in place without constructing the full
     /// fixed-capacity storage on the caller's stack first.
     ///
@@ -78,7 +61,7 @@ where
             .and_then(|entry| entry.rendezvous_mut())
     }
 
-    /// Borrow a rendezvous mutably, preserving the distinction between an
+    /// Borrow a rendezvous mutably, keeping the distinction between an
     /// absent rendezvous and an active affine lease.
     pub(crate) fn get_mut_checked(
         &mut self,
@@ -87,7 +70,7 @@ where
         let slot = self
             .entries
             .get_mut(id)
-            .ok_or(LeaseError::UnknownRendezvous(*id))?;
+            .ok_or(LeaseError::RendezvousUnregistered(*id))?;
         if slot.is_active() {
             return Err(LeaseError::AlreadyLeased(*id));
         }
@@ -105,7 +88,7 @@ where
         let slot = self
             .entries
             .get_mut(&rv_id)
-            .ok_or(LeaseError::UnknownRendezvous(rv_id))?;
+            .ok_or(LeaseError::RendezvousUnregistered(rv_id))?;
         if slot.is_active() {
             return Err(LeaseError::AlreadyLeased(rv_id));
         }
@@ -171,7 +154,7 @@ where
 pub(crate) enum RegisterRendezvousError {
     /// Attempted to register more rendezvous than the fixed capacity allows.
     CapacityExceeded,
-    /// Borrowed runtime storage cannot fit the rendezvous resident header.
+    /// Caller-provided slab cannot fit the rendezvous resident header.
     StorageExhausted,
 }
 
@@ -179,20 +162,26 @@ pub(crate) enum RegisterRendezvousError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LeaseError {
     /// No rendezvous with the requested identifier exists.
-    UnknownRendezvous(RendezvousId),
+    RendezvousUnregistered(RendezvousId),
     /// The rendezvous is currently leased and cannot be borrowed again.
     AlreadyLeased(RendezvousId),
 }
 
-/// Internal rendezvous slot used by [`RendezvousTable`].
+/// Resident rendezvous slot used by [`RendezvousTable`].
 struct RendezvousEntry<'cfg, T, C>
 where
     T: Transport,
     C: Clock,
 {
     rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T, C>>,
-    active: bool,
+    state: RendezvousEntryState,
     _marker: PhantomData<&'cfg mut Rendezvous<'cfg, 'cfg, T, C>>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RendezvousEntryState {
+    Available,
+    Leased,
 }
 
 impl<'cfg, T, C> RendezvousEntry<'cfg, T, C>
@@ -201,36 +190,34 @@ where
     C: Clock,
 {
     fn is_active(&self) -> bool {
-        self.active
+        self.state == RendezvousEntryState::Leased
     }
 
     fn mark_active(&mut self) {
-        self.active = true;
+        self.state = RendezvousEntryState::Leased;
     }
 
     fn clear_active(&mut self) {
-        self.active = false;
+        self.state = RendezvousEntryState::Available;
     }
 
     fn rendezvous_ref(&self) -> Option<&Rendezvous<'cfg, 'cfg, T, C>> {
-        if self.active {
-            None
-        } else {
-            Some(
+        match self.state {
+            RendezvousEntryState::Available => Some(
                 /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
                 unsafe { self.rendezvous.as_ref() },
-            )
+            ),
+            RendezvousEntryState::Leased => None,
         }
     }
 
     fn rendezvous_mut(&mut self) -> Option<&mut Rendezvous<'cfg, 'cfg, T, C>> {
-        if self.active {
-            None
-        } else {
-            Some(
+        match self.state {
+            RendezvousEntryState::Available => Some(
                 /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
                 unsafe { self.rendezvous.as_mut() },
-            )
+            ),
+            RendezvousEntryState::Leased => None,
         }
     }
 
@@ -258,7 +245,7 @@ where
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).rendezvous).write(NonNull::new_unchecked(rendezvous));
-            core::ptr::addr_of_mut!((*dst).active).write(false);
+            core::ptr::addr_of_mut!((*dst).state).write(RendezvousEntryState::Available);
             core::ptr::addr_of_mut!((*dst)._marker).write(PhantomData);
         }
         Ok(())
@@ -301,9 +288,10 @@ where
 
     #[inline]
     fn entry_mut(&mut self) -> &mut RendezvousEntry<'cfg, T, C> {
-        self.slot
-            .as_mut()
-            .expect("rendezvous lease has already been consumed")
+        match self.slot.as_mut() {
+            Some(slot) => slot,
+            None => crate::invariant(),
+        }
     }
 
     #[inline]
@@ -340,15 +328,13 @@ where
     }
 
     #[inline]
-    pub(crate) fn release_lane_with_tap(&mut self, lane: Lane) -> bool {
-        self.with_rendezvous(|rv| {
-            if let Some(sid) = rv.release_lane(lane) {
+    pub(crate) fn release_lane_with_tap(&mut self, lane: Lane) {
+        self.with_rendezvous(|rv| match rv.release_lane(lane) {
+            LaneRelease::Released(sid) => {
                 rv.emit_lane_release(sid, lane);
-                true
-            } else {
-                false
             }
-        })
+            LaneRelease::StillHeld => {}
+        });
     }
 }
 

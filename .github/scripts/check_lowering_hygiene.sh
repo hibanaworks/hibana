@@ -50,7 +50,7 @@ check_absent \
 
 check_absent \
   "interpret_eff_list\\(" \
-  "forbidden interpret_eff_list lowering bypass path" \
+  "forbidden interpret_eff_list lowering forbidden path" \
   src
 
 check_absent \
@@ -111,13 +111,13 @@ check_absent_outside \
 
 check_absent_outside \
   "CompiledProgram::compile\\(" \
-  "direct CompiledProgram::compile call used outside compiled owners or test-only fixtures" \
+  "direct CompiledProgram::compile call used outside compiled owners or test-only test support" \
   "src/global/compiled/program.rs" \
   "src/session/cluster/effects.rs"
 
 check_absent_outside \
   "CompiledRole::compile\\(" \
-  "direct CompiledRole::compile call used outside compiled owners or test-only fixtures" \
+  "direct CompiledRole::compile call used outside compiled owners or test-only test support" \
   "src/global/compiled/role.rs" \
   "src/global/role_program.rs" \
   "src/endpoint/kernel/core.rs"

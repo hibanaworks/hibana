@@ -33,14 +33,14 @@ impl Iterator for ProgramImageDynamicResolverSiteIter<'_> {
             let Some(resolver) = self.program.resident_resolver_at(offset) else {
                 continue;
             };
-            if !resolver.is_dynamic() {
+            let crate::global::const_dsl::RouteResolver::Dynamic { resolver_id, scope } = resolver
+            else {
                 continue;
-            }
-            let atom = self.program.atom_at(offset).expect("invariant");
+            };
             return Some(DynamicResolverSite::new(
                 EffIndex::from_dense_ordinal(offset),
-                atom.label,
-                resolver,
+                resolver_id,
+                scope,
             ));
         }
         None

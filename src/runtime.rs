@@ -1,8 +1,7 @@
 //! Protocol-neutral runtime surface for protocol implementors.
 //!
-//! App code should not use this module directly. Protocol crates use it to
-//! project a choreography, allocate runtime storage, bind transport I/O, and
-//! return an attached [`crate::Endpoint`].
+//! Protocol crates use this module to project a choreography, provide runtime
+//! buffers, bind transport I/O, and return an attached [`crate::Endpoint`].
 //!
 //! The canonical runtime path is:
 //!
@@ -31,8 +30,8 @@
 //! - [`runtime::resolver`](crate::runtime::resolver) for explicit
 //!   route resolver sites.
 //!
-//! Transport observation and resolver authority stay under their owning
-//! canonical buckets; the runtime surface does not expose parallel mirrors.
+//! Transport observation and resolver authority stay under their owning modules;
+//! the runtime surface does not expose parallel mirrors.
 //!
 //! Runtime APIs surface attach and resolver failures as domain-specific
 //! evidence. They do not add a public timeout, cancellation, restart helper, or

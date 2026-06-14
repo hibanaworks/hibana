@@ -32,7 +32,7 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         init: *const crate::endpoint::kernel::SendInit,
-    ) -> bool {
+    ) -> crate::endpoint::kernel::PublicOpLease {
         let init = unsafe {
             // SAFETY: caller provides the initialized send-state descriptor for
             // this callback invocation.
@@ -41,9 +41,12 @@ where
         unsafe {
             // SAFETY: this raw callback has exclusive access to the carrier
             // endpoint slot selected by `handle` for the duration of the call.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, false, |kernel| {
-                kernel.init_public_send_state(init)
-            })
+            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
+                ptr,
+                handle,
+                crate::endpoint::kernel::PublicOpLease::Rejected,
+                |kernel| kernel.init_public_send_state(init),
+            )
         }
     }
 

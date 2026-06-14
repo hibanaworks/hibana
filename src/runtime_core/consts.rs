@@ -1,4 +1,4 @@
-//! Static limits shared across the crate.
+//! Compile-time limits shared across the crate.
 //!
 //! The values here intentionally favour predictability over configurability so
 //! that they can be referenced inside `const` contexts without requiring

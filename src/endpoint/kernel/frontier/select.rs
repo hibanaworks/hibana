@@ -1,6 +1,6 @@
 use super::{
-    FrontierCandidate, FrontierKind, ObservedEntrySet, OfferEntryObservedState,
-    OfferEntryStaticSummary, ScopeId, TryFrom,
+    FrontierCandidate, FrontierKind, ObservedEntrySet, OfferEntryObservedState, OfferEntrySummary,
+    ScopeId, TryFrom,
 };
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OfferSelectPriority {
@@ -10,27 +10,71 @@ pub(crate) enum OfferSelectPriority {
     CandidateUnique,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OfferEntryEvidence {
+    bits: u8,
+}
+
+impl OfferEntryEvidence {
+    pub(crate) const FLAG_ACK: u8 = 1;
+    pub(crate) const FLAG_READY_ARM: u8 = 1 << 1;
+    pub(crate) const FLAG_INGRESS_READY: u8 = 1 << 2;
+
+    #[inline]
+    pub(crate) const fn empty() -> Self {
+        Self { bits: 0 }
+    }
+
+    #[inline]
+    pub(crate) const fn with_ack(self) -> Self {
+        Self {
+            bits: self.bits | Self::FLAG_ACK,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn with_ready_arm(self) -> Self {
+        Self {
+            bits: self.bits | Self::FLAG_READY_ARM,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn with_ingress_ready(self) -> Self {
+        Self {
+            bits: self.bits | Self::FLAG_INGRESS_READY,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn has_ack(self) -> bool {
+        (self.bits & Self::FLAG_ACK) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn has_ready_arm(self) -> bool {
+        (self.bits & Self::FLAG_READY_ARM) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn ingress_ready(self) -> bool {
+        (self.bits & Self::FLAG_INGRESS_READY) != 0
+    }
+}
+
 #[inline]
-pub(crate) fn candidate_has_progress_evidence(
-    has_ready_arm_evidence: bool,
-    ack_is_progress: bool,
-    ingress_ready: bool,
-) -> bool {
-    has_ready_arm_evidence || ack_is_progress || ingress_ready
+pub(crate) fn candidate_has_progress_evidence(evidence: OfferEntryEvidence) -> bool {
+    evidence.has_ready_arm() || evidence.has_ack() || evidence.ingress_ready()
 }
 
 #[inline]
 pub(crate) fn offer_entry_observed_state(
-    _scope_id: ScopeId,
-    summary: OfferEntryStaticSummary,
-    has_ready_arm_evidence: bool,
-    ack_is_progress: bool,
-    ingress_ready: bool,
+    scope_id: ScopeId,
+    summary: OfferEntrySummary,
+    evidence: OfferEntryEvidence,
 ) -> OfferEntryObservedState {
-    let has_progress_evidence =
-        candidate_has_progress_evidence(has_ready_arm_evidence, ack_is_progress, ingress_ready);
-    let ready =
-        has_ready_arm_evidence || ack_is_progress || ingress_ready || summary.static_ready();
+    let has_progress_evidence = candidate_has_progress_evidence(evidence);
+    let ready = has_progress_evidence || summary.intrinsic_ready();
     let mut flags = 0u8;
     if summary.is_controller() {
         flags |= OfferEntryObservedState::FLAG_CONTROLLER;
@@ -41,17 +85,17 @@ pub(crate) fn offer_entry_observed_state(
     if has_progress_evidence {
         flags |= OfferEntryObservedState::FLAG_PROGRESS;
     }
-    if has_ready_arm_evidence {
+    if evidence.has_ready_arm() {
         flags |= OfferEntryObservedState::FLAG_READY_ARM;
     }
-    if ingress_ready {
+    if evidence.ingress_ready() {
         flags |= OfferEntryObservedState::FLAG_BINDING_READY;
     }
     if ready {
         flags |= OfferEntryObservedState::FLAG_READY;
     }
     OfferEntryObservedState {
-        scope_id: _scope_id,
+        scope_id,
         frontier_mask: summary.frontier_mask,
         flags,
     }
@@ -73,19 +117,14 @@ pub(crate) fn offer_entry_frontier_candidate(
         entry_idx: entry_idx as u16,
         parallel_root,
         frontier,
-        flags: FrontierCandidate::pack_flags(
-            observed.is_controller(),
-            observed.is_dynamic(),
-            observed.has_progress_evidence(),
-            observed.ready(),
-        ),
+        flags: FrontierCandidate::flags_from_observed(observed),
     }
 }
 
 #[inline]
 pub(crate) fn cached_offer_entry_observed_state(
-    _scope_id: ScopeId,
-    summary: OfferEntryStaticSummary,
+    scope_id: ScopeId,
+    summary: OfferEntrySummary,
     observed_entries: ObservedEntrySet,
     observed_bit: u8,
 ) -> OfferEntryObservedState {
@@ -106,7 +145,7 @@ pub(crate) fn cached_offer_entry_observed_state(
         flags |= OfferEntryObservedState::FLAG_READY;
     }
     OfferEntryObservedState {
-        scope_id: _scope_id,
+        scope_id,
         frontier_mask: summary.frontier_mask,
         flags,
     }

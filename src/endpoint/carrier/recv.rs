@@ -7,13 +7,16 @@ where
     pub(super) unsafe fn init_public_recv_state_raw<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> bool {
+    ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: this raw callback has exclusive access to the carrier
             // endpoint slot selected by `handle` for the duration of the call.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, false, |kernel| {
-                kernel.init_public_recv_state()
-            })
+            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
+                ptr,
+                handle,
+                crate::endpoint::kernel::PublicOpLease::Rejected,
+                |kernel| kernel.init_public_recv_state(),
+            )
         }
     }
 
@@ -37,7 +40,7 @@ where
             ptr,
             handle,
             logical_label,
-            accepts_empty_payload,
+            payload_mode,
             validate,
             cx,
             out,
@@ -51,12 +54,7 @@ where
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| match kernel.poll_public_recv(
-                    logical_label,
-                    accepts_empty_payload,
-                    validate,
-                    cx,
-                ) {
+                |kernel| match kernel.poll_public_recv(logical_label, payload_mode, validate, cx) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),

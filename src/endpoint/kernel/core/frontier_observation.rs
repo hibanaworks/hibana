@@ -5,9 +5,9 @@ use super::super::frontier::{
 };
 use super::{
     ActiveEntrySet, CursorEndpoint, FrontierKind, FrontierObservationDomain,
-    FrontierObservationKey, FrontierScratchLayout, ObservedEntrySet, OfferEntryObservedState,
-    ScopeId, Transport, cached_offer_entry_observed_state, checked_state_index,
-    frontier_cached_observation_key_view_from_storage,
+    FrontierObservationKey, FrontierScratchLayout, FrontierScratchState, ObservedEntrySet,
+    OfferEntryObservedState, ScopeId, Transport, cached_offer_entry_observed_state,
+    checked_state_index, frontier_cached_observation_key_view_from_storage,
     frontier_global_active_entries_view_from_storage, frontier_observed_entries_view_from_storage,
     lane_port, state_index_to_usize,
 };
@@ -32,7 +32,11 @@ where
     pub(in crate::endpoint::kernel) fn global_frontier_observed_state(
         &self,
     ) -> GlobalFrontierObservedState {
-        if !self.frontier_state.global_frontier_scratch_initialized {
+        if !self
+            .frontier_state
+            .global_frontier_scratch_state
+            .is_initialized()
+        {
             return GlobalFrontierObservedState::EMPTY;
         }
         let (scratch_ptr, layout, _) = self.global_frontier_scratch_parts();
@@ -52,7 +56,11 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn init_global_frontier_scratch_if_needed(&mut self) {
-        if self.frontier_state.global_frontier_scratch_initialized {
+        if self
+            .frontier_state
+            .global_frontier_scratch_state
+            .is_initialized()
+        {
             return;
         }
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
@@ -73,12 +81,16 @@ where
             frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout)
                 .write(GlobalFrontierObservedState::EMPTY);
         }
-        self.frontier_state.global_frontier_scratch_initialized = true;
+        self.frontier_state.global_frontier_scratch_state = FrontierScratchState::Initialized;
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn global_active_entries(&self) -> ActiveEntrySet {
-        if !self.frontier_state.global_frontier_scratch_initialized {
+        if !self
+            .frontier_state
+            .global_frontier_scratch_state
+            .is_initialized()
+        {
             return ActiveEntrySet::EMPTY;
         }
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
@@ -93,7 +105,11 @@ where
     pub(in crate::endpoint::kernel) fn cached_global_frontier_observation_key(
         &self,
     ) -> FrontierObservationKey {
-        if !self.frontier_state.global_frontier_scratch_initialized {
+        if !self
+            .frontier_state
+            .global_frontier_scratch_state
+            .is_initialized()
+        {
             return FrontierObservationKey::EMPTY;
         }
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();

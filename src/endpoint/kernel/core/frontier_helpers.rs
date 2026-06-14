@@ -1,7 +1,7 @@
 use super::{
-    CachedRecvMeta, CursorEndpoint, EventCursor, FrameLabelMask, FrontierKind, FrontierStaticFacts,
-    OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeId, ScopeLoopMeta,
-    Transport, state_index_to_usize,
+    CachedRecvMeta, CursorEndpoint, EventCursor, FrameLabelMask, FrontierFacts, FrontierKind,
+    FrontierReadiness, OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta,
+    ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
@@ -28,8 +28,8 @@ where
         if !is_controller && !has_controller_entry {
             return FrontierKind::PassiveObserver;
         }
-        if cursor.route_scope_linger(scope_id) {
-            return FrontierKind::Loop;
+        if cursor.route_scope_reentry(scope_id) {
+            return FrontierKind::Reentry;
         }
         if Self::parallel_scope_root(cursor, scope_id).is_some() {
             return FrontierKind::Parallel;
@@ -38,49 +38,49 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn scope_loop_meta(
+    pub(in crate::endpoint::kernel) fn scope_reentry_meta(
         cursor: &EventCursor,
         scope_id: ScopeId,
-    ) -> ScopeLoopMeta {
-        Self::scope_loop_meta_at(cursor, scope_id, cursor.index())
+    ) -> ScopeReentryMeta {
+        Self::scope_reentry_meta_at(cursor, scope_id, cursor.index())
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn scope_loop_meta_at(
+    pub(in crate::endpoint::kernel) fn scope_reentry_meta_at(
         cursor: &EventCursor,
         scope_id: ScopeId,
         idx: usize,
-    ) -> ScopeLoopMeta {
+    ) -> ScopeReentryMeta {
         let mut flags = 0u8;
-        if cursor.node_loop_scope(idx).is_some() {
-            flags |= ScopeLoopMeta::FLAG_SCOPE_ACTIVE;
+        if cursor.node_roll_scope(idx).is_some() {
+            flags |= ScopeReentryMeta::FLAG_SCOPE_ACTIVE;
         }
-        if cursor.route_scope_linger(scope_id) {
-            flags |= ScopeLoopMeta::FLAG_SCOPE_LINGER;
+        if cursor.route_scope_reentry(scope_id) {
+            flags |= ScopeReentryMeta::FLAG_ROUTE_REENTRY;
         }
         if cursor.route_scope_arm_recv_index(scope_id, 0).is_some() {
-            flags |= ScopeLoopMeta::FLAG_CONTINUE_HAS_RECV;
+            flags |= ScopeReentryMeta::FLAG_ARM0_HAS_RECV;
         }
         if cursor.route_scope_arm_recv_index(scope_id, 1).is_some() {
-            flags |= ScopeLoopMeta::FLAG_BREAK_HAS_RECV;
+            flags |= ScopeReentryMeta::FLAG_ARM1_HAS_RECV;
         }
-        ScopeLoopMeta { flags }
+        ScopeReentryMeta { flags }
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn scope_frame_label_meta(
         cursor: &EventCursor,
         scope_id: ScopeId,
-        loop_meta: ScopeLoopMeta,
+        reentry_meta: ScopeReentryMeta,
     ) -> ScopeFrameLabelMeta {
-        Self::scope_frame_label_meta_at(cursor, scope_id, loop_meta, cursor.index())
+        Self::scope_frame_label_meta_at(cursor, scope_id, reentry_meta, cursor.index())
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn scope_frame_label_meta_at(
         cursor: &EventCursor,
         scope_id: ScopeId,
-        loop_meta: ScopeLoopMeta,
+        reentry_meta: ScopeReentryMeta,
         idx: usize,
     ) -> ScopeFrameLabelMeta {
         let is_controller = cursor.is_route_controller(scope_id);
@@ -120,7 +120,7 @@ where
                 meta.clear_evidence_arm_frame_label(1, label);
             }
         }
-        if loop_meta.loop_label_scope() {
+        if reentry_meta.route_reentry_scope() {
             if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
                 meta.record_arm_frame_label(0, label);
             }
@@ -133,7 +133,7 @@ where
             let mut dispatch_idx = 0usize;
             while dispatch_idx < len as usize {
                 let entry = dispatch[dispatch_idx];
-                if entry.arm() < 2 && !entry.target().is_max() {
+                if entry.arm() < 2 && !entry.target().is_absent() {
                     if cursor
                         .try_recv_meta_at(state_index_to_usize(entry.target()))
                         .is_some()
@@ -169,17 +169,17 @@ where
                 {
                     return cached;
                 }
-                let loop_meta = Self::scope_loop_meta_at(&self.cursor, scope_id, entry_idx);
+                let reentry_meta = Self::scope_reentry_meta_at(&self.cursor, scope_id, entry_idx);
                 return Self::scope_frame_label_meta_at(
                     &self.cursor,
                     scope_id,
-                    loop_meta,
+                    reentry_meta,
                     entry_idx,
                 );
             }
         }
         if let Some(offer_entry) = self.cursor.route_scope_offer_entry(scope_id) {
-            let entry_idx = if offer_entry.is_max() {
+            let entry_idx = if offer_entry.is_absent() {
                 self.cursor.index()
             } else {
                 state_index_to_usize(offer_entry)
@@ -187,11 +187,16 @@ where
             if let Some(cached) = Self::offer_entry_frame_label_meta(self, scope_id, entry_idx) {
                 return cached;
             }
-            let loop_meta = Self::scope_loop_meta_at(&self.cursor, scope_id, entry_idx);
-            return Self::scope_frame_label_meta_at(&self.cursor, scope_id, loop_meta, entry_idx);
+            let reentry_meta = Self::scope_reentry_meta_at(&self.cursor, scope_id, entry_idx);
+            return Self::scope_frame_label_meta_at(
+                &self.cursor,
+                scope_id,
+                reentry_meta,
+                entry_idx,
+            );
         }
-        let loop_meta = Self::scope_loop_meta(&self.cursor, scope_id);
-        Self::scope_frame_label_meta(&self.cursor, scope_id, loop_meta)
+        let reentry_meta = Self::scope_reentry_meta(&self.cursor, scope_id);
+        Self::scope_frame_label_meta(&self.cursor, scope_id, reentry_meta)
     }
 
     #[inline]
@@ -210,7 +215,7 @@ where
             }
         }
         if let Some(offer_entry) = self.cursor.route_scope_offer_entry(scope_id) {
-            let entry_idx = if offer_entry.is_max() {
+            let entry_idx = if offer_entry.is_absent() {
                 self.cursor.index()
             } else {
                 state_index_to_usize(offer_entry)
@@ -251,30 +256,31 @@ where
         )
     }
 
-    pub(in crate::endpoint::kernel) fn frontier_static_facts_at(
+    pub(in crate::endpoint::kernel) fn frontier_facts_at(
         cursor: &EventCursor,
         scope_id: ScopeId,
         is_controller: bool,
         is_dynamic: bool,
         idx: usize,
-    ) -> FrontierStaticFacts {
-        let loop_meta = Self::scope_loop_meta_at(cursor, scope_id, idx);
+    ) -> FrontierFacts {
+        let reentry_meta = Self::scope_reentry_meta_at(cursor, scope_id, idx);
         let controller_local_ready =
             is_controller && Self::scope_has_controller_arm_entry(cursor, scope_id);
         let cursor_ready = cursor.is_recv_at(idx)
             || cursor.try_recv_meta_at(idx).is_some()
             || cursor.try_local_meta_at(idx).is_some();
-        FrontierStaticFacts {
+        let readiness = if reentry_meta.recvless_arm_ready()
+            || controller_local_ready
+            || is_dynamic
+            || cursor_ready
+        {
+            FrontierReadiness::Ready
+        } else {
+            FrontierReadiness::Waiting
+        };
+        FrontierFacts {
             frontier: Self::frontier_kind(cursor, scope_id, is_controller),
-            ready: loop_meta.recvless_ready()
-                || controller_local_ready
-                || is_dynamic
-                || cursor_ready,
+            readiness,
         }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn ack_is_progress_evidence(has_ack: bool) -> bool {
-        has_ack
     }
 }

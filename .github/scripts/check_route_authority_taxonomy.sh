@@ -40,7 +40,10 @@ if "from_ack" not in source or "from_resolver" not in source or "from_poll" not 
     sys.exit(1)
 
 for path in [root / "src", root / "tests", root / "README.md"]:
-    text = "\n".join(p.read_text(errors="ignore") for p in ([path] if path.is_file() else path.rglob("*.rs")))
+    text = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in ([path] if path.is_file() else path.rglob("*.rs"))
+    )
     if "IncomingClassification" in text:
         print("route authority taxonomy violation: IncomingClassification name must not remain", file=sys.stderr)
         sys.exit(1)

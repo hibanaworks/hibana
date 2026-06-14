@@ -16,7 +16,7 @@ use crate::{
 /// - `arg0`, `arg1`: Context-dependent arguments (sid, gen, label, etc.)
 /// - `arg2`: Extended context (e.g., ScopeId range/nest ordinals)
 #[repr(C)]
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TapEvent {
     pub ts: u32,
     pub id: u16,
@@ -26,7 +26,7 @@ pub struct TapEvent {
     pub arg2: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Evidence {
     kind: u16,
     reason: u8,
@@ -174,7 +174,7 @@ impl WirePayload for TapEvent {
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        require_exact_len(input.as_bytes().len(), 20, "payload length")
+        require_exact_len(input.as_bytes().len(), 20)
     }
 
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
@@ -187,6 +187,14 @@ impl WirePayload for TapEvent {
             arg1: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
             arg2: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
         }
+    }
+
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        if scratch.len() < 20 {
+            return Err(CodecError::Truncated);
+        }
+        scratch[..20].fill(0);
+        Ok(Payload::new(&scratch[..20]))
     }
 }
 

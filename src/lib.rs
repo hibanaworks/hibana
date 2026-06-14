@@ -98,7 +98,7 @@
 //! derived from Hibana's wire/domain limits and projected descriptors, not
 //! chosen by callers. Hidden timeout fuses are not protocol API or attach
 //! config.
-//! Protocol-invisible carrier watchdogs live inside the transport adapter:
+//! Protocol-invisible carrier watchdogs live inside the transport implementation:
 //! terminal I/O waits are reported as [`runtime::transport::TransportError`]
 //! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
 //!
@@ -153,6 +153,7 @@ mod test_support;
 // Public modules (application-facing)
 // ============================================================================
 
+mod diag;
 pub mod g;
 /// Global-to-Local projection (MPST theory layer)
 mod global;
@@ -174,31 +175,42 @@ mod observe;
 
 mod resolver_audit;
 
-/// Internal ingress demux bridge.
 // ============================================================================
-// Internal modules (NOT for direct user access)
+// Private modules
 // ============================================================================
 mod eff;
 
 #[cold]
 #[inline(never)]
+#[track_caller]
 pub(crate) const fn invariant() -> ! {
-    panic!("invariant")
+    panic!()
 }
 
-/// Rendezvous (internal descriptor evaluator)
+#[inline]
+#[track_caller]
+pub(crate) fn invariant_some<T>(value: Option<T>) -> T {
+    match value {
+        Some(value) => value,
+        None => invariant(),
+    }
+}
+
+#[inline]
+#[track_caller]
+pub(crate) fn invariant_ok<T, E>(value: Result<T, E>) -> T {
+    match value {
+        Ok(value) => value,
+        Err(_) => invariant(),
+    }
+}
+
+/// Rendezvous owner for local session, lane, and route state.
 ///
-/// **INTERNAL IMPLEMENTATION - DO NOT USE DIRECTLY**
-///
-/// This module contains the internal implementation of the Rendezvous descriptor evaluator.
-/// It evaluates descriptor-baked route facts and manages local session state.
-///
-/// **For application code**, use:
-/// - [`Endpoint`] for localside choreography execution
-/// - [`runtime::SessionKit`] for Rendezvous coordination
-///
-/// This module stays internal; tests reach it through crate-private coverage,
-/// not through a third public face.
+/// Application code uses [`Endpoint`] for choreography execution and
+/// [`runtime::SessionKit`] for runtime coordination. This module stays internal;
+/// tests reach it through crate-private coverage, not through a third public
+/// face.
 mod rendezvous;
 
 // ============================================================================

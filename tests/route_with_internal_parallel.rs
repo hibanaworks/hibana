@@ -10,7 +10,7 @@ use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
@@ -76,10 +76,10 @@ fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
 
 #[test]
 fn selected_route_arm_materializes_lanes_inside_parallel_body() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");

@@ -139,18 +139,18 @@ where
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
                 current_parallel: selection.frontier_parallel_root,
-                reason: DeferReason::NoEvidence,
+                reason: DeferReason::EvidenceAbsent,
                 offer_lane: selection.offer_lane,
-                ingress_ready: state.ingress.has_transport(),
+                ingress: state.ingress.evidence_state(),
                 selected_arm: Some(route_token.arm().as_u8()),
             },
             frontier_visited,
         ) {
             FrontierDeferOutcome::Continue => {
-                if state.facts.profile.static_passive_progress_after_defer() {
+                if state.facts.profile.intrinsic_passive_progress_after_defer() {
                     state
                         .pending
-                        .arm_static_passive_progress(route_token.arm().as_u8());
+                        .arm_intrinsic_passive_progress(route_token.arm().as_u8());
                 } else {
                     state.pending.arm_yield_restart();
                 }

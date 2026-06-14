@@ -31,7 +31,7 @@ mod tests {
     const QUEUE_CAPACITY: usize = 16;
     const PAYLOAD_CAPACITY: usize = 96;
 
-    fn retain_large_choreography_fixture_symbols() {
+    fn retain_large_choreography_symbols() {
         let _ = huge_program::run
             as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
         let _ = huge_program::controller_program as fn() -> crate::runtime::program::RoleProgram<0>;
@@ -48,17 +48,17 @@ mod tests {
     }
 
     #[test]
-    fn large_choreography_fixture_symbols_are_reachable() {
-        retain_large_choreography_fixture_symbols();
+    fn large_choreography_symbols_are_reachable() {
+        retain_large_choreography_symbols();
     }
 
     std::thread_local! {
-        static FIXTURE_CLOCK: CounterClock = const { CounterClock::zero() };
-        static FIXTURE_TAP: UnsafeCell<[crate::observe::core::TapEvent; LARGE_CHOREOGRAPHY_RING_EVENTS]> =
+        static TEST_CLOCK: CounterClock = const { CounterClock::zero() };
+        static TEST_TAP: UnsafeCell<[crate::observe::core::TapEvent; LARGE_CHOREOGRAPHY_RING_EVENTS]> =
             const { UnsafeCell::new([crate::observe::core::TapEvent::zero(); LARGE_CHOREOGRAPHY_RING_EVENTS]) };
-        static FIXTURE_SLAB: UnsafeCell<[u8; HOST_MEASURE_SLAB_BYTES]> =
+        static TEST_SLAB: UnsafeCell<[u8; HOST_MEASURE_SLAB_BYTES]> =
             const { UnsafeCell::new([0u8; HOST_MEASURE_SLAB_BYTES]) };
-        static FIXTURE_TRANSPORT: UnsafeCell<LargeChoreographyTransportState> =
+        static TEST_TRANSPORT: UnsafeCell<LargeChoreographyTransportState> =
             const { UnsafeCell::new(LargeChoreographyTransportState::new()) };
     }
 
@@ -244,9 +244,9 @@ mod tests {
     }
 
     impl LargeChoreographyTransport {
-        const fn fixture() -> Self {
+        const fn shared() -> Self {
             Self {
-                state: &FIXTURE_TRANSPORT,
+                state: &TEST_TRANSPORT,
             }
         }
 
@@ -254,7 +254,7 @@ mod tests {
             self.state.with(|state| unsafe { f(&mut *state.get()) })
         }
 
-        fn reset_fixture(&self) {
+        fn reset_state(&self) {
             self.with_state(|state| *state = LargeChoreographyTransportState::new());
         }
     }
@@ -373,19 +373,19 @@ mod tests {
         }
     }
 
-    fn with_large_choreography_fixture<R>(
+    fn with_large_choreography_workspace<R>(
         f: impl FnOnce(
             &'static CounterClock,
             &'static mut [crate::observe::core::TapEvent; LARGE_CHOREOGRAPHY_RING_EVENTS],
             &'static mut [u8; HOST_MEASURE_SLAB_BYTES],
         ) -> R,
     ) -> R {
-        FIXTURE_CLOCK.with(|clock| {
-            FIXTURE_TAP.with(|tap| {
-                FIXTURE_SLAB.with(|slab| unsafe {
+        TEST_CLOCK.with(|clock| {
+            TEST_TAP.with(|tap| {
+                TEST_SLAB.with(|slab| unsafe {
                     let tap = &mut *tap.get();
                     let slab = &mut *slab.get();
-                    LargeChoreographyTransport::fixture().reset_fixture();
+                    LargeChoreographyTransport::shared().reset_state();
                     tap.fill(crate::observe::core::TapEvent::zero());
                     slab.fill(0);
                     f(
@@ -494,11 +494,11 @@ mod tests {
         assert_eq!(route_scope_count, expected_acks.len());
 
         let mut runtime_metrics = None::<RuntimeShapeMetrics>;
-        with_large_choreography_fixture(|_clock, tap_buf, slab| {
-            // The host test fixture itself can consume more stack than the small-target
-            // budget. Measure only additional runtime stack below this point.
-            let baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
-            let transport = LargeChoreographyTransport::fixture();
+        with_large_choreography_workspace(|_clock, tap_buf, slab| {
+            // The host test support can consume more stack than the small target.
+            // Mark this point and measure only the runtime stack below it.
+            let initial_peak_stack_bytes = measure_peak_stack_bytes(bounds);
+            let transport = LargeChoreographyTransport::shared();
             let mut kit_storage = LargeChoreographyKit::uninit();
             let kit = kit_storage.init();
             let rv = kit
@@ -519,14 +519,14 @@ mod tests {
                 .enter()
                 .expect("enter worker");
             let attach_peak_stack_bytes = metric_add(
-                metric_sub(measure_peak_stack_bytes(bounds), baseline_peak_stack_bytes),
+                metric_sub(measure_peak_stack_bytes(bounds), initial_peak_stack_bytes),
                 STACK_CANARY_HEADROOM_BYTES,
             );
 
             unsafe {
                 initialize_stack_canary(bounds);
             }
-            let localside_baseline_peak_stack_bytes = measure_peak_stack_bytes(bounds);
+            let localside_initial_peak_stack_bytes = measure_peak_stack_bytes(bounds);
 
             run(&mut controller, &mut worker);
             assert!(
@@ -564,7 +564,7 @@ mod tests {
             let localside_peak_stack_bytes = metric_add(
                 metric_sub(
                     localside_raw_peak_stack_bytes,
-                    localside_baseline_peak_stack_bytes,
+                    localside_initial_peak_stack_bytes,
                 ),
                 STACK_CANARY_HEADROOM_BYTES,
             );

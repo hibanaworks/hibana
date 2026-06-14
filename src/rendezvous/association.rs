@@ -26,7 +26,7 @@ pub(crate) enum SessionFaultKind {
 }
 
 impl SessionFaultKind {
-    const NONE: u8 = 0;
+    const ABSENT_CODE: u8 = 0;
 
     #[inline]
     const fn encode(self) -> u8 {
@@ -43,14 +43,14 @@ impl SessionFaultKind {
     #[inline]
     const fn decode(raw: u8) -> Option<Self> {
         match raw {
-            Self::NONE => None,
+            Self::ABSENT_CODE => None,
             1 => Some(Self::TransportClosed),
             2 => Some(Self::PeerReset),
             3 => Some(Self::DecodeFailed),
             4 => Some(Self::ProtocolViolation),
             5 => Some(Self::EndpointDropped),
             6 => Some(Self::ProgressInvariantViolated),
-            _ => panic!("session fault cell corrupt"),
+            _ => crate::invariant(),
         }
     }
 }
@@ -69,25 +69,7 @@ pub(super) struct AssocTable {
     _no_send_sync: PhantomData<*mut ()>,
 }
 
-impl Default for AssocTable {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
 impl AssocTable {
-    pub(super) const fn empty() -> Self {
-        Self {
-            lane_base: 0,
-            lane_slots: 0,
-            lane_to_sid: UnsafeCell::new(core::ptr::null_mut()),
-            ref_counts: UnsafeCell::new(core::ptr::null_mut()),
-            faults: UnsafeCell::new(core::ptr::null_mut()),
-            waiters: UnsafeCell::new(core::ptr::null_mut()),
-            _no_send_sync: PhantomData,
-        }
-    }
-
     pub(super) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
@@ -191,7 +173,7 @@ impl AssocTable {
             unsafe {
                 lane_to_sid.add(idx).write(SessionId::new(0));
                 ref_counts.add(idx).write(0);
-                faults.add(idx).write(SessionFaultKind::NONE);
+                faults.add(idx).write(SessionFaultKind::ABSENT_CODE);
                 WaiterSlot::init_empty(waiters.add(idx));
             }
             idx += 1;
@@ -272,7 +254,7 @@ impl AssocTable {
         Self::storage_bytes(self.lane_slots as usize)
     }
 
-    pub(super) unsafe fn rebind_from_storage_preserving(
+    pub(super) unsafe fn rebind_from_storage_copying_entries(
         &mut self,
         storage: *mut u8,
         lane_base: u32,
@@ -324,7 +306,7 @@ impl AssocTable {
             unsafe {
                 lane_to_sid.add(idx).write(SessionId::new(0));
                 ref_counts.add(idx).write(0);
-                faults.add(idx).write(SessionFaultKind::NONE);
+                faults.add(idx).write(SessionFaultKind::ABSENT_CODE);
                 WaiterSlot::init_empty(waiters.add(idx));
             }
             idx += 1;
@@ -412,7 +394,9 @@ impl AssocTable {
             }
             sids.add(idx).write(sid);
             counts.add(idx).write(1);
-            self.faults_ptr().add(idx).write(SessionFaultKind::NONE);
+            self.faults_ptr()
+                .add(idx)
+                .write(SessionFaultKind::ABSENT_CODE);
             (*self.waiters_ptr().add(idx)).clear();
         }
     }
@@ -459,7 +443,9 @@ impl AssocTable {
             counts.add(idx).write(next);
             if next == 0 {
                 sids.add(idx).write(SessionId::new(0));
-                self.faults_ptr().add(idx).write(SessionFaultKind::NONE);
+                self.faults_ptr()
+                    .add(idx)
+                    .write(SessionFaultKind::ABSENT_CODE);
                 (*self.waiters_ptr().add(idx)).clear();
             }
             Some(next)

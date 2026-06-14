@@ -33,7 +33,7 @@ done < "${owner_manifest}"
 
 check_absent \
   "transport_payload_len|transport_payload_lane|ProbeBinding \\{" \
-  "offer frontier regressed to sentinel payload or ad-hoc probe state" \
+  "offer frontier regressed to implicit payload cache or probe-owned state" \
   src/endpoint/kernel/core
 
 check_absent \
@@ -48,7 +48,7 @@ check_absent \
   src/endpoint/kernel/core.rs
 
 check_absent \
-  "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_linger_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
+  "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_reentry_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
   "core.rs detected direct route-state table mutation" \
   src/endpoint/kernel/core.rs
 

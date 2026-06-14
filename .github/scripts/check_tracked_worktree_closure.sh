@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "tracked worktree closure check skipped outside git worktree"
+  echo "tracked worktree closure check not run outside git worktree"
   exit 0
 fi
 

@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 /// `hibana`'s runtime is intentionally single-core, non-reentrant, and not
 /// ISR-safe. Embedding owners carry this field so they cannot implement
 /// `Send`/`Sync` accidentally.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct LocalOnly(PhantomData<*mut ()>);
 
 impl LocalOnly {

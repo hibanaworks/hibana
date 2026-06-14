@@ -46,16 +46,7 @@ cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \
-  route_projection_regression_fixtures_keep_canonical_inputs_live \
-  -- \
-  --exact \
-  --nocapture
-
-cargo +"${TOOLCHAIN}" test \
-  --manifest-path "${MANIFEST_PATH}" \
-  --test public_surface_guards \
-  --features std \
-  ui_diagnostics_stay_semantic \
+  dynamic_resolver_surface_uses_one_decision_resolver \
   -- \
   --exact \
   --nocapture

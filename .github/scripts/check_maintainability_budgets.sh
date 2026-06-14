@@ -153,7 +153,7 @@ for raw in Path(test_debt_allowlist).read_text().splitlines():
         continue
     if not ALLOW_TEST_SOURCE_DEBT:
         report(
-            f"test fixture budget violation: {test_debt_allowlist} must not contain committed debt entries; split oversized test sources instead: {file}"
+            f"test support budget violation: {test_debt_allowlist} must not contain committed debt entries; split oversized test sources instead: {file}"
         )
     allowlisted.add(file)
 
@@ -161,17 +161,17 @@ for file in test_rs:
     lines = line_counts[file]
     if lines > TEST_LIMIT and file not in allowlisted:
         report(
-            f"test fixture budget violation: {file} has {lines} lines (>{TEST_LIMIT}); split it below the per-file budget"
+            f"test support budget violation: {file} has {lines} lines (>{TEST_LIMIT}); split it below the per-file budget"
         )
 
 for file in allowlisted:
     path = Path(file)
     if not path.is_file():
-        report(f"test fixture budget violation: forbidden test debt allowlist entry: {file}")
+        report(f"test support budget violation: forbidden test debt allowlist entry: {file}")
         continue
     lines = line_counts.get(file, len(path.read_text().splitlines()))
     if lines <= TEST_LIMIT:
-        report(f"test fixture budget violation: remove resolved test debt allowlist entry: {file}")
+        report(f"test support budget violation: remove resolved test debt allowlist entry: {file}")
 
 part_files = [
     path
@@ -186,7 +186,7 @@ if part_files:
 for path in [file for file in all_rs if file.startswith("tests/")]:
     for idx, line in enumerate(Path(path).read_text().splitlines(), 1):
         if re.search(r'#\[path = "\.\./src/test_support/', line):
-            report("test support boundary violation: repository tests must not path-import src/test_support fixtures")
+            report("test support boundary violation: repository tests must not path-import src/test_support test support")
             print(f"{path}:{idx}:{line}", file=os.sys.stderr)
 
 include_hits: list[str] = []

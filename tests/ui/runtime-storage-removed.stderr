@@ -1,0 +1,5 @@
+error[E0432]: unresolved import `hibana::runtime::RuntimeStorage`
+ --> tests/ui/runtime-storage-removed.rs:1:45
+  |
+1 | use hibana::runtime::{Config, CounterClock, RuntimeStorage, TapEvent, RING_EVENTS};
+  |                                             ^^^^^^^^^^^^^^ no `RuntimeStorage` in `runtime`

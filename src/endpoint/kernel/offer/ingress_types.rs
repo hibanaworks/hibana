@@ -1,5 +1,6 @@
 //! Offer scope selection value types.
 
+use super::OfferEntryPosition;
 use crate::global::const_dsl::ScopeId;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -37,5 +38,5 @@ pub(in crate::endpoint::kernel) struct OfferScopeSelection {
     pub(in crate::endpoint::kernel) scope_id: ScopeId,
     pub(in crate::endpoint::kernel) frontier_parallel_root: Option<ScopeId>,
     pub(in crate::endpoint::kernel) offer_lane: u8,
-    pub(in crate::endpoint::kernel) at_route_offer_entry: bool,
+    pub(in crate::endpoint::kernel) entry_position: OfferEntryPosition,
 }

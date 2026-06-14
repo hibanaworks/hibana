@@ -20,7 +20,6 @@ pub struct EffIndex(u32);
 
 impl EffIndex {
     pub(crate) const ZERO: Self = Self(0);
-    pub(crate) const MAX: Self = Self(u32::MAX);
 
     #[inline(always)]
     pub(crate) const fn from_segment_offset(segment: u16, offset: u16) -> Self {
@@ -52,9 +51,6 @@ impl EffIndex {
 
     #[inline(always)]
     pub(crate) const fn dense_ordinal(self) -> usize {
-        if self.0 == Self::MAX.0 {
-            panic!("sentinel eff index cannot be represented as a program offset");
-        }
         let segment = self.segment() as usize;
         let offset = self.offset() as usize;
         if segment >= meta::MAX_SEGMENTS || offset >= meta::MAX_SEGMENT_EFFS {
@@ -72,21 +68,52 @@ impl core::fmt::Display for EffIndex {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EffKind {
+pub(crate) enum EffKind {
     Pure = 0,
     Atom = 1,
 }
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EventOrigin {
+    User = 0,
+    Session = 1,
+}
+
+impl EventOrigin {
+    #[inline(always)]
+    pub(crate) const fn from_packed_bits(bits: u8) -> Self {
+        match bits {
+            0 => Self::User,
+            1 => Self::Session,
+            _ => panic!("invalid packed event origin bits"),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn packed_bits(self) -> u8 {
+        match self {
+            Self::User => 0,
+            Self::Session => 1,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_session(self) -> bool {
+        matches!(self, Self::Session)
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EffAtom {
-    pub from: u8,
-    pub to: u8,
-    pub label: u8,
-    pub is_internal: bool,
-    pub resource: Option<u8>,
-    /// Type-level lane for parallel composition (default 0).
-    pub lane: u8,
+pub(crate) struct EffAtom {
+    pub(crate) from: u8,
+    pub(crate) to: u8,
+    pub(crate) label: u8,
+    pub(crate) origin: EventOrigin,
+    pub(crate) resource: Option<u8>,
+    /// Type-level lane for parallel composition; lane 0 is the primary lane.
+    pub(crate) lane: u8,
 }
 
 impl EffAtom {
@@ -94,7 +121,7 @@ impl EffAtom {
         from: 0,
         to: 0,
         label: 0,
-        is_internal: false,
+        origin: EventOrigin::User,
         resource: None,
         lane: 0,
     };
@@ -102,43 +129,43 @@ impl EffAtom {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct EffData {
+pub(crate) struct EffData {
     atom: EffAtom,
 }
 
 impl EffData {
-    pub const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
             atom: EffAtom::ZERO,
         }
     }
 
-    pub const fn from_atom(atom: EffAtom) -> Self {
+    pub(crate) const fn from_atom(atom: EffAtom) -> Self {
         Self { atom }
     }
 
     #[inline(always)]
-    pub const fn atom(&self) -> EffAtom {
+    pub(crate) const fn atom(&self) -> EffAtom {
         self.atom
     }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct EffStruct {
-    pub kind: EffKind,
-    pub data: EffData,
+pub(crate) struct EffStruct {
+    pub(crate) kind: EffKind,
+    pub(crate) data: EffData,
 }
 
 impl EffStruct {
-    pub const fn pure() -> Self {
+    pub(crate) const fn pure() -> Self {
         Self {
             kind: EffKind::Pure,
             data: EffData::empty(),
         }
     }
 
-    pub const fn atom(atom: EffAtom) -> Self {
+    pub(crate) const fn atom(atom: EffAtom) -> Self {
         Self {
             kind: EffKind::Atom,
             data: EffData::from_atom(atom),
@@ -146,7 +173,7 @@ impl EffStruct {
     }
 
     #[inline(always)]
-    pub const fn atom_data(&self) -> EffAtom {
+    pub(crate) const fn atom_data(&self) -> EffAtom {
         match self.kind {
             EffKind::Pure => panic!("pure effect node has no atom data"),
             EffKind::Atom => self.data.atom(),

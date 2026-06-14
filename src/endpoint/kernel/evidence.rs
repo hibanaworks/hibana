@@ -17,15 +17,15 @@ impl RouteArmState {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ScopeLoopMeta {
+pub(super) struct ScopeReentryMeta {
     pub(super) flags: u8,
 }
 
-impl ScopeLoopMeta {
+impl ScopeReentryMeta {
     pub(super) const FLAG_SCOPE_ACTIVE: u8 = 1;
-    pub(super) const FLAG_SCOPE_LINGER: u8 = 1 << 1;
-    pub(super) const FLAG_CONTINUE_HAS_RECV: u8 = 1 << 3;
-    pub(super) const FLAG_BREAK_HAS_RECV: u8 = 1 << 4;
+    pub(super) const FLAG_ROUTE_REENTRY: u8 = 1 << 1;
+    pub(super) const FLAG_ARM0_HAS_RECV: u8 = 1 << 3;
+    pub(super) const FLAG_ARM1_HAS_RECV: u8 = 1 << 4;
 
     #[inline]
     pub(super) fn scope_active(self) -> bool {
@@ -33,29 +33,29 @@ impl ScopeLoopMeta {
     }
 
     #[inline]
-    pub(super) fn scope_linger(self) -> bool {
-        (self.flags & Self::FLAG_SCOPE_LINGER) != 0
+    pub(super) fn route_reentry(self) -> bool {
+        (self.flags & Self::FLAG_ROUTE_REENTRY) != 0
     }
 
     #[inline]
-    pub(super) fn loop_label_scope(self) -> bool {
-        self.scope_linger()
+    pub(super) fn route_reentry_scope(self) -> bool {
+        self.route_reentry()
     }
 
     #[inline]
-    pub(super) fn continue_has_recv(self) -> bool {
-        (self.flags & Self::FLAG_CONTINUE_HAS_RECV) != 0
+    pub(super) fn arm0_has_recv(self) -> bool {
+        (self.flags & Self::FLAG_ARM0_HAS_RECV) != 0
     }
 
     #[inline]
-    pub(super) fn break_has_recv(self) -> bool {
-        (self.flags & Self::FLAG_BREAK_HAS_RECV) != 0
+    pub(super) fn arm1_has_recv(self) -> bool {
+        (self.flags & Self::FLAG_ARM1_HAS_RECV) != 0
     }
 
     #[inline]
-    pub(super) fn recvless_ready(self) -> bool {
-        (self.scope_active() || self.scope_linger())
-            && (!self.continue_has_recv() || !self.break_has_recv())
+    pub(super) fn recvless_arm_ready(self) -> bool {
+        (self.scope_active() || self.route_reentry())
+            && (!self.arm0_has_recv() || !self.arm1_has_recv())
     }
 }
 

@@ -1,7 +1,7 @@
 use super::CompiledProgramRef;
 use crate::{
     endpoint::kernel::EndpointArenaLayout,
-    global::role_program::{DENSE_LANE_NONE, DenseLaneOrdinal, RoleImageRef, lane_word_count},
+    global::role_program::{DENSE_LANE_ABSENT, DenseLaneOrdinal, RoleImageRef, lane_word_count},
 };
 
 #[derive(Clone, Copy)]
@@ -103,10 +103,11 @@ impl RoleDescriptorRef {
         if self.route_scope_count() == 0 {
             0
         } else {
-            self.footprint()
-                .active_lane_count
-                .checked_mul(self.max_route_stack_depth().max(1))
-                .expect("invariant")
+            crate::invariant_some(
+                self.footprint()
+                    .active_lane_count
+                    .checked_mul(self.max_route_stack_depth().max(1)),
+            )
         }
     }
 
@@ -131,13 +132,12 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [DenseLaneOrdinal]) -> usize {
-        dst.fill(DENSE_LANE_NONE);
+        dst.fill(DENSE_LANE_ABSENT);
         let active = self.image().active_lane_set();
         let mut dense = 0usize;
         let mut next = active.first_set(dst.len());
         while let Some(lane_idx) = next {
-            dst[lane_idx] =
-                DenseLaneOrdinal::new(dense).expect("dense active lane ordinal fits u16");
+            dst[lane_idx] = crate::invariant_some(DenseLaneOrdinal::new(dense));
             dense += 1;
             next = active.next_set_from(lane_idx + 1, dst.len());
         }

@@ -1,7 +1,7 @@
 //! Offer preview state and restore ownership.
 
 use super::ingress::OfferFrontierFacts;
-use super::{OfferProgressState, OfferScopeSelection, ResolvePendingState};
+use super::{IngressEvidenceState, OfferProgressState, OfferScopeSelection, ResolvePendingState};
 use crate::endpoint::kernel::lane_port;
 
 pub(super) struct OfferStagedIngress<'a> {
@@ -19,6 +19,14 @@ impl<'a> OfferStagedIngress<'a> {
     #[inline]
     pub(super) fn has_transport(&self) -> bool {
         self.transport_payload.is_some()
+    }
+
+    #[inline]
+    pub(super) fn evidence_state(&self) -> IngressEvidenceState {
+        match self.transport_payload {
+            Some(_) => IngressEvidenceState::Ready,
+            None => IngressEvidenceState::Absent,
+        }
     }
 
     #[inline]
@@ -42,10 +50,9 @@ impl<'a> OfferStagedIngress<'a> {
 
     #[inline]
     pub(super) fn stage_transport(&mut self, frame: lane_port::PreambleFrame<'a>) {
-        assert!(
-            self.transport_payload.is_none(),
-            "offer ingress cannot stage two transport frames"
-        );
+        if self.transport_payload.is_some() {
+            crate::invariant();
+        }
         self.transport_payload = Some(frame);
     }
 

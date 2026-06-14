@@ -2,7 +2,9 @@ use super::{Clock, CursorEndpoint, FrontierObservationDomain, RecvError, RecvRes
 
 mod candidates;
 mod model;
-use self::model::{CurrentOfferAuthority, CurrentOfferEntry, OfferAlignmentCandidateInput};
+use self::model::{
+    CurrentOfferAuthority, CurrentOfferEntry, OfferAlignmentCandidateInput, ProgressSiblingPresence,
+};
 
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
@@ -56,41 +58,50 @@ where
             observed_entries = self.frontier_observed_entries(observation_domain);
         }
         let reentry_ready_entry_idx =
-            self.observed_reentry_entry_idx(observed_entries, current_idx, true);
-        let loop_controller_without_evidence =
-            current_frontier_state.loop_controller_without_evidence();
-        let progress_sibling_exists = if !observation_domain.uses_root_entries() {
-            self.global_frontier_progress_sibling_exists(
-                current_idx,
-                current_frontier,
-                loop_controller_without_evidence,
-            )
-        } else {
-            self.root_frontier_progress_sibling_exists(
-                observation_domain.root_scope(),
-                current_idx,
-                current_frontier,
-                loop_controller_without_evidence,
-            )
-        };
+            self.observed_ready_reentry_entry_idx(observed_entries, current_idx);
+        let reentry_controller_evidence = current_frontier_state.reentry_controller_evidence();
+        let progress_sibling_presence = ProgressSiblingPresence::from_observed_progress_sibling(
+            if !observation_domain.uses_root_entries() {
+                self.global_frontier_progress_sibling_exists(
+                    current_idx,
+                    current_frontier,
+                    reentry_controller_evidence,
+                )
+            } else {
+                self.root_frontier_progress_sibling_exists(
+                    observation_domain.root_scope(),
+                    current_idx,
+                    current_frontier,
+                    reentry_controller_evidence,
+                )
+            },
+        );
         let Some(current_scope_meta) =
             self.current_scope_selection_meta(node_scope, current_idx, current_frontier_state)
         else {
             return Ok(());
         };
-        let current_entry = CurrentOfferEntry::from_meta(
-            current_scope_meta.is_route_entry(),
-            current_scope_meta.has_offer_lanes(),
-        );
-        let current_authority =
-            CurrentOfferAuthority::from_meta(current_scope_meta.is_controller());
+        let current_entry = if current_scope_meta.is_route_entry() {
+            if current_scope_meta.has_offer_lanes() {
+                CurrentOfferEntry::RouteWithOfferLanes
+            } else {
+                CurrentOfferEntry::RouteWithoutOfferLanes
+            }
+        } else {
+            CurrentOfferEntry::NonRoute
+        };
+        let current_authority = if current_scope_meta.is_controller() {
+            CurrentOfferAuthority::Controller
+        } else {
+            CurrentOfferAuthority::Passive
+        };
         let candidates = self.offer_alignment_candidates(
             observed_entries,
             OfferAlignmentCandidateInput {
                 current_idx,
                 current_entry,
                 current_authority,
-                progress_sibling_exists,
+                progress_sibling_presence,
             },
         );
         current_frontier_state = candidates.merge_current_observation(current_frontier_state);
@@ -105,7 +116,7 @@ where
             }
             return Ok(());
         }
-        if self.current_route_arm_authorized()?.is_some() {
+        if self.current_route_arm_authorized()? {
             return Ok(());
         }
         if candidates.current_can_remain_after_alignment(current_frontier_state) {

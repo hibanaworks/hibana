@@ -16,11 +16,25 @@ pub(in crate::endpoint) enum PublicActiveOp {
     Decode,
 }
 
-/// Internal endpoint kernel. Owns the rendezvous port as well as the lane
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PublicOpLease {
+    Rejected = 0,
+    Held = 1,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PublicSlotOwnership {
+    Borrowed = 0,
+    Owned = 1,
+}
+
+/// Endpoint kernel. Owns the rendezvous port as well as the lane
 /// release handle. Dropping the endpoint releases the lane back to the
 /// `SessionCluster` via the handle.
 #[repr(C)]
-pub struct CursorEndpoint<
+pub(crate) struct CursorEndpoint<
     'r,
     const ROLE: u8,
     T: Transport + 'r,
@@ -45,7 +59,7 @@ pub struct CursorEndpoint<
     pub(crate) public_rv: RendezvousId,
     pub(crate) public_slot: EndpointLeaseId,
     pub(crate) public_generation: u32,
-    pub(crate) public_slot_owned: bool,
+    pub(crate) public_slot_ownership: PublicSlotOwnership,
     pub(in crate::endpoint) public_active_op: PublicActiveOp,
     pub(in crate::endpoint) public_offer_state: OfferState<'r>,
     pub(in crate::endpoint) public_route_branch: Option<MaterializedRouteBranch<'r>>,
@@ -58,7 +72,7 @@ pub struct CursorEndpoint<
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
 }
 
-pub struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r, C, const MAX_RV: usize>
+pub(crate) struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r, C, const MAX_RV: usize>
 where
     C: crate::runtime_core::config::Clock,
 {
@@ -137,8 +151,8 @@ impl<'a> StagedPayload<'a> {
     }
 
     #[inline]
-    pub(crate) const fn transport_frame_label(&self) -> Option<u8> {
-        Some(self.frame.frame_label_raw())
+    pub(crate) const fn transport_frame_label(&self) -> u8 {
+        self.frame.frame_label_raw()
     }
 
     #[inline]

@@ -18,7 +18,7 @@ use super::{
 impl RouteTableStorageParts {
     unsafe fn pop_free_slot(&self) -> Option<usize> {
         let head = /* SAFETY: the free-list head belongs to this route-table column bundle. */ unsafe { *self.free_head };
-        if head == RouteTable::NO_FRAME {
+        if head == RouteTable::FRAME_LIST_END {
             return None;
         }
         let idx = head as usize;
@@ -28,7 +28,7 @@ impl RouteTableStorageParts {
         /* SAFETY: the frame slot and free-list head are owned by the same column bundle and are updated as one free-list transition. */
         unsafe {
             *self.free_head = next;
-            (*self.frames.add(idx)).next = RouteTable::NO_FRAME;
+            (*self.frames.add(idx)).next = RouteTable::FRAME_LIST_END;
         }
         Some(idx)
     }
@@ -44,7 +44,7 @@ impl RouteTableStorageParts {
 }
 
 impl RouteTable {
-    pub(crate) const NO_FRAME: u16 = u16::MAX;
+    pub(crate) const FRAME_LIST_END: u16 = u16::MAX;
     pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
 
     #[inline(always)]
@@ -201,7 +201,7 @@ impl RouteTable {
             let next = if idx + 1 < shape.route_slots {
                 (idx + 1) as u16
             } else {
-                Self::NO_FRAME
+                Self::FRAME_LIST_END
             };
             unsafe {
                 // SAFETY: `bind_storage` owns the route-frame backing slice for
@@ -213,9 +213,9 @@ impl RouteTable {
         let mut lane_idx = 0usize;
         while lane_idx < shape.lane_slots {
             unsafe {
-                // SAFETY: `lane_heads` points at `lane_slots` caller-owned u16
-                // entries reserved for this `RouteTable` owner.
-                parts.lane_heads.add(lane_idx).write(Self::NO_FRAME);
+                // SAFETY: `lane_heads` points at `lane_slots` u16 entries
+                // owned by this `RouteTable`.
+                parts.lane_heads.add(lane_idx).write(Self::FRAME_LIST_END);
             }
             lane_idx += 1;
         }
@@ -223,7 +223,7 @@ impl RouteTable {
             // SAFETY: `free_head` is the single u16 free-list head owned by this
             // route table storage layout.
             parts.free_head.write(if shape.route_slots == 0 {
-                Self::NO_FRAME
+                Self::FRAME_LIST_END
             } else {
                 0
             });
@@ -310,7 +310,7 @@ impl RouteTable {
             let next = if idx + 1 < shape.route_slots {
                 (idx + 1) as u16
             } else {
-                Self::NO_FRAME
+                Self::FRAME_LIST_END
             };
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
@@ -322,14 +322,17 @@ impl RouteTable {
         while lane_idx < shape.lane_slots {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
-                dst_parts.lane_heads.add(lane_idx).write(Self::NO_FRAME);
+                dst_parts
+                    .lane_heads
+                    .add(lane_idx)
+                    .write(Self::FRAME_LIST_END);
             }
             lane_idx += 1;
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
             dst_parts.free_head.write(if shape.route_slots == 0 {
-                Self::NO_FRAME
+                Self::FRAME_LIST_END
             } else {
                 0
             });
@@ -383,19 +386,21 @@ impl RouteTable {
         let mut lane_idx = 0usize;
         while lane_idx < self.lane_slots() {
             let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
-            let mut prev_new = Self::NO_FRAME;
-            while current != Self::NO_FRAME {
+            let mut prev_new = Self::FRAME_LIST_END;
+            while current != Self::FRAME_LIST_END {
                 let src_idx = current as usize;
                 let next = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { (*self.frames_ptr().add(src_idx)).next };
-                let dst_idx = /* SAFETY: migration owns the destination column bundle and pops each destination frame at most once. */ unsafe { dst_parts.pop_free_slot() }
-                    .expect("invariant");
+                let dst_idx = crate::invariant_some(
+                    /* SAFETY: migration owns the destination column bundle and pops each destination frame at most once. */
+                    unsafe { dst_parts.pop_free_slot() },
+                );
                 let mut moved = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.frames_ptr().add(src_idx) };
-                moved.next = Self::NO_FRAME;
+                moved.next = Self::FRAME_LIST_END;
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
                     dst_parts.frames.add(dst_idx).write(moved);
                 }
-                if prev_new == Self::NO_FRAME {
+                if prev_new == Self::FRAME_LIST_END {
                     /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
                     unsafe {
                         *dst_parts.lane_heads.add(lane_idx) = dst_idx as u16;

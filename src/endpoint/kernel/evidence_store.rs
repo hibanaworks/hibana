@@ -4,6 +4,19 @@ use super::authority::RouteArmToken;
 use super::evidence::ScopeEvidence;
 use core::ops::{Index, IndexMut};
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum ReadyArmEvidence {
+    Poll,
+    Materialization,
+}
+
+impl ReadyArmEvidence {
+    #[inline]
+    const fn records_poll(self) -> bool {
+        matches!(self, Self::Poll)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ScopeEvidenceSlot {
     evidence: ScopeEvidence,
@@ -30,7 +43,7 @@ impl ScopeEvidenceTable {
         len: usize,
     ) {
         if len > u16::MAX as usize {
-            panic!("scope evidence capacity overflow");
+            crate::invariant();
         }
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
@@ -76,13 +89,17 @@ impl ScopeEvidenceTable {
 
     #[inline]
     pub(super) fn generation(&self, slot: usize) -> u16 {
-        assert!(self.contains(slot), "scope evidence slot out of bounds");
+        if !self.contains(slot) {
+            crate::invariant();
+        }
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe { (*self.slots.add(slot)).generation }
     }
 
     pub(super) fn bump_generation(&mut self, slot: usize) {
-        assert!(self.contains(slot), "scope evidence slot out of bounds");
+        if !self.contains(slot) {
+            crate::invariant();
+        }
         let generation = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut (*self.slots.add(slot)).generation };
         let next = generation.wrapping_add(1);
         *generation = if next == 0 { 1 } else { next };
@@ -107,16 +124,14 @@ impl Index<usize> for ScopeEvidenceTable {
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        self.get(index)
-            .expect("scope evidence slot must fit compiled dense route scope bound")
+        crate::invariant_some(self.get(index))
     }
 }
 
 impl IndexMut<usize> for ScopeEvidenceTable {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        self.get_mut(index)
-            .expect("scope evidence slot must fit compiled dense route scope bound")
+        crate::invariant_some(self.get_mut(index))
     }
 }
 
@@ -215,11 +230,17 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn mark_ready_arm(&mut self, slot: usize, arm: u8, poll_ready: bool) -> bool {
+    pub(super) fn mark_ready_arm(
+        &mut self,
+        slot: usize,
+        arm: u8,
+        evidence_kind: ReadyArmEvidence,
+    ) -> bool {
         let evidence = &mut self[slot];
         let bit = ScopeEvidence::arm_bit(arm);
         let ready_changed = (evidence.ready_arm_mask & bit) == 0;
-        let poll_changed = poll_ready && (evidence.poll_ready_arm_mask & bit) == 0;
+        let poll_changed =
+            evidence_kind.records_poll() && (evidence.poll_ready_arm_mask & bit) == 0;
         if ready_changed {
             evidence.ready_arm_mask |= bit;
         }

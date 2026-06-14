@@ -1,11 +1,11 @@
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
-  --> tests/ui/send-future-endpoint-alias.rs:42:22
+  --> tests/ui/send-future-endpoint-alias.rs:54:22
    |
-40 |     let flow = endpoint.flow::<g::Msg<7, Payload>>().expect("fixture setup");
+50 |     let flow = endpoint
    |                -------- first mutable borrow occurs here
-41 |     let send = flow.send(&Payload(1));
-42 |     let flow_again = endpoint.flow::<g::Msg<7, Payload>>().expect("fixture setup");
+...
+54 |     let flow_again = endpoint
    |                      ^^^^^^^^ second mutable borrow occurs here
-43 |     core::hint::black_box(&flow_again);
-44 |     core::hint::black_box(send);
+...
+58 |     core::hint::black_box(send);
    |                           ---- first borrow later used here

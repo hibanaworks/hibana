@@ -1,12 +1,13 @@
 use super::{
     BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint, DecodeCommitBuilder,
-    DecodeCommitPlan, DecodeLingerCursorPlan, DecodeProgressPlan, DecodeRuntimeDesc,
-    EndpointRxAuditPlan, EventCursor, MaterializedRouteBranch, Payload, Poll,
-    PreparedDecodeProgressPlan, PreparedDecodePublishPlan, RecvError, RecvMeta, RecvResult,
-    RouteState, SelectedRouteCommitRows, StateIndex, Transport, decode_phase_invariant, lane_port,
-    prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range,
+    DecodeCommitPlan, DecodeProgressPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EventCursor,
+    MaterializedRouteBranch, Payload, Poll, PreparedDecodeProgressPlan, PreparedDecodePublishPlan,
+    RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRows, StateIndex, Transport,
+    decode_phase_invariant, lane_port,
+    prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
+use crate::global::typestate::RelocatableResidentLaneStep;
 
 mod commit_builder;
 
@@ -39,7 +40,7 @@ where
             .cursor
             .try_recv_meta_at(state_index_to_usize(branch.branch_meta.cursor_index))
             .ok_or_else(decode_phase_invariant)?;
-        if meta.is_internal {
+        if meta.origin.is_session() {
             return Err(decode_phase_invariant());
         }
         if desc.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
@@ -85,7 +86,7 @@ where
             });
         }
         match branch_meta.kind {
-            BranchKind::LocalAction | BranchKind::EmptyArmTerminal => {
+            BranchKind::LocalAction | BranchKind::TerminalArm => {
                 let payload = self.non_wire_branch_payload(branch_meta.lane_wire, desc)?;
                 desc.validate_payload(payload).map_err(RecvError::Codec)?;
                 let branch_view = BranchPreviewView::from_materialized(branch);
@@ -119,7 +120,7 @@ where
                 } else {
                     return Err(decode_phase_invariant());
                 };
-                if meta.is_internal {
+                if meta.origin.is_session() {
                     return Err(decode_phase_invariant());
                 }
 
@@ -131,10 +132,7 @@ where
                     branch.staged_payload = Some(staged_payload);
                     return Err(decode_phase_invariant());
                 }
-                if staged_payload
-                    .transport_frame_label()
-                    .is_some_and(|frame_label| frame_label != meta.frame_label)
-                {
+                if staged_payload.transport_frame_label() != meta.frame_label {
                     branch.staged_payload = Some(staged_payload);
                     return Err(decode_phase_invariant());
                 }
@@ -166,13 +164,7 @@ where
                             payload,
                         )
                     })?;
-                branch
-                    .staged_payload
-                    .take()
-                    .expect(
-                        "committed wire decode must retain staged payload until explicit frame commit",
-                    )
-                    .commit();
+                crate::invariant_some(branch.staged_payload.take()).commit();
                 let committed_payload = self.publish_decode_commit_plan(publish_plan);
                 Ok(committed_payload)
             }
@@ -203,7 +195,7 @@ where
         self.prepare_decode_publish_plan(plan)
     }
 
-    fn collect_decode_linger_route_rows_from_parts(
+    fn collect_decode_reentry_route_rows_from_parts(
         cursor: &EventCursor,
         decision_state: &RouteState,
         meta: RecvMeta,
@@ -212,7 +204,7 @@ where
     ) -> RecvResult<()> {
         let mut result = Ok(());
         let completed =
-            cursor.visit_decode_linger_route_rows(meta.scope, branch_scope, |scope, selected| {
+            cursor.visit_decode_reentry_route_rows(meta.scope, branch_scope, |scope, selected| {
                 if Self::selected_route_arm_from_parts(decision_state, cursor, scope).is_some()
                     || plan.arm_for_scope(cursor, scope).is_some()
                 {
@@ -223,7 +215,7 @@ where
                     return false;
                 };
                 result =
-                    prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range(
+                    prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range(
                         decision_state,
                         cursor,
                         meta.lane,
@@ -268,20 +260,16 @@ where
         Self::selected_route_arm_from_parts(decision_state, cursor, scope)
     }
 
-    fn build_decode_linger_cursor_plan_from_parts(
+    fn decode_reentry_cursor_step_from_parts(
         cursor: &EventCursor,
         decision_state: &RouteState,
         rows: &SelectedRouteCommitRows,
         meta: RecvMeta,
         next_index: StateIndex,
-    ) -> RecvResult<DecodeLingerCursorPlan> {
-        let plan = match cursor.decode_linger_cursor_step(meta, next_index, |scope| {
+    ) -> Option<RelocatableResidentLaneStep> {
+        cursor.decode_reentry_cursor_step(meta, next_index, |scope| {
             Self::authorized_route_arm_for_decode(decision_state, cursor, rows, scope)
-        }) {
-            Some(step) => DecodeLingerCursorPlan::SetLane { step },
-            None => DecodeLingerCursorPlan::None,
-        };
-        Ok(plan)
+        })
     }
 
     fn prepare_decode_publish_plan(

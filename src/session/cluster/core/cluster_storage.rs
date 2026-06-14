@@ -19,11 +19,12 @@ pub(crate) struct SessionRoleBindings<const MAX_RV: usize> {
 }
 
 impl<const MAX_RV: usize> SessionRoleBindings<MAX_RV> {
-    const EMPTY_ROW: [Option<SessionRoleBinding>; ROLE_BINDING_SLOTS] = [None; ROLE_BINDING_SLOTS];
+    const UNBOUND_ROW: [Option<SessionRoleBinding>; ROLE_BINDING_SLOTS] =
+        [None; ROLE_BINDING_SLOTS];
 
     pub(crate) const fn new() -> Self {
         Self {
-            slots: [Self::EMPTY_ROW; MAX_RV],
+            slots: [Self::UNBOUND_ROW; MAX_RV],
         }
     }
 
@@ -41,10 +42,10 @@ impl<const MAX_RV: usize> SessionRoleBindings<MAX_RV> {
         rv: RendezvousId,
     ) -> Result<(), ClusterError> {
         if role >= crate::g::ROLE_DOMAIN_SIZE {
-            return Err(ClusterError::UnsupportedEffect(role));
+            crate::invariant();
         }
 
-        let mut empty = None;
+        let mut vacant_slot = None;
         let mut row = 0usize;
         while row < MAX_RV {
             let mut col = 0usize;
@@ -67,15 +68,15 @@ impl<const MAX_RV: usize> SessionRoleBindings<MAX_RV> {
                                 ))?;
                         return Ok(());
                     }
-                } else if empty.is_none() {
-                    empty = Some((row, col));
+                } else if vacant_slot.is_none() {
+                    vacant_slot = Some((row, col));
                 }
                 col += 1;
             }
             row += 1;
         }
 
-        let Some((row, col)) = empty else {
+        let Some((row, col)) = vacant_slot else {
             return Err(ClusterError::resource_exhausted(
                 ResourceScope::RendezvousTable,
             ));
@@ -123,7 +124,7 @@ impl<const MAX_RV: usize> SessionRoleBindings<MAX_RV> {
 ///
 /// - `MAX_RV`: Maximum number of Rendezvous instances
 ///
-/// Internal mutable state of SessionCluster.
+/// Resident mutable state of SessionCluster.
 ///
 /// # Safety Invariants
 ///
@@ -214,12 +215,9 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
                 expected: rv_id.raw(),
                 actual: 0,
             })?;
-        let required = bucket
-            .occupied_len()
-            .checked_add(additional_entries)
-            .ok_or(ClusterError::resource_exhausted(
-                ResourceScope::ResolverTable,
-            ))?;
+        let required = bucket.entry_count().checked_add(additional_entries).ok_or(
+            ClusterError::resource_exhausted(ResourceScope::ResolverTable),
+        )?;
         if bucket.capacity() >= required {
             return Ok(());
         }

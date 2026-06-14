@@ -35,7 +35,7 @@ use crate::{
 };
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct EndpointLeaseId(u16);
 
 impl EndpointLeaseId {
@@ -100,6 +100,12 @@ pub(crate) struct LanePortAccess<'lease, 'cfg, T: Transport, C: Clock> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaneRelease {
+    StillHeld,
+    Released(SessionId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointResidentBudget {
     pub(crate) route_frame_slots: u16,
     pub(crate) route_lane_slots: u8,
@@ -149,8 +155,7 @@ pub(crate) struct EndpointLeaseSlot {
     pub(crate) offset: u32,
     pub(crate) len: u32,
     pub(crate) resident_budget: EndpointResidentBudget,
-    pub(crate) public_endpoint: bool,
-    pub(crate) occupied: bool,
+    pub(crate) state: EndpointLeaseState,
 }
 
 impl EndpointLeaseSlot {
@@ -159,9 +164,27 @@ impl EndpointLeaseSlot {
         offset: 0,
         len: 0,
         resident_budget: EndpointResidentBudget::ZERO,
-        public_endpoint: false,
-        occupied: false,
+        state: EndpointLeaseState::Vacant,
     };
+
+    #[inline]
+    pub(crate) const fn is_live(&self) -> bool {
+        self.state.is_live()
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EndpointLeaseState {
+    Vacant = 0,
+    Live = 1,
+}
+
+impl EndpointLeaseState {
+    #[inline]
+    const fn is_live(self) -> bool {
+        matches!(self, Self::Live)
+    }
 }
 
 const FREE_REGION_CAPACITY: usize = 16;
@@ -170,15 +193,43 @@ const FREE_REGION_CAPACITY: usize = 16;
 struct FreeRegion {
     offset: u32,
     len: u32,
-    occupied: bool,
+    state: FreeRegionState,
 }
 
 impl FreeRegion {
     const EMPTY: Self = Self {
         offset: 0,
         len: 0,
-        occupied: false,
+        state: FreeRegionState::Vacant,
     };
+
+    #[inline]
+    const fn recorded(offset: u32, len: u32) -> Self {
+        Self {
+            offset,
+            len,
+            state: FreeRegionState::Recorded,
+        }
+    }
+
+    #[inline]
+    const fn is_recorded(&self) -> bool {
+        self.state.is_recorded()
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FreeRegionState {
+    Vacant = 0,
+    Recorded = 1,
+}
+
+impl FreeRegionState {
+    #[inline]
+    const fn is_recorded(self) -> bool {
+        matches!(self, Self::Recorded)
+    }
 }
 
 pub(crate) struct Rendezvous<'rv, 'cfg, T: Transport, C: Clock = CounterClock>
@@ -252,8 +303,8 @@ mod storage_runtime_budget;
 ///
 /// # Visibility
 ///
-/// This type is internal implementation, hidden from public docs but
-/// accessible to repository tests. Public API users obtain endpoints via the
+/// This type is crate-private lane ownership machinery. Public API users obtain
+/// endpoints via the
 /// `SessionKit::rendezvous(...).session(...).role(...).enter(...)` witness chain.
 ///
 /// # Cluster Ownership Model
@@ -268,13 +319,13 @@ mod storage_runtime_budget;
 ///    consumed or dropped.
 /// 2. Normal cluster lookup paths refuse a rendezvous entry while its lease is
 ///    active.
-/// 3. Callers must not use raw owner pointers to bypass the active-entry marker.
+/// 3. Callers must not reach storage through raw owner pointers without the active-entry marker.
 ///
 /// # Observable Properties
 ///
 /// - LANE_ACQUIRE tap event on lease creation (via `SessionKit::lease_port`)
 /// - LANE_RELEASE tap event on Drop
-/// - Streaming checker verifies acquire/release pairs match (similar to cancel begin/ack)
+/// - Streaming checker verifies acquire/release pairs match
 pub(crate) struct LaneLease<'lease, 'cfg, T, C, const MAX_RV: usize>
 where
     T: Transport,
@@ -303,7 +354,7 @@ where
     C: Clock,
     'cfg: 'lease,
 {
-    /// Internal constructor for a rendezvous entry that has already been marked
+    /// Constructs a rendezvous entry that has already been marked
     /// active by the lease table.
     pub(crate) fn new(
         lease: crate::session::lease::core::RendezvousLease<'lease, 'cfg, T, C>,
@@ -325,11 +376,9 @@ where
         }
     }
 
-    pub(crate) fn into_port_guard(
-        mut self,
-    ) -> Result<LanePortAccess<'lease, 'cfg, T, C>, RendezvousError> {
+    pub(crate) fn into_port_guard(mut self) -> LanePortAccess<'lease, 'cfg, T, C> {
         let (port, guard) = {
-            let lease = self.lease.as_mut().expect("invariant");
+            let lease = crate::invariant_some(self.lease.as_mut());
             // SAFETY: `RendezvousLease<'lease, 'cfg, ...>` holds the unique mutable
             // entry borrow for `'lease`, so reborrowing the rendezvous as shared for
             // the same `'lease` lifetime is sound as long as we do not use the lease
@@ -338,22 +387,22 @@ where
                 lease.with_rendezvous(core::ptr::from_mut);
             let rv: &'lease Rendezvous<'cfg, 'cfg, T, C> =
                 /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*rv_ptr };
-            let active_leases = *self.active_leases.as_ref().expect("invariant");
+            let active_leases = *crate::invariant_some(self.active_leases.as_ref());
             rv.open_port_guard(
                 self.sid,
                 self.lane,
                 self.role,
                 self.role_count,
                 active_leases,
-            )?
+            )
         };
         self.lease = None;
         self.active_leases = None;
-        Ok(LanePortAccess {
+        LanePortAccess {
             port,
             lane_guard: guard,
             brand: self.brand,
-        })
+        }
     }
 
     #[inline]
@@ -361,7 +410,7 @@ where
         &mut self,
         f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, C>) -> R,
     ) -> R {
-        let lease = self.lease.as_mut().expect("invariant");
+        let lease = crate::invariant_some(self.lease.as_mut());
         lease.with_rendezvous(f)
     }
 }

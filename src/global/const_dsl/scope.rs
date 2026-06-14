@@ -1,14 +1,14 @@
 /// Structured scope taxonomy used by the global DSL to tag composite
-/// fragments such as routes, loops, or parallel lanes.
+/// fragments such as routes, rolled reentry regions, or parallel lanes.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScopeKind {
-    /// Default scope kind when no specialised semantics are required.
-    Generic = 0,
+    /// Plain source fragment without route, reentry, or parallel semantics.
+    Plain = 0,
     /// Scope representing a routing decision (`g::route`).
     Route = 1,
-    /// Scope representing a loop fixpoint.
-    Loop = 2,
+    /// Scope representing a rolled reentry region (`Program::roll`).
+    Roll = 2,
     /// Scope representing a parallel lane (`g::par`).
     Parallel = 3,
 }
@@ -32,7 +32,7 @@ pub(crate) struct CompactScopeId {
 }
 
 impl ScopeId {
-    const NONE_RAW: u64 = u64::MAX;
+    const ABSENT_RAW: u64 = u64::MAX;
     const KIND_BITS: u64 = 3;
     const LOCAL_BITS: u64 = 13;
     const RANGE_BITS: u64 = 16;
@@ -70,12 +70,12 @@ impl ScopeId {
 
     pub(crate) const fn none() -> Self {
         Self {
-            raw: Self::NONE_RAW,
+            raw: Self::ABSENT_RAW,
         }
     }
 
     pub(crate) const fn is_none(self) -> bool {
-        self.raw == Self::NONE_RAW
+        self.raw == Self::ABSENT_RAW
     }
 
     pub(crate) const fn raw(self) -> u64 {
@@ -84,12 +84,12 @@ impl ScopeId {
 
     pub(crate) const fn kind(self) -> ScopeKind {
         if self.is_none() {
-            return ScopeKind::Generic;
+            return ScopeKind::Plain;
         }
         match ((self.raw >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8 {
-            0 => ScopeKind::Generic,
+            0 => ScopeKind::Plain,
             1 => ScopeKind::Route,
-            2 => ScopeKind::Loop,
+            2 => ScopeKind::Roll,
             3 => ScopeKind::Parallel,
             _ => panic!("invalid scope kind"),
         }
@@ -129,7 +129,7 @@ impl ScopeId {
 
     pub(crate) const fn canonical_raw(self) -> u64 {
         if self.is_none() {
-            Self::NONE_RAW
+            Self::ABSENT_RAW
         } else {
             let variable_mask =
                 (Self::RANGE_MASK << Self::RANGE_SHIFT) | (Self::NEST_MASK << Self::NEST_SHIFT);
@@ -158,8 +158,8 @@ impl ScopeId {
         Self::new(ScopeKind::Route, ordinal)
     }
 
-    pub(crate) const fn loop_scope(ordinal: u16) -> Self {
-        Self::new(ScopeKind::Loop, ordinal)
+    pub(crate) const fn roll_scope(ordinal: u16) -> Self {
+        Self::new(ScopeKind::Roll, ordinal)
     }
 
     pub(crate) const fn parallel(ordinal: u16) -> Self {
@@ -168,7 +168,7 @@ impl ScopeId {
 }
 
 impl CompactScopeId {
-    const NONE_RAW: u32 = u32::MAX;
+    const ABSENT_RAW: u32 = u32::MAX;
     const KIND_BITS: u32 = 3;
     const ORDINAL_BITS: u32 = 9;
 
@@ -182,12 +182,12 @@ impl CompactScopeId {
 
     pub(crate) const fn none() -> Self {
         Self {
-            raw: Self::NONE_RAW,
+            raw: Self::ABSENT_RAW,
         }
     }
 
     pub(crate) const fn decode_raw(raw: u32) -> Option<Self> {
-        if raw == Self::NONE_RAW {
+        if raw == Self::ABSENT_RAW {
             return Some(Self::none());
         }
         if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u32 {
@@ -202,7 +202,7 @@ impl CompactScopeId {
     }
 
     pub(crate) const fn is_none(self) -> bool {
-        self.raw == Self::NONE_RAW
+        self.raw == Self::ABSENT_RAW
     }
 
     pub(crate) const fn from_scope_id(scope: ScopeId) -> Self {
@@ -238,12 +238,12 @@ impl CompactScopeId {
 
     pub(crate) const fn kind(self) -> ScopeKind {
         if self.is_none() {
-            return ScopeKind::Generic;
+            return ScopeKind::Plain;
         }
         match ((self.raw >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8 {
-            0 => ScopeKind::Generic,
+            0 => ScopeKind::Plain,
             1 => ScopeKind::Route,
-            2 => ScopeKind::Loop,
+            2 => ScopeKind::Roll,
             3 => ScopeKind::Parallel,
             _ => panic!("invalid scope kind"),
         }

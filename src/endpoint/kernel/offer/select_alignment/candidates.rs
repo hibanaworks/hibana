@@ -1,8 +1,8 @@
 use super::super::{CurrentFrontierSelectionState, ObservedEntrySet, OfferSelectPriority};
 use super::model::{
-    CurrentOfferAuthority, CurrentOfferEntry, CurrentOfferObservation,
+    CurrentOfferAuthority, CurrentOfferCandidateStatus, CurrentOfferEntry, CurrentOfferObservation,
     OfferAlignmentCandidateInput, OfferAlignmentCandidatePool, OfferAlignmentSelection,
-    OfferEntrySet,
+    OfferEntrySet, ProgressEvidence, ProgressSiblingPresence,
 };
 use super::{Clock, CursorEndpoint, Transport};
 use crate::endpoint::kernel::frontier::FrontierKind;
@@ -18,8 +18,14 @@ struct OfferAlignmentCurrent {
     idx: usize,
     entry: CurrentOfferEntry,
     authority: CurrentOfferAuthority,
-    progress_sibling_exists: bool,
+    progress_sibling_presence: ProgressSiblingPresence,
     observation: CurrentOfferObservation,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CurrentEntryAdmission {
+    Eligible,
+    Excluded,
 }
 
 impl OfferAlignmentCandidates {
@@ -35,11 +41,8 @@ impl OfferAlignmentCandidates {
         &self,
         current_state: CurrentFrontierSelectionState,
     ) -> Option<(OfferSelectPriority, usize)> {
-        let current_is_candidate = self.current.is_candidate(current_state, self.selection);
-        self.selection.select(
-            current_is_candidate && self.current.present(),
-            self.current.idx,
-        )
+        let current = self.current.candidate_status(current_state, self.selection);
+        self.selection.select(current, self.current.idx)
     }
 
     #[inline]
@@ -62,14 +65,14 @@ impl OfferAlignmentCurrent {
         idx: usize,
         entry: CurrentOfferEntry,
         authority: CurrentOfferAuthority,
-        progress_sibling_exists: bool,
+        progress_sibling_presence: ProgressSiblingPresence,
         observation: CurrentOfferObservation,
     ) -> Self {
         Self {
             idx,
             entry,
             authority,
-            progress_sibling_exists,
+            progress_sibling_presence,
             observation,
         }
     }
@@ -84,48 +87,53 @@ impl OfferAlignmentCurrent {
         if !self.present() {
             return;
         }
-        state.ready |= self.observation.ready();
-        state.has_progress_evidence |= self.observation.progress_evidence();
+        if self.observation.ready() {
+            state.record_ready();
+        }
+        if self.observation.progress_evidence() {
+            state.record_progress_evidence();
+        }
     }
 
     #[inline]
-    fn is_candidate(
+    fn candidate_status(
         &self,
         current_state: CurrentFrontierSelectionState,
         selection: OfferAlignmentSelection,
-    ) -> bool {
-        let current_has_evidence = self
+    ) -> CurrentOfferCandidateStatus {
+        if !self.present() {
+            return CurrentOfferCandidateStatus::NotSelectable;
+        }
+
+        let current_progress = self
             .observation
-            .accumulated_progress_evidence(current_state.has_progress_evidence);
+            .accumulated_progress_evidence(current_state);
         if !self.current_entry_survives_hint_filter(
-            self.suppresses_current_passive_without_evidence(
-                current_state.frontier,
-                current_has_evidence,
-            ),
+            self.current_passive_admission(current_state.frontier, current_progress),
             selection,
         ) {
-            return false;
+            return CurrentOfferCandidateStatus::NotSelectable;
         }
         if self.authority.is_controller()
-            && !current_has_evidence
-            && self.progress_sibling_exists
+            && current_progress.is_absent()
+            && self.progress_sibling_presence.exists()
             && selection.has_candidate()
         {
-            return false;
+            return CurrentOfferCandidateStatus::NotSelectable;
         }
-        true
+        CurrentOfferCandidateStatus::Selectable
     }
 
     #[inline]
     fn current_entry_survives_hint_filter(
         &self,
-        suppress_current: bool,
+        admission: CurrentEntryAdmission,
         selection: OfferAlignmentSelection,
     ) -> bool {
         if !self.entry.is_route_entry()
             || !self.entry.has_offer_lanes()
             || !self.present()
-            || suppress_current
+            || admission == CurrentEntryAdmission::Excluded
         {
             return false;
         }
@@ -133,21 +141,26 @@ impl OfferAlignmentCurrent {
     }
 
     #[inline]
-    fn suppresses_current_passive_without_evidence(
+    fn current_passive_admission(
         &self,
         current_frontier: FrontierKind,
-        current_has_evidence: bool,
-    ) -> bool {
-        current_frontier == FrontierKind::PassiveObserver
+        current_progress: ProgressEvidence,
+    ) -> CurrentEntryAdmission {
+        if current_frontier == FrontierKind::PassiveObserver
             && !self.authority.is_controller()
-            && !current_has_evidence
+            && current_progress.is_absent()
             && self.observation.controller_progress_sibling_exists()
+        {
+            CurrentEntryAdmission::Excluded
+        } else {
+            CurrentEntryAdmission::Eligible
+        }
     }
 
     #[inline]
     const fn can_remain_after_alignment(self, state: CurrentFrontierSelectionState) -> bool {
         self.entry.has_offer_lanes()
-            && (self.entry.is_route_entry() || state.ready || state.has_progress_evidence)
+            && (self.entry.is_route_entry() || state.ready() || state.has_progress_evidence())
     }
 }
 
@@ -166,16 +179,17 @@ where
             self.selectable_observed_offer_entries(observed_entries),
             input,
         );
-        let suppress_current_controller =
-            candidates.suppresses_current_controller_without_evidence(observed_entries, input);
-        let static_controller_frontier =
-            candidates.static_controller_frontier(suppress_current_controller);
-        let selection = candidates.selection(observed_entries, input, static_controller_frontier);
+        let current_controller_frontier =
+            candidates.current_controller_frontier(observed_entries, input);
+        let intrinsic_controller_frontier =
+            candidates.intrinsic_controller_frontier(current_controller_frontier);
+        let selection =
+            candidates.selection(observed_entries, input, intrinsic_controller_frontier);
         let current = OfferAlignmentCurrent::new(
             input.current_idx,
             input.current_entry,
             input.current_authority,
-            input.progress_sibling_exists,
+            input.progress_sibling_presence,
             candidates.current_observation(observed_entries),
         );
 

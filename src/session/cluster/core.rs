@@ -20,23 +20,14 @@ use crate::session::lease::core::{LeaseError, RegisterRendezvousError};
 struct PublicEndpointStorageLayout {
     total_bytes: usize,
     total_align: usize,
-    header_bytes: usize,
-    port_slots_bytes: usize,
-    guard_slots_bytes: usize,
-    header_padding_bytes: usize,
     arena_offset: usize,
-    arena_bytes: usize,
-    arena_align: usize,
 }
 
-use core::{fmt, panic::Location};
+use core::fmt;
 
 use super::error::{AttachError, ClusterError, ResourceScope};
 use crate::eff::EffIndex;
-use crate::global::{
-    compiled::images::{CompiledProgramRef, RoleImageSlice},
-    const_dsl::ResolverMode,
-};
+use crate::global::compiled::images::{CompiledProgramRef, RoleImageSlice};
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::session::types::{Lane, RendezvousId, SessionId};
@@ -56,7 +47,7 @@ struct EndpointInitArgs<
     public_slot: EndpointLeaseId,
     public_generation: u32,
     public_ops: crate::endpoint::carrier::EndpointOps<'r>,
-    public_slot_owned: bool,
+    public_slot_ownership: crate::endpoint::kernel::PublicSlotOwnership,
 }
 mod cluster_storage;
 mod dynamic_resolvers;

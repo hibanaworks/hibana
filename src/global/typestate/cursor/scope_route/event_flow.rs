@@ -51,7 +51,7 @@ impl EventCursor {
                 row.matches_commit(
                     event.eff_index,
                     event.label,
-                    event.is_internal,
+                    event.origin,
                     event.scope,
                     event.route_arm,
                     event.lane,
@@ -426,7 +426,7 @@ impl EventCursor {
                 {
                     if let Some(selected) = committed_arm_for_scope(scope_id)
                         && selected != arm
-                        && !self.route_scope_linger(scope_id)
+                        && !self.route_scope_reentry(scope_id)
                     {
                         return Err(FlowPreviewError::Invariant);
                     }
@@ -519,7 +519,7 @@ impl EventCursor {
                     frame_label: local.frame_label,
                     resource: local.resource,
                     semantic: local.semantic,
-                    is_internal: local.is_internal,
+                    origin: local.origin,
                     next: local.next,
                     scope: local.scope,
                     route_arm: local.route_arm,

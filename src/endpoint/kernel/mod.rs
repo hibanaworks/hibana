@@ -1,4 +1,4 @@
-//! Internal endpoint kernel split by layer.
+//! Endpoint kernel split by layer.
 
 mod authority;
 mod core;
@@ -19,7 +19,7 @@ mod lane_slots {
     impl<T> LaneSlotArray<T> {
         pub(super) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut Option<T>, len: usize) {
             if len > u16::MAX as usize {
-                panic!("lane slot array overflow");
+                crate::invariant();
             }
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
             unsafe {
@@ -80,14 +80,14 @@ mod lane_slots {
 
         #[inline]
         fn index(&self, index: usize) -> &Self::Output {
-            self.get(index).expect("lane slot index out of range")
+            crate::invariant_some(self.get(index))
         }
     }
 
     impl<T> core::ops::IndexMut<usize> for LaneSlotArray<T> {
         #[inline]
         fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-            self.get_mut(index).expect("lane slot index out of range")
+            crate::invariant_some(self.get_mut(index))
         }
     }
 
@@ -140,7 +140,9 @@ mod recv;
 
 pub(crate) use self::core::cursor_endpoint_storage_layout;
 pub(super) use self::core::*;
-pub(crate) use self::core::{CursorEndpoint, SendInit, SendPreview, SendRuntimeDesc};
+pub(crate) use self::core::{
+    CursorEndpoint, PublicSlotOwnership, SendInit, SendPreview, SendRuntimeDesc,
+};
 pub(crate) use self::frontier::FrontierScratchLayout;
 pub(crate) use self::lane_port::RawSendPayload;
 pub(crate) use self::layout::EndpointArenaLayout;

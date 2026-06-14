@@ -41,15 +41,15 @@ for required in Cargo.toml README.md src/lib.rs tests/docs_surface.rs tests/sema
 done
 
 if rg -n 'tests/support/' src; then
-  echo "package artifact check failed: src must not depend on tests/support fixtures" >&2
+  echo "package artifact check failed: src must not depend on tests/support" >&2
   exit 1
 fi
 
-SOURCE_TEST_FIXTURE_PATTERN='^src/(test_support|endpoint/kernel/test_support)/|^src/.*/tests/|^src/.*/tests\.rs$|^src/.*_tests\.rs$'
+SOURCE_TEST_SUPPORT_PATTERN='^src/(test_support|endpoint/kernel/test_support)/|^src/.*/tests/|^src/.*/tests\.rs$|^src/.*_tests\.rs$'
 
-if grep -qE "${SOURCE_TEST_FIXTURE_PATTERN}" <<<"${PACKAGE_LIST}"; then
-  echo "package artifact check failed: source-tree test fixtures must not ship in the production crate package" >&2
-  grep -E "${SOURCE_TEST_FIXTURE_PATTERN}" <<<"${PACKAGE_LIST}" >&2
+if grep -qE "${SOURCE_TEST_SUPPORT_PATTERN}" <<<"${PACKAGE_LIST}"; then
+  echo "package artifact check failed: source-tree test support must not ship in the production crate package" >&2
+  grep -E "${SOURCE_TEST_SUPPORT_PATTERN}" <<<"${PACKAGE_LIST}" >&2
   exit 1
 fi
 
@@ -63,7 +63,7 @@ MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*
 PATH_RE = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\s*\]')
 
 
-def is_excluded_fixture(path: Path) -> bool:
+def is_excluded_test_support(path: Path) -> bool:
     rel = path.as_posix()
     return (
         rel.startswith("src/test_support/")
@@ -74,7 +74,7 @@ def is_excluded_fixture(path: Path) -> bool:
     )
 
 
-def default_module_candidates(source: Path, mod_name: str) -> list[Path]:
+def rust_module_candidates(source: Path, mod_name: str) -> list[Path]:
     if source.name in {"lib.rs", "main.rs", "mod.rs"}:
         base = source.parent
         return [base / f"{mod_name}.rs", base / mod_name / "mod.rs"]
@@ -110,12 +110,12 @@ for source in sorted(Path("src").rglob("*.rs")):
             if path_attr is not None:
                 targets = [(source.parent / path_attr).resolve().relative_to(ROOT)]
             else:
-                targets = [p for p in default_module_candidates(source, mod_name) if p.exists()]
+                targets = [p for p in rust_module_candidates(source, mod_name) if p.exists()]
             if not targets:
                 violations.append(f"{source}: repo-only module `{mod_name}` target not found")
             else:
                 for target in targets:
-                    if not is_excluded_fixture(target):
+                    if not is_excluded_test_support(target):
                         violations.append(
                             f"{source}: repo-only module `{mod_name}` targets package source {target}"
                         )
@@ -129,7 +129,7 @@ for source in sorted(Path("src").rglob("*.rs")):
 
 if violations:
     print(
-        "package artifact check failed: repo-only test modules must target excluded source-tree fixtures",
+        "package artifact check failed: repo-only test modules must target excluded source-tree test support",
         file=sys.stderr,
     )
     for violation in violations:
@@ -148,7 +148,7 @@ MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*
 PATH_RE = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\s*\]')
 
 
-def default_module_candidates(source: Path, mod_name: str) -> list[Path]:
+def rust_module_candidates(source: Path, mod_name: str) -> list[Path]:
     if source.name in {"lib.rs", "main.rs", "mod.rs"}:
         base = source.parent
         return [base / f"{mod_name}.rs", base / mod_name / "mod.rs"]
@@ -184,7 +184,7 @@ while stack:
         if path_attr is not None:
             candidates = [source.parent / path_attr]
         else:
-            candidates = [p for p in default_module_candidates(source, mod_name) if p.exists()]
+            candidates = [p for p in rust_module_candidates(source, mod_name) if p.exists()]
         if not candidates:
             missing.append(f"{source}: module `{mod_name}` target not found")
         for target in candidates:
@@ -219,16 +219,16 @@ run_package_clean "package lib check --features std" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --features std --lib
 run_package_clean "package lib test build --features std" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings -Adead_code" \
+  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --features std --lib --no-run
 run_package_clean "package representative test build --features std" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings -Adead_code" \
+  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --features std --test semantic_surface --no-run
 run_package_clean "package lib check --no-default-features" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib
 run_package_clean "package lib test build --no-default-features" \
-  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings -Adead_code" \
+  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib --no-run
 run_package_clean "package docs --no-default-features" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" RUSTDOCFLAGS="-Dwarnings" \

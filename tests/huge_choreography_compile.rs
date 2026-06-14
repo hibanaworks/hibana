@@ -1,6 +1,5 @@
 #![cfg(feature = "std")]
 
-mod common;
 #[path = "support/large_choreography/fanout_program.rs"]
 mod fanout_program;
 #[path = "support/large_choreography/huge_program.rs"]
@@ -18,7 +17,7 @@ fn drive<F: core::future::Future>(future: F) -> F::Output {
     futures::executor::block_on(future)
 }
 
-fn retain_large_choreography_fixture_symbols() {
+fn retain_large_choreography_symbols() {
     let _ = fanout_program::ROUTE_SCOPE_COUNT;
     let _ = fanout_program::EXPECTED_WORKER_BRANCH_LABELS;
     let _ = fanout_program::ACK_LABELS;
@@ -38,13 +37,13 @@ fn retain_large_choreography_fixture_symbols() {
 }
 
 #[test]
-fn large_choreography_fixture_symbols_are_reachable() {
-    retain_large_choreography_fixture_symbols();
+fn large_choreography_symbols_are_reachable() {
+    retain_large_choreography_symbols();
 }
 
 #[test]
 fn huge_programs_stay_on_direct_program_values() {
-    retain_large_choreography_fixture_symbols();
+    retain_large_choreography_symbols();
     assert_eq!(huge_program::ROUTE_SCOPE_COUNT, 4);
     assert_eq!(
         huge_program::EXPECTED_WORKER_BRANCH_LABELS,
@@ -64,7 +63,7 @@ fn huge_programs_stay_on_direct_program_values() {
 
 #[test]
 fn huge_program_shape_matrix_projects_both_roles() {
-    retain_large_choreography_fixture_symbols();
+    retain_large_choreography_symbols();
     let route_heavy_controller: RoleProgram<0> = huge_program::controller_program();
     let route_heavy_worker: RoleProgram<1> = huge_program::worker_program();
     let linear_heavy_controller: RoleProgram<0> = linear_program::controller_program();

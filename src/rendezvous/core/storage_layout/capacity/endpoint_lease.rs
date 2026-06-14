@@ -16,7 +16,7 @@ where
             return None;
         }
         let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-        if slot.occupied && slot.generation == generation {
+        if slot.is_live() && slot.generation == generation {
             Some(slot)
         } else {
             None
@@ -34,7 +34,7 @@ where
             return None;
         }
         let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *self.endpoint_leases.add(idx) };
-        if slot.occupied && slot.generation == generation {
+        if slot.is_live() && slot.generation == generation {
             Some(slot)
         } else {
             None
@@ -122,7 +122,7 @@ where
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
+            if slot.is_live() {
                 required =
                     core::cmp::max(required, slot.resident_budget.route_frame_slots as usize);
             }
@@ -137,7 +137,7 @@ where
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
+            if slot.is_live() {
                 required = core::cmp::max(required, slot.resident_budget.route_lane_slots as usize);
             }
             idx += 1;
@@ -151,7 +151,7 @@ where
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied {
+            if slot.is_live() {
                 required = core::cmp::max(
                     required,
                     slot.resident_budget.frontier_workspace_bytes as usize,
@@ -186,7 +186,7 @@ where
     #[inline]
     pub(crate) fn recompute_frontier_workspace_bytes(&mut self) {
         let required = self.resident_frontier_workspace_floor();
-        let required = u32::try_from(required).expect("invariant");
+        let required = crate::invariant_ok(u32::try_from(required));
         self.set_frontier_workspace_bytes(required);
     }
 }

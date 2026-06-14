@@ -1,35 +1,8 @@
-use crate::transport::{TransportError, wire::CodecError};
-use core::{fmt, panic::Location};
-
-#[derive(Clone, Copy)]
-pub(crate) struct ErrorLocation {
-    location: &'static Location<'static>,
-}
-
-impl ErrorLocation {
-    #[inline]
-    #[track_caller]
-    pub(crate) fn caller() -> Self {
-        Self {
-            location: Location::caller(),
-        }
-    }
-
-    #[inline]
-    const fn file(self) -> &'static str {
-        self.location.file()
-    }
-
-    #[inline]
-    const fn line(self) -> u32 {
-        self.location.line()
-    }
-
-    #[inline]
-    const fn column(self) -> u32 {
-        self.location.column()
-    }
-}
+use crate::{
+    diag::Callsite,
+    transport::{TransportError, wire::CodecError},
+};
+use core::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EndpointOp {
@@ -50,7 +23,7 @@ pub(crate) enum EndpointOp {
 #[derive(Clone, Copy)]
 pub struct EndpointError {
     op: EndpointOp,
-    location: ErrorLocation,
+    location: Callsite,
     kind: EndpointErrorKind,
 }
 
@@ -69,7 +42,7 @@ impl fmt::Debug for EndpointError {
 
 impl EndpointError {
     #[inline]
-    pub(super) fn new<E>(op: EndpointOp, location: ErrorLocation, error: E) -> Self
+    pub(super) fn new<E>(op: EndpointOp, location: Callsite, error: E) -> Self
     where
         EndpointErrorKind: From<E>,
     {
@@ -184,7 +157,7 @@ pub(crate) enum SendError {
     PhaseInvariant,
     /// Attempted to send a message whose label does not match the typestate step.
     LabelMismatch { expected: u8, actual: u8 },
-    /// Resolver VM rejected the send operation.
+    /// Resolver rejected the send operation.
     ResolverReject { resolver_id: u16 },
     /// Current session generation has terminal fault evidence.
     SessionFault(crate::rendezvous::SessionFaultKind),
@@ -201,7 +174,7 @@ pub(crate) enum RecvError {
     PhaseInvariant,
     /// Choreography logical label did not match the projected typestate step.
     LabelMismatch { expected: u8, actual: u8 },
-    /// Resolver VM rejected the receive operation.
+    /// Resolver rejected the receive operation.
     ResolverReject { resolver_id: u16 },
     /// Current session generation has terminal fault evidence.
     SessionFault(crate::rendezvous::SessionFaultKind),

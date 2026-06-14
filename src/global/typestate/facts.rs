@@ -1,10 +1,13 @@
 //! Immutable typestate facts and metadata.
 
 use crate::{
-    eff::{self, EffIndex},
+    eff::{self, EffIndex, EventOrigin},
     global::{
         compiled::images::EventSemanticKind,
-        const_dsl::{CompactScopeId, ResolverMode, ScopeId, ScopeKind},
+        const_dsl::{
+            CompactScopeId, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, RouteResolver, ScopeId,
+            ScopeKind,
+        },
     },
 };
 
@@ -84,7 +87,7 @@ impl LocalDependency {
 pub(crate) struct PackedLocalDependency(u64);
 
 impl PackedLocalDependency {
-    const NONE: u64 = u64::MAX;
+    const ABSENT_RAW: u64 = u64::MAX;
     const STEP_BITS: u64 = 12;
     pub(crate) const STEP_MASK: u64 = (1 << Self::STEP_BITS) - 1;
     const DEP_ORDINAL_BITS: u64 = 12;
@@ -103,7 +106,7 @@ impl PackedLocalDependency {
 
     #[inline(always)]
     pub(crate) const fn none() -> Self {
-        Self(Self::NONE)
+        Self(Self::ABSENT_RAW)
     }
 
     #[inline(always)]
@@ -118,7 +121,7 @@ impl PackedLocalDependency {
 
     #[inline(always)]
     pub(crate) const fn is_none(self) -> bool {
-        self.0 == Self::NONE
+        self.0 == Self::ABSENT_RAW
     }
 
     #[inline(always)]
@@ -170,7 +173,7 @@ impl PackedLocalDependency {
 
     #[inline(always)]
     pub(crate) const fn to_dependency(self) -> Option<LocalDependency> {
-        if self.0 == Self::NONE {
+        if self.0 == Self::ABSENT_RAW {
             return None;
         }
         let start = ((self.0 >> Self::START_SHIFT) & Self::STEP_MASK) as usize;
@@ -208,7 +211,7 @@ impl PackedLocalDependency {
 pub(crate) struct PackedEventConflict(u16);
 
 impl PackedEventConflict {
-    const NONE: u16 = u16::MAX;
+    const ABSENT_RAW: u16 = u16::MAX;
     const ARM_BITS: u16 = 1;
     const ROUTE_MASK: u16 = (1 << 13) - 1;
     /// Maximum row-chain length for conflict traversal.
@@ -221,7 +224,7 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn none() -> Self {
-        Self(Self::NONE)
+        Self(Self::ABSENT_RAW)
     }
 
     #[inline(always)]
@@ -236,7 +239,7 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn is_none(self) -> bool {
-        self.0 == Self::NONE
+        self.0 == Self::ABSENT_RAW
     }
 
     #[inline(always)]
@@ -264,7 +267,7 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn to_conflict(self) -> Option<LocalConflict> {
-        if self.0 == Self::NONE {
+        if self.0 == Self::ABSENT_RAW {
             return None;
         }
         let arm = (self.0 & 1) as u8;
@@ -318,7 +321,7 @@ pub(crate) struct RouteScopeRows {
     scope: ScopeId,
     start: usize,
     end: usize,
-    linger: bool,
+    reentry: ReentryMark,
 }
 
 impl RouteScopeRows {
@@ -327,7 +330,7 @@ impl RouteScopeRows {
         scope: ScopeId,
         start: usize,
         end: usize,
-        linger: bool,
+        reentry: ReentryMark,
     ) -> Option<Self> {
         if scope.is_none()
             || !matches!(scope.kind(), ScopeKind::Route)
@@ -340,7 +343,7 @@ impl RouteScopeRows {
                 scope,
                 start,
                 end,
-                linger,
+                reentry,
             })
         }
     }
@@ -361,8 +364,8 @@ impl RouteScopeRows {
     }
 
     #[inline(always)]
-    pub(crate) const fn linger(self) -> bool {
-        self.linger
+    pub(crate) const fn reentry(self) -> bool {
+        self.reentry.is_reentrant()
     }
 }
 
@@ -372,7 +375,7 @@ impl RouteScopeRows {
 pub(crate) struct StateIndex(u16);
 
 impl StateIndex {
-    pub(crate) const MAX: Self = Self(u16::MAX);
+    pub(crate) const ABSENT: Self = Self(u16::MAX);
 
     #[inline(always)]
     pub(crate) const fn new(raw: u16) -> Self {
@@ -398,7 +401,7 @@ impl StateIndex {
     }
 
     #[inline(always)]
-    pub(crate) const fn is_max(self) -> bool {
+    pub(crate) const fn is_absent(self) -> bool {
         self.0 == u16::MAX
     }
 }
@@ -417,7 +420,7 @@ impl FirstRecvDispatchSpec {
         lane: 0,
         frame_label: 0,
         arm: 0,
-        target: StateIndex::MAX,
+        target: StateIndex::ABSENT,
     };
 
     #[inline(always)]
@@ -465,9 +468,9 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_internal: bool,
-        resolver: ResolverMode,
-        /// Type-level lane for parallel composition (default 0).
+        origin: EventOrigin,
+        resolver: RouteResolver,
+        /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
     },
     /// Role receives a message from a peer.
@@ -477,9 +480,9 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_internal: bool,
-        resolver: ResolverMode,
-        /// Type-level lane for parallel composition (default 0).
+        origin: EventOrigin,
+        resolver: RouteResolver,
+        /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
     },
     /// Role executes an endpoint-local action.
@@ -488,16 +491,14 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_internal: bool,
-        resolver: ResolverMode,
-        /// Type-level lane for parallel composition (default 0).
+        origin: EventOrigin,
+        resolver: RouteResolver,
+        /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
     },
     /// Terminal node (no further actions).
     Terminate,
 }
-
-const LOCAL_ACTION_STATIC_RESOLVER_ID: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PackedLocalAction {
@@ -507,7 +508,7 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_internal: bool,
+        origin: EventOrigin,
         resolver_id: u16,
         lane: u8,
     },
@@ -517,7 +518,7 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_internal: bool,
+        origin: EventOrigin,
         resolver_id: u16,
         lane: u8,
     },
@@ -526,7 +527,7 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         resource: Option<u8>,
-        is_internal: bool,
+        origin: EventOrigin,
         resolver_id: u16,
         lane: u8,
     },
@@ -536,39 +537,52 @@ enum PackedLocalAction {
 /// Message-local facts compiled for a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalAtomFacts {
-    pub eff_index: EffIndex,
-    pub label: u8,
-    pub frame_label: u8,
-    pub resource: Option<u8>,
-    pub is_internal: bool,
-    pub resolver: ResolverMode,
-    pub lane: u8,
+    pub(crate) eff_index: EffIndex,
+    pub(crate) label: u8,
+    pub(crate) frame_label: u8,
+    pub(crate) resource: Option<u8>,
+    pub(crate) origin: EventOrigin,
+    pub(crate) resolver: RouteResolver,
+    pub(crate) lane: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RouteChoiceMark {
+    Ordinary,
+    Determinant,
+}
+
+impl RouteChoiceMark {
+    #[inline(always)]
+    pub(crate) const fn is_determinant(self) -> bool {
+        matches!(self, Self::Determinant)
+    }
 }
 
 /// Non-message facts compiled for a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalNodeMeta {
-    pub semantic: EventSemanticKind,
-    pub next: StateIndex,
-    pub scope: ScopeId,
-    pub route_arm: Option<u8>,
-    pub is_choice_determinant: bool,
+    pub(crate) semantic: EventSemanticKind,
+    pub(crate) next: StateIndex,
+    pub(crate) scope: ScopeId,
+    pub(crate) route_arm: Option<u8>,
+    pub(crate) choice: RouteChoiceMark,
 }
 
 #[inline(always)]
-const fn encode_resolver_id(resolver: ResolverMode) -> u16 {
-    match resolver.dynamic_resolver_id() {
-        Some(resolver_id) => resolver_id,
-        None => LOCAL_ACTION_STATIC_RESOLVER_ID,
+const fn encode_resolver_id(resolver: RouteResolver) -> u16 {
+    match resolver {
+        RouteResolver::Dynamic { resolver_id, .. } => resolver_id,
+        RouteResolver::Intrinsic => INTRINSIC_ROUTE_RESOLVER_ID,
     }
 }
 
 #[inline(always)]
-const fn decode_resolver(resolver_id: u16, scope: CompactScopeId) -> ResolverMode {
-    if resolver_id == LOCAL_ACTION_STATIC_RESOLVER_ID {
-        ResolverMode::Static
+const fn decode_resolver(resolver_id: u16, scope: CompactScopeId) -> RouteResolver {
+    if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
+        RouteResolver::Intrinsic
     } else {
-        ResolverMode::Dynamic { resolver_id, scope }
+        RouteResolver::Dynamic { resolver_id, scope }
     }
 }
 
@@ -646,9 +660,9 @@ impl LocalNode {
     }
 
     #[inline(always)]
-    const fn flags(is_choice_determinant: bool, semantic: EventSemanticKind) -> u8 {
+    const fn flags(choice: RouteChoiceMark, semantic: EventSemanticKind) -> u8 {
         let mut flags = Self::encode_semantic(semantic);
-        if is_choice_determinant {
+        if choice.is_determinant() {
             flags |= Self::FLAG_CHOICE_DETERMINANT;
         }
         flags
@@ -663,14 +677,14 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 resource: facts.resource,
-                is_internal: facts.is_internal,
+                origin: facts.origin,
                 resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
             scope: CompactScopeId::from_scope_id(meta.scope),
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
-            flags: Self::flags(meta.is_choice_determinant, meta.semantic),
+            flags: Self::flags(meta.choice, meta.semantic),
         }
     }
 
@@ -683,14 +697,14 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 resource: facts.resource,
-                is_internal: facts.is_internal,
+                origin: facts.origin,
                 resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
             scope: CompactScopeId::from_scope_id(meta.scope),
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
-            flags: Self::flags(meta.is_choice_determinant, meta.semantic),
+            flags: Self::flags(meta.choice, meta.semantic),
         }
     }
 
@@ -702,14 +716,14 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 resource: facts.resource,
-                is_internal: facts.is_internal,
+                origin: facts.origin,
                 resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
             scope: CompactScopeId::from_scope_id(meta.scope),
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
-            flags: Self::flags(meta.is_choice_determinant, meta.semantic),
+            flags: Self::flags(meta.choice, meta.semantic),
         }
     }
 
@@ -734,7 +748,7 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver_id,
                 lane,
             } => LocalAction::Send {
@@ -743,7 +757,7 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
@@ -753,7 +767,7 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver_id,
                 lane,
             } => LocalAction::Recv {
@@ -762,7 +776,7 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
@@ -771,7 +785,7 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver_id,
                 lane,
             } => LocalAction::Local {
@@ -779,7 +793,7 @@ impl LocalNode {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
@@ -807,6 +821,15 @@ impl LocalNode {
     #[inline(always)]
     pub(crate) const fn is_choice_determinant(&self) -> bool {
         (self.flags & Self::FLAG_CHOICE_DETERMINANT) != 0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn choice_mark(&self) -> RouteChoiceMark {
+        if self.is_choice_determinant() {
+            RouteChoiceMark::Determinant
+        } else {
+            RouteChoiceMark::Ordinary
+        }
     }
 
     #[inline(always)]

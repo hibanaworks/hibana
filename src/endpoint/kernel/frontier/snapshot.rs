@@ -1,4 +1,4 @@
-use super::{FrontierCandidate, FrontierKind, FrontierScratchView, ScopeId};
+use super::{FrontierCandidate, FrontierKind, FrontierScratchView, OfferEntryEvidence, ScopeId};
 pub(crate) fn frontier_snapshot_from_scratch(
     scratch: &mut FrontierScratchView,
     current_scope: ScopeId,
@@ -198,19 +198,15 @@ pub(crate) struct EvidenceFingerprint(u8);
 
 impl EvidenceFingerprint {
     #[inline]
-    pub(crate) const fn new(
-        has_ack: bool,
-        has_ready_arm_evidence: bool,
-        ingress_ready: bool,
-    ) -> Self {
+    pub(crate) const fn from_offer_entry_evidence(evidence: OfferEntryEvidence) -> Self {
         let mut bits = 0u8;
-        if has_ack {
+        if evidence.has_ack() {
             bits |= 1 << 0;
         }
-        if has_ready_arm_evidence {
+        if evidence.has_ready_arm() {
             bits |= 1 << 1;
         }
-        if ingress_ready {
+        if evidence.ingress_ready() {
             bits |= 1 << 2;
         }
         Self(bits)
@@ -250,7 +246,10 @@ impl OfferProgressState {
 
 #[inline(always)]
 pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-    let mask = align.checked_sub(1).expect("invariant");
+    let mask = match align.checked_sub(1) {
+        Some(mask) => mask,
+        None => crate::invariant(),
+    };
     (value + mask) & !mask
 }
 

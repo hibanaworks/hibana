@@ -20,19 +20,31 @@ impl WireEncode for FramePayload {
 impl WirePayload for FramePayload {
     type Decoded<'a> = Payload<'a>;
 
-    fn validate_payload(_input: Payload<'_>) -> Result<(), CodecError> {
-        Ok(())
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        match input.as_bytes().len() {
+            4 => Ok(()),
+            0..=3 => Err(CodecError::Truncated),
+            _ => Err(CodecError::Malformed),
+        }
     }
 
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         input
     }
+
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        if scratch.len() < 4 {
+            return Err(CodecError::Truncated);
+        }
+        scratch[..4].fill(0);
+        Ok(Payload::new(&scratch[..4]))
+    }
 }
 
 fn borrowed_decode_keeps_endpoint_borrow<'r>(endpoint: &mut Endpoint<'r, 0>) {
-    let branch = futures::executor::block_on(endpoint.offer()).expect("fixture setup");
+    let branch = futures::executor::block_on(endpoint.offer()).expect("test setup");
     let payload = futures::executor::block_on(branch.decode::<g::Msg<7, FramePayload>>())
-        .expect("fixture setup");
+        .expect("test setup");
     let next_offer = endpoint.offer();
     core::hint::black_box(&next_offer);
     core::hint::black_box(&payload);

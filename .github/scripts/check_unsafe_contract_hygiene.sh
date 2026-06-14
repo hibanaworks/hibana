@@ -77,7 +77,7 @@ generic_phrases = [
     "reaches this block through its exclusive mutation path or a read-only snapshot path",
     "establishes the relevant initialized slot/range before this access",
     "bounds the reference to resident storage or this call",
-    "excludes incompatible aliases at this access path",
+    "excludes alias conflicts at this access path",
     "has established the initialized slot/range before this access",
     "owns this raw storage access",
     "owns the adjacent raw access",
@@ -109,7 +109,7 @@ for path in Path("src").rglob("*.rs"):
             missing.append(f"{text_path}:{idx + 1}: unsafe block missing local SAFETY contract")
             continue
         if any(phrase in window for phrase in generic_phrases):
-            generic.append(f"{text_path}:{idx + 1}: unsafe block uses the generic SAFETY bypass")
+            generic.append(f"{text_path}:{idx + 1}: unsafe block uses the generic SAFETY comment")
 
 if missing:
     print("unsafe contract hygiene violation: every production unsafe block needs a local SAFETY contract", file=__import__("sys").stderr)
@@ -117,7 +117,7 @@ if missing:
         print(item, file=__import__("sys").stderr)
     raise SystemExit(1)
 if generic:
-    print("unsafe contract hygiene violation: SAFETY comments must name owner/lifetime/aliasing facts instead of the generic bypass", file=__import__("sys").stderr)
+    print("unsafe contract hygiene violation: SAFETY comments must name owner/lifetime/aliasing facts instead of the generic comment", file=__import__("sys").stderr)
     for item in generic:
         print(item, file=__import__("sys").stderr)
     raise SystemExit(1)
@@ -157,12 +157,14 @@ fi
 
 for required in \
   "received transport frames must be committed, explicitly requeued, or explicitly discarded" \
-  "received transport frame dropped without explicit commit, requeue, or discard" \
-  "received transport frame requeued on a different lane" \
-  "transport receive frame polled while current frame receipt is unresolved" \
-  "transport receive frame receipt is no longer current" \
-  "received transport frame requeued on a different endpoint port" \
-  "received transport frame requeued on a different Rx handle" \
+  "impl Drop for ReceivedFrameCore" \
+  "if self.receipt.is_current()" \
+  "if self.outstanding.replace(true)" \
+  "if !self.outstanding.get()" \
+  "crate::invariant()" \
+  "if self.lane_wire() != port.lane().as_wire()" \
+  "if self.port_key != port_key" \
+  "if self.state != receipt_state" \
   "fn issue(&self, port_key" \
   "assert_matches_port" \
   "fn requeue_on" \
@@ -212,7 +214,7 @@ done
 for required in \
   'SAFETY: the caller provides exclusive, writable storage for one' \
   'SAFETY: `bind_storage` owns the route-frame backing slice' \
-  'SAFETY: `lane_heads` points at `lane_slots` caller-owned u16' \
+  'SAFETY: `lane_heads` points at `lane_slots` u16 entries' \
   'SAFETY: `free_head` is the single u16 free-list head owned by this' \
   'SAFETY: `pending_frame_hint_masks` has one initialized slot per' \
   'SAFETY: the waiter arena contains `lane_slots *'

@@ -6,14 +6,14 @@ mod state;
 
 use core::task::Poll;
 
-pub(crate) use state::DecodeState;
+pub(crate) use state::{DecodeRestore, DecodeState};
 
 use super::decision_state::RouteState;
 use super::{
     core::{
         BranchPreviewView, CommitDelta, CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch,
         PreparedCommitDelta,
-        prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range,
+        prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
         scope_slot_for_route_from_cursor,
     },
     decision_state::{SelectedRouteCommitRows, SelectedRouteCommitRowsRef},
@@ -22,9 +22,7 @@ use super::{
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
-    global::typestate::{
-        EventCursor, RecvMeta, RelocatableResidentLaneStep, StateIndex, state_index_to_usize,
-    },
+    global::typestate::{EventCursor, RecvMeta, StateIndex, state_index_to_usize},
     runtime_core::config::Clock,
     transport::{Transport, wire::Payload},
 };
@@ -39,12 +37,6 @@ struct EndpointRxAuditPlan {
 enum DecodeProgressPlan {
     Wire { delta: CommitDelta },
     NonWire { delta: CommitDelta },
-}
-
-#[derive(Clone, Copy)]
-enum DecodeLingerCursorPlan {
-    None,
-    SetLane { step: RelocatableResidentLaneStep },
 }
 
 struct DecodeCommitPlan<'r> {

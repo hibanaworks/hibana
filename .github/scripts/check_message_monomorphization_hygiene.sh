@@ -76,7 +76,7 @@ for name, (_path, source, call) in raw_owners.items():
     )
     outside = source.replace(block_after(source, impl_anchor), "")
     if call in outside:
-        fail(f"{call} escaped {name}; poll loop would monomorphize outside raw owner")
+        fail(f"{call} left {name}; poll loop would monomorphize outside raw owner")
 
 send_decl = re.search(r"struct\s+SendFuture\s*<([^>]*)>", flow)
 if not send_decl:
@@ -101,8 +101,16 @@ for future_name, raw_name in [
 recv_future_block = block_after(endpoint, "impl<'e, 'r, const ROLE: u8, M> Future for RecvFuture")
 if "Payload::new(&[])" in recv_future_block:
     fail("RecvFuture poll must not recompute empty-payload codec authority")
-if "flags: RawRecvFlags" not in endpoint:
-    fail("RawRecvFuture must cache internal flags")
+for required in [
+    "lease: RecvFutureLease",
+    "payload_mode: RecvPayloadMode",
+    "RecvPayloadMode::from_allows_zero_length",
+]:
+    if required not in endpoint:
+        fail(f"RawRecvFuture must cache typed recv future state: {required}")
+for forbidden in ["Raw" "Recv" "Flags", "Raw" "Offer" "Lease"]:
+    if forbidden in endpoint:
+        fail(f"endpoint futures must not regrow bitflag lease state: {forbidden}")
 
 send_future_block = block_after(flow, "impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture")
 if "this.raw.poll_raw(" not in send_future_block:
@@ -113,6 +121,16 @@ for forbidden in ["poll_recv(", "poll_decode(", "poll_offer(", "poll_send("]:
 
 if "message_type_variation_does_not_change_future_layout" not in endpoint:
     fail("endpoint future layout must be tested across multiple message payload shapes")
+for required in [
+    "endpoint_surface_size_gates_hold",
+    "recv_future_state_caches_payload_mode_and_completion",
+    "final_form_future_layout_measurement_report",
+    "OfferFutureLease must stay a byte-sized state enum",
+    "RecvFutureLease must stay a byte-sized state enum",
+    "RecvPayloadMode must stay a byte-sized payload-mode enum",
+]:
+    if required not in endpoint:
+        fail(f"endpoint future state/size guard missing: {required}")
 if "send_future_layout_is_message_independent" not in flow:
     fail("send future layout independence test missing")
 

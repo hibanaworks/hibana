@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn sequential_noncontiguous_lane_steps_progress_in_order() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
                 g::send::<0, 1, Msg<31, u32>>(),
@@ -77,8 +77,8 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
 
 #[test]
 fn forgotten_flow_leaves_endpoint_fail_closed() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
                 g::send::<0, 1, Msg<51, u32>>(),
@@ -127,8 +127,8 @@ fn forgotten_flow_leaves_endpoint_fail_closed() {
 
 #[test]
 fn forgotten_send_future_leaves_endpoint_fail_closed() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
                 g::send::<0, 1, Msg<53, u32>>(),
@@ -179,8 +179,8 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
 
 #[test]
 fn forgotten_recv_future_leaves_endpoint_fail_closed() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<55, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
@@ -247,8 +247,8 @@ fn counting_waker(count: &Cell<usize>) -> Waker {
 
 #[test]
 fn send_session_fault_cancels_pending_transport_state_once() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = PendingCancelTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = PendingCancelTransport::new();
         let cancel_count = transport.cancel_count();
         with_resident_tls_ref(&PENDING_CANCEL_SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<2, FramePayload>>();
@@ -275,12 +275,11 @@ fn send_session_fault_cancels_pending_transport_state_once() {
 
             let payload = FramePayload(*b"hiba");
             {
-                let mut send_future = std::pin::pin!(
-                    origin_endpoint
-                        .flow::<Msg<2, FramePayload>>()
-                        .expect("send flow")
-                        .send(&payload)
-                );
+                let flow = origin_endpoint
+                    .flow::<Msg<2, FramePayload>>()
+                    .expect("send flow");
+                let send_error_line = line!() + 1;
+                let mut send_future = std::pin::pin!(flow.send(&payload));
                 let waker = futures::task::noop_waker_ref();
                 let mut context = Context::from_waker(waker);
                 if let Poll::Ready(result) = send_future.as_mut().poll(&mut context) {
@@ -302,6 +301,12 @@ fn send_session_fault_cancels_pending_transport_state_once() {
                 match send_future.as_mut().poll(&mut context) {
                     Poll::Ready(Err(error)) => {
                         assert_eq!(error.operation(), "send");
+                        assert!(
+                            error
+                                .file()
+                                .ends_with("tests/cursor_send_recv/session_lifecycle.rs")
+                        );
+                        assert_eq!(error.line(), send_error_line);
                         assert!(
                             format!("{error:?}").contains("EndpointDropped"),
                             "send error must keep session fault evidence: {error:?}"
@@ -331,8 +336,8 @@ fn send_session_fault_cancels_pending_transport_state_once() {
 
 #[test]
 fn dropping_live_endpoint_poison_wakes_waiting_peer() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<2, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);

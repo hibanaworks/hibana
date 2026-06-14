@@ -27,9 +27,7 @@ where
             route_commit_rows,
             ..
         } = self;
-        let mut rows = route_commit_rows
-            .begin()
-            .map_err(|_| SendError::PhaseInvariant)?;
+        let mut rows = route_commit_rows.begin();
         prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
             decision_state,
             cursor,
@@ -143,9 +141,9 @@ where
         let route_rows = self.build_send_selected_route_rows(preview_idx, meta)?;
         let current_route_scope = meta.scope;
         let current_route_arm = meta.route_arm;
-        let linger_cursor =
+        let reentry_cursor =
             self.cursor
-                .send_linger_cursor_step(meta, enabled.cursor_after(), |scope| {
+                .send_reentry_cursor_step(meta, enabled.cursor_after(), |scope| {
                     if scope == current_route_scope {
                         current_route_arm
                     } else {
@@ -158,7 +156,7 @@ where
             enabled.cursor_after(),
             enabled.progress_step(),
         )
-        .with_lane_relocation(linger_cursor);
+        .with_lane_relocation(reentry_cursor);
         let delta = match self.prepare_commit_delta(delta) {
             Ok(delta) => delta,
             Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
@@ -179,8 +177,7 @@ where
         descriptor: SendRuntimeDesc,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
-    ) -> SendResult<StagedSendPayload>
-where {
+    ) -> SendResult<StagedSendPayload> {
         let data = payload.ok_or(SendError::PhaseInvariant)?;
         Ok(StagedSendPayload {
             encoded_len: descriptor.encode_payload(data, scratch)?,
@@ -207,10 +204,8 @@ where {
         &mut self,
         meta: SendMeta,
         descriptor: SendRuntimeDesc,
-        _has_payload: bool,
-    ) -> SendResult<()>
-where {
-        if meta.is_internal {
+    ) -> SendResult<()> {
+        if meta.origin.is_session() {
             return Err(SendError::PhaseInvariant);
         }
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
@@ -222,7 +217,7 @@ where {
         let lane = Lane::new(meta.lane as u32);
         // EndpointTx resolver audit is an attempt-side replay tuple for the
         // resolver input that authorized this send attempt. The observable
-        // ENDPOINT_SEND / ENDPOINT_CONTROL event is emitted only from the
+        // ENDPOINT_SEND / ENDPOINT_SESSION event is emitted only from the
         // post-transport commit path.
         self.emit_endpoint_resolver_audit(
             ResolverSlot::EndpointTx,
@@ -242,8 +237,7 @@ where {
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
-    ) -> SendResult<SendTransportStep<'r>>
-where {
+    ) -> SendResult<SendTransportStep<'r>> {
         let scratch_ptr = {
             let port = self.port_for_lane(meta.lane as usize);
             lane_port::scratch_ptr(port)
@@ -298,12 +292,11 @@ where {
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
         payload: Option<lane_port::RawSendPayload>,
-    ) -> SendInitOutcome<'r>
-where {
+    ) -> SendInitOutcome<'r> {
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
         }
-        if let Err(err) = self.validate_send_payload(meta, descriptor, payload.is_some()) {
+        if let Err(err) = self.validate_send_payload(meta, descriptor) {
             return SendInitOutcome::Ready(Err(err));
         }
         let step = match self.begin_send_transport(descriptor, preview_cursor_index, meta, payload)
@@ -354,9 +347,7 @@ where {
 
     #[inline(never)]
     fn emit_send_after_transport_event(&mut self, delta: &super::CommittedCommitDelta) {
-        let event = delta
-            .event()
-            .expect("send progress delta must carry an enabled event row");
+        let event = crate::invariant_some(delta.event());
         let lane = event.lane();
         let lane_wire = self.port_for_lane(lane as usize).lane().as_wire();
         let logical_meta = TapFrameMeta::new(
@@ -367,7 +358,7 @@ where {
             FrameFlags::empty(),
         );
         let scope_trace = self.scope_trace(event.scope());
-        let event_id = event.event_id(ids::ENDPOINT_SEND, ids::ENDPOINT_CONTROL);
+        let event_id = event.event_id(ids::ENDPOINT_SEND, ids::ENDPOINT_SESSION);
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, lane);
     }
 
@@ -380,10 +371,7 @@ where {
         match self.poll_send_transport(pending, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => {
-                let commit_plan = pending
-                    .commit_plan
-                    .take()
-                    .expect("send commit proof must remain until transport completion");
+                let commit_plan = crate::invariant_some(pending.commit_plan.take());
                 Poll::Ready(Ok(commit_plan))
             }
             Poll::Ready(Err(err)) => {

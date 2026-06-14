@@ -41,7 +41,7 @@ impl FrameLabel {
 }
 
 /// Fixed mask over the complete `FrameLabel` domain.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct FrameLabelMask {
     word0: u64,
     word1: u64,
@@ -77,7 +77,7 @@ impl FrameLabelMask {
                 word3: bit,
                 ..Self::EMPTY
             },
-            _ => panic!("frame label shard overflow"),
+            _ => crate::invariant(),
         }
     }
 
@@ -89,7 +89,7 @@ impl FrameLabelMask {
             1 => (self.word1 & bit) != 0,
             2 => (self.word2 & bit) != 0,
             3 => (self.word3 & bit) != 0,
-            _ => panic!("frame label shard overflow"),
+            _ => crate::invariant(),
         }
     }
 

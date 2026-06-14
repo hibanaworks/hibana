@@ -372,8 +372,8 @@ pub(crate) struct TestTransport {
     slot: usize,
 }
 
-impl Default for TestTransport {
-    fn default() -> Self {
+impl TestTransport {
+    pub(crate) fn new() -> Self {
         TRANSPORT_POOL.with(|pool| {
             if let Some(slot) = pool.allocate() {
                 let pool_ref = unsafe { &*(pool as *const TransportPool) };
@@ -385,19 +385,7 @@ impl Default for TestTransport {
             panic!("test transport slot pool exhausted");
         })
     }
-}
 
-impl Clone for TestTransport {
-    fn clone(&self) -> Self {
-        self.pool.ref_inc(self.slot);
-        Self {
-            pool: self.pool,
-            slot: self.slot,
-        }
-    }
-}
-
-impl TestTransport {
     pub(crate) fn queue_is_empty(&self) -> bool {
         self.pool.state_with(self.slot, |state| {
             state.roles.iter().all(|role| role.queue.len == 0)
@@ -496,7 +484,7 @@ impl TestTransport {
         Poll::Ready(Ok(ReceivedFrame::framed(header, Payload::new(bytes))))
     }
 
-    pub(crate) fn open_rx_for_test(&self, role: u8, lane: u8) -> TestRx<'_> {
+    pub(crate) fn open_rx(&self, role: u8, lane: u8) -> TestRx<'_> {
         self.pool
             .state_with(self.slot, |state| state.ensure_role(role));
         TestRx {
@@ -510,8 +498,18 @@ impl TestTransport {
     }
 }
 
+impl Clone for TestTransport {
+    fn clone(&self) -> Self {
+        self.pool.ref_inc(self.slot);
+        Self {
+            pool: self.pool,
+            slot: self.slot,
+        }
+    }
+}
+
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
-const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx_for_test;
+const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
 const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
     TestTransport::stage_send_with_session;
 

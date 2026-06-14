@@ -1,4 +1,6 @@
-use crate::global::const_dsl::{EffList, ResolverMode, ScopeEvent, ScopeId, ScopeKind};
+use crate::global::const_dsl::{
+    EffList, INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
+};
 use crate::global::steps::RoleLaneMask;
 
 use super::ProgramSourceError;
@@ -102,8 +104,8 @@ impl ProgramSourceData {
 
     pub(crate) const fn resolve_route(self, resolver_id: u16) -> Self {
         let mut error = self.error;
-        if resolver_id == u16::MAX {
-            error = Self::merge_error(error, Some(ProgramSourceError::ResolverIdReserved));
+        if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
+            error = Self::merge_error(error, Some(ProgramSourceError::ResolverIdOutOfDomain));
         }
         let eff = if self.eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
@@ -122,7 +124,7 @@ impl ProgramSourceData {
                 {
                     eff = eff.push_resolver(
                         marker.offset,
-                        ResolverMode::dynamic(resolver_id).with_scope(scope),
+                        RouteResolver::dynamic(resolver_id).with_scope(scope),
                     );
                     found = true;
                 }
@@ -144,14 +146,14 @@ impl ProgramSourceData {
     pub(crate) const fn roll(self) -> Self {
         let mut error = self.error;
         if self.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::LoopBodyEmpty));
+            error = Self::merge_error(error, Some(ProgramSourceError::RollBodyAbsent));
         }
-        let loop_scope = ScopeId::loop_scope(0);
+        let roll_scope = ScopeId::roll_scope(0);
         let eff = self
             .into_eff()
             .rebase_scopes(1)
-            .mark_route_scopes_linger()
-            .with_scope(loop_scope);
+            .mark_route_scopes_reentry()
+            .with_scope(roll_scope);
         Self {
             eff,
             role_lane_mask: self.role_lane_mask,
@@ -191,7 +193,7 @@ impl ProgramSourceData {
     pub(crate) const fn par(self, right: Self) -> Self {
         let mut error = Self::merge_error(self.error, right.error);
         if self.eff.is_empty() || right.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::ParallelEmpty));
+            error = Self::merge_error(error, Some(ProgramSourceError::ParallelArmAbsent));
         }
         let right_role_lane_mask = right.role_lane_mask.shift_lanes(self.lane_span);
         if self.role_lane_mask.intersects(&right_role_lane_mask) {

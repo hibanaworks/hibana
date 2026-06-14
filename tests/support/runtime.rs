@@ -2,22 +2,22 @@ use core::cell::UnsafeCell;
 use hibana::runtime::{CounterClock, TapEvent};
 
 pub(crate) const RING_EVENTS: usize = 128;
-const FIXTURE_SLAB_CAPACITY: usize = 1_048_576;
+const TEST_SLAB_CAPACITY: usize = 1_048_576;
 
 std::thread_local! {
-    static FIXTURE_CLOCK: CounterClock = const { CounterClock::zero() };
-    static FIXTURE_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
+    static TEST_CLOCK: CounterClock = const { CounterClock::zero() };
+    static TEST_TAP: UnsafeCell<[TapEvent; RING_EVENTS]> =
         const { UnsafeCell::new([TapEvent::zero(); RING_EVENTS]) };
-    static FIXTURE_SLAB: UnsafeCell<[u8; FIXTURE_SLAB_CAPACITY]> =
-        const { UnsafeCell::new([0u8; FIXTURE_SLAB_CAPACITY]) };
+    static TEST_SLAB: UnsafeCell<[u8; TEST_SLAB_CAPACITY]> =
+        const { UnsafeCell::new([0u8; TEST_SLAB_CAPACITY]) };
 }
 
-pub(crate) fn with_fixture<R>(
+pub(crate) fn with_runtime_workspace<R>(
     f: impl FnOnce(&'static CounterClock, &'static mut [TapEvent; RING_EVENTS], &'static mut [u8]) -> R,
 ) -> R {
-    FIXTURE_CLOCK.with(|clock| {
-        FIXTURE_TAP.with(|tap| {
-            FIXTURE_SLAB.with(|slab| unsafe {
+    TEST_CLOCK.with(|clock| {
+        TEST_TAP.with(|tap| {
+            TEST_SLAB.with(|slab| unsafe {
                 let tap = &mut *tap.get();
                 let slab = &mut *slab.get();
                 tap.fill(TapEvent::zero());

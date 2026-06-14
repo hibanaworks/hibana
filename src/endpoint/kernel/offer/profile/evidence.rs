@@ -21,14 +21,14 @@ impl OfferEarlyDecisionReadiness {
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer) enum OfferControllerCursorArm {
-    Present,
-    Missing,
+    AtArm,
+    OutsideArm,
 }
 
 impl OfferControllerCursorArm {
     #[inline]
-    const fn is_missing(self) -> bool {
-        matches!(self, Self::Missing)
+    const fn is_outside_arm(self) -> bool {
+        matches!(self, Self::OutsideArm)
     }
 }
 
@@ -46,13 +46,13 @@ impl OfferMaterializationReadiness {
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel::offer) struct OfferControllerSkipEvidence {
+pub(in crate::endpoint::kernel::offer) struct OfferControllerLocalEvidence {
     cursor: OfferCursorReadiness,
     cursor_arm: OfferControllerCursorArm,
     materialization: OfferMaterializationReadiness,
 }
 
-impl OfferControllerSkipEvidence {
+impl OfferControllerLocalEvidence {
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn new(
         cursor: OfferCursorReadiness,
@@ -73,20 +73,20 @@ impl OfferControllerSkipEvidence {
 
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn non_entry_cursor_ready(self) -> bool {
-        matches!(self.cursor, OfferCursorReadiness::NonRecv) && self.cursor_arm.is_missing()
+        matches!(self.cursor, OfferCursorReadiness::NonRecv) && self.cursor_arm.is_outside_arm()
     }
 }
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer) enum OfferPassiveReadySignal {
-    Present,
-    Missing,
+    Observed,
+    Absent,
 }
 
 impl OfferPassiveReadySignal {
     #[inline]
-    const fn is_present(self) -> bool {
-        matches!(self, Self::Present)
+    const fn is_observed(self) -> bool {
+        matches!(self, Self::Observed)
     }
 }
 
@@ -139,7 +139,7 @@ impl OfferPassiveEvidence {
 
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn has_ready_signal(self) -> bool {
-        self.ready_signal.is_present()
+        self.ready_signal.is_observed()
     }
 
     #[inline]

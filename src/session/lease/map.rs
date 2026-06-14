@@ -21,15 +21,6 @@ pub(crate) struct ArrayMap<K, V, const N: usize> {
 }
 
 impl<K: Copy + Eq, V, const N: usize> ArrayMap<K, V, N> {
-    /// Create a new empty map.
-    pub(crate) const fn new() -> Self {
-        Self {
-            // SAFETY: MaybeUninit::uninit() creates an uninitialized array of MaybeUninit entries.
-            entries: unsafe { MaybeUninit::uninit().assume_init() },
-            len: 0,
-        }
-    }
-
     /// Initialize an empty map in place without first materializing the full
     /// backing array on the caller's stack.
     ///
@@ -119,15 +110,18 @@ impl<K, V, const N: usize> Drop for ArrayMap<K, V, N> {
     }
 }
 
-impl<K: Copy + Eq, V, const N: usize> Default for ArrayMap<K, V, N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_map<K: Copy + Eq, V, const N: usize>() -> ArrayMap<K, V, N> {
+        let mut map = MaybeUninit::<ArrayMap<K, V, N>>::uninit();
+        /* SAFETY: test setup owns the uninitialized map storage and exposes it only after init_empty writes its initialized prefix metadata. */
+        unsafe {
+            ArrayMap::init_empty(map.as_mut_ptr());
+            map.assume_init()
+        }
+    }
 
     fn push_entry<K: Copy + Eq, V: Copy, const N: usize>(
         map: &mut ArrayMap<K, V, N>,
@@ -178,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_get() {
-        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+        let mut map: ArrayMap<u8, u32, 4> = test_map();
 
         assert!(push_entry(&mut map, 1, 100).is_ok());
         assert!(push_entry(&mut map, 2, 200).is_ok());
@@ -192,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_insert_full() {
-        let mut map: ArrayMap<u8, u32, 2> = ArrayMap::new();
+        let mut map: ArrayMap<u8, u32, 2> = test_map();
 
         assert!(push_entry(&mut map, 1, 100).is_ok());
         assert!(push_entry(&mut map, 2, 200).is_ok());
@@ -203,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_get_mut_updates_existing() {
-        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+        let mut map: ArrayMap<u8, u32, 4> = test_map();
 
         assert!(push_entry(&mut map, 1, 100).is_ok());
         *map.get_mut(&1).expect("entry") = 999;
@@ -214,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+        let mut map: ArrayMap<u8, u32, 4> = test_map();
 
         push_entry(&mut map, 1, 100).expect("test setup entry fits map");
         push_entry(&mut map, 2, 200).expect("test setup entry fits map");
@@ -230,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+        let mut map: ArrayMap<u8, u32, 4> = test_map();
 
         push_entry(&mut map, 1, 100).expect("test setup entry fits map");
         push_entry(&mut map, 2, 200).expect("test setup entry fits map");
@@ -244,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_get_mut() {
-        let mut map: ArrayMap<u8, u32, 4> = ArrayMap::new();
+        let mut map: ArrayMap<u8, u32, 4> = test_map();
 
         push_entry(&mut map, 1, 100).expect("test setup entry fits map");
 

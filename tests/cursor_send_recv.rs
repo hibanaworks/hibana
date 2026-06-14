@@ -25,7 +25,7 @@ use hibana::{
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[derive(Clone, Copy)]
@@ -48,12 +48,24 @@ impl WireEncode for FramePayload {
 impl WirePayload for FramePayload {
     type Decoded<'a> = Payload<'a>;
 
-    fn validate_payload(_input: Payload<'_>) -> Result<(), CodecError> {
-        Ok(())
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        match input.as_bytes().len() {
+            4 => Ok(()),
+            0..=3 => Err(CodecError::Truncated),
+            _ => Err(CodecError::Malformed),
+        }
     }
 
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         input
+    }
+
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        if scratch.len() < 4 {
+            return Err(CodecError::Truncated);
+        }
+        scratch[..4].fill(0);
+        Ok(Payload::new(&scratch[..4]))
     }
 }
 
@@ -65,16 +77,14 @@ struct PendingCancelTransport {
     cancel_count: Rc<Cell<usize>>,
 }
 
-impl Default for PendingCancelTransport {
-    fn default() -> Self {
+impl PendingCancelTransport {
+    fn new() -> Self {
         Self {
-            inner: TestTransport::default(),
+            inner: TestTransport::new(),
             cancel_count: Rc::new(Cell::new(0)),
         }
     }
-}
 
-impl PendingCancelTransport {
     fn cancel_count(&self) -> Rc<Cell<usize>> {
         self.cancel_count.clone()
     }

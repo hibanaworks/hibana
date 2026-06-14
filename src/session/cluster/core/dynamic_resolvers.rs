@@ -1,7 +1,7 @@
 use super::{
-    ClusterError, EffIndex, Location, MaybeUninit, PhantomData, RendezvousId, ResolverMode,
-    ResourceScope, UnsafeCell, fmt,
+    ClusterError, EffIndex, MaybeUninit, PhantomData, RendezvousId, ResourceScope, UnsafeCell, fmt,
 };
+use crate::diag::Callsite;
 // # Unsafe Owner Contract
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
@@ -44,37 +44,6 @@ pub enum DecisionResolution {
 pub(crate) enum DynamicResolverResolution {
     DecisionArm { arm: u8 },
     Defer,
-    NoAuthority,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ResolverErrorLocation {
-    location: &'static Location<'static>,
-}
-
-impl ResolverErrorLocation {
-    #[inline]
-    #[track_caller]
-    pub(crate) fn caller() -> Self {
-        Self {
-            location: Location::caller(),
-        }
-    }
-
-    #[inline]
-    const fn file(self) -> &'static str {
-        self.location.file()
-    }
-
-    #[inline]
-    const fn line(self) -> u32 {
-        self.location.line()
-    }
-
-    #[inline]
-    const fn column(self) -> u32 {
-        self.location.column()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,7 +67,7 @@ enum ResolverErrorKind {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ResolverError {
     pub(crate) op: ResolverOp,
-    location: ResolverErrorLocation,
+    location: Callsite,
     kind: ResolverErrorKind,
 }
 
@@ -121,7 +90,7 @@ impl ResolverError {
     pub fn reject() -> Self {
         Self {
             op: ResolverOp::Reject,
-            location: ResolverErrorLocation::caller(),
+            location: Callsite::caller(),
             kind: ResolverErrorKind::Reject,
         }
     }
@@ -131,7 +100,7 @@ impl ResolverError {
     pub(crate) fn cluster(error: ClusterError) -> Self {
         Self {
             op: ResolverOp::SetResolver,
-            location: ResolverErrorLocation::caller(),
+            location: Callsite::caller(),
             kind: ResolverErrorKind::Cluster(error),
         }
     }
@@ -143,11 +112,7 @@ impl ResolverError {
     }
 
     #[inline]
-    pub(crate) const fn with_operation_at(
-        mut self,
-        op: ResolverOp,
-        location: ResolverErrorLocation,
-    ) -> Self {
+    pub(crate) const fn with_operation_at(mut self, op: ResolverOp, location: Callsite) -> Self {
         self.op = op;
         self.location = location;
         self
@@ -280,7 +245,7 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
 
     /// Evaluate this typed resolver without erasing its resolver id.
     ///
-    /// This is for typed resolver adapters. It does not commit route/session progress.
+    /// This is for typed resolver owners. It does not commit route/session progress.
     /// It does not expose the erased storage handle.
     #[inline]
     pub fn evaluate(self) -> Result<DecisionResolution, ResolverError> {
@@ -337,7 +302,8 @@ impl DynamicResolverKey {
 #[derive(Clone, Copy)]
 pub(crate) struct DynamicResolverEntry<'cfg> {
     pub(crate) resolver_ref: ErasedResolverRef<'cfg>,
-    pub(crate) mode: ResolverMode,
+    pub(crate) resolver_id: u16,
+    pub(crate) scope: crate::global::const_dsl::CompactScopeId,
 }
 
 #[inline]
@@ -440,23 +406,23 @@ impl<'cfg> ResolverBucket<'cfg> {
         self.capacity
     }
 
-    pub(crate) fn occupied_len(&self) -> usize {
+    pub(crate) fn entry_count(&self) -> usize {
         let entries = self.entries_ptr();
         if entries.is_null() {
             return 0;
         }
         let mut idx = 0usize;
-        let mut occupied = 0usize;
+        let mut count = 0usize;
         while idx < self.capacity {
             /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
             unsafe {
                 if (*entries.add(idx)).is_some() {
-                    occupied += 1;
+                    count += 1;
                 }
             }
             idx += 1;
         }
-        occupied
+        count
     }
 
     pub(crate) unsafe fn bind_from_storage(

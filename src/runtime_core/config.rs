@@ -1,4 +1,4 @@
-//! Static configuration describing the runtime envelope Hibana operates in.
+//! Runtime configuration describing the runtime envelope Hibana operates in.
 //!
 //! The crate expects callers to provide everything it needs at start-up: fixed
 //! buffers for rendezvous bookkeeping, observation rings, and wire payloads. By
@@ -61,35 +61,6 @@ impl fmt::Debug for CounterClock {
 }
 
 /// Borrowed resources required by the runtime.
-pub struct RuntimeStorage<'a> {
-    tap_buf: &'a mut [TapEvent; RING_EVENTS],
-    slab: &'a mut [u8],
-}
-
-impl<'a> RuntimeStorage<'a> {
-    #[inline]
-    pub fn from_buffers(tap_buf: &'a mut [TapEvent; RING_EVENTS], slab: &'a mut [u8]) -> Self {
-        Self { tap_buf, slab }
-    }
-}
-
-impl<'a> From<(&'a mut [TapEvent; RING_EVENTS], &'a mut [u8])> for RuntimeStorage<'a> {
-    #[inline]
-    fn from(resources: (&'a mut [TapEvent; RING_EVENTS], &'a mut [u8])) -> Self {
-        Self::from_buffers(resources.0, resources.1)
-    }
-}
-
-impl<'a, const N: usize> From<(&'a mut [TapEvent; RING_EVENTS], &'a mut [u8; N])>
-    for RuntimeStorage<'a>
-{
-    #[inline]
-    fn from(resources: (&'a mut [TapEvent; RING_EVENTS], &'a mut [u8; N])) -> Self {
-        Self::from_buffers(resources.0, &mut resources.1[..])
-    }
-}
-
-/// Borrowed resources required by the runtime.
 pub struct Config<'a, C: Clock = CounterClock> {
     pub(crate) tap_buf: &'a mut [TapEvent; RING_EVENTS],
     pub(crate) slab: &'a mut [u8],
@@ -111,16 +82,18 @@ impl<'a, C: Clock> Config<'a, C> {
     /// Runtime sizing that follows from the projected program is derived by the
     /// attach path. Callers provide only the storage/clock envelope; they do not
     /// choose lane windows, endpoint slot counts, or hidden wait fuses.
-    pub fn from_resources(resources: impl Into<RuntimeStorage<'a>>, clock: C) -> Self {
-        let resources = resources.into();
+    pub fn from_resources(
+        resources: (&'a mut [TapEvent; RING_EVENTS], &'a mut [u8]),
+        clock: C,
+    ) -> Self {
         Self {
-            tap_buf: resources.tap_buf,
-            slab: resources.slab,
+            tap_buf: resources.0,
+            slab: resources.1,
             clock,
         }
     }
 
-    /// Empty lane domain materialized before a projected role descriptor exists.
+    /// Zero-width lane domain materialized before a projected role descriptor exists.
     ///
     /// Lane legality and lane storage sizing are owned by projection metadata.
     /// Public config therefore starts with no materialized lane slots; endpoint

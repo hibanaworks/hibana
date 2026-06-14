@@ -11,7 +11,7 @@ use super::wire::FrameFlags;
 ///
 /// This keeps typestate-derived label/flag selections together for Tap events.
 /// Never passed to Transport; emitted directly via `emit_endpoint_event`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TapFrameMeta {
     pub(crate) sid: u32,
     pub(crate) lane: u8,

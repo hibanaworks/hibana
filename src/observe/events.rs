@@ -1,11 +1,12 @@
-//! Internal TapEvent encoders.
+//! TapEvent encoders owned by runtime operations.
 //!
 //! Production callers use the event owner that matches the runtime operation;
-//! Repository fixtures construct raw `TapEvent` values directly.
+//! Repository tests construct raw `TapEvent` values directly.
 
 use super::core::TapEvent;
 use super::ids;
-// ────────────── Cancel / Endpoint (0x0200-0x020F) ──────────────
+
+// ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
 // ────────────── Lane lifecycle (0x0210-0x021F) ──────────────
 
@@ -64,7 +65,7 @@ pub(crate) const fn route_arm_selection_with_causal(
 
 // ────────────── Misuse detection (0x02FF) ──────────────
 
-// ────────────── Resolver VM (0x0400-0x041F) ──────────────
+// ────────────── Resolver audit (0x0400-0x041F) ──────────────
 
 // ────────────── Raw builder for fixed event encoders ──────────────
 

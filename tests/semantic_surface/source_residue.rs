@@ -166,7 +166,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_program.contains("pub(crate) fn route_scope_for_selected_child_arm")
             && !event_program.contains("pub(crate) fn parallel_root")
             && !event_program.contains("pub(crate) fn enclosing_loop")
-            && event_program.contains("pub(crate) fn route_scope_linger")
+            && event_program.contains("pub(crate) fn route_scope_reentry")
             && !event_program.contains("pub(crate) fn passive_arm_entry")
             && !event_program.contains("pub(crate) fn route_recv_state")
             && !event_program.contains("pub(crate) fn route_scope_offer_entry_by_slot")
@@ -468,7 +468,7 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
 }
 
 #[test]
-fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_recovery() {
+fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let cursor_scope_route = cursor_scope_route_source();
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let role_scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
@@ -510,7 +510,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_recovery() {
                 "prepare_route_site_materialization_rows_from_resident_route_commit_range"
             )
             && route_commit_helpers.contains(
-                "prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range"
+                "prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range"
             )
             && !route_commit_helpers
                 .contains("prepare_selected_route_commit_rows_from_route_scope_chain")
@@ -557,13 +557,13 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_recovery() {
         role_scope_rows.as_str().to_owned() + &first_recv_dispatch + &passive_child;
     for forbidden in [
         "left_start == usize::MAX || right_start == usize::MAX",
-        "None => Self::scope_segment_end(markers, idx, default_end)",
+        "None => Self::scope_segment_end(markers, idx, segment_limit)",
         "None => Self::scope_segment_end(markers, idx, view_len)",
         "None => scope_segment_end(scope_markers, idx, arm_end)",
     ] {
         assert!(
             !route_lowering_source.contains(forbidden),
-            "route lowering must not recover malformed binary route ranges through segment-end implicit recovery: {forbidden}"
+            "route lowering must not repair malformed binary route ranges through segment-end repair path: {forbidden}"
         );
     }
     assert!(
@@ -575,7 +575,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_recovery() {
             && event_flow.contains("selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>")
             && event_flow.contains("if self.route_scope_rows_at(self.index()).is_some()")
             && !event_flow.contains(".unwrap_or_else(|| self.index())"),
-        "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind unwrap implicit recovery"
+        "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind cursor resume shortcut"
     );
     for (name, body) in [
         ("route-preview", route_preview.as_str()),
@@ -599,7 +599,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_recovery() {
         ] {
             assert!(
                 !body.contains(forbidden),
-                "{name} must not re-grow route-state cleanup implicit recovery: {forbidden}"
+                "{name} must not re-grow route-state cleanup shortcut: {forbidden}"
             );
         }
     }
@@ -646,12 +646,12 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
-            && !prepared_commit_delta_row.contains(&["loop_row: ", "Loop", "Commit", "Row"].concat())
+            && !prepared_commit_delta_row.contains(&["roll_row: ", "Roll", "Commit", "Row"].concat())
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
             && !runtime_types.contains("pub(crate) struct PreparedCommitDelta")
             && !runtime_types.contains("fn from_enabled(")
-            && !runtime_types.contains("fn with_loop_row(")
+            && !runtime_types.contains("fn with_roll_row(")
             && runtime_types.contains("fn with_lane_relocation(")
             && commit_delta.contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
             && commit_delta.contains(".route_commit_range_for_conflict(")
@@ -661,12 +661,13 @@ fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
             && commit_delta.contains("fn apply_prepared_lane_advance(")
             && commit_delta.contains("fn apply_prepared_lane_relocation(")
             && !commit_delta.contains("self.apply_loop_commit_row(")
+            && !commit_delta.contains("self.apply_roll_commit_row(")
             && !route_preview.contains("fn set_cursor_index(")
             && !offer_refresh.contains("fn set_lane_cursor_to_relocatable_step(")
             && !offer_refresh.contains("fn advance_lane_cursor_to_relocatable_step(")
             && !commit_delta.contains("apply_route_commit_effects")
             && !commit_delta.contains("settle_cursor_after_commit"),
-        "CommitDelta must be the only cursor/route/loop mutation boundary"
+        "CommitDelta must be the only cursor/route/reentry mutation boundary"
     );
 
     for (name, source, marker) in [

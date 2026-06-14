@@ -20,13 +20,16 @@ where
     pub(super) unsafe fn init_public_offer_state_raw<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> bool {
+    ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: this raw callback has exclusive access to the carrier
             // endpoint slot selected by `handle` for the duration of the call.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, false, |endpoint| {
-                endpoint.init_public_offer_state()
-            })
+            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
+                ptr,
+                handle,
+                crate::endpoint::kernel::PublicOpLease::Rejected,
+                |endpoint| endpoint.init_public_offer_state(),
+            )
         }
     }
 
@@ -46,13 +49,16 @@ where
     pub(super) unsafe fn begin_public_decode_state_raw<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> bool {
+    ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
             // SAFETY: this raw callback has exclusive access to the carrier
             // endpoint slot selected by `handle` for the duration of the call.
-            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, false, |kernel| {
-                kernel.begin_public_decode_state()
-            })
+            Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
+                ptr,
+                handle,
+                crate::endpoint::kernel::PublicOpLease::Rejected,
+                |kernel| kernel.begin_public_decode_state(),
+            )
         }
     }
 

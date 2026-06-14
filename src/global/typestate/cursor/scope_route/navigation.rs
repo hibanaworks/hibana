@@ -86,8 +86,8 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_linger(&self, scope_id: ScopeId) -> bool {
-        self.machine().route_scope_linger(scope_id)
+    pub(crate) fn route_scope_reentry(&self, scope_id: ScopeId) -> bool {
+        self.machine().route_scope_reentry(scope_id)
     }
 
     #[inline]
@@ -135,7 +135,7 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn static_passive_scope_evidence_materializes_poll(
+    pub(crate) fn intrinsic_passive_scope_evidence_materializes_poll(
         &self,
         scope_id: ScopeId,
     ) -> bool {
@@ -169,7 +169,7 @@ impl EventCursor {
             if entry.lane() == lane
                 && entry.frame_label() == frame_label
                 && entry.arm() < 2
-                && !entry.target().is_max()
+                && !entry.target().is_absent()
             {
                 let target = (entry.arm(), entry.target());
                 if matched.is_some_and(|prev| prev != target) {

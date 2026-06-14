@@ -45,7 +45,7 @@ def owner_files(path: Path) -> set[Path]:
 
 
 def owner_lines(path: Path) -> int:
-    return sum(p.read_text(errors="ignore").count("\n") + 1 for p in owner_files(path))
+    return sum(p.read_text(encoding="utf-8").count("\n") + 1 for p in owner_files(path))
 
 
 def load_partitions() -> dict[Path, list[Path]]:

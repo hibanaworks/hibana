@@ -1,16 +1,16 @@
 use super::super::{
-    BlobPtr, ColumnRange, LaneSetView, LaneSteps, PackedLaneRange, PackedLocalEventRow,
-    PackedLoopScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
+    BlobPtr, ColumnRange, LaneSetView, LaneStepLayout, LaneSteps, PackedLaneRange,
+    PackedLocalEventRow, PackedRollScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
     ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
-    ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_LOOP_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
     ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
 };
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
 impl RoleLaneImage {
     const ROUTE_SCOPE_ROW_EMPTY: u16 = u16::MAX;
-    const ROUTE_SCOPE_ROW_LINGER: u16 = 1 << 15;
-    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_LINGER - 1;
+    const ROUTE_SCOPE_ROW_REENTRY: u16 = 1 << 15;
+    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_REENTRY - 1;
 
     #[inline(always)]
     pub(crate) const fn new(columns: super::super::RoleImageColumns, blob: BlobPtr) -> Self {
@@ -167,13 +167,13 @@ impl RoleLaneImage {
         let end = row.end();
         let mut first = usize::MAX;
         let mut len = 0usize;
-        let mut sparse = false;
+        let mut layout = LaneStepLayout::Contiguous;
         while pos < end && pos < self.columns.lanes.len as usize {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
                 if first == usize::MAX {
                     first = pos;
                 } else if pos != first + len {
-                    sparse = true;
+                    layout = LaneStepLayout::Sparse;
                 }
                 len += 1;
             }
@@ -187,7 +187,7 @@ impl RoleLaneImage {
             Some(LaneSteps {
                 start: first as u16,
                 len: len as u16,
-                sparse,
+                layout,
             })
         }
     }
@@ -266,10 +266,10 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    pub(crate) const fn loop_scope_row(&self, slot: usize) -> Option<PackedLoopScopeRow> {
-        match self.read_u64(self.columns.loop_scopes, slot, ROLE_IMAGE_LOOP_SCOPE_STRIDE) {
+    pub(crate) const fn roll_scope_row(&self, slot: usize) -> Option<PackedRollScopeRow> {
+        match self.read_u64(self.columns.roll_scopes, slot, ROLE_IMAGE_ROLL_SCOPE_STRIDE) {
             Some(raw) => {
-                let row = PackedLoopScopeRow::from_raw(raw);
+                let row = PackedRollScopeRow::from_raw(raw);
                 if row.is_empty() { None } else { Some(row) }
             }
             None => None,
@@ -295,10 +295,10 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_scope_linger_by_slot(&self, slot: usize) -> bool {
+    pub(crate) const fn route_scope_reentry_by_slot(&self, slot: usize) -> bool {
         match self.route_scope_row(slot) {
             Some(row) => {
-                row != Self::ROUTE_SCOPE_ROW_EMPTY && (row & Self::ROUTE_SCOPE_ROW_LINGER) != 0
+                row != Self::ROUTE_SCOPE_ROW_EMPTY && (row & Self::ROUTE_SCOPE_ROW_REENTRY) != 0
             }
             None => false,
         }

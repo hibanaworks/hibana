@@ -7,6 +7,7 @@ use super::{
     FrontierObservationKey, ObservedEntrySet, OfferEntryObservedState, ScopeId,
     cached_offer_entry_observed_state, checked_state_index, state_index_to_usize,
 };
+use crate::endpoint::kernel::offer::CurrentReentryControllerEvidence;
 use crate::transport::Transport;
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
@@ -231,14 +232,8 @@ where
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
-        let (ingress_ready, has_ack, has_ready_arm_evidence) =
-            self.preview_offer_entry_evidence_non_consuming(entry_idx);
-        let (observed, _) = self.offer_entry_candidate_from_observation(
-            entry_idx,
-            ingress_ready,
-            has_ack,
-            has_ready_arm_evidence,
-        );
+        let evidence = self.preview_offer_entry_evidence_non_consuming(entry_idx);
+        let (observed, _) = self.offer_entry_candidate_from_observation(entry_idx, evidence);
         Some(observed)
     }
 
@@ -265,7 +260,7 @@ where
         if cached_bit == 0 {
             return None;
         }
-        let summary = self.compute_offer_entry_static_summary(entry_idx);
+        let summary = self.compute_offer_entry_summary(entry_idx);
         Some(cached_offer_entry_observed_state(
             self.offer_entry_scope_id(entry_idx),
             summary,
@@ -291,12 +286,12 @@ where
         };
         if cached_slot_idx >= cached_key.len()
             || cached_key.entry_state(cached_slot_idx) != entry
-            || cached_key.entry_state(cached_slot_idx).is_max()
+            || cached_key.entry_state(cached_slot_idx).is_absent()
             || observation_key
                 .slot(observation_slot_idx)
                 .entry_summary_fingerprint
                 != self
-                    .compute_offer_entry_static_summary(entry_idx)
+                    .compute_offer_entry_summary(entry_idx)
                     .observation_fingerprint()
             || observation_key.slot(observation_slot_idx).scope_generation
                 != self.scope_evidence_generation_for_scope(self.offer_entry_scope_id(entry_idx))
@@ -345,7 +340,7 @@ where
         ) {
             return None;
         }
-        let summary = self.compute_offer_entry_static_summary(entry_idx);
+        let summary = self.compute_offer_entry_summary(entry_idx);
         Some(cached_offer_entry_observed_state(
             self.offer_entry_scope_id(entry_idx),
             summary,
@@ -361,7 +356,11 @@ where
             .observation_generation
             .wrapping_add(1);
         if next == 0 {
-            if self.frontier_state.global_frontier_scratch_initialized {
+            if self
+                .frontier_state
+                .global_frontier_scratch_state
+                .is_initialized()
+            {
                 let (scratch_ptr, layout, frontier_entry_capacity) =
                     self.global_frontier_scratch_parts();
                 let mut cached_key = frontier_cached_observation_key_view_from_storage(
@@ -423,13 +422,13 @@ where
         root: ScopeId,
         current_entry_idx: usize,
         current_frontier: FrontierKind,
-        loop_controller_without_evidence: bool,
+        reentry_controller_evidence: CurrentReentryControllerEvidence,
     ) -> bool {
         self.observed_frontier_progress_sibling_exists(
             self.root_frontier_observed_entries(root),
             current_entry_idx,
             current_frontier,
-            loop_controller_without_evidence,
+            reentry_controller_evidence,
         )
     }
 
@@ -437,13 +436,13 @@ where
         &self,
         current_entry_idx: usize,
         current_frontier: FrontierKind,
-        loop_controller_without_evidence: bool,
+        reentry_controller_evidence: CurrentReentryControllerEvidence,
     ) -> bool {
         self.observed_frontier_progress_sibling_exists(
             self.global_frontier_observed_entries(),
             current_entry_idx,
             current_frontier,
-            loop_controller_without_evidence,
+            reentry_controller_evidence,
         )
     }
 
@@ -453,11 +452,11 @@ where
         observed_entries: ObservedEntrySet,
         current_entry_idx: usize,
         current_frontier: FrontierKind,
-        loop_controller_without_evidence: bool,
+        reentry_controller_evidence: CurrentReentryControllerEvidence,
     ) -> bool {
         let mut sibling_mask = observed_entries.progress_mask;
         sibling_mask &= !observed_entries.entry_bit(current_entry_idx);
-        if !loop_controller_without_evidence {
+        if !reentry_controller_evidence.allows_cross_frontier_progress_sibling() {
             sibling_mask &= observed_entries.frontier_mask(current_frontier);
         }
         sibling_mask != 0

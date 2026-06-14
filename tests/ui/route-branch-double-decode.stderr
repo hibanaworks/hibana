@@ -1,12 +1,12 @@
 error[E0382]: use of moved value: `branch`
-  --> tests/ui/route-branch-double-decode.rs:36:25
+  --> tests/ui/route-branch-double-decode.rs:48:25
    |
-33 |     let branch = futures::executor::block_on(endpoint.offer()).expect("fixture setup");
+45 |     let branch = futures::executor::block_on(endpoint.offer()).expect("test setup");
    |         ------ move occurs because `branch` has type `RouteBranch<'_, '_, 0>`, which does not implement the `Copy` trait
-34 |     let first_decode = branch.decode::<g::Msg<7, FramePayload>>();
+46 |     let first_decode = branch.decode::<g::Msg<7, FramePayload>>();
    |                               ----------------------------------- `branch` moved due to this method call
-35 |     core::hint::black_box(&first_decode);
-36 |     let second_decode = branch.decode::<g::Msg<7, FramePayload>>();
+47 |     core::hint::black_box(&first_decode);
+48 |     let second_decode = branch.decode::<g::Msg<7, FramePayload>>();
    |                         ^^^^^^ value used here after move
    |
 note: `hibana::endpoint::branch::<impl RouteBranch<'e, 'r, ROLE>>::decode` takes ownership of the receiver `self`, which moves `branch`

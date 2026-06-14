@@ -5,7 +5,8 @@ use crate::global::{
     compiled::images::{CompiledProgramRef, EventSemanticKind},
     const_dsl::ScopeKind,
     typestate::{
-        LocalAtomFacts, LocalConflict, LocalNode, LocalNodeMeta, PackedEventConflict, StateIndex,
+        LocalAtomFacts, LocalConflict, LocalNode, LocalNodeMeta, PackedEventConflict,
+        RouteChoiceMark, StateIndex,
     },
 };
 
@@ -42,9 +43,9 @@ impl PackedLocalEventRow {
             return ScopeId::none();
         }
         let kind = match (slot >> Self::SCOPE_SLOT_KIND_SHIFT) as u8 {
-            0 => ScopeKind::Generic,
+            0 => ScopeKind::Plain,
             1 => ScopeKind::Route,
-            2 => ScopeKind::Loop,
+            2 => ScopeKind::Roll,
             3 => ScopeKind::Parallel,
             _ => panic!("local event scope kind overflow"),
         };
@@ -80,13 +81,13 @@ impl PackedLocalEventRow {
         eff_idx: usize,
         scope: ScopeId,
         frame_label: u8,
-        is_choice_determinant: bool,
+        choice: RouteChoiceMark,
     ) -> Self {
         if eff_idx > u16::MAX as usize {
             panic!("local event row eff index overflow");
         }
         let mut flags = 0u8;
-        if is_choice_determinant {
+        if choice.is_determinant() {
             flags |= Self::FLAG_CHOICE_DETERMINANT;
         }
         Self {
@@ -128,6 +129,15 @@ impl PackedLocalEventRow {
     }
 
     #[inline(always)]
+    const fn choice_mark(self) -> RouteChoiceMark {
+        if self.is_choice_determinant() {
+            RouteChoiceMark::Determinant
+        } else {
+            RouteChoiceMark::Ordinary
+        }
+    }
+
+    #[inline(always)]
     pub(crate) const fn to_node(
         self,
         role: u8,
@@ -143,9 +153,9 @@ impl PackedLocalEventRow {
         let scope = Self::decode_scope_slot(self.scope_slot);
         let resolver = match program.resident_resolver_at(eff_idx) {
             Some(resolver) => resolver.with_scope(scope),
-            None => crate::global::const_dsl::ResolverMode::Static,
+            None => crate::global::const_dsl::RouteResolver::Intrinsic,
         };
-        let semantic = EventSemanticKind::Other;
+        let semantic = EventSemanticKind::ProtocolEvent;
         let route_arm = match conflict.to_conflict() {
             Some(LocalConflict::RouteArm { arm, .. }) => Some(arm),
             Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
@@ -157,7 +167,7 @@ impl PackedLocalEventRow {
             label: atom.label,
             frame_label: self.frame_label,
             resource: atom.resource,
-            is_internal: atom.is_internal,
+            origin: atom.origin,
             resolver,
             lane: atom.lane,
         };
@@ -166,7 +176,7 @@ impl PackedLocalEventRow {
             next,
             scope,
             route_arm,
-            is_choice_determinant: self.is_choice_determinant(),
+            choice: self.choice_mark(),
         };
         if atom.from == role && atom.to == role {
             Some(LocalNode::local(facts, meta))
@@ -295,11 +305,11 @@ impl RoleLaneScratch {
         let choice = match route_scope_and_arm {
             Some((route_scope, arm)) => {
                 match Self::first_recv_eff_for_route_arm::<ROLE>(program, route_scope, arm) {
-                    Some(first) => first == eff_idx,
-                    None => false,
+                    Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
+                    Some(_) | None => RouteChoiceMark::Ordinary,
                 }
             }
-            None => false,
+            None => RouteChoiceMark::Ordinary,
         };
         PackedLocalEventRow::new(eff_idx, scope, frame_label, choice)
     }

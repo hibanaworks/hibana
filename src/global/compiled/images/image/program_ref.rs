@@ -3,9 +3,9 @@ use super::columns::{
     ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
-    eff::{EffAtom, EffStruct},
+    eff::{EffAtom, EffStruct, EventOrigin},
     global::compiled::images::program::DynamicResolverSite,
-    global::const_dsl::{CompactScopeId, ResolverMode},
+    global::const_dsl::{CompactScopeId, INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver},
     global::role_program::BlobPtr,
 };
 
@@ -102,7 +102,7 @@ impl CompiledProgramRef {
                     from: self.byte_at(offset + 2),
                     to: self.byte_at(offset + 3),
                     label: self.byte_at(offset + 4),
-                    is_internal: self.byte_at(offset + 5) != 0,
+                    origin: EventOrigin::from_packed_bits(self.byte_at(offset + 5)),
                     resource: Self::decode_resource(self.byte_at(offset + 6)),
                     lane: self.byte_at(offset + 7),
                 });
@@ -135,7 +135,7 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_resolver_at(&self, eff_idx: usize) -> Option<ResolverMode> {
+    pub(crate) const fn resident_resolver_at(&self, eff_idx: usize) -> Option<RouteResolver> {
         let mut row = 0usize;
         while row < self.columns.resolvers.len as usize {
             let offset = match self.column_offset(
@@ -148,10 +148,10 @@ impl CompiledProgramRef {
             };
             if self.read_u16_at(offset) as usize == eff_idx {
                 let resolver_id = self.read_u16_at(offset + 2);
-                if resolver_id == u16::MAX {
-                    return Some(ResolverMode::Static);
+                if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
+                    return Some(RouteResolver::Intrinsic);
                 }
-                return Some(ResolverMode::Dynamic {
+                return Some(RouteResolver::Dynamic {
                     resolver_id,
                     scope: Self::compact_scope_from_bits(self.read_u32_at(offset + 4)),
                 });

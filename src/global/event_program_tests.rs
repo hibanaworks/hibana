@@ -141,7 +141,7 @@ impl<'a> ReferenceState<'a> {
 
     pub(crate) fn commit_event(&mut self, event_id: usize) -> Result<(), ReferenceCommitError> {
         let Some(event) = self.program.events.get(event_id) else {
-            return Err(ReferenceCommitError::MissingEvent { event_id });
+            return Err(ReferenceCommitError::EventAbsent { event_id });
         };
         if !self.event_enabled(event) {
             return Err(ReferenceCommitError::NotEnabled {
@@ -171,7 +171,7 @@ pub(crate) enum ReferenceCommitError {
     NotEnabled {
         label: u8,
     },
-    MissingEvent {
+    EventAbsent {
         event_id: usize,
     },
     ConflictSelected {

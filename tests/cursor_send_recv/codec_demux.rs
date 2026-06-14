@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn recv_codec_error_poisons_before_same_generation_continuation() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
@@ -80,8 +80,8 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
 
 #[test]
 fn cursor_send_and_recv_high_logical_label_roundtrip() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<200, u32>>();
             let origin_program: RoleProgram<0> = project(&program);

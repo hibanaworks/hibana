@@ -2,10 +2,10 @@
 
 use super::super::frontier::FrontierKind;
 use super::first_recv_dispatch::FirstRecvDispatchCache;
-use crate::eff::EffIndex;
+use crate::eff::{EffIndex, EventOrigin};
 use crate::global::compiled::images::EventSemanticKind;
-use crate::global::const_dsl::{ResolverMode, ScopeId};
-use crate::global::typestate::{RecvMeta, StateIndex, state_index_to_usize};
+use crate::global::const_dsl::{RouteResolver, ScopeId};
+use crate::global::typestate::{RecvMeta, RouteChoiceMark, StateIndex, state_index_to_usize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::endpoint::kernel) struct FrontierObservationDomain {
@@ -49,16 +49,16 @@ impl FrontierObservationDomain {
 pub(in crate::endpoint::kernel) struct CachedRouteArm(u8);
 
 impl CachedRouteArm {
-    const NONE: u8 = u8::MAX;
+    const ABSENT_RAW: u8 = u8::MAX;
 
     #[inline]
     pub(in crate::endpoint::kernel) const fn none() -> Self {
-        Self(Self::NONE)
+        Self(Self::ABSENT_RAW)
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) const fn some(arm: u8) -> Self {
-        if arm == Self::NONE {
+        if arm == Self::ABSENT_RAW {
             crate::invariant();
         }
         Self(arm)
@@ -74,7 +74,7 @@ impl CachedRouteArm {
 
     #[inline]
     pub(in crate::endpoint::kernel) const fn as_option(self) -> Option<u8> {
-        if self.0 == Self::NONE {
+        if self.0 == Self::ABSENT_RAW {
             None
         } else {
             Some(self.0)
@@ -91,12 +91,12 @@ pub(in crate::endpoint::kernel) struct CachedRecvMeta {
     pub(in crate::endpoint::kernel) frame_label: u8,
     pub(in crate::endpoint::kernel) resource: Option<u8>,
     pub(in crate::endpoint::kernel) semantic: EventSemanticKind,
-    pub(in crate::endpoint::kernel) is_internal: bool,
+    pub(in crate::endpoint::kernel) origin: EventOrigin,
     pub(in crate::endpoint::kernel) next: StateIndex,
     pub(in crate::endpoint::kernel) scope: ScopeId,
     pub(in crate::endpoint::kernel) route_arm: CachedRouteArm,
-    pub(in crate::endpoint::kernel) is_choice_determinant: bool,
-    pub(in crate::endpoint::kernel) resolver: ResolverMode,
+    pub(in crate::endpoint::kernel) choice: RouteChoiceMark,
+    pub(in crate::endpoint::kernel) resolver: RouteResolver,
     pub(in crate::endpoint::kernel) lane: u8,
     pub(in crate::endpoint::kernel) flags: u8,
 }
@@ -105,26 +105,26 @@ impl CachedRecvMeta {
     pub(in crate::endpoint::kernel) const FLAG_RECV_STEP: u8 = 1;
 
     pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
-        cursor_index: StateIndex::MAX,
+        cursor_index: StateIndex::ABSENT,
         eff_index: EffIndex::ZERO,
         peer: 0,
         label: 0,
         frame_label: 0,
         resource: None,
-        semantic: EventSemanticKind::Other,
-        is_internal: false,
-        next: StateIndex::MAX,
+        semantic: EventSemanticKind::ProtocolEvent,
+        origin: EventOrigin::User,
+        next: StateIndex::ABSENT,
         scope: ScopeId::none(),
         route_arm: CachedRouteArm::none(),
-        is_choice_determinant: false,
-        resolver: ResolverMode::static_mode(),
+        choice: RouteChoiceMark::Ordinary,
+        resolver: RouteResolver::Intrinsic,
         lane: 0,
         flags: 0,
     };
 
     #[inline]
     pub(in crate::endpoint::kernel) const fn is_empty(&self) -> bool {
-        self.cursor_index.is_max() || self.next.is_max()
+        self.cursor_index.is_absent() || self.next.is_absent()
     }
 
     #[inline]
@@ -141,11 +141,11 @@ impl CachedRecvMeta {
                 frame_label: self.frame_label,
                 resource: self.resource,
                 semantic: self.semantic,
-                is_internal: self.is_internal,
+                origin: self.origin,
                 next: state_index_to_usize(self.next),
                 scope: self.scope,
                 route_arm: self.route_arm.as_option(),
-                is_choice_determinant: self.is_choice_determinant,
+                choice: self.choice,
                 resolver: self.resolver,
                 lane: self.lane,
             },
@@ -173,11 +173,11 @@ pub(in crate::endpoint::kernel) struct ScopeArmMaterializationMeta {
 impl ScopeArmMaterializationMeta {
     pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
         arm_count: 0,
-        controller_arm_entry: [StateIndex::MAX; 2],
+        controller_arm_entry: [StateIndex::ABSENT; 2],
         controller_arm_label: [0; 2],
         controller_cross_role_recv_mask: 0,
-        recv_entry: [StateIndex::MAX; 2],
-        passive_arm_entry: [StateIndex::MAX; 2],
+        recv_entry: [StateIndex::ABSENT; 2],
+        passive_arm_entry: [StateIndex::ABSENT; 2],
         passive_child_scope: [ScopeId::none(); 2],
         first_recv_dispatch: FirstRecvDispatchCache::EMPTY,
     };
@@ -192,7 +192,7 @@ impl ScopeArmMaterializationMeta {
             return None;
         }
         let entry = self.controller_arm_entry[arm];
-        (!entry.is_max()).then_some((entry, self.controller_arm_label[arm]))
+        (!entry.is_absent()).then_some((entry, self.controller_arm_label[arm]))
     }
 
     #[inline]
@@ -202,7 +202,7 @@ impl ScopeArmMaterializationMeta {
             return None;
         }
         let entry = self.recv_entry[arm];
-        (!entry.is_max()).then_some(entry)
+        (!entry.is_absent()).then_some(entry)
     }
 
     #[inline]
@@ -212,7 +212,7 @@ impl ScopeArmMaterializationMeta {
             return None;
         }
         let entry = self.passive_arm_entry[arm];
-        (!entry.is_max()).then_some(entry)
+        (!entry.is_absent()).then_some(entry)
     }
 
     #[inline]
@@ -272,22 +272,55 @@ impl CurrentScopeSelectionMeta {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(in crate::endpoint::kernel) enum CurrentReentryControllerEvidence {
+    ProgressSatisfiedOrNotController,
+    ProgressEvidenceAbsent,
+}
+
+impl CurrentReentryControllerEvidence {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn allows_cross_frontier_progress_sibling(self) -> bool {
+        matches!(self, Self::ProgressEvidenceAbsent)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct CurrentFrontierSelectionState {
     pub(in crate::endpoint::kernel) frontier: FrontierKind,
     pub(in crate::endpoint::kernel) parallel_root: ScopeId,
-    pub(in crate::endpoint::kernel) ready: bool,
-    pub(in crate::endpoint::kernel) has_progress_evidence: bool,
     pub(in crate::endpoint::kernel) flags: u8,
 }
 
 impl CurrentFrontierSelectionState {
     pub(in crate::endpoint::kernel) const FLAG_CONTROLLER: u8 = 1;
     pub(in crate::endpoint::kernel) const FLAG_DYNAMIC: u8 = 1 << 1;
+    pub(in crate::endpoint::kernel) const FLAG_READY: u8 = 1 << 2;
+    pub(in crate::endpoint::kernel) const FLAG_PROGRESS_EVIDENCE: u8 = 1 << 3;
 
     #[inline]
     pub(in crate::endpoint::kernel) fn is_controller(self) -> bool {
         (self.flags & Self::FLAG_CONTROLLER) != 0
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn ready(self) -> bool {
+        (self.flags & Self::FLAG_READY) != 0
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn has_progress_evidence(self) -> bool {
+        (self.flags & Self::FLAG_PROGRESS_EVIDENCE) != 0
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn record_ready(&mut self) {
+        self.flags |= Self::FLAG_READY;
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn record_progress_evidence(&mut self) {
+        self.flags |= Self::FLAG_PROGRESS_EVIDENCE;
     }
 
     #[inline]
@@ -300,16 +333,44 @@ impl CurrentFrontierSelectionState {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn loop_controller_without_evidence(self) -> bool {
-        self.frontier == FrontierKind::Loop
+    pub(in crate::endpoint::kernel) fn reentry_controller_evidence(
+        self,
+    ) -> CurrentReentryControllerEvidence {
+        if self.frontier == FrontierKind::Reentry
             && self.is_controller()
-            && self.ready
-            && !self.has_progress_evidence
+            && self.ready()
+            && !self.has_progress_evidence()
+        {
+            CurrentReentryControllerEvidence::ProgressEvidenceAbsent
+        } else {
+            CurrentReentryControllerEvidence::ProgressSatisfiedOrNotController
+        }
     }
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct FrontierStaticFacts {
+pub(in crate::endpoint::kernel) struct FrontierFacts {
     pub(in crate::endpoint::kernel) frontier: FrontierKind,
-    pub(in crate::endpoint::kernel) ready: bool,
+    pub(in crate::endpoint::kernel) readiness: FrontierReadiness,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::endpoint::kernel) enum FrontierReadiness {
+    Waiting = 0,
+    Ready = 1,
+}
+
+impl FrontierReadiness {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+}
+
+impl FrontierFacts {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn ready(self) -> bool {
+        self.readiness.is_ready()
+    }
 }

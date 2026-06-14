@@ -7,7 +7,13 @@ pub(crate) struct DecodeState<'r> {
     pub(crate) branch: Option<MaterializedRouteBranch<'r>>,
     prepared_meta: Option<RecvMeta>,
     pending_recv: lane_port::PendingRecv,
-    pub(crate) restore_on_drop: bool,
+    restore_on_drop: DecodeRestore,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum DecodeRestore {
+    Disarmed,
+    Armed,
 }
 
 impl<'r> DecodeState<'r> {
@@ -17,7 +23,7 @@ impl<'r> DecodeState<'r> {
             branch: None,
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
-            restore_on_drop: false,
+            restore_on_drop: DecodeRestore::Disarmed,
         }
     }
 
@@ -27,8 +33,18 @@ impl<'r> DecodeState<'r> {
             branch: Some(branch),
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
-            restore_on_drop: true,
+            restore_on_drop: DecodeRestore::Armed,
         }
+    }
+
+    #[inline]
+    pub(crate) const fn restore_on_drop(&self) -> DecodeRestore {
+        self.restore_on_drop
+    }
+
+    #[inline]
+    pub(crate) fn disarm_restore(&mut self) {
+        self.restore_on_drop = DecodeRestore::Disarmed;
     }
 
     #[inline]
@@ -51,7 +67,7 @@ impl<'r> DecodeState<'r> {
         if let Some(branch) = self.branch.take() {
             branch.discard_terminal();
         }
-        self.restore_on_drop = false;
+        self.disarm_restore();
     }
 
     #[inline]

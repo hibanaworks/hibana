@@ -14,9 +14,8 @@ use crate::{
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
     observe::core::TapRing,
-    resolver_audit::{self, ResolverSlot},
     runtime_core::config::Clock,
-    session::types::{Lane, RendezvousId, SessionId},
+    session::types::{Lane, RendezvousId},
     transport::{FrameLabelMask, Transport},
 };
 
@@ -65,7 +64,7 @@ use self::{recv_frame::RecvFrameReceiptState, route_hints::RouteHintQueue};
 ///
 /// The port is intentionally `!Send`/`!Sync` (via the hidden `PhantomData`) so
 /// that transport handles remain affine. Endpoint methods keep the mutable
-/// borrow for the duration of a single `.await`, but exclusivity is preserved
+/// borrow for the duration of a single `.await`, but exclusivity is kept
 /// because owning endpoints themselves are affine.
 pub(crate) struct Port<'r, T: Transport> {
     transport: &'r T,
@@ -77,7 +76,7 @@ pub(crate) struct Port<'r, T: Transport> {
     endpoint_leases: *const super::core::EndpointLeaseSlot,
     endpoint_lease_capacity: super::core::EndpointLeaseId,
     scratch_marker: PhantomData<&'r mut [u8]>,
-    pub lane: Lane,
+    pub(crate) lane: Lane,
     role: u8,
     role_count: u8,
     rv_id: RendezvousId,
@@ -91,21 +90,21 @@ pub(crate) struct Port<'r, T: Transport> {
 }
 
 pub(crate) struct PortInit<'r, 'tap, T: Transport> {
-    pub transport: &'r T,
-    pub tap: &'tap TapRing<'tap>,
-    pub clock: &'tap dyn Clock,
-    pub routes: &'tap RouteTable,
-    pub slab: *mut [u8],
-    pub image_frontier: *const u32,
-    pub frontier_workspace_bytes: *const u32,
-    pub endpoint_leases: *const super::core::EndpointLeaseSlot,
-    pub endpoint_lease_capacity: super::core::EndpointLeaseId,
-    pub lane: Lane,
-    pub role: u8,
-    pub role_count: u8,
-    pub rv_id: RendezvousId,
-    pub tx: T::Tx<'r>,
-    pub rx: T::Rx<'r>,
+    pub(crate) transport: &'r T,
+    pub(crate) tap: &'tap TapRing<'tap>,
+    pub(crate) clock: &'tap dyn Clock,
+    pub(crate) routes: &'tap RouteTable,
+    pub(crate) slab: *mut [u8],
+    pub(crate) image_frontier: *const u32,
+    pub(crate) frontier_workspace_bytes: *const u32,
+    pub(crate) endpoint_leases: *const super::core::EndpointLeaseSlot,
+    pub(crate) endpoint_lease_capacity: super::core::EndpointLeaseId,
+    pub(crate) lane: Lane,
+    pub(crate) role: u8,
+    pub(crate) role_count: u8,
+    pub(crate) rv_id: RendezvousId,
+    pub(crate) tx: T::Tx<'r>,
+    pub(crate) rx: T::Rx<'r>,
 }
 
 impl<'r, T: Transport + 'r> Port<'r, T> {
@@ -208,7 +207,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             // SAFETY: `endpoint_leases` has `endpoint_lease_capacity`
             // initialized slots owned by this port.
             let slot = unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied && slot.len != 0 && (slot.offset as usize) < floor {
+            if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }
             idx += 1;
@@ -284,7 +283,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     #[inline]
     pub(crate) fn has_route_hint_for_frame_label_mask(
         &self,
-        _session: SessionId,
         frame_label_mask: FrameLabelMask,
     ) -> bool {
         let hints = self.route_hints_from_table();
@@ -296,7 +294,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     #[inline]
     pub(crate) fn has_pending_route_hint_for_lane(
         &self,
-        _session: SessionId,
         frame_label_mask: FrameLabelMask,
         target_lane: Lane,
     ) -> bool {
@@ -310,7 +307,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     #[inline]
     pub(crate) fn take_route_hint_for_frame_label_mask(
         &self,
-        _session: SessionId,
         frame_label_mask: FrameLabelMask,
     ) -> Option<u8> {
         let mut hints = self.route_hints_from_table();
@@ -351,8 +347,8 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             crate::invariant();
         }
         let len = end - start;
-        // SAFETY: `start..start+len` is clamped to the endpoint storage floor
-        // within the pinned slab returned by `slab_ptr_and_len`.
+        // SAFETY: `start..start+len` is bounded by the endpoint storage floor
+        // inside the pinned slab returned by `slab_ptr_and_len`.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(start), len) }
     }
 
@@ -379,18 +375,9 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             scratch_start
         };
         let len = workspace_end - scratch_start;
-        // SAFETY: `scratch_start..scratch_start+len` is clamped to the
+        // SAFETY: `scratch_start..scratch_start+len` is bounded by the
         // frontier workspace region inside the pinned port slab.
         unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
-    }
-
-    #[inline]
-    pub(crate) fn resolver_digest(&self, slot: ResolverSlot) -> u32 {
-        match slot {
-            ResolverSlot::EndpointRx | ResolverSlot::EndpointTx | ResolverSlot::Decision => {
-                resolver_audit::RESOLVER_DIGEST_NONE
-            }
-        }
     }
 
     #[inline]

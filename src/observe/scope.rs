@@ -8,15 +8,8 @@
 /// Structured scope trace (range/nest ordinals) attached to tap events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ScopeTrace {
-    pub range: u16,
-    pub nest: u16,
-}
-
-impl Default for ScopeTrace {
-    #[inline]
-    fn default() -> Self {
-        Self::new(0, 0)
-    }
+    pub(crate) range: u16,
+    pub(crate) nest: u16,
 }
 
 impl ScopeTrace {

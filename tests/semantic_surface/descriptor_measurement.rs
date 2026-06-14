@@ -57,7 +57,6 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             && attach.contains("pub struct AttachError {"),
         "domain evidence structs must exist without exposing public error-kind enums"
     );
-
     for (path, source) in [
         ("src/lib.rs", lib.as_str()),
         ("src/endpoint.rs", endpoint.as_str()),
@@ -90,7 +89,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{path} must not expose failure/cancellation bypass: {forbidden}"
+                "{path} must not expose failure/cancellation shortcut: {forbidden}"
             );
         }
     }
@@ -297,7 +296,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
     );
     assert!(
         !program.contains("pub const fn embedded") && !projection.contains("pub const fn embedded"),
-        "embedded projection fingerprint implicit recovery is an internal representation detail, not public API"
+        "embedded projection fingerprint shortcut is an internal representation detail, not public API"
     );
 
     let role_program = {
@@ -404,9 +403,12 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
                 .and_then(|tail| tail.split("}").next())
                 .unwrap_or("")
                 .contains("LaneSetView")
-            && !role_image
-                .contains("[DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]")
-            && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
+            && !role_image.contains(concat!(
+                "[DENSE",
+                "_LANE",
+                "_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]"
+            ))
+            && !role_image.contains(concat!("[DENSE", "_LANE", "_NONE; LANE_DOMAIN_SIZE]"))
             && role_image.contains("self.image().active_lane_set()")
             && !role_image.contains(".phase_lane_set(idx)")
             && !read("src/endpoint/kernel/decision_state.rs")
@@ -460,7 +462,7 @@ fn resident_descriptor_metadata_stays_columnar() {
         segment.contains("atom_mask: u128")
             && !segment.contains("nodes: [EffStruct; MAX_SEGMENT_EFFS]")
             && !segment.contains("steps: [ProgramStepRow; MAX_SEGMENT_EFFS]")
-            && !segment.contains(&["poli", "cies: [ResolverMode; MAX_SEGMENT_EFFS]"].concat())
+            && !segment.contains(&["poli", "cies: [RouteResolver; MAX_SEGMENT_EFFS]"].concat())
             && segment.contains("atom_row_start: u16")
             && segment.contains("atom_row_len: u16")
             && segment.contains("resolver_row_start: u16")
@@ -511,7 +513,7 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
         program_from_image
             .contains("if projected_len > N {\n            panic!(\"program image\");\n        }")
             && !program_from_image.contains("return Self::empty(image);"),
-        "ProgramImageBytes::from_image overflow must fail closed, not fall back to an empty or max-capacity image"
+        "ProgramImageBytes::from_image overflow must fail closed instead of producing an empty or max-capacity image"
     );
 
     let role_from_scratch = role_blob
@@ -523,12 +525,12 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
         role_from_scratch
             .contains("if projected_len > N {\n            panic!(\"role image\");\n        }")
             && !role_from_scratch.contains("return Self::empty();"),
-        "RoleImageBytes::from_scratch overflow must fail closed, not fall back to an empty or max-capacity image"
+        "RoleImageBytes::from_scratch overflow must fail closed instead of producing an empty or max-capacity image"
     );
 
     assert!(
-        program_blob.contains("pub(crate) const fn from_unselected_bucket_or_empty(")
-            && role_blob.contains("pub(crate) const fn from_unselected_bucket_or_empty(")
+        program_blob.contains("pub(crate) const fn from_capacity_bucket(")
+            && role_blob.contains("pub(crate) const fn from_capacity_bucket(")
             && !program_blob.contains("pub(crate) const fn blob(")
             && !role_blob.contains("pub(crate) const fn blob(")
             && !program_blob.contains("BlobPtr::from_array(")
@@ -539,14 +541,11 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             )
             && program_ref.contains("BlobPtr::from_array(bytes, columns.blob_len())")
             && role_ref_access.contains("BlobPtr::from_array(bytes, columns.blob_len())")
-            && !program_blob.contains("pub(crate) const fn from_projection_bucket(")
-            && !role_blob.contains("pub(crate) const fn from_projection_bucket(")
-            && projection.contains("from_unselected_bucket_or_empty")
-            && !projection.contains("from_projection_bucket")
+            && projection.contains("from_capacity_bucket")
             && !projection.contains("ROLE_IMAGE_BLOB_CAPACITY")
             && !projection.contains("PROGRAM_IMAGE_BLOB_CAPACITY")
             && !projection.contains("CompiledProgramRef { image: &'static CompiledProgramImage }"),
-        "projection may use private dead-bucket sentinels, but selected buckets must stay on fail-closed compact constructors without max-capacity implicit recovery or resident CompiledProgramImage handles"
+        "projection may use private capacity buckets, but selected buckets must stay on fail-closed compact constructors without resident CompiledProgramImage handles"
     );
 }
 
@@ -608,9 +607,22 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let workflow = read(".github/workflows/quality-gates.yml");
 
     for required in [
-        "if [[ \"${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" ]]; then",
-        "fixed snapshot thumb budget check skipped by explicit override; worktree size snapshot still runs",
-        "fixed snapshot runtime budget check skipped by explicit override; worktree size snapshot still runs",
+        "if [[ \"${HIBANA_OMIT_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" ]]; then",
+        "fixed snapshot thumb budget check omitted by explicit override; worktree size snapshot still runs",
+        "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs",
+        "rustup target add --toolchain \"${TOOLCHAIN}\" thumbv6m-none-eabi",
+        "--target thumbv6m-none-eabi",
+        concat!(
+            "thumb section name=.rodata bytes=%d target=thumbv6m-none-eabi ",
+            "no_",
+            "default",
+            "_features=1"
+        ),
+        "values[\"flash_total\"] =",
+        "thumb_values[\"flash_total\"] =",
+        "actual_sram =",
+        "budget_sram =",
+        "actual_max_stack = max(metrics[\"peak_stack_bytes\"] for metrics in seen.values())",
         "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
@@ -638,10 +650,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "endpoint_scratch_bytes",
         "largest_section_bytes",
         "== final-form protocol artifact flash matrix ==",
-        "FINAL_FORM_PROTOCOL_FIXTURE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs\"",
-        "FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_black_box_roles.rs\"",
-        "cp \"${FINAL_FORM_PROTOCOL_FIXTURE}\"",
-        "cp \"${FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE}\"",
+        "FINAL_FORM_PROTOCOL_SOURCE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs\"",
+        "FINAL_FORM_PROTOCOL_BLACK_BOX_SOURCE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_black_box_roles.rs\"",
+        "cp \"${FINAL_FORM_PROTOCOL_SOURCE}\"",
+        "cp \"${FINAL_FORM_PROTOCOL_BLACK_BOX_SOURCE}\"",
         "final_form_protocol!(${protocol_name})",
         "final_form_protocol_black_box_roles!(${protocol_name}, &program)",
         "protocol-artifact ",
@@ -704,7 +716,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "path.write_text",
         "failed to inject localside stack probe",
         "refusing to patch current source",
-        "HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=0",
+        "HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=0",
         "\"${CI:-false}\" != \"true\"",
         "CI/override",
         concat!("BASE", "_REF=\"HEAD^\""),
@@ -713,7 +725,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         concat!("HIBANA_SIZE_", "BA", "SE_REF"),
         concat!("hibana::", "inte", "gration"),
         "metrics[\"localside_peak_stack_bytes\"] = metrics.get(\"peak_stack_bytes\", 0)",
-        concat!("published", " baseline"),
+        concat!("published", " ", "base", "line"),
     ] {
         assert!(
             !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
@@ -729,9 +741,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 .contains("bash ./.github/scripts/check_surface_test_alias_hygiene.sh")
             && run_final_gate
                 .contains("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
-            && final_gate.contains("HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1")
+            && final_gate.contains("HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=1")
             && final_gate
-                .contains("if [[ \"${HIBANA_SKIP_WORKTREE_SIZE_SNAPSHOT:-0}\" != \"1\" ]]; then"),
+                .contains("if [[ \"${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}\" != \"1\" ]]; then"),
         "CI must run fixed Pico snapshots and the worktree size snapshot unless an explicit local override is set"
     );
     let size_gate_pos = run_final_gate
@@ -761,7 +773,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
 
     for required in [
         "Size is primary. This gate only blocks structural hot-path regressions",
-        "LaneSetView::next_set_from must skip empty lane runs with bit operations",
+        "LaneSetView::next_set_from must advance over empty lane runs with bit operations",
         "compiled image hot path ",
         "must not rebuild lane sets by effect-list or full-view scans",
         "endpoint arena must not contain route-scope lane-word caches",

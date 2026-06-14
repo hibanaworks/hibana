@@ -4,10 +4,10 @@
 //! zero-allocation authority over compiled role-local rows; projection checks
 //! compare this image against an independent oracle in tests.
 
-use crate::eff::EffIndex;
+use crate::eff::{EffIndex, EventOrigin};
 use crate::global::{
     compiled::images::CompiledProgramRef,
-    const_dsl::{ScopeId, ScopeKind},
+    const_dsl::{ReentryMark, ScopeId, ScopeKind},
     role_program::{LaneSetView, LaneSteps, PackedLaneRange, RoleImageRef},
     typestate::{
         LocalAction, LocalDependency, LocalNode, PackedEventConflict, PassiveArmChildFact,
@@ -187,27 +187,27 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_linger(self, scope_id: ScopeId) -> bool {
+    pub(crate) fn route_scope_reentry(self, scope_id: ScopeId) -> bool {
         self.route_scope_slot(scope_id)
-            .is_some_and(|slot| self.rows().route_scope_linger_by_slot(slot))
+            .is_some_and(|slot| self.rows().route_scope_reentry_by_slot(slot))
     }
 
     #[inline(always)]
-    pub(crate) fn loop_scope_row_by_slot(self, slot: usize) -> Option<(ScopeId, LocalEventRowSet)> {
-        let row = self.rows().loop_scope_row(slot)?;
+    pub(crate) fn roll_scope_row_by_slot(self, slot: usize) -> Option<(ScopeId, LocalEventRowSet)> {
+        let row = self.rows().roll_scope_row(slot)?;
         let scope = row.scope()?;
         let events = LocalEventRowSet::from_packed(row.event_row())?;
         Some((scope, events))
     }
 
     #[inline(always)]
-    pub(crate) fn loop_scope_row(self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
-        if scope_id.is_none() || !matches!(scope_id.kind(), ScopeKind::Loop) {
+    pub(crate) fn roll_scope_row(self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
+        if scope_id.is_none() || !matches!(scope_id.kind(), ScopeKind::Roll) {
             return None;
         }
         let target = scope_id.local_ordinal();
         let mut slot = 0usize;
-        while let Some((scope, row)) = self.loop_scope_row_by_slot(slot) {
+        while let Some((scope, row)) = self.roll_scope_row_by_slot(slot) {
             if scope.local_ordinal() == target {
                 return Some(row);
             }
@@ -243,12 +243,12 @@ impl LocalEventProgram {
             }
             arm += 1;
         }
-        RouteScopeRows::new(
-            scope_id,
-            start,
-            end,
-            self.rows().route_scope_linger_by_slot(slot),
-        )
+        let reentry = if self.rows().route_scope_reentry_by_slot(slot) {
+            ReentryMark::Reentrant
+        } else {
+            ReentryMark::SinglePass
+        };
+        RouteScopeRows::new(scope_id, start, end, reentry)
     }
 
     #[inline(always)]
@@ -409,7 +409,7 @@ impl LocalEventRow {
         self,
         eff_index: EffIndex,
         label: u8,
-        is_internal: bool,
+        origin: EventOrigin,
         scope: ScopeId,
         route_arm: Option<u8>,
         lane: u8,
@@ -421,21 +421,21 @@ impl LocalEventRow {
             LocalAction::Send {
                 eff_index: row_eff,
                 label: row_label,
-                is_internal: row_control,
+                origin: row_origin,
                 ..
             }
             | LocalAction::Recv {
                 eff_index: row_eff,
                 label: row_label,
-                is_internal: row_control,
+                origin: row_origin,
                 ..
             }
             | LocalAction::Local {
                 eff_index: row_eff,
                 label: row_label,
-                is_internal: row_control,
+                origin: row_origin,
                 ..
-            } => row_eff == eff_index && row_label == label && row_control == is_internal,
+            } => row_eff == eff_index && row_label == label && row_origin == origin,
             LocalAction::Terminate => false,
         }
     }

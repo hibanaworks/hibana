@@ -69,7 +69,7 @@ impl CompiledProgramImage {
                     resolver_markers_len = increment_compact_count(resolver_markers_len);
                     resolver
                 } else {
-                    ResolverMode::Static
+                    RouteResolver::Intrinsic
                 };
                 if matches!(node.kind, EffKind::Atom) {
                     let atom = node.atom_data();

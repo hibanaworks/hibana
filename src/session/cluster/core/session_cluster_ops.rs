@@ -82,7 +82,7 @@ where
         self.resolvers.get() as *const ResolverCore<'cfg, MAX_RV>
     }
 
-    /// Internal helper to access mutable session state (NOT PUBLIC).
+    /// Runs a mutation inside the session storage owner.
     pub(crate) fn with_storage_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut SessionStorage<'cfg, T, C, MAX_RV>) -> R,
@@ -91,7 +91,7 @@ where
         unsafe { f(&mut *self.storage_ptr()) }
     }
 
-    /// Internal helper to access mutable resolver state.
+    /// Runs a mutation inside the resolver storage owner.
     pub(crate) fn with_resolvers_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut ResolverCore<'cfg, MAX_RV>) -> R,
@@ -103,7 +103,9 @@ where
     #[inline]
     pub(crate) fn map_rendezvous_access_error(error: LeaseError) -> ClusterError {
         match error {
-            LeaseError::UnknownRendezvous(id) => ClusterError::RendezvousMissing { id: id.raw() },
+            LeaseError::RendezvousUnregistered(id) => {
+                ClusterError::RendezvousUnregistered { id: id.raw() }
+            }
             LeaseError::AlreadyLeased(id) => ClusterError::RendezvousBusy { id: id.raw() },
         }
     }
@@ -121,22 +123,7 @@ where
         PublicEndpointStorageLayout {
             total_bytes: storage_layout.total_bytes(),
             total_align: storage_layout.total_align(),
-            header_bytes: storage_layout.header_bytes(),
-            port_slots_bytes: storage_layout.port_slots_bytes(),
-            guard_slots_bytes: storage_layout.guard_slots_bytes(),
-            header_padding_bytes: storage_layout
-                .arena_offset()
-                .checked_sub(
-                    storage_layout
-                        .header_bytes()
-                        .checked_add(storage_layout.port_slots_bytes())
-                        .and_then(|bytes| bytes.checked_add(storage_layout.guard_slots_bytes()))
-                        .expect("invariant"),
-                )
-                .expect("invariant"),
             arena_offset: storage_layout.arena_offset(),
-            arena_bytes: storage_layout.arena_bytes(),
-            arena_align: storage_layout.arena_align(),
         }
     }
 
@@ -179,25 +166,28 @@ where
         if let Err(resource) = rv.ensure_endpoint_resident_budget(resident_budget) {
             return Err(ClusterError::resource_exhausted(resource));
         }
-        let Some((slot, generation, offset, _len)) = (/* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */unsafe {
-            rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
-        }) else {
+        let (slot, generation, offset, _len) =
+            (/* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
+            unsafe {
+                rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
+            })
+            .map_err(ClusterError::resource_exhausted)?;
+        let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
+        let Some(storage_end) = offset.checked_add(required_bytes) else {
+            rv.release_endpoint_lease(slot, generation);
             return Err(ClusterError::resource_exhausted(
-                ResourceScope::EndpointLease,
+                ResourceScope::EndpointBounds,
             ));
         };
-        let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
-        if offset + required_bytes > slab_len {
+        if storage_end > slab_len {
             rv.release_endpoint_lease(slot, generation);
             return Err(ClusterError::resource_exhausted(
                 ResourceScope::EndpointBounds,
             ));
         }
-        if !rv.mark_public_endpoint_lease(slot, generation) {
+        if let Err(resource) = rv.ensure_endpoint_lease_live(slot, generation) {
             rv.release_endpoint_lease(slot, generation);
-            return Err(ClusterError::resource_exhausted(
-                ResourceScope::EndpointMark,
-            ));
+            return Err(ClusterError::resource_exhausted(resource));
         }
         Ok((
             slot,
@@ -222,7 +212,8 @@ where
         let rv = self.get_local(&rv_id)?;
         let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
         let (offset, len) = rv.endpoint_lease_storage(slot, generation)?;
-        if len == 0 || offset + len > slab_len {
+        let storage_end = offset.checked_add(len)?;
+        if len == 0 || storage_end > slab_len {
             return None;
         }
         Some(
@@ -384,12 +375,7 @@ where
     {
         let compiled = self
             .ensure_compiled_program_ref(rv_id, program)
-            .map_err(|err| {
-                E::from(
-                    err.cluster_cause()
-                        .expect("resident program validation errors must carry storage cause"),
-                )
-            })?;
+            .map_err(|err| E::from(crate::invariant_some(err.cluster_cause())))?;
         f(compiled)
     }
 
@@ -481,7 +467,7 @@ where
 
         let mut lease = match core.locals.lease(rv_id) {
             Ok(lease) => lease,
-            Err(LeaseError::UnknownRendezvous(_)) => {
+            Err(LeaseError::RendezvousUnregistered(_)) => {
                 return Err(RendezvousError::LaneOutOfRange { lane });
             }
             Err(LeaseError::AlreadyLeased(_)) => {

@@ -38,7 +38,7 @@ use super::frontier::{
 };
 use super::lane_port;
 use crate::endpoint::{RecvError, RecvResult};
-use crate::global::const_dsl::ScopeId;
+use crate::global::const_dsl::{ReentryMark, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::state_index_to_usize;
 use crate::rendezvous::port::Port;
@@ -49,15 +49,16 @@ pub(in crate::endpoint::kernel) use self::commit_types::{
     BranchCommitPlan, BranchKind, BranchMeta,
 };
 pub(in crate::endpoint::kernel) use self::frontier_types::{
-    CachedRecvMeta, CachedRouteArm, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
-    FrontierObservationDomain, FrontierStaticFacts, ScopeArmMaterializationMeta,
+    CachedRecvMeta, CachedRouteArm, CurrentFrontierSelectionState,
+    CurrentReentryControllerEvidence, CurrentScopeSelectionMeta, FrontierFacts,
+    FrontierObservationDomain, FrontierReadiness, ScopeArmMaterializationMeta,
 };
 use self::ingress::OfferFrontierFacts;
 pub(in crate::endpoint::kernel) use self::ingress_types::{
     FrameHintResolution, OfferScopeSelection,
 };
 use self::profile::OfferAuthorityPath;
-pub(in crate::endpoint::kernel) use self::profile::OfferScopeProfile;
+pub(in crate::endpoint::kernel) use self::profile::{OfferEntryPosition, OfferScopeProfile};
 use self::resolve_types::ResolvePendingState;
 pub(in crate::endpoint::kernel) use self::resolve_types::{
     ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence,
@@ -65,53 +66,56 @@ pub(in crate::endpoint::kernel) use self::resolve_types::{
 use self::select::FrontierDeferRequest;
 pub(in crate::endpoint::kernel) use self::state::OfferState;
 use self::state::{OfferCollectState, OfferExecution, OfferResolveState, OfferStagedIngress};
+pub(in crate::endpoint::kernel) use super::core::{IngressEvidenceState, ResolverDeferProgress};
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(in crate::endpoint::kernel) enum FrameHintIngestion {
+    Scope,
+    Dynamic,
+}
 
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
     C: Clock,
 {
-    #[inline]
-    fn discard_terminal_ingress(&mut self, state: &mut OfferState<'r>) {
-        state.discard_terminal();
-    }
-
     fn ingest_scope_evidence_for_lane(
         &mut self,
         lane_idx: usize,
         scope_id: ScopeId,
-        suppress_hint: bool,
+        frame_hint_ingestion: FrameHintIngestion,
         frame_label_meta: ScopeFrameLabelMeta,
     ) {
-        if suppress_hint {
-            if let Some(frame_label) =
-                self.take_frame_hint_for_lane(lane_idx, false, frame_label_meta)
-            {
-                self.record_dynamic_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
-                self.mark_scope_ready_arm_from_frame_label(
-                    scope_id,
-                    lane_idx as u8,
-                    frame_label,
-                    frame_label_meta,
-                );
-            }
+        match frame_hint_ingestion {
+            FrameHintIngestion::Dynamic => {
+                if let Some(frame_label) = self.take_frame_hint_for_lane(lane_idx, frame_label_meta)
+                {
+                    self.record_dynamic_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
+                    self.mark_scope_ready_arm_from_frame_label(
+                        scope_id,
+                        lane_idx as u8,
+                        frame_label,
+                        frame_label_meta,
+                    );
+                }
 
-            if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
-                && let Some(arm) = Arm::new(arm)
-            {
-                self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
+                if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
+                    && let Some(arm) = Arm::new(arm)
+                {
+                    self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
+                }
             }
-            return;
-        }
-        if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
-            && let Some(arm) = Arm::new(arm)
-        {
-            self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
-        }
-        if let Some(frame_label) =
-            self.take_frame_hint_for_lane(lane_idx, suppress_hint, frame_label_meta)
-        {
-            self.record_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
+            FrameHintIngestion::Scope => {
+                if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
+                    && let Some(arm) = Arm::new(arm)
+                {
+                    self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
+                }
+                if let Some(frame_label) = self.take_frame_hint_for_lane(lane_idx, frame_label_meta)
+                {
+                    self.record_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
+                }
+            }
         }
     }
 
@@ -119,13 +123,13 @@ where
         &mut self,
         scope_id: ScopeId,
         offer_lanes: crate::global::role_program::LaneSetView,
-        suppress_hint: bool,
+        frame_hint_ingestion: FrameHintIngestion,
         frame_label_meta: ScopeFrameLabelMeta,
     ) {
         self.ingest_scope_evidence_for_offer_impl(
             scope_id,
             offer_lanes,
-            suppress_hint,
+            frame_hint_ingestion,
             frame_label_meta,
         )
     }
@@ -134,7 +138,7 @@ where
         &mut self,
         scope_id: ScopeId,
         offer_lanes: crate::global::role_program::LaneSetView,
-        suppress_hint: bool,
+        frame_hint_ingestion: FrameHintIngestion,
         frame_label_meta: ScopeFrameLabelMeta,
     ) {
         if offer_lanes.is_empty() {
@@ -149,7 +153,7 @@ where
                 self.ingest_scope_evidence_for_lane(
                     lane_idx,
                     scope_id,
-                    suppress_hint,
+                    frame_hint_ingestion,
                     frame_label_meta,
                 );
             }
@@ -209,7 +213,7 @@ where
             return;
         };
         self.detach_offer_entry_from_root_frontier(entry_idx, detached_root);
-        Self::ensure_global_frontier_scratch_initialized(self);
+        Self::ensure_global_frontier_scratch_ready(self);
         let mut global_active_entries = self.global_active_entries();
         global_active_entries.remove_entry(entry_idx);
         let info = self.decision_state.lane_offer_state(lane_idx);
@@ -227,16 +231,16 @@ where
             info,
             !self.offer_lane_set_for_scope(info.scope).is_empty(),
         );
-        let static_summary = self.compute_offer_entry_static_summary(entry_idx);
+        let entry_summary = self.compute_offer_entry_summary(entry_idx);
         if let Some(state) = self.frontier_state.offer_entry_state_mut(entry_idx) {
             state.lane_idx = lane_idx as u8;
             state.parallel_root = info.parallel_root;
             state.frontier = info.frontier;
             state.scope_id = info.scope;
             state.selection_meta = selection_meta;
-            state.summary = static_summary;
+            state.summary = entry_summary;
         }
-        Self::ensure_global_frontier_scratch_initialized(self);
+        Self::ensure_global_frontier_scratch_ready(self);
         let mut global_active_entries = self.global_active_entries();
         global_active_entries.insert_entry(entry_idx, lane_idx as u8);
         self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
@@ -249,7 +253,7 @@ where
 
     fn detach_lane_from_offer_entry(&mut self, lane_idx: usize, info: LaneOfferState) {
         let entry_idx = state_index_to_usize(info.entry);
-        if info.entry.is_max() || entry_idx >= crate::global::typestate::MAX_STATES {
+        if info.entry.is_absent() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
         let remaining_active_lanes = self.offer_entry_has_other_active_lanes(entry_idx, lane_idx);
@@ -266,7 +270,7 @@ where
                 info.parallel_root
             };
             self.detach_offer_entry_from_root_frontier(entry_idx, parallel_root);
-            Self::ensure_global_frontier_scratch_initialized(self);
+            Self::ensure_global_frontier_scratch_ready(self);
             let mut global_active_entries = self.global_active_entries();
             global_active_entries.remove_entry(entry_idx);
             self.frontier_state.clear_offer_entry_state(entry_idx);
@@ -285,7 +289,7 @@ where
 
     fn attach_lane_to_offer_entry(&mut self, lane_idx: usize, info: LaneOfferState) {
         let entry_idx = state_index_to_usize(info.entry);
-        if info.entry.is_max() || entry_idx >= crate::global::typestate::MAX_STATES {
+        if info.entry.is_absent() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
         let was_inactive = self
@@ -293,7 +297,7 @@ where
             .slot_for_entry(entry_idx)
             .is_none();
         if was_inactive {
-            Self::ensure_global_frontier_scratch_initialized(self);
+            Self::ensure_global_frontier_scratch_ready(self);
             let mut global_active_entries = self.global_active_entries();
             global_active_entries.insert_entry(entry_idx, lane_idx as u8);
             self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
@@ -333,7 +337,7 @@ where
         start = 0;
         while let Some(lane_idx) = {
             self.decision_state
-                .lane_linger_lanes()
+                .lane_reentry_lanes()
                 .next_set_from(start, logical_lane_count)
         } {
             self.refresh_lane_offer_state(lane_idx);
@@ -343,7 +347,7 @@ where
         start = 0;
         while let Some(lane_idx) = {
             self.decision_state
-                .lane_offer_linger_lanes()
+                .lane_offer_reentry_lanes()
                 .next_set_from(start, logical_lane_count)
         } {
             self.refresh_lane_offer_state(lane_idx);
@@ -359,9 +363,13 @@ where
         self.detach_lane_from_offer_entry(lane_idx, detached);
         self.detach_lane_from_root_frontier(detached);
         if let Some(info) = self.compute_lane_offer_state(lane_idx) {
-            let is_linger = self.is_linger_route(info.scope);
+            let reentry = if self.is_reentry_route(info.scope) {
+                ReentryMark::Reentrant
+            } else {
+                ReentryMark::SinglePass
+            };
             self.decision_state
-                .set_lane_offer_state(lane_idx, info, is_linger);
+                .set_lane_offer_state(lane_idx, info, reentry);
             self.attach_lane_to_root_frontier(info);
             self.attach_lane_to_offer_entry(lane_idx, info);
         }
@@ -403,19 +411,11 @@ where
                     let selection = match self.select_scope() {
                         Ok(selection) => selection,
                         Err(err) => {
-                            self.discard_terminal_ingress(state);
+                            state.discard_terminal();
                             return Poll::Ready(Err(err));
                         }
                     };
-                    let facts = match self.prepare_frontier_facts(selection, &mut frontier_visited)
-                    {
-                        Ok(facts) => facts,
-                        Err(err) => {
-                            state.execution = OfferExecution::Selecting { frontier_visited };
-                            self.discard_terminal_ingress(state);
-                            return Poll::Ready(Err(err));
-                        }
-                    };
+                    let facts = self.prepare_frontier_facts(selection, &mut frontier_visited);
                     state.execution = OfferExecution::Collecting {
                         frontier_visited,
                         stage: OfferCollectState {
@@ -443,14 +443,13 @@ where
                         }
                         Poll::Ready(Ok(())) => {
                             let scope_id = stage.facts.scope_id();
-                            let suppress_scope_frame_hint =
-                                stage.facts.profile.suppresses_scope_frame_hint();
+                            let frame_hint_ingestion = stage.facts.profile.frame_hint_ingestion();
                             let frame_label_meta =
                                 self.selection_frame_label_meta(stage.facts.selection);
                             self.ingest_scope_evidence_for_offer(
                                 scope_id,
                                 self.offer_lane_set_for_scope(scope_id),
-                                suppress_scope_frame_hint,
+                                frame_hint_ingestion,
                                 frame_label_meta,
                             );
                             if self.scope_evidence_conflicted(scope_id) {

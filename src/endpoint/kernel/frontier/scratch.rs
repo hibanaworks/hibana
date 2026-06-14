@@ -474,7 +474,7 @@ mod tests {
                 written < dst.len(),
                 "lane-index destination is too small for the exact lane set"
             );
-            dst[written] = u8::try_from(lane).expect("invariant");
+            dst[written] = crate::invariant_ok(u8::try_from(lane));
             written += 1;
             next = lanes.next_set_from(lane + 1, lane_limit);
         }

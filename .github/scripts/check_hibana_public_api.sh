@@ -13,11 +13,11 @@ RUN_SURFACE_TESTS=1
 case "${1:-}" in
   "")
     ;;
-  "--skip-tests")
+  "--surface-only")
     RUN_SURFACE_TESTS=0
     ;;
   *)
-    echo "usage: $0 [--skip-tests]" >&2
+    echo "usage: $0 [--surface-only]" >&2
     exit 2
     ;;
 esac

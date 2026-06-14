@@ -92,10 +92,10 @@ pub(crate) struct EndpointArenaLayout {
     decision_state: EndpointArenaSection,
     route_state_lane_dense_by_lane: EndpointArenaSection,
     route_state_lane_route_arm_lens: EndpointArenaSection,
-    route_state_lane_linger_counts: EndpointArenaSection,
+    route_state_lane_reentry_counts: EndpointArenaSection,
     route_state_scope_selected_arms: EndpointArenaSection,
-    route_state_lane_linger_lanes: EndpointArenaSection,
-    route_state_lane_offer_linger_lanes: EndpointArenaSection,
+    route_state_lane_reentry_lanes: EndpointArenaSection,
+    route_state_lane_offer_reentry_lanes: EndpointArenaSection,
     route_state_active_offer_lanes: EndpointArenaSection,
     route_commit_row_set_builder: EndpointArenaSection,
     frontier: RouteFrontierArenaLayout,
@@ -144,10 +144,10 @@ impl EndpointArenaLayout {
         offset = route_state_lane_route_arm_lens.offset + route_state_lane_route_arm_lens.bytes;
         total_align = max_usize(total_align, route_state_lane_route_arm_lens.align);
 
-        let route_state_lane_linger_counts =
+        let route_state_lane_reentry_counts =
             Self::section_array::<u8>(offset, footprint.active_lane_count);
-        offset = route_state_lane_linger_counts.offset + route_state_lane_linger_counts.bytes;
-        total_align = max_usize(total_align, route_state_lane_linger_counts.align);
+        offset = route_state_lane_reentry_counts.offset + route_state_lane_reentry_counts.bytes;
+        total_align = max_usize(total_align, route_state_lane_reentry_counts.align);
 
         let route_state_scope_selected_arms = Self::section_array::<RouteScopeSelectedArmSlot>(
             offset,
@@ -157,16 +157,16 @@ impl EndpointArenaLayout {
         total_align = max_usize(total_align, route_state_scope_selected_arms.align);
 
         let route_state_lane_word_count = footprint.lane_word_count();
-        let route_state_lane_linger_lanes =
+        let route_state_lane_reentry_lanes =
             Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset = route_state_lane_linger_lanes.offset + route_state_lane_linger_lanes.bytes;
-        total_align = max_usize(total_align, route_state_lane_linger_lanes.align);
+        offset = route_state_lane_reentry_lanes.offset + route_state_lane_reentry_lanes.bytes;
+        total_align = max_usize(total_align, route_state_lane_reentry_lanes.align);
 
-        let route_state_lane_offer_linger_lanes =
+        let route_state_lane_offer_reentry_lanes =
             Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset =
-            route_state_lane_offer_linger_lanes.offset + route_state_lane_offer_linger_lanes.bytes;
-        total_align = max_usize(total_align, route_state_lane_offer_linger_lanes.align);
+        offset = route_state_lane_offer_reentry_lanes.offset
+            + route_state_lane_offer_reentry_lanes.bytes;
+        total_align = max_usize(total_align, route_state_lane_offer_reentry_lanes.align);
 
         let route_state_active_offer_lanes =
             Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
@@ -237,10 +237,10 @@ impl EndpointArenaLayout {
             decision_state,
             route_state_lane_dense_by_lane,
             route_state_lane_route_arm_lens,
-            route_state_lane_linger_counts,
+            route_state_lane_reentry_counts,
             route_state_scope_selected_arms,
-            route_state_lane_linger_lanes,
-            route_state_lane_offer_linger_lanes,
+            route_state_lane_reentry_lanes,
+            route_state_lane_offer_reentry_lanes,
             route_state_active_offer_lanes,
             route_commit_row_set_builder,
             frontier: RouteFrontierArenaLayout {
@@ -315,8 +315,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_state_lane_linger_counts(&self) -> EndpointArenaSection {
-        self.route_state_lane_linger_counts
+    pub(crate) const fn route_state_lane_reentry_counts(&self) -> EndpointArenaSection {
+        self.route_state_lane_reentry_counts
     }
 
     #[inline(always)]
@@ -325,13 +325,13 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_state_lane_linger_lanes(&self) -> EndpointArenaSection {
-        self.route_state_lane_linger_lanes
+    pub(crate) const fn route_state_lane_reentry_lanes(&self) -> EndpointArenaSection {
+        self.route_state_lane_reentry_lanes
     }
 
     #[inline(always)]
-    pub(crate) const fn route_state_lane_offer_linger_lanes(&self) -> EndpointArenaSection {
-        self.route_state_lane_offer_linger_lanes
+    pub(crate) const fn route_state_lane_offer_reentry_lanes(&self) -> EndpointArenaSection {
+        self.route_state_lane_offer_reentry_lanes
     }
 
     #[inline(always)]
@@ -514,12 +514,12 @@ mod tests {
         assert_eq!(scoped_layout.route_state_scope_selected_arms().count(), 16);
         assert_eq!(scoped_layout.scope_evidence_slots().count(), 16);
         assert_eq!(
-            scoped_layout.route_state_lane_linger_lanes().count(),
-            base_layout.route_state_lane_linger_lanes().count()
+            scoped_layout.route_state_lane_reentry_lanes().count(),
+            base_layout.route_state_lane_reentry_lanes().count()
         );
         assert_eq!(
-            scoped_layout.route_state_lane_offer_linger_lanes().count(),
-            base_layout.route_state_lane_offer_linger_lanes().count()
+            scoped_layout.route_state_lane_offer_reentry_lanes().count(),
+            base_layout.route_state_lane_offer_reentry_lanes().count()
         );
         assert_eq!(
             scoped_layout.route_state_active_offer_lanes().count(),

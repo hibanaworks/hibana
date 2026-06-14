@@ -38,9 +38,9 @@ where
                 true
             }
             Some(existing) if existing == sid => {
-                self.assoc
-                    .increment(lane, sid)
-                    .expect("lane attachment count overflow");
+                if self.assoc.increment(lane, sid).is_none() {
+                    return Err(RendezvousError::LaneAttachOverflow { lane });
+                }
                 false
             }
             Some(_other) => {
@@ -72,7 +72,7 @@ where
         role: u8,
         role_count: u8,
         active_leases: &'a Cell<u32>,
-    ) -> Result<(Port<'a, T>, LaneGuard<'a, T, C>), RendezvousError>
+    ) -> (Port<'a, T>, LaneGuard<'a, T, C>)
     where
         'rv: 'a,
     {
@@ -98,7 +98,7 @@ where
         });
         let guard =
             LaneGuard::new_detached((self as *const Self).cast::<()>(), lane, active_leases);
-        Ok((port, guard))
+        (port, guard)
     }
 
     // ============================================================================

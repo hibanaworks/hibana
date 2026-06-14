@@ -120,7 +120,7 @@ pub(crate) struct ActiveEntrySlot {
 
 impl ActiveEntrySlot {
     pub(crate) const EMPTY: Self = Self {
-        entry: StateIndex::MAX,
+        entry: StateIndex::ABSENT,
         lane_idx: u8::MAX,
     };
 }
@@ -178,7 +178,7 @@ impl ActiveEntrySet {
     pub(crate) fn len(&self) -> usize {
         let mut len = 0usize;
         while len < self.slots.capacity() {
-            if self.slots[len].entry.is_max() {
+            if self.slots[len].entry.is_absent() {
                 break;
             }
             len += 1;
@@ -207,7 +207,7 @@ impl ActiveEntrySet {
     #[inline]
     pub(crate) fn entry_state(self, slot_idx: usize) -> StateIndex {
         if slot_idx >= self.len() {
-            return StateIndex::MAX;
+            return StateIndex::ABSENT;
         }
         self.slots[slot_idx].entry
     }
@@ -468,7 +468,10 @@ impl ObservedEntrySet {
 
     #[inline]
     pub(crate) fn entry_bit(self, entry_idx: usize) -> u8 {
-        self.slot_for_entry(entry_idx).map_or(0, |slot| 1u8 << slot)
+        match self.slot_for_entry(entry_idx) {
+            Some(slot) => 1u8 << slot,
+            None => 0,
+        }
     }
 
     #[inline]
@@ -481,7 +484,7 @@ impl ObservedEntrySet {
             return None;
         }
         let entry = self.slots[observed_idx].entry;
-        if entry.is_max() {
+        if entry.is_absent() {
             return None;
         }
         let entry_idx = state_index_to_usize(entry);

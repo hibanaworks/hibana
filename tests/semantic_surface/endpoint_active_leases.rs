@@ -9,6 +9,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let endpoint_ops = read("src/endpoint/ops.rs");
     let flow = read("src/endpoint/flow.rs");
     let futures = read("src/endpoint/futures.rs");
+    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let branch = read("src/endpoint/branch.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview_flow.rs");
     let lifecycle_tests = format!(
@@ -36,25 +37,29 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         );
     }
     assert!(
-        public_runtime.contains("fn start_public_op(&mut self, op: PublicActiveOp) -> bool")
+        public_types.contains("pub(crate) enum PublicOpLease")
+            && public_types.contains("Rejected = 0")
+            && public_types.contains("Held = 1")
+            && public_runtime.contains("fn start_public_op(\n        &mut self,\n        op: PublicActiveOp,\n    ) -> super::core::PublicOpLease")
             && public_runtime.contains("self.public_active_op == PublicActiveOp::Idle")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::Poisoned;")
             && public_runtime.contains("SessionFaultKind::ProgressInvariantViolated")
             && !public_runtime.contains("fn enter_public_op(&mut self, op: PublicActiveOp) -> bool")
-            && public_runtime.contains("fn transition_public_op(&mut self, from: PublicActiveOp, to: PublicActiveOp) -> bool")
+            && public_runtime.contains("fn transition_public_op(\n        &mut self,\n        from: PublicActiveOp,\n        to: PublicActiveOp,\n    ) -> super::core::PublicOpLease")
             && public_runtime.contains("fn finish_public_op(&mut self, op: PublicActiveOp)")
             && public_runtime.contains("if self.public_active_op == op")
             && public_runtime.contains("self.public_active_op != PublicActiveOp::Poisoned")
             && public_runtime.contains("fn clear_public_op_if_current(&mut self, op: PublicActiveOp)")
-            && public_runtime.contains("fn init_public_send_state(&mut self, init: &SendInit) -> bool")
-            && public_runtime.contains("if !self.start_public_op(PublicActiveOp::Send)")
-            && public_runtime.contains("fn init_public_recv_state(&mut self) -> bool")
-            && public_runtime.contains("if !self.start_public_op(PublicActiveOp::Recv)")
-            && public_runtime.contains("fn init_public_offer_state(&mut self) -> bool")
-            && public_runtime.contains("if !self.start_public_op(PublicActiveOp::Offer)")
+            && public_runtime.contains("fn init_public_send_state(\n        &mut self,\n        init: &SendInit,\n    ) -> super::core::PublicOpLease")
+            && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Send);")
+            && public_runtime.contains("fn init_public_recv_state(&mut self) -> super::core::PublicOpLease")
+            && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Recv);")
+            && public_runtime.contains("fn init_public_offer_state(&mut self) -> super::core::PublicOpLease")
+            && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Offer);")
+            && public_runtime.contains("super::core::PublicOpLease::Rejected => return lease")
             && public_runtime.contains("if self.public_active_op != PublicActiveOp::Offer")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
-            && public_runtime.contains("fn begin_public_decode_state(&mut self) -> bool")
+            && public_runtime.contains("fn begin_public_decode_state(&mut self) -> super::core::PublicOpLease")
             && public_runtime.contains("self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::Decode)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Send)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Recv)")
@@ -76,28 +81,37 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "flow preview must not overwrite a forgotten active operation"
     );
     assert!(
-        endpoint_ops.contains("let started = unsafe { self.init_public_send_state(&init) };")
-            && endpoint_ops.contains("if !started {")
+        endpoint_ops.contains("match unsafe { self.init_public_send_state(&init) }")
+            && endpoint_ops.contains("kernel::PublicOpLease::Held => {}")
+            && endpoint_ops.contains("kernel::PublicOpLease::Rejected =>")
             && endpoint_ops.contains("crate::endpoint::SendError::PhaseInvariant"),
         "flow must not return an affine Flow handle when send active-lease initialization fails after preview"
     );
     assert!(
         flow.contains("impl<'e, 'r, const ROLE: u8, M> Drop for Flow")
             && flow.contains("impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture")
-            && futures.contains("pub(super) struct RawOfferLease(u8)")
-            && futures.contains("fn new(leased: bool) -> Self")
-            && futures.contains("fn leased(self) -> bool")
-            && futures.contains("fn mark_completed(&mut self)")
-            && futures.contains("fn must_restore_on_drop(self) -> bool")
-            && branch.contains("let leased = unsafe { endpoint.init_public_offer_state() };")
-            && branch.contains("RawOfferLease::new(leased)")
-            && branch.contains("if !self.lease.leased()")
-            && branch.contains("self.lease.mark_completed();")
-            && branch.contains("if self.lease.must_restore_on_drop()")
-            && futures.contains("if !self.flags.leased()")
-            && futures.contains("if !self.leased")
-            && futures.contains("if self.flags.leased() && !self.flags.completed()")
-            && futures.contains("if self.leased && !self.completed")
+            && futures.contains("enum OfferFutureLease")
+            && futures.contains("enum RecvFutureLease")
+            && runtime_types.contains("pub(crate) enum RecvPayloadMode")
+            && branch.contains("OfferFutureLease::from_public_lease")
+            && futures.contains("RecvFutureLease::from_public_lease")
+            && runtime_types.contains("const fn from_allows_zero_length")
+            && futures.contains("RecvPayloadMode::from_allows_zero_length")
+            && branch.contains("let lease = unsafe { endpoint.init_public_offer_state() };")
+            && branch.contains("lease: OfferFutureLease::from_public_lease(lease)")
+            && branch.contains("OfferFutureLease::Rejected =>")
+            && branch.contains("self.lease = OfferFutureLease::Completed;")
+            && branch.contains("self.lease == OfferFutureLease::RestoreOnDrop")
+            && futures.contains("RecvFutureLease::Rejected =>")
+            && futures.contains("self.lease = RecvFutureLease::Completed;")
+            && futures.contains("lease: crate::endpoint::kernel::PublicOpLease")
+            && futures.contains("self.lease == RecvFutureLease::RestoreOnDrop")
+            && futures.contains("progress: DecodeFutureProgress")
+            && futures.contains("DecodeFutureProgress::Pending")
+            && futures.contains("DecodeFutureProgress::Finished")
+            && futures.contains(
+                "(crate::endpoint::kernel::PublicOpLease::Held, DecodeFutureProgress::Pending)"
+            )
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture")
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture"),
         "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"

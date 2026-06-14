@@ -114,7 +114,7 @@ attached transport, a projected first visible route action, or an explicit
 resolver decision at a projected route resolver site. Role code must not read
 shared memory, shared atomics, global flags, device registers, or side-channel
 state to decide whether a route is ready, a rolled region re-enters, or a message may
-be skipped.
+be omitted.
 
 Shared memory is especially not protocol authority. A runtime crate may
 use memory, atomics, interrupts, DMA, or OS primitives as private transport or
@@ -278,15 +278,15 @@ diagnostic evidence. It does not authorize reconnect or a different
 branch in the same generation.
 
 There is intentionally no `recv_timeout`, `send_timeout`, public `cancel`, or
-same-generation recovery API. If time should select a branch, model time in the
-choreography itself: use a timer or clock role whose first visible route action
-carries the decision.
+same-generation retry/reselection API. If time should select a branch, model
+time in the choreography itself: use a timer or clock role whose first visible
+route action carries the decision.
 
-Protocol-invisible liveness detection belongs inside the transport adapter. A
+Protocol-invisible liveness detection belongs inside the transport implementation. A
 UDP, serial, or custom carrier that decides an I/O wait is terminal must return
 `TransportError` from `poll_send(...)` or `poll_recv(...)`; Hibana converts that
 transport failure into terminal session evidence. Such watchdogs do not create
-hidden route authority, carrier recovery resolver, or same-generation recovery in Hibana.
+hidden route authority or an alternate branch inside the current generation.
 
 The public evidence envelopes are domain-specific:
 
@@ -301,7 +301,7 @@ was observed without requiring a second error layer at every call.
 
 ### Parallel Composition
 
-`g::par(left, right)` combines independent local flows. Empty arms and
+`g::par(left, right)` combines independent local flows. Arms without protocol steps and
 overlapping `(role, lane)` ownership are rejected by projection.
 
 ```rust
@@ -350,13 +350,21 @@ impl WirePayload for FourBytes {
         if input.as_bytes().len() == 4 {
             Ok(())
         } else {
-            Err(CodecError::Invalid("FourBytes requires exactly 4 bytes"))
+            Err(CodecError::Malformed)
         }
     }
 
     fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_> {
         let bytes = input.as_bytes();
         FourBytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        if scratch.len() < 4 {
+            return Err(CodecError::Truncated);
+        }
+        scratch[..4].fill(0);
+        Ok(Payload::new(&scratch[..4]))
     }
 }
 ```
@@ -419,7 +427,7 @@ let body = g::seq(
 ).roll();
 ```
 
-Here `open -> resolved route` is the loop body. The reverse order is invalid:
+Here `open -> resolved route` is the rolled body. The reverse order is invalid:
 
 ```rust,ignore
 g::route(left, right).roll().resolve::<ID>()
@@ -427,7 +435,7 @@ g::route(left, right).roll().resolve::<ID>()
 
 `resolve::<ID>()` is only available on `Program<Route<...>>`; after `.roll()`,
 the type is `Program<Roll<Route<...>>>`. Semantically, the resolver belongs to
-the route decision site, not to the loop.
+the route decision site, not to the rolled reentry region.
 
 Nested reentry follows the same rule:
 
@@ -467,46 +475,47 @@ rv.role(&role0)
     .set_resolver(ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;
 ```
 
-External resolver appliances use the same seam. Hibana core does not contain an
-embedded resolver executor or hidden decision engine. An appliance stays outside the core,
-owns its input state, and installs a typed `ResolverRef` for the route decision
-site. When the appliance is active, it returns `DecisionResolution` for that
-resolver id; otherwise the appliance resolver calls the user-registered default
-resolver. That default resolver is explicit route authority; it does not
-transfer authority to appliance state. Hibana never treats appliance telemetry,
-payload bytes, or transport readiness as route authority by itself.
+External resolver state uses the same explicit registration path. Route
+decisions come from the typed resolver registered for the route site. The
+external owner stays outside Hibana, owns its input state, and installs a typed
+`ResolverRef` for the route decision site. When that owner has a decision, it
+returns `DecisionResolution` for that resolver id; otherwise it delegates to
+another user-registered `ResolverRef`. That local resolver is still explicit
+route authority; it does not transfer authority to external state. Hibana never
+treats external telemetry, payload bytes, or transport readiness as route
+authority by itself.
 
 ```rust,ignore
-struct ResolverAppliance {
+struct ExternalResolverOwner {
     loaded: bool,
-    default_resolver: ResolverRef<'static, ROUTE_RESOLVER>,
+    local_resolver: ResolverRef<'static, ROUTE_RESOLVER>,
 }
 
-fn default_decision() -> Result<DecisionResolution, ResolverError> {
+fn local_decision() -> Result<DecisionResolution, ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
-fn appliance_decision(
-    appliance: &ResolverAppliance,
+fn external_decision(
+    owner: &ExternalResolverOwner,
 ) -> Result<DecisionResolution, ResolverError> {
-    if appliance.loaded {
+    if owner.loaded {
         Ok(DecisionResolution::Arm(DecisionArm::Right))
     } else {
-        appliance.default_resolver.evaluate()
+        owner.local_resolver.evaluate()
     }
 }
 
-let routed = g::route(default_arm, resolver_arm).resolve::<ROUTE_RESOLVER>();
+let routed = g::route(local_arm, external_arm).resolve::<ROUTE_RESOLVER>();
 let role0: RoleProgram<0> = project(&routed);
-let appliance = ResolverAppliance {
+let owner = ExternalResolverOwner {
     loaded: true,
-    default_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_fn(default_decision),
+    local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_fn(local_decision),
 };
 
 rv.role(&role0)
     .set_resolver(ResolverRef::<ROUTE_RESOLVER>::decision_state(
-        &appliance,
-        appliance_decision,
+        &owner,
+        external_decision,
     ))?;
 ```
 
@@ -582,13 +591,14 @@ kit in place into caller-owned storage, returns the stable borrow used
 by endpoint attach, and drops the initialized kit exactly once. The raw unsafe
 initializer and `MaybeUninit` protocol are not part of the public surface.
 
-`Config::from_resources` owns the rendezvous storage and clock authority. Lane
-domain and endpoint lease capacity are not caller-selected config. A fresh
-rendezvous starts with no materialized lane storage and no endpoint lease table.
-Role attach reads the projected descriptor, grows exactly the lane
-tables and endpoint lease entries it needs, and preserves existing session state
-if a later projected role needs a wider lane span. Runtime code must not
-pass caller-chosen lane windows, endpoint counts, or deadline knobs.
+`Config::from_resources` borrows the caller-owned tap ring and slab, and carries
+the clock authority. Lane domain and endpoint lease capacity are not
+caller-selected config. A fresh rendezvous starts with no materialized lane
+storage and no endpoint lease table. Role attach reads the projected descriptor,
+grows exactly the lane tables and endpoint lease entries it needs, and preserves
+existing session state if a later projected role needs a wider lane span.
+Runtime code must not pass caller-chosen lane windows, endpoint counts, or
+deadline knobs.
 
 The protocol crate owns concrete `MyTransport` and any ingress demux state. The
 application receives only `Endpoint`.
@@ -658,8 +668,8 @@ Resolvers are installed by the protocol crate for explicit route resolution
 sites. Route choices are otherwise derived from projected first visible branch
 actions. Resolver state is the external input owner: use
 `ResolverRef::decision_state(...)` when a resolver needs protocol-specific
-observations. Resolver failure rejects the step; it does not fall through to a
-different semantic path.
+observations. Resolver failure rejects the step; it does not authorize any
+alternate semantic path.
 
 ## Guarantees
 
@@ -680,7 +690,7 @@ Core guarantees:
 - failed sends, receives, offers, and decodes do not authorize hidden progress;
 - payload decode is exact;
 - message logical labels and transport frame labels are separate concepts;
-- route-decision semantics are descriptor metadata, not reserved numeric labels;
+- route-decision semantics are descriptor metadata, not protocol label numbers;
 - route authority is limited to projected facts, first visible branch actions,
   and explicit resolver decisions; descriptor-checked transport observation may
   only confirm or demux projected facts.
@@ -707,7 +717,7 @@ cargo +1.95.0 check --features std --lib -p hibana
 cargo +1.95.0 doc -p hibana --no-deps --no-default-features
 ```
 
-The full test suite is repository-only; it depends on source-tree fixtures that
+The full test suite is repository-only; it depends on source-tree test support that
 are intentionally excluded from the production crate package.
 
 For a repository checkout, maintainers should run the repository gate suite

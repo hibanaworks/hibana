@@ -1,9 +1,9 @@
 use crate::{
     eff::{
-        EffAtom, EffKind,
+        EffAtom, EffKind, EventOrigin,
         meta::{MAX_SEGMENT_EFFS, MAX_SEGMENTS},
     },
-    global::const_dsl::{EffList, ResolverMode, ScopeEvent, ScopeMarker, SegmentSummary},
+    global::const_dsl::{EffList, RouteResolver, ScopeEvent, ScopeMarker, SegmentSummary},
 };
 
 use super::super::images::program::{
@@ -92,7 +92,7 @@ impl ProgramAtomRow {
             from: 0,
             to: 0,
             label: 0,
-            is_internal: false,
+            origin: EventOrigin::User,
             resource: None,
             lane: 0,
         },
@@ -110,17 +110,17 @@ impl ProgramAtomRow {
 #[derive(Clone, Copy)]
 struct ProgramResolverRow {
     offset: u16,
-    resolver: ResolverMode,
+    resolver: RouteResolver,
 }
 
 impl ProgramResolverRow {
     const EMPTY: Self = Self {
         offset: u16::MAX,
-        resolver: ResolverMode::Static,
+        resolver: RouteResolver::Intrinsic,
     };
 
     #[inline(always)]
-    const fn new(offset: usize, resolver: ResolverMode) -> Self {
+    const fn new(offset: usize, resolver: RouteResolver) -> Self {
         Self {
             offset: ProgramImageSegmentData::compact_count(offset),
             resolver,
@@ -159,7 +159,7 @@ pub(crate) struct CompiledProgramImage {
     roles: ProgramRoleImageData,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct ProgramLoweringFacts {
     scope_count: u16,
     max_active_scope_depth: u16,
@@ -180,7 +180,7 @@ impl ProgramLoweringFacts {
     };
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct RoleCompiledFacts {
     local_step_count: u16,
     resident_row_count: u16,

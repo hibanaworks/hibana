@@ -28,25 +28,32 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint::kernel) fn start_public_op(&mut self, op: PublicActiveOp) -> bool {
+    pub(in crate::endpoint::kernel) fn start_public_op(
+        &mut self,
+        op: PublicActiveOp,
+    ) -> super::core::PublicOpLease {
         if self.public_active_op == PublicActiveOp::Idle {
             self.public_active_op = op;
-            true
+            super::core::PublicOpLease::Held
         } else {
             self.public_op_busy_fault();
-            false
+            super::core::PublicOpLease::Rejected
         }
     }
 
     #[inline]
     #[must_use]
-    fn transition_public_op(&mut self, from: PublicActiveOp, to: PublicActiveOp) -> bool {
+    fn transition_public_op(
+        &mut self,
+        from: PublicActiveOp,
+        to: PublicActiveOp,
+    ) -> super::core::PublicOpLease {
         if self.public_active_op == from {
             self.public_active_op = to;
-            true
+            super::core::PublicOpLease::Held
         } else {
             self.public_op_busy_fault();
-            false
+            super::core::PublicOpLease::Rejected
         }
     }
 
@@ -123,12 +130,14 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> bool {
-        if !self.start_public_op(PublicActiveOp::Offer) {
-            return false;
+    pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> super::core::PublicOpLease {
+        let lease = self.start_public_op(PublicActiveOp::Offer);
+        match lease {
+            super::core::PublicOpLease::Held => {}
+            super::core::PublicOpLease::Rejected => return lease,
         }
         self.public_offer_state = OfferState::new();
-        true
+        lease
     }
 
     #[inline]
@@ -141,9 +150,14 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint) fn init_public_send_state(&mut self, init: &SendInit) -> bool {
-        if !self.start_public_op(PublicActiveOp::Send) {
-            return false;
+    pub(in crate::endpoint) fn init_public_send_state(
+        &mut self,
+        init: &SendInit,
+    ) -> super::core::PublicOpLease {
+        let lease = self.start_public_op(PublicActiveOp::Send);
+        match lease {
+            super::core::PublicOpLease::Held => {}
+            super::core::PublicOpLease::Rejected => return lease,
         }
         let (meta, preview_cursor_index) = init.preview.into_parts();
         self.public_send_state = SendState::Init {
@@ -151,7 +165,7 @@ where
             meta,
             preview_cursor_index: Some(preview_cursor_index),
         };
-        true
+        lease
     }
 
     #[inline]
@@ -182,12 +196,14 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint) fn init_public_recv_state(&mut self) -> bool {
-        if !self.start_public_op(PublicActiveOp::Recv) {
-            return false;
+    pub(in crate::endpoint) fn init_public_recv_state(&mut self) -> super::core::PublicOpLease {
+        let lease = self.start_public_op(PublicActiveOp::Recv);
+        match lease {
+            super::core::PublicOpLease::Held => {}
+            super::core::PublicOpLease::Rejected => return lease,
         }
         self.public_recv_state = super::recv::RecvState::new();
-        true
+        lease
     }
 
     #[inline]
@@ -206,18 +222,22 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint) fn begin_public_decode_state(&mut self) -> bool {
-        if !self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::Decode) {
-            self.public_decode_state = super::decode::DecodeState::empty();
-            return false;
+    pub(in crate::endpoint) fn begin_public_decode_state(&mut self) -> super::core::PublicOpLease {
+        let lease = self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::Decode);
+        match lease {
+            super::core::PublicOpLease::Held => {}
+            super::core::PublicOpLease::Rejected => {
+                self.public_decode_state = super::decode::DecodeState::empty();
+                return lease;
+            }
         }
         if let Some(branch) = self.public_route_branch.take() {
             self.public_decode_state = super::decode::DecodeState::new(branch);
-            true
+            lease
         } else {
             self.public_op_busy_fault();
             self.public_decode_state = super::decode::DecodeState::empty();
-            false
+            super::core::PublicOpLease::Rejected
         }
     }
 
@@ -225,7 +245,7 @@ where
     pub(in crate::endpoint) fn reset_public_decode_state(&mut self) {
         self.clear_session_waiter();
         self.finish_public_op(PublicActiveOp::Decode);
-        if self.public_decode_state.restore_on_drop
+        if self.public_decode_state.restore_on_drop() == super::decode::DecodeRestore::Armed
             && let Some(branch) = self.public_decode_state.branch.take()
         {
             self.restore_materialized_route_branch(branch);

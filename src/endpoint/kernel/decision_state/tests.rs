@@ -6,12 +6,10 @@ use core::mem::MaybeUninit;
 fn route_commit_row_set_builder_accepts_more_than_64_route_scopes() {
     let mut builder = MaybeUninit::<RouteCommitRowSetBuilder>::uninit();
     unsafe {
-        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), core::ptr::null_mut(), 71);
+        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), 71);
     }
     let mut builder = unsafe { builder.assume_init() };
-    let list = builder
-        .begin()
-        .expect("route commit row set builder derives from route scope count");
+    let list = builder.begin();
 
     assert_eq!(list.len(), 0);
 }
@@ -20,7 +18,7 @@ fn route_commit_row_set_builder_accepts_more_than_64_route_scopes() {
 fn prepared_route_commit_rows_use_builder_capacity_not_fixed_inline_cap() {
     let mut builder = MaybeUninit::<RouteCommitRowSetBuilder>::uninit();
     unsafe {
-        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), core::ptr::null_mut(), 9);
+        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), 9);
     }
     let mut builder = unsafe { builder.assume_init() };
     let rows =
@@ -31,22 +29,17 @@ fn prepared_route_commit_rows_use_builder_capacity_not_fixed_inline_cap() {
 
     assert_eq!(value.len(), 9);
     assert_eq!(value.selected_lane(), Some(3));
-    assert!(
-        builder.begin().is_ok(),
-        "sealing borrowed route rows must leave the builder reusable"
-    );
+    assert_eq!(builder.begin().len(), 0);
 }
 
 #[test]
 fn decode_commit_row_set_builder_accepts_more_than_64_route_scopes() {
     let mut builder = MaybeUninit::<RouteCommitRowSetBuilder>::uninit();
     unsafe {
-        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), core::ptr::null_mut(), 71);
+        RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), 71);
     }
     let mut builder = unsafe { builder.assume_init() };
-    let list = builder
-        .begin()
-        .expect("decode commit plan uses shared route-scope row builder");
+    let list = builder.begin();
 
     assert_eq!(list.len(), 0);
 }

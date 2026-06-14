@@ -1,12 +1,14 @@
 use super::super::super::{
     Arm, CachedRecvMeta, CachedRouteArm, ClusterError, CommitDelta, CursorEndpoint,
     DynamicResolverResolution, EffIndex, EventSemanticKind, OfferScopeSelection, RecvError,
-    RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm, ResolverMode, RouteArmToken,
-    RouteResolveStep, ScopeArmMaterializationMeta, ScopeId, SendMeta, TapEvent, Transport,
+    RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm, RouteArmToken, RouteResolveStep,
+    RouteResolver, ScopeArmMaterializationMeta, ScopeId, SendMeta, TapEvent, Transport,
     checked_state_index, controller_arm_label, controller_arm_semantic_kind, emit, events,
     prepare_route_site_materialization_rows_from_resident_route_commit_range,
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
+use crate::eff::EventOrigin;
+use crate::global::typestate::RouteChoiceMark;
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
     T: Transport + 'r,
@@ -51,11 +53,11 @@ where
             frame_label: meta.frame_label,
             resource: meta.resource,
             semantic: meta.semantic,
-            is_internal: meta.is_internal,
+            origin: meta.origin,
             next,
             scope: meta.scope,
             route_arm: CachedRouteArm::from_option(meta.route_arm),
-            is_choice_determinant: meta.is_choice_determinant,
+            choice: meta.choice,
             resolver: meta.resolver,
             lane: meta.lane,
             flags: CachedRecvMeta::FLAG_RECV_STEP,
@@ -83,11 +85,11 @@ where
             frame_label: meta.frame_label,
             resource: meta.resource,
             semantic: meta.semantic,
-            is_internal: meta.is_internal,
+            origin: meta.origin,
             next,
             scope: scope_id,
             route_arm: CachedRouteArm::some(route_arm),
-            is_choice_determinant: false,
+            choice: RouteChoiceMark::Ordinary,
             resolver: meta.resolver(),
             lane: meta.lane,
             flags: 0,
@@ -114,11 +116,11 @@ where
             frame_label: meta.frame_label,
             resource: meta.resource,
             semantic: meta.semantic,
-            is_internal: meta.is_internal,
+            origin: meta.origin,
             next,
             scope: meta.scope,
             route_arm: CachedRouteArm::some(route_arm),
-            is_choice_determinant: false,
+            choice: RouteChoiceMark::Ordinary,
             resolver: meta.resolver,
             lane: meta.lane,
             flags: 0,
@@ -149,12 +151,12 @@ where
             frame_label: 0,
             resource: None,
             semantic,
-            is_internal: true,
+            origin: EventOrigin::Session,
             next,
             scope: scope_id,
             route_arm: CachedRouteArm::some(route_arm),
-            is_choice_determinant: false,
-            resolver: ResolverMode::static_mode(),
+            choice: RouteChoiceMark::Ordinary,
+            resolver: RouteResolver::Intrinsic,
             lane,
             flags: 0,
         }
@@ -172,8 +174,11 @@ where
         let Some(label) = controller_arm_label(&self.cursor, scope_id, route_arm) else {
             return CachedRecvMeta::EMPTY;
         };
-        let semantic = controller_arm_semantic_kind(&self.cursor, scope_id, route_arm)
-            .expect("controller arm label has resident semantic");
+        let semantic = crate::invariant_some(controller_arm_semantic_kind(
+            &self.cursor,
+            scope_id,
+            route_arm,
+        ));
         Self::route_arm_cached_recv_meta(
             cursor_index,
             scope_id,
@@ -205,7 +210,7 @@ where
         if !self.cursor.has_route_scope(scope_id) {
             return CachedRecvMeta::EMPTY;
         }
-        if self.cursor.route_scope_linger(scope_id) {
+        if self.cursor.route_scope_reentry(scope_id) {
             return self.route_arm_cached_recv_meta_for_arm(
                 entry_idx, scope_id, target_arm, entry_idx, offer_lane,
             );
@@ -247,12 +252,14 @@ where
     ) -> bool {
         let materialization_meta = self.selection_materialization_meta(selection);
         if is_route_controller
-            && selection.at_route_offer_entry
+            && selection.entry_position.is_route_entry()
             && materialization_meta.controller_arm_entry(arm).is_some()
         {
             return materialization_meta.controller_arm_requires_ready_evidence(arm);
         }
-        if selection.at_route_offer_entry && materialization_meta.passive_arm_entry(arm).is_some() {
+        if selection.entry_position.is_route_entry()
+            && materialization_meta.passive_arm_entry(arm).is_some()
+        {
             if materialization_meta.arm_has_first_recv_dispatch(arm) {
                 return !self
                     .selection_arm_dispatch_materializes_without_ready_evidence(selection, arm);
@@ -267,7 +274,7 @@ where
             if passive_meta.peer == ROLE {
                 return false;
             }
-            if passive_meta.is_internal
+            if passive_meta.origin.is_session()
                 && materialization_meta
                     .controller_arm_entry(arm)
                     .map(|(_, label)| label)
@@ -375,7 +382,7 @@ where
                 route_commit_rows,
                 ..
             } = self;
-            let mut route_rows = route_commit_rows.begin()?;
+            let mut route_rows = route_commit_rows.begin();
             let mut route_row_result = Ok(());
             let target_index = cursor
                 .visit_passive_route_materialization_rows(
@@ -489,18 +496,18 @@ where
             .cursor
             .route_scope_controller_resolver(scope_id)
             .ok_or(RecvError::PhaseInvariant)?;
-        if !resolver.is_dynamic() {
+        let RouteResolver::Dynamic {
+            resolver_id,
+            scope: resolver_scope,
+        } = resolver
+        else {
             return Err(RecvError::PhaseInvariant);
-        }
-        let resolver_id = resolver
-            .dynamic_resolver_id()
-            .ok_or(RecvError::PhaseInvariant)?;
-        if scope_id.is_none() || scope_id != resolver.scope() {
+        };
+        if scope_id.is_none() || scope_id != resolver_scope.to_scope_id() {
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        self.emit_decision_resolver_audit(scope_id, offer_lane, resolver_id)
-            .map_err(|_| RecvError::PhaseInvariant)?;
+        self.emit_decision_resolver_audit(scope_id, offer_lane, resolver_id);
         let cluster = self.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let resolution = match cluster.resolve_dynamic_resolver(rv_id, eff_index, resolver_id) {
@@ -510,17 +517,15 @@ where
             }
             Err(
                 ClusterError::RendezvousMismatch { .. }
-                | ClusterError::RendezvousMissing { .. }
+                | ClusterError::RendezvousUnregistered { .. }
                 | ClusterError::RendezvousBusy { .. }
                 | ClusterError::ResourceExhausted { .. }
-                | ClusterError::UnsupportedEffect(_)
                 | ClusterError::DynamicResolverInvariant { .. },
             ) => return Err(RecvError::PhaseInvariant),
         };
         let arm = match resolution {
             DynamicResolverResolution::DecisionArm { arm } => arm,
             DynamicResolverResolution::Defer => return Ok(RouteResolveStep::Deferred),
-            DynamicResolverResolution::NoAuthority => return Ok(RouteResolveStep::NoAuthority),
         };
         let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
         self.record_route_arm_selection_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);

@@ -10,7 +10,7 @@ use super::{
     lane_port,
 };
 use crate::{
-    endpoint::{RecvError, RecvResult},
+    endpoint::{RecvError, RecvResult, kernel::RecvPayloadMode},
     global::typestate::{CursorInvariantError, StateIndex, state_index_to_usize},
     observe::ids,
     resolver_audit::ResolverSlot,
@@ -23,13 +23,8 @@ use crate::{
 };
 
 pub(crate) enum RecvPayloadSource<'a> {
-    Empty,
+    ZeroLength,
     Direct(Payload<'a>),
-}
-
-impl RecvPayloadSource<'_> {
-    #[inline]
-    fn discard_terminal(self) {}
 }
 
 struct RecvCommitPlan<'a> {
@@ -91,7 +86,7 @@ where
     fn prepare_recv_descriptor(
         &mut self,
         target_label: u8,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
     ) -> RecvResult<PreparedRecv> {
         let idx = self
             .cursor
@@ -141,9 +136,9 @@ where
         let runtime = RecvRuntimeDesc::new(
             target_label,
             crate::transport::FrameLabel::new(meta.frame_label),
-            accepts_empty_payload,
+            payload_mode,
         );
-        if meta.is_internal {
+        if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
         }
         Ok(PreparedRecv {
@@ -155,7 +150,7 @@ where
     fn poll_recv_payload_source(
         &mut self,
         desc: RecvDescriptor,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<RecvPayloadSource<'r>>> {
@@ -177,14 +172,14 @@ where
         };
 
         if frame.is_empty() {
-            if accepts_empty_payload {
+            if payload_mode.allows_zero_length() {
                 if !frame.into_payload().as_bytes().is_empty() {
                     crate::invariant();
                 }
-                return Poll::Ready(Ok(RecvPayloadSource::Empty));
+                return Poll::Ready(Ok(RecvPayloadSource::ZeroLength));
             }
             frame.discard_uncommitted();
-            return Poll::Ready(Ok(RecvPayloadSource::Empty));
+            return Poll::Ready(Ok(RecvPayloadSource::ZeroLength));
         }
 
         Poll::Ready(Ok(RecvPayloadSource::Direct(frame.into_payload())))
@@ -199,16 +194,16 @@ where
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let meta = desc.meta;
         if erased.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
-            payload_source.discard_terminal();
             return Err(RecvError::PhaseInvariant);
         }
-        if meta.is_internal {
-            payload_source.discard_terminal();
+        if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
         }
         let payload = match payload_source {
-            RecvPayloadSource::Empty if erased.accepts_empty_payload() => Payload::new(&[]),
-            RecvPayloadSource::Empty => return Err(RecvError::PhaseInvariant),
+            RecvPayloadSource::ZeroLength if erased.payload_mode().allows_zero_length() => {
+                Payload::new(&[])
+            }
+            RecvPayloadSource::ZeroLength => return Err(RecvError::PhaseInvariant),
             RecvPayloadSource::Direct(payload) => payload,
         };
         if let Err(err) = validate(payload) {
@@ -232,12 +227,7 @@ where
                     route_commit_rows,
                     ..
                 } = &mut *self;
-                let mut rows = match route_commit_rows.begin() {
-                    Ok(rows) => rows,
-                    Err(err) => {
-                        return Err(err);
-                    }
-                };
+                let mut rows = route_commit_rows.begin();
                 prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
                     decision_state,
                     cursor,
@@ -275,7 +265,7 @@ where
         })
     }
 
-    fn publish_recv_commit_plan(&mut self, plan: RecvCommitPlan<'r>) -> RecvResult<Payload<'r>> {
+    fn publish_recv_commit_plan(&mut self, plan: RecvCommitPlan<'r>) -> Payload<'r> {
         let RecvCommitPlan {
             desc,
             payload,
@@ -303,15 +293,15 @@ where
             FrameFlags::empty(),
         );
         let scope_trace = self.scope_trace(meta.scope);
-        let event_id = if meta.is_internal {
-            ids::ENDPOINT_CONTROL
+        let event_id = if meta.origin.is_session() {
+            ids::ENDPOINT_SESSION
         } else {
             ids::ENDPOINT_RECV
         };
         self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
 
         self.commit_prepared_delta(delta);
-        Ok(payload)
+        payload
     }
 
     fn finish_recv_payload(
@@ -322,8 +312,7 @@ where
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
         let plan = self.build_recv_commit_plan(desc, payload_source, erased, validate)?;
-        let payload = self.publish_recv_commit_plan(plan)?;
-        Ok(payload)
+        Ok(self.publish_recv_commit_plan(plan))
     }
 }
 
@@ -337,21 +326,21 @@ where
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
     ) -> RecvResult<PreparedRecv> {
-        self.prepare_recv_descriptor(label, accepts_empty_payload)
+        self.prepare_recv_descriptor(label, payload_mode)
     }
 
     #[inline]
     fn poll_recv_kernel_payload_source(
         &mut self,
         desc: RecvDescriptor,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<RecvPayloadSource<'r>>> {
         let pending_recv = &mut state.pending_recv;
-        self.poll_recv_payload_source(desc, accepts_empty_payload, pending_recv, cx)
+        self.poll_recv_payload_source(desc, payload_mode, pending_recv, cx)
     }
 
     #[inline]

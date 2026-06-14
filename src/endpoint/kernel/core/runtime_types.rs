@@ -51,24 +51,51 @@ pub(crate) struct SendCommitOutcome<'rv> {
     pub(crate) _borrow: core::marker::PhantomData<&'rv ()>,
 }
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RecvPayloadMode {
+    RequiresPayload = 0,
+    AllowsZeroLength = 1,
+}
+
+impl RecvPayloadMode {
+    #[inline]
+    pub(crate) const fn from_allows_zero_length(allows_zero_length: bool) -> Self {
+        if allows_zero_length {
+            Self::AllowsZeroLength
+        } else {
+            Self::RequiresPayload
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn allows_zero_length(self) -> bool {
+        matches!(self, Self::AllowsZeroLength)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct MsgFlags(u8);
 
 impl MsgFlags {
-    const ACCEPTS_EMPTY_PAYLOAD: u8 = 1 << 0;
+    const ALLOWS_ZERO_LENGTH: u8 = 1 << 0;
 
     #[inline(always)]
-    pub(crate) const fn new(accepts_empty_payload: bool) -> Self {
+    pub(crate) const fn new(payload_mode: RecvPayloadMode) -> Self {
         let mut bits = 0u8;
-        if accepts_empty_payload {
-            bits |= Self::ACCEPTS_EMPTY_PAYLOAD;
+        if payload_mode.allows_zero_length() {
+            bits |= Self::ALLOWS_ZERO_LENGTH;
         }
         Self(bits)
     }
 
     #[inline(always)]
-    pub(crate) const fn accepts_empty_payload(self) -> bool {
-        self.0 & Self::ACCEPTS_EMPTY_PAYLOAD != 0
+    pub(crate) const fn payload_mode(self) -> RecvPayloadMode {
+        if self.0 & Self::ALLOWS_ZERO_LENGTH != 0 {
+            RecvPayloadMode::AllowsZeroLength
+        } else {
+            RecvPayloadMode::RequiresPayload
+        }
     }
 }
 
@@ -85,12 +112,12 @@ impl MsgCore {
     pub(crate) const fn new(
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
     ) -> Self {
         Self {
             logical_label: crate::transport::LogicalLabel::new(logical_label),
             frame_label,
-            flags: MsgFlags::new(accepts_empty_payload),
+            flags: MsgFlags::new(payload_mode),
         }
     }
 
@@ -105,8 +132,8 @@ impl MsgCore {
     }
 
     #[inline]
-    pub(crate) const fn accepts_empty_payload(self) -> bool {
-        self.flags.accepts_empty_payload()
+    pub(crate) const fn payload_mode(self) -> RecvPayloadMode {
+        self.flags.payload_mode()
     }
 }
 
@@ -121,10 +148,10 @@ impl RecvRuntimeDesc {
     pub(crate) const fn new(
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
     ) -> Self {
         Self {
-            core: MsgCore::new(logical_label, frame_label, accepts_empty_payload),
+            core: MsgCore::new(logical_label, frame_label, payload_mode),
         }
     }
 
@@ -134,8 +161,8 @@ impl RecvRuntimeDesc {
     }
 
     #[inline]
-    pub(crate) const fn accepts_empty_payload(self) -> bool {
-        self.core.accepts_empty_payload()
+    pub(crate) const fn payload_mode(self) -> RecvPayloadMode {
+        self.core.payload_mode()
     }
 }
 
@@ -160,7 +187,7 @@ impl DecodeRuntimeDesc {
             -> Result<Payload<'a>, crate::transport::wire::CodecError>,
     ) -> Self {
         Self {
-            core: MsgCore::new(logical_label, frame_label, false),
+            core: MsgCore::new(logical_label, frame_label, RecvPayloadMode::RequiresPayload),
             validate,
             zero_payload,
         }
@@ -212,7 +239,7 @@ impl SendRuntimeDesc {
         ) -> Result<usize, crate::transport::wire::CodecError>,
     ) -> Self {
         Self {
-            core: MsgCore::new(logical_label, frame_label, false),
+            core: MsgCore::new(logical_label, frame_label, RecvPayloadMode::RequiresPayload),
             encode_payload,
         }
     }
@@ -284,18 +311,8 @@ pub(crate) struct CursorEndpointStorageLayout {
 
 impl CursorEndpointStorageLayout {
     #[inline(always)]
-    pub(crate) const fn header_bytes(self) -> usize {
-        self.header_bytes
-    }
-
-    #[inline(always)]
     pub(crate) const fn port_slots_offset(self) -> usize {
         self.port_slots_offset
-    }
-
-    #[inline(always)]
-    pub(crate) const fn port_slots_bytes(self) -> usize {
-        self.port_slots_bytes
     }
 
     #[inline(always)]
@@ -304,23 +321,8 @@ impl CursorEndpointStorageLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn guard_slots_bytes(self) -> usize {
-        self.guard_slots_bytes
-    }
-
-    #[inline(always)]
     pub(crate) const fn arena_offset(self) -> usize {
         self.arena_offset
-    }
-
-    #[inline(always)]
-    pub(crate) const fn arena_bytes(self) -> usize {
-        self.arena_bytes
-    }
-
-    #[inline(always)]
-    pub(crate) const fn arena_align(self) -> usize {
-        self.arena_align
     }
 
     #[inline(always)]

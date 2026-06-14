@@ -14,7 +14,7 @@ fn route_arm_lane_steps_are_sparse_over_actual_lanes_not_logical_lanes() {
         let logical_lane_count = descriptor.logical_lane_count();
         assert!(
             logical_lane_count >= 64,
-            "test fixture must keep route arm lane on a high logical lane"
+            "test support must keep route arm lane on a high logical lane"
         );
         assert_eq!(columns.route_arms.len, 8);
         assert_eq!(columns.route_arm_lane_step_rows.len, 8);

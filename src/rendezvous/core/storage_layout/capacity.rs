@@ -14,13 +14,13 @@ mod endpoint_lease;
 // before publishing the new table ingress.
 
 #[derive(Clone, Copy)]
-struct ReservedSidecar {
+struct SidecarLease {
     ptr: *mut u8,
     bytes: usize,
     reclaim_delta: usize,
 }
 
-impl ReservedSidecar {
+impl SidecarLease {
     #[inline]
     const fn new(ptr: *mut u8, bytes: usize, reclaim_delta: usize) -> Self {
         Self {
@@ -31,9 +31,8 @@ impl ReservedSidecar {
     }
 }
 
-#[derive(Default)]
-struct LaneStorageReservation {
-    association: Option<ReservedSidecar>,
+struct LaneStorageLeaseSet {
+    association: Option<SidecarLease>,
 }
 
 impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
@@ -45,7 +44,7 @@ where
         let mut empty = 0usize;
         let mut idx = 0usize;
         while idx < FREE_REGION_CAPACITY {
-            if !self.free_regions[idx].occupied {
+            if !self.free_regions[idx].is_recorded() {
                 empty += 1;
             }
             idx += 1;
@@ -57,7 +56,7 @@ where
     fn first_empty_free_region_slot(&self) -> Option<usize> {
         let mut idx = 0usize;
         while idx < FREE_REGION_CAPACITY {
-            if !self.free_regions[idx].occupied {
+            if !self.free_regions[idx].is_recorded() {
                 return Some(idx);
             }
             idx += 1;
@@ -77,16 +76,16 @@ where
             return;
         }
         let mut start = offset;
-        let mut end = offset.checked_add(len).expect("invariant");
+        let mut end = crate::invariant_some(offset.checked_add(len));
         let mut idx = 0usize;
         while idx < FREE_REGION_CAPACITY {
             let region = self.free_regions[idx];
-            if !region.occupied {
+            if !region.is_recorded() {
                 idx += 1;
                 continue;
             }
             let region_start = region.offset;
-            let region_end = region.offset.checked_add(region.len).expect("invariant");
+            let region_end = crate::invariant_some(region.offset.checked_add(region.len));
             if region_end < start || region_start > end {
                 idx += 1;
                 continue;
@@ -104,8 +103,8 @@ where
                 let mut free_idx = 0usize;
                 while free_idx < FREE_REGION_CAPACITY {
                     let region = self.free_regions[free_idx];
-                    if region.occupied
-                        && region.offset.checked_add(region.len).expect("invariant")
+                    if region.is_recorded()
+                        && crate::invariant_some(region.offset.checked_add(region.len))
                             == self.image_frontier
                     {
                         self.set_image_frontier(region.offset);
@@ -123,11 +122,8 @@ where
         }
 
         if let Some(idx) = self.first_empty_free_region_slot() {
-            self.free_regions[idx] = FreeRegion {
-                offset: start,
-                len: end.checked_sub(start).expect("invariant"),
-                occupied: true,
-            };
+            self.free_regions[idx] =
+                FreeRegion::recorded(start, crate::invariant_some(end.checked_sub(start)));
         }
     }
 
@@ -141,7 +137,7 @@ where
         let mut idx = 0usize;
         while idx < FREE_REGION_CAPACITY {
             let region = self.free_regions[idx];
-            if !region.occupied {
+            if !region.is_recorded() {
                 idx += 1;
                 continue;
             }
@@ -153,8 +149,8 @@ where
                 idx += 1;
                 continue;
             }
-            let prefix_len = alloc_start.checked_sub(region_start).expect("invariant");
-            let suffix_len = region_end.checked_sub(alloc_end).expect("invariant");
+            let prefix_len = crate::invariant_some(alloc_start.checked_sub(region_start));
+            let suffix_len = crate::invariant_some(region_end.checked_sub(alloc_end));
             let fragments = usize::from(prefix_len != 0) + usize::from(suffix_len != 0);
             if self.free_region_empty_slots() + 1 < fragments {
                 idx += 1;
@@ -162,15 +158,15 @@ where
             }
             self.clear_free_region(idx);
             if prefix_len != 0 {
-                let prefix_len = u32::try_from(prefix_len).expect("invariant");
+                let prefix_len = crate::invariant_ok(u32::try_from(prefix_len));
                 self.release_persistent_region(region.offset, prefix_len);
             }
             if suffix_len != 0 {
-                let alloc_end = u32::try_from(alloc_end).expect("invariant");
-                let suffix_len = u32::try_from(suffix_len).expect("invariant");
+                let alloc_end = crate::invariant_ok(u32::try_from(alloc_end));
+                let suffix_len = crate::invariant_ok(u32::try_from(suffix_len));
                 self.release_persistent_region(alloc_end, suffix_len);
             }
-            let alloc_start_u32 = u32::try_from(alloc_start).expect("invariant");
+            let alloc_start_u32 = crate::invariant_ok(u32::try_from(alloc_start));
             return Some((
                 /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
                 unsafe { slab_ptr.add(alloc_start) },
@@ -199,8 +195,11 @@ where
         if end > self.endpoint_storage_floor() {
             return None;
         }
-        let end_u32 = u32::try_from(end).ok()?;
-        let start_u32 = u32::try_from(start).ok()?;
+        if end > u32::MAX as usize {
+            return None;
+        }
+        let end_u32 = crate::invariant_ok(u32::try_from(end));
+        let start_u32 = crate::invariant_ok(u32::try_from(start));
         self.set_image_frontier(end_u32);
         Some((
             /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
@@ -229,9 +228,9 @@ where
     pub(crate) fn reclaim_offset_for_payload(&self, ptr: *mut u8, reclaim_delta: usize) -> u32 {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
-        let payload_start = ptr.addr().checked_sub(base).expect("invariant");
-        let reclaim_start = payload_start.checked_sub(reclaim_delta).expect("invariant");
-        u32::try_from(reclaim_start).expect("invariant")
+        let payload_start = crate::invariant_some(ptr.addr().checked_sub(base));
+        let reclaim_start = crate::invariant_some(payload_start.checked_sub(reclaim_delta));
+        crate::invariant_ok(u32::try_from(reclaim_start))
     }
 
     #[inline]
@@ -246,11 +245,11 @@ where
         }
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
-        let payload_start = ptr.addr().checked_sub(base).expect("invariant");
+        let payload_start = crate::invariant_some(ptr.addr().checked_sub(base));
         let reclaim_start = reclaim_offset as usize;
-        let payload_end = payload_start.checked_add(bytes).expect("invariant");
-        let release_len = payload_end.checked_sub(reclaim_start).expect("invariant");
-        let release_len = u32::try_from(release_len).expect("invariant");
+        let payload_end = crate::invariant_some(payload_start.checked_add(bytes));
+        let release_len = crate::invariant_some(payload_end.checked_sub(reclaim_start));
+        let release_len = crate::invariant_ok(u32::try_from(release_len));
         self.release_persistent_region(reclaim_offset, release_len);
     }
 
@@ -290,37 +289,37 @@ where
     }
 
     #[inline]
-    fn reserve_sidecar(&mut self, bytes: usize, align: usize) -> Option<ReservedSidecar> {
+    fn lease_sidecar(&mut self, bytes: usize, align: usize) -> Option<SidecarLease> {
         let (ptr, reclaim_delta) = self.allocate_external_persistent_sidecar_bytes(bytes, align)?;
-        Some(ReservedSidecar::new(ptr, bytes, reclaim_delta))
+        Some(SidecarLease::new(ptr, bytes, reclaim_delta))
     }
 
     #[inline]
-    fn release_reserved_sidecar(&mut self, reserved: &mut Option<ReservedSidecar>) {
-        if let Some(reserved) = reserved.take() {
+    fn release_sidecar_lease(&mut self, lease: &mut Option<SidecarLease>) {
+        if let Some(lease) = lease.take() {
             self.free_external_persistent_sidecar_bytes(
-                reserved.ptr,
-                reserved.bytes,
-                reserved.reclaim_delta,
+                lease.ptr,
+                lease.bytes,
+                lease.reclaim_delta,
             );
         }
     }
 
-    fn release_lane_storage_reservation(&mut self, reservation: &mut LaneStorageReservation) {
-        self.release_reserved_sidecar(&mut reservation.association);
+    fn release_lane_storage_leases(&mut self, leases: &mut LaneStorageLeaseSet) {
+        self.release_sidecar_lease(&mut leases.association);
     }
 
-    fn reserve_lane_storage_sidecar(
+    fn lease_lane_storage_sidecar(
         &mut self,
-        reservation: &mut LaneStorageReservation,
+        leases: &mut LaneStorageLeaseSet,
         bytes: usize,
         align: usize,
-    ) -> Option<ReservedSidecar> {
-        let Some(reserved) = self.reserve_sidecar(bytes, align) else {
-            self.release_lane_storage_reservation(reservation);
+    ) -> Option<SidecarLease> {
+        let Some(lease) = self.lease_sidecar(bytes, align) else {
+            self.release_lane_storage_leases(leases);
             return None;
         };
-        Some(reserved)
+        Some(lease)
     }
 
     fn ensure_lane_storage_for_lane_slots(
@@ -348,30 +347,30 @@ where
         let source_assoc_ptr = self.assoc.storage_ptr();
         let source_assoc_bytes = self.assoc.storage_bytes_current();
 
-        let mut reserved = LaneStorageReservation::default();
+        let mut leases = LaneStorageLeaseSet { association: None };
 
         if need_assoc {
-            reserved.association = Some(
-                self.reserve_lane_storage_sidecar(
-                    &mut reserved,
+            leases.association = Some(
+                self.lease_lane_storage_sidecar(
+                    &mut leases,
                     AssocTable::storage_bytes(target_slots),
                     AssocTable::storage_align(),
                 )
                 .ok_or(ResourceScope::LaneStorage)?,
             );
         }
-        if let Some(reserved) = reserved.association.take() {
-            /* SAFETY: all required sidecar storage was reserved before any table owner is rebound. */
+        if let Some(lease) = leases.association.take() {
+            /* SAFETY: all required sidecar storage was leased before any table owner is rebound. */
             unsafe {
                 if assoc_was_bound {
-                    self.assoc.rebind_from_storage_preserving(
-                        reserved.ptr,
+                    self.assoc.rebind_from_storage_copying_entries(
+                        lease.ptr,
                         lane_base,
                         target_slots,
                     );
                 } else {
                     self.assoc
-                        .bind_from_storage(reserved.ptr, lane_base, target_slots);
+                        .bind_from_storage(lease.ptr, lane_base, target_slots);
                 }
             }
         }

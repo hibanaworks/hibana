@@ -40,7 +40,7 @@ if rg -n 'pub[[:space:]]+const[[:space:]]+fn[[:space:]]+raw' src/eff.rs >/dev/nu
 fi
 
 if rg -n 'pub[[:space:]]+const[[:space:]]+(ZERO|MAX):' src/eff.rs >/dev/null; then
-  echo "segmented lowering hygiene violation: EffIndex must not expose public sentinel constructors" >&2
+  echo "segmented lowering hygiene violation: EffIndex must not expose public absence constructors" >&2
   exit 1
 fi
 
@@ -90,12 +90,12 @@ if rg -n '\b[Mm]onolithic lowering\b' src >/dev/null; then
 fi
 
 if ! rg -n 'pub\(crate\)[[:space:]]+const[[:space:]]+ZERO:' src/eff.rs >/dev/null; then
-  echo "segmented lowering hygiene violation: EffIndex zero sentinel must remain crate-private" >&2
+  echo "segmented lowering hygiene violation: EffIndex zero value must remain crate-private" >&2
   exit 1
 fi
 
-if ! rg -n 'pub\(crate\)[[:space:]]+const[[:space:]]+MAX:' src/eff.rs >/dev/null; then
-  echo "segmented lowering hygiene violation: EffIndex max sentinel must remain crate-private" >&2
+if rg -n 'pub\(crate\)[[:space:]]+const[[:space:]]+MAX:' src/eff.rs >/dev/null; then
+  echo "segmented lowering hygiene violation: EffIndex must not keep an unused max value" >&2
   exit 1
 fi
 
@@ -119,7 +119,7 @@ if ! rg -n 'struct ProgramImageSegmentData' src/global/compiled/lowering/driver.
   exit 1
 fi
 
-if rg -n 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|poli''cies:\s*\[ResolverMode;\s*MAX_COMPILED_IMAGE_NODES\]' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
+if rg -n 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|poli''cies:\s*\[RouteResolver;\s*MAX_COMPILED_IMAGE_NODES\]' src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver >/dev/null; then
   echo "segmented lowering hygiene violation: flat lowering validation rows detected" >&2
   exit 1
 fi

@@ -1,8 +1,8 @@
 use super::{
     Clock, CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome,
-    FrontierDeferRequest, FrontierVisitSet, OfferProgressState, OfferResolveState,
-    OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    ResolvePendingState, ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
+    FrontierDeferRequest, FrontierVisitSet, IngressEvidenceState, OfferProgressState,
+    OfferResolveState, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError,
+    RecvResult, ResolvePendingState, ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput<'a> {
     pub(super) selection: OfferScopeSelection,
@@ -61,6 +61,11 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 
     #[inline]
+    fn evidence_state(&self) -> IngressEvidenceState {
+        self.ingress.evidence_state()
+    }
+
+    #[inline]
     fn transport_lane_wire(&self) -> Option<u8> {
         self.ingress.transport_lane_wire()
     }
@@ -98,8 +103,8 @@ where
                 state.pending.clear();
                 Poll::Ready(Ok(ResolveTokenOutcome::RestartFrontier))
             }
-            ResolvePendingState::StaticPassiveProgress { selected_arm } => {
-                match self.await_static_passive_progress(
+            ResolvePendingState::IntrinsicPassiveProgress { selected_arm } => {
+                match self.await_intrinsic_passive_progress(
                     pending_recv,
                     state.selection(),
                     Some(selected_arm),
@@ -180,9 +185,9 @@ where
                 FrontierDeferRequest {
                     scope_id,
                     current_parallel: frontier_parallel_root,
-                    reason: DeferReason::NoEvidence,
+                    reason: DeferReason::EvidenceAbsent,
                     offer_lane,
-                    ingress_ready: state.has_transport(),
+                    ingress: state.evidence_state(),
                     selected_arm: None,
                 },
                 state.frontier_visited,
@@ -229,7 +234,7 @@ where
         self.ingest_scope_evidence_for_offer(
             scope_id,
             offer_lanes,
-            profile.suppresses_scope_frame_hint(),
+            profile.frame_hint_ingestion(),
             frame_label_meta,
         );
         if self.scope_evidence_conflicted(scope_id) {

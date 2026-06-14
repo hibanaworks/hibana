@@ -1,29 +1,29 @@
 use super::{
-    OfferControllerSkipEvidence, OfferControllerSkipReadiness, OfferPassiveEvidence,
+    OfferControllerLocalEvidence, OfferControllerLocalReadiness, OfferPassiveEvidence,
     OfferPassiveReadiness, OfferScopeProfile,
 };
 
 impl OfferScopeProfile {
     #[inline]
-    pub(in crate::endpoint::kernel::offer) const fn controller_skip_readiness(
+    pub(in crate::endpoint::kernel::offer) const fn controller_local_readiness(
         self,
-        evidence: OfferControllerSkipEvidence,
-    ) -> OfferControllerSkipReadiness {
+        evidence: OfferControllerLocalEvidence,
+    ) -> OfferControllerLocalReadiness {
         match self {
-            Self::ControllerStatic | Self::ControllerDynamic
+            Self::ControllerIntrinsic | Self::ControllerDynamic
                 if evidence.materialization_pending() =>
             {
-                OfferControllerSkipReadiness::BlockedByMaterialization
+                OfferControllerLocalReadiness::BlockedByMaterialization
             }
-            Self::ControllerStatic | Self::ControllerDynamic
+            Self::ControllerIntrinsic | Self::ControllerDynamic
                 if evidence.non_entry_cursor_ready() =>
             {
-                OfferControllerSkipReadiness::Ready
+                OfferControllerLocalReadiness::Ready
             }
-            Self::ControllerStatic
+            Self::ControllerIntrinsic
             | Self::ControllerDynamic
-            | Self::PassiveStatic
-            | Self::PassiveDynamic => OfferControllerSkipReadiness::NeedsTransport,
+            | Self::PassiveIntrinsic
+            | Self::PassiveDynamic => OfferControllerLocalReadiness::NeedsTransport,
         }
     }
 
@@ -33,7 +33,7 @@ impl OfferScopeProfile {
         evidence: OfferPassiveEvidence,
     ) -> OfferPassiveReadiness {
         match self {
-            Self::PassiveStatic if evidence.has_ready_signal() => {
+            Self::PassiveIntrinsic if evidence.has_ready_signal() => {
                 OfferPassiveReadiness::ReadyArmOrFrameHint
             }
             Self::PassiveDynamic if evidence.has_ready_signal() => {
@@ -45,9 +45,9 @@ impl OfferScopeProfile {
             Self::PassiveDynamic if evidence.ack_materializable() => {
                 OfferPassiveReadiness::DynamicAckMaterializable
             }
-            Self::ControllerStatic
+            Self::ControllerIntrinsic
             | Self::ControllerDynamic
-            | Self::PassiveStatic
+            | Self::PassiveIntrinsic
             | Self::PassiveDynamic => OfferPassiveReadiness::NeedsTransport,
         }
     }

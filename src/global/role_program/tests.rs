@@ -1,5 +1,5 @@
 use super::*;
-use crate::eff::{EffAtom, EffStruct};
+use crate::eff::{EffAtom, EffStruct, EventOrigin};
 use crate::g::{self, Msg, Program};
 use crate::global::compiled::images::{CompiledProgramRef, ProgramColumnRange, RoleDescriptorRef};
 use crate::global::const_dsl::{EffList, ScopeKind};
@@ -15,7 +15,7 @@ const fn test_atom(label: u8, lane: u8) -> EffStruct {
         from: 0,
         to: 1,
         label,
-        is_internal: false,
+        origin: EventOrigin::User,
         resource: None,
         lane,
     })
@@ -45,7 +45,7 @@ fn with_role_descriptor<const ROLE: u8, R>(
 
 #[test]
 fn logical_lane_count_stays_inside_wire_lane_domain() {
-    assert_eq!(logical_lane_count_for_role(0, 1), RESERVED_BINDING_LANES);
+    assert_eq!(logical_lane_count_for_role(0, 1), MIN_ENDPOINT_LANE_SLOTS);
     assert_eq!(logical_lane_count_for_role(254, 255), LANE_DOMAIN_SIZE);
     assert_eq!(logical_lane_count_for_role(255, 256), LANE_DOMAIN_SIZE);
     assert_eq!(logical_lane_count_for_role(256, 256), LANE_DOMAIN_SIZE);
@@ -365,58 +365,67 @@ fn sparse_route_arm_program() -> Program<SparseRouteArmProgram> {
     g::seq(g::seq(route0, route1), g::seq(route2, route3))
 }
 
-type OtherLane = g::Send<2, 3, Msg<108, ()>>;
-type OtherLanes2 = g::Par<OtherLane, OtherLane>;
-type OtherLanes4 = g::Par<OtherLanes2, OtherLanes2>;
-type OtherLanes8 = g::Par<OtherLanes4, OtherLanes4>;
-type OtherLanes16 = g::Par<OtherLanes8, OtherLanes8>;
-type OtherLanes32 = g::Par<OtherLanes16, OtherLanes16>;
-type OtherLanes63 = g::Par<
-    OtherLanes32,
-    g::Par<OtherLanes16, g::Par<OtherLanes8, g::Par<OtherLanes4, g::Par<OtherLanes2, OtherLane>>>>,
+type NonParticipantLane = g::Send<2, 3, Msg<108, ()>>;
+type NonParticipantLanes2 = g::Par<NonParticipantLane, NonParticipantLane>;
+type NonParticipantLanes4 = g::Par<NonParticipantLanes2, NonParticipantLanes2>;
+type NonParticipantLanes8 = g::Par<NonParticipantLanes4, NonParticipantLanes4>;
+type NonParticipantLanes16 = g::Par<NonParticipantLanes8, NonParticipantLanes8>;
+type NonParticipantLanes32 = g::Par<NonParticipantLanes16, NonParticipantLanes16>;
+type NonParticipantLanes63 = g::Par<
+    NonParticipantLanes32,
+    g::Par<
+        NonParticipantLanes16,
+        g::Par<
+            NonParticipantLanes8,
+            g::Par<NonParticipantLanes4, g::Par<NonParticipantLanes2, NonParticipantLane>>,
+        >,
+    >,
 >;
 
-fn other_lane() -> Program<g::Send<2, 3, Msg<108, ()>>> {
+fn non_participant_lane() -> Program<g::Send<2, 3, Msg<108, ()>>> {
     g::send::<2, 3, Msg<108, ()>>()
 }
 
-fn other_lanes_2() -> Program<OtherLanes2> {
-    g::par(other_lane(), other_lane())
+fn non_participant_lanes_2() -> Program<NonParticipantLanes2> {
+    g::par(non_participant_lane(), non_participant_lane())
 }
 
-fn other_lanes_4() -> Program<OtherLanes4> {
-    g::par(other_lanes_2(), other_lanes_2())
+fn non_participant_lanes_4() -> Program<NonParticipantLanes4> {
+    g::par(non_participant_lanes_2(), non_participant_lanes_2())
 }
 
-fn other_lanes_8() -> Program<OtherLanes8> {
-    g::par(other_lanes_4(), other_lanes_4())
+fn non_participant_lanes_8() -> Program<NonParticipantLanes8> {
+    g::par(non_participant_lanes_4(), non_participant_lanes_4())
 }
 
-fn other_lanes_16() -> Program<OtherLanes16> {
-    g::par(other_lanes_8(), other_lanes_8())
+fn non_participant_lanes_16() -> Program<NonParticipantLanes16> {
+    g::par(non_participant_lanes_8(), non_participant_lanes_8())
 }
 
-fn other_lanes_32() -> Program<OtherLanes32> {
-    g::par(other_lanes_16(), other_lanes_16())
+fn non_participant_lanes_32() -> Program<NonParticipantLanes32> {
+    g::par(non_participant_lanes_16(), non_participant_lanes_16())
 }
 
-fn other_lanes_63() -> Program<OtherLanes63> {
+fn non_participant_lanes_63() -> Program<NonParticipantLanes63> {
     g::par(
-        other_lanes_32(),
+        non_participant_lanes_32(),
         g::par(
-            other_lanes_16(),
+            non_participant_lanes_16(),
             g::par(
-                other_lanes_8(),
-                g::par(other_lanes_4(), g::par(other_lanes_2(), other_lane())),
+                non_participant_lanes_8(),
+                g::par(
+                    non_participant_lanes_4(),
+                    g::par(non_participant_lanes_2(), non_participant_lane()),
+                ),
             ),
         ),
     )
 }
 
-type SparseRouteHighLaneProgram = g::Par<OtherLanes63, SparseRouteArmProgram>;
+type SparseRouteHighLaneProgram = g::Par<NonParticipantLanes63, SparseRouteArmProgram>;
 
 fn sparse_route_high_lane_program() -> Program<SparseRouteHighLaneProgram> {
-    g::par(other_lanes_63(), sparse_route_arm_program())
+    g::par(non_participant_lanes_63(), sparse_route_arm_program())
 }
 
 type MultiPhaseProgramSteps = g::Seq<
@@ -441,7 +450,7 @@ fn rolled_seq_program() -> Program<RolledSeqProgramSteps> {
     .roll()
 }
 
-fn loop_route_internal_parallel_program() -> impl Projectable {
+fn roll_route_internal_parallel_program() -> impl Projectable {
     let left = g::seq(
         g::send::<1, 1, Msg<145, u8>>(),
         g::seq(
@@ -482,7 +491,7 @@ fn loop_route_internal_parallel_program() -> impl Projectable {
 }
 
 #[test]
-fn roll_projection_marks_seq_body_with_loop_scope() {
+fn roll_projection_marks_seq_body_with_roll_scope() {
     let program: RoleProgram<0> = project(&rolled_seq_program());
     with_role_descriptor(&program, |descriptor| {
         let rows = descriptor.local_event_rows();
@@ -492,8 +501,8 @@ fn roll_projection_marks_seq_body_with_loop_scope() {
         let second = rows
             .local_step_node(1)
             .expect("rolled seq second local event");
-        assert_eq!(first.scope().kind(), ScopeKind::Loop);
-        assert_eq!(second.scope().kind(), ScopeKind::Loop);
+        assert_eq!(first.scope().kind(), ScopeKind::Roll);
+        assert_eq!(second.scope().kind(), ScopeKind::Roll);
         assert_eq!(
             first.scope().canonical_raw(),
             second.scope().canonical_raw()
@@ -539,7 +548,7 @@ fn resident_rows_cover_multiple_exact_layout_rows() {
 
 #[test]
 fn route_internal_parallel_scope_has_exact_resident_arm_relation() {
-    let program: RoleProgram<2> = project(&loop_route_internal_parallel_program());
+    let program: RoleProgram<2> = project(&roll_route_internal_parallel_program());
     with_role_descriptor(&program, |descriptor| {
         let rows = descriptor.local_event_rows();
         let mut found_route_internal_parallel = false;
@@ -570,7 +579,7 @@ fn route_internal_parallel_scope_has_exact_resident_arm_relation() {
         }
         assert!(
             found_route_internal_parallel,
-            "fixture must contain a route-internal parallel scope"
+            "test program must contain a route-internal parallel scope"
         );
     });
 }

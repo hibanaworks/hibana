@@ -1,8 +1,7 @@
 //! Const helpers for building segmented `EffStruct` images at compile time.
 //!
-//! These helpers progressively migrate the global combinators (`send/seq/par/route`)
-//! toward a const-only surface. They provide an `EffList` accumulator that stays
-//! segment-addressed and is read through crate-private segment-aware accessors.
+//! These helpers lower global combinators (`send/seq/par/route`) into a
+//! segment-addressed `EffList` read through crate-private accessors.
 //!
 //! # Unsafe Owner Contract
 //!
@@ -26,43 +25,19 @@ mod scope;
 pub(crate) use self::eff_list::const_send_typed;
 pub(crate) use self::scope::{CompactScopeId, ScopeEvent, ScopeId, ScopeKind};
 
+pub(crate) const INTRINSIC_ROUTE_RESOLVER_ID: u16 = u16::MAX;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ResolverMode {
-    Static,
+pub(crate) enum RouteResolver {
+    Intrinsic,
     Dynamic {
         resolver_id: u16,
         scope: CompactScopeId,
     },
 }
 
-impl ResolverMode {
-    pub(crate) const fn static_mode() -> Self {
-        Self::Static
-    }
-
-    /// Create a dynamic resolver marker with the given resolver id.
-    ///
-    /// Route decisions are evaluated from the projected route site and the
-    /// registered resolver.
-    ///
-    /// Public choreography authors do not name this lowering hook directly.
-    /// ```rust,ignore
-    /// fn resolve_decision(
-    ///     state: &DecisionState,
-    /// ) -> Result<hibana::runtime::resolver::DecisionResolution, hibana::runtime::resolver::ResolverError> {
-    ///     Ok(hibana::runtime::resolver::DecisionResolution::Arm(state.preferred_arm))
-    /// }
-    ///
-    /// let decision_state = DecisionState {
-    ///     preferred_arm: hibana::runtime::resolver::DecisionArm::Left,
-    /// };
-    ///
-    /// rv.role(&controller).set_resolver::<MY_RESOLVER_ID>(
-    ///     hibana::runtime::resolver::ResolverRef::decision_state(&decision_state, resolve_decision),
-    /// )?;
-    /// ```
-    ///
-    /// [`SessionKit::rendezvous`]: crate::runtime::SessionKit::rendezvous
+impl RouteResolver {
+    /// Bind a route decision site to a registered runtime resolver id.
     pub(crate) const fn dynamic(resolver_id: u16) -> Self {
         Self::Dynamic {
             resolver_id,
@@ -74,17 +49,10 @@ impl ResolverMode {
         matches!(self, Self::Dynamic { .. })
     }
 
-    pub(crate) const fn dynamic_resolver_id(self) -> Option<u16> {
-        match self {
-            Self::Dynamic { resolver_id, .. } => Some(resolver_id),
-            Self::Static => None,
-        }
-    }
-
     pub(crate) const fn scope(self) -> ScopeId {
         match self {
             Self::Dynamic { scope, .. } => scope.to_scope_id(),
-            Self::Static => ScopeId::none(),
+            Self::Intrinsic => ScopeId::none(),
         }
     }
 
@@ -94,50 +62,62 @@ impl ResolverMode {
                 resolver_id,
                 scope: CompactScopeId::from_scope_id(scope),
             },
-            Self::Static => Self::Static,
+            Self::Intrinsic => Self::Intrinsic,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReentryMark {
+    SinglePass,
+    Reentrant,
+}
+
+impl ReentryMark {
+    pub(crate) const fn is_reentrant(self) -> bool {
+        matches!(self, Self::Reentrant)
     }
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct ResolverMarker {
     pub(crate) offset: usize,
-    pub(crate) resolver: ResolverMode,
+    pub(crate) resolver: RouteResolver,
 }
 
 impl ResolverMarker {
     const fn empty() -> Self {
         Self {
             offset: 0,
-            resolver: ResolverMode::Static,
+            resolver: RouteResolver::Intrinsic,
         }
     }
 
-    const fn new(offset: usize, resolver: ResolverMode) -> Self {
+    const fn new(offset: usize, resolver: RouteResolver) -> Self {
         Self { offset, resolver }
     }
 }
 
 #[derive(Clone, Copy)]
-pub struct ScopeMarker {
-    pub offset: usize,
-    pub scope_id: ScopeId,
-    pub scope_kind: ScopeKind,
-    pub event: ScopeEvent,
-    pub linger: bool,
+pub(crate) struct ScopeMarker {
+    pub(crate) offset: usize,
+    pub(crate) scope_id: ScopeId,
+    pub(crate) scope_kind: ScopeKind,
+    pub(crate) event: ScopeEvent,
+    pub(crate) reentry: ReentryMark,
     /// Controller role for route scopes, derived from the first visible arm action.
-    /// `None` for non-Route scopes or when controller info is unavailable.
-    pub controller_role: Option<u8>,
+    /// `None` for scopes without route-controller semantics.
+    pub(crate) controller_role: Option<u8>,
 }
 
 impl ScopeMarker {
-    pub const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
             offset: 0,
             scope_id: ScopeId::none(),
-            scope_kind: ScopeKind::Generic,
+            scope_kind: ScopeKind::Plain,
             event: ScopeEvent::Enter,
-            linger: false,
+            reentry: ReentryMark::SinglePass,
             controller_role: None,
         }
     }
@@ -192,7 +172,7 @@ impl SegmentSummary {
 
 /// Accumulator used to build `EffStruct` sequences in const contexts.
 #[derive(Clone, Copy)]
-pub struct EffList {
+pub(crate) struct EffList {
     segments: [[EffStruct; MAX_SEGMENT_EFFS]; MAX_SEGMENTS],
     segment_summaries: [SegmentSummary; MAX_SEGMENTS],
     len: usize,

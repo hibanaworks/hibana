@@ -2,7 +2,7 @@ mod select;
 
 use super::super::{
     CursorEndpoint, DynamicResolverResolution, EventSemanticKind, ResolverSlot, ScopeId, SendError,
-    SendMeta, SendResult, Transport, events, ids, resolver_audit,
+    SendMeta, SendResult, Transport, events, ids,
 };
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
@@ -14,15 +14,14 @@ where
         meta: &SendMeta,
         target_label: u8,
     ) -> SendResult<()> {
-        if !meta.resolver().is_dynamic() {
+        let crate::global::const_dsl::RouteResolver::Dynamic { .. } = meta.resolver() else {
             return Ok(());
-        }
-        let dynamic_kind = meta.semantic;
-        match dynamic_kind {
+        };
+        match meta.semantic {
             EventSemanticKind::DecisionArm => {
                 self.evaluate_arm_decision_resolver(meta, target_label)
             }
-            EventSemanticKind::Other => {
+            EventSemanticKind::ProtocolEvent => {
                 if !meta.scope.is_none() {
                     self.cursor
                         .route_scope_controller_resolver(meta.scope)
@@ -33,96 +32,15 @@ where
         }
     }
 
-    fn emit_decision_resolver_audit(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        resolver_id: u16,
-    ) -> SendResult<()> {
+    fn emit_decision_resolver_audit(&self, scope_id: ScopeId, lane: u8, resolver_id: u16) {
         let port = self.port_for_lane(lane as usize);
-        let resolver_words = resolver_audit::EMPTY_RESOLVER_INPUT_WORDS;
-        let arg0 = resolver_audit::EMPTY_RESOLVER_INPUT_ARG0;
         let mut event = events::raw_event(port.now32(), ids::ROUTE_ARM_SELECTION)
-            .with_arg0(arg0)
+            .with_arg0(self.sid.raw())
             .with_arg1(resolver_id as u32);
         if let Some(trace) = self.scope_trace(scope_id) {
             event = event.with_arg2(trace.pack());
         }
-        let resolver_digest = port.resolver_digest(ResolverSlot::Decision);
-        let event_hash = resolver_audit::hash_tap_event(&event);
-        let signals_input_hash = resolver_audit::hash_empty_resolver_input();
-        let resolver_attrs_hash = resolver_audit::hash_empty_resolver_attrs();
-        let resolver_attrs_replay_hash = resolver_audit::hash_empty_resolver_replay_attrs();
-        let replay_attrs = resolver_audit::EMPTY_RESOLVER_ATTR_WORDS;
-        let replay_resolver_attr_presence = resolver_audit::EMPTY_RESOLVER_ATTR_PRESENCE;
-        let mode_id = resolver_audit::RESOLVER_MODE_AUDIT_ONLY_TAG;
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_AUDIT,
-            resolver_digest,
-            event_hash,
-            signals_input_hash,
-            port.lane(),
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_AUDIT_EXT,
-            resolver_attrs_hash,
-            resolver_attrs_replay_hash,
-            ((resolver_audit::slot_tag(ResolverSlot::Decision) as u32) << 24)
-                | ((mode_id as u32) << 16),
-            port.lane(),
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_EVENT,
-            event.ts,
-            event.id as u32,
-            event.arg0,
-            port.lane(),
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_EVENT_EXT,
-            event.arg1,
-            event.arg2,
-            event.causal_key as u32,
-            port.lane(),
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_INPUT0,
-            resolver_words[0],
-            resolver_words[1],
-            resolver_words[2],
-            port.lane(),
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_INPUT1,
-            resolver_words[3],
-            0,
-            0,
-            port.lane(),
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_ATTRS0,
-            replay_attrs[0],
-            replay_attrs[1],
-            replay_attrs[2],
-            port.lane(),
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_ATTRS1,
-            replay_attrs[3],
-            replay_resolver_attr_presence as u32,
-            0,
-            port.lane(),
-        );
-        let verdict_meta = ((resolver_audit::RESOLVER_RESULT_NO_ENGINE_TAG as u32) << 24)
-            | ((resolver_audit::RESOLVER_RESULT_NO_ENGINE_ARM as u32) << 16);
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_AUDIT_RESULT,
-            verdict_meta,
-            resolver_audit::RESOLVER_REASON_NO_ENGINE as u32,
-            resolver_audit::RESOLVER_FUEL_NONE as u32,
-            port.lane(),
-        );
-        Ok(())
+        self.emit_resolver_audit_replay(ResolverSlot::Decision, event, port.lane());
     }
 
     fn evaluate_arm_decision_resolver(
@@ -130,21 +48,24 @@ where
         meta: &SendMeta,
         target_label: u8,
     ) -> SendResult<()> {
-        let resolver = meta.resolver();
-        let resolver_id = resolver
-            .dynamic_resolver_id()
-            .ok_or(SendError::PhaseInvariant)?;
+        let crate::global::const_dsl::RouteResolver::Dynamic {
+            resolver_id,
+            scope: resolver_scope,
+        } = meta.resolver()
+        else {
+            return Err(SendError::PhaseInvariant);
+        };
 
         if meta.label != target_label {
             return Err(SendError::PhaseInvariant);
         }
         let scope_id = meta.scope;
         let arm_index = meta.route_arm.ok_or(SendError::PhaseInvariant)?;
-        if scope_id.is_none() || scope_id != resolver.scope() {
+        if scope_id.is_none() || scope_id != resolver_scope.to_scope_id() {
             return Err(SendError::PhaseInvariant);
         }
 
-        self.emit_decision_resolver_audit(scope_id, meta.lane, resolver_id)?;
+        self.emit_decision_resolver_audit(scope_id, meta.lane, resolver_id);
 
         let cluster = self.session.cluster();
         let resolution = cluster
@@ -157,7 +78,6 @@ where
                 Err(SendError::ResolverReject { resolver_id })
             }
             DynamicResolverResolution::Defer => Err(SendError::ResolverReject { resolver_id }),
-            DynamicResolverResolution::NoAuthority => Err(SendError::PhaseInvariant),
         }
     }
 
@@ -168,10 +88,9 @@ where
                 SendError::ResolverReject { resolver_id }
             }
             crate::session::cluster::error::ClusterError::RendezvousMismatch { .. }
-            | crate::session::cluster::error::ClusterError::RendezvousMissing { .. }
+            | crate::session::cluster::error::ClusterError::RendezvousUnregistered { .. }
             | crate::session::cluster::error::ClusterError::RendezvousBusy { .. }
             | crate::session::cluster::error::ClusterError::ResourceExhausted { .. }
-            | crate::session::cluster::error::ClusterError::UnsupportedEffect(_)
             | crate::session::cluster::error::ClusterError::DynamicResolverInvariant { .. } => {
                 SendError::PhaseInvariant
             }

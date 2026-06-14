@@ -367,7 +367,7 @@ pub trait Transport {
     /// Requeue the most recent frame obtained from [`poll_recv`](Transport::poll_recv).
     ///
     /// Implementations must make that frame observable again by a later
-    /// `poll_recv` on the same `Rx` handle. A no-op requeue violates the
+    /// `poll_recv` on the same `Rx` handle. An empty requeue violates the
     /// endpoint restore contract: higher layers call this only after a
     /// descriptor-checked operation consumed transport state that it ultimately
     /// could not commit.

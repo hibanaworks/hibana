@@ -51,15 +51,19 @@ impl Transport for DeadlineRecvTransport {
     fn poll_recv<'a>(
         &'a self,
         rx: &'a mut Self::Rx<'a>,
-        _context: &mut Context<'_>,
+        context: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+        core::hint::black_box(context.waker());
         core::hint::black_box((rx.session_id.raw(), rx.lane, rx.role));
         Poll::Ready(Err(self.error))
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        core::hint::black_box(tx);
+    }
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        core::hint::black_box(rx);
         Ok(())
     }
 }
@@ -74,8 +78,8 @@ std::thread_local! {
 
 #[test]
 fn cursor_recv_can_return_borrowed_frame_views() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>>();
             let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
@@ -117,7 +121,7 @@ fn cursor_recv_can_return_borrowed_frame_views() {
 
 #[test]
 fn direct_recv_deadline_emits_transport_fault_tap() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&DEADLINE_SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, FramePayload>>();
@@ -156,12 +160,17 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
             hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE
         );
         assert_eq!(fault.arg0, 73);
+        assert_eq!(fault.arg1, 0);
+        assert_eq!(
+            fault.arg2,
+            u32::from(hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE)
+        );
     });
 }
 
 #[test]
 fn transport_poll_recv_returns_frame_header_with_payload() {
-    let transport = TestTransport::default();
+    let transport = TestTransport::new();
     let sid = SessionId::new(94);
     let mut tx = TestTx {
         session_id: sid,
@@ -175,7 +184,7 @@ fn transport_poll_recv_returns_frame_header_with_payload() {
         Poll::Ready(Ok(()))
     ));
 
-    let mut rx = transport.open_rx_for_test(1, 0);
+    let mut rx = transport.open_rx(1, 0);
     let waker = futures::task::noop_waker_ref();
     let mut context = Context::from_waker(waker);
     let received = match Transport::poll_recv(&transport, &mut rx, &mut context) {
@@ -204,8 +213,8 @@ fn transport_poll_recv_returns_frame_header_with_payload() {
 
 #[test]
 fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, FramePayload>>();

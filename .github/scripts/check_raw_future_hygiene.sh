@@ -46,7 +46,7 @@ check_required "endpoint.poll_send(cx, self.payload.take())" "send payload borro
 check_absent "set_public_send_payload" "send payload borrow must not be staged in endpoint resident state" src/endpoint src/endpoint/kernel
 check_absent \
   "ErasedSendInput|mod[[:space:]]+sealed|Into<Option<&'a M::Payload>>|\\.send\\(None\\)" \
-  "Flow::send must not retain optional payload or private-bound argument adapters" \
+  "Flow::send must not retain optional payload or private-bound argument wrappers" \
   src/endpoint/flow.rs
 
 check_absent \

@@ -17,7 +17,7 @@ pub mod ids {
 pub use crate::session::types::SessionId;
 pub use crate::eff::EffIndex;
 pub use crate::observe::core::TapEvent;
-pub use crate::runtime_core::config::{Clock, Config, CounterClock, RuntimeStorage};
+pub use crate::runtime_core::config::{Clock, Config, CounterClock};
 pub use crate::runtime_core::consts::RING_EVENTS;
 pub mod resolver {
 pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };

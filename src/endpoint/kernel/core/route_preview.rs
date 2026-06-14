@@ -1,7 +1,7 @@
 use super::{
     Arm, CursorEndpoint, DeferReason, FrameFlags, FrontierKind, Lane, RecvError, RecvResult,
-    ResolverSlot, ScopeId, ScopeTrace, TapEvent, TapFrameMeta, Transport, TryFrom, emit, events,
-    ids, resolver_audit, state_index_to_usize,
+    ResolverSlot, ScopeId, ScopeTrace, TapEvent, TapFrameMeta, Transport, emit, events, ids,
+    resolver_audit, state_index_to_usize,
 };
 
 const AUDIT_ABSENT_SCOPE_SLOT: u16 = u16::MAX;
@@ -16,9 +16,47 @@ pub(in crate::endpoint::kernel) struct ResolverDeferAudit {
     pub(in crate::endpoint::kernel) selected_arm: Option<u8>,
     pub(in crate::endpoint::kernel) hint: Option<u8>,
     pub(in crate::endpoint::kernel) ready_arm_mask: u8,
-    pub(in crate::endpoint::kernel) ingress_ready: bool,
-    pub(in crate::endpoint::kernel) pending: bool,
+    pub(in crate::endpoint::kernel) ingress: IngressEvidenceState,
+    pub(in crate::endpoint::kernel) progress: ResolverDeferProgress,
     pub(in crate::endpoint::kernel) lane: u8,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::endpoint::kernel) enum IngressEvidenceState {
+    Absent = 0,
+    Ready = 1,
+}
+
+impl IngressEvidenceState {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn is_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    #[inline]
+    const fn audit_bit(self) -> u32 {
+        self.is_ready() as u32
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::endpoint::kernel) enum ResolverDeferProgress {
+    Settled = 0,
+    Pending = 1,
+}
+
+impl ResolverDeferProgress {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn is_pending(self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    #[inline]
+    const fn audit_bit(self) -> u32 {
+        matches!(self, Self::Pending) as u32
+    }
 }
 
 #[inline]
@@ -62,8 +100,8 @@ where
         Some(ScopeTrace::new(scope.range_ordinal(), scope.nest_ordinal()))
     }
 
-    pub(crate) fn is_linger_route(&self, scope: ScopeId) -> bool {
-        self.cursor.route_scope_linger(scope)
+    pub(crate) fn is_reentry_route(&self, scope: ScopeId) -> bool {
+        self.cursor.route_scope_reentry(scope)
     }
 
     pub(crate) fn selected_arm_for_scope(&self, scope: ScopeId) -> Option<u8> {
@@ -76,7 +114,7 @@ where
 
     pub(crate) fn route_scope_offer_entry_index(&self, scope_id: ScopeId) -> Option<usize> {
         let offer_entry = self.cursor.route_scope_offer_entry(scope_id)?;
-        Some(if offer_entry.is_max() {
+        Some(if offer_entry.is_absent() {
             self.cursor.index()
         } else {
             state_index_to_usize(offer_entry)
@@ -125,12 +163,13 @@ where
             })
     }
 
-    pub(crate) fn current_route_arm_authorized(&self) -> RecvResult<Option<bool>> {
+    pub(crate) fn current_route_arm_authorized(&self) -> RecvResult<bool> {
         self.cursor
             .current_route_arm_authorization(
                 |scope| self.selected_arm_for_scope(scope),
                 |scope| self.preview_selected_arm_for_scope(scope),
             )
+            .map(|authorization| authorization.authorizes_current_arm())
             .map_err(|_| RecvError::PhaseInvariant)
     }
 
@@ -167,14 +206,15 @@ where
         let scope_slot = audit_scope_slot(self.scope_slot_for_route(audit.scope_id));
         let arm = audit_arm(audit.selected_arm);
         let (hint, hint_present) = audit_hint(audit.hint);
-        let arg0 = (RESOLVER_DEFER_AUDIT_TAG << 24) | u32::from(audit.pending);
+        let progress = audit.progress.audit_bit();
+        let arg0 = (RESOLVER_DEFER_AUDIT_TAG << 24) | progress;
         let arg1 = (scope_slot << 16) | (arm << 8) | (audit.ready_arm_mask as u32);
         let arg2 = ((audit.reason as u32) << 16)
             | (hint << 8)
             | ((audit.frontier.as_audit_tag() as u32) << 4)
             | hint_present
-            | ((u32::from(audit.ingress_ready)) << 1)
-            | u32::from(audit.pending);
+            | (audit.ingress.audit_bit() << 1)
+            | progress;
         self.emit_resolver_audit_event(
             ids::RESOLVER_AUDIT_DEFER,
             arg0,
@@ -217,28 +257,22 @@ where
         let event = events::raw_event(port.now32(), event_id)
             .with_arg0(arg0)
             .with_arg1(arg1);
-        let resolver_words = resolver_audit::EMPTY_RESOLVER_INPUT_WORDS;
-        let resolver_digest = port.resolver_digest(slot);
+        self.emit_resolver_audit_replay(slot, event, lane);
+    }
+
+    pub(crate) fn emit_resolver_audit_replay(
+        &self,
+        slot: ResolverSlot,
+        event: TapEvent,
+        lane: Lane,
+    ) {
         let event_hash = resolver_audit::hash_tap_event(&event);
-        let signals_input_hash = resolver_audit::hash_empty_resolver_input();
-        let resolver_attrs_hash = resolver_audit::hash_empty_resolver_attrs();
-        let resolver_attrs_replay_hash = resolver_audit::hash_empty_resolver_replay_attrs();
-        let replay_attrs = resolver_audit::EMPTY_RESOLVER_ATTR_WORDS;
-        let replay_resolver_attr_presence = resolver_audit::EMPTY_RESOLVER_ATTR_PRESENCE;
         let slot_id = resolver_audit::slot_tag(slot);
-        let mode_id = resolver_audit::RESOLVER_MODE_AUDIT_ONLY_TAG;
         self.emit_resolver_audit_event(
             ids::RESOLVER_AUDIT,
-            resolver_digest,
             event_hash,
-            signals_input_hash,
-            lane,
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_AUDIT_EXT,
-            resolver_attrs_hash,
-            resolver_attrs_replay_hash,
-            ((slot_id as u32) << 24) | ((mode_id as u32) << 16),
+            event.id as u32,
+            u32::from(slot_id),
             lane,
         );
         self.emit_resolver_audit_event(
@@ -253,37 +287,6 @@ where
             event.arg1,
             event.arg2,
             event.causal_key as u32,
-            lane,
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_INPUT0,
-            resolver_words[0],
-            resolver_words[1],
-            resolver_words[2],
-            lane,
-        );
-        self.emit_resolver_audit_event(ids::RESOLVER_REPLAY_INPUT1, resolver_words[3], 0, 0, lane);
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_ATTRS0,
-            replay_attrs[0],
-            replay_attrs[1],
-            replay_attrs[2],
-            lane,
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_ATTRS1,
-            replay_attrs[3],
-            replay_resolver_attr_presence as u32,
-            0,
-            lane,
-        );
-        let verdict_meta = ((resolver_audit::RESOLVER_RESULT_NO_ENGINE_TAG as u32) << 24)
-            | ((resolver_audit::RESOLVER_RESULT_NO_ENGINE_ARM as u32) << 16);
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_AUDIT_RESULT,
-            verdict_meta,
-            resolver_audit::RESOLVER_REASON_NO_ENGINE as u32,
-            resolver_audit::RESOLVER_FUEL_NONE as u32,
             lane,
         );
     }

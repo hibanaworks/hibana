@@ -22,7 +22,7 @@ use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
 use placement_support::write_value;
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_resident_tls_ref;
 
@@ -74,11 +74,11 @@ fn worker_program() -> RoleProgram<1> {
 // Test nested first-visible routes.
 #[test]
 fn nested_branch_commit_stack() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config =
                 Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport.clone())
                 .expect("register rv");
@@ -172,11 +172,11 @@ fn nested_branch_commit_stack() {
 
 #[test]
 fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config =
                 Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster.rendezvous(config, transport).expect("register rv");
 
             let sid = SessionId::new(79);
@@ -247,11 +247,11 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
 
 #[test]
 fn localside_offer_decode_sizes_stay_compact() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config =
                 Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster.rendezvous(config, transport).expect("register rv");
 
             let sid = SessionId::new(78);

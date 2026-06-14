@@ -77,7 +77,7 @@ check_absent \
   --glob '!**/*tests.rs'
 
 check_absent \
-  "RoleCompileScratch|ROLE_COMPILE_SCRATCH_MAX_|OFFER_TEST_LANE_CAPACITY|TEST_ENDPOINT_LANE_CAPACITY|TEST_LANE_SNAPSHOT_CAPACITY|BindingInboxTestArena|FrontierObservationKeyTestArena|ObservedKeyTestArena|CachedSpliceOperandsMap|with_test_lane_set\\(|FixtureHarness|run::<scenario::FixtureHarness>" \
+  "RoleCompileScratch|ROLE_COMPILE_SCRATCH_MAX_|OFFER_TEST_LANE_CAPACITY|TEST_ENDPOINT_LANE_CAPACITY|TEST_LANE_SNAPSHOT_CAPACITY|BindingInboxTestArena|FrontierObservationKeyTestArena|ObservedKeyTestArena|CachedSpliceOperandsMap|with_test_lane_set\\(|ScenarioHarness|run::<scenario::ScenarioHarness>" \
   "test-only exact-world cleanup must not regress to renamed ceilings, shared arenas, low-lane helpers, or compile-only shadow harnesses" \
   src tests \
   --glob '!tests/public_surface_guards.rs'
@@ -88,7 +88,7 @@ check_absent \
   src/endpoint src/rendezvous src/session src/global/typestate
 
 check_absent \
-  "active_route_lane_mask: RoleLaneMask|lane_linger_mask: RoleLaneMask|lane_offer_linger_mask: RoleLaneMask|active_offer_mask: RoleLaneMask|nonempty_mask: RoleLaneMask|observed_offer_lane_mask: RoleLaneMask|global_frontier_observed_offer_lane_mask: RoleLaneMask" \
+  "active_route_lane_mask: RoleLaneMask|lane_reentry_mask: RoleLaneMask|lane_offer_reentry_mask: RoleLaneMask|active_offer_mask: RoleLaneMask|nonempty_mask: RoleLaneMask|observed_offer_lane_mask: RoleLaneMask|global_frontier_observed_offer_lane_mask: RoleLaneMask" \
   "runtime sidecars must not retain scalar lane-mask cache state" \
   src/endpoint
 
@@ -127,7 +127,7 @@ check_absent \
 
 check_absent \
   "\\bEndpointHandle\\b|\\bEndpointResource\\b|endpoint_identity\\(|endpoint_header\\(|raw_header\\(|const fn handle\\(&self\\)|fn handle\\(&self\\)" \
-  "brand owner witness source must not retain endpoint-identity test fixtures or raw debug accessors" \
+  "brand owner witness source must not retain endpoint-identity test supports or raw debug accessors" \
   src/session/brand.rs
 
 DELETED_SESSION_CAP_DIR="src/session/""cap"

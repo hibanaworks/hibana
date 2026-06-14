@@ -2,6 +2,7 @@ use super::{
     CommitDelta, CommitEventRow, CursorEndpoint, CursorInvariantError, PreparedRouteCommitRows,
     RelocatableResidentLaneStep, SelectedRouteCommitRow, Transport, state_index_to_usize,
 };
+use crate::global::const_dsl::ReentryMark;
 use crate::global::typestate::StateIndex;
 
 pub(crate) struct PreparedCommitDelta {
@@ -105,7 +106,7 @@ where
                 crate::global::typestate::EventCommitMeta::new(
                     event.eff_index(),
                     event.event_label(),
-                    event.event_internal(),
+                    event.event_origin(),
                     event.scope(),
                     event.route_arm(),
                     event.lane(),
@@ -260,7 +261,11 @@ where
             .cursor
             .route_scope_slot(scope)
             .ok_or(CursorInvariantError::INVARIANT)?;
-        let is_linger = self.cursor.route_scope_linger(scope);
+        let reentry = if self.cursor.route_scope_reentry(scope) {
+            ReentryMark::Reentrant
+        } else {
+            ReentryMark::SinglePass
+        };
         if self
             .cursor
             .passive_observer_arm_entry_index(scope, row.selected_arm())
@@ -274,7 +279,7 @@ where
         }
         if let Some(selected) = self.selected_arm_for_scope(scope)
             && selected != row.selected_arm()
-            && !is_linger
+            && !reentry.is_reentrant()
         {
             return Err(CursorInvariantError::INVARIANT);
         }
@@ -284,7 +289,7 @@ where
                 scope,
                 scope_slot,
                 row.selected_arm(),
-                is_linger,
+                reentry,
             )
             .ok_or(CursorInvariantError::INVARIANT)?;
         Ok(())
@@ -387,11 +392,15 @@ where
         let Some(scope_slot) = self.cursor.route_scope_slot(row.scope()) else {
             crate::invariant();
         };
-        let is_linger = self.cursor.route_scope_linger(row.scope());
+        let reentry = if self.cursor.route_scope_reentry(row.scope()) {
+            ReentryMark::Reentrant
+        } else {
+            ReentryMark::SinglePass
+        };
         self.decision_state.apply_prepared_route_selection(
             lane_idx,
             scope_slot,
-            is_linger,
+            reentry,
             row,
             CommitDeltaApplyPermit::new(),
         );

@@ -1,4 +1,4 @@
-//! Internal generativity helpers used to brand rendezvous instances and lanes.
+//! Generativity helpers used to brand rendezvous instances and lanes.
 //!
 //! Rendezvous is the exclusive authority for issuing ownership witnesses.
 //! We model this by giving every rendezvous a zero-sized brand token and handing
@@ -32,14 +32,12 @@ impl<'brand> Guard<'brand> {
 
 #[derive(Clone, Copy)]
 pub(crate) struct Owner<'brand> {
-    _brand: PhantomData<Guard<'brand>>,
+    _brand: Guard<'brand>,
 }
 
 impl<'brand> Owner<'brand> {
     #[inline]
-    pub(crate) fn new(_brand: Guard<'brand>) -> Self {
-        Self {
-            _brand: PhantomData,
-        }
+    pub(crate) fn new(brand: Guard<'brand>) -> Self {
+        Self { _brand: brand }
     }
 }

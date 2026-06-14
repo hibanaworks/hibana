@@ -12,7 +12,7 @@ use common::TestTransport;
 use hibana::g::{self, Message, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
@@ -83,17 +83,17 @@ fn nested_seq_roll_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::seq(outer, g::send::<0, 1, Msg<NESTED_EXIT, u8>>()))
 }
 
-fn with_visible_reentry_fixture(
+fn with_visible_reentry_workspace(
     sid: u32,
     controller_program: RoleProgram<0>,
     worker_program: RoleProgram<1>,
     run: impl FnOnce(&mut hibana::Endpoint<'static, 0>, &mut hibana::Endpoint<'static, 1>),
 ) {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config =
                 Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");
@@ -168,7 +168,7 @@ fn assert_controller_flow_blocked<const MSG: u8>(controller: &mut hibana::Endpoi
 
 #[test]
 fn rolled_seq_reenters_by_repeated_head_without_loop_control() {
-    with_visible_reentry_fixture(
+    with_visible_reentry_workspace(
         960,
         visible_reentry_program::<0>(),
         visible_reentry_program::<1>(),
@@ -205,7 +205,7 @@ fn rolled_seq_reenters_by_repeated_head_without_loop_control() {
 
 #[test]
 fn rolled_par_reenters_only_after_both_lanes_settle() {
-    with_visible_reentry_fixture(
+    with_visible_reentry_workspace(
         962,
         visible_parallel_reentry_program::<0>(),
         visible_parallel_reentry_program::<1>(),
@@ -234,7 +234,7 @@ fn rolled_par_reenters_only_after_both_lanes_settle() {
 
 #[test]
 fn nested_rolled_route_reenters_before_outer_body_continues() {
-    with_visible_reentry_fixture(
+    with_visible_reentry_workspace(
         961,
         nested_visible_reentry_program::<0>(),
         nested_visible_reentry_program::<1>(),
@@ -270,7 +270,7 @@ fn nested_rolled_route_reenters_before_outer_body_continues() {
 
 #[test]
 fn nested_roll_scopes_reenter_inner_until_outer_scope_completes() {
-    with_visible_reentry_fixture(
+    with_visible_reentry_workspace(
         963,
         nested_seq_roll_program::<0>(),
         nested_seq_roll_program::<1>(),

@@ -113,7 +113,7 @@ if not poll_public_recv or not all(
     for required in [
         "kernel_recv(",
         "logical_label",
-        "accepts_empty_payload",
+        "payload_mode",
         "recv_state",
         "cx",
     ]
@@ -154,7 +154,7 @@ SYSROOT="$(rustup run "${TOOLCHAIN}" rustc --print sysroot)"
 HOST="$(rustup run "${TOOLCHAIN}" rustc -vV | sed -n 's|host: ||p')"
 LLVM_NM="${SYSROOT}/lib/rustlib/${HOST}/bin/llvm-nm"
 if [[ ! -x "${LLVM_NM}" ]]; then
-  echo "kernel monomorphization quarantine violation: llvm-nm unavailable for ${TOOLCHAIN}" >&2
+  echo "kernel monomorphization quarantine violation: llvm-nm missing for ${TOOLCHAIN}" >&2
   exit 1
 fi
 

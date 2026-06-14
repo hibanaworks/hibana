@@ -1,8 +1,9 @@
 use super::{
     ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, FrontierCandidate,
-    FrontierKind, LaneOfferState, ObservedEntrySet, OfferEntryObservedState, OfferEntryState,
-    ScopeArmMaterializationMeta, ScopeId, Transport, checked_state_index,
-    offer_entry_frontier_candidate, offer_entry_observed_state, state_index_to_usize,
+    FrontierKind, LaneOfferState, ObservedEntrySet, OfferEntryEvidence, OfferEntryObservedState,
+    OfferEntryState, OfferEntrySummary, ScopeArmMaterializationMeta, ScopeId, Transport,
+    checked_state_index, offer_entry_frontier_candidate, offer_entry_observed_state,
+    state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
@@ -19,7 +20,7 @@ where
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
             let info = self.decision_state.lane_offer_state(lane_idx);
-            if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
+            if !info.entry.is_absent() && state_index_to_usize(info.entry) == entry_idx {
                 return true;
             }
             next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
@@ -28,7 +29,7 @@ where
             .offer_entry_state
             .get(entry_idx)
             .copied()
-            .is_some_and(|state| state.active)
+            .is_some_and(OfferEntryState::is_active)
     }
 
     #[inline]
@@ -43,7 +44,7 @@ where
         while let Some(lane_idx) = next {
             if lane_idx != excluded_lane_idx {
                 let info = self.decision_state.lane_offer_state(lane_idx);
-                if !info.entry.is_max() && state_index_to_usize(info.entry) == entry_idx {
+                if !info.entry.is_absent() && state_index_to_usize(info.entry) == entry_idx {
                     return true;
                 }
             }
@@ -67,15 +68,19 @@ where
             .get(entry_idx)
             .copied()
         {
-            if state.active || has_active_lanes {
+            if state.is_active() || has_active_lanes {
                 return Some(state);
             }
             return None;
         }
-        has_active_lanes.then_some(OfferEntryState {
-            active: true,
-            ..OfferEntryState::EMPTY
-        })
+        has_active_lanes.then_some(OfferEntryState::active(
+            u8::MAX,
+            ScopeId::none(),
+            FrontierKind::Route,
+            ScopeId::none(),
+            CurrentScopeSelectionMeta::EMPTY,
+            OfferEntrySummary::EMPTY,
+        ))
     }
 
     #[inline]
@@ -105,34 +110,27 @@ where
             };
             let summary = match cached_state {
                 Some(state) => state.summary,
-                None => self.compute_offer_entry_static_summary_from_route_state(entry_idx),
+                None => self.compute_offer_entry_summary_from_route_state(entry_idx),
             };
-            return Some(OfferEntryState {
-                active: true,
-                lane_idx: lane_idx as u8,
-                parallel_root: info.parallel_root,
-                frontier: info.frontier,
-                scope_id: info.scope,
+            return Some(OfferEntryState::active(
+                lane_idx as u8,
+                info.parallel_root,
+                info.frontier,
+                info.scope,
                 selection_meta,
                 summary,
-            });
+            ));
         }
         None
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn observed_reentry_entry_idx(
+    pub(in crate::endpoint::kernel) fn observed_ready_reentry_entry_idx(
         &self,
         observed_entries: ObservedEntrySet,
         current_idx: usize,
-        ready_only: bool,
     ) -> Option<usize> {
-        let mut mask = if ready_only {
-            observed_entries.ready_mask
-        } else {
-            observed_entries.occupancy_mask()
-        };
-        mask &= !observed_entries.entry_bit(current_idx);
+        let mask = observed_entries.ready_mask & !observed_entries.entry_bit(current_idx);
         observed_entries.first_entry_idx(mask)
     }
 
@@ -317,7 +315,7 @@ where
             let mut idx = 0usize;
             while idx < dispatch_len as usize {
                 let entry = dispatch[idx];
-                if entry.arm() < 2 && !entry.target().is_max() {
+                if entry.arm() < 2 && !entry.target().is_absent() {
                     arm_mask |= 1u8 << entry.arm();
                 }
                 idx += 1;
@@ -367,47 +365,37 @@ where
     pub(in crate::endpoint::kernel) fn preview_offer_entry_evidence_non_consuming(
         &mut self,
         entry_idx: usize,
-    ) -> (bool, bool, bool) {
+    ) -> OfferEntryEvidence {
         let scope_id = self.offer_entry_scope_id(entry_idx);
         let offer_lanes = if scope_id.is_none() {
             crate::global::role_program::LaneSetView::EMPTY
         } else {
             self.offer_lane_set_for_scope(scope_id)
         };
-        let ingress_ready = false;
-        let mut has_ack = !scope_id.is_none() && self.peek_scope_ack(scope_id).is_some();
-        let pending_ack = if scope_id.is_none() {
-            false
-        } else {
-            self.preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
-                .is_some()
-        };
-        if !has_ack {
-            has_ack = pending_ack;
+        let mut evidence = OfferEntryEvidence::empty();
+        if !scope_id.is_none()
+            && (self.peek_scope_ack(scope_id).is_some()
+                || self
+                    .preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
+                    .is_some())
+        {
+            evidence = evidence.with_ack();
         }
-        let has_ready_arm_evidence =
-            !scope_id.is_none() && self.scope_has_ready_arm_evidence(scope_id);
-        (ingress_ready, has_ack, has_ready_arm_evidence)
+        if !scope_id.is_none() && self.scope_has_ready_arm_evidence(scope_id) {
+            evidence = evidence.with_ready_arm();
+        }
+        evidence
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_candidate_from_observation(
         &self,
         entry_idx: usize,
-        ingress_ready: bool,
-        has_ack: bool,
-        has_ready_arm_evidence: bool,
+        evidence: OfferEntryEvidence,
     ) -> (OfferEntryObservedState, FrontierCandidate) {
         let scope_id = self.offer_entry_scope_id(entry_idx);
-        let summary = self.compute_offer_entry_static_summary(entry_idx);
-        let ack_is_progress = Self::ack_is_progress_evidence(has_ack);
-        let observed = offer_entry_observed_state(
-            scope_id,
-            summary,
-            has_ready_arm_evidence,
-            ack_is_progress,
-            ingress_ready,
-        );
+        let summary = self.compute_offer_entry_summary(entry_idx);
+        let observed = offer_entry_observed_state(scope_id, summary, evidence);
         let candidate = offer_entry_frontier_candidate(
             scope_id,
             entry_idx,
@@ -429,14 +417,9 @@ where
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }
-        let (ingress_ready, has_ack, has_ready_arm_evidence) =
-            self.preview_offer_entry_evidence_non_consuming(entry_idx);
-        let (_observed, candidate) = self.offer_entry_candidate_from_observation(
-            entry_idx,
-            ingress_ready,
-            has_ack,
-            has_ready_arm_evidence,
-        );
+        let evidence = self.preview_offer_entry_evidence_non_consuming(entry_idx);
+        let (_observed, candidate) =
+            self.offer_entry_candidate_from_observation(entry_idx, evidence);
         Some(candidate)
     }
 

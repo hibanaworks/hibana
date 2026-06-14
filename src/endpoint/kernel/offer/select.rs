@@ -1,11 +1,12 @@
+use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     ActiveEntrySet, Arm, Clock, ControlFlow, CurrentFrontierSelectionState,
     CurrentScopeSelectionMeta, CursorEndpoint, DeferReason, FrontierDeferOutcome,
-    FrontierObservationDomain, FrontierObservationKey, FrontierVisitSet, LaneSetView,
-    ObservedEntrySet, OfferEntryObservedState, OfferEvidenceOutcome, OfferLaneEntrySlotMasks,
-    OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult,
-    RouteArmToken, ScopeFrameLabelMeta, ScopeId, Transport,
-    frontier_observation_key_view_from_storage,
+    FrontierObservationDomain, FrontierObservationKey, FrontierVisitSet, IngressEvidenceState,
+    LaneSetView, ObservedEntrySet, OfferEntryObservedState, OfferEntryPosition,
+    OfferEvidenceOutcome, OfferLaneEntrySlotMasks, OfferProgressState, OfferScopeSelection,
+    OfferStagedIngress, Poll, Port, RecvError, RecvResult, ResolverDeferProgress, RouteArmToken,
+    ScopeFrameLabelMeta, ScopeId, Transport, frontier_observation_key_view_from_storage,
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     lane_port, state_index_to_usize,
 };
@@ -16,7 +17,7 @@ pub(super) struct FrontierDeferRequest {
     pub(super) current_parallel: Option<ScopeId>,
     pub(super) reason: DeferReason,
     pub(super) offer_lane: u8,
-    pub(super) ingress_ready: bool,
+    pub(super) ingress: IngressEvidenceState,
     pub(super) selected_arm: Option<u8>,
 }
 
@@ -36,7 +37,7 @@ where
         {
             return None;
         }
-        let loop_meta = CursorEndpoint::<ROLE, T, C, MAX_RV>::scope_loop_meta_at(
+        let reentry_meta = CursorEndpoint::<ROLE, T, C, MAX_RV>::scope_reentry_meta_at(
             &endpoint.cursor,
             scope_id,
             entry_idx,
@@ -45,7 +46,7 @@ where
             CursorEndpoint::<ROLE, T, C, MAX_RV>::scope_frame_label_meta_at(
                 &endpoint.cursor,
                 scope_id,
-                loop_meta,
+                reentry_meta,
                 entry_idx,
             ),
         )
@@ -59,11 +60,11 @@ where
         endpoint.cursor.lane_has_pending_step(lane_idx)
             || endpoint
                 .decision_state
-                .lane_linger_lanes()
+                .lane_reentry_lanes()
                 .contains(lane_idx)
             || endpoint
                 .decision_state
-                .lane_offer_linger_lanes()
+                .lane_offer_reentry_lanes()
                 .contains(lane_idx)
     }
 
@@ -165,7 +166,7 @@ where
                 Some(scope_id) => scope_id,
                 None => ScopeId::none(),
             };
-            let summary = endpoint.compute_offer_entry_static_summary(entry_idx);
+            let summary = endpoint.compute_offer_entry_summary(entry_idx);
             let slot = key.slot_mut(slot_idx);
             slot.entry_summary_fingerprint = summary.observation_fingerprint();
             slot.scope_generation = endpoint.scope_evidence_generation_for_scope(scope_id);
@@ -195,7 +196,7 @@ where
         let active_offer_lanes = endpoint.decision_state.active_offer_lanes();
         Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
             let info = endpoint.decision_state.lane_offer_state(lane_idx);
-            if !info.entry.is_max()
+            if !info.entry.is_absent()
                 && active_entries
                     .slot_for_entry(state_index_to_usize(info.entry))
                     .is_some()
@@ -207,7 +208,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn ensure_global_frontier_scratch_initialized(
+    pub(in crate::endpoint::kernel) fn ensure_global_frontier_scratch_ready(
         endpoint: &mut CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
     ) {
         endpoint.init_global_frontier_scratch_if_needed();
@@ -284,17 +285,23 @@ where
         let Some(offer_lane) = offer_lane else {
             return Err(RecvError::PhaseInvariant);
         };
-        let at_route_offer_entry = self
-            .cursor
-            .route_offer_entry_matches_current(scope_id, current_idx)
-            .expect("invariant");
+        let route_offer_entry_matches = crate::invariant_some(
+            self.cursor
+                .route_offer_entry_cursor_position(scope_id, current_idx),
+        )
+        .is_at_entry();
+        let entry_position = if route_offer_entry_matches {
+            OfferEntryPosition::RouteEntry
+        } else {
+            OfferEntryPosition::AfterRouteEntry
+        };
         let frontier_parallel_root =
             CursorEndpoint::<ROLE, T, C, MAX_RV>::parallel_scope_root(&self.cursor, scope_id);
         Ok(OfferScopeSelection {
             scope_id,
             frontier_parallel_root,
             offer_lane,
-            at_route_offer_entry,
+            entry_position,
         })
     }
 
@@ -313,12 +320,12 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn mark_scope_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
-        self.mark_scope_ready_arm_inner(scope_id, arm, true);
+        self.mark_scope_ready_arm_inner(scope_id, arm, ReadyArmEvidence::Poll);
     }
 
     #[inline]
     pub(super) fn mark_scope_materialization_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
-        self.mark_scope_ready_arm_inner(scope_id, arm, false);
+        self.mark_scope_ready_arm_inner(scope_id, arm, ReadyArmEvidence::Materialization);
     }
 
     #[inline]
@@ -335,19 +342,19 @@ where
         let arm = exact_passive_arm
             .or_else(|| frame_label_meta.evidence_arm_for_frame_label(frame_label));
         if let Some(arm) = arm {
-            if self.static_passive_scope_evidence_materializes_poll(scope_id) {
+            if self.intrinsic_passive_scope_evidence_materializes_poll(scope_id) {
                 self.mark_scope_ready_arm(scope_id, arm);
             } else {
                 self.mark_scope_materialization_ready_arm(scope_id, arm);
             }
             if exact_passive_arm.is_some() {
-                self.mark_static_passive_descendant_path_ready(scope_id, lane, frame_label);
+                self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
             }
         }
     }
 
     #[inline]
-    pub(super) fn mark_static_passive_descendant_path_ready(
+    pub(super) fn mark_intrinsic_passive_descendant_path_ready(
         &mut self,
         scope_id: ScopeId,
         lane: u8,
@@ -387,12 +394,16 @@ where
             current_parallel,
             reason,
             offer_lane,
-            ingress_ready,
+            ingress,
             selected_arm,
         } = request;
-        let fingerprint = self.evidence_fingerprint(scope_id, ingress_ready);
+        let fingerprint = self.evidence_fingerprint(scope_id, ingress);
         let evidence = progress.on_defer(fingerprint);
-        let pending = matches!(evidence, OfferEvidenceOutcome::Pending);
+        let defer_progress = if matches!(evidence, OfferEvidenceOutcome::Pending) {
+            ResolverDeferProgress::Pending
+        } else {
+            ResolverDeferProgress::Settled
+        };
         let is_controller = self.cursor.is_route_controller(scope_id);
         let frontier = CursorEndpoint::<ROLE, T, C, MAX_RV>::frontier_kind_for_cursor(
             &self.cursor,
@@ -408,8 +419,8 @@ where
             selected_arm,
             hint,
             ready_arm_mask,
-            ingress_ready,
-            pending,
+            ingress,
+            progress: defer_progress,
             lane: offer_lane,
         });
         visited.record(scope_id);
@@ -436,7 +447,7 @@ where
             }
             ControlFlow::<()>::Continue(())
         });
-        if pending {
+        if defer_progress.is_pending() {
             let Some(candidate) = snapshot.select_yield_candidate(*visited) else {
                 return FrontierDeferOutcome::Pending;
             };
@@ -477,8 +488,8 @@ where
         }
         let at_route_entry = self
             .cursor
-            .route_offer_entry_matches_current(scope_id, current_idx)?;
-        if !at_route_entry {
+            .route_offer_entry_cursor_position(scope_id, current_idx)?;
+        if !at_route_entry.is_at_entry() {
             return Some(CurrentScopeSelectionMeta::EMPTY);
         }
         let mut flags = CurrentScopeSelectionMeta::FLAG_ROUTE_ENTRY;
@@ -511,7 +522,7 @@ where
         current_idx: usize,
     ) -> CurrentFrontierSelectionState {
         if let Some(info) = self.offer_entry_lane_state(scope_id, current_idx) {
-            let summary = self.compute_offer_entry_static_summary(current_idx);
+            let summary = self.compute_offer_entry_summary(current_idx);
             let entry_parallel = self.offer_entry_parallel_root(current_idx);
             let parallel_root = info.parallel_root;
             let current_parallel =
@@ -527,14 +538,15 @@ where
             if summary.is_dynamic() {
                 flags |= CurrentFrontierSelectionState::FLAG_DYNAMIC;
             }
+            if summary.intrinsic_ready() {
+                flags |= CurrentFrontierSelectionState::FLAG_READY;
+            }
             return CurrentFrontierSelectionState {
                 frontier: self.offer_entry_frontier(current_idx),
                 parallel_root: match current_parallel {
                     Some(root) => root,
                     None => ScopeId::none(),
                 },
-                ready: summary.static_ready(),
-                has_progress_evidence: false,
                 flags,
             };
         }
@@ -544,7 +556,7 @@ where
                 .cursor
                 .route_scope_controller_resolver(scope_id)
                 .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
-        let static_facts = CursorEndpoint::<ROLE, T, C, MAX_RV>::frontier_static_facts_at(
+        let frontier_facts = CursorEndpoint::<ROLE, T, C, MAX_RV>::frontier_facts_at(
             &self.cursor,
             scope_id,
             current_is_controller,
@@ -574,19 +586,20 @@ where
         if current_is_dynamic {
             flags |= CurrentFrontierSelectionState::FLAG_DYNAMIC;
         }
+        if frontier_facts.ready() {
+            flags |= CurrentFrontierSelectionState::FLAG_READY;
+        }
         CurrentFrontierSelectionState {
-            frontier: static_facts.frontier,
+            frontier: frontier_facts.frontier,
             parallel_root: match current_parallel {
                 Some(root) => root,
                 None => ScopeId::none(),
             },
-            ready: static_facts.ready,
-            has_progress_evidence: false,
             flags,
         }
     }
 
-    pub(super) fn await_static_passive_progress(
+    pub(super) fn await_intrinsic_passive_progress(
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
         selection: OfferScopeSelection,
@@ -603,7 +616,7 @@ where
             None => Some(selection.offer_lane),
         };
         if let Some(arm) = selected_arm
-            && selection.at_route_offer_entry
+            && selection.entry_position.is_route_entry()
             && let Some(entry) = materialization_meta.passive_arm_entry(arm)
             && !self.cursor.is_recv_at(state_index_to_usize(entry))
         {

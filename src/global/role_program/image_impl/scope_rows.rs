@@ -116,7 +116,7 @@ impl RoleLaneScratch {
     pub(super) const fn scope_segment_end(
         markers: &[ScopeMarker],
         enter_idx: usize,
-        default_end: usize,
+        segment_limit: usize,
     ) -> usize {
         let marker = markers[enter_idx];
         let mut scan = enter_idx + 1;
@@ -129,13 +129,13 @@ impl RoleLaneScratch {
             }
             scan += 1;
         }
-        default_end
+        segment_limit
     }
 
     #[inline(always)]
     pub(super) const fn first_scope_segment_bounds(
         markers: &[ScopeMarker],
-        default_end: usize,
+        segment_limit: usize,
         scope_id: ScopeId,
     ) -> Option<(ScopeKind, usize, usize)> {
         if scope_id.is_none() {
@@ -150,7 +150,7 @@ impl RoleLaneScratch {
                 return Some((
                     marker.scope_kind,
                     marker.offset,
-                    Self::scope_segment_end(markers, idx, default_end),
+                    Self::scope_segment_end(markers, idx, segment_limit),
                 ));
             }
             idx += 1;
@@ -161,11 +161,11 @@ impl RoleLaneScratch {
     #[inline(always)]
     const fn scope_dependency_bounds(
         markers: &[ScopeMarker],
-        default_end: usize,
+        segment_limit: usize,
         scope_id: ScopeId,
     ) -> Option<(ScopeKind, usize, usize)> {
         let Some((kind, start, end)) =
-            Self::first_scope_segment_bounds(markers, default_end, scope_id)
+            Self::first_scope_segment_bounds(markers, segment_limit, scope_id)
         else {
             return None;
         };
@@ -231,11 +231,11 @@ impl RoleLaneScratch {
     #[inline(always)]
     pub(super) const fn nearest_route_for_scope(
         markers: &[ScopeMarker],
-        default_end: usize,
+        segment_limit: usize,
         scope_id: ScopeId,
     ) -> Option<ScopeId> {
         let Some((_, target_start, target_end)) =
-            Self::scope_dependency_bounds(markers, default_end, scope_id)
+            Self::scope_dependency_bounds(markers, segment_limit, scope_id)
         else {
             return None;
         };

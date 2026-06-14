@@ -20,7 +20,7 @@ pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
-pub(crate) const ROLE_IMAGE_LOOP_SCOPE_STRIDE: usize = 8;
+pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -137,7 +137,7 @@ impl PackedRouteArmRow {
     const START_SHIFT: u32 = 12;
     const FIELD_MASK: u32 = 0x0fff;
     const LANE_FIELD_MASK: u64 = 0xffff;
-    const CHILD_NONE: u32 = 0;
+    const CHILD_ABSENT_DELTA: u32 = 0;
 
     #[inline(always)]
     pub(crate) const fn new(
@@ -164,7 +164,7 @@ impl PackedRouteArmRow {
                 }
                 delta as u32
             }
-            None => Self::CHILD_NONE,
+            None => Self::CHILD_ABSENT_DELTA,
         };
         let lane_start = if lane_step_row.is_empty() {
             0u64
@@ -229,7 +229,7 @@ impl PackedRouteArmRow {
             None
         } else {
             let delta = (self.0 >> Self::CHILD_SHIFT) as u8;
-            if delta == Self::CHILD_NONE as u8 {
+            if delta == Self::CHILD_ABSENT_DELTA as u8 {
                 None
             } else {
                 Some(delta)
@@ -239,9 +239,9 @@ impl PackedRouteArmRow {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PackedLoopScopeRow(u64);
+pub(crate) struct PackedRollScopeRow(u64);
 
-impl PackedLoopScopeRow {
+impl PackedRollScopeRow {
     pub(crate) const EMPTY: Self = Self(u64::MAX);
     const START_SHIFT: u32 = 16;
     const LEN_SHIFT: u32 = 32;
@@ -253,7 +253,7 @@ impl PackedLoopScopeRow {
         row: PackedLaneRange,
     ) -> Self {
         if scope.is_none()
-            || !matches!(scope.kind(), crate::global::const_dsl::ScopeKind::Loop)
+            || !matches!(scope.kind(), crate::global::const_dsl::ScopeKind::Roll)
             || row.is_empty()
             || row.start() > Self::FIELD_MASK as usize
             || row.len() > Self::FIELD_MASK as usize
@@ -287,7 +287,7 @@ impl PackedLoopScopeRow {
         if self.is_empty() {
             None
         } else {
-            Some(crate::global::const_dsl::ScopeId::loop_scope(
+            Some(crate::global::const_dsl::ScopeId::roll_scope(
                 (self.0 & Self::FIELD_MASK) as u16,
             ))
         }
@@ -403,7 +403,7 @@ pub(crate) struct RoleImageColumns {
     pub(crate) route_arm_lane_step_rows: ColumnRange,
     pub(crate) route_commit_ranges: ColumnRange,
     pub(crate) route_commit_rows: ColumnRange,
-    pub(crate) loop_scopes: ColumnRange,
+    pub(crate) roll_scopes: ColumnRange,
 }
 
 impl RoleImageColumns {
@@ -440,7 +440,7 @@ impl RoleImageColumns {
         );
         len = Self::max_end(len, self.route_commit_ranges, ROLE_IMAGE_LANE_RANGE_STRIDE);
         len = Self::max_end(len, self.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE);
-        len = Self::max_end(len, self.loop_scopes, ROLE_IMAGE_LOOP_SCOPE_STRIDE);
+        len = Self::max_end(len, self.roll_scopes, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
         len
     }
 }
@@ -464,7 +464,7 @@ pub(crate) struct RoleLaneScratch {
     pub(crate) route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) route_offer_lane_rows: [PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) route_commit_ranges: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
-    pub(crate) loop_scope_rows: [PackedLoopScopeRow; MAX_LOCAL_STEP_LANES],
+    pub(crate) roll_scope_rows: [PackedRollScopeRow; MAX_LOCAL_STEP_LANES],
     pub(crate) active_lane_row: PackedLaneRange,
     pub(crate) resident_row_len: u16,
     pub(crate) dependency_row_len: u16,
@@ -472,7 +472,7 @@ pub(crate) struct RoleLaneScratch {
     pub(crate) lane_bit_row_len: u16,
     pub(crate) route_commit_row_len: u16,
     pub(crate) route_arm_lane_step_row_len: u16,
-    pub(crate) loop_scope_row_len: u16,
+    pub(crate) roll_scope_row_len: u16,
     pub(crate) first_active_lane: u16,
 }
 

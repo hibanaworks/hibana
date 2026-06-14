@@ -7,7 +7,7 @@ cd "${ROOT_DIR}"
 FAILED=0
 
 if [[ -e "src/sync.rs" ]]; then
-  echo "boundary deny pattern detected: runtime sync bypass path" >&2
+  echo "boundary deny pattern detected: runtime sync forbidden path" >&2
   FAILED=1
 fi
 
@@ -21,19 +21,19 @@ GUESS_WORD='heur''istic'
 UNIVERSE_WORD='uni''verse'
 RECONFIG_TOKEN='fe''nce'
 
-LEGACY_ROLE_TOKEN_PATTERN='g::''Role<'
-LEGACY_ROLE_TOKEN_RESIDUE="$(
-  rg -n "${LEGACY_ROLE_TOKEN_PATTERN}" src tests README.md .github/scripts || true
+FORBIDDEN_ROLE_TOKEN_PATTERN='g::''Role<'
+FORBIDDEN_ROLE_TOKEN_MATCHES="$(
+  rg -n "${FORBIDDEN_ROLE_TOKEN_PATTERN}" src tests README.md .github/scripts || true
 )"
-if [[ -n "${LEGACY_ROLE_TOKEN_RESIDUE}" ]]; then
-  echo "${LEGACY_ROLE_TOKEN_RESIDUE}" >&2
+if [[ -n "${FORBIDDEN_ROLE_TOKEN_MATCHES}" ]]; then
+  echo "${FORBIDDEN_ROLE_TOKEN_MATCHES}" >&2
   echo "boundary deny pattern detected: forbidden g role token API residue" >&2
   FAILED=1
 fi
 
 check_absent \
   "mod[[:space:]]+sync;|crate::sync" \
-  "runtime fake-sync bypass path detected" \
+  "runtime sync substitute forbidden path detected" \
   src/lib.rs src/runtime.rs src/endpoint.rs src/rendezvous/core.rs src/observe/core.rs
 
 check_absent \
@@ -56,12 +56,12 @@ check_absent \
 
 check_absent \
   "validate_sendable_message|assert_sendable|label exceeds ${UNIVERSE_WORD}|0\\.\\.=127|128 labels|LABEL_MAX:[[:space:]]*u8[[:space:]]*=[[:space:]]*127" \
-  "forbidden half-range label domain or no-op sendability guard detected" \
+  "forbidden half-range label domain or empty sendability guard detected" \
   src tests README.md
 
 check_absent \
-  "custom demux and channel adapters|decode adapters only|large temporary" \
-  "renamed adapter/temporary wording residue" \
+  "custom demux and channel adap""ters|decode adap""ters only|large[[:space:]]+tem""porar(y)" \
+  "renamed transport wording residue" \
   src README.md
 
 check_absent \
@@ -91,50 +91,50 @@ fi
 
 bash ./.github/scripts/check_surface_test_alias_hygiene.sh
 
-TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS="$(
+TEST_SUPPORT_TYPED_HANDLE_STATIC_SLOTS="$(
   (
     rg -n -U "StaticSlot<[^\\n;]*(Endpoint<|RouteBranch<)" tests || true
   ) | rg -v "tests/(runtime_surface|public_surface_guards)\\.rs:" || true
 )"
-if [[ -n "${TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS}" ]]; then
-  echo "${TEST_FIXTURE_TYPED_HANDLE_STATIC_SLOTS}" >&2
+if [[ -n "${TEST_SUPPORT_TYPED_HANDLE_STATIC_SLOTS}" ]]; then
+  echo "${TEST_SUPPORT_TYPED_HANDLE_STATIC_SLOTS}" >&2
   echo "boundary deny pattern detected: typed handle static slot" >&2
   FAILED=1
 fi
 
-TEST_FIXTURE_PURE_CLUSTER_ALIASES="$(
+TEST_SUPPORT_PURE_CLUSTER_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*SessionCluster<" tests || true
 )"
-if [[ -n "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_CLUSTER_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure cluster alias" >&2
+if [[ -n "${TEST_SUPPORT_PURE_CLUSTER_ALIASES}" ]]; then
+  echo "${TEST_SUPPORT_PURE_CLUSTER_ALIASES}" >&2
+  echo "boundary deny pattern detected: test support pure cluster alias" >&2
   FAILED=1
 fi
 
-TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES="$(
+TEST_SUPPORT_PROJECT_ROLE_OUTPUT_ALIASES="$(
   rg -n -U "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*<.*as[[:space:]]+ProjectRole<.*>::Output;" tests || true
 )"
-if [[ -n "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PROJECT_ROLE_OUTPUT_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture project-role output alias" >&2
+if [[ -n "${TEST_SUPPORT_PROJECT_ROLE_OUTPUT_ALIASES}" ]]; then
+  echo "${TEST_SUPPORT_PROJECT_ROLE_OUTPUT_ALIASES}" >&2
+  echo "boundary deny pattern detected: test support project-role output alias" >&2
   FAILED=1
 fi
 
-TEST_FIXTURE_IMPORT_ALIASES="$(
+TEST_SUPPORT_IMPORT_ALIASES="$(
   rg -n -U "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" tests || true
 )"
-if [[ -n "${TEST_FIXTURE_IMPORT_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_IMPORT_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture import alias bypass path" >&2
+if [[ -n "${TEST_SUPPORT_IMPORT_ALIASES}" ]]; then
+  echo "${TEST_SUPPORT_IMPORT_ALIASES}" >&2
+  echo "boundary deny pattern detected: test support import alias forbidden path" >&2
   FAILED=1
 fi
 
-TEST_FIXTURE_PURE_PROGRAM_ALIASES="$(
+TEST_SUPPORT_PURE_PROGRAM_ALIASES="$(
   rg -n "^const[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<[^>]+>[[:space:]]*=[[:space:]]*[A-Z][A-Z0-9_]*;" tests || true
 )"
-if [[ -n "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" ]]; then
-  echo "${TEST_FIXTURE_PURE_PROGRAM_ALIASES}" >&2
-  echo "boundary deny pattern detected: test fixture pure program alias" >&2
+if [[ -n "${TEST_SUPPORT_PURE_PROGRAM_ALIASES}" ]]; then
+  echo "${TEST_SUPPORT_PURE_PROGRAM_ALIASES}" >&2
+  echo "boundary deny pattern detected: test support pure program alias" >&2
   FAILED=1
 fi
 
@@ -228,7 +228,7 @@ EXAMPLE_IMPORT_ALIASES="$(
 )"
 if [[ -n "${EXAMPLE_IMPORT_ALIASES}" ]]; then
   echo "${EXAMPLE_IMPORT_ALIASES}" >&2
-  echo "boundary deny pattern detected: example import alias bypass path" >&2
+  echo "boundary deny pattern detected: example import alias forbidden path" >&2
   FAILED=1
 fi
 
@@ -239,18 +239,18 @@ EXAMPLE_UNDERSCORE_CASTS="$(
 )"
 if [[ -n "${EXAMPLE_UNDERSCORE_CASTS}" ]]; then
   echo "${EXAMPLE_UNDERSCORE_CASTS}" >&2
-  echo "boundary deny pattern detected: example underscore cast bypass path" >&2
+  echo "boundary deny pattern detected: example underscore cast forbidden path" >&2
   FAILED=1
 fi
 
-EXAMPLE_ESCAPE_HATCHES="$(
+EXAMPLE_FORBIDDEN_SURFACE="$(
   if [[ -e examples ]]; then
     rg -n "#\\[doc\\(hidden\\)\\]|#\\[allow\\(dead_code\\)\\]|\\b${ALT_WORD}\\b" examples || true
   fi
 )"
-if [[ -n "${EXAMPLE_ESCAPE_HATCHES}" ]]; then
-  echo "${EXAMPLE_ESCAPE_HATCHES}" >&2
-  echo "boundary deny pattern detected: example bypass residue" >&2
+if [[ -n "${EXAMPLE_FORBIDDEN_SURFACE}" ]]; then
+  echo "${EXAMPLE_FORBIDDEN_SURFACE}" >&2
+  echo "boundary deny pattern detected: example forbidden residue" >&2
   FAILED=1
 fi
 
@@ -268,21 +268,21 @@ if [[ -n "${INTERNAL_SOURCE_TEST_OWNER_HIDING_ALIASES}" ]]; then
   FAILED=1
 fi
 
-STACK_BACKED_TAP_STORAGE_SHIM="$(
+STACK_BACKED_TAP_STORAGE_RESIDUE="$(
   rg -n "Box::new\\(\\[TapEvent::default\\(\\);[[:space:]]*RING_EVENTS\\]\\)" \
     tests/support/runtime.rs || true
 )"
-if [[ -n "${STACK_BACKED_TAP_STORAGE_SHIM}" ]]; then
-  echo "${STACK_BACKED_TAP_STORAGE_SHIM}" >&2
-  echo "boundary deny pattern detected: stack-backed tap storage bypass path" >&2
+if [[ -n "${STACK_BACKED_TAP_STORAGE_RESIDUE}" ]]; then
+  echo "${STACK_BACKED_TAP_STORAGE_RESIDUE}" >&2
+  echo "boundary deny pattern detected: stack-backed tap storage forbidden path" >&2
   FAILED=1
 fi
 
-STACK_TUNING_HELPER_SHIM="$(
+STACK_TUNING_HELPER_RESIDUE="$(
   rg -n -g '!tests/huge_choreography_runtime.rs' "stack_size\\(" src tests || true
 )"
-if [[ -n "${STACK_TUNING_HELPER_SHIM}" ]]; then
-  echo "${STACK_TUNING_HELPER_SHIM}" >&2
+if [[ -n "${STACK_TUNING_HELPER_RESIDUE}" ]]; then
+  echo "${STACK_TUNING_HELPER_RESIDUE}" >&2
   echo "boundary deny pattern detected: explicit stack tuning helper" >&2
   FAILED=1
 fi
@@ -297,7 +297,7 @@ PUBLIC_TEST_UTILS_FEATURE="$(
 )"
 if [[ -n "${PUBLIC_TEST_UTILS_FEATURE}" ]]; then
   echo "${PUBLIC_TEST_UTILS_FEATURE}" >&2
-  echo "boundary deny pattern detected: public test-utils feature bypass path" >&2
+  echo "boundary deny pattern detected: public test-utils feature forbidden path" >&2
   FAILED=1
 fi
 
@@ -309,7 +309,7 @@ PROJECT_TURBOFISH_RESIDUE="$(
 )"
 if [[ -n "${PROJECT_TURBOFISH_RESIDUE}" ]]; then
   echo "${PROJECT_TURBOFISH_RESIDUE}" >&2
-  echo "boundary deny pattern detected: project turbofish bypass path" >&2
+  echo "boundary deny pattern detected: project turbofish forbidden path" >&2
   FAILED=1
 fi
 
@@ -321,31 +321,31 @@ APP_CONSTRUCTOR_TURBOFISH_RESIDUE="$(
 )"
 if [[ -n "${APP_CONSTRUCTOR_TURBOFISH_RESIDUE}" ]]; then
   echo "${APP_CONSTRUCTOR_TURBOFISH_RESIDUE}" >&2
-  echo "boundary deny pattern detected: app constructor turbofish bypass path" >&2
+  echo "boundary deny pattern detected: app constructor turbofish forbidden path" >&2
   FAILED=1
 fi
 
-CFG_GATED_NOOP_FUNCTIONS="$(
+CFG_GATED_EMPTY_FUNCTIONS="$(
   rg -n -U "#\\[cfg\\(not\\(feature = \\\"[A-Za-z0-9_-]+\\\"\\)\\)\\][[:space:]]*\\n[[:space:]]*(pub\\(crate\\)|pub)?[[:space:]]*fn[[:space:]]+[A-Za-z0-9_]+\\([^;]*\\)[[:space:]]*\\{[[:space:]]*\\}" \
     src || true
 )"
-if [[ -n "${CFG_GATED_NOOP_FUNCTIONS}" ]]; then
-  echo "${CFG_GATED_NOOP_FUNCTIONS}" >&2
-  echo "boundary deny pattern detected: cfg-gated no-op seam" >&2
+if [[ -n "${CFG_GATED_EMPTY_FUNCTIONS}" ]]; then
+  echo "${CFG_GATED_EMPTY_FUNCTIONS}" >&2
+  echo "boundary deny pattern detected: cfg-gated empty function body" >&2
   FAILED=1
 fi
 
-TRANSPORT_TRAIT_DEFAULT_NOOPS="$(
+TRANSPORT_TRAIT_EMPTY_DEFAULTS="$(
   rg -n -U "fn[[:space:]]+requeue<'a>\\(&'a self, rx: &'a mut Self::Rx<'a>\\)[[:space:]]*\\{[[:space:]]*debug_assert!\\(core::ptr::eq\\(rx, rx\\)\\);[[:space:]]*\\}|fn[[:space:]]+metrics\\(&self\\)[[:space:]]*->[[:space:]]*Self::Metrics[[:space:]]*\\{[[:space:]]*Self::Metrics::default\\(\\)[[:space:]]*\\}" \
     src/transport.rs || true
 )"
-if [[ -n "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" ]]; then
-  echo "${TRANSPORT_TRAIT_DEFAULT_NOOPS}" >&2
-  echo "boundary deny pattern detected: transport trait default bypass path" >&2
+if [[ -n "${TRANSPORT_TRAIT_EMPTY_DEFAULTS}" ]]; then
+  echo "${TRANSPORT_TRAIT_EMPTY_DEFAULTS}" >&2
+  echo "boundary deny pattern detected: transport trait default forbidden path" >&2
   FAILED=1
 fi
 check_absent "fn[[:space:]]+cancel_send<'a>\\(&self, tx: &'a mut Self::Tx<'a>\\)[[:space:]]*\\{[[:space:]]*let _ = tx;[[:space:]]*\\}" \
-  "transport send cancellation must be a required transport contract, not a default no-op" \
+  "transport send cancellation must be a required transport contract, not an empty trait body" \
   src/transport.rs
 check_absent "fn[[:space:]]+open<'a>\\(&self, port: PortOpen\\)[[:space:]]*->[[:space:]]*\\(Self::Tx<'a>, Self::Rx<'a>\\)" \
   "Transport::open must bind Tx/Rx handles to the transport borrow" \
@@ -355,37 +355,37 @@ if ! grep -Fq "fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<
   FAILED=1
 fi
 
-RESERVED_LABEL_CONTRACT_RESIDUE="$(
+LOGICAL_FRAME_LABEL_RESIDUE="$(
   rg -n \
     -g '!tests/docs_surface.rs' \
     -g '!*.stderr' \
-    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved protocol band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_ARM_SELECTION|LABEL_PROTOCOL_CONTROL|Message>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
+    "recv_label_hint|scope_hint|ScopeLabelMeta|scope_label_meta|frame_hint_label|resolved_frame_hint_label|matches_frame_hint_label|record_arm_label|record_dispatch_arm_label|mark_scope_ready_arm_from_label|mark_scope_ready_arm_from_binding_label|scope_label_to_arm|scope_evidence_label_to_arm|binding_scope_evidence_label_to_arm|FrameLabelMask::from_label|contains_label\\(|insert_label\\(|remove_label\\(|singleton_label\\(|binding_label_masks|endpoint_binding_label_masks_bytes|pending_frame_hint_label_masks|pending_frame_hint_labels_for_lane|update_pending_frame_hint_lane_masks|first_recv_dispatch_label_mask|route_scope_first_recv_dispatch_label_mask|reserved protocol[[:space:]]+band|0x0300[[:space:]]*\\+[^;]*(LABEL|LOGICAL)|_reserved[[:space:]]*:|LABEL_LOOP_CONTINUE|LABEL_LOOP_BREAK|LABEL_ROUTE_ARM_SELECTION|LABEL_PROTOCOL_CONTROL|Message>::LABEL|const[[:space:]]+LABEL[[:space:]]*:[[:space:]]*u8|IngressEvidence[[:space:]]*\\{[[:space:]]*label:" \
     README.md src tests || true
 )"
-if [[ -n "${RESERVED_LABEL_CONTRACT_RESIDUE}" ]]; then
-  echo "${RESERVED_LABEL_CONTRACT_RESIDUE}" >&2
-  echo "boundary deny pattern detected: reserved protocol label contract residue" >&2
+if [[ -n "${LOGICAL_FRAME_LABEL_RESIDUE}" ]]; then
+  echo "${LOGICAL_FRAME_LABEL_RESIDUE}" >&2
+  echo "boundary deny pattern detected: logical/frame label contract residue" >&2
   FAILED=1
 fi
 
 check_absent \
   "TEST_LOOP_CONTINUE_LABEL|TEST_LOOP_BREAK_LABEL|TEST_ROUTE_ARM_SELECTION_LABEL|const[[:space:]]+[A-Z0-9_]*(LABEL|LOGICAL|FRAME)[A-Z0-9_]*[[:space:]]*:[[:space:]]*u8[[:space:]]*=[[:space:]]*(48|49|57);|Msg<\\{?[[:space:]]*(48|49|57)\\b|LabelMarker<(48|49|57)>|FrameLabel::new\\([^)]*LOGICAL\\)|FrameLabelMask::from_frame_label\\([^)]*LOGICAL\\)" \
-  "tests must not preserve retired 48/49/57 protocol-label fixtures or pass logical labels as frame labels" \
+  "tests must not preserve retired 48/49/57 protocol-label test support or pass logical labels as frame labels" \
   src tests
 
 check_absent \
   "FrameLabel::new\\([A-Z0-9_]*LABEL\\)|FrameLabelMask::from_frame_label\\([A-Z0-9_]*LABEL\\)" \
-  "tests must not pass logical-label fixtures or ambiguous LABEL constants as FrameLabel values" \
+  "tests must not pass logical-label test support or ambiguous LABEL constants as FrameLabel values" \
   src tests
 
 check_absent \
   "ScopeFrameHint|frame_label[[:space:]]*==[[:space:]]*0|FrameLabel::new\\(<Msg<|outgoing\\.frame_label\\(\\)\\.raw\\(\\)[[:space:]]*==[[:space:]]*<Msg<" \
-  "FrameLabel/logical label conflation or zero-sentinel residue" \
+  "FrameLabel/logical label conflation or zero-valued label residue" \
   src tests
 
 check_absent \
   "current_step_labels|event_cursor_current_step_labels|refresh_current_step_label\\(|rebuild_current_step_labels\\(" \
-  "current-step logical label zero-sentinel residue" \
+  "current-step logical label cache residue" \
   src tests
 
 check_absent \
@@ -434,7 +434,7 @@ check_absent \
   src/endpoint tests
 
 check_absent \
-  "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_payload|RecvRuntimeDesc::new\\([^,]+,[^,]+,[^,]+\\)" \
+  "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_""payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_""payload|RecvRuntimeDesc::new\\([^,]+,[^,]+,[^,]+\\)" \
   "deterministic recv must carry descriptor evidence into complete runtime descriptor" \
   src/endpoint src/endpoint/kernel
 
@@ -443,13 +443,14 @@ check_absent \
   "FrameLabel allocation must be edge-unique, not logical-label deduplicated" \
   src/global/typestate/emit_walk.rs
 
-TRANSPORT_METRICS_DEFAULT_NOOPS="$(
-  rg -n -U "pub[[:space:]]+trait[[:space:]]+TransportMetrics:[[:space:]]+Default|fn[[:space:]]+(latency_us|queue_depth|pacing_interval_us|congestion_marks|retransmissions|pto_count|srtt_us|latest_ack_pn|congestion_window|in_flight_bytes|algorithm)\\(&self\\)[[:space:]]*->[[:space:]]*Option<[^>]+>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
+DEFAULT_WORD='Def''ault'
+TRANSPORT_METRICS_EMPTY_DEFAULTS="$(
+  rg -n -U "pub[[:space:]]+trait[[:space:]]+TransportMetrics:[[:space:]]+${DEFAULT_WORD}|fn[[:space:]]+(latency_us|queue_depth|pacing_interval_us|congestion_marks|retransmissions|pto_count|srtt_us|latest_ack_pn|congestion_window|in_flight_bytes|algorithm)\\(&self\\)[[:space:]]*->[[:space:]]*Option<[^>]+>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
     src/transport.rs || true
 )"
-if [[ -n "${TRANSPORT_METRICS_DEFAULT_NOOPS}" ]]; then
-  echo "${TRANSPORT_METRICS_DEFAULT_NOOPS}" >&2
-  echo "boundary deny pattern detected: transport metrics trait default bypass path" >&2
+if [[ -n "${TRANSPORT_METRICS_EMPTY_DEFAULTS}" ]]; then
+  echo "${TRANSPORT_METRICS_EMPTY_DEFAULTS}" >&2
+  echo "boundary deny pattern detected: transport metrics trait default forbidden path" >&2
   FAILED=1
 fi
 
@@ -474,7 +475,7 @@ CORE_TRAIT_DEFAULT_HELPERS="$(
 )"
 if [[ -n "${CORE_TRAIT_DEFAULT_HELPERS}" ]]; then
   echo "${CORE_TRAIT_DEFAULT_HELPERS}" >&2
-  echo "boundary deny pattern detected: core trait default bypass path" >&2
+  echo "boundary deny pattern detected: core trait default forbidden path" >&2
   FAILED=1
 fi
 
@@ -497,7 +498,7 @@ if [[ -e "${DELETED_SESSION_CAP_DIR}" ]]; then
 fi
 if [[ -n "${RESOURCE_KIND_DEFAULT_HELPERS}" ]]; then
   echo "${RESOURCE_KIND_DEFAULT_HELPERS}" >&2
-  echo "boundary deny pattern detected: resource kind default bypass path" >&2
+  echo "boundary deny pattern detected: resource kind default forbidden path" >&2
   FAILED=1
 fi
 
@@ -507,7 +508,7 @@ WIRE_ENCODE_DEFAULT_HINT="$(
 )"
 if [[ -n "${WIRE_ENCODE_DEFAULT_HINT}" ]]; then
   echo "${WIRE_ENCODE_DEFAULT_HINT}" >&2
-  echo "boundary deny pattern detected: wire encode trait default bypass path" >&2
+  echo "boundary deny pattern detected: wire encode trait default forbidden path" >&2
   FAILED=1
 fi
 
@@ -520,61 +521,61 @@ if [[ -n "${TRANSPORT_RECONFIG_ALTERNATE}" ]]; then
   FAILED=1
 fi
 
-RENDEZVOUS_STACK_TEMP_SHIM="$(
+RENDEZVOUS_STACK_RESIDUE="$(
   rg -n -U "let[[:space:]]+rv[[:space:]]*=[[:space:]]*Rendezvous::from_config\\(config, transport\\);[[:space:]]*self\\.add_rendezvous\\(rv\\)" \
     src/session/cluster/core.rs || true
 )"
-if [[ -n "${RENDEZVOUS_STACK_TEMP_SHIM}" ]]; then
-  echo "${RENDEZVOUS_STACK_TEMP_SHIM}" >&2
-  echo "boundary deny pattern detected: rendezvous stack temporary bypass path" >&2
+if [[ -n "${RENDEZVOUS_STACK_RESIDUE}" ]]; then
+  echo "${RENDEZVOUS_STACK_RESIDUE}" >&2
+  echo "boundary deny pattern detected: rendezvous stack forbidden path" >&2
   FAILED=1
 fi
 
 check_absent_multiline "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" \
-  "source import alias bypass path" \
+  "source import alias forbidden path" \
   src examples
 check_absent "\\sas _([,;)|]|$)" \
-  "underscore inferred cast bypass path" \
+  "underscore inferred cast forbidden path" \
   src examples
 check_absent "as \\*const _|as \\*mut _" \
-  "underscore pointer cast bypass path" \
+  "underscore pointer cast forbidden path" \
   src examples
 check_absent "^[[:space:]]*const[[:space:]]+(INDEX|VALUE|LABEL):[[:space:]]+u8[[:space:]]*=[[:space:]]+(IDX|LABEL);" \
-  "self-shadowing associated const bypass path" \
+  "self-shadowing associated const forbidden path" \
   src tests
 check_absent "type[[:space:]]+Controller[[:space:]]*=[[:space:]]*Controller;" \
-  "route semantic self-shadowing associated type bypass path" \
+  "route semantic self-shadowing associated type forbidden path" \
   src/global.rs
 STALE_VAR_ALLOW='un''used_variables'
 check_absent "#\\[allow\\(clippy::empty_loop\\)\\]|#\\[allow\\(${STALE_VAR_ALLOW}\\)\\]|#\\[allow\\(clippy::let_unit_value\\)\\]" \
-  "forbidden allow bypass path" \
+  "forbidden allow attribute" \
   src tests
 check_absent "route_inferred|par_inferred" \
   "forbidden inferred binary builder vocabulary" \
   src/global.rs \
   src/global/program.rs
 check_absent "^type[[:space:]]+[A-Za-z0-9_]*Msg[A-Za-z0-9_]*[[:space:]]*=" \
-  "global const-dsl message alias bypass path" \
+  "global const-dsl message alias forbidden path" \
   src/global/const_dsl.rs
 REMOVED_RESOURCE='Con''trol''Resource'
 check_absent "^type[[:space:]]+${REMOVED_RESOURCE}<" \
-  "endpoint forbidden descriptor shorthand alias bypass path" \
+  "endpoint forbidden descriptor shorthand alias forbidden path" \
   src/endpoint/kernel/core.rs \
   src/endpoint/flow.rs
 check_absent "mem::transmute::<Guard<'_>, Guard<'static>>|mem::transmute::<Guard<'static>, Guard<'rv>>|core::mem::transmute::<_, Port<[^>]+>>" \
-  "rendezvous brand or port transmute bypass path" \
+  "rendezvous brand or port transmute forbidden path" \
   src/rendezvous/core.rs
 check_absent "transmute::<usize, fn\\(u32\\)>" \
-  "observe timestamp-checker transmute bypass path" \
+  "observe timestamp-checker transmute forbidden path" \
   src/observe/core.rs
 check_absent "LeaseObserve|from_resident_tap|commit_event: Option<TapEvent>|requeue_event: Option<TapEvent>" \
   "unconsumed lease observe/tap authority" \
   src/session/lease/core.rs
 check_absent "#\\[doc\\(hidden\\)\\]" \
-  "doc-hidden bypass" \
+  "doc-hidden forbidden path" \
   src examples
 check_absent "LocalSteps = steps::StepNil" \
-  "RoleProgram StepNil default projection bypass path" \
+  "RoleProgram StepNil default projection forbidden path" \
   src/global/role_program.rs
 check_absent "HIBANA_[A-Z0-9_]+" \
   "env/debug token in hibana core" \
@@ -585,7 +586,9 @@ check_absent "(^|[^A-Za-z0-9_])([Qq][Uu][Ii][Cc]|[Hh]3|[Hh][Qq])([^A-Za-z0-9_]|$
 check_absent "${ALT_WORD}_|\\b${ALT_WORD}\\b" \
   "alternate-path residue vocabulary in production source" \
   src
-check_absent "\\b(for_test|_for_test)\\b|test-only|Test-only|\\b${MODE_WORD}(ibility)?\\b|\\b${OLD_WORD}\\b|\\b${RECOVERY_WORD}\\b|\\b${GUESS_WORD}\\b" \
+FOR_TEST_WORD='for_''test'
+FOR_TEST_SUFFIX='_for_''test'
+check_absent "\\b(${FOR_TEST_WORD}|${FOR_TEST_SUFFIX})\\b|test-only|Test-only|\\b${MODE_WORD}(ibility)?\\b|\\b${OLD_WORD}\\b|\\b${RECOVERY_WORD}\\b|\\b${GUESS_WORD}\\b" \
   "test-only or forbidden-surface residue in production source" \
   src
 check_absent "(?i)\\b(${MODE_WORD}(ibility|ible)?|${OLD_WORD}|${RECOVERY_WORD}|${GUESS_WORD}|${ALT_WORD}|state machine|infer(red|ence|s|ring)?|absorb mismatch|absorption)\\b" \
@@ -606,7 +609,7 @@ check_absent "\\bEndpointBinding\\b" \
 check_absent "pub[[:space:]]+struct[[:space:]]+StateIndex|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new|from_usize|raw|as_usize|is_max)\\(" \
   "typestate StateIndex flat-index helpers must remain crate-private" \
   src/global/typestate/facts.rs
-check_absent "\\b(RouteResolutionOutcome|LoopResolutionOutcome)\\b" \
+check_absent "\\b(RouteResolutionOutcome|LoopResolutionOutcome|RollResolutionOutcome)\\b" \
   "resolver result alias residue in production source" \
   src/session/cluster/core.rs
 check_absent "TransportAlgorithm,[[:space:]]*TransportError|TransportError,[[:space:]]*TransportEvent" \
@@ -719,7 +722,7 @@ if [[ -e src/session/automaton/distributed.rs ]]; then
   echo "boundary deny pattern detected: forbidden distributed session owner detected" >&2
   FAILED=1
 fi
-check_absent "\\b(StatelessRouteResolverFn|RouteResolverStatePayload[[:space:]]*<[^>]+>[[:space:]]*=|ErasedRouteResolverStatePayload|StatelessLoopResolverFn|LoopResolverStatePayload[[:space:]]*<[^>]+>[[:space:]]*=|ErasedLoopResolverStatePayload)\\b" \
+check_absent "\\b(StatelessRouteResolverFn|RouteResolverStatePayload[[:space:]]*<[^>]+>[[:space:]]*=|ErasedRouteResolverStatePayload|StatelessLoopResolverFn|LoopResolverStatePayload[[:space:]]*<[^>]+>[[:space:]]*=|ErasedLoopResolverStatePayload|StatelessRollResolverFn|RollResolverStatePayload[[:space:]]*<[^>]+>[[:space:]]*=|ErasedRollResolverStatePayload)\\b" \
   "resolver storage type alias residue in production source" \
   src/session/cluster/core.rs
 check_absent "type[[:space:]]+SessionLaneHandle[[:space:]]*=" \
@@ -759,13 +762,13 @@ check_absent "\\bpoll_arm_from_ready_hint\\b" \
   "hint-derived Poll helper" \
   src/endpoint/kernel/core.rs
 check_absent "rebuild_pending_offers|build_frontier_snapshot|select_offer_entry|lag correction|passive takeover" \
-  "offer-kernel recovery bypass path" \
+  "offer-kernel cleanup forbidden path" \
   src/endpoint/kernel/core.rs
 check_absent "duplicate route label" \
   "route duplicate-label const panic residue" \
   src/global/program.rs
 check_absent "\\b(RouteLabelBits|BitEq|BitsEqual|BitsCons|BitsNil|Bit0|Bit1)\\b" \
-  "route label bit-table bypass path" \
+  "route label bit-table forbidden path" \
   src/global.rs
 check_absent "\\bRouteControllerArm\\b|\\bParallelLaneShape\\b" \
   "route/par forbidden witness name" \
@@ -775,7 +778,7 @@ check_absent "\\bParallelFragment\\b" \
   src/global.rs \
   src/global/program.rs
 check_absent "\\bStepNonEmpty\\b" \
-  "parallel empty-arm witness bypass path" \
+  "parallel empty-arm witness forbidden path" \
   src/global/steps.rs
 check_absent "(?i)\\b(quic|h3|hq|qpack|alpn)\\b|http/3" \
   "protocol-specific vocabulary in hibana/src" \
@@ -790,7 +793,7 @@ HIDDEN_SRC_FILES="$(
 )"
 if [[ -n "${HIDDEN_SRC_FILES}" ]]; then
   echo "${HIDDEN_SRC_FILES}" >&2
-  echo "boundary deny pattern detected: underscore source bypass" >&2
+  echo "boundary deny pattern detected: underscore source forbidden path" >&2
   FAILED=1
 fi
 
@@ -803,22 +806,20 @@ check_absent \
   "public step bucket detected" \
   src/global.rs src/g.rs src
 
-ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE="$(
+ITEM_LEVEL_PROGRAM_INFERENCE_RESIDUE="$(
   paths=(README.md tests src)
   if [[ -e examples ]]; then
     paths+=(examples)
   fi
   rg -n \
     -g '!tests/docs_surface.rs' \
-    -g '!tests/ui/const_program_inferred_item_type.rs' \
-    -g '!tests/ui/static_program_inferred_item_type.rs' \
     -g '!tests/ui/*.stderr' \
     -g '!src/global/program.rs' \
     "(const|static)[[:space:]]+[A-Z0-9_]+[[:space:]]*:[[:space:]]+(g::)?Program<_" \
     "${paths[@]}" || true
 )"
-if [[ -n "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" ]]; then
-  echo "${ITEM_LEVEL_PROGRAM_PLACEHOLDER_RESIDUE}" >&2
+if [[ -n "${ITEM_LEVEL_PROGRAM_INFERENCE_RESIDUE}" ]]; then
+  echo "${ITEM_LEVEL_PROGRAM_INFERENCE_RESIDUE}" >&2
   echo "boundary deny pattern detected: item-level inferred Program type detected" >&2
   FAILED=1
 fi

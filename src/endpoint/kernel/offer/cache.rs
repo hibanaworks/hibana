@@ -376,7 +376,7 @@ where
             if cached_key.slot(slot_idx).scope_generation == scope_generation {
                 continue;
             }
-            let summary = self.compute_offer_entry_static_summary(entry_idx);
+            let summary = self.compute_offer_entry_summary(entry_idx);
             if cached_key.slot(slot_idx).entry_summary_fingerprint
                 != summary.observation_fingerprint()
             {
@@ -446,7 +446,7 @@ where
             {
                 continue;
             }
-            let summary = self.compute_offer_entry_static_summary(entry_idx);
+            let summary = self.compute_offer_entry_summary(entry_idx);
             if cached_key.slot(slot_idx).entry_summary_fingerprint
                 != summary.observation_fingerprint()
                 || cached_key.slot(slot_idx).scope_generation

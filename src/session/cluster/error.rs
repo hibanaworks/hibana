@@ -5,43 +5,14 @@
 //! callsite so protocol runtimes can propagate attach errors with `?`
 //! without adding an extra context type at every call site.
 
-use core::{fmt, panic::Location};
+use crate::diag::Callsite;
+use core::fmt;
 
 mod debug;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ErrorLocation {
-    location: &'static Location<'static>,
-}
-
-impl ErrorLocation {
-    #[inline]
-    #[track_caller]
-    pub(crate) fn caller() -> Self {
-        Self {
-            location: Location::caller(),
-        }
-    }
-
-    #[inline]
-    const fn file(self) -> &'static str {
-        self.location.file()
-    }
-
-    #[inline]
-    const fn line(self) -> u32 {
-        self.location.line()
-    }
-
-    #[inline]
-    const fn column(self) -> u32 {
-        self.location.column()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttachOp {
-    Internal,
+    Attach,
     Rendezvous,
     Enter,
 }
@@ -54,7 +25,7 @@ pub(crate) enum AttachOp {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AttachError {
     op: AttachOp,
-    location: ErrorLocation,
+    location: Callsite,
     kind: AttachErrorKind,
 }
 
@@ -82,8 +53,8 @@ impl AttachError {
     #[track_caller]
     pub(crate) fn cluster(error: ClusterError) -> Self {
         Self {
-            op: AttachOp::Internal,
-            location: ErrorLocation::caller(),
+            op: AttachOp::Attach,
+            location: Callsite::caller(),
             kind: AttachErrorKind::Cluster(error),
         }
     }
@@ -92,14 +63,14 @@ impl AttachError {
     #[track_caller]
     pub(crate) fn rendezvous(error: crate::rendezvous::error::RendezvousError) -> Self {
         Self {
-            op: AttachOp::Internal,
-            location: ErrorLocation::caller(),
+            op: AttachOp::Attach,
+            location: Callsite::caller(),
             kind: AttachErrorKind::Rendezvous(error),
         }
     }
 
     #[inline]
-    pub(crate) const fn with_operation(mut self, op: AttachOp, location: ErrorLocation) -> Self {
+    pub(crate) const fn with_operation(mut self, op: AttachOp, location: Callsite) -> Self {
         self.op = op;
         self.location = location;
         self
@@ -116,7 +87,7 @@ impl AttachError {
     #[inline]
     pub const fn operation(&self) -> &'static str {
         match self.op {
-            AttachOp::Internal => "attach",
+            AttachOp::Attach => "attach",
             AttachOp::Rendezvous => "rendezvous",
             AttachOp::Enter => "enter",
         }
@@ -154,23 +125,20 @@ impl From<crate::rendezvous::error::RendezvousError> for AttachError {
     }
 }
 
-/// Cluster attach and resolver error type.
+/// Cluster attach and resolver failure catalogue.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ClusterError {
+pub(crate) enum ClusterError {
     /// Rendezvous ID mismatch.
     RendezvousMismatch { expected: u16, actual: u16 },
 
-    /// Requested rendezvous was not registered in this session cluster.
-    RendezvousMissing { id: u16 },
+    /// Requested rendezvous is not registered in this session cluster.
+    RendezvousUnregistered { id: u16 },
 
     /// Rendezvous exists but is currently protected by an affine lease.
     RendezvousBusy { id: u16 },
 
     /// Resource exhaustion in a specific cluster storage area.
     ResourceExhausted { resource: ResourceScope },
-
-    /// Effect not supported by the target session descriptor.
-    UnsupportedEffect(u8),
 
     /// Registered resolver rejected the operation.
     ResolverReject { resolver_id: u16 },
@@ -180,7 +148,7 @@ pub enum ClusterError {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ResourceScope {
+pub(crate) enum ResourceScope {
     RendezvousTable,
     LaneStorage,
     ResolverTable,
@@ -192,7 +160,7 @@ pub enum ResourceScope {
 }
 
 impl ResourceScope {
-    pub const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::RendezvousTable => "rv",
             Self::LaneStorage => "lane",
@@ -208,7 +176,7 @@ impl ResourceScope {
 
 impl ClusterError {
     #[inline]
-    pub const fn resource_exhausted(resource: ResourceScope) -> Self {
+    pub(crate) const fn resource_exhausted(resource: ResourceScope) -> Self {
         Self::ResourceExhausted { resource }
     }
 }
@@ -217,7 +185,7 @@ impl ClusterError {
 impl std::error::Error for ClusterError {}
 
 // Tests use `format!` which requires `alloc`/`std`. Gate them behind `std` so
-// that rust-analyzer (no_std default) doesn't flag errors, while CI runs them
+// that rust-analyzer in a no_std configuration doesn't flag errors, while CI runs them
 // under `--all-features` (which enables `std`).
 #[cfg(all(test, feature = "std"))]
 mod tests {

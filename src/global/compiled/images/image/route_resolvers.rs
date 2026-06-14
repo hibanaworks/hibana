@@ -1,8 +1,11 @@
 use super::CompiledProgramRef;
-use super::columns::{PROGRAM_IMAGE_NO_ROUTE_CONTROLLER, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE};
+use super::columns::{
+    PROGRAM_IMAGE_INTRINSIC_ROUTE_EFF, PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE,
+    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+};
 use crate::{
     eff::EffIndex,
-    global::const_dsl::{ResolverMode, ScopeId},
+    global::const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeId},
 };
 
 impl CompiledProgramRef {
@@ -32,7 +35,7 @@ impl CompiledProgramRef {
     pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
         let offset = self.route_resolver_row(scope_id)?;
         let role = self.byte_at(offset + 8);
-        if role == PROGRAM_IMAGE_NO_ROUTE_CONTROLLER {
+        if role == PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE {
             None
         } else {
             Some(role)
@@ -43,18 +46,18 @@ impl CompiledProgramRef {
     pub(crate) fn route_controller(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(ResolverMode, crate::eff::EffIndex, u8)> {
+    ) -> Option<(RouteResolver, crate::eff::EffIndex, u8)> {
         let offset = self.route_resolver_row(scope_id)?;
         let eff_dense = self.read_u16_at(offset + 6);
-        if eff_dense == u16::MAX {
+        if eff_dense == PROGRAM_IMAGE_INTRINSIC_ROUTE_EFF {
             return None;
         }
         let resolver_id = self.read_u16_at(offset + 4);
         let scope = Self::compact_scope_from_bits(self.read_u32_at(offset));
-        let resolver = if resolver_id == u16::MAX {
-            ResolverMode::Static
+        let resolver = if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
+            RouteResolver::Intrinsic
         } else {
-            ResolverMode::Dynamic { resolver_id, scope }
+            RouteResolver::Dynamic { resolver_id, scope }
         };
         Some((
             resolver,

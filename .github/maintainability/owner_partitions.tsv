@@ -5,6 +5,7 @@
 # have their own partition below.
 src	src/session
 src	src/session.rs
+src	src/diag.rs
 src	src/eff.rs
 src	src/endpoint
 src	src/endpoint.rs
@@ -149,7 +150,7 @@ src/global/role_program	src/global/role_program/program.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/blob_image.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/event_rows.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/lane_image.rs
-src/global/role_program/image_impl	src/global/role_program/image_impl/loop_rows.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/roll_rows.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/ref_access.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/scope_rows.rs
 src/global/typestate	src/global/typestate/cursor
@@ -171,6 +172,7 @@ src/rendezvous	src/rendezvous/tables
 src/rendezvous	src/rendezvous/tables.rs
 src/rendezvous	src/rendezvous/waiter.rs
 tests	tests/affine_progression.rs
+tests	tests/callsite_regression.rs
 tests	tests/common
 tests	tests/cursor_send_recv
 tests	tests/cursor_send_recv.rs

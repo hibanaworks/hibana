@@ -1,8 +1,8 @@
 use super::{
     BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint, DecodeCommitBuilder,
-    DecodeCommitPlan, DecodeLingerCursorPlan, DecodeProgressPlan, EndpointRxAuditPlan, Payload,
-    RecvError, RecvMeta, RecvResult, StateIndex, Transport, decode_phase_invariant,
-    scope_slot_for_route_from_cursor, state_index_to_usize,
+    DecodeCommitPlan, DecodeProgressPlan, EndpointRxAuditPlan, Payload, RecvError, RecvMeta,
+    RecvResult, StateIndex, Transport, decode_phase_invariant, scope_slot_for_route_from_cursor,
+    state_index_to_usize,
 };
 use crate::endpoint::kernel::core::{CommitDelta, CommitRow};
 
@@ -22,7 +22,7 @@ where
         committed_payload: Payload<'r>,
     ) -> RecvResult<DecodeCommitPlan<'r>> {
         let mut route_rows = self.route_rows.take().ok_or_else(decode_phase_invariant)?;
-        CursorEndpoint::<ROLE, T, C, MAX_RV>::collect_decode_linger_route_rows_from_parts(
+        CursorEndpoint::<ROLE, T, C, MAX_RV>::collect_decode_reentry_route_rows_from_parts(
             self.cursor,
             self.decision_state,
             meta,
@@ -36,7 +36,7 @@ where
                 crate::global::typestate::EventCommitMeta::new(
                     branch_meta.eff_index,
                     branch_meta.label,
-                    branch_meta.is_internal,
+                    branch_meta.origin,
                     branch_meta.scope,
                     branch_meta.route_arm,
                     branch_meta.lane,
@@ -51,24 +51,21 @@ where
                 },
             )
             .map_err(|_| decode_phase_invariant())?;
-        let linger_cursor =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::build_decode_linger_cursor_plan_from_parts(
+        let reentry_cursor =
+            CursorEndpoint::<ROLE, T, C, MAX_RV>::decode_reentry_cursor_step_from_parts(
                 self.cursor,
                 self.decision_state,
                 &route_rows,
                 meta,
                 enabled.cursor_after(),
-            )?;
+            );
         let delta = CommitDelta::from_recv_meta(
             branch_meta,
             route_rows.as_commit_rows(branch_meta.lane),
             enabled.cursor_after(),
             enabled.progress_step(),
         )
-        .with_lane_relocation(match linger_cursor {
-            DecodeLingerCursorPlan::None => None,
-            DecodeLingerCursorPlan::SetLane { step } => Some(step),
-        });
+        .with_lane_relocation(reentry_cursor);
         Ok(DecodeCommitPlan {
             branch: branch_plan,
             audit,
@@ -97,7 +94,7 @@ where
                         crate::global::typestate::EventCommitMeta::new(
                             branch_meta.eff_index,
                             branch_meta.label,
-                            branch_meta.is_internal,
+                            branch_meta.origin,
                             branch_meta.scope_id,
                             Some(branch_meta.selected_arm),
                             branch_meta.lane_wire,
@@ -117,7 +114,7 @@ where
                     delta: CommitDelta::from_event_row(
                         branch_meta.eff_index,
                         branch_meta.label,
-                        branch_meta.is_internal,
+                        branch_meta.origin,
                         CommitRow::new(
                             branch_meta.scope_id,
                             Some(branch_meta.selected_arm),
@@ -129,7 +126,7 @@ where
                     ),
                 }
             }
-            BranchKind::EmptyArmTerminal => {
+            BranchKind::TerminalArm => {
                 let next_index = StateIndex::from_usize(self.cursor.index());
                 DecodeProgressPlan::NonWire {
                     delta: CommitDelta::route_rows(

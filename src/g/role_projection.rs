@@ -11,7 +11,7 @@ where
     Steps: ProgramTerm,
 {
     const BYTES: crate::global::compiled::images::ProgramImageBytes<N> =
-        crate::global::compiled::images::ProgramImageBytes::<N>::from_unselected_bucket_or_empty(
+        crate::global::compiled::images::ProgramImageBytes::<N>::from_capacity_bucket(
             &ProgramProjection::<Steps>::IMAGE,
         );
 }
@@ -188,7 +188,7 @@ where
     Steps: ProgramTerm,
 {
     const BYTES: crate::global::role_program::RoleImageBytes<N> =
-        crate::global::role_program::RoleImageBytes::<N>::from_unselected_bucket_or_empty(
+        crate::global::role_program::RoleImageBytes::<N>::from_capacity_bucket(
             RoleProjection::<ROLE, Steps>::SCRATCH,
             RoleProjection::<ROLE, Steps>::FACTS,
         );

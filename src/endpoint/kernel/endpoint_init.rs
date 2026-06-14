@@ -54,7 +54,7 @@ where
     public_slot: EndpointLeaseId,
     public_generation: u32,
     public_ops: EndpointOps<'r>,
-    public_slot_owned: bool,
+    public_slot_ownership: super::core::PublicSlotOwnership,
     session: SessionCtx<'r, T, C, MAX_RV>,
 }
 
@@ -77,7 +77,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
         public_slot,
         public_generation,
         public_ops,
-        public_slot_owned,
+        public_slot_ownership,
         session,
     } = init;
     /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
@@ -109,7 +109,7 @@ unsafe fn init_endpoint_header<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
         ::core::ptr::addr_of_mut!((*dst).public_rv).write(public_rv);
         ::core::ptr::addr_of_mut!((*dst).public_slot).write(public_slot);
         ::core::ptr::addr_of_mut!((*dst).public_generation).write(public_generation);
-        ::core::ptr::addr_of_mut!((*dst).public_slot_owned).write(public_slot_owned);
+        ::core::ptr::addr_of_mut!((*dst).public_slot_ownership).write(public_slot_ownership);
         ::core::ptr::addr_of_mut!((*dst).public_active_op).write(super::core::PublicActiveOp::Idle);
         ::core::ptr::addr_of_mut!((*dst).public_offer_state).write(super::offer::OfferState::new());
         ::core::ptr::addr_of_mut!((*dst).public_route_branch).write(None);
@@ -190,7 +190,6 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
         );
         RouteCommitRowSetBuilder::init(
             route_commit_row_set_builder,
-            core::ptr::null_mut(),
             role_descriptor.max_route_stack_depth().max(1),
         );
         RouteState::init_empty(
@@ -220,17 +219,17 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
                     arena_storage,
                     arena_layout.route_state_lane_route_arm_lens(),
                 ),
-                lane_linger_counts: section_ptr::<u8>(
+                lane_reentry_counts: section_ptr::<u8>(
                     arena_storage,
-                    arena_layout.route_state_lane_linger_counts(),
+                    arena_layout.route_state_lane_reentry_counts(),
                 ),
-                lane_linger_words: section_ptr::<crate::global::role_program::LaneWord>(
+                lane_reentry_words: section_ptr::<crate::global::role_program::LaneWord>(
                     arena_storage,
-                    arena_layout.route_state_lane_linger_lanes(),
+                    arena_layout.route_state_lane_reentry_lanes(),
                 ),
-                lane_offer_linger_words: section_ptr::<crate::global::role_program::LaneWord>(
+                lane_offer_reentry_words: section_ptr::<crate::global::role_program::LaneWord>(
                     arena_storage,
-                    arena_layout.route_state_lane_offer_linger_lanes(),
+                    arena_layout.route_state_lane_offer_reentry_lanes(),
                 ),
                 active_offer_lane_words: section_ptr::<crate::global::role_program::LaneWord>(
                     arena_storage,
@@ -240,7 +239,7 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
             RouteStateCapacity {
                 lane_slot_count: arena_layout.route_state_lane_dense_by_lane().count(),
                 active_lane_count,
-                lane_word_count: arena_layout.route_state_lane_linger_lanes().count(),
+                lane_word_count: arena_layout.route_state_lane_reentry_lanes().count(),
                 lane_offer_state_count: arena_layout.lane_offer_state_slots().count(),
                 route_frame_depth: role_descriptor.max_route_stack_depth(),
                 scope_evidence_count: arena_layout.scope_evidence_slots().count(),
@@ -255,7 +254,6 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
     dst: *mut CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
-    _role_descriptor: RoleDescriptorRef,
 ) where
     T: Transport + 'r,
     C: crate::runtime_core::config::Clock,
@@ -318,18 +316,18 @@ pub(crate) struct CompiledEndpointInit<
     C: crate::runtime_core::config::Clock,
     const MAX_RV: usize,
 > {
-    pub dst: *mut CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
-    pub arena_storage: *mut u8,
-    pub primary_lane: usize,
-    pub sid: SessionId,
-    pub owner: Owner<'r>,
-    pub role_descriptor: RoleDescriptorRef,
-    pub public_rv: RendezvousId,
-    pub public_slot: EndpointLeaseId,
-    pub public_generation: u32,
-    pub public_ops: EndpointOps<'r>,
-    pub public_slot_owned: bool,
-    pub session: SessionCtx<'r, T, C, MAX_RV>,
+    pub(crate) dst: *mut CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+    pub(crate) arena_storage: *mut u8,
+    pub(crate) primary_lane: usize,
+    pub(crate) sid: SessionId,
+    pub(crate) owner: Owner<'r>,
+    pub(crate) role_descriptor: RoleDescriptorRef,
+    pub(crate) public_rv: RendezvousId,
+    pub(crate) public_slot: EndpointLeaseId,
+    pub(crate) public_generation: u32,
+    pub(crate) public_ops: EndpointOps<'r>,
+    pub(crate) public_slot_ownership: super::core::PublicSlotOwnership,
+    pub(crate) session: SessionCtx<'r, T, C, MAX_RV>,
 }
 
 pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
@@ -349,7 +347,7 @@ pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T, C, const MA
         public_slot,
         public_generation,
         public_ops,
-        public_slot_owned,
+        public_slot_ownership,
         session,
     } = init;
     let arena_layout = role_descriptor.endpoint_arena_layout();
@@ -371,12 +369,12 @@ pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T, C, const MA
             public_slot,
             public_generation,
             public_ops,
-            public_slot_owned,
+            public_slot_ownership,
             session,
         });
         init_endpoint_cursor(dst, arena_storage, &arena_layout, role_descriptor);
         init_endpoint_route(dst, arena_storage, &arena_layout, role_descriptor);
-        init_endpoint_frontier(dst, arena_storage, &arena_layout, role_descriptor);
+        init_endpoint_frontier(dst, arena_storage, &arena_layout);
     }
 }
 

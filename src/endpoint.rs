@@ -27,7 +27,7 @@ mod error;
 /// Flow-based send API.
 pub(crate) mod flow;
 mod futures;
-/// Internal endpoint kernel implementation.
+/// Endpoint kernel implementation.
 pub(crate) mod kernel;
 mod ops;
 mod public_types;
@@ -37,9 +37,7 @@ pub(crate) mod session;
 mod tests;
 
 pub use self::error::{EndpointError, EndpointResult};
-pub(crate) use self::error::{
-    EndpointOp, ErrorLocation, RecvError, RecvResult, SendError, SendResult,
-};
+pub(crate) use self::error::{EndpointOp, RecvError, RecvResult, SendError, SendResult};
 pub use self::flow::Flow;
 pub(crate) use self::futures::RecvFuture;
 pub use self::public_types::{Endpoint, RouteBranch};

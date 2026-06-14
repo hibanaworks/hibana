@@ -25,7 +25,7 @@ const ROLE_LANE_WORDS: usize = (ROLE_DOMAIN_SIZE * (u8::MAX as usize + 1)).div_c
 
 impl RoleLaneMask {
     /// Create an empty mask.
-    pub const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
             words: [0; ROLE_LANE_WORDS],
         }
@@ -45,7 +45,7 @@ impl RoleLaneMask {
     }
 
     /// Compute the union of two masks.
-    pub const fn union(self, other: Self) -> Self {
+    pub(crate) const fn union(self, other: Self) -> Self {
         let mut out = Self::empty();
         let mut idx = 0usize;
         while idx < ROLE_LANE_WORDS {
@@ -56,7 +56,7 @@ impl RoleLaneMask {
     }
 
     /// Check if any role overlaps within the same lane.
-    pub const fn intersects(&self, other: &Self) -> bool {
+    pub(crate) const fn intersects(&self, other: &Self) -> bool {
         let mut idx = 0usize;
         while idx < ROLE_LANE_WORDS {
             if (self.words[idx] & other.words[idx]) != 0 {

@@ -47,13 +47,13 @@ pub(crate) enum ProgramSourceError {
     RouteArmHead,
     RouteDuplicateLabel,
     RouteControllerMismatch,
-    LoopBodyEmpty,
-    ParallelEmpty,
+    RollBodyAbsent,
+    ParallelArmAbsent,
     ParallelConflict,
-    ResolverIdReserved,
+    ResolverIdOutOfDomain,
     ResolverTargetNotRoute,
     ProjectionRouteResolverMismatch,
-    ProjectionRouteResolverMissing,
+    ProjectionRouteResolverAbsent,
     ProjectionRouteUnprojectable,
 }
 
@@ -76,21 +76,21 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         ProgramSourceError::RouteControllerMismatch => {
             panic!("route arms use different first visible controllers")
         }
-        ProgramSourceError::LoopBodyEmpty => panic!("loop body must contain at least one step"),
-        ProgramSourceError::ParallelEmpty => {
-            panic!("g::par(left, right) arms must be non-empty protocol fragments")
+        ProgramSourceError::RollBodyAbsent => panic!("rolled body requires at least one step"),
+        ProgramSourceError::ParallelArmAbsent => {
+            panic!("g::par(left, right) arms require protocol steps")
         }
         ProgramSourceError::ParallelConflict => {
             panic!("parallel lanes must use disjoint (role, lane) pairs")
         }
-        ProgramSourceError::ResolverIdReserved => {
-            panic!("route resolver id u16::MAX is reserved")
+        ProgramSourceError::ResolverIdOutOfDomain => {
+            panic!("route resolver id must be < u16::MAX")
         }
         ProgramSourceError::ResolverTargetNotRoute => {
             panic!("route resolver can only be attached to a route")
         }
         ProgramSourceError::ProjectionRouteResolverMismatch => panic!("route resolver mismatch"),
-        ProgramSourceError::ProjectionRouteResolverMissing => panic!("route resolver missing"),
+        ProgramSourceError::ProjectionRouteResolverAbsent => panic!("route resolver absent"),
         ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
             "Route unprojectable for this role: arms not mergeable, ",
             "wire dispatch non-deterministic, ",
@@ -194,7 +194,7 @@ impl<LeftSteps, RightSteps> Program<Route<LeftSteps, RightSteps>> {
         self,
     ) -> Program<Resolve<Route<LeftSteps, RightSteps>, RESOLVER_ID>> {
         if RESOLVER_ID == u16::MAX {
-            panic!("route resolver id u16::MAX is reserved");
+            panic!("route resolver id must be < u16::MAX");
         }
         let _ = self;
         Program::new()

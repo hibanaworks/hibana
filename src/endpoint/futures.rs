@@ -1,7 +1,8 @@
 use super::{
-    Endpoint, EndpointError, EndpointOp, EndpointResult, ErrorLocation, RecvResult, RouteBranch,
-    carrier,
+    Endpoint, EndpointError, EndpointOp, EndpointResult, RecvResult, RouteBranch, carrier,
 };
+use crate::diag::Callsite;
+use crate::endpoint::kernel::RecvPayloadMode;
 use crate::global::MessageRuntime;
 use crate::transport::wire::{CodecError, Payload};
 use core::{
@@ -12,20 +13,26 @@ use core::{
 
 pub(crate) struct RawOfferFuture<'e, 'r, const ROLE: u8> {
     pub(super) endpoint: *mut Endpoint<'r, ROLE>,
-    pub(super) lease: RawOfferLease,
+    pub(super) lease: OfferFutureLease,
     pub(super) _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
 pub(crate) struct OfferFuture<'e, 'r, const ROLE: u8> {
     pub(super) raw: RawOfferFuture<'e, 'r, ROLE>,
-    pub(super) location: ErrorLocation,
+    pub(super) location: Callsite,
 }
 
 pub(crate) struct RawDecodeFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
-    leased: bool,
-    completed: bool,
+    lease: crate::endpoint::kernel::PublicOpLease,
+    progress: DecodeFutureProgress,
     _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DecodeFutureProgress {
+    Pending,
+    Finished,
 }
 
 pub(crate) struct DecodeFuture<'e, 'r, const ROLE: u8, M>
@@ -33,86 +40,50 @@ where
     M: crate::g::Message,
 {
     raw: RawDecodeFuture<'e, 'r, ROLE>,
-    location: ErrorLocation,
+    location: Callsite,
     _msg: core::marker::PhantomData<M>,
 }
 
 pub(crate) struct RawRecvFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
-    flags: RawRecvFlags,
+    lease: RecvFutureLease,
+    payload_mode: RecvPayloadMode,
     _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct RawOfferLease(u8);
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum OfferFutureLease {
+    Rejected = 0,
+    RestoreOnDrop = 1,
+    Completed = 2,
+}
 
-impl RawOfferLease {
-    const COMPLETED: u8 = 1 << 0;
-    const LEASED: u8 = 1 << 1;
-
+impl OfferFutureLease {
     #[inline]
-    pub(super) const fn new(leased: bool) -> Self {
-        Self(if leased { Self::LEASED } else { 0 })
-    }
-
-    #[inline]
-    pub(super) fn mark_completed(&mut self) {
-        self.0 |= Self::COMPLETED;
-    }
-
-    #[inline]
-    pub(super) const fn completed(self) -> bool {
-        self.0 & Self::COMPLETED != 0
-    }
-
-    #[inline]
-    pub(super) const fn leased(self) -> bool {
-        self.0 & Self::LEASED != 0
-    }
-
-    #[inline]
-    pub(super) const fn must_restore_on_drop(self) -> bool {
-        self.0 & Self::LEASED != 0 && self.0 & Self::COMPLETED == 0
+    pub(super) const fn from_public_lease(lease: crate::endpoint::kernel::PublicOpLease) -> Self {
+        match lease {
+            crate::endpoint::kernel::PublicOpLease::Held => Self::RestoreOnDrop,
+            crate::endpoint::kernel::PublicOpLease::Rejected => Self::Rejected,
+        }
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RawRecvFlags(u8);
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RecvFutureLease {
+    Rejected = 0,
+    RestoreOnDrop = 1,
+    Completed = 2,
+}
 
-impl RawRecvFlags {
-    const COMPLETED: u8 = 1 << 0;
-    const ACCEPTS_EMPTY_PAYLOAD: u8 = 1 << 1;
-    const LEASED: u8 = 1 << 2;
-
+impl RecvFutureLease {
     #[inline]
-    pub(crate) const fn new(accepts_empty_payload: bool, leased: bool) -> Self {
-        let accepts = if accepts_empty_payload {
-            Self::ACCEPTS_EMPTY_PAYLOAD
-        } else {
-            0
-        };
-        let leased = if leased { Self::LEASED } else { 0 };
-        Self(accepts | leased)
-    }
-
-    #[inline]
-    pub(crate) fn mark_completed(&mut self) {
-        self.0 |= Self::COMPLETED;
-    }
-
-    #[inline]
-    pub(crate) const fn completed(self) -> bool {
-        self.0 & Self::COMPLETED != 0
-    }
-
-    #[inline]
-    pub(crate) const fn leased(self) -> bool {
-        self.0 & Self::LEASED != 0
-    }
-
-    #[inline]
-    pub(crate) const fn accepts_empty_payload(self) -> bool {
-        self.0 & Self::ACCEPTS_EMPTY_PAYLOAD != 0
+    pub(crate) const fn from_public_lease(lease: crate::endpoint::kernel::PublicOpLease) -> Self {
+        match lease {
+            crate::endpoint::kernel::PublicOpLease::Held => Self::RestoreOnDrop,
+            crate::endpoint::kernel::PublicOpLease::Rejected => Self::Rejected,
+        }
     }
 }
 
@@ -121,7 +92,7 @@ where
     M: crate::g::Message,
 {
     raw: RawRecvFuture<'e, 'r, ROLE>,
-    location: ErrorLocation,
+    location: Callsite,
     _msg: core::marker::PhantomData<M>,
 }
 
@@ -131,13 +102,18 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
         let branch = core::mem::ManuallyDrop::new(branch);
         let endpoint = branch.endpoint;
         /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
-        let leased = unsafe { (&mut *endpoint).begin_public_decode_state() };
+        let lease = unsafe { (&mut *endpoint).begin_public_decode_state() };
         Self {
             endpoint,
-            leased,
-            completed: false,
+            lease,
+            progress: DecodeFutureProgress::Pending,
             _borrow: core::marker::PhantomData,
         }
+    }
+
+    #[inline]
+    fn finish(&mut self) {
+        self.progress = DecodeFutureProgress::Finished;
     }
 
     #[inline]
@@ -148,22 +124,25 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
         zero_payload: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        if self.completed {
+        if self.progress == DecodeFutureProgress::Finished {
             crate::invariant();
         }
-        if !self.leased {
-            self.completed = true;
-            return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
+        match self.lease {
+            crate::endpoint::kernel::PublicOpLease::Held => {}
+            crate::endpoint::kernel::PublicOpLease::Rejected => {
+                self.finish();
+                return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
+            }
         }
         let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
         match endpoint.poll_decode(logical_label, validate, zero_payload, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
-                self.completed = true;
+                self.finish();
                 Poll::Ready(Ok(payload))
             }
             Poll::Ready(Err(err)) => {
-                self.completed = true;
+                self.finish();
                 Poll::Ready(Err(err))
             }
         }
@@ -172,12 +151,14 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: &'e mut Endpoint<'r, ROLE>, accepts_empty_payload: bool) -> Self {
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>, payload_mode: RecvPayloadMode) -> Self {
         /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
-        let leased = unsafe { endpoint.init_public_recv_state() };
+        let lease =
+            RecvFutureLease::from_public_lease(unsafe { endpoint.init_public_recv_state() });
         Self {
             endpoint: core::ptr::from_mut(endpoint),
-            flags: RawRecvFlags::new(accepts_empty_payload, leased),
+            lease,
+            payload_mode,
             _borrow: core::marker::PhantomData,
         }
     }
@@ -189,27 +170,23 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        if self.flags.completed() {
-            crate::invariant();
-        }
-        if !self.flags.leased() {
-            self.flags.mark_completed();
-            return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
+        match self.lease {
+            RecvFutureLease::Completed => crate::invariant(),
+            RecvFutureLease::Rejected => {
+                self.lease = RecvFutureLease::Completed;
+                return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
+            }
+            RecvFutureLease::RestoreOnDrop => {}
         }
         let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(
-            logical_label,
-            self.flags.accepts_empty_payload(),
-            validate,
-            cx,
-        ) {
+        match endpoint.poll_recv(logical_label, self.payload_mode, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
-                self.flags.mark_completed();
+                self.lease = RecvFutureLease::Completed;
                 Poll::Ready(Ok(payload))
             }
             Poll::Ready(Err(err)) => {
-                self.flags.mark_completed();
+                self.lease = RecvFutureLease::Completed;
                 Poll::Ready(Err(err))
             }
         }
@@ -221,7 +198,7 @@ where
     M: crate::g::Message,
 {
     #[inline]
-    pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>, location: ErrorLocation) -> Self {
+    pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>, location: Callsite) -> Self {
         Self {
             raw: RawDecodeFuture::new(branch),
             location,
@@ -235,10 +212,11 @@ where
     M: crate::g::Message,
 {
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: ErrorLocation) -> Self {
-        let accepts_empty_payload = <M as MessageRuntime>::ACCEPTS_EMPTY_PAYLOAD;
+    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: Callsite) -> Self {
+        let payload_mode =
+            RecvPayloadMode::from_allows_zero_length(<M as MessageRuntime>::ALLOWS_ZERO_LENGTH);
         Self {
-            raw: RawRecvFuture::new(endpoint, accepts_empty_payload),
+            raw: RawRecvFuture::new(endpoint, payload_mode),
             location,
             _msg: core::marker::PhantomData,
         }
@@ -304,18 +282,22 @@ where
 
 impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if self.leased && !self.completed {
-            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
-            unsafe {
-                (&mut *self.endpoint).reset_public_decode_state();
+        match (self.lease, self.progress) {
+            (crate::endpoint::kernel::PublicOpLease::Held, DecodeFutureProgress::Pending) => {
+                /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+                unsafe {
+                    (&mut *self.endpoint).reset_public_decode_state();
+                }
             }
+            (crate::endpoint::kernel::PublicOpLease::Held, DecodeFutureProgress::Finished)
+            | (crate::endpoint::kernel::PublicOpLease::Rejected, _) => {}
         }
     }
 }
 
 impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if self.flags.leased() && !self.flags.completed() {
+        if self.lease == RecvFutureLease::RestoreOnDrop {
             /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
             unsafe {
                 (&mut *self.endpoint).reset_public_recv_state();

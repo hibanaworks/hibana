@@ -8,7 +8,11 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 
 use crate::runtime_core::config::Clock;
-use crate::{rendezvous::core::Rendezvous, session::types::Lane, transport::Transport};
+use crate::{
+    rendezvous::core::{LaneRelease, Rendezvous},
+    session::types::Lane,
+    transport::Transport,
+};
 
 /// Lease-backed lane guard.
 ///
@@ -52,8 +56,9 @@ where
             /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
             unsafe {
                 let rv = &*self.rendezvous.cast::<Rendezvous<'static, 'static, T, C>>();
-                if let Some(sid) = rv.release_lane(lane) {
-                    rv.emit_lane_release(sid, lane);
+                match rv.release_lane(lane) {
+                    LaneRelease::Released(sid) => rv.emit_lane_release(sid, lane),
+                    LaneRelease::StillHeld => {}
                 }
             }
         }

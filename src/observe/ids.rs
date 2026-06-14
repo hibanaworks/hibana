@@ -33,11 +33,11 @@ pub const ENDPOINT_SEND: u16 = 0x0202;
 /// - `arg1`: Packed role/lane/label/flags (u32)
 pub const ENDPOINT_RECV: u16 = 0x0203;
 
-/// Endpoint event whose committed choreography row is internal to Hibana.
+/// Endpoint event whose committed choreography row is session-originated.
 ///
 /// - `arg0`: Packed role/lane/label/flags (u32)
 ///
-pub const ENDPOINT_CONTROL: u16 = 0x0204;
+pub const ENDPOINT_SESSION: u16 = 0x0204;
 
 /// Transport frame observed but not delivered because its header did not match
 /// the endpoint descriptor.
@@ -57,20 +57,18 @@ pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
 /// Transport frame metadata observed before endpoint progress committed.
 ///
 /// This is staged frame evidence, not accepted-frame evidence. Endpoint commit
-/// remains represented by `ENDPOINT_RECV` / `ENDPOINT_CONTROL`.
+/// remains represented by `ENDPOINT_RECV` / `ENDPOINT_SESSION`.
 ///
-/// - `causal_key`: zero in the core runtime ABI
 /// - `arg0`: Observed session identifier (u32)
 /// - `arg1`: observed_lane<<24 | source_role<<16 | peer_role<<8 | frame_label
-/// - `arg2`: Optional adapter-local compact status, zero in core transports
 pub const TRANSPORT_FRAME: u16 = 0x0206;
 
 /// Transport operation reached a carrier-local terminal condition.
 ///
 /// - `causal_key`: lane in high byte, fault reason in low byte
 /// - `arg0`: Session identifier if available (u32)
-/// - `arg1`: Reserved, zero in the core runtime ABI
-/// - `arg2`: Reserved, zero in the core runtime ABI
+/// - `arg1`: Lane index encoded on the wire (u8 promoted to u32)
+/// - `arg2`: Fault reason (u8 promoted to u32)
 pub const TRANSPORT_FAULT: u16 = 0x0207;
 
 pub const TRANSPORT_FAULT_OFFLINE: u8 = 1;
@@ -106,77 +104,36 @@ pub const LANE_RELEASE: u16 = 0x0211;
 ///
 /// - `arg0`: Session identifier (u32)
 /// - `arg1`: scope_id<<16 | arm (u32)
-/// - `causal`: lane marker with decision encoded in the sequence field (0 = skip, 1 = send)
+/// - `causal`: lane marker with authority token encoded in the sequence field
+///   (1 = ack, 2 = resolver, 3 = poll)
 pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 
-/// Resolver audit core digest tuple.
+/// Resolver audit summary tuple.
 ///
-/// - `arg0`: resolver_digest
-/// - `arg1`: event_hash
-/// - `arg2`: signals_input_hash
+/// - `arg0`: triggering event hash
+/// - `arg1`: triggering event id (u16 promoted to u32)
+/// - `arg2`: resolver slot tag
 pub const RESOLVER_AUDIT: u16 = 0x0407;
-
-/// Resolver audit extension digest tuple.
-///
-/// - `arg0`: signals_attrs_hash
-/// - `arg1`: resolver_attrs_replay_hash
-/// - `arg2`: slot/mode metadata
-pub const RESOLVER_AUDIT_EXT: u16 = 0x0408;
-
-/// Resolver audit verdict tuple.
-///
-/// - `arg0`: verdict metadata (`tag<<24 | arm<<16`)
-/// - `arg1`: reject reason (0 unless `Reject`)
-/// - `arg2`: fuel_used
-pub const RESOLVER_AUDIT_RESULT: u16 = 0x0409;
 
 /// Resolver replay event tuple.
 ///
-/// - `arg0`: triggering event id (u16 promoted to u32)
-/// - `arg1`: triggering event arg0
-/// - `arg2`: triggering event arg1
-pub(crate) const RESOLVER_REPLAY_EVENT: u16 = 0x040A;
-
-/// Resolver replay input tuple.
-///
-/// - `arg0`: resolver_input.primary
-/// - `arg1`: reserved (0)
-/// - `arg2`: reserved (0)
-pub(crate) const RESOLVER_REPLAY_INPUT0: u16 = 0x040B;
-
-/// Reserved resolver replay input tuple.
-///
-/// - `arg0`: reserved (0)
-/// - `arg1`: reserved (0)
-/// - `arg2`: reserved (0)
-pub(crate) const RESOLVER_REPLAY_INPUT1: u16 = 0x040C;
-
-/// Resolver replay attribute tuple (latency/queue).
-///
-/// - `arg0`: latency_us (saturated to u32, 0 when unavailable)
-/// - `arg1`: queue_depth
-/// - `arg2`: reserved (0)
-pub(crate) const RESOLVER_REPLAY_ATTRS0: u16 = 0x040D;
-
-/// Resolver replay attribute tuple (presence).
-///
-/// - `arg0`: reserved (0)
-/// - `arg1`: presence bitmask (bit0 latency, bit1 queue)
-/// - `arg2`: reserved (0)
-pub(crate) const RESOLVER_REPLAY_ATTRS1: u16 = 0x040E;
+/// - `arg0`: triggering event timestamp
+/// - `arg1`: triggering event id (u16 promoted to u32)
+/// - `arg2`: triggering event arg0
+pub(crate) const RESOLVER_REPLAY_EVENT: u16 = 0x0408;
 
 /// Resolver replay event extension tuple.
 ///
 /// - `arg0`: triggering event arg1
 /// - `arg1`: triggering event arg2
 /// - `arg2`: triggering event causal key (u16 promoted to u32)
-pub(crate) const RESOLVER_REPLAY_EVENT_EXT: u16 = 0x040F;
+pub(crate) const RESOLVER_REPLAY_EVENT_EXT: u16 = 0x0409;
 
 /// Resolver progress/defer audit tuple.
 ///
 /// - `arg0`: `defer_source<<24 | pending_flag`
 ///   (`defer_source` is not a route-arm token tap sequence)
 /// - `arg1`: `scope_slot<<16 | selected_arm<<8 | ready_arm_mask`
-///   (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means unknown)
+///   (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means no selected arm)
 /// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | hint_present<<2 | ingress_ready<<1 | pending_flag`
-pub(crate) const RESOLVER_AUDIT_DEFER: u16 = 0x0410;
+pub(crate) const RESOLVER_AUDIT_DEFER: u16 = 0x040A;

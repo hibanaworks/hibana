@@ -10,7 +10,7 @@ use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
@@ -79,10 +79,10 @@ fn assert_flow_blocked<T, E: core::fmt::Debug>(result: Result<T, E>) {
 
 #[test]
 fn route_arm_future_phase_blocks_post_route_flow() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");
@@ -166,10 +166,10 @@ fn route_arm_future_phase_blocks_post_route_flow() {
 
 #[test]
 fn inner_route_completion_does_not_exit_outer_route_early() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");

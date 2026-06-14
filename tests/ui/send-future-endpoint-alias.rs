@@ -1,9 +1,9 @@
 use hibana::runtime::wire::{CodecError, WireEncode, WirePayload};
 use hibana::{Endpoint, g};
 
-struct Payload(u8);
+struct TestPayload(u8);
 
-impl WireEncode for Payload {
+impl WireEncode for TestPayload {
     fn encoded_len(&self) -> Option<usize> {
         Some(1)
     }
@@ -17,7 +17,7 @@ impl WireEncode for Payload {
     }
 }
 
-impl WirePayload for Payload {
+impl WirePayload for TestPayload {
     type Decoded<'a> = Self;
 
     fn validate_payload(input: hibana::runtime::wire::Payload<'_>) -> Result<(), CodecError> {
@@ -26,7 +26,7 @@ impl WirePayload for Payload {
         } else if input.as_bytes().is_empty() {
             Err(CodecError::Truncated)
         } else {
-            Err(CodecError::Invalid("trailing bytes after Payload"))
+            Err(CodecError::Malformed)
         }
     }
 
@@ -34,12 +34,26 @@ impl WirePayload for Payload {
         let input = input.as_bytes();
         Self(input[0])
     }
+
+    fn zero_payload<'a>(
+        scratch: &'a mut [u8],
+    ) -> Result<hibana::runtime::wire::Payload<'a>, CodecError> {
+        if scratch.is_empty() {
+            return Err(CodecError::Truncated);
+        }
+        scratch[0] = 0;
+        Ok(hibana::runtime::wire::Payload::new(&scratch[..1]))
+    }
 }
 
 fn pending_send_keeps_endpoint_borrow<'r>(endpoint: &mut Endpoint<'r, 0>) {
-    let flow = endpoint.flow::<g::Msg<7, Payload>>().expect("fixture setup");
-    let send = flow.send(&Payload(1));
-    let flow_again = endpoint.flow::<g::Msg<7, Payload>>().expect("fixture setup");
+    let flow = endpoint
+        .flow::<g::Msg<7, TestPayload>>()
+        .expect("test setup");
+    let send = flow.send(&TestPayload(1));
+    let flow_again = endpoint
+        .flow::<g::Msg<7, TestPayload>>()
+        .expect("test setup");
     core::hint::black_box(&flow_again);
     core::hint::black_box(send);
 }

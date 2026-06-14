@@ -94,16 +94,16 @@ where
         source_role: u8,
         frame_label: u8,
         frame: lane_port::PreambleFrame<'r>,
-    ) -> Result<lane_port::ReceivedFrame<'r>, ()> {
+    ) -> Option<lane_port::ReceivedFrame<'r>> {
         let observed = frame.observed_transport_frame(self.sid.raw(), lane_wire, ROLE);
         match frame.accept_parts(self.sid.raw(), ROLE, source_role, frame_label) {
             Ok(frame) => {
                 self.emit_materialized_transport_frame_observation(lane_idx, observed);
-                Ok(frame)
+                Some(frame)
             }
             Err(mismatch) => {
                 self.emit_materialization_mismatch_observation(lane_idx, lane_wire, mismatch);
-                Err(())
+                None
             }
         }
     }
@@ -122,7 +122,9 @@ where
             .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
                 lane_wire, reason,
             ))
-            .with_arg0(self.sid.raw());
+            .with_arg0(self.sid.raw())
+            .with_arg1(u32::from(lane_wire))
+            .with_arg2(u32::from(reason));
         crate::observe::core::emit(port.tap(), event);
     }
 }

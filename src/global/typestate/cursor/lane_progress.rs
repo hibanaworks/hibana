@@ -1,5 +1,5 @@
 use super::{
-    CursorInvariantError, CursorRefresh, EVENT_CURSOR_NO_STATE, EventCursor, LocalAction,
+    CursorInvariantError, CursorRefresh, EVENT_CURSOR_STATE_NONE, EventCursor, LocalAction,
     RelocatableResidentLaneStep, ResidentLaneStep, StateIndex, state_index_to_usize,
 };
 impl EventCursor {
@@ -91,7 +91,7 @@ impl EventCursor {
     pub(super) fn step_state_index_at_lane(&self, lane_idx: usize) -> Option<StateIndex> {
         let step_idx = self.step_index_at_lane(lane_idx)?;
         let state_idx = self.machine().state_for_step_index(step_idx)?;
-        if state_idx == EVENT_CURSOR_NO_STATE {
+        if state_idx == EVENT_CURSOR_STATE_NONE {
             crate::invariant();
         }
         Some(state_idx)
@@ -120,7 +120,7 @@ impl EventCursor {
             let start = lane_steps.start as usize;
             let end = start.checked_add(lane_steps.len as usize)?;
             if step_idx >= start && step_idx < end {
-                u16::try_from(step_idx.checked_sub(start)?).ok()
+                Some(crate::invariant_ok(u16::try_from(step_idx - start)))
             } else {
                 None
             }
@@ -161,7 +161,7 @@ impl EventCursor {
             return false;
         }
         match self.machine().state_for_step_index(step_idx) {
-            Some(state_idx) => state_idx != EVENT_CURSOR_NO_STATE,
+            Some(state_idx) => state_idx != EVENT_CURSOR_STATE_NONE,
             None => false,
         }
     }
@@ -258,7 +258,7 @@ impl EventCursor {
         let state_idx = self
             .machine()
             .state_for_step_index(target.step_idx as usize)?;
-        if state_idx == EVENT_CURSOR_NO_STATE {
+        if state_idx == EVENT_CURSOR_STATE_NONE {
             return None;
         }
         Some(state_index_to_usize(state_idx))

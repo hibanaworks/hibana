@@ -1,5 +1,8 @@
 use super::AttachError;
-use crate::session::cluster::error::{ClusterError, ResourceScope};
+use crate::{
+    diag::Callsite,
+    session::cluster::error::{ClusterError, ResourceScope},
+};
 
 /// Protocol-neutral session kit facade for protocol implementors.
 ///
@@ -30,7 +33,21 @@ pub struct SessionKitStorage<
     C: crate::runtime_core::config::Clock + 'cfg,
 {
     storage: core::mem::MaybeUninit<SessionKit<'cfg, T, C, MAX_RV>>,
-    initialized: bool,
+    state: SessionKitStorageState,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionKitStorageState {
+    Uninitialized = 0,
+    Initialized = 1,
+}
+
+impl SessionKitStorageState {
+    #[inline]
+    const fn is_initialized(self) -> bool {
+        matches!(self, Self::Initialized)
+    }
 }
 
 /// Rendezvous-scoped runtime witness.
@@ -73,25 +90,24 @@ where
     pub const fn uninit() -> Self {
         Self {
             storage: core::mem::MaybeUninit::uninit(),
-            initialized: false,
+            state: SessionKitStorageState::Uninitialized,
         }
     }
 
     /// Initialize the kit in place.
     pub fn init(&mut self) -> &SessionKit<'cfg, T, C, MAX_RV> {
-        assert!(
-            !self.initialized,
-            "SessionKitStorage must not be initialized twice"
-        );
+        if self.state.is_initialized() {
+            crate::invariant();
+        }
         unsafe {
             // SAFETY: `self.storage` is exclusively borrowed through `&mut self`,
             // has not been initialized yet, and remains owned by this storage
             // object until `Drop` runs exactly once.
-            SessionKit::init_empty(self.storage.as_mut_ptr());
+            SessionKit::init_unregistered(self.storage.as_mut_ptr());
         }
-        self.initialized = true;
+        self.state = SessionKitStorageState::Initialized;
         unsafe {
-            // SAFETY: `init_empty` has initialized `storage`; the returned
+            // SAFETY: `init_unregistered` has initialized `storage`; the returned
             // shared borrow is tied to the mutable borrow of this owner.
             &*self.storage.as_ptr()
         }
@@ -104,10 +120,10 @@ where
     C: crate::runtime_core::config::Clock + 'cfg,
 {
     fn drop(&mut self) {
-        if self.initialized {
+        if self.state.is_initialized() {
             unsafe {
-                // SAFETY: `initialized` is set only after `init_empty` succeeds;
-                // this storage owner drops the initialized kit exactly once.
+                // SAFETY: `Initialized` is set only after initialization
+                // succeeds; this storage owner drops the kit exactly once.
                 core::ptr::drop_in_place(self.storage.as_mut_ptr());
             }
         }
@@ -119,7 +135,7 @@ where
     T: crate::transport::Transport + 'cfg,
     C: crate::runtime_core::config::Clock + 'cfg,
 {
-    unsafe fn init_empty(dst: *mut Self) {
+    unsafe fn init_unregistered(dst: *mut Self) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
             crate::session::cluster::core::SessionCluster::init_empty(core::ptr::addr_of_mut!(
@@ -142,7 +158,7 @@ where
         config: crate::runtime::Config<'cfg, C>,
         transport: T,
     ) -> Result<RendezvousKit<'_, 'cfg, T, C, false, MAX_RV>, AttachError> {
-        let location = crate::session::cluster::error::ErrorLocation::caller();
+        let location = Callsite::caller();
         let rv = self
             .inner
             .register_rendezvous(config, transport)
@@ -170,7 +186,7 @@ where
     where
         'cfg: 'r,
     {
-        let location = crate::session::cluster::error::ErrorLocation::caller();
+        let location = Callsite::caller();
         Self::enter_endpoint(self, rv, sid, program).map_err(|error| {
             error.with_operation(crate::session::cluster::error::AttachOp::Enter, location)
         })
@@ -205,7 +221,7 @@ where
         program: &crate::runtime::program::RoleProgram<ROLE>,
         resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), crate::runtime::resolver::ResolverError> {
-        let location = crate::session::cluster::core::ResolverErrorLocation::caller();
+        let location = Callsite::caller();
         self.inner
             .set_resolver::<RESOLVER, ROLE>(rv, program, resolver)
             .map_err(|error| {

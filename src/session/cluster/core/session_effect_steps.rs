@@ -1,6 +1,6 @@
 use super::{
     ClusterError, DecisionResolution, DynamicResolverEntry, DynamicResolverKey,
-    DynamicResolverResolution, EffIndex, RendezvousId, ResolverMode, ResolverRef, SessionCluster,
+    DynamicResolverResolution, EffIndex, RendezvousId, ResolverRef, SessionCluster,
 };
 impl<'cfg, T, C, const MAX_RV: usize> SessionCluster<'cfg, T, C, MAX_RV>
 where
@@ -57,7 +57,7 @@ where
             let mut decision_scope = None;
             for site in compiled.dynamic_resolver_sites_for(RESOLVER) {
                 matched_sites += 1;
-                let site_scope = site.resolver().scope();
+                let site_scope = site.scope();
                 if site_scope.is_none() {
                     return Err(ClusterError::ResolverReject {
                         resolver_id: RESOLVER,
@@ -88,8 +88,8 @@ where
                 self.register_dynamic_resolver_resolver(
                     rv_id,
                     site.eff_index(),
-                    site.logical_label(),
-                    site.resolver(),
+                    site.resolver_id(),
+                    site.resolver_scope(),
                     resolver,
                 )?;
             }
@@ -101,33 +101,25 @@ where
         &self,
         rv_id: RendezvousId,
         eff_index: EffIndex,
-        label: u8,
-        mode: ResolverMode,
+        resolver_id: u16,
+        scope: crate::global::const_dsl::CompactScopeId,
         resolver_ref: ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), ClusterError> {
         let key = DynamicResolverKey::new(rv_id, eff_index);
-        let mode = match mode {
-            ResolverMode::Dynamic { .. } => {
-                let resolver_id = mode
-                    .dynamic_resolver_id()
-                    .ok_or(ClusterError::UnsupportedEffect(label))?;
-                if resolver_id != RESOLVER {
-                    return Err(ClusterError::ResolverReject {
-                        resolver_id: RESOLVER,
-                    });
-                }
-                if mode.scope().is_none() {
-                    return Err(ClusterError::ResolverReject {
-                        resolver_id: RESOLVER,
-                    });
-                }
-                mode
-            }
-            ResolverMode::Static => return Err(ClusterError::UnsupportedEffect(label)),
-        };
+        if resolver_id != RESOLVER {
+            return Err(ClusterError::ResolverReject {
+                resolver_id: RESOLVER,
+            });
+        }
+        if scope.to_scope_id().is_none() {
+            return Err(ClusterError::ResolverReject {
+                resolver_id: RESOLVER,
+            });
+        }
         let entry = DynamicResolverEntry {
             resolver_ref: resolver_ref.erase(),
-            mode,
+            resolver_id,
+            scope,
         };
         if self.dynamic_resolver(key).is_none() {
             self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
@@ -143,23 +135,17 @@ where
     ) -> Result<DynamicResolverResolution, ClusterError> {
         let key = DynamicResolverKey::new(rv_id, eff_index);
         let Some(entry) = self.dynamic_resolver(key) else {
-            return Ok(DynamicResolverResolution::NoAuthority);
+            return Err(ClusterError::DynamicResolverInvariant { resolver_id });
         };
-        let mode = entry.mode;
-
-        let entry_resolver_id = mode
-            .dynamic_resolver_id()
-            .ok_or(ClusterError::DynamicResolverInvariant { resolver_id })?;
-        if entry_resolver_id != resolver_id {
+        if entry.resolver_id != resolver_id {
             return Err(ClusterError::DynamicResolverInvariant { resolver_id });
         }
 
-        let resolver_scope = mode.scope();
         let resolution = entry
             .resolver_ref
             .resolve_decision()
             .map_err(|_| ClusterError::ResolverReject { resolver_id })?;
-        if resolver_scope.is_none() {
+        if entry.scope.to_scope_id().is_none() {
             return Err(ClusterError::ResolverReject { resolver_id });
         }
         match resolution {

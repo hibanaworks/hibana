@@ -4,8 +4,8 @@ use core::task::Poll;
 
 use super::{
     core::{
-        CursorEndpoint, DecodeRuntimeDesc, PublicActiveOp, SendCommitOutcome, SendState,
-        kernel_decode, kernel_recv, kernel_send,
+        CursorEndpoint, DecodeRuntimeDesc, PublicActiveOp, RecvPayloadMode, SendCommitOutcome,
+        SendState, kernel_decode, kernel_recv, kernel_send,
     },
     lane_port,
     offer::OfferState,
@@ -80,7 +80,7 @@ where
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
         logical_label: u8,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
@@ -99,7 +99,7 @@ where
         match kernel_recv(
             self,
             logical_label,
-            accepts_empty_payload,
+            payload_mode,
             validate,
             &mut recv_state,
             cx,
@@ -192,8 +192,7 @@ where
         &mut self,
         cx: &mut core::task::Context<'_>,
         payload: Option<lane_port::RawSendPayload>,
-    ) -> Poll<SendResult<SendCommitOutcome<'r>>>
-where {
+    ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
         if let Some(kind) = self.session_fault() {
             self.reset_public_send_state();
             return Poll::Ready(Err(SendError::SessionFault(kind)));

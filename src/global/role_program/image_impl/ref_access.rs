@@ -1,5 +1,5 @@
 use super::super::{
-    BlobPtr, LaneSetView, LaneSteps, PackedLaneRange, PackedLoopScopeRow, RoleCompiledCounts,
+    BlobPtr, LaneSetView, LaneSteps, PackedLaneRange, PackedRollScopeRow, RoleCompiledCounts,
     RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts, RuntimeRoleFootprint,
 };
 use crate::global::typestate::{LocalDependency, LocalNode, PackedEventConflict};
@@ -132,8 +132,8 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn loop_scope_row(self, slot: usize) -> Option<PackedLoopScopeRow> {
-        self.lanes().loop_scope_row(slot)
+    pub(crate) const fn roll_scope_row(self, slot: usize) -> Option<PackedRollScopeRow> {
+        self.lanes().roll_scope_row(slot)
     }
 
     #[inline(always)]
@@ -142,8 +142,8 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_scope_linger_by_slot(self, slot: usize) -> bool {
-        self.lanes().route_scope_linger_by_slot(slot)
+    pub(crate) const fn route_scope_reentry_by_slot(self, slot: usize) -> bool {
+        self.lanes().route_scope_reentry_by_slot(slot)
     }
 
     #[inline(always)]

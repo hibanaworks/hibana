@@ -1,4 +1,4 @@
-//! Error types for ra module.
+//! Rendezvous error types.
 
 use crate::session::types::{Lane, SessionId};
 
@@ -9,6 +9,8 @@ pub(crate) enum RendezvousError {
     LaneOutOfRange { lane: Lane },
     /// Lane already in use.
     LaneBusy { lane: Lane },
+    /// Lane attachment reference count is saturated.
+    LaneAttachOverflow { lane: Lane },
     /// Session generation has already faulted and cannot accept more progress.
     SessionPoisoned { sid: SessionId },
 }

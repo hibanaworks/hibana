@@ -32,7 +32,7 @@ where
                 route_commit_rows,
                 ..
             } = self;
-            let mut rows = route_commit_rows.begin()?;
+            let mut rows = route_commit_rows.begin();
             prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
                 decision_state,
                 cursor,
@@ -64,7 +64,7 @@ where
             } else if preview
                 .branch_meta
                 .profile
-                .poll_wire_commit_requires_static_observation()
+                .poll_wire_commit_requires_intrinsic_observation()
             {
                 let Some((arm, _)) = self.cursor.observed_recv_target_for_lane_frame_label(
                     scope_id,

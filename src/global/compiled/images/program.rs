@@ -1,24 +1,23 @@
-use crate::{eff::EffIndex, global::const_dsl::ResolverMode};
+use crate::{
+    eff::EffIndex,
+    global::const_dsl::{CompactScopeId, ScopeId},
+};
 
 /// Precomputed dynamic resolver site discovered during program lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicResolverSite {
     eff_index: EffIndex,
-    logical_label: u8,
-    resolver: ResolverMode,
+    resolver_id: u16,
+    scope: CompactScopeId,
 }
 
 impl DynamicResolverSite {
     #[inline(always)]
-    pub(crate) const fn new(
-        eff_index: EffIndex,
-        logical_label: u8,
-        resolver: ResolverMode,
-    ) -> Self {
+    pub(crate) const fn new(eff_index: EffIndex, resolver_id: u16, scope: CompactScopeId) -> Self {
         Self {
             eff_index,
-            logical_label,
-            resolver,
+            resolver_id,
+            scope,
         }
     }
 
@@ -28,28 +27,25 @@ impl DynamicResolverSite {
     }
 
     #[inline(always)]
-    pub(crate) const fn logical_label(&self) -> u8 {
-        self.logical_label
-    }
-
-    #[inline(always)]
-    pub(crate) const fn resolver(&self) -> ResolverMode {
-        self.resolver
-    }
-
-    #[inline(always)]
     pub(crate) const fn resolver_id(&self) -> u16 {
-        match self.resolver {
-            ResolverMode::Dynamic { resolver_id, .. } => resolver_id,
-            ResolverMode::Static => 0,
-        }
+        self.resolver_id
+    }
+
+    #[inline(always)]
+    pub(crate) const fn resolver_scope(&self) -> CompactScopeId {
+        self.scope
+    }
+
+    #[inline(always)]
+    pub(crate) const fn scope(&self) -> ScopeId {
+        self.scope.to_scope_id()
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum EventSemanticKind {
-    Other = 0,
+    ProtocolEvent = 0,
     DecisionArm = 1,
 }
 
@@ -57,7 +53,7 @@ impl EventSemanticKind {
     #[inline(always)]
     pub(crate) const fn packed_bits(self) -> u8 {
         match self {
-            Self::Other => 0,
+            Self::ProtocolEvent => 0,
             Self::DecisionArm => 1,
         }
     }
@@ -65,7 +61,7 @@ impl EventSemanticKind {
     #[inline(always)]
     pub(crate) const fn from_packed_bits(bits: u8) -> Self {
         match bits {
-            0 => Self::Other,
+            0 => Self::ProtocolEvent,
             1 => Self::DecisionArm,
             _ => panic!("invalid packed event semantic bits"),
         }
@@ -108,7 +104,7 @@ mod tests {
     fn compiled_program_marks_route_decision_semantics() {
         assert_eq!(
             EventSemanticKind::from_packed_bits(0),
-            EventSemanticKind::Other
+            EventSemanticKind::ProtocolEvent
         );
         assert_eq!(
             EventSemanticKind::from_packed_bits(1),

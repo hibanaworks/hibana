@@ -24,7 +24,7 @@ use hibana::{
         transport::{Outgoing, ReceivedFrame, Transport},
     },
 };
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 const SEND_LOGICAL: u8 = 10;
@@ -129,7 +129,7 @@ impl Transport for PendingSendTransport {
 
 #[test]
 fn drop_flow_keeps_endpoint_on_same_send_step() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&TEST_KIT_SLOT, |cluster| {
             let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
             let controller_send_program: RoleProgram<0> = project(&send_protocol);
@@ -137,7 +137,7 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
             let rv = cluster
                 .rendezvous(
                     Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
-                    TestTransport::default(),
+                    TestTransport::new(),
                 )
                 .expect("register rendezvous");
             let sid = SessionId::new(401);
@@ -182,13 +182,13 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
         state.reset();
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
 
-        with_fixture(|_clock, tap_buf, slab| {
+        with_runtime_workspace(|_clock, tap_buf, slab| {
             with_resident_tls_ref(&PENDING_SEND_KIT_SLOT, |cluster| {
                 let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
                 let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let transport = PendingSendTransport {
-                    inner: TestTransport::default(),
+                    inner: TestTransport::new(),
                     state,
                 };
                 let rv = cluster
@@ -250,13 +250,13 @@ fn forgotten_started_send_future_leaves_flow_fail_closed() {
         state.reset();
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
 
-        with_fixture(|_clock, tap_buf, slab| {
+        with_runtime_workspace(|_clock, tap_buf, slab| {
             with_resident_tls_ref(&PENDING_SEND_KIT_SLOT, |cluster| {
                 let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
                 let worker_send_program: RoleProgram<1> = project(&send_protocol);
                 let transport = PendingSendTransport {
-                    inner: TestTransport::default(),
+                    inner: TestTransport::new(),
                     state,
                 };
                 let rv = cluster

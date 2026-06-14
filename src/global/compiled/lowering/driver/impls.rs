@@ -2,7 +2,7 @@ use super::{
     CompiledProgramView, EffAtom, MAX_COMPILED_IMAGE_NODES, MAX_COMPILED_PROGRAM_RESOURCES,
     MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS,
     ProgramImageData, ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData,
-    ResolverMode, RoleCompiledCounts, ScopeMarker,
+    RoleCompiledCounts, RouteResolver, ScopeMarker,
 };
 
 impl<'a> CompiledProgramView<'a> {
@@ -54,7 +54,7 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_resolver_at(&self, offset: usize) -> Option<ResolverMode> {
+    pub(crate) const fn resident_resolver_at(&self, offset: usize) -> Option<RouteResolver> {
         if offset < self.len {
             let (segment, _) = Self::segment_slot(offset);
             let segment = self.segments[segment];

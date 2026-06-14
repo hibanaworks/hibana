@@ -3,7 +3,7 @@ use crate::{
     g::ProgramSourceError,
     global::{
         compiled::lowering::CompiledProgramImage,
-        const_dsl::{EffList, ScopeEvent, ScopeKind, ScopeMarker},
+        const_dsl::{EffList, ReentryMark, RouteResolver, ScopeEvent, ScopeKind, ScopeMarker},
         role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
 };
@@ -326,7 +326,7 @@ const fn validate_scope_capacity(view: &super::CompiledProgramView<'_>) {
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
         if matches!(marker.event, ScopeEvent::Enter)
-            && matches!(marker.scope_kind, ScopeKind::Route | ScopeKind::Loop)
+            && matches!(marker.scope_kind, ScopeKind::Route | ScopeKind::Roll)
         {
             let ordinal = marker.scope_id.local_ordinal() as usize;
             if ordinal >= seen_route_like.len() {
@@ -379,7 +379,7 @@ const fn validate_route_projection_guarantees<const ROLE: u8>(
                     scope_markers,
                     marker_idx,
                     marker.controller_role,
-                    marker.linger,
+                    marker.reentry,
                 ) {
                     return Some(error);
                 }
@@ -397,7 +397,7 @@ const fn validate_route_scope<const ROLE: u8>(
     scope_markers: &[crate::global::const_dsl::ScopeMarker],
     route_enter_marker_idx: usize,
     controller_role: Option<u8>,
-    linger: bool,
+    reentry: ReentryMark,
 ) -> Option<ProgramSourceError> {
     let (arm0_enter_marker_idx, arm0_start, arm0_end, arm1_enter_marker_idx, arm1_start, arm1_end) =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
@@ -405,13 +405,11 @@ const fn validate_route_scope<const ROLE: u8>(
         view,
         eff_list,
         arm0_enter_marker_idx,
-        arm0_end,
         arm1_enter_marker_idx,
-        arm1_end,
     ) {
         return Some(error);
     }
-    if linger {
+    if reentry.is_reentrant() {
         return None;
     }
 
@@ -436,14 +434,7 @@ const fn validate_route_scope<const ROLE: u8>(
     if dispatchable_after_shared_prefix(&left, left_len, &right, right_len) {
         return None;
     }
-    if scope_has_dynamic_resolver(
-        view,
-        eff_list,
-        arm0_enter_marker_idx,
-        arm0_end,
-        arm1_enter_marker_idx,
-        arm1_end,
-    ) {
+    if scope_has_dynamic_resolver(view, eff_list, arm0_enter_marker_idx, arm1_enter_marker_idx) {
         return None;
     }
     Some(ProgramSourceError::ProjectionRouteUnprojectable)
@@ -507,60 +498,38 @@ const fn scope_has_dynamic_resolver(
     view: &super::CompiledProgramView<'_>,
     eff_list: &EffList,
     arm0_enter_marker_idx: usize,
-    arm0_end: usize,
     arm1_enter_marker_idx: usize,
-    arm1_end: usize,
 ) -> bool {
-    first_route_head_decision_resolver_id_in_range(view, eff_list, arm0_enter_marker_idx, arm0_end)
-        .is_some()
-        || first_route_head_decision_resolver_id_in_range(
-            view,
-            eff_list,
-            arm1_enter_marker_idx,
-            arm1_end,
-        )
-        .is_some()
+    first_route_head_decision_resolver_id(view, eff_list, arm0_enter_marker_idx).is_some()
+        || first_route_head_decision_resolver_id(view, eff_list, arm1_enter_marker_idx).is_some()
 }
 
 const fn validate_decision_resolver_consistency(
     view: &super::CompiledProgramView<'_>,
     eff_list: &EffList,
     arm0_enter_marker_idx: usize,
-    arm0_end: usize,
     arm1_enter_marker_idx: usize,
-    arm1_end: usize,
 ) -> Option<ProgramSourceError> {
-    let left = first_route_head_decision_resolver_id_in_range(
-        view,
-        eff_list,
-        arm0_enter_marker_idx,
-        arm0_end,
-    );
-    let right = first_route_head_decision_resolver_id_in_range(
-        view,
-        eff_list,
-        arm1_enter_marker_idx,
-        arm1_end,
-    );
+    let left = first_route_head_decision_resolver_id(view, eff_list, arm0_enter_marker_idx);
+    let right = first_route_head_decision_resolver_id(view, eff_list, arm1_enter_marker_idx);
     if let Some(left_id) = left {
         if let Some(right_id) = right {
             if left_id != right_id {
                 return Some(ProgramSourceError::ProjectionRouteResolverMismatch);
             }
         } else {
-            return Some(ProgramSourceError::ProjectionRouteResolverMissing);
+            return Some(ProgramSourceError::ProjectionRouteResolverAbsent);
         }
     } else if right.is_some() {
-        return Some(ProgramSourceError::ProjectionRouteResolverMissing);
+        return Some(ProgramSourceError::ProjectionRouteResolverAbsent);
     }
     None
 }
 
-const fn first_route_head_decision_resolver_id_in_range(
+const fn first_route_head_decision_resolver_id(
     view: &super::CompiledProgramView<'_>,
     eff_list: &EffList,
     route_enter_marker_idx: usize,
-    _end: usize,
 ) -> Option<u16> {
     let scope_markers = view.scope_markers();
     if route_enter_marker_idx >= scope_markers.len() {
@@ -580,7 +549,7 @@ const fn first_route_head_decision_resolver_id_in_range(
             break;
         }
         if matches!(marker.event, ScopeEvent::Enter)
-            && !matches!(marker.scope_kind, ScopeKind::Generic)
+            && !matches!(marker.scope_kind, ScopeKind::Plain)
         {
             nested_non_resolver_enter = true;
         }
@@ -589,10 +558,10 @@ const fn first_route_head_decision_resolver_id_in_range(
     if nested_non_resolver_enter {
         return None;
     }
-    if let Some((resolver, _scope)) = eff_list.resolver_with_scope(route_enter.offset)
-        && resolver.dynamic_resolver_id().is_some()
+    if let Some((RouteResolver::Dynamic { resolver_id, .. }, _scope)) =
+        eff_list.resolver_with_scope(route_enter.offset)
     {
-        return resolver.dynamic_resolver_id();
+        return Some(resolver_id);
     }
     None
 }

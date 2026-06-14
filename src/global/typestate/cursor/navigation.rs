@@ -48,11 +48,11 @@ impl EventCursor {
     /// facts chosen by the caller.
     ///
     /// Returns the arm entry index.
-    /// For τ-eliminated arms with no cross-role content, returns the ArmEmpty terminal row.
+    /// For τ-eliminated arms with no cross-role content, returns the terminal arm row.
     ///
     /// Navigation uses the projected passive arm-entry authority. τ-eliminated
     /// arms with no cross-role content are sealed at compile time with an
-    /// ArmEmpty RouteArmEnd row, so the entry remains present through the same
+    /// terminal RouteArmEnd row, so the entry remains present through the same
     /// descriptor row.
     pub(crate) fn follow_passive_observer_arm_for_scope(
         &self,
@@ -145,7 +145,7 @@ impl EventCursor {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver,
                 lane,
             } => Some(SendMeta {
@@ -155,7 +155,7 @@ impl EventCursor {
                 frame_label,
                 resource,
                 semantic: node.event_semantic(),
-                is_internal,
+                origin,
                 next: state_index_to_usize(node.next()),
                 scope: node.scope(),
                 route_arm: node.route_arm(),
@@ -175,7 +175,7 @@ impl EventCursor {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver,
                 lane,
             } => Some(RecvMeta {
@@ -185,11 +185,11 @@ impl EventCursor {
                 frame_label,
                 resource,
                 semantic: node.event_semantic(),
-                is_internal,
+                origin,
                 next: state_index_to_usize(node.next()),
                 scope: node.scope(),
                 route_arm: node.route_arm(),
-                is_choice_determinant: node.is_choice_determinant(),
+                choice: node.choice_mark(),
                 resolver,
                 lane,
             }),
@@ -205,7 +205,7 @@ impl EventCursor {
                 label,
                 frame_label,
                 resource,
-                is_internal,
+                origin,
                 resolver,
                 lane,
             } => Some(LocalMeta {
@@ -214,7 +214,7 @@ impl EventCursor {
                 frame_label,
                 resource,
                 semantic: node.event_semantic(),
-                is_internal,
+                origin,
                 next: state_index_to_usize(node.next()),
                 scope: node.scope(),
                 route_arm: node.route_arm(),

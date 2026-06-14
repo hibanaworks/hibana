@@ -12,9 +12,6 @@ use crate::{
     transport::{FrameHeader, Transport, wire::Payload},
 };
 
-const RECEIVED_FRAME_CONTRACT: &str =
-    "received transport frame dropped without explicit commit, requeue, or discard";
-
 pub(super) struct RecvFrameReceiptState {
     outstanding: Cell<bool>,
 }
@@ -98,10 +95,9 @@ impl RecvFrameReceiptState {
 
     #[inline]
     fn issue(&self, port_key: *const ()) -> PortRecvFrameReceipt {
-        assert!(
-            !self.outstanding.replace(true),
-            "transport receive frame polled while current frame receipt is unresolved",
-        );
+        if self.outstanding.replace(true) {
+            crate::invariant();
+        }
         PortRecvFrameReceipt {
             port_key,
             state: core::ptr::from_ref(self),
@@ -110,19 +106,17 @@ impl RecvFrameReceiptState {
 
     #[inline]
     fn resolve(&self) {
-        assert!(
-            self.outstanding.get(),
-            "transport receive frame receipt is no longer current",
-        );
+        if !self.outstanding.get() {
+            crate::invariant();
+        }
         self.outstanding.set(false);
     }
 
     #[inline]
     fn assert_current(&self) {
-        assert!(
-            self.outstanding.get(),
-            "transport receive frame receipt is no longer current",
-        );
+        if !self.outstanding.get() {
+            crate::invariant();
+        }
     }
 
     #[inline]
@@ -154,14 +148,12 @@ impl PortRecvFrameReceipt {
         if self.state.is_null() {
             return;
         }
-        assert_eq!(
-            self.port_key, port_key,
-            "received transport frame requeued on a different endpoint port",
-        );
-        assert_eq!(
-            self.state, receipt_state,
-            "received transport frame requeued on a different Rx handle",
-        );
+        if self.port_key != port_key {
+            crate::invariant();
+        }
+        if self.state != receipt_state {
+            crate::invariant();
+        }
         // SAFETY: the receipt stores a pointer to this port's receipt state.
         // `assert_matches` has just proven both the port identity and the
         // state pointer identity before reading the state.
@@ -301,7 +293,6 @@ pub(crate) fn transport_frame_tap_event(now32: u32, observation: FrameObservatio
     events::raw_event(now32, ids::TRANSPORT_FRAME)
         .with_arg0(observation.session_raw())
         .with_arg1(observation.meta())
-        .with_arg2(0)
 }
 
 impl ObservedSourceLabel {
@@ -455,11 +446,9 @@ impl<'r> ReceivedFrameCore<'r> {
     where
         T: Transport + 'r,
     {
-        assert_eq!(
-            self.lane_wire(),
-            port.lane().as_wire(),
-            "received transport frame requeued on a different lane",
-        );
+        if self.lane_wire() != port.lane().as_wire() {
+            crate::invariant();
+        }
         self.receipt.assert_matches(
             Port::port_key(port),
             core::ptr::from_ref(&port.recv_frame_receipt),
@@ -469,7 +458,9 @@ impl<'r> ReceivedFrameCore<'r> {
 
 impl Drop for ReceivedFrameCore<'_> {
     fn drop(&mut self) {
-        assert!(!self.receipt.is_current(), "{}", RECEIVED_FRAME_CONTRACT,);
+        if self.receipt.is_current() {
+            crate::invariant();
+        }
     }
 }
 

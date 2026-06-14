@@ -14,7 +14,7 @@ use hibana::{
     runtime::program::{RoleProgram, project},
     runtime::{Config, SessionKitStorage, TapEvent, ids::SessionId},
 };
-use runtime_support::{RING_EVENTS, with_fixture};
+use runtime_support::{RING_EVENTS, with_runtime_workspace};
 use tls_ref_support::with_resident_tls_ref;
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport, hibana::runtime::CounterClock, 2>;
@@ -41,8 +41,8 @@ fn decode_sid_lane(packed: u32) -> (u32, u16) {
 
 #[test]
 fn lane_lifecycle_emits_acquire_and_release_taps() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         let tap_ptr = tap_buf as *mut [TapEvent; runtime_support::RING_EVENTS];
         let slab_ptr = slab as *mut [u8];
         let (expected_rv, expected_sid, expected_lane) =

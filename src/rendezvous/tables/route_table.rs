@@ -102,12 +102,6 @@ pub(crate) struct RouteTable {
     _no_send_sync: PhantomData<*mut ()>,
 }
 
-impl Default for RouteTable {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
 mod storage;
 
 impl RouteTable {
@@ -156,7 +150,7 @@ impl RouteTable {
     #[inline]
     fn slot_for_scope(&self, lane_idx: usize, coord: ScopeCoord) -> Option<usize> {
         let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
-        while current != Self::NO_FRAME {
+        while current != Self::FRAME_LIST_END {
             let idx = current as usize;
             if self.frame_ref(idx).scope == coord.canonical {
                 return Some(idx);
@@ -186,7 +180,7 @@ impl RouteTable {
         Some(idx)
     }
 
-    fn try_reclaim_route_slot(&self, lane_idx: usize, slot_idx: usize, role_count: u8) {
+    fn reclaim_completed_route_slot(&self, lane_idx: usize, slot_idx: usize, role_count: u8) {
         let role_mask = Self::complete_seen_mask(Self::role_slot_count(role_count));
         if role_mask == 0 {
             return;
@@ -195,13 +189,13 @@ impl RouteTable {
         if frame.entry.generation == 0 || (frame.entry.seen_mask & role_mask) != role_mask {
             return;
         }
-        let mut prev = Self::NO_FRAME;
+        let mut prev = Self::FRAME_LIST_END;
         let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
-        while current != Self::NO_FRAME {
+        while current != Self::FRAME_LIST_END {
             let current_idx = current as usize;
             let next = self.frame_ref(current_idx).next;
             if current_idx == slot_idx {
-                if prev == Self::NO_FRAME {
+                if prev == Self::FRAME_LIST_END {
                     /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
                     unsafe {
                         *self.lane_heads_ptr().add(lane_idx) = next;
@@ -249,18 +243,12 @@ impl RouteTable {
         scope: ScopeId,
         arm: u8,
     ) -> u16 {
-        let coord = ScopeCoord::from_scope(scope).expect("invariant");
+        let coord = crate::invariant_some(ScopeCoord::from_scope(scope));
         let lane_idx = self.lane_slot(lane);
         let slot_idx = match Self::slot_or_alloc(self, lane_idx, coord) {
             Some(slot_idx) => slot_idx,
             None => {
-                let free_head = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { *self.free_head_ptr() };
-                panic!(
-                    "route ledger exhausted: lane_idx={lane_idx} frame_capacity={} free_head={} coord_local={}",
-                    self.route_slots,
-                    free_head,
-                    coord.canonical.local_ordinal()
-                );
+                crate::invariant();
             }
         };
         /* SAFETY: the slot index comes from owned table allocation and this operation owns the mutation. */
@@ -302,7 +290,7 @@ impl RouteTable {
         if (role as usize) >= role_slots {
             return Poll::Ready(0);
         }
-        let coord = ScopeCoord::from_scope(scope).expect("invariant");
+        let coord = crate::invariant_some(ScopeCoord::from_scope(scope));
         let lane_idx = self.lane_slot(lane);
         let slot_idx = match Self::slot_or_alloc(self, lane_idx, coord) {
             Some(idx) => idx,
@@ -314,7 +302,7 @@ impl RouteTable {
         if entry.generation != 0 && (entry.seen_mask & role_bit) == 0 {
             entry.seen_mask |= role_bit;
             let arm = entry.arm;
-            self.try_reclaim_route_slot(lane_idx, slot_idx, role_count);
+            self.reclaim_completed_route_slot(lane_idx, slot_idx, role_count);
             self.bump_change_generation();
             return Poll::Ready(arm);
         }
@@ -350,7 +338,7 @@ impl RouteTable {
         }
         entry.seen_mask |= role_bit;
         let arm = entry.arm;
-        self.try_reclaim_route_slot(lane_idx, slot_idx, role_count);
+        self.reclaim_completed_route_slot(lane_idx, slot_idx, role_count);
         self.bump_change_generation();
         Some(arm)
     }
@@ -446,9 +434,9 @@ impl RouteTable {
         let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
-            *self.lane_heads_ptr().add(lane_idx) = Self::NO_FRAME;
+            *self.lane_heads_ptr().add(lane_idx) = Self::FRAME_LIST_END;
         }
-        while current != Self::NO_FRAME {
+        while current != Self::FRAME_LIST_END {
             let idx = current as usize;
             let next = self.frame_ref(idx).next;
             self.push_free_slot(idx);

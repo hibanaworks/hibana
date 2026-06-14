@@ -10,7 +10,7 @@ use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
@@ -153,10 +153,10 @@ fn assert_flow_rejected<T, E: core::fmt::Debug>(result: Result<T, E>, context: &
 
 #[test]
 fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");
@@ -225,10 +225,10 @@ fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
 
 #[test]
 fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");
@@ -314,10 +314,10 @@ fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
 
 #[test]
 fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");
@@ -390,10 +390,10 @@ fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
 
 #[test]
 fn route_selected_left_keeps_entire_nested_parallel_path_live() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");
@@ -509,10 +509,10 @@ fn route_selected_left_keeps_entire_nested_parallel_path_live() {
 
 #[test]
 fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");
@@ -612,10 +612,10 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
 
 #[test]
 fn nested_parallel_join_requires_every_dependency_before_post() {
-    with_fixture(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let transport = TestTransport::default();
+            let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
                 .expect("register rendezvous");

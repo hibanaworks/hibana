@@ -17,6 +17,12 @@ assert_not_impl_any!(StaticTestKit: Send, Sync);
 assert_not_impl_any!(Endpoint<'static, 0>: Send, Sync);
 assert_not_impl_any!(RouteBranch<'static, 'static, 0>: Send, Sync);
 
+#[test]
+fn test_transport_support_constructs_explicitly() {
+    let transport = common::TestTransport::new();
+    assert!(transport.queue_is_empty());
+}
+
 fn read(path: &str) -> String {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let full = root.join(path);
@@ -106,13 +112,21 @@ fn runtime_facade_projects_before_enter() {
 
 const EXTERNAL_RESOLVER_ID: u16 = 91;
 
-struct ExternalResolver<'a> {
-    loaded: bool,
-    default_resolver: ResolverRef<'a, EXTERNAL_RESOLVER_ID>,
+struct LocalResolver {
+    available: bool,
 }
 
-fn default_left_resolver() -> Result<DecisionResolution, ResolverError> {
-    Ok(DecisionResolution::Arm(DecisionArm::Left))
+struct ExternalResolver<'a> {
+    loaded: bool,
+    local_resolver: ResolverRef<'a, EXTERNAL_RESOLVER_ID>,
+}
+
+fn local_resolver_decision(resolver: &LocalResolver) -> Result<DecisionResolution, ResolverError> {
+    if resolver.available {
+        Ok(DecisionResolution::Arm(DecisionArm::Left))
+    } else {
+        Err(ResolverError::reject())
+    }
 }
 
 fn external_resolver_decision(
@@ -121,16 +135,18 @@ fn external_resolver_decision(
     if resolver.loaded {
         Ok(DecisionResolution::Arm(DecisionArm::Right))
     } else {
-        resolver.default_resolver.evaluate()
+        resolver.local_resolver.evaluate()
     }
 }
 
 #[test]
-fn resolver_state_can_host_external_resolver_appliance() {
-    let default_resolver = ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_fn(default_left_resolver);
+fn resolver_state_can_host_external_resolver_owner() {
+    let local = LocalResolver { available: true };
+    let local_resolver =
+        ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_state(&local, local_resolver_decision);
     let unloaded = ExternalResolver {
         loaded: false,
-        default_resolver,
+        local_resolver,
     };
     let resolver =
         ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_state(&unloaded, external_resolver_decision);
@@ -141,7 +157,7 @@ fn resolver_state_can_host_external_resolver_appliance() {
 
     let loaded = ExternalResolver {
         loaded: true,
-        default_resolver,
+        local_resolver,
     };
     let resolver =
         ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_state(&loaded, external_resolver_decision);
@@ -296,7 +312,7 @@ fn runtime_eff_index_surface_is_segmented_not_flat() {
             && !eff_rs.contains("pub const ZERO")
             && !eff_rs.contains("pub const MAX")
             && eff_rs.contains("pub(crate) const fn dense_ordinal(self) -> usize"),
-        "EffIndex must not expose public constructors, sentinels, flat ordinal, or raw conversion"
+        "EffIndex must not expose public constructors, absence codes, flat ordinal, or raw conversion"
     );
 }
 
@@ -365,7 +381,7 @@ fn runtime_root_exposes_only_core_buckets() {
 
     for required in [
         "pub use session_kit::{RendezvousKit, RoleKit, SessionKit, SessionKitStorage};",
-        "pub use crate::runtime_core::config::{Clock, Config, CounterClock, RuntimeStorage};",
+        "pub use crate::runtime_core::config::{Clock, Config, CounterClock};",
         "pub mod ids {",
         "pub mod resolver {",
         "ResolverRef",
@@ -383,6 +399,10 @@ fn runtime_root_exposes_only_core_buckets() {
             "runtime surface must keep the core bucket: {required}"
         );
     }
+    assert!(
+        !runtime_rs.contains(concat!("Runtime", "Storage")),
+        "runtime resources must be owned by Config without a public storage envelope"
+    );
     assert!(
         !runtime_rs.contains("pub mod binding {") && !runtime_rs.contains("pub fn ingress("),
         "ingress binding must not remain a public runtime bucket or attach verb"
@@ -548,18 +568,18 @@ fn crate_package_artifact_is_a_first_class_gate() {
             && cargo.contains("\"!/src/**/tests.rs\"")
             && cargo.contains("\"!/src/**/tests/**\"")
             && cargo.contains("\"!/src/**/*_tests.rs\""),
-        "crate package must exclude source-tree test fixtures from the production package"
+        "crate package must exclude source-tree test support from the production package"
     );
     assert!(
         !cargo.contains("autotests")
             && !cargo.contains("[[test]]")
             && cargo.contains("\"/tests/**\""),
-        "repo repository tests must remain Cargo-auto-discovered and ship with the crate so cargo publish is warning-free"
+        "repository tests must remain Cargo-auto-discovered and ship with the crate so cargo publish is warning-free"
     );
     for required in [
-        "src must not depend on tests/support fixtures",
-        "source-tree test fixtures must not ship in the production crate package",
-        "SOURCE_TEST_FIXTURE_PATTERN",
+        "src must not depend on tests/support",
+        "source-tree test support must not ship in the production crate package",
+        "SOURCE_TEST_SUPPORT_PATTERN",
         "^src/.*/tests/",
         "run_package_clean \"cargo package --list\"",
         "run_package_clean \"cargo package --no-verify\"",
@@ -580,16 +600,15 @@ fn crate_package_artifact_is_a_first_class_gate() {
         );
     }
     assert!(
-        maintainability_gate
-            .contains("repository tests must not path-import src/test_support fixtures"),
-        "maintainability gate must keep runtime fixtures from reaching into src/test_support"
+        maintainability_gate.contains("repository tests must not path-import src/test_support"),
+        "maintainability gate must keep runtime test support from reaching into src/test_support"
     );
     assert!(
         final_gate.contains("bash ./.github/scripts/check_package_artifact.sh"),
         "final gate must run package artifact verification before release"
     );
     assert!(
-        final_gate.contains("bash ./.github/scripts/check_hibana_public_api.sh --skip-tests"),
+        final_gate.contains("bash ./.github/scripts/check_hibana_public_api.sh --surface-only"),
         "final gate must reuse the all-test pass instead of rerunning public surface tests"
     );
     assert!(

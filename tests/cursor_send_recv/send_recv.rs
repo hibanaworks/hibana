@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn cursor_send_and_recv_roundtrip() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
@@ -44,8 +44,8 @@ fn cursor_send_and_recv_roundtrip() {
 
 #[test]
 fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
                 g::send::<0, 1, Msg<41, u32>>(),
@@ -118,8 +118,8 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
 
 #[test]
 fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
                 g::send::<0, 1, Msg<42, u32>>(),
@@ -195,8 +195,8 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
 
 #[test]
 fn flow_error_captures_public_callsite() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);

@@ -35,7 +35,7 @@ reject_source() {
 require_source \
   "src/global/role_program/lane_set.rs" \
   "fn next_set_from\\([^)]*\\)[[:space:]\n]*->[^{]+\\{[[:space:]\n\\S]*trailing_zeros\\(\\)" \
-  "LaneSetView::next_set_from must skip empty lane runs with bit operations"
+  "LaneSetView::next_set_from must advance over empty lane runs with bit operations"
 
 require_source \
   "src/global/role_program/image_impl/ref_access.rs" \

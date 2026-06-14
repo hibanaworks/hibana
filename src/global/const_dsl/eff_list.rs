@@ -1,16 +1,11 @@
 use super::{
-    EffList, EffStruct, MAX_CAPACITY, MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, ResolverMarker,
-    ResolverMode, ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary, eff,
+    EffList, EffStruct, MAX_CAPACITY, MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, ReentryMark,
+    ResolverMarker, RouteResolver, ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary,
+    eff,
 };
-impl Default for EffList {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl EffList {
     /// Create an empty accumulator.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             segments: [[EffStruct::pure(); MAX_SEGMENT_EFFS]; MAX_SEGMENTS],
             segment_summaries: [SegmentSummary::EMPTY; MAX_SEGMENTS],
@@ -24,17 +19,17 @@ impl EffList {
     }
 
     /// Return the current length.
-    pub const fn len(&self) -> usize {
+    pub(crate) const fn len(&self) -> usize {
         self.len
     }
 
     /// Number of structured scopes encoded within this list.
-    pub const fn scope_budget(&self) -> u16 {
+    pub(crate) const fn scope_budget(&self) -> u16 {
         self.scope_budget
     }
 
     /// Whether the accumulator is empty.
-    pub const fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -127,7 +122,7 @@ impl EffList {
     /// Shift every scope identifier by `offset` ordinals.
     ///
     /// This is the only required linear scan: rebasing changes every scope id.
-    pub const fn rebase_scopes(mut self, offset: u16) -> Self {
+    pub(crate) const fn rebase_scopes(mut self, offset: u16) -> Self {
         if offset == 0 {
             return self;
         }
@@ -141,7 +136,7 @@ impl EffList {
                 scope_id: rebased,
                 scope_kind: rebased.kind(),
                 event: marker.event,
-                linger: marker.linger,
+                reentry: marker.reentry,
                 controller_role: marker.controller_role,
             };
             let ordinal = rebased.ordinal();
@@ -171,7 +166,7 @@ impl EffList {
     }
 
     /// Shift every atom lane by a projection-internal lane offset.
-    pub const fn rebase_lanes(mut self, offset: u16) -> Self {
+    pub(crate) const fn rebase_lanes(mut self, offset: u16) -> Self {
         if offset == 0 {
             return self;
         }
@@ -194,7 +189,7 @@ impl EffList {
     }
 
     /// Append a single node to the accumulator.
-    pub const fn push(mut self, node: EffStruct) -> Self {
+    pub(crate) const fn push(mut self, node: EffStruct) -> Self {
         if self.len >= MAX_CAPACITY {
             panic!("EffList capacity exceeded");
         }
@@ -208,7 +203,7 @@ impl EffList {
     /// Extend the accumulator with another `EffList`.
     ///
     /// Linear by construction: offsets and scope metadata must be rebased.
-    pub const fn extend_list(mut self, other: EffList) -> Self {
+    pub(crate) const fn extend_list(mut self, other: EffList) -> Self {
         let mut idx = 0;
         let base = self.len;
         while idx < other.len {
@@ -223,7 +218,7 @@ impl EffList {
                 marker.scope_id,
                 marker.scope_kind,
                 marker.event,
-                marker.linger,
+                marker.reentry,
                 marker.controller_role,
             );
             scope_idx += 1;
@@ -243,9 +238,9 @@ impl EffList {
         scope_id: ScopeId,
         scope_kind: ScopeKind,
         event: ScopeEvent,
-        linger: bool,
+        reentry: ReentryMark,
     ) -> Self {
-        self.push_scope_marker_full(offset, scope_id, scope_kind, event, linger, None)
+        self.push_scope_marker_full(offset, scope_id, scope_kind, event, reentry, None)
     }
 
     pub(super) const fn push_scope_marker_full(
@@ -254,7 +249,7 @@ impl EffList {
         scope_id: ScopeId,
         scope_kind: ScopeKind,
         event: ScopeEvent,
-        linger: bool,
+        reentry: ReentryMark,
         controller_role: Option<u8>,
     ) -> Self {
         if self.scope_marker_len >= MAX_CAPACITY {
@@ -286,7 +281,7 @@ impl EffList {
             scope_id,
             scope_kind,
             event,
-            linger,
+            reentry,
             controller_role,
         };
         self.scope_marker_len += 1;
@@ -294,18 +289,18 @@ impl EffList {
     }
 
     const fn push_scope_marker(self, offset: usize, scope: ScopeId, event: ScopeEvent) -> Self {
-        self.push_scope_marker_raw(offset, scope, scope.kind(), event, false)
+        self.push_scope_marker_raw(offset, scope, scope.kind(), event, ReentryMark::SinglePass)
     }
 
     const fn push_scope_marker_outer_enter(self, offset: usize, scope: ScopeId) -> Self {
-        self.push_scope_marker_outer_enter_linger(offset, scope, false)
+        self.push_scope_marker_outer_enter_reentry(offset, scope, ReentryMark::SinglePass)
     }
 
-    const fn push_scope_marker_outer_enter_linger(
+    const fn push_scope_marker_outer_enter_reentry(
         mut self,
         offset: usize,
         scope: ScopeId,
-        linger: bool,
+        reentry: ReentryMark,
     ) -> Self {
         if self.scope_marker_len >= MAX_CAPACITY {
             panic!("EffList scope marker capacity exceeded");
@@ -337,20 +332,20 @@ impl EffList {
             scope_id: scope,
             scope_kind: scope.kind(),
             event: ScopeEvent::Enter,
-            linger,
+            reentry,
             controller_role: None,
         };
         self.scope_marker_len += 1;
         self
     }
 
-    pub const fn with_scope(self, scope: ScopeId) -> Self {
+    pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
         let len = self.len;
         let scoped = self.push_scope_marker_outer_enter(0, scope);
         scoped.push_scope_marker(len, scope, ScopeEvent::Exit)
     }
 
-    pub(crate) const fn mark_route_scopes_linger(mut self) -> Self {
+    pub(crate) const fn mark_route_scopes_reentry(mut self) -> Self {
         let mut marker_idx = 0usize;
         while marker_idx < self.scope_marker_len {
             let marker = self.scope_markers[marker_idx];
@@ -358,7 +353,7 @@ impl EffList {
                 && matches!(marker.event, ScopeEvent::Enter)
             {
                 let mut updated = marker;
-                updated.linger = true;
+                updated.reentry = ReentryMark::Reentrant;
                 self.scope_markers[marker_idx] = updated;
             }
             marker_idx += 1;
@@ -383,7 +378,7 @@ impl EffList {
         self.update_scope_markers(scope, None, Some(controller_role))
     }
 
-    pub(crate) const fn push_resolver(mut self, offset: usize, resolver: ResolverMode) -> Self {
+    pub(crate) const fn push_resolver(mut self, offset: usize, resolver: RouteResolver) -> Self {
         if offset > self.len || offset > MAX_CAPACITY {
             panic!("EffList resolver marker offset out of bounds");
         }
@@ -405,7 +400,7 @@ impl EffList {
         self
     }
 
-    pub(crate) const fn resolver_at(&self, offset: usize) -> Option<ResolverMode> {
+    pub(crate) const fn resolver_at(&self, offset: usize) -> Option<RouteResolver> {
         if offset >= MAX_CAPACITY {
             crate::invariant();
         }
@@ -460,7 +455,7 @@ impl EffList {
     const fn update_scope_markers(
         mut self,
         scope: ScopeId,
-        linger: Option<bool>,
+        reentry: Option<ReentryMark>,
         controller_role: Option<u8>,
     ) -> Self {
         if scope.is_none() {
@@ -471,8 +466,8 @@ impl EffList {
             let marker = self.scope_markers[marker_idx];
             if marker.scope_id.raw() == scope.raw() {
                 let mut updated = marker;
-                if let Some(value) = linger {
-                    updated.linger = value;
+                if let Some(value) = reentry {
+                    updated.reentry = value;
                 }
                 if let Some(role) = controller_role {
                     updated.controller_role = Some(role);
@@ -487,7 +482,7 @@ impl EffList {
     pub(crate) const fn resolver_with_scope(
         &self,
         offset: usize,
-    ) -> Option<(ResolverMode, ScopeId)> {
+    ) -> Option<(RouteResolver, ScopeId)> {
         match self.resolver_at(offset) {
             Some(resolver) => {
                 let baked_scope = resolver.scope();
@@ -506,7 +501,7 @@ impl EffList {
         }
     }
 
-    pub const fn scope_markers(&self) -> &[ScopeMarker] {
+    pub(crate) const fn scope_markers(&self) -> &[ScopeMarker] {
         /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
         unsafe { core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len) }
     }
@@ -524,7 +519,7 @@ where
         from: FROM,
         to: TO,
         label: <M as Message>::LOGICAL_LABEL,
-        is_internal: false,
+        origin: eff::EventOrigin::User,
         resource: None,
         lane: LANE,
     };

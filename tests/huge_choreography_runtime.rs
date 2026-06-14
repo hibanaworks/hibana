@@ -32,21 +32,9 @@ fn drive<F: core::future::Future>(future: F) -> F::Output {
 }
 
 fn drive_pinned<F: core::future::Future>(mut future: core::pin::Pin<&mut F>) -> F::Output {
-    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use core::task::{Context, Poll, Waker};
 
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(
-        |_| RawWaker::new(core::ptr::null(), &VTABLE),
-        |_| {},
-        |_| {},
-        |_| {},
-    );
-
-    fn noop_waker() -> Waker {
-        unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) }
-    }
-
-    let waker = noop_waker();
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(Waker::noop());
     loop {
         match future.as_mut().poll(&mut cx) {
             Poll::Ready(output) => return output,
@@ -212,8 +200,8 @@ fn run_attached_sample(
     assert_eq!(route_scope_count, expected_branch_labels.len());
     assert_eq!(route_scope_count, expected_acks.len());
 
-    runtime_support::with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
@@ -284,8 +272,8 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
     let controller_program: RoleProgram<0> = project(&program);
     let worker_program: RoleProgram<1> = project(&program);
 
-    runtime_support::with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
@@ -317,8 +305,8 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
 
 #[test]
 fn high_lane_route_runs_to_completion_on_actual_localside() {
-    runtime_support::with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
@@ -385,8 +373,8 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
 
 #[test]
 fn active_scope_depth_above_128_enters_public_sessionkit_path() {
-    runtime_support::with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         let mut kit_storage = DeepScopeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
@@ -407,8 +395,8 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
 
 #[test]
 fn lane_255_runs_to_completion_on_public_sessionkit_path() {
-    runtime_support::with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit

@@ -1,14 +1,14 @@
-//! Internal endpoint kernel built on top of `EventCursor`.
+//! Endpoint kernel built on top of `EventCursor`.
 //!
 //! The kernel endpoint owns the rendezvous port outright and advances
 //! according to the typestate cursor obtained from `RoleProgram` projection.
 
-use core::{convert::TryFrom, ops::ControlFlow, task::Poll};
+use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::{Arm, DeferReason, RouteArmToken, RouteResolveStep};
-use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeLoopMeta};
+use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeReentryMeta};
 use super::frontier::*;
-use super::frontier_state::FrontierState;
+use super::frontier_state::{FrontierScratchState, FrontierState};
 use super::lane_port;
 use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
@@ -17,7 +17,7 @@ mod route_commit_helpers;
 use super::decision_state::{RouteCommitRowSetBuilder, RouteState};
 use crate::eff::EffIndex;
 use crate::global::compiled::images::EventSemanticKind;
-use crate::global::const_dsl::{ResolverMode, ScopeId};
+use crate::global::const_dsl::{RouteResolver, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
     CursorInvariantError, CursorRefresh, EventCursor, FlowPreviewError, RecvMeta,
@@ -47,27 +47,22 @@ use crate::{
 pub(in crate::endpoint::kernel::core) use route_commit_helpers::prepare_route_site_materialization_rows_from_resident_route_commit_range;
 pub(in crate::endpoint::kernel::core) use route_commit_helpers::preview_selected_arm_for_scope_from_parts;
 pub(in crate::endpoint::kernel) use route_commit_helpers::{
-    prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range,
+    prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor,
 };
-
-#[inline]
-fn checked_state_index(idx: usize) -> Option<StateIndex> {
-    u16::try_from(idx).ok().map(StateIndex::new)
-}
 
 pub(crate) trait RecvKernelEndpoint<'r> {
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
     ) -> RecvResult<super::recv::PreparedRecv>;
 
     fn poll_recv_kernel_payload_source(
         &mut self,
         desc: super::recv::RecvDescriptor,
-        accepts_empty_payload: bool,
+        payload_mode: RecvPayloadMode,
         state: &mut super::recv::RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<super::recv::RecvPayloadSource<'r>>>;
@@ -128,7 +123,7 @@ pub(crate) trait SendKernelEndpoint<'r> {
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
     logical_label: u8,
-    accepts_empty_payload: bool,
+    payload_mode: RecvPayloadMode,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
@@ -136,19 +131,18 @@ pub(crate) fn kernel_recv<'r>(
     let prepared = match state.prepared() {
         Some(prepared) => prepared,
         None => {
-            let prepared = match endpoint
-                .prepare_recv_kernel_descriptor(logical_label, accepts_empty_payload)
-            {
-                Ok(prepared) => prepared,
-                Err(err) => return Poll::Ready(Err(err)),
-            };
+            let prepared =
+                match endpoint.prepare_recv_kernel_descriptor(logical_label, payload_mode) {
+                    Ok(prepared) => prepared,
+                    Err(err) => return Poll::Ready(Err(err)),
+                };
             state.set_prepared(prepared);
             prepared
         }
     };
     match endpoint.poll_recv_kernel_payload_source(
         prepared.descriptor,
-        prepared.runtime.accepts_empty_payload(),
+        prepared.runtime.payload_mode(),
         state,
         cx,
     ) {
@@ -165,7 +159,7 @@ pub(crate) fn kernel_recv<'r>(
                     )
                     .map(|payload| unsafe {
                         // SAFETY: recv payloads returned by the kernel are backed by
-                        // endpoint-resident transport, ingress, or static empty storage.
+                        // endpoint-resident transport, ingress, or a canonical zero-length slice.
                         lane_port::endpoint_resident_payload(payload)
                     }),
             )
@@ -189,7 +183,7 @@ pub(crate) fn kernel_decode<'r>(
     }
     if state.prepared_meta().is_none() {
         let prepared = {
-            let branch = state.branch().expect("invariant");
+            let branch = crate::invariant_some(state.branch());
             match endpoint.prepare_decode_kernel_transport_wait(desc, branch) {
                 Ok(meta) => meta,
                 Err(err) => return Poll::Ready(Err(err)),
@@ -199,7 +193,7 @@ pub(crate) fn kernel_decode<'r>(
     }
     if let Some(meta) = state.prepared_meta() {
         let needs_transport = {
-            let branch = state.branch().expect("invariant");
+            let branch = crate::invariant_some(state.branch());
             branch.staged_payload.is_none()
         };
         if needs_transport {
@@ -215,19 +209,19 @@ pub(crate) fn kernel_decode<'r>(
                     return Poll::Ready(Err(err));
                 }
             };
-            let branch = state.branch_mut().expect("invariant");
+            let branch = crate::invariant_some(state.branch_mut());
             branch.staged_payload = Some(StagedPayload::new(frame));
         }
     }
     let prepared_meta = state.prepared_meta();
     let result = {
-        let branch = state.branch_mut().expect("invariant");
+        let branch = crate::invariant_some(state.branch_mut());
         endpoint.finish_decode_kernel(desc, prepared_meta, branch)
     };
     match result {
         Ok(payload) => {
             drop(state.take_branch());
-            state.restore_on_drop = false;
+            state.disarm_restore();
             Poll::Ready(Ok(unsafe {
                 // SAFETY: committed decode payloads are staged in endpoint-resident
                 // transport/ingress storage or local zero scratch.
@@ -346,13 +340,11 @@ fn controller_arm_semantic_kind(
 #[inline]
 const fn controller_arm_semantic_from_node(kind: EventSemanticKind) -> EventSemanticKind {
     match kind {
-        EventSemanticKind::DecisionArm | EventSemanticKind::Other => EventSemanticKind::DecisionArm,
+        EventSemanticKind::DecisionArm | EventSemanticKind::ProtocolEvent => {
+            EventSemanticKind::DecisionArm
+        }
     }
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "core/decision_resolver_tests.rs"]
-mod decision_resolver_tests;
 
 mod commit_delta;
 mod frontier_observation;
@@ -374,7 +366,9 @@ pub(crate) use super::decision_state::{
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
 pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
 pub(crate) use public_types::*;
-pub(in crate::endpoint::kernel) use route_preview::ResolverDeferAudit;
+pub(in crate::endpoint::kernel) use route_preview::{
+    IngressEvidenceState, ResolverDeferAudit, ResolverDeferProgress,
+};
 pub(crate) use runtime_types::*;
 
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
@@ -393,7 +387,7 @@ where
         if self.ports[self.primary_lane].is_none() {
             crate::invariant();
         }
-        self.ports[self.primary_lane].as_ref().expect("invariant")
+        crate::invariant_some(self.ports[self.primary_lane].as_ref())
     }
 
     /// Get port for a specific lane.
@@ -401,7 +395,7 @@ where
         if self.ports[lane_idx].is_none() {
             crate::invariant();
         }
-        self.ports[lane_idx].as_ref().expect("invariant")
+        crate::invariant_some(self.ports[lane_idx].as_ref())
     }
 
     #[inline]
@@ -487,16 +481,16 @@ where
         if self.public_generation != 0 {
             let cluster = self.session.cluster();
             cluster.unbind_session_role(self.sid, ROLE, self.public_rv);
-            if self.public_slot_owned {
+            if self.public_slot_ownership == PublicSlotOwnership::Owned {
                 cluster.release_public_endpoint_slot_owned(
                     self.public_rv,
                     self.public_slot,
                     self.public_generation,
                 );
             }
-            self.public_header.invalidate();
+            self.public_header.retire_generation();
             self.public_generation = 0;
-            self.public_slot_owned = false;
+            self.public_slot_ownership = PublicSlotOwnership::Borrowed;
         }
     }
 }

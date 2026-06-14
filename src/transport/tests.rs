@@ -5,13 +5,19 @@ use core::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-#[derive(Default)]
 struct SharedState {
     waker: UnsafeCell<Option<Waker>>,
     ready: Cell<bool>,
 }
 
 impl SharedState {
+    fn new() -> Self {
+        Self {
+            waker: UnsafeCell::new(None),
+            ready: Cell::new(false),
+        }
+    }
+
     fn store_waker(&self, waker: &Waker) {
         unsafe {
             *self.waker.get() = Some(waker.clone());
@@ -38,7 +44,7 @@ struct WakerAwareTransport {
 impl WakerAwareTransport {
     fn new() -> Self {
         Self {
-            state: SharedState::default(),
+            state: SharedState::new(),
         }
     }
 
@@ -58,28 +64,31 @@ impl Transport for WakerAwareTransport {
     where
         Self: 'a;
 
-    fn open<'a>(&'a self, _port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+    fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box(port);
         ((), ())
     }
 
     fn poll_send<'a, 'f>(
         &self,
-        _tx: &'a mut Self::Tx<'a>,
-        _outgoing: Outgoing<'f>,
-        _cx: &mut Context<'_>,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        cx: &mut Context<'_>,
     ) -> Poll<Result<(), Self::Error>>
     where
         'a: 'f,
     {
+        core::hint::black_box((tx, outgoing, cx.waker()));
         Poll::Ready(Ok(()))
     }
 
     fn poll_recv<'a>(
         &'a self,
-        _rx: &'a mut Self::Rx<'a>,
+        rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
         static PAYLOAD: [u8; 0] = [];
+        core::hint::black_box(rx);
         self.state.store_waker(cx.waker());
         if self.state.take_ready() {
             Poll::Ready(Ok(ReceivedFrame::deterministic(Payload::new(&PAYLOAD))))
@@ -88,9 +97,12 @@ impl Transport for WakerAwareTransport {
         }
     }
 
-    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        core::hint::black_box(tx);
+    }
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        core::hint::black_box(rx);
         self.state.set_ready();
         Ok(())
     }

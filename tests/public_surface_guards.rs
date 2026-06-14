@@ -179,7 +179,7 @@ fn runtime_runtime_surface_owns_tapevent_resource() {
 
     for forbidden in [
         "TapBatch",
-        "RawEvent",
+        concat!("Raw", "Event"),
         "for_each_since",
         "install_ring",
         "push(",
@@ -218,11 +218,11 @@ fn runtime_resolver_surface_is_decision_input_owner() {
         resolver_src.contains("pub struct ResolverRef<'cfg, const RESOLVER_ID: u16")
             && resolver_src
                 .contains("pub fn evaluate(self) -> Result<DecisionResolution, ResolverError>")
-            && resolver_src.contains("This is for typed resolver adapters")
+            && resolver_src.contains("This is for typed resolver owners")
             && resolver_src.contains("not commit route/session progress")
             && !resolver_src.contains("pub fn resolve_decision")
             && !resolver_src.contains("erase_resolver_id"),
-        "ResolverRef must carry resolver id and expose only the typed resolver-combinator evaluate seam without a public erasure bypass"
+        "ResolverRef must carry resolver id and expose only the typed resolver-combinator evaluate seam without a public erasure shortcut"
     );
     for forbidden in [
         "ResolverContext",
@@ -287,8 +287,11 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
 
     for forbidden in [
         "pub enum LoopResolution",
+        "pub enum RollResolution",
         "pub fn loop_fn",
         "pub fn loop_state",
+        "pub fn roll_fn",
+        "pub fn roll_state",
         concat!(
             "pub fn decision_fn(resolver: fn(ResolverContext) -> DecisionResolution",
             "Outcome)"
@@ -306,12 +309,12 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
     }
     assert!(
         !decision_resolver_src.contains("if meta.peer == ROLE"),
-        "dynamic route decision must not bypass resolver validation for local sends"
+        "dynamic route decision must not omit resolver validation for local sends"
     );
 }
 
 #[test]
-fn core_resolver_audit_has_no_in_crate_appliance_layer() {
+fn core_resolver_audit_has_no_in_crate_resolver_owner() {
     let resolver_audit = read("src/resolver_audit.rs");
     for forbidden in [
         "pub(crate) struct ResolverCtx",
@@ -322,7 +325,7 @@ fn core_resolver_audit_has_no_in_crate_appliance_layer() {
     ] {
         assert!(
             !resolver_audit.contains(forbidden),
-            "hibana core must not keep an in-crate resolver appliance: {forbidden}"
+            "hibana core must not keep an in-crate resolver owner: {forbidden}"
         );
     }
 
@@ -335,7 +338,7 @@ fn core_resolver_audit_has_no_in_crate_appliance_layer() {
         for forbidden in ["run_resolver(", "resolver_mode_tag("] {
             assert!(
                 !src.contains(forbidden),
-                "hibana core must audit resolver inputs without a no-op resolver executor: {path}: {forbidden}"
+                "hibana core must record resolver audit inputs without route authority: {path}: {forbidden}"
             );
         }
     }

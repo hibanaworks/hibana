@@ -77,7 +77,7 @@ where
             cursor_index: preview_meta.cursor_index,
             eff_index: meta.eff_index,
             label: meta.label,
-            is_internal: meta.is_internal,
+            origin: meta.origin,
             frame_label: meta.frame_label,
             kind: branch_kind,
             profile,
@@ -101,7 +101,7 @@ where
         } else if self.cursor.is_local_action_at(cursor_index) {
             BranchKind::LocalAction
         } else {
-            BranchKind::EmptyArmTerminal
+            BranchKind::TerminalArm
         }
     }
 
@@ -126,8 +126,8 @@ where
                 frame_label,
                 payload,
             ) {
-                Ok(payload) => Ok(MaterializedTransport::Accepted(Some(payload))),
-                Err(()) => Ok(MaterializedTransport::DiscardedAndPending),
+                Some(payload) => Ok(MaterializedTransport::Accepted(Some(payload))),
+                None => Ok(MaterializedTransport::DiscardedAndPending),
             };
         }
         let transport_payload_frame_mismatch = observed_frame_label != frame_label;

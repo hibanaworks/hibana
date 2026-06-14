@@ -224,7 +224,7 @@ const fn scope_first_enter_index(scope_markers: &[ScopeMarker], scope: ScopeId) 
 const fn scope_segment_end(
     scope_markers: &[ScopeMarker],
     enter_idx: usize,
-    default_end: usize,
+    segment_limit: usize,
 ) -> usize {
     let marker = scope_markers[enter_idx];
     let mut scan = enter_idx + 1;
@@ -237,7 +237,7 @@ const fn scope_segment_end(
         }
         scan += 1;
     }
-    default_end
+    segment_limit
 }
 
 const fn route_scope_slot_for_scope(

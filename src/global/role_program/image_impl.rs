@@ -1,7 +1,7 @@
 use super::{
     CompiledProgramImage, LANE_DOMAIN_BYTES, MAX_LOCAL_STEP_LANES, MAX_RESIDENT_LANE_BIT_BYTES,
     MAX_RESIDENT_ROW_BOUNDARY_ROWS, MAX_RESIDENT_ROW_LANE_ROWS, MAX_ROUTE_ARM_LANE_ROWS,
-    MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, PackedLocalEventRow, PackedLoopScopeRow,
+    MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
     PackedRouteArmRow, RoleLaneScratch, ScopeEvent, ScopeId, ScopeKind, lane_byte_count,
     lane_byte_index,
 };
@@ -11,17 +11,17 @@ use crate::global::typestate::{
 mod blob_image;
 mod event_rows;
 mod lane_image;
-mod loop_rows;
 mod ref_access;
+mod roll_rows;
 mod scope_rows;
 
 use scope_rows::RouteArmProjectionRowInput;
 
 impl RoleLaneScratch {
-    const NO_ACTIVE_LANE: u16 = u16::MAX;
+    const ACTIVE_LANE_NONE: u16 = u16::MAX;
     const ROUTE_SCOPE_ROW_EMPTY: u16 = u16::MAX;
-    const ROUTE_SCOPE_ROW_LINGER: u16 = 1 << 15;
-    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_LINGER - 1;
+    const ROUTE_SCOPE_ROW_REENTRY: u16 = 1 << 15;
+    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_REENTRY - 1;
 
     #[inline(always)]
     const fn local_row_has_lane(&self, row: PackedLaneRange, lane: u8) -> bool {
@@ -559,8 +559,8 @@ impl RoleLaneScratch {
                     panic!("route scope ordinal overflow");
                 }
                 self.route_scope_rows[route_slot] = ordinal
-                    | if marker.linger {
-                        Self::ROUTE_SCOPE_ROW_LINGER
+                    | if marker.reentry.is_reentrant() {
+                        Self::ROUTE_SCOPE_ROW_REENTRY
                     } else {
                         0
                     };
@@ -648,7 +648,7 @@ impl RoleLaneScratch {
             route_arm_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
             route_offer_lane_rows: [PackedLaneRange::EMPTY; MAX_ROUTE_SCOPE_LANE_ROWS],
             route_commit_ranges: [PackedLaneRange::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
-            loop_scope_rows: [PackedLoopScopeRow::EMPTY; MAX_LOCAL_STEP_LANES],
+            roll_scope_rows: [PackedRollScopeRow::EMPTY; MAX_LOCAL_STEP_LANES],
             active_lane_row: PackedLaneRange::EMPTY,
             resident_row_len: 0,
             dependency_row_len: 0,
@@ -656,8 +656,8 @@ impl RoleLaneScratch {
             lane_bit_row_len: 0,
             route_commit_row_len: 0,
             route_arm_lane_step_row_len: 0,
-            loop_scope_row_len: 0,
-            first_active_lane: Self::NO_ACTIVE_LANE,
+            roll_scope_row_len: 0,
+            first_active_lane: Self::ACTIVE_LANE_NONE,
         };
         let view = program.view();
         let markers = view.scope_markers();
@@ -724,7 +724,7 @@ impl RoleLaneScratch {
             lanes.append_lane_bit_row_for_local_range(PackedLaneRange::new(0, step));
         lanes.push_resident_rows::<ROLE>(program);
         lanes.push_route_arm_lane_rows::<ROLE>(program);
-        lanes.push_loop_scope_rows::<ROLE>(program);
+        lanes.push_roll_scope_rows::<ROLE>(program);
         lanes
     }
 }
@@ -760,7 +760,7 @@ impl RoleLaneScratch {
     }
 
     #[inline(always)]
-    pub(crate) const fn loop_scope_row_len(&self) -> usize {
-        self.loop_scope_row_len as usize
+    pub(crate) const fn roll_scope_row_len(&self) -> usize {
+        self.roll_scope_row_len as usize
     }
 }

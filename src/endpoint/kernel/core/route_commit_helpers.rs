@@ -7,7 +7,7 @@ use crate::{
     endpoint::kernel::decision_state::SelectedRouteCommitRows,
     endpoint::{RecvError, RecvResult},
     global::{
-        const_dsl::ScopeId,
+        const_dsl::{ReentryMark, ScopeId},
         role_program::LaneSetView,
         typestate::{EventCursor, PackedEventConflict},
     },
@@ -25,11 +25,12 @@ pub(in crate::endpoint::kernel) fn scope_slot_for_route_from_cursor(
 }
 
 #[inline]
-pub(in crate::endpoint::kernel) fn is_linger_route_from_cursor(
-    cursor: &EventCursor,
-    scope: ScopeId,
-) -> bool {
-    cursor.route_scope_linger(scope)
+fn route_reentry_from_cursor(cursor: &EventCursor, scope: ScopeId) -> ReentryMark {
+    if cursor.route_scope_reentry(scope) {
+        ReentryMark::Reentrant
+    } else {
+        ReentryMark::SinglePass
+    }
 }
 
 fn prepare_selected_route_commit_row_from_parts(
@@ -52,7 +53,7 @@ fn prepare_selected_route_commit_row_from_parts(
         scope,
         scope_slot,
         arm,
-        is_linger_route_from_cursor(cursor, scope),
+        route_reentry_from_cursor(cursor, scope),
     )
 }
 
@@ -93,7 +94,7 @@ pub(in crate::endpoint::kernel::core) fn prepare_route_site_materialization_rows
     )
 }
 
-pub(in crate::endpoint::kernel) fn prepare_descriptor_checked_recv_linger_rows_from_resident_route_commit_range(
+pub(in crate::endpoint::kernel) fn prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range(
     decision_state: &RouteState,
     cursor: &EventCursor,
     lane: u8,

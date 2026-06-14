@@ -32,8 +32,8 @@ impl OfferFrontierFacts {
 
 #[derive(Clone, Copy)]
 pub(super) enum OfferIngressMode {
-    Skip,
-    TransportOnly,
+    ResolvedWithoutFrame,
+    TransportFrame,
 }
 
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
@@ -48,10 +48,9 @@ where
         ingress: &mut OfferStagedIngress<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
-        assert!(
-            !ingress.has_transport(),
-            "offer transport wait must not poll while a received frame is already staged"
-        );
+        if ingress.has_transport() {
+            crate::invariant();
+        }
         let frame = match self.poll_received_transport_frame_for_lane(
             pending_recv,
             offer_lane as usize,
@@ -81,7 +80,7 @@ where
         facts: OfferFrontierFacts,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
-        if matches!(facts.ingress_mode, OfferIngressMode::Skip) {
+        if matches!(facts.ingress_mode, OfferIngressMode::ResolvedWithoutFrame) {
             return Poll::Ready(Ok(None));
         }
 
@@ -171,11 +170,11 @@ fn next_preferred_transport_lane(
         }
     }
     let mut candidate = offer_lanes.first_set(lane_limit);
-    let mut skipped = 1usize;
-    while skipped < *scan_idx {
+    let mut advanced = 1usize;
+    while advanced < *scan_idx {
         let lane_idx = candidate?;
         candidate = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        skipped += 1;
+        advanced += 1;
     }
     while let Some(lane_idx) = candidate {
         *scan_idx += 1;

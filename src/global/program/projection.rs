@@ -15,9 +15,9 @@ pub(crate) mod seal {
 /// metadata visitation stay behind Hibana's projection owner; this trait is
 /// only the sealed choreography bound.
 ///
-/// Projection is independent of runtime storage/configuration types. Keep this
-/// bound parameter-free so facade APIs do not make users write a runtime
-/// parameter just to hide a choreography term.
+/// Projection is independent of runtime resources. Keep this bound
+/// parameter-free so facade APIs do not make users write runtime parameters
+/// just to hide a choreography term.
 ///
 /// The trait is not an extension point. Return hibana choreography values behind
 /// `impl Projectable`; do not implement a parallel projection path.

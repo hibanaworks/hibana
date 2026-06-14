@@ -16,7 +16,7 @@ use hibana::{
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
-use runtime_support::with_fixture;
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
 #[derive(Clone, Copy)]
@@ -47,7 +47,7 @@ impl WirePayload for InstallPayload {
         } else if input.as_bytes().len() < 4 {
             Err(CodecError::Truncated)
         } else {
-            Err(CodecError::Invalid("trailing bytes after InstallPayload"))
+            Err(CodecError::Malformed)
         }
     }
 
@@ -56,6 +56,14 @@ impl WirePayload for InstallPayload {
         let mut data = [0u8; 4];
         data.copy_from_slice(&input[..4]);
         Self { data }
+    }
+
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        if scratch.len() < 4 {
+            return Err(CodecError::Truncated);
+        }
+        scratch[..4].fill(0);
+        Ok(Payload::new(&scratch[..4]))
     }
 }
 
@@ -110,8 +118,8 @@ fn run_local_action_flow(
 
 #[test]
 fn local_action_flow_executes() {
-    with_fixture(|_clock, tap_buf, slab| {
-        let transport = TestTransport::default();
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             run_local_action_flow(cluster, tap_buf, slab, &transport);
         });

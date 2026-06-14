@@ -5,9 +5,9 @@ use super::passive::{
 };
 use super::{
     Clock, CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome,
-    FrontierDeferRequest, FrontierVisitSet, OfferAuthorityPath, OfferResolveState, RecvError,
-    RecvResult, ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
-    RouteResolveStep, Transport,
+    FrontierDeferRequest, FrontierVisitSet, IngressEvidenceState, OfferAuthorityPath,
+    OfferResolveState, RecvError, RecvResult, ResolveTokenOutcome, ResolvedRouteArm,
+    RouteArmCommitEvidence, RouteArmToken, RouteResolveStep, Transport,
 };
 pub(super) struct RouteAuthorityResolution {
     pub(super) route_token: RouteArmToken,
@@ -27,11 +27,10 @@ pub(super) enum MaterializationReadyOutcome {
 
 enum RouteResolveOutcome {
     Token(RouteArmToken),
-    NoAuthority,
     RestartFrontier,
 }
 
-enum PassiveRouteResolutionOutcome {
+enum PassiveRouteAuthorityOutcome {
     Authority(RouteArmToken, FrameHintResolution),
     EvidenceOnly(FrameHintResolution),
     RestartFrontier,
@@ -121,9 +120,6 @@ where
                     Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
                         Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
                     }
-                    Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => {
-                        Poll::Ready(Err(RecvError::PhaseInvariant))
-                    }
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
                 }
             }
@@ -156,10 +152,10 @@ where
         match self.passive_evidence_authority(state, pending_recv, frontier_visited, cx, frame_hint)
         {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(PassiveRouteResolutionOutcome::RestartFrontier)) => {
+            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::RestartFrontier)) => {
                 Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
             }
-            Poll::Ready(Ok(PassiveRouteResolutionOutcome::Authority(route_token, frame_hint))) => {
+            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(route_token, frame_hint))) => {
                 Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                     RouteAuthorityResolution {
                         route_token,
@@ -168,7 +164,7 @@ where
                     },
                 )))
             }
-            Poll::Ready(Ok(PassiveRouteResolutionOutcome::EvidenceOnly(frame_hint))) => self
+            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::EvidenceOnly(frame_hint))) => self
                 .collect_route_authority_after_passive_evidence_only(
                     state,
                     pending_recv,
@@ -210,14 +206,6 @@ where
             Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
                 Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
             }
-            Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => self
-                .poll_route_authority_after_local_sources_miss(
-                    state,
-                    pending_recv,
-                    frontier_visited,
-                    cx,
-                    frame_hint,
-                ),
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
@@ -239,7 +227,7 @@ where
                 pending_recv,
                 frontier_visited,
                 cx,
-                false,
+                IngressEvidenceState::Absent,
             ) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
@@ -261,9 +249,6 @@ where
             )),
             Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
                 Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
-            }
-            Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)) => {
-                Poll::Ready(Err(RecvError::PhaseInvariant))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
@@ -290,18 +275,15 @@ where
                 RouteResolveStep::Reject(resolver_id) => {
                     return Poll::Ready(Err(RecvError::ResolverReject { resolver_id }));
                 }
-                RouteResolveStep::NoAuthority => {
-                    return Poll::Ready(Ok(RouteResolveOutcome::NoAuthority));
-                }
                 RouteResolveStep::Deferred => {
                     match self.on_frontier_defer(
                         &mut state.progress,
                         FrontierDeferRequest {
                             scope_id,
                             current_parallel: selection.frontier_parallel_root,
-                            reason: DeferReason::Unsupported,
+                            reason: DeferReason::ResolverDeferred,
                             offer_lane: selection.offer_lane,
-                            ingress_ready: state.ingress.has_transport(),
+                            ingress: state.ingress.evidence_state(),
                             selected_arm: None,
                         },
                         frontier_visited,
@@ -324,7 +306,7 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         frame_hint: FrameHintResolution,
-    ) -> Poll<RecvResult<PassiveRouteResolutionOutcome>> {
+    ) -> Poll<RecvResult<PassiveRouteAuthorityOutcome>> {
         let selection = state.selection();
         let offer_lanes = self.offer_lane_set_for_scope(selection.scope_id);
         match self.poll_passive_route_evidence(
@@ -344,17 +326,17 @@ where
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::RestartFrontier)) => {
-                Poll::Ready(Ok(PassiveRouteResolutionOutcome::RestartFrontier))
+                Poll::Ready(Ok(PassiveRouteAuthorityOutcome::RestartFrontier))
             }
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
                 route_token,
                 frame_hint,
-            })) => Poll::Ready(Ok(PassiveRouteResolutionOutcome::Authority(
+            })) => Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(
                 route_token,
                 frame_hint,
             ))),
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly { frame_hint })) => {
-                Poll::Ready(Ok(PassiveRouteResolutionOutcome::EvidenceOnly(frame_hint)))
+                Poll::Ready(Ok(PassiveRouteAuthorityOutcome::EvidenceOnly(frame_hint)))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
@@ -380,20 +362,21 @@ where
             RouteResolveStep::Reject(resolver_id) => {
                 Poll::Ready(Err(RecvError::ResolverReject { resolver_id }))
             }
-            RouteResolveStep::NoAuthority => Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)),
             RouteResolveStep::Deferred => match self.on_frontier_defer(
                 &mut state.progress,
                 FrontierDeferRequest {
                     scope_id,
                     current_parallel: selection.frontier_parallel_root,
-                    reason: DeferReason::Unsupported,
+                    reason: DeferReason::ResolverDeferred,
                     offer_lane: selection.offer_lane,
-                    ingress_ready: state.ingress.has_transport(),
+                    ingress: state.ingress.evidence_state(),
                     selected_arm: None,
                 },
                 frontier_visited,
             ) {
-                FrontierDeferOutcome::Continue => Poll::Ready(Ok(RouteResolveOutcome::NoAuthority)),
+                FrontierDeferOutcome::Continue => {
+                    Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier))
+                }
                 FrontierDeferOutcome::Yielded => {
                     state.pending.arm_yield_restart();
                     self.poll_resolve_pending_as(
@@ -437,7 +420,7 @@ where
                 pending_recv,
                 frontier_visited,
                 cx,
-                state.ingress.has_transport(),
+                state.ingress.evidence_state(),
             )
         }
     }
@@ -448,7 +431,7 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-        has_ingress: bool,
+        ingress: IngressEvidenceState,
     ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         match self.on_frontier_defer(
@@ -456,9 +439,9 @@ where
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
                 current_parallel: selection.frontier_parallel_root,
-                reason: DeferReason::NoEvidence,
+                reason: DeferReason::EvidenceAbsent,
                 offer_lane: selection.offer_lane,
-                ingress_ready: has_ingress,
+                ingress,
                 selected_arm: None,
             },
             frontier_visited,

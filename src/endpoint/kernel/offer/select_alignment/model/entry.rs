@@ -1,47 +1,31 @@
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer::select_alignment) enum CurrentOfferEntry {
-    Route { has_offer_lanes: bool },
+    RouteWithOfferLanes,
+    RouteWithoutOfferLanes,
     NonRoute,
 }
 
 impl CurrentOfferEntry {
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn from_meta(
-        is_route_entry: bool,
-        has_offer_lanes: bool,
-    ) -> Self {
-        if is_route_entry {
-            Self::Route { has_offer_lanes }
-        } else {
-            Self::NonRoute
-        }
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel::offer::select_alignment) const fn is_route_entry(self) -> bool {
-        matches!(self, Self::Route { .. })
+        matches!(
+            self,
+            Self::RouteWithOfferLanes | Self::RouteWithoutOfferLanes
+        )
     }
 
     #[inline]
     pub(in crate::endpoint::kernel::offer::select_alignment) const fn has_offer_lanes(
         self,
     ) -> bool {
-        match self {
-            Self::Route { has_offer_lanes } => has_offer_lanes,
-            Self::NonRoute => false,
-        }
+        matches!(self, Self::RouteWithOfferLanes)
     }
 
     #[inline]
     pub(in crate::endpoint::kernel::offer::select_alignment) const fn is_unrunnable_route(
         self,
     ) -> bool {
-        matches!(
-            self,
-            Self::Route {
-                has_offer_lanes: false
-            }
-        )
+        matches!(self, Self::RouteWithoutOfferLanes)
     }
 }
 
@@ -53,19 +37,32 @@ pub(in crate::endpoint::kernel::offer::select_alignment) enum CurrentOfferAuthor
 
 impl CurrentOfferAuthority {
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn from_meta(
-        is_controller: bool,
+    pub(in crate::endpoint::kernel::offer::select_alignment) const fn is_controller(self) -> bool {
+        matches!(self, Self::Controller)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::endpoint::kernel::offer::select_alignment) enum ProgressSiblingPresence {
+    Absent,
+    Present,
+}
+
+impl ProgressSiblingPresence {
+    #[inline]
+    pub(in crate::endpoint::kernel::offer::select_alignment) const fn from_observed_progress_sibling(
+        observed: bool,
     ) -> Self {
-        if is_controller {
-            Self::Controller
+        if observed {
+            Self::Present
         } else {
-            Self::Passive
+            Self::Absent
         }
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn is_controller(self) -> bool {
-        matches!(self, Self::Controller)
+    pub(in crate::endpoint::kernel::offer::select_alignment) const fn exists(self) -> bool {
+        matches!(self, Self::Present)
     }
 }
 
@@ -75,5 +72,6 @@ pub(in crate::endpoint::kernel::offer::select_alignment) struct OfferAlignmentCa
     pub(in crate::endpoint::kernel::offer::select_alignment) current_entry: CurrentOfferEntry,
     pub(in crate::endpoint::kernel::offer::select_alignment) current_authority:
         CurrentOfferAuthority,
-    pub(in crate::endpoint::kernel::offer::select_alignment) progress_sibling_exists: bool,
+    pub(in crate::endpoint::kernel::offer::select_alignment) progress_sibling_presence:
+        ProgressSiblingPresence,
 }

@@ -1,7 +1,7 @@
 use super::super::{
     ColumnRange, LANE_DOMAIN_SIZE, PackedLaneRange, PackedLocalEventRow,
     ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
-    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_LOOP_SCOPE_STRIDE,
+    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
     ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE,
     RoleImageBytes, RoleImageColumns, RoleImageRef, RoleLaneScratch, RouteArmLaneStepRow,
     RuntimeRoleFacts,
@@ -27,7 +27,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let resident_boundary_len = scratch.resident_boundary_count();
         let lane_bit_len = scratch.lane_bit_row_len();
         let route_commit_len = scratch.route_commit_row_len();
-        let loop_scope_len = scratch.loop_scope_row_len();
+        let roll_scope_len = scratch.roll_scope_row_len();
 
         (local_len * ROLE_IMAGE_EVENT_STRIDE)
             + (local_len * ROLE_IMAGE_LANE_STRIDE)
@@ -43,7 +43,7 @@ impl<const N: usize> RoleImageBytes<N> {
             + (route_arm_lane_step_row_len * ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE)
             + (route_arm_len * ROLE_IMAGE_LANE_RANGE_STRIDE)
             + (route_commit_len * ROLE_IMAGE_CONFLICT_STRIDE)
-            + (loop_scope_len * ROLE_IMAGE_LOOP_SCOPE_STRIDE)
+            + (roll_scope_len * ROLE_IMAGE_ROLL_SCOPE_STRIDE)
     }
 
     #[inline(always)]
@@ -67,7 +67,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let resident_boundary_len = scratch.resident_boundary_count();
         let lane_bit_len = scratch.lane_bit_row_len();
         let route_commit_len = scratch.route_commit_row_len();
-        let loop_scope_len = scratch.loop_scope_row_len();
+        let roll_scope_len = scratch.roll_scope_row_len();
 
         let (events, offset) = Self::column_at(0, local_len, ROLE_IMAGE_EVENT_STRIDE);
         let (lanes, offset) = Self::column_at(offset, local_len, ROLE_IMAGE_LANE_STRIDE);
@@ -96,10 +96,10 @@ impl<const N: usize> RoleImageBytes<N> {
             Self::column_at(offset, route_arm_len, ROLE_IMAGE_LANE_RANGE_STRIDE);
         let (route_commit_rows, _) =
             Self::column_at(offset, route_commit_len, ROLE_IMAGE_CONFLICT_STRIDE);
-        let (loop_scopes, _) = Self::column_at(
+        let (roll_scopes, _) = Self::column_at(
             route_commit_rows.end_offset(ROLE_IMAGE_CONFLICT_STRIDE),
-            loop_scope_len,
-            ROLE_IMAGE_LOOP_SCOPE_STRIDE,
+            roll_scope_len,
+            ROLE_IMAGE_ROLL_SCOPE_STRIDE,
         );
         RoleImageColumns {
             events,
@@ -116,7 +116,7 @@ impl<const N: usize> RoleImageBytes<N> {
             route_arm_lane_step_rows,
             route_commit_ranges,
             route_commit_rows,
-            loop_scopes,
+            roll_scopes,
         }
     }
 
@@ -380,7 +380,7 @@ impl<const N: usize> RoleImageBytes<N> {
     }
 
     #[inline(always)]
-    pub(crate) const fn from_unselected_bucket_or_empty(
+    pub(crate) const fn from_capacity_bucket(
         scratch: RoleLaneScratch,
         facts: RuntimeRoleFacts,
     ) -> Self {
@@ -401,7 +401,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
         let lane_bit_len = scratch.lane_bit_row_len();
-        let loop_scope_len = scratch.loop_scope_row_len();
+        let roll_scope_len = scratch.roll_scope_row_len();
         let projected_len = Self::projected_len(scratch, facts);
         if projected_len > N {
             panic!("role image");
@@ -513,12 +513,12 @@ impl<const N: usize> RoleImageBytes<N> {
         }
 
         idx = 0;
-        while idx < loop_scope_len {
+        while idx < roll_scope_len {
             out.w64(
-                columns.loop_scopes,
+                columns.roll_scopes,
                 idx,
-                ROLE_IMAGE_LOOP_SCOPE_STRIDE,
-                scratch.loop_scope_rows[idx].raw(),
+                ROLE_IMAGE_ROLL_SCOPE_STRIDE,
+                scratch.roll_scope_rows[idx].raw(),
             );
             idx += 1;
         }

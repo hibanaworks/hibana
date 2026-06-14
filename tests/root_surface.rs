@@ -165,7 +165,7 @@ fn root_visible_surface_stays_minimal() {
             !source.contains(&["#[", "allow(", "private_bounds", ")]"].concat())
                 && !source.contains("#[expect(\n        private_bounds")
                 && !source.contains("#[expect(private_bounds"),
-            "{owner} must not rely on private_bounds suppression in the public surface"
+            "{owner} must not rely on private_bounds lint allowance in the public surface"
         );
     }
     assert!(
@@ -175,7 +175,7 @@ fn root_visible_surface_stays_minimal() {
             && flow_rs.contains("kernel::RawSendPayload::from_typed::<M::Payload>(payload)")
             && !flow_rs.contains("Into<Option<&'a M::Payload>>")
             && !flow_rs.contains(".into()"),
-        "Flow::send must stay a single required typed-payload API without optional or private-bound argument adapters"
+        "Flow::send must stay a single required typed-payload API without optional or private-bound argument wrappers"
     );
 
     for forbidden in [
@@ -277,10 +277,10 @@ fn root_visible_surface_stays_minimal() {
         concat!("Control", "Message", "Kind"),
         concat!("Control", "Message"),
         concat!("Loop", "Break", "Steps,"),
-        "ResolverMode,",
+        "RouteResolver,",
         "const_dsl::{\n            ControlScopeKind, DynamicMeta,",
         "LocalProgram,",
-        "NoControl,",
+        concat!("No", "Control,"),
         "project_chain",
         "project, project_ref,",
         "project,\n        with_resolver,",

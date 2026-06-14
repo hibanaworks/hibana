@@ -2,7 +2,7 @@
 //!
 //! Marker traits in this module are crate-private witness vocabulary. They do
 //! not prove an invariant by themselves; rendezvous owners issue typestate values
-//! only after the corresponding lane, generation, or reservation check has
+//! only after the corresponding lane, generation, or owner check has
 //! already succeeded. Public items here are compact wire/runtime identifiers.
 
 use core::num::NonZeroU16;
@@ -19,7 +19,9 @@ pub(crate) struct Lane(u8);
 impl Lane {
     /// Create a new lane identifier.
     pub(crate) const fn new(id: u32) -> Self {
-        assert!(id <= u8::MAX as u32, "lane id must be <= 255");
+        if id > u8::MAX as u32 {
+            crate::invariant();
+        }
         Self(id as u8)
     }
 
@@ -61,7 +63,7 @@ impl RendezvousId {
     pub(crate) const fn new(id: u16) -> Self {
         match NonZeroU16::new(id) {
             Some(id) => Self(id),
-            None => panic!("rendezvous id must be non-zero"),
+            None => crate::invariant(),
         }
     }
 
@@ -76,7 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "rendezvous id must be non-zero")]
+    #[should_panic]
     fn rendezvous_id_zero_is_rejected() {
         let _ = RendezvousId::new(0);
     }

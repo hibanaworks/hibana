@@ -8,7 +8,7 @@ pub(super) enum ResolvePendingState {
     Ready,
     YieldRestartUnarmed,
     YieldRestartArmed,
-    StaticPassiveProgress { selected_arm: u8 },
+    IntrinsicPassiveProgress { selected_arm: u8 },
 }
 
 impl ResolvePendingState {
@@ -33,8 +33,8 @@ impl ResolvePendingState {
     }
 
     #[inline]
-    pub(super) fn arm_static_passive_progress(&mut self, selected_arm: u8) {
-        *self = Self::StaticPassiveProgress { selected_arm };
+    pub(super) fn arm_intrinsic_passive_progress(&mut self, selected_arm: u8) {
+        *self = Self::IntrinsicPassiveProgress { selected_arm };
     }
 
     #[inline]

@@ -54,7 +54,7 @@ where
                 rv.activate_lane_attachment(sid, physical_lane)
                     .map_err(AttachError::from)
             })?;
-            let access = lease.into_port_guard().map_err(AttachError::from)?;
+            let access = lease.into_port_guard();
             /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
             unsafe {
                 crate::endpoint::kernel::endpoint_init::write_port_slot(
@@ -90,10 +90,10 @@ where
             public_slot,
             public_generation,
             public_ops,
-            public_slot_owned,
+            public_slot_ownership,
         } = args;
         let program_image = role_image.program();
-        let role_count = u8::try_from(program_image.role_count()).expect("invariant");
+        let role_count = crate::invariant_ok(u8::try_from(program_image.role_count()));
         let logical_lane_count = role_image.logical_lane_count().max(1);
         let primary_lane_index = Self::primary_endpoint_lane_index(role_image, logical_lane_count);
         let session_lane_index = 0usize;
@@ -105,7 +105,7 @@ where
             rv.activate_lane_attachment(sid, session_wire_lane)
                 .map_err(AttachError::from)
         })?;
-        let session_access = session_lease.into_port_guard().map_err(AttachError::from)?;
+        let session_access = session_lease.into_port_guard();
         let owner: crate::session::brand::Owner<'r> = /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
             core::mem::transmute(crate::session::brand::Owner::<'cfg>::new(session_access.brand))
         };
@@ -137,7 +137,7 @@ where
                     public_slot,
                     public_generation,
                     public_ops,
-                    public_slot_owned,
+                    public_slot_ownership,
                     session,
                 },
             );
@@ -261,7 +261,7 @@ where
                     public_slot: slot,
                     public_generation: generation,
                     public_ops,
-                    public_slot_owned: true,
+                    public_slot_ownership: crate::endpoint::kernel::PublicSlotOwnership::Owned,
                 }) {
                     self.with_storage_mut(|core| {
                         if let Some(rv) = core.locals.get_mut(&rv_id) {

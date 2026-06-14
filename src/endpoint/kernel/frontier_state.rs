@@ -82,9 +82,8 @@ impl RootFrontierTable {
             unsafe {
                 storage.rows.add(slot_idx).write(RootFrontierState::EMPTY);
             }
-            let base = slot_idx
-                .checked_mul(capacity.observed_key_lane_word_count)
-                .expect("invariant");
+            let base =
+                crate::invariant_some(slot_idx.checked_mul(capacity.observed_key_lane_word_count));
             let mut word_idx = 0usize;
             while word_idx < capacity.observed_key_lane_word_count {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -171,11 +170,9 @@ impl RootFrontierTable {
     fn observed_key_offer_lanes_ptr(&self, slot_idx: usize) -> *mut LaneWord {
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe {
-            self.observed_key_offer_lanes.add(
-                slot_idx
-                    .checked_mul(self.observed_key_lane_word_count())
-                    .expect("invariant"),
-            )
+            self.observed_key_offer_lanes.add(crate::invariant_some(
+                slot_idx.checked_mul(self.observed_key_lane_word_count()),
+            ))
         }
     }
 
@@ -243,7 +240,9 @@ impl RootFrontierTable {
         entry_idx: usize,
         lane_idx: u8,
     ) -> bool {
-        assert!(slot_idx < self.len(), "root frontier slot out of bounds");
+        if slot_idx >= self.len() {
+            crate::invariant();
+        }
         let Some(entry) = super::frontier::checked_state_index(entry_idx) else {
             return false;
         };
@@ -309,12 +308,14 @@ impl RootFrontierTable {
     }
 
     fn remove_root_active_entry(&mut self, slot_idx: usize, entry_idx: usize) -> bool {
-        assert!(slot_idx < self.len(), "root frontier slot out of bounds");
+        if slot_idx >= self.len() {
+            crate::invariant();
+        }
         let row = self[slot_idx];
         let start = row.active_start as usize;
         let len = row.active_len as usize;
         let mut remove_rel = 0usize;
-        let entry = super::frontier::checked_state_index(entry_idx).expect("invariant");
+        let entry = crate::invariant_some(super::frontier::checked_state_index(entry_idx));
         while remove_rel < len {
             if
             /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
@@ -375,7 +376,9 @@ impl RootFrontierTable {
         slot_idx: usize,
         key: FrontierObservationKey,
     ) {
-        assert!(slot_idx < self.len(), "root frontier slot out of bounds");
+        if slot_idx >= self.len() {
+            crate::invariant();
+        }
         let row = self[slot_idx];
         let active_len = row.active_len as usize;
         let new_len = key.len();
@@ -391,15 +394,14 @@ impl RootFrontierTable {
             self[slot_idx].clear_observed_key_cache();
             return;
         }
-        assert_eq!(
-            new_len, active_len,
-            "root frontier observed-key length must track active entries"
-        );
+        if new_len != active_len {
+            crate::invariant();
+        }
         if !key.exact_entries_match(self.active_entry_set(slot_idx)) {
             crate::invariant();
         }
         dst.copy_from(key);
-        self[slot_idx].observed_key_present = true;
+        self[slot_idx].mark_observed_key_cached();
     }
 
     #[inline]
@@ -410,7 +412,7 @@ impl RootFrontierTable {
     fn remove_root_row(&mut self, slot_idx: usize) {
         let len = self.len();
         if slot_idx >= len {
-            panic!("root frontier slot out of bounds");
+            crate::invariant();
         }
 
         let active_span = self[slot_idx].active_len as usize;
@@ -467,7 +469,9 @@ impl Index<usize> for RootFrontierTable {
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        assert!(index < self.capacity(), "root frontier slot out of bounds");
+        if index >= self.capacity() {
+            crate::invariant();
+        }
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe { &*self.ptr.add(index) }
     }
@@ -476,7 +480,9 @@ impl Index<usize> for RootFrontierTable {
 impl IndexMut<usize> for RootFrontierTable {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        assert!(index < self.capacity(), "root frontier slot out of bounds");
+        if index >= self.capacity() {
+            crate::invariant();
+        }
         /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
         unsafe { &mut *self.ptr.add(index) }
     }
@@ -485,7 +491,21 @@ impl IndexMut<usize> for RootFrontierTable {
 pub(super) struct FrontierState {
     pub(super) root_frontier_state: RootFrontierTable,
     pub(super) offer_entry_state: OfferEntryTable,
-    pub(super) global_frontier_scratch_initialized: bool,
+    pub(super) global_frontier_scratch_state: FrontierScratchState,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FrontierScratchState {
+    Uninitialized = 0,
+    Initialized = 1,
+}
+
+impl FrontierScratchState {
+    #[inline]
+    pub(super) const fn is_initialized(self) -> bool {
+        matches!(self, Self::Initialized)
+    }
 }
 
 impl FrontierState {
@@ -509,7 +529,8 @@ impl FrontierState {
                 storage.offer_entry_slots,
                 capacity.max_offer_entries,
             );
-            core::ptr::addr_of_mut!((*dst).global_frontier_scratch_initialized).write(false);
+            core::ptr::addr_of_mut!((*dst).global_frontier_scratch_state)
+                .write(FrontierScratchState::Uninitialized);
         }
     }
 

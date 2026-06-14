@@ -1,4 +1,4 @@
-//! Internal runtime kernel behind [`crate::runtime::SessionKit`].
+//! Runtime kernel behind [`crate::runtime::SessionKit`].
 //!
 //! `hibana` exposes only two public faces: the app surface at the crate root
 //! and the runtime surface at [`crate::runtime`]. This module houses the kernel

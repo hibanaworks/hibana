@@ -2,8 +2,8 @@ use super::super::{
     Clock, CursorEndpoint, OfferScopeProfile, OfferScopeSelection, RouteArmToken,
     ScopeArmMaterializationMeta, Transport,
     profile::{
-        OfferArmRecvEvidence, OfferControllerCursorArm, OfferControllerSkipEvidence,
-        OfferControllerSkipReadiness, OfferCursorReadiness, OfferEarlyDecisionReadiness,
+        OfferArmRecvEvidence, OfferControllerCursorArm, OfferControllerLocalEvidence,
+        OfferControllerLocalReadiness, OfferCursorReadiness, OfferEarlyDecisionReadiness,
         OfferEntryPosition, OfferMaterializationReadiness, OfferPassiveAckEvidence,
         OfferPassiveEvidence, OfferPassiveReadiness, OfferPassiveReadySignal,
         OfferPassiveRecvEvidence,
@@ -46,9 +46,11 @@ where
         };
 
         match profile {
-            OfferScopeProfile::ControllerStatic => self.controller_static_ingress_evidence(input),
+            OfferScopeProfile::ControllerIntrinsic => {
+                self.controller_intrinsic_ingress_evidence(input)
+            }
             OfferScopeProfile::ControllerDynamic => self.controller_dynamic_ingress_evidence(input),
-            OfferScopeProfile::PassiveStatic => self.passive_static_ingress_evidence(input),
+            OfferScopeProfile::PassiveIntrinsic => self.passive_intrinsic_ingress_evidence(input),
             OfferScopeProfile::PassiveDynamic => self.passive_dynamic_ingress_evidence(input),
         }
     }
@@ -64,22 +66,22 @@ where
             .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
         match (is_controller, is_dynamic) {
             (true, true) => OfferScopeProfile::ControllerDynamic,
-            (true, false) => OfferScopeProfile::ControllerStatic,
+            (true, false) => OfferScopeProfile::ControllerIntrinsic,
             (false, true) => OfferScopeProfile::PassiveDynamic,
-            (false, false) => OfferScopeProfile::PassiveStatic,
+            (false, false) => OfferScopeProfile::PassiveIntrinsic,
         }
     }
 
-    fn controller_static_ingress_evidence(
+    fn controller_intrinsic_ingress_evidence(
         &self,
         input: OfferIngressPlannerInput,
     ) -> OfferIngressEvidence {
         OfferIngressEvidence {
-            profile: OfferScopeProfile::ControllerStatic,
+            profile: OfferScopeProfile::ControllerIntrinsic,
             entry: input.entry,
             cursor: input.cursor,
             early_decision: self.controller_early_decision_readiness(&input),
-            controller: self.controller_static_readiness(&input),
+            controller: self.controller_intrinsic_readiness(&input),
             passive: OfferPassiveReadiness::NeedsTransport,
         }
     }
@@ -98,17 +100,17 @@ where
         }
     }
 
-    fn passive_static_ingress_evidence(
+    fn passive_intrinsic_ingress_evidence(
         &self,
         input: OfferIngressPlannerInput,
     ) -> OfferIngressEvidence {
         OfferIngressEvidence {
-            profile: OfferScopeProfile::PassiveStatic,
+            profile: OfferScopeProfile::PassiveIntrinsic,
             entry: input.entry,
             cursor: input.cursor,
             early_decision: self.passive_early_decision_readiness(&input),
-            controller: OfferControllerSkipReadiness::NeedsTransport,
-            passive: self.passive_static_readiness(&input),
+            controller: OfferControllerLocalReadiness::NeedsTransport,
+            passive: self.passive_intrinsic_readiness(&input),
         }
     }
 
@@ -121,32 +123,32 @@ where
             entry: input.entry,
             cursor: input.cursor,
             early_decision: self.passive_early_decision_readiness(&input),
-            controller: OfferControllerSkipReadiness::NeedsTransport,
+            controller: OfferControllerLocalReadiness::NeedsTransport,
             passive: self.passive_dynamic_readiness(&input),
         }
     }
 
-    fn controller_static_readiness(
+    fn controller_intrinsic_readiness(
         &self,
         input: &OfferIngressPlannerInput,
-    ) -> OfferControllerSkipReadiness {
-        let profile = OfferScopeProfile::ControllerStatic;
-        profile.controller_skip_readiness(self.controller_skip_evidence(input))
+    ) -> OfferControllerLocalReadiness {
+        let profile = OfferScopeProfile::ControllerIntrinsic;
+        profile.controller_local_readiness(self.controller_local_evidence(input))
     }
 
     fn controller_dynamic_readiness(
         &self,
         input: &OfferIngressPlannerInput,
-    ) -> OfferControllerSkipReadiness {
+    ) -> OfferControllerLocalReadiness {
         let profile = OfferScopeProfile::ControllerDynamic;
-        profile.controller_skip_readiness(self.controller_skip_evidence(input))
+        profile.controller_local_readiness(self.controller_local_evidence(input))
     }
 
-    fn controller_skip_evidence(
+    fn controller_local_evidence(
         &self,
         input: &OfferIngressPlannerInput,
-    ) -> OfferControllerSkipEvidence {
-        OfferControllerSkipEvidence::new(
+    ) -> OfferControllerLocalEvidence {
+        OfferControllerLocalEvidence::new(
             input.cursor,
             self.controller_cursor_arm(input),
             self.controller_materialization_readiness(input),
@@ -158,9 +160,9 @@ where
             .controller_arm_at_cursor(input.selection.scope_id)
             .is_some()
         {
-            OfferControllerCursorArm::Present
+            OfferControllerCursorArm::AtArm
         } else {
-            OfferControllerCursorArm::Missing
+            OfferControllerCursorArm::OutsideArm
         }
     }
 
@@ -180,8 +182,11 @@ where
         }
     }
 
-    fn passive_static_readiness(&self, input: &OfferIngressPlannerInput) -> OfferPassiveReadiness {
-        OfferScopeProfile::PassiveStatic.passive_readiness(OfferPassiveEvidence::new(
+    fn passive_intrinsic_readiness(
+        &self,
+        input: &OfferIngressPlannerInput,
+    ) -> OfferPassiveReadiness {
+        OfferScopeProfile::PassiveIntrinsic.passive_readiness(OfferPassiveEvidence::new(
             self.passive_ready_signal(input),
             self.passive_recv_evidence(input),
             OfferPassiveAckEvidence::NotMaterializable,
@@ -202,9 +207,9 @@ where
                 .peek_scope_frame_hint(input.selection.scope_id)
                 .is_some()
         {
-            OfferPassiveReadySignal::Present
+            OfferPassiveReadySignal::Observed
         } else {
-            OfferPassiveReadySignal::Missing
+            OfferPassiveReadySignal::Absent
         }
     }
 

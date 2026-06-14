@@ -5,7 +5,7 @@ pub(crate) use core::primitive::usize as LaneWord;
 pub(crate) struct DenseLaneOrdinal(u16);
 
 impl DenseLaneOrdinal {
-    pub(crate) const NONE: Self = Self(u16::MAX);
+    pub(crate) const ABSENT: Self = Self(u16::MAX);
 
     pub(crate) const fn new(index: usize) -> Option<Self> {
         if index < u16::MAX as usize {
@@ -21,8 +21,8 @@ impl DenseLaneOrdinal {
 }
 
 pub(crate) const LANE_DOMAIN_SIZE: usize = u8::MAX as usize + 1;
-pub(crate) const DENSE_LANE_NONE: DenseLaneOrdinal = DenseLaneOrdinal::NONE;
-pub(crate) const RESERVED_BINDING_LANES: usize = 2;
+pub(crate) const DENSE_LANE_ABSENT: DenseLaneOrdinal = DenseLaneOrdinal::ABSENT;
+pub(crate) const MIN_ENDPOINT_LANE_SLOTS: usize = 2;
 pub(crate) const LANE_SET_VIEW_WORDS: usize = lane_word_count(LANE_DOMAIN_SIZE);
 pub(crate) const LANE_DOMAIN_BYTES: usize = lane_byte_count(LANE_DOMAIN_SIZE);
 
@@ -384,12 +384,12 @@ pub(crate) const fn logical_lane_count_for_role(
     active_lane_count: usize,
     endpoint_lane_slot_count: usize,
 ) -> usize {
-    if active_lane_count > usize::MAX - RESERVED_BINDING_LANES {
+    if active_lane_count > usize::MAX - MIN_ENDPOINT_LANE_SLOTS {
         crate::invariant();
     }
-    let reserved = active_lane_count + RESERVED_BINDING_LANES;
-    let requested = if reserved > endpoint_lane_slot_count {
-        reserved
+    let required = active_lane_count + MIN_ENDPOINT_LANE_SLOTS;
+    let requested = if required > endpoint_lane_slot_count {
+        required
     } else {
         endpoint_lane_slot_count
     };
@@ -404,25 +404,38 @@ pub(crate) const fn logical_lane_count_for_role(
 ///
 /// The resident descriptor computes local nodes directly from the compiled
 /// choreography image, so this is only a compact lane range cursor.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct LaneSteps {
     /// First offset into the RoleProgram's local step stream for contiguous rows.
-    pub start: u16,
+    pub(crate) start: u16,
     /// Number of steps in this lane.
-    pub len: u16,
-    /// True when this lane's steps are not contiguous within the resident row.
-    pub sparse: bool,
+    pub(crate) len: u16,
+    pub(crate) layout: LaneStepLayout,
 }
 
 impl LaneSteps {
     /// Whether this lane has any steps.
     #[inline(always)]
-    pub const fn is_active(&self) -> bool {
+    pub(crate) const fn is_active(&self) -> bool {
         self.len > 0
     }
 
     #[inline(always)]
-    pub const fn is_contiguous(&self) -> bool {
-        !self.sparse
+    pub(crate) const fn is_contiguous(&self) -> bool {
+        self.layout.is_contiguous()
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaneStepLayout {
+    Contiguous = 0,
+    Sparse = 1,
+}
+
+impl LaneStepLayout {
+    #[inline(always)]
+    pub(crate) const fn is_contiguous(self) -> bool {
+        matches!(self, Self::Contiguous)
     }
 }

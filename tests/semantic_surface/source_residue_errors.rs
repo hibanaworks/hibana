@@ -51,6 +51,8 @@ fn session_errors_do_not_retain_forbidden_variants() {
         concat!("ClusterError::", "Ab", "ort"),
         concat!("ClusterError::", "State", "Snapshot"),
         "ClusterError::ResourceMismatch",
+        concat!("Un", "supported", "Effect"),
+        concat!("Resolver", "Site", "Static"),
         "ResourceMismatch {",
         "InvalidLane",
         "AckTimeout",
@@ -95,16 +97,19 @@ fn dynamic_resolver_resolution_does_not_encode_authority_as_reject_reason() {
         "reason != 0",
         concat!("Ab", "ort", "(0)"),
         ".unwrap_or(cause)",
+        concat!("DynamicResolverResolution::", "Resolver", "Unbound"),
+        concat!("RouteResolveStep::", "Resolver", "Unbound"),
+        concat!("RouteResolveOutcome::", "Resolver", "Unbound"),
+        concat!("Resolver", "Unbound"),
     ] {
         assert!(
             !source.contains(forbidden),
-            "dynamic resolver authority must not be encoded as sentinel resolver-reject implicit recovery: {forbidden}"
+            "dynamic resolver authority must not keep unregistered-resolver alternate paths: {forbidden}"
         );
     }
     assert!(
-        source.contains("DynamicResolverResolution::NoAuthority")
-            && source.contains("RouteResolveStep::NoAuthority"),
-        "missing dynamic resolver authority must stay typed instead of reusing ResolverReject"
+        source.contains("return Err(ClusterError::DynamicResolverInvariant { resolver_id });"),
+        "unregistered dynamic resolver sites must fail closed as projection/runtime invariant"
     );
 }
 

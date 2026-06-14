@@ -3,9 +3,10 @@ mod pool;
 mod set;
 
 pub(super) use self::entry::{
-    CurrentOfferAuthority, CurrentOfferEntry, OfferAlignmentCandidateInput,
+    CurrentOfferAuthority, CurrentOfferEntry, OfferAlignmentCandidateInput, ProgressSiblingPresence,
 };
 pub(super) use self::pool::{
-    CurrentOfferObservation, OfferAlignmentCandidatePool, OfferAlignmentSelection,
+    CurrentOfferCandidateStatus, CurrentOfferObservation, OfferAlignmentCandidatePool,
+    OfferAlignmentSelection, ProgressEvidence,
 };
 pub(super) use self::set::OfferEntrySet;

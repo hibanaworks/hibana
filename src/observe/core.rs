@@ -196,5 +196,5 @@ impl<'a> TapRing<'a> {
 // - `0x0210..0x021F`: Lane lifecycle
 // - `0x0220..0x022F`: Route decision (ROUTE_ARM_SELECTION)
 // - `0x0230..0x023F`: Decision-resolver staging (DECISION_PICK)
-// - `0x0400..0x041F`: Resolver VM events (ABORT, ANNOT, TRAP, EFFECT, COMMIT)
+// - `0x0400..0x041F`: Resolver audit events
 // - `0x02FF`: Misuse detection (MISUSE_RECVGUARD_DROP)

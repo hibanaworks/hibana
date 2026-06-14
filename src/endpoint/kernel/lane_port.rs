@@ -64,10 +64,9 @@ impl PendingRecv {
         if self.port_key != Some(port_key) {
             self.clear();
         }
-        assert!(
-            !port.has_unresolved_recv_frame(),
-            "transport receive frame polled while current frame receipt is unresolved"
-        );
+        if port.has_unresolved_recv_frame() {
+            crate::invariant();
+        }
         self.port_key = Some(port_key);
     }
 }
@@ -89,10 +88,7 @@ impl<'r> PendingSend<'r> {
 
     #[inline]
     pub(super) fn lane_idx(&self) -> usize {
-        self.outgoing
-            .expect("pending send must be armed before lane lookup")
-            .meta
-            .lane as usize
+        crate::invariant_some(self.outgoing).meta.lane as usize
     }
 }
 
@@ -154,7 +150,7 @@ where
 /// `payload` must point into endpoint-resident storage that remains valid for
 /// the returned lifetime. Callers must not use this to extend a borrow from a
 /// stack-local buffer, transport-owned pending buffer, or any storage that can be
-/// invalidated before `'a` ends.
+/// retired before `'a` ends.
 #[inline]
 pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payload<'a> {
     // SAFETY: caller guarantees the payload bytes live in endpoint-resident
@@ -355,9 +351,7 @@ pub(super) fn poll_send_outgoing<'r, T>(
 where
     T: Transport + 'r,
 {
-    let outgoing = pending
-        .outgoing
-        .expect("pending send must be armed before polling");
+    let outgoing = crate::invariant_some(pending.outgoing);
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
     let poll = unsafe {

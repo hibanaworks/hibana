@@ -509,25 +509,25 @@ impl ProductionCursorTrace {
         self.event_program.event_row_at(idx)?;
         let lane = self.event_program.local_step_lane(idx)?;
         let node = self.event_program.node(idx);
-        let (eff_index, label, is_internal) = match node.action() {
+        let (eff_index, label, origin) = match node.action() {
             LocalAction::Send {
                 eff_index,
                 label,
-                is_internal,
+                origin,
                 ..
             }
             | LocalAction::Recv {
                 eff_index,
                 label,
-                is_internal,
+                origin,
                 ..
             }
             | LocalAction::Local {
                 eff_index,
                 label,
-                is_internal,
+                origin,
                 ..
-            } => (eff_index, label, is_internal),
+            } => (eff_index, label, origin),
             LocalAction::Terminate => return None,
         };
         let selected = &self.selected;
@@ -537,7 +537,7 @@ impl ProductionCursorTrace {
                 crate::global::typestate::EventCommitMeta::new(
                     eff_index,
                     label,
-                    is_internal,
+                    origin,
                     node.scope(),
                     node.route_arm(),
                     lane,

@@ -1,5 +1,5 @@
 use crate::{
-    eff::EffIndex,
+    eff::{EffIndex, EventOrigin},
     endpoint::kernel::decision_state::{
         RouteOnlyCommitRowsRef, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
     },
@@ -81,7 +81,7 @@ impl CommitDelta {
             event: Some(CommitEventRow::new(
                 meta.eff_index,
                 meta.label,
-                meta.is_internal,
+                meta.origin,
                 CommitRow::from_send_meta(meta),
                 progress_step,
             )),
@@ -102,7 +102,7 @@ impl CommitDelta {
             event: Some(CommitEventRow::new(
                 meta.eff_index,
                 meta.label,
-                meta.is_internal,
+                meta.origin,
                 CommitRow::from_recv_meta(meta),
                 progress_step,
             )),
@@ -116,7 +116,7 @@ impl CommitDelta {
     pub(crate) const fn from_event_row(
         eff_index: EffIndex,
         event_label: u8,
-        event_internal: bool,
+        origin: EventOrigin,
         row: CommitRow,
         selected_routes: SelectedRouteCommitRowsRef,
         cursor_after: StateIndex,
@@ -126,7 +126,7 @@ impl CommitDelta {
             event: Some(CommitEventRow::new(
                 eff_index,
                 event_label,
-                event_internal,
+                origin,
                 row,
                 progress_step,
             )),
@@ -230,13 +230,13 @@ impl SelectedRouteCommitSet {
 }
 
 impl CommitEventRow {
-    const INTERNAL: u8 = 0b0000_0001;
+    const SESSION: u8 = 0b0000_0001;
 
     #[inline(always)]
     pub(crate) const fn new(
         eff_index: EffIndex,
         event_label: u8,
-        event_internal: bool,
+        origin: EventOrigin,
         row: CommitRow,
         progress_step: RelocatableResidentLaneStep,
     ) -> Self {
@@ -245,7 +245,11 @@ impl CommitEventRow {
             progress_step,
             eff_dense: eff_index.dense_ordinal() as u16,
             event_label,
-            event_flags: if event_internal { Self::INTERNAL } else { 0 },
+            event_flags: if origin.is_session() {
+                Self::SESSION
+            } else {
+                0
+            },
         }
     }
 
@@ -280,13 +284,17 @@ impl CommitEventRow {
     }
 
     #[inline(always)]
-    pub(crate) const fn event_internal(self) -> bool {
-        self.event_flags & Self::INTERNAL != 0
+    pub(crate) const fn event_origin(self) -> EventOrigin {
+        if self.event_flags & Self::SESSION != 0 {
+            EventOrigin::Session
+        } else {
+            EventOrigin::User
+        }
     }
 
     #[inline(always)]
     pub(crate) const fn event_id(self, message: u16, session: u16) -> u16 {
-        if self.event_internal() {
+        if self.event_origin().is_session() {
             session
         } else {
             message

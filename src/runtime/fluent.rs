@@ -25,10 +25,7 @@ where
 {
     #[inline]
     pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
-        self.kit
-            .inner
-            .get_local(&self.rv)
-            .expect("rendezvous witness must reference a registered rendezvous")
+        crate::invariant_some(self.kit.inner.get_local(&self.rv))
             .tap()
             .port()
     }

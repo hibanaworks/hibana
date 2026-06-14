@@ -7,10 +7,35 @@ use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFac
 use super::{
     CursorInvariantError, EffIndex, EventCursor, EventSemanticKind, FirstRecvDispatchSpec,
     LaneSetView, LocalAction, LocalDependency, MAX_FIRST_RECV_DISPATCH, RecvMeta,
-    RelocatableResidentLaneStep, ResidentLaneStep, ResolverMode, RouteOfferCursorState, ScopeId,
+    RelocatableResidentLaneStep, ResidentLaneStep, RouteOfferCursorState, RouteResolver, ScopeId,
     SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::global::role_program::PackedLaneRange;
+
+pub(crate) enum CurrentRouteArmAuthorization {
+    NotAuthorized,
+    Authorized,
+}
+
+impl CurrentRouteArmAuthorization {
+    #[inline]
+    pub(crate) const fn authorizes_current_arm(self) -> bool {
+        matches!(self, Self::Authorized)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RouteOfferEntryCursorPosition {
+    AtEntry,
+    AfterEntry,
+}
+
+impl RouteOfferEntryCursorPosition {
+    #[inline]
+    pub(crate) const fn is_at_entry(self) -> bool {
+        matches!(self, Self::AtEntry)
+    }
+}
 
 impl EventCursor {
     #[inline(always)]
@@ -90,31 +115,31 @@ impl EventCursor {
         Some(region.end())
     }
 
-    pub(crate) fn visit_decode_linger_route_rows(
+    pub(crate) fn visit_decode_reentry_route_rows(
         &self,
         meta_scope: ScopeId,
         branch_scope: ScopeId,
         mut visit: impl FnMut(ScopeId, Option<u8>) -> bool,
     ) -> bool {
-        let mut linger_scope = meta_scope;
+        let mut reentry_scope = meta_scope;
         let mut depth = 0usize;
         let depth_bound = self.local_steps_len() + PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
-            if linger_scope == branch_scope {
+            if reentry_scope == branch_scope {
                 return true;
             }
-            if linger_scope != branch_scope && self.route_scope_linger(linger_scope) {
+            if reentry_scope != branch_scope && self.route_scope_reentry(reentry_scope) {
                 let selected = self
-                    .route_scope_conflict_arm_for_scope(branch_scope, linger_scope)
-                    .or_else(|| self.route_scope_conflict_arm_for_scope(meta_scope, linger_scope));
-                if !visit(linger_scope, selected) {
+                    .route_scope_conflict_arm_for_scope(branch_scope, reentry_scope)
+                    .or_else(|| self.route_scope_conflict_arm_for_scope(meta_scope, reentry_scope));
+                if !visit(reentry_scope, selected) {
                     return false;
                 }
             }
-            let Some((parent, _arm)) = self.route_conflict_parent_arm(linger_scope) else {
+            let Some((parent, _arm)) = self.route_conflict_parent_arm(reentry_scope) else {
                 return true;
             };
-            linger_scope = parent;
+            reentry_scope = parent;
             depth += 1;
         }
         false
@@ -157,14 +182,14 @@ impl EventCursor {
 
     pub(crate) fn route_scope_materialization_index(&self, scope_id: ScopeId) -> Option<usize> {
         if let Some(offer_entry) = self.route_scope_offer_entry(scope_id)
-            && !offer_entry.is_max()
+            && !offer_entry.is_absent()
         {
             return Some(state_index_to_usize(offer_entry));
         }
         self.route_scope_rows(scope_id).map(|region| region.start())
     }
 
-    fn event_linger_cursor_step(
+    fn event_reentry_cursor_step(
         &self,
         scope: ScopeId,
         lane: u8,
@@ -172,26 +197,26 @@ impl EventCursor {
         next_index: StateIndex,
         mut authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
-        let mut linger_scope = scope;
+        let mut reentry_scope = scope;
         loop {
-            if self.route_scope_linger(linger_scope)
-                && let Some(arm) = authorized_arm_for_scope(linger_scope)
+            if self.route_scope_reentry(reentry_scope)
+                && let Some(arm) = authorized_arm_for_scope(reentry_scope)
                 && arm == 0
-                && let Some(last_eff) = self.route_arm_lane_last_eff(linger_scope, arm, lane)
+                && let Some(last_eff) = self.route_arm_lane_last_eff(reentry_scope, arm, lane)
                 && last_eff == eff_index
-                && let Some(first_step) = self.route_arm_lane_first_step(linger_scope, arm, lane)
+                && let Some(first_step) = self.route_arm_lane_first_step(reentry_scope, arm, lane)
             {
                 return Some(first_step);
             }
-            let Some((parent, _arm)) = self.route_conflict_parent_arm(linger_scope) else {
+            let Some((parent, _arm)) = self.route_conflict_parent_arm(reentry_scope) else {
                 break;
             };
-            linger_scope = parent;
+            reentry_scope = parent;
         }
 
         let next_usize = state_index_to_usize(next_index);
         if let Some(region) = self.route_scope_rows_at(next_usize)
-            && region.linger()
+            && region.reentry()
             && next_usize == region.start()
             && let Some(arm) = authorized_arm_for_scope(region.scope())
             && arm == 0
@@ -202,13 +227,13 @@ impl EventCursor {
         None
     }
 
-    pub(crate) fn decode_linger_cursor_step(
+    pub(crate) fn decode_reentry_cursor_step(
         &self,
         meta: RecvMeta,
         next_index: StateIndex,
         authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
-        self.event_linger_cursor_step(
+        self.event_reentry_cursor_step(
             meta.scope,
             meta.lane,
             meta.eff_index,
@@ -217,13 +242,13 @@ impl EventCursor {
         )
     }
 
-    pub(crate) fn send_linger_cursor_step(
+    pub(crate) fn send_reentry_cursor_step(
         &self,
         meta: SendMeta,
         next_index: StateIndex,
         authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
-        self.event_linger_cursor_step(
+        self.event_reentry_cursor_step(
             meta.scope,
             meta.lane,
             meta.eff_index,
@@ -244,17 +269,17 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn enclosing_loop_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        self.machine().enclosing_loop(scope_id)
+    pub(crate) fn enclosing_roll_scope(&self, scope_id: ScopeId) -> Option<ScopeId> {
+        self.machine().enclosing_roll(scope_id)
     }
 
     #[inline]
-    pub(crate) fn node_loop_scope(&self, index: usize) -> Option<ScopeId> {
+    pub(crate) fn node_roll_scope(&self, index: usize) -> Option<ScopeId> {
         let scope = self.typestate_node(index).scope();
         if scope.is_none() {
             None
         } else {
-            self.enclosing_loop_scope(scope)
+            self.enclosing_roll_scope(scope)
         }
     }
 
@@ -290,7 +315,7 @@ impl EventCursor {
 
     fn route_scope_offer_entry_inner(&self, scope_id: ScopeId) -> Option<StateIndex> {
         let slot = self.route_scope_slot_inner(scope_id)?;
-        self.machine().route_scope_offer_entry_by_slot(slot)
+        Some(self.machine().route_scope_offer_entry_by_slot(slot))
     }
 
     fn route_scope_slot_inner(&self, scope_id: ScopeId) -> Option<usize> {
@@ -315,8 +340,10 @@ impl EventCursor {
             .machine()
             .event_program()
             .route_arm_lane_first_step_by_slot(slot, arm, lane)? as usize;
-        self.relocatable_resident_lane_step_at_index(step, lane as usize)
-            .ok()
+        match self.relocatable_resident_lane_step_at_index(step, lane as usize) {
+            Ok(step) => Some(step),
+            Err(CursorInvariantError::INVARIANT) => crate::invariant(),
+        }
     }
 
     fn route_arm_lane_last_eff_inner(
@@ -425,7 +452,7 @@ impl EventCursor {
     }
 
     /// Get offer entry index for a route scope.
-    /// u16::MAX indicates the entry check is disabled (e.g., linger routes).
+    /// StateIndex::ABSENT means this route authorizes the current cursor entry.
     pub(crate) fn route_scope_offer_entry(&self, scope_id: ScopeId) -> Option<StateIndex> {
         self.route_scope_offer_entry_inner(scope_id)
     }
@@ -449,10 +476,10 @@ impl EventCursor {
         selected_arm: Option<u8>,
     ) -> bool {
         if let Some(offer_entry) = self.route_scope_offer_entry(scope_id)
-            && !offer_entry.is_max()
+            && !offer_entry.is_absent()
             && current_idx != state_index_to_usize(offer_entry)
         {
-            if self.route_scope_linger(scope_id) && self.current_route_arm().is_some() {
+            if self.route_scope_reentry(scope_id) && self.current_route_arm().is_some() {
                 return true;
             }
             return selected_arm.is_some() && self.current_route_arm() == selected_arm;
@@ -461,13 +488,17 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn route_offer_entry_matches_current(
+    pub(crate) fn route_offer_entry_cursor_position(
         &self,
         scope_id: ScopeId,
         current_idx: usize,
-    ) -> Option<bool> {
+    ) -> Option<RouteOfferEntryCursorPosition> {
         let offer_entry = self.route_scope_offer_entry(scope_id)?;
-        Some(offer_entry.is_max() || current_idx == state_index_to_usize(offer_entry))
+        if offer_entry.is_absent() || current_idx == state_index_to_usize(offer_entry) {
+            Some(RouteOfferEntryCursorPosition::AtEntry)
+        } else {
+            Some(RouteOfferEntryCursorPosition::AfterEntry)
+        }
     }
 
     #[inline]
@@ -488,28 +519,34 @@ impl EventCursor {
         &self,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut preview_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> Result<Option<bool>, CursorInvariantError> {
+    ) -> Result<CurrentRouteArmAuthorization, CursorInvariantError> {
         let Some(region) = self.route_scope_rows_at(self.index()) else {
-            return Ok(None);
+            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         };
         let scope = region.scope();
         let Some(current_arm) = self.node_route_arm_at(self.index()) else {
-            return Ok(None);
+            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         };
         if self.index() == region.start() && self.is_route_controller(scope) {
-            return Ok(None);
+            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         if let Some(selected_arm) = selected_arm_for_scope(scope) {
-            if selected_arm != current_arm && self.route_scope_linger(scope) {
-                return Ok(Some(false));
+            if selected_arm != current_arm && self.route_scope_reentry(scope) {
+                return Ok(CurrentRouteArmAuthorization::Authorized);
             }
-            return Ok((selected_arm == current_arm).then_some(false));
+            if selected_arm == current_arm {
+                return Ok(CurrentRouteArmAuthorization::Authorized);
+            }
+            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         if let Some(preview_arm) = preview_arm_for_scope(scope) {
-            return Ok((preview_arm == current_arm).then_some(false));
+            if preview_arm == current_arm {
+                return Ok(CurrentRouteArmAuthorization::Authorized);
+            }
+            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         if !self.is_route_controller(scope) {
-            return Ok(None);
+            return Ok(CurrentRouteArmAuthorization::NotAuthorized);
         }
         Err(CursorInvariantError::INVARIANT)
     }
@@ -519,13 +556,13 @@ impl EventCursor {
         scope_id: ScopeId,
         entry_idx: usize,
         selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        linger_offer: impl FnMut() -> Option<(ScopeId, StateIndex)>,
+        reentry_offer: impl FnMut() -> Option<(ScopeId, StateIndex)>,
     ) -> Option<RouteOfferCursorState> {
         self.normalize_lane_offer_entry_inner(
             scope_id,
             entry_idx,
             selected_arm_for_scope,
-            linger_offer,
+            reentry_offer,
         )
     }
 
@@ -534,44 +571,38 @@ impl EventCursor {
         mut scope_id: ScopeId,
         mut entry_idx: usize,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        mut linger_offer: impl FnMut() -> Option<(ScopeId, StateIndex)>,
+        mut reentry_offer: impl FnMut() -> Option<(ScopeId, StateIndex)>,
     ) -> Option<RouteOfferCursorState> {
         let mut region = self.route_scope_rows(scope_id)?;
-        let mut entry = self
-            .route_scope_offer_entry(region.scope())
-            .expect("invariant");
-        if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
+        let mut entry = crate::invariant_some(self.route_scope_offer_entry(region.scope()));
+        if !entry.is_absent() && state_index_to_usize(entry) != entry_idx {
             let canonical_entry = state_index_to_usize(entry);
             if canonical_entry >= region.start() && canonical_entry < region.end() {
                 let selected_arm = selected_arm_for_scope(scope_id);
-                if region.linger() || selected_arm.is_none() {
+                if region.reentry() || selected_arm.is_none() {
                     entry_idx = canonical_entry;
                 } else {
-                    let (linger_scope, linger_entry) = linger_offer()?;
-                    scope_id = linger_scope;
-                    entry_idx = state_index_to_usize(linger_entry);
+                    let (reentry_scope, reentry_entry) = reentry_offer()?;
+                    scope_id = reentry_scope;
+                    entry_idx = state_index_to_usize(reentry_entry);
                     region = self.route_scope_rows(scope_id)?;
-                    entry = self
-                        .route_scope_offer_entry(region.scope())
-                        .expect("invariant");
-                    if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
+                    entry = crate::invariant_some(self.route_scope_offer_entry(region.scope()));
+                    if !entry.is_absent() && state_index_to_usize(entry) != entry_idx {
                         return None;
                     }
                 }
             } else {
-                let (linger_scope, linger_entry) = linger_offer()?;
-                scope_id = linger_scope;
-                entry_idx = state_index_to_usize(linger_entry);
+                let (reentry_scope, reentry_entry) = reentry_offer()?;
+                scope_id = reentry_scope;
+                entry_idx = state_index_to_usize(reentry_entry);
                 region = self.route_scope_rows(scope_id)?;
-                entry = self
-                    .route_scope_offer_entry(region.scope())
-                    .expect("invariant");
-                if !entry.is_max() && state_index_to_usize(entry) != entry_idx {
+                entry = crate::invariant_some(self.route_scope_offer_entry(region.scope()));
+                if !entry.is_absent() && state_index_to_usize(entry) != entry_idx {
                     return None;
                 }
             }
         }
-        let entry_idx = if entry.is_max() {
+        let entry_idx = if entry.is_absent() {
             entry_idx
         } else {
             state_index_to_usize(entry)
@@ -580,7 +611,7 @@ impl EventCursor {
             .then_some(RouteOfferCursorState::new(region.scope(), entry_idx))
     }
 
-    pub(crate) fn active_linger_offer_entry(
+    pub(crate) fn active_reentry_offer_entry(
         &self,
         scope_id: ScopeId,
     ) -> Option<(ScopeId, StateIndex)> {
@@ -697,14 +728,13 @@ impl EventCursor {
     #[inline]
     /// Get route controller resolver metadata.
     ///
-    /// The tuple `(ResolverMode, EffIndex, u8)` corresponds to the
-    /// controller-provided
-    /// resolver mode, the effect index of the send action that declared it, and the
-    /// decision tag baked by projection.
+    /// The tuple `(RouteResolver, EffIndex, u8)` corresponds to the
+    /// controller-provided resolver binding, the effect index of the send action
+    /// that declared it, and the decision tag baked by projection.
     pub(crate) fn route_scope_controller_resolver(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(ResolverMode, EffIndex, u8)> {
+    ) -> Option<(RouteResolver, EffIndex, u8)> {
         self.machine().route_controller(scope_id)
     }
 }

@@ -135,7 +135,7 @@ THUMB_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
       }
     ')"
 printf '%s\n' "${THUMB_SECTION_OUTPUT}"
-if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
+if [[ "${HIBANA_OMIT_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
 import json
 import os
@@ -168,11 +168,12 @@ for name, maximum in budget.items():
         sys.exit(1)
 PY
 else
-  echo "fixed snapshot thumb budget check skipped by explicit override; worktree size snapshot still runs"
+  echo "fixed snapshot thumb budget check omitted by explicit override; worktree size snapshot still runs"
 fi
 
 echo "== final-form future/layout sizes =="
 cargo +"${TOOLCHAIN}" test -p hibana endpoint_surface_size_gates_hold --lib --features std
+cargo +"${TOOLCHAIN}" test -p hibana recv_future_state_caches_payload_mode_and_completion --lib --features std
 cargo +"${TOOLCHAIN}" test -p hibana message_type_variation_does_not_change_future_layout --lib --features std
 cargo +"${TOOLCHAIN}" test -p hibana send_flow_and_runtime_descriptor_size_gates_hold --lib --features std
 FUTURE_LAYOUT_OUTPUT="$(
@@ -201,6 +202,11 @@ budgets = {
     "RecvFuture": 3 * word,
     "DecodeFuture": 3 * word,
     "SendFuture": 3 * word,
+    "RawOfferFuture": 2 * word,
+    "RawRecvFuture": 2 * word,
+    "OfferFutureLease": 1,
+    "RecvFutureLease": 1,
+    "RecvPayloadMode": 1,
 }
 for name, budget in budgets.items():
     if values.get(name, budget + 1) > budget:
@@ -320,14 +326,14 @@ hibana = { path = "${ROOT_DIR}", default-features = false }
 EOF
 }
 
-FINAL_FORM_PROTOCOL_FIXTURE="${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs"
-FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE="${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_black_box_roles.rs"
+FINAL_FORM_PROTOCOL_SOURCE="${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs"
+FINAL_FORM_PROTOCOL_BLACK_BOX_SOURCE="${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_black_box_roles.rs"
 
 write_protocol_artifact_source() {
   local crate_dir="$1"
   local protocol_name="$2"
-  cp "${FINAL_FORM_PROTOCOL_FIXTURE}" "${crate_dir}/src/final_form_protocol_matrix.rs"
-  cp "${FINAL_FORM_PROTOCOL_BLACK_BOX_FIXTURE}" "${crate_dir}/src/final_form_protocol_black_box_roles.rs"
+  cp "${FINAL_FORM_PROTOCOL_SOURCE}" "${crate_dir}/src/final_form_protocol_matrix.rs"
+  cp "${FINAL_FORM_PROTOCOL_BLACK_BOX_SOURCE}" "${crate_dir}/src/final_form_protocol_black_box_roles.rs"
   cat >"${crate_dir}/src/main.rs" <<EOF
 #![no_std]
 #![no_main]
@@ -646,7 +652,7 @@ STACK_HIGH_WATER_OUTPUT="$(
     --test-threads=1
 )"
 printf '%s\n' "${STACK_HIGH_WATER_OUTPUT}"
-if [[ "${HIBANA_SKIP_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
+if [[ "${HIBANA_OMIT_FIXED_SNAPSHOT_CHECK:-0}" != "1" ]]; then
 STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" SNAPSHOT_FILE="${SNAPSHOT_FILE}" python3 - <<'PY'
 import json
 import os
@@ -764,12 +770,12 @@ if sram_headroom < min_sram_headroom:
     sys.exit(1)
 PY
 else
-  echo "fixed snapshot runtime budget check skipped by explicit override; worktree size snapshot still runs"
+  echo "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs"
 fi
 
-if [[ "${HIBANA_SKIP_WORKTREE_SIZE_SNAPSHOT:-0}" != "1" ]]; then
+if [[ "${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}" != "1" ]]; then
   echo "== final-form worktree size snapshot =="
-  HIBANA_SKIP_FIXED_SNAPSHOT_CHECK=1 \
+  HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=1 \
     bash "${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh"
 fi
 

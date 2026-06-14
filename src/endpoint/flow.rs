@@ -12,7 +12,8 @@ use core::{
 };
 
 use crate::{
-    endpoint::{EndpointError, EndpointOp, EndpointResult, ErrorLocation, SendResult, kernel},
+    diag::Callsite,
+    endpoint::{EndpointError, EndpointOp, EndpointResult, SendResult, kernel},
     g::Message,
     global::MessageRuntime,
     transport::{FrameLabel, wire::WireEncode},
@@ -39,7 +40,7 @@ struct RawSendFuture<'a, 'e, 'r, const ROLE: u8> {
 
 pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
     raw: RawSendFuture<'a, 'e, 'r, ROLE>,
-    location: ErrorLocation,
+    location: Callsite,
 }
 
 #[inline]
@@ -97,7 +98,7 @@ where
                 endpoint,
                 kernel::RawSendPayload::from_typed::<M::Payload>(payload),
             ),
-            location: ErrorLocation::caller(),
+            location: Callsite::caller(),
         }
     }
 }

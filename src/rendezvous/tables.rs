@@ -1,4 +1,4 @@
-//! Internal state tables for ra module.
+//! Rendezvous state tables.
 //!
 //! These tables manage route decisions and waiters.
 //! All tables are !Send/!Sync and single-threaded under no_std.

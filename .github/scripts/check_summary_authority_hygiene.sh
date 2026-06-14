@@ -58,13 +58,13 @@ done
 
 check_absent_outside \
   "CompiledProgramImage::scan_const\\(" \
-  "raw summary scans escaped Program compile layer" \
+  "raw summary scans outside Program compile layer" \
   "src/g.rs" \
   "src/global/program/source.rs"
 
 check_absent_outside \
   "SOURCE\\.eff_list\\(" \
-  "raw EffList lowering source escaped Program compile layer" \
+  "raw EffList lowering source outside Program compile layer" \
   "src/g.rs" \
   "src/global/program/source.rs" \
   "src/global/const_dsl.rs"
@@ -81,12 +81,12 @@ check_required \
 
 check_required \
   "const { validate_choreography::<Steps>() };" \
-  "project must force projection validation before role image escape" \
+  "project must force projection validation before role image construction" \
   src/g.rs
 
 check_required \
   "if let Some(error) = source_data.error() {" \
-  "Program must reject invalid choreography terms before role image escape" \
+  "Program must reject invalid choreography terms before role image construction" \
   src/g.rs
 
 check_required \

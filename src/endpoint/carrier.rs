@@ -3,7 +3,7 @@
 //! # Unsafe Owner Contract
 //!
 //! This module owns raw endpoint-carrier projections. Unsafe blocks here may
-//! recover typed payload/session references from stored raw pointers only when
+//! reborrow typed payload/session references from stored raw pointers only when
 //! the creating endpoint lease still owns the referenced resident image.
 
 use core::{
@@ -74,7 +74,7 @@ pub(crate) struct RecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
     pub(crate) handle: PackedEndpointHandle,
     pub(crate) logical_label: u8,
-    pub(crate) accepts_empty_payload: bool,
+    pub(crate) payload_mode: crate::endpoint::kernel::RecvPayloadMode,
     pub(crate) validate:
         for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
     pub(crate) cx: &'a mut Context<'cx>,
@@ -130,7 +130,7 @@ impl<'r> KernelEndpointHeader<'r> {
     }
 
     #[inline(always)]
-    pub(crate) fn invalidate(&mut self) {
+    pub(crate) fn retire_generation(&mut self) {
         self.generation = 0;
     }
 }
@@ -142,19 +142,25 @@ pub(crate) struct EndpointOps<'r> {
     pub(crate) restore_public_route_branch:
         unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
     pub(crate) reset_public_offer_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) init_public_offer_state:
-        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle) -> bool,
+    pub(crate) init_public_offer_state: unsafe fn(
+        ptr: NonNull<()>,
+        handle: PackedEndpointHandle,
+    ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) init_public_send_state: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         init: *const crate::endpoint::kernel::SendInit,
-    ) -> bool,
+    ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) reset_public_send_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) init_public_recv_state:
-        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle) -> bool,
+    pub(crate) init_public_recv_state: unsafe fn(
+        ptr: NonNull<()>,
+        handle: PackedEndpointHandle,
+    ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) begin_public_decode_state:
-        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle) -> bool,
+    pub(crate) begin_public_decode_state: unsafe fn(
+        ptr: NonNull<()>,
+        handle: PackedEndpointHandle,
+    ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) reset_public_decode_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
     pub(crate) preview_flow: unsafe fn(
         ptr: NonNull<()>,

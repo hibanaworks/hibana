@@ -11,29 +11,21 @@
 
 use core::{fmt, ops};
 
-const ERR_PAYLOAD_LEN: &str = "payload length";
-const ERR_ZERO_PAYLOAD: &str = "zero payload";
-const ERR_BOOLEAN_PAYLOAD: &str = "boolean payload";
-
 /// Errors surfaced by wire encode/decode helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
     Truncated,
-    Invalid(&'static str),
+    Malformed,
 }
 
 #[inline]
-pub(crate) fn require_exact_len(
-    actual: usize,
-    expected: usize,
-    context: &'static str,
-) -> Result<(), CodecError> {
+pub(crate) fn require_exact_len(actual: usize, expected: usize) -> Result<(), CodecError> {
     if actual < expected {
         Err(CodecError::Truncated)
     } else if actual == expected {
         Ok(())
     } else {
-        Err(CodecError::Invalid(context))
+        Err(CodecError::Malformed)
     }
 }
 
@@ -69,9 +61,9 @@ unsafe fn encode_erased<P: WireEncode>(
 /// reference. `Decoded<'a>` describes what `recv()` / `decode()` yield when the
 /// wire bytes are borrowed for the duration of the endpoint borrow.
 pub trait WirePayload: WireEncode {
-    /// Static fact used by the descriptor kernel when a transport returns an
+    /// Compile-time fact used by the descriptor kernel when a transport returns an
     /// empty payload without ingress evidence.
-    const ACCEPTS_EMPTY_PAYLOAD: bool = false;
+    const ALLOWS_ZERO_LENGTH: bool = false;
 
     type Decoded<'a>;
 
@@ -86,7 +78,7 @@ pub trait WirePayload: WireEncode {
     /// Decode bytes already accepted by payload-local validation and any
     /// endpoint-context validation owned by the calling kernel path.
     ///
-    /// Endpoint receive/decode progress is committed before this adapter runs,
+    /// Endpoint receive/decode progress is committed before this decode function runs,
     /// so this operation has no error channel.
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;
 
@@ -98,11 +90,8 @@ pub trait WirePayload: WireEncode {
     }
 
     /// Provide the canonical zero payload used for non-wire local route
-    /// materialization. Types that cannot represent such a payload keep the
-    /// default fail-closed implementation.
-    fn zero_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        Err(CodecError::Invalid(ERR_ZERO_PAYLOAD))
-    }
+    /// materialization.
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError>;
 }
 
 impl WireEncode for () {
@@ -110,24 +99,28 @@ impl WireEncode for () {
         Some(0)
     }
 
-    fn encode_into(&self, _out: &mut [u8]) -> Result<usize, CodecError> {
-        Ok(0)
+    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+        Ok(out[..0].len())
     }
 }
 
 impl WirePayload for () {
-    const ACCEPTS_EMPTY_PAYLOAD: bool = true;
+    const ALLOWS_ZERO_LENGTH: bool = true;
 
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        require_exact_len(input.as_bytes().len(), 0, ERR_PAYLOAD_LEN)
+        require_exact_len(input.as_bytes().len(), 0)
     }
 
-    fn decode_validated_payload<'a>(_input: Payload<'a>) -> Self::Decoded<'a> {}
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        if !input.as_bytes().is_empty() {
+            crate::invariant();
+        }
+    }
 
-    fn zero_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        Ok(Payload::new(&[]))
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        Ok(Payload::new(&scratch[..0]))
     }
 }
 
@@ -150,10 +143,10 @@ impl WirePayload for bool {
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
         let bytes = input.as_bytes();
-        require_exact_len(bytes.len(), 1, ERR_PAYLOAD_LEN)?;
+        require_exact_len(bytes.len(), 1)?;
         match bytes[0] {
             0 | 1 => Ok(()),
-            _ => Err(CodecError::Invalid(ERR_BOOLEAN_PAYLOAD)),
+            _ => Err(CodecError::Malformed),
         }
     }
 
@@ -190,7 +183,7 @@ macro_rules! impl_wire_for_int {
             type Decoded<'a> = Self;
 
             fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-                require_exact_len(input.as_bytes().len(), $len, ERR_PAYLOAD_LEN)
+                require_exact_len(input.as_bytes().len(), $len)
             }
 
             fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
@@ -237,11 +230,12 @@ impl WireEncode for &[u8] {
 }
 
 impl WirePayload for &[u8] {
-    const ACCEPTS_EMPTY_PAYLOAD: bool = true;
+    const ALLOWS_ZERO_LENGTH: bool = true;
 
     type Decoded<'a> = &'a [u8];
 
-    fn validate_payload(_input: Payload<'_>) -> Result<(), CodecError> {
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        input.as_bytes();
         Ok(())
     }
 
@@ -249,8 +243,8 @@ impl WirePayload for &[u8] {
         input.as_bytes()
     }
 
-    fn zero_payload<'a>(_scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        Ok(Payload::new(&[]))
+    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
+        Ok(Payload::new(&scratch[..0]))
     }
 }
 
@@ -269,12 +263,12 @@ impl<const N: usize> WireEncode for [u8; N] {
 }
 
 impl<const N: usize> WirePayload for [u8; N] {
-    const ACCEPTS_EMPTY_PAYLOAD: bool = N == 0;
+    const ALLOWS_ZERO_LENGTH: bool = N == 0;
 
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        require_exact_len(input.as_bytes().len(), N, ERR_PAYLOAD_LEN)
+        require_exact_len(input.as_bytes().len(), N)
     }
 
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
@@ -305,7 +299,7 @@ mod tests {
         );
         assert_eq!(
             <() as WirePayload>::decode_payload(Payload::new(&[1])),
-            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
+            Err(CodecError::Malformed)
         );
 
         assert_eq!(
@@ -314,7 +308,7 @@ mod tests {
         );
         assert_eq!(
             <bool as WirePayload>::decode_payload(Payload::new(&[1, 0])),
-            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
+            Err(CodecError::Malformed)
         );
 
         assert_eq!(
@@ -323,7 +317,7 @@ mod tests {
         );
         assert_eq!(
             <u16 as WirePayload>::decode_payload(Payload::new(&[0x12, 0x34, 0x56])),
-            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
+            Err(CodecError::Malformed)
         );
 
         assert_eq!(
@@ -332,7 +326,7 @@ mod tests {
         );
         assert_eq!(
             <[u8; 2] as WirePayload>::decode_payload(Payload::new(&[7, 9, 11])),
-            Err(CodecError::Invalid(ERR_PAYLOAD_LEN))
+            Err(CodecError::Malformed)
         );
     }
 
@@ -381,12 +375,12 @@ mod tests {
 /// Only transport fragmentation metadata remains here; endpoint-internal events
 /// stay outside the frame flag domain so the data plane observes a uniform
 /// payload model.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub(crate) struct FrameFlags(u8);
 
 impl FrameFlags {
-    /// Mask of supported bits. Unknown bits are dropped when decoding.
+    /// Closed bit domain for frame metadata constructed by Hibana.
     pub(crate) const ALLOWED: u8 = 0x10 /*FRAG*/ | 0x20 /*IDX*/ | 0x40 /*TOT*/;
 
     pub(crate) const EMPTY: Self = Self(0x00);

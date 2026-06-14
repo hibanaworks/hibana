@@ -1,6 +1,6 @@
 mod seal {
     pub trait Sealed {
-        const ACCEPTS_EMPTY_PAYLOAD: bool;
+        const ALLOWS_ZERO_LENGTH: bool;
 
         fn validate_payload<'a>(
             input: crate::transport::wire::Payload<'a>,
@@ -49,8 +49,7 @@ impl<const LOGICAL_LABEL: u8, P> seal::Sealed for crate::g::Msg<LOGICAL_LABEL, P
 where
     P: crate::transport::wire::WirePayload,
 {
-    const ACCEPTS_EMPTY_PAYLOAD: bool =
-        <P as crate::transport::wire::WirePayload>::ACCEPTS_EMPTY_PAYLOAD;
+    const ALLOWS_ZERO_LENGTH: bool = <P as crate::transport::wire::WirePayload>::ALLOWS_ZERO_LENGTH;
 
     #[inline]
     fn validate_payload<'a>(

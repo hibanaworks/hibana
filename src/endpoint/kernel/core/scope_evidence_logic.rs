@@ -1,7 +1,8 @@
+use super::super::evidence_store::ReadyArmEvidence;
 use super::{
-    Arm, CursorEndpoint, EventCursor, EvidenceFingerprint, Lane, RouteArmToken,
-    ScopeArmMaterializationMeta, ScopeEvidence, ScopeFrameLabelMeta, ScopeId, Transport,
-    state_index_to_usize,
+    Arm, CursorEndpoint, EventCursor, EvidenceFingerprint, IngressEvidenceState, Lane,
+    OfferEntryEvidence, RouteArmToken, ScopeArmMaterializationMeta, ScopeEvidence,
+    ScopeFrameLabelMeta, ScopeId, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
 where
@@ -99,25 +100,25 @@ where
         &mut self,
         scope_id: ScopeId,
         arm: u8,
-        poll_ready: bool,
+        evidence_kind: ReadyArmEvidence,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id)
             && self
                 .decision_state
                 .scope_evidence
-                .mark_ready_arm(slot, arm, poll_ready)
+                .mark_ready_arm(slot, arm, evidence_kind)
         {
             self.bump_scope_evidence_generation_for_scope(scope_id, slot);
         }
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn static_passive_scope_evidence_materializes_poll(
+    pub(in crate::endpoint::kernel) fn intrinsic_passive_scope_evidence_materializes_poll(
         &self,
         scope_id: ScopeId,
     ) -> bool {
         self.cursor
-            .static_passive_scope_evidence_materializes_poll(scope_id)
+            .intrinsic_passive_scope_evidence_materializes_poll(scope_id)
     }
 
     #[inline]
@@ -223,13 +224,19 @@ where
     pub(in crate::endpoint::kernel) fn evidence_fingerprint(
         &self,
         scope_id: ScopeId,
-        ingress_ready: bool,
+        ingress: IngressEvidenceState,
     ) -> EvidenceFingerprint {
-        EvidenceFingerprint::new(
-            self.peek_scope_ack(scope_id).is_some(),
-            self.scope_has_ready_arm_evidence(scope_id),
-            ingress_ready,
-        )
+        let mut evidence = OfferEntryEvidence::empty();
+        if self.peek_scope_ack(scope_id).is_some() {
+            evidence = evidence.with_ack();
+        }
+        if self.scope_has_ready_arm_evidence(scope_id) {
+            evidence = evidence.with_ready_arm();
+        }
+        if ingress.is_ready() {
+            evidence = evidence.with_ingress_ready();
+        }
+        EvidenceFingerprint::from_offer_entry_evidence(evidence)
     }
 
     #[inline]
@@ -299,11 +306,10 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) -> bool {
-        let at_scope_offer_entry = self
-            .cursor
-            .route_scope_offer_entry(scope_id)
-            .map(|entry| entry.is_max() || self.cursor.index() == state_index_to_usize(entry))
-            .expect("invariant");
+        let at_scope_offer_entry =
+            crate::invariant_some(self.cursor.route_scope_offer_entry(scope_id).map(|entry| {
+                entry.is_absent() || self.cursor.index() == state_index_to_usize(entry)
+            }));
         if self.cursor.is_route_controller(scope_id)
             && at_scope_offer_entry
             && let Some((entry, _)) = self.cursor.controller_arm_entry_by_arm(scope_id, arm)
@@ -320,7 +326,7 @@ where
             if recv_meta.peer == ROLE {
                 return false;
             }
-            if recv_meta.is_internal
+            if recv_meta.origin.is_session()
                 && let Some((_controller_entry, controller_label)) =
                     self.cursor.controller_arm_entry_by_arm(scope_id, arm)
                 && recv_meta.label == controller_label
@@ -337,20 +343,16 @@ where
     pub(in crate::endpoint::kernel) fn take_frame_hint_for_lane(
         &mut self,
         lane_idx: usize,
-        suppress_hint: bool,
         frame_label_meta: ScopeFrameLabelMeta,
     ) -> Option<u8> {
-        if suppress_hint {
-            return None;
-        }
         let (taken, captured_change_generation) = {
             let port = self.port_for_lane(lane_idx);
             let captured_change_generation = port.route_change_generation();
             let frame_hint_mask = frame_label_meta.frame_hint_mask();
-            let taken = if !port.has_route_hint_for_frame_label_mask(self.sid, frame_hint_mask) {
+            let taken = if !port.has_route_hint_for_frame_label_mask(frame_hint_mask) {
                 None
             } else {
-                port.take_route_hint_for_frame_label_mask(self.sid, frame_hint_mask)
+                port.take_route_hint_for_frame_label_mask(frame_hint_mask)
             };
             (taken, captured_change_generation)
         };
@@ -392,7 +394,6 @@ where
             };
             let captured_change_generation = port.route_change_generation();
             let pending = port.has_pending_route_hint_for_lane(
-                self.sid,
                 frame_label_meta.frame_hint_mask(),
                 Lane::new(lane_idx as u32),
             );

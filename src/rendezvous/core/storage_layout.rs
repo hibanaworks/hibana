@@ -71,7 +71,7 @@ where
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
             let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
-            if slot.occupied && slot.len != 0 && (slot.offset as usize) < floor {
+            if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }
             idx += 1;
@@ -81,9 +81,9 @@ where
 
     #[inline]
     pub(crate) fn endpoint_lease_floor(&self) -> usize {
-        (self.image_frontier as usize)
-            .checked_add(self.frontier_workspace_bytes as usize)
-            .expect("invariant")
+        crate::invariant_some(
+            (self.image_frontier as usize).checked_add(self.frontier_workspace_bytes as usize),
+        )
     }
 
     #[inline]
