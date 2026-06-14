@@ -112,6 +112,7 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/candidates.
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/entry.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/pool.rs
+src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/selection.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/set.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/state.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/entry_sets.rs
