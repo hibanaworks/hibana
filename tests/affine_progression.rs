@@ -98,7 +98,7 @@ impl Transport for PendingSendTransport {
         self.state.polls.set(self.state.polls.get().wrapping_add(1));
         self.inner.stage_send(
             tx,
-            outgoing.peer(),
+            outgoing.target_role(),
             outgoing.lane(),
             outgoing.frame_label().raw(),
             outgoing.payload().as_bytes(),

@@ -33,7 +33,7 @@ pub(crate) enum FrameMismatchKind {
     Session = ids::TRANSPORT_MISMATCH_SESSION,
     Lane = ids::TRANSPORT_MISMATCH_LANE,
     SourceRole = ids::TRANSPORT_MISMATCH_SOURCE_ROLE,
-    PeerRole = ids::TRANSPORT_MISMATCH_PEER_ROLE,
+    TargetRole = ids::TRANSPORT_MISMATCH_PEER_ROLE,
     Label = ids::TRANSPORT_MISMATCH_LABEL,
 }
 
@@ -61,7 +61,7 @@ struct ReceivedFrameCore<'r> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ObservedSourceLabel(u32);
 
-/// Transport frame whose session, lane, and receiving peer role are accepted.
+/// Transport frame whose session, lane, and receiving target role are accepted.
 ///
 /// This type deliberately does not expose payload commit APIs. Offer/passive
 /// paths may stage it while route authority is still being resolved, but must
@@ -167,14 +167,14 @@ impl FrameObservation {
         session_raw: u32,
         lane_wire: u8,
         source_role: u8,
-        peer_role: u8,
+        target_role: u8,
         label: u8,
     ) -> Self {
         Self {
             session: session_raw,
             meta: ((lane_wire as u32) << 24)
                 | ((source_role as u32) << 16)
-                | ((peer_role as u32) << 8)
+                | ((target_role as u32) << 8)
                 | (label as u32),
         }
     }
@@ -185,7 +185,7 @@ impl FrameObservation {
             header.session().raw(),
             header.lane(),
             header.source_role(),
-            header.peer_role(),
+            header.target_role(),
             header.label().raw(),
         )
     }
@@ -211,7 +211,7 @@ impl FrameObservation {
     }
 
     #[inline]
-    pub(crate) const fn peer_role(self) -> u8 {
+    pub(crate) const fn target_role(self) -> u8 {
         (self.meta >> 8) as u8
     }
 
@@ -226,7 +226,7 @@ impl FrameObservation {
         session_raw: u32,
         lane_wire: u8,
         source_role: u8,
-        peer_role: u8,
+        target_role: u8,
         label: u8,
     ) -> Option<FrameMismatchKind> {
         if self.session_raw() != session_raw {
@@ -235,8 +235,8 @@ impl FrameObservation {
             Some(FrameMismatchKind::Lane)
         } else if self.source_role() != source_role {
             Some(FrameMismatchKind::SourceRole)
-        } else if self.peer_role() != peer_role {
-            Some(FrameMismatchKind::PeerRole)
+        } else if self.target_role() != target_role {
+            Some(FrameMismatchKind::TargetRole)
         } else if self.label_raw() != label {
             Some(FrameMismatchKind::Label)
         } else {
@@ -249,14 +249,14 @@ impl FrameObservation {
         self,
         session_raw: u32,
         lane_wire: u8,
-        peer_role: u8,
+        target_role: u8,
     ) -> Option<FrameMismatchKind> {
         if self.session_raw() != session_raw {
             Some(FrameMismatchKind::Session)
         } else if self.lane_wire() != lane_wire {
             Some(FrameMismatchKind::Lane)
-        } else if self.peer_role() != peer_role {
-            Some(FrameMismatchKind::PeerRole)
+        } else if self.target_role() != target_role {
+            Some(FrameMismatchKind::TargetRole)
         } else {
             None
         }
@@ -328,12 +328,17 @@ impl ObservedSourceLabel {
     }
 
     #[inline]
-    const fn observation(self, session_raw: u32, lane_wire: u8, peer_role: u8) -> FrameObservation {
+    const fn observation(
+        self,
+        session_raw: u32,
+        lane_wire: u8,
+        target_role: u8,
+    ) -> FrameObservation {
         FrameObservation::new(
             session_raw,
             lane_wire,
             self.source_role(),
-            peer_role,
+            target_role,
             self.label_raw(),
         )
     }
@@ -490,7 +495,7 @@ impl<'r> PreambleFrame<'r> {
     pub(crate) fn accept_parts(
         self,
         expected_session_raw: u32,
-        expected_peer_role: u8,
+        expected_target_role: u8,
         source_role: u8,
         frame_label: u8,
     ) -> Result<ReceivedFrame<'r>, FrameMismatch> {
@@ -502,7 +507,7 @@ impl<'r> PreambleFrame<'r> {
             let observation = core.observed_source_label.observation(
                 expected_session_raw,
                 core.lane_wire(),
-                expected_peer_role,
+                expected_target_role,
             );
             core.discard_uncommitted();
             return Err(FrameMismatch::new(observation, kind));
@@ -531,11 +536,11 @@ impl<'r> PreambleFrame<'r> {
         &self,
         session_raw: u32,
         lane_wire: u8,
-        peer_role: u8,
+        target_role: u8,
     ) -> FrameObservation {
         self.core
             .observed_source_label
-            .observation(session_raw, lane_wire, peer_role)
+            .observation(session_raw, lane_wire, target_role)
     }
 
     #[inline]

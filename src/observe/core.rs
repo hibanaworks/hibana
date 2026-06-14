@@ -23,11 +23,13 @@ use crate::{
 
 pub use crate::observe::event::{Evidence, TapEvent};
 
+const _: [(); RING_EVENTS] = [(); RING_BUFFER_SIZE * 2];
+
 /// Single-producer event ring buffer storage suited for DMA/SHM environments.
 struct RingBuffer<'a> {
     head: Cell<usize>,
     storage: *mut TapEvent,
-    _marker: PhantomData<&'a mut [TapEvent]>,
+    _marker: PhantomData<&'a mut [TapEvent; RING_BUFFER_SIZE]>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
@@ -36,11 +38,10 @@ pub(crate) fn emit(ring: &TapRing<'_>, event: TapEvent) {
 }
 
 impl<'a> RingBuffer<'a> {
-    fn new(storage: &'a mut [TapEvent]) -> Self {
-        assert!(storage.len() >= RING_BUFFER_SIZE);
+    fn from_ptr(storage: *mut TapEvent) -> Self {
         Self {
             head: Cell::new(0),
-            storage: storage.as_mut_ptr(),
+            storage,
             _marker: PhantomData,
             _no_send_sync: PhantomData,
         }
@@ -158,10 +159,13 @@ pub(crate) struct TapRing<'a> {
 
 impl<'a> TapRing<'a> {
     pub(crate) fn from_storage(storage: &'a mut [TapEvent; RING_EVENTS]) -> Self {
-        let (user_slice, infra_slice) = storage.split_at_mut(RING_BUFFER_SIZE);
+        let storage = storage.as_mut_ptr();
         Self {
-            user: RingBuffer::new(user_slice),
-            infra: RingBuffer::new(infra_slice),
+            user: RingBuffer::from_ptr(storage),
+            // SAFETY: the const equality above fixes `RING_EVENTS` to exactly
+            // two ring halves, so this pointer starts the second half inside
+            // the rendezvous-owned tap buffer.
+            infra: RingBuffer::from_ptr(unsafe { storage.add(RING_BUFFER_SIZE) }),
         }
     }
 

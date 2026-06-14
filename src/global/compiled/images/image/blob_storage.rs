@@ -73,7 +73,7 @@ impl<const N: usize> ProgramImageBytes<N> {
             route_resolvers,
         };
         if offset > columns.blob_len() {
-            panic!("program image");
+            crate::invariant();
         }
         columns
     }
@@ -91,7 +91,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     #[inline(always)]
     const fn write_u8(&mut self, offset: usize, value: u8) {
         if offset >= self.bytes.len() {
-            panic!("program image");
+            crate::invariant();
         }
         self.bytes[offset] = value;
     }
@@ -111,7 +111,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     #[inline(always)]
     const fn column_offset(column: ProgramColumnRange, row: usize, stride: usize) -> usize {
         if row >= column.len as usize {
-            panic!("program image");
+            crate::invariant();
         }
         column.offset as usize + row * stride
     }
@@ -133,7 +133,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         atom: EffAtom,
     ) {
         if offset > u16::MAX as usize {
-            panic!("program image");
+            crate::invariant();
         }
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ATOM_STRIDE);
         self.write_u16(out, offset as u16);
@@ -154,7 +154,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         resolver: RouteResolver,
     ) {
         if offset > u16::MAX as usize {
-            panic!("program image");
+            crate::invariant();
         }
         let resolver_id = match resolver {
             RouteResolver::Dynamic { resolver_id, .. } => resolver_id,
@@ -188,7 +188,7 @@ impl<const N: usize> ProgramImageBytes<N> {
                 };
                 let dense = eff.dense_ordinal();
                 if dense > u16::MAX as usize {
-                    panic!("program image");
+                    crate::invariant();
                 }
                 (resolver_id, dense as u16, tag)
             }
@@ -301,12 +301,12 @@ impl<const N: usize> ProgramImageBytes<N> {
         let columns = Self::columns(image);
         let projected_len = columns.blob_len();
         if projected_len > N {
-            panic!("program image");
+            crate::invariant();
         }
         let view = image.view();
         let markers = view.scope_markers();
         if projected_len > u16::MAX as usize {
-            panic!("program image");
+            crate::invariant();
         }
 
         let mut out = Self::empty();

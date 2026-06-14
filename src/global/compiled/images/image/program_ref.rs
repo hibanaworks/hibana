@@ -52,7 +52,7 @@ impl CompiledProgramRef {
         }
         let offset = column.offset as usize + row * stride;
         if offset + stride > self.columns.blob_len() {
-            panic!("program image");
+            crate::invariant();
         }
         Some(offset)
     }
@@ -60,7 +60,7 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(super) const fn byte_at(&self, offset: usize) -> u8 {
         if offset >= self.columns.blob_len() {
-            panic!("program image");
+            crate::invariant();
         }
         self.blob.byte_at(offset)
     }
@@ -84,7 +84,7 @@ impl CompiledProgramRef {
     pub(super) const fn compact_scope_from_bits(raw: u32) -> CompactScopeId {
         match CompactScopeId::decode_raw(raw) {
             Some(scope) => scope,
-            None => panic!("program image"),
+            None => crate::invariant(),
         }
     }
 

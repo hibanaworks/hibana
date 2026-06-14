@@ -53,7 +53,7 @@ impl EventCursorMachine {
         let mut depth = 0usize;
         while visit_len > 0 {
             if depth >= PackedEventConflict::MAX_CHAIN_DEPTH {
-                panic!("first recv dispatch table exceeded PackedEventConflict::MAX_CHAIN_DEPTH");
+                crate::invariant();
             }
             visit_len -= 1;
             let visit = visits[visit_len];
@@ -91,7 +91,7 @@ impl EventCursorMachine {
         visit: FirstRecvDispatchVisit,
     ) {
         if *len >= visits.len() {
-            panic!("first recv dispatch visit overflow");
+            crate::invariant();
         }
         visits[*len] = visit;
         *len += 1;
@@ -125,7 +125,7 @@ impl EventCursorMachine {
             idx += 1;
         }
         if *len >= table.len() {
-            panic!("first recv dispatch table overflow");
+            crate::invariant();
         }
         table[*len] = FirstRecvDispatchSpec::new(lane, frame_label, root_arm, target);
         *len += 1;

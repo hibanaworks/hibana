@@ -260,8 +260,8 @@ mod tests {
     }
 
     #[inline(always)]
-    const fn large_choreography_source_role(peer: u8) -> u8 {
-        match peer {
+    const fn large_choreography_source_role(target_role: u8) -> u8 {
+        match target_role {
             0 => 1,
             1 => 0,
             _ => crate::invariant(),
@@ -269,12 +269,12 @@ mod tests {
     }
 
     #[inline(always)]
-    fn large_choreography_header(frame: &FrameOwned, peer_role: u8) -> FrameHeader {
+    fn large_choreography_header(frame: &FrameOwned, target_role: u8) -> FrameHeader {
         FrameHeader::new(
             SessionId::new(0x6000),
             frame.lane(),
             frame.source_role(),
-            peer_role,
+            target_role,
             FrameLabel::new(frame.frame_label()),
         )
     }
@@ -314,10 +314,11 @@ mod tests {
             'a: 'f,
         {
             self.with_state(|state| {
+                let target_role = outgoing.target_role();
                 state
-                    .role_mut(outgoing.peer())
+                    .role_mut(target_role)
                     .queue
-                    .push_back_outgoing(large_choreography_source_role(outgoing.peer()), outgoing);
+                    .push_back_outgoing(large_choreography_source_role(target_role), outgoing);
             });
             core::task::Poll::Ready(Ok(()))
         }

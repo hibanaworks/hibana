@@ -1,0 +1,5 @@
+error[E0599]: no method named `peer_role` found for struct `FrameHeader` in the current scope
+ --> tests/ui/runtime-frame-header-peer-role-removed.rs:8:20
+  |
+8 |     let _ = header.peer_role();
+  |                    ^^^^^^^^^ method not found in `FrameHeader`

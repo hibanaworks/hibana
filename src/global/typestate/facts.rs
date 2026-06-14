@@ -44,10 +44,10 @@ impl LocalDependency {
         if start > PackedLocalDependency::STEP_MASK as usize
             || end > PackedLocalDependency::STEP_MASK as usize
         {
-            panic!("dependency local step range overflow");
+            crate::invariant();
         }
         if start > end {
-            panic!("dependency local step range is inverted");
+            crate::invariant();
         }
         Self {
             scope,
@@ -131,16 +131,16 @@ impl PackedLocalDependency {
             return Self::none();
         }
         if !matches!(scope.kind(), ScopeKind::Parallel) {
-            panic!("dependency row scope must be a parallel scope");
+            crate::invariant();
         }
         let dep_ordinal = scope.local_ordinal() as u64;
         if dep_ordinal > Self::DEP_ORDINAL_MASK {
-            panic!("dependency scope ordinal overflow");
+            crate::invariant();
         }
         let start = dependency.start() as u64;
         let end = dependency.end() as u64;
         if start > Self::STEP_MASK || end > Self::STEP_MASK || start > end {
-            panic!("dependency local step range overflow");
+            crate::invariant();
         }
 
         let (conflict_tag, route_ordinal) = match dependency.conflict() {
@@ -148,16 +148,16 @@ impl PackedLocalDependency {
             LocalConflict::SharedRoute => (Self::CONFLICT_SHARED_ROUTE, 0),
             LocalConflict::RouteArm { scope, arm } => {
                 if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
-                    panic!("dependency route conflict scope must be a route scope");
+                    crate::invariant();
                 }
                 let route_ordinal = scope.local_ordinal() as u64;
                 if route_ordinal > Self::ROUTE_ORDINAL_MASK {
-                    panic!("dependency route conflict ordinal overflow");
+                    crate::invariant();
                 }
                 match arm {
                     0 => (Self::CONFLICT_ROUTE_ARM_0, route_ordinal),
                     1 => (Self::CONFLICT_ROUTE_ARM_1, route_ordinal),
-                    _ => panic!("dependency route conflict arm overflow"),
+                    _ => crate::invariant(),
                 }
             }
         };
@@ -245,14 +245,14 @@ impl PackedEventConflict {
     #[inline(always)]
     pub(crate) const fn route_arm(scope: ScopeId, arm: u8) -> Self {
         if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
-            panic!("event conflict scope must be a route scope");
+            crate::invariant();
         }
         if arm > 1 {
-            panic!("event conflict arm overflow");
+            crate::invariant();
         }
         let ordinal = scope.local_ordinal();
         if ordinal > Self::ROUTE_MASK {
-            panic!("event conflict route ordinal overflow");
+            crate::invariant();
         }
         Self((ordinal << Self::ARM_BITS) | arm as u16)
     }
@@ -385,7 +385,7 @@ impl StateIndex {
     #[inline(always)]
     pub(crate) const fn from_usize(idx: usize) -> Self {
         if idx > (u16::MAX as usize) {
-            panic!("state index overflow");
+            crate::invariant();
         }
         Self(idx as u16)
     }

@@ -18,14 +18,14 @@ impl ProgramColumnRange {
     #[inline(always)]
     pub(crate) const fn new(offset: usize, len: usize, stride: usize) -> Self {
         if offset > u16::MAX as usize || len > u16::MAX as usize {
-            panic!("program image");
+            crate::invariant();
         }
         if stride == 0 {
-            panic!("program image");
+            crate::invariant();
         }
         let byte_len = len * stride;
         if byte_len > (u16::MAX as usize - offset) {
-            panic!("program image");
+            crate::invariant();
         }
         Self {
             offset: offset as u16,

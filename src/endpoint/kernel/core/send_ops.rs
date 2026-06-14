@@ -249,40 +249,34 @@ where
         let commit_plan = self.build_send_commit_plan(preview_cursor_index, meta)?;
         let encoded_len = staged_send.encoded_len;
 
-        let mut pending_transport = None;
-        let is_remote_send = if meta.peer == ROLE {
-            false
-        } else {
-            let port = self.port_for_lane(meta.lane as usize);
-            let payload_view = {
-                let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*scratch_ptr };
-                Payload::new(&scratch[..encoded_len])
-            };
-            let outgoing = crate::transport::Outgoing {
-                meta: crate::transport::SendMeta {
-                    eff_index: meta.eff_index,
-                    logical_label: crate::transport::LogicalLabel::new(meta.label),
-                    frame_label: crate::transport::FrameLabel::new(meta.frame_label),
-                    peer: meta.peer,
-                    lane: port.lane().as_wire(),
-                },
-                payload: payload_view,
-            };
+        if meta.peer == ROLE {
+            return Ok(SendTransportStep::Immediate(commit_plan));
+        }
 
-            let mut transport = lane_port::PendingSend::new();
-            lane_port::begin_send_outgoing(&mut transport, outgoing);
-            pending_transport = Some(transport);
-            true
+        let port = self.port_for_lane(meta.lane as usize);
+        let lane = port.lane();
+        let payload_view = {
+            let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*scratch_ptr };
+            Payload::new(&scratch[..encoded_len])
+        };
+        let outgoing = crate::transport::Outgoing {
+            meta: crate::transport::SendMeta {
+                eff_index: meta.eff_index,
+                logical_label: crate::transport::LogicalLabel::new(meta.label),
+                frame_label: crate::transport::FrameLabel::new(meta.frame_label),
+                target_role: meta.peer,
+                lane: lane.as_wire(),
+            },
+            payload: payload_view,
         };
 
-        if is_remote_send {
-            Ok(SendTransportStep::Pending(PendingSendIo {
-                transport: pending_transport.ok_or(SendError::PhaseInvariant)?,
-                commit_plan: Some(commit_plan),
-            }))
-        } else {
-            Ok(SendTransportStep::Immediate(commit_plan))
-        }
+        let mut transport = lane_port::PendingSend::new();
+        lane_port::begin_send_outgoing(&mut transport, outgoing);
+        Ok(SendTransportStep::Pending(PendingSendIo {
+            lane,
+            transport,
+            commit_plan: Some(commit_plan),
+        }))
     }
 
     #[inline(never)]
@@ -316,12 +310,14 @@ where
         pending: &mut PendingSendIo<'r>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<SendResult<()>> {
-        let port = self.port_for_lane(pending.lane_idx());
+        let lane_idx = pending.lane_idx();
+        let port = self.port_for_lane(lane_idx);
+        let lane_wire = pending.lane_wire();
         match lane_port::poll_send_outgoing(&mut pending.transport, port, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(err)) => {
-                self.emit_transport_fault_event(pending.lane_idx(), port.lane().as_wire(), err);
+                self.emit_transport_fault_event(lane_idx, lane_wire, err);
                 Poll::Ready(Err(SendError::Transport(err)))
             }
         }

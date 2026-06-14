@@ -490,26 +490,73 @@ fn production_callsite_location_storage_has_one_owner() {
 
 #[test]
 fn runtime_production_path_has_no_string_panic_alternate_paths() {
+    fn strip_cfg_test_modules(source: &str) -> String {
+        let mut out = String::new();
+        let mut skip = false;
+        let mut pending_cfg_test = false;
+        let mut depth = 0usize;
+
+        for line in source.lines() {
+            let trimmed = line.trim_start();
+            if skip {
+                depth = depth
+                    .saturating_add(line.matches('{').count())
+                    .saturating_sub(line.matches('}').count());
+                if depth == 0 {
+                    skip = false;
+                }
+                continue;
+            }
+            if trimmed.starts_with("#[cfg(test)]") {
+                pending_cfg_test = true;
+                continue;
+            }
+            if pending_cfg_test && trimmed.starts_with("mod tests") {
+                depth = line
+                    .matches('{')
+                    .count()
+                    .saturating_sub(line.matches('}').count());
+                if depth > 0 {
+                    skip = true;
+                }
+                pending_cfg_test = false;
+                continue;
+            }
+            if pending_cfg_test {
+                out.push_str("#[cfg(test)]\n");
+                pending_cfg_test = false;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+
     let mut source = String::new();
     for path in [
         "src/runtime.rs",
         "src/runtime_core.rs",
+        "src/observe/core.rs",
+        "src/eff.rs",
         "src/endpoint.rs",
         "src/rendezvous.rs",
         "src/session.rs",
         "src/transport.rs",
+        "src/global/compiled/images/program.rs",
+        "src/global/compiled/images/image/program_ref.rs",
     ] {
-        source.push_str(&read(path));
+        source.push_str(&strip_cfg_test_modules(&read(path)));
     }
     for path in [
         "src/runtime",
         "src/runtime_core",
+        "src/global/typestate",
         "src/endpoint",
         "src/rendezvous",
         "src/session",
         "src/transport",
     ] {
-        source.push_str(&read_production_rs_tree(path));
+        source.push_str(&strip_cfg_test_modules(&read_production_rs_tree(path)));
     }
 
     for forbidden in [
@@ -548,6 +595,30 @@ fn runtime_production_path_has_no_string_panic_alternate_paths() {
         offenders.is_empty(),
         "runtime production path must not keep format panic or string assert invariant paths: {}",
         offenders.join(" | ")
+    );
+}
+
+#[test]
+fn tap_ring_storage_shape_is_a_type_sized_dual_ring() {
+    let observe = read("src/observe/core.rs");
+    assert!(
+        observe.contains("const _: [(); RING_EVENTS] = [(); RING_BUFFER_SIZE * 2];"),
+        "tap ring storage layout must be fixed by a compile-time equality"
+    );
+    for forbidden in [
+        "RingBuffer::new",
+        "assert!(storage.len()",
+        "storage.len() >= RING_BUFFER_SIZE",
+    ] {
+        assert!(
+            !observe.contains(forbidden),
+            "tap ring construction must not keep slice-length runtime fallback: {forbidden}"
+        );
+    }
+    assert!(
+        observe.contains("RingBuffer::from_ptr(storage)")
+            && observe.contains("storage.add(RING_BUFFER_SIZE)"),
+        "tap ring halves must be split from the fixed storage array"
     );
 }
 

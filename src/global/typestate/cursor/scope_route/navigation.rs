@@ -51,7 +51,7 @@ impl EventCursor {
             scope = child_scope;
             depth += 1;
         }
-        panic!("passive route materialization index exceeded PackedEventConflict::MAX_CHAIN_DEPTH");
+        crate::invariant();
     }
 
     #[inline]
@@ -472,6 +472,6 @@ impl EventCursor {
             selected_scope = child_scope;
             depth += 1;
         }
-        panic!("passive route descendant rebase exceeded PackedEventConflict::MAX_CHAIN_DEPTH");
+        crate::invariant();
     }
 }

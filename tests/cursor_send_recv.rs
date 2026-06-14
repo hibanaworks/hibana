@@ -21,7 +21,7 @@ use hibana::{
     runtime::{
         Config, CounterClock, SessionKitStorage,
         ids::SessionId,
-        transport::{IngressEvidence, Outgoing, ReceivedFrame, Transport},
+        transport::{Outgoing, ReceivedFrame, Transport},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -123,7 +123,7 @@ impl Transport for PendingCancelTransport {
     {
         self.inner.stage_send(
             tx,
-            outgoing.peer(),
+            outgoing.target_role(),
             outgoing.lane(),
             outgoing.frame_label().raw(),
             outgoing.payload().as_bytes(),

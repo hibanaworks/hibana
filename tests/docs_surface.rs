@@ -114,8 +114,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "transport readiness",
         "authority by itself",
         "local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_fn(local_decision)",
-        "`offer()` and",
-        "`RouteBranch::decode()` require framed descriptor-checked evidence.",
+        "`offer()` and `RouteBranch::decode()`",
+        "require `ReceivedFrame::framed(...)`",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
         "let program = g::seq(prefix, app);",
@@ -128,7 +128,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "registered rendezvous .session(...).role(...)",
         "`runtime::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
-        "`runtime::ids::{EffIndex, SessionId}`",
+        "`runtime::ids::SessionId`",
         "`runtime::TapEvent`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --features std --lib -p hibana",
@@ -396,8 +396,9 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "`runtime::resolver`",
         ".roll()",
         "`ReceivedFrame`",
-        "`IngressEvidence`",
-        "Payload shape, queue position, carrier id, and driver observations are never branch authority.",
+        "`ReceivedFrame::framed(...)`",
+        "Payload shape, queue position, carrier id, and driver observations are never",
+        "branch authority.",
     ] {
         assert!(
             readme.contains(required),
@@ -412,6 +413,7 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "CUSTOM_WIRE_TAP_ID",
         "0x0300 + 124",
         "0x0300 + 90",
+        "`IngressEvidence`",
     ] {
         assert!(
             !readme.contains(forbidden),

@@ -16,7 +16,7 @@ pub(crate) mod meta {
 /// runtime crates may inspect it as a compact stable descriptor id.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EffIndex(u32);
+pub(crate) struct EffIndex(u32);
 
 impl EffIndex {
     pub(crate) const ZERO: Self = Self(0);
@@ -24,7 +24,7 @@ impl EffIndex {
     #[inline(always)]
     pub(crate) const fn from_segment_offset(segment: u16, offset: u16) -> Self {
         if segment as usize >= meta::MAX_SEGMENTS || offset as usize >= meta::MAX_SEGMENT_EFFS {
-            panic!("segmented eff index out of bounds");
+            crate::invariant();
         }
         Self(((segment as u32) << 16) | offset as u32)
     }
@@ -32,7 +32,7 @@ impl EffIndex {
     #[inline(always)]
     pub(crate) const fn from_dense_ordinal(idx: usize) -> Self {
         if idx >= meta::MAX_EFF_NODES {
-            panic!("eff index exceeds segmented program capacity");
+            crate::invariant();
         }
         let segment = idx / meta::MAX_SEGMENT_EFFS;
         let offset = idx % meta::MAX_SEGMENT_EFFS;
@@ -40,12 +40,12 @@ impl EffIndex {
     }
 
     #[inline(always)]
-    pub const fn segment(self) -> u16 {
+    pub(crate) const fn segment(self) -> u16 {
         (self.0 >> 16) as u16
     }
 
     #[inline(always)]
-    pub const fn offset(self) -> u16 {
+    pub(crate) const fn offset(self) -> u16 {
         self.0 as u16
     }
 
@@ -54,7 +54,7 @@ impl EffIndex {
         let segment = self.segment() as usize;
         let offset = self.offset() as usize;
         if segment >= meta::MAX_SEGMENTS || offset >= meta::MAX_SEGMENT_EFFS {
-            panic!("segmented eff index is outside the fixed program image");
+            crate::invariant();
         }
         segment * meta::MAX_SEGMENT_EFFS + offset
     }
@@ -86,7 +86,7 @@ impl EventOrigin {
         match bits {
             0 => Self::User,
             1 => Self::Session,
-            _ => panic!("invalid packed event origin bits"),
+            _ => crate::invariant(),
         }
     }
 
@@ -175,7 +175,7 @@ impl EffStruct {
     #[inline(always)]
     pub(crate) const fn atom_data(&self) -> EffAtom {
         match self.kind {
-            EffKind::Pure => panic!("pure effect node has no atom data"),
+            EffKind::Pure => crate::invariant(),
             EffKind::Atom => self.data.atom(),
         }
     }
@@ -221,13 +221,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "segmented eff index out of bounds")]
+    #[should_panic]
     fn invalid_eff_index_constructor_panics_at_construction() {
         let _ = EffIndex::from_segment_offset(super::meta::MAX_SEGMENTS as u16, 0);
     }
 
     #[test]
-    #[should_panic(expected = "pure effect node has no atom data")]
+    #[should_panic]
     fn pure_effect_atom_data_fails_fast() {
         let _ = EffStruct::pure().atom_data();
     }

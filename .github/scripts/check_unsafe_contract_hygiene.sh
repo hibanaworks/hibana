@@ -150,8 +150,9 @@ if [[ "${eff_rs}" == *"pub union EffData"* ]] || [[ "${eff_rs}" == *"unsafe { se
   exit 1
 fi
 
-if [[ "${eff_rs}" != *"pure effect node has no atom data"* ]]; then
-  echo "pure effect atom access must fail fast instead of reading untagged storage" >&2
+if [[ "${eff_rs}" != *"EffKind::Pure => crate::invariant()"* ]] \
+  || [[ "${eff_rs}" != *"EffKind::Atom => self.data.atom()"* ]]; then
+  echo "pure effect atom access must fail fast through the runtime invariant path" >&2
   exit 1
 fi
 

@@ -9,8 +9,9 @@ fn effect_nodes_do_not_read_inactive_union_fields() {
         "effect nodes must not expose safe reads from inactive union fields"
     );
     assert!(
-        eff.contains("pure effect node has no atom data"),
-        "pure effect atom access must fail fast instead of returning untagged storage"
+        eff.contains("EffKind::Pure => crate::invariant()")
+            && eff.contains("EffKind::Atom => self.data.atom()"),
+        "pure effect atom access must fail fast through the runtime invariant path"
     );
 }
 
@@ -511,7 +512,7 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
         .expect("program image fail-closed constructor");
     assert!(
         program_from_image
-            .contains("if projected_len > N {\n            panic!(\"program image\");\n        }")
+            .contains("if projected_len > N {\n            crate::invariant();\n        }")
             && !program_from_image.contains("return Self::empty(image);"),
         "ProgramImageBytes::from_image overflow must fail closed instead of producing an empty or max-capacity image"
     );

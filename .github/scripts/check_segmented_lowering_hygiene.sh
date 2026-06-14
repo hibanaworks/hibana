@@ -44,13 +44,13 @@ if rg -n 'pub[[:space:]]+const[[:space:]]+(ZERO|MAX):' src/eff.rs >/dev/null; th
   exit 1
 fi
 
-if ! rg -n 'pub[[:space:]]+const[[:space:]]+fn[[:space:]]+segment\(self\)[[:space:]]*->[[:space:]]*u16' src/eff.rs >/dev/null; then
-  echo "segmented lowering hygiene violation: EffIndex must expose a public segment accessor" >&2
+if ! rg -n 'pub\(crate\)[[:space:]]+const[[:space:]]+fn[[:space:]]+segment\(self\)[[:space:]]*->[[:space:]]*u16' src/eff.rs >/dev/null; then
+  echo "segmented lowering hygiene violation: EffIndex segment accessor must remain crate-private" >&2
   exit 1
 fi
 
-if ! rg -n 'pub[[:space:]]+const[[:space:]]+fn[[:space:]]+offset\(self\)[[:space:]]*->[[:space:]]*u16' src/eff.rs >/dev/null; then
-  echo "segmented lowering hygiene violation: EffIndex must expose a public segment-local offset accessor" >&2
+if ! rg -n 'pub\(crate\)[[:space:]]+const[[:space:]]+fn[[:space:]]+offset\(self\)[[:space:]]*->[[:space:]]*u16' src/eff.rs >/dev/null; then
+  echo "segmented lowering hygiene violation: EffIndex segment-local offset accessor must remain crate-private" >&2
   exit 1
 fi
 

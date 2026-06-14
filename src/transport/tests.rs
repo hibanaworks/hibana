@@ -146,7 +146,7 @@ fn frame_header_preserves_full_wire_domain() {
     assert_eq!(header.session().raw(), u32::MAX);
     assert_eq!(header.lane(), u8::MAX);
     assert_eq!(header.source_role(), u8::MAX);
-    assert_eq!(header.peer_role(), u8::MAX);
+    assert_eq!(header.target_role(), u8::MAX);
     assert_eq!(header.label().raw(), u8::MAX);
 }
 

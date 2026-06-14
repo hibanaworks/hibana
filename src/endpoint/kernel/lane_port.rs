@@ -23,7 +23,7 @@ pub(super) struct FrameExpectation {
     pub(super) session_raw: u32,
     pub(super) lane_wire: u8,
     pub(super) source_role: u8,
-    pub(super) peer_role: u8,
+    pub(super) target_role: u8,
     pub(super) label: u8,
 }
 
@@ -84,11 +84,6 @@ impl<'r> PendingSend<'r> {
     #[inline]
     fn clear(&mut self) {
         self.outgoing = None;
-    }
-
-    #[inline]
-    pub(super) fn lane_idx(&self) -> usize {
-        crate::invariant_some(self.outgoing).meta.lane as usize
     }
 }
 
@@ -186,7 +181,7 @@ where
         expected.session_raw,
         expected.lane_wire,
         expected.source_role,
-        expected.peer_role,
+        expected.target_role,
         expected.label,
     ) {
         emit_transport_mismatch_observation(
@@ -201,7 +196,7 @@ where
     let frame = PreambleFrame::from_accepted_payload(port, payload, observation);
     match frame.accept_parts(
         expected.session_raw,
-        expected.peer_role,
+        expected.target_role,
         expected.source_role,
         expected.label,
     ) {
@@ -228,7 +223,7 @@ pub(super) fn poll_recv_frame_preamble<'r, T>(
     port: &Port<'r, T>,
     expected_session_raw: u32,
     expected_lane_wire: u8,
-    expected_peer_role: u8,
+    expected_target_role: u8,
     cx: &mut Context<'_>,
 ) -> Poll<Result<PreambleFrame<'r>, TransportError>>
 where
@@ -243,7 +238,7 @@ where
         && let Some(kind) = observation.mismatch_preamble(
             expected_session_raw,
             expected_lane_wire,
-            expected_peer_role,
+            expected_target_role,
         )
     {
         emit_transport_mismatch_observation(

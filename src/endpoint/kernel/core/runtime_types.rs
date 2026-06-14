@@ -1,6 +1,6 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    CursorEndpoint, EndpointArenaLayout, LaneGuard, Payload, Port, SendError, SendMeta,
+    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Payload, Port, SendError, SendMeta,
     SendPreview, SendResult, StateIndex, Transport, lane_port,
 };
 
@@ -25,6 +25,7 @@ pub(crate) struct SendCommitPlan<'rv> {
 }
 
 pub(crate) struct PendingSendIo<'r> {
+    pub(in crate::endpoint::kernel) lane: Lane,
     pub(in crate::endpoint::kernel) transport: lane_port::PendingSend<'r>,
     pub(in crate::endpoint::kernel) commit_plan: Option<SendCommitPlan<'r>>,
 }
@@ -32,7 +33,12 @@ pub(crate) struct PendingSendIo<'r> {
 impl<'r> PendingSendIo<'r> {
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn lane_idx(&self) -> usize {
-        self.transport.lane_idx()
+        self.lane.raw() as usize
+    }
+
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn lane_wire(&self) -> u8 {
+        self.lane.as_wire()
     }
 }
 

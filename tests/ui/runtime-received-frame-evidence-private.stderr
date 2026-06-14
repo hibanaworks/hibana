@@ -1,0 +1,10 @@
+error[E0624]: method `evidence` is private
+  --> tests/ui/runtime-received-frame-evidence-private.rs:11:19
+   |
+11 |     let _ = frame.evidence();
+   |                   ^^^^^^^^ private method
+   |
+  ::: src/transport.rs
+   |
+   |     pub(crate) const fn evidence(&self) -> IngressEvidence {
+   |     ------------------------------------------------------ private method defined here

@@ -28,15 +28,15 @@ pub(crate) use labels::{FrameLabelMask, LogicalLabel};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SendMeta {
     /// Effect index (stable identifier for the choreography step).
-    pub eff_index: EffIndex,
+    pub(crate) eff_index: EffIndex,
     /// Application/choreography logical label.
-    pub logical_label: LogicalLabel,
+    pub(crate) logical_label: LogicalLabel,
     /// Transport/ingress demux discriminator.
-    pub frame_label: FrameLabel,
-    /// Target peer role.
-    pub peer: u8,
+    pub(crate) frame_label: FrameLabel,
+    /// Target role for this outgoing message.
+    pub(crate) target_role: u8,
     /// Logical lane for this message.
-    pub lane: u8,
+    pub(crate) lane: u8,
 }
 
 /// Transport-owned outgoing frame.
@@ -53,8 +53,8 @@ impl<'f> Outgoing<'f> {
     }
 
     #[inline]
-    pub const fn peer(&self) -> u8 {
-        self.meta.peer
+    pub const fn target_role(&self) -> u8 {
+        self.meta.target_role
     }
 
     #[inline]
@@ -116,14 +116,14 @@ impl FrameHeader {
         session: SessionId,
         carrier: u8,
         source_role: u8,
-        peer_role: u8,
+        target_role: u8,
         label: FrameLabel,
     ) -> Self {
         Self(pack_frame_header(
             session.raw(),
             carrier,
             source_role,
-            peer_role,
+            target_role,
             label.raw(),
         ))
     }
@@ -144,7 +144,7 @@ impl FrameHeader {
     }
 
     #[inline]
-    pub const fn peer_role(self) -> u8 {
+    pub const fn target_role(self) -> u8 {
         (self.raw() >> 8) as u8
     }
 
@@ -166,7 +166,7 @@ impl FrameHeader {
 /// branch demux. Route/offer/decode demux paths must receive framed evidence and
 /// fail closed when the carrier cannot provide it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IngressEvidence {
+pub(crate) enum IngressEvidence {
     /// Headerless receive evidence for a deterministic single-resident recv.
     Deterministic,
     /// Carrier-observed frame metadata.
@@ -186,7 +186,7 @@ impl IngressEvidence {
             session: header.session(),
             carrier: header.lane(),
             source: header.source_role(),
-            target: header.peer_role(),
+            target: header.target_role(),
             label: header.label(),
         }
     }
@@ -235,7 +235,7 @@ impl<'f> ReceivedFrame<'f> {
     }
 
     #[inline]
-    pub const fn evidence(&self) -> IngressEvidence {
+    pub(crate) const fn evidence(&self) -> IngressEvidence {
         self.evidence
     }
 
@@ -250,13 +250,13 @@ const fn pack_frame_header(
     session_raw: u32,
     lane_wire: u8,
     source_role: u8,
-    peer_role: u8,
+    target_role: u8,
     label: u8,
 ) -> u64 {
     ((session_raw as u64) << 32)
         | ((lane_wire as u64) << 24)
         | ((source_role as u64) << 16)
-        | ((peer_role as u64) << 8)
+        | ((target_role as u64) << 8)
         | (label as u64)
 }
 

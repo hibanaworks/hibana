@@ -520,9 +520,11 @@ rv.role(&role0)
 ```
 
 Receive evidence is checked against the projected descriptor. `ReceivedFrame`
-uses fail-closed `IngressEvidence`: deterministic receive is valid only when a
-single active receive can be selected, while `offer()` and
-`RouteBranch::decode()` require framed descriptor-checked evidence. Payload shape, queue position, carrier id, and driver observations are never branch authority.
+has two construction paths: deterministic receive is valid only when a single
+active receive can be selected, while `offer()` and `RouteBranch::decode()`
+require `ReceivedFrame::framed(...)` with descriptor-checked frame metadata.
+Payload shape, queue position, carrier id, and driver observations are never
+branch authority.
 
 ## Protocol Runtime
 
@@ -608,7 +610,7 @@ Useful runtime owners:
 - `runtime::program::{project, RoleProgram}`
 - `runtime::SessionKit`
 - `runtime::{Config, CounterClock, RING_EVENTS}`
-- `runtime::ids::{EffIndex, SessionId}`
+- `runtime::ids::SessionId`
 - `runtime::transport::Transport`
 - `runtime::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
 - `runtime::wire::{Payload, WireEncode, WirePayload}`
@@ -630,7 +632,7 @@ The transport owns:
 - `open(port)` for the descriptor-derived role/session/lane port witness;
 - `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `ReceivedFrame`
   view from transport-managed receive storage, carrying payload bytes and
-  transport `IngressEvidence` as one receive value;
+  carrier observation as one receive value;
 - `cancel_send(...)` for transport cleanup when a send future is dropped after
   staging carrier state;
 - `requeue(...)` as the required return path for an accepted staged frame
@@ -640,11 +642,12 @@ The transport owns:
 borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
 inside the transport owner without allocating or exporting a separate context.
 
-The canonical receive-side frame observation is the `IngressEvidence` inside the
-`ReceivedFrame` returned by `poll_recv(...)`. Payload and evidence cross the
-transport boundary together; there is no separate receive-observation hook.
-`Deterministic` evidence is valid only for a single deterministic receive;
-route, offer, and decode demux require framed evidence that Hibana compares with
+The canonical receive-side observation is the `ReceivedFrame` returned by
+`poll_recv(...)`. Payload and carrier observation cross the transport boundary
+together; there is no separate receive-observation hook.
+`ReceivedFrame::deterministic(...)` is valid only for a single deterministic
+receive; route, offer, and decode demux require
+`ReceivedFrame::framed(header, payload)`, where Hibana compares the header with
 the endpoint's expected session/lane/role/label context before any endpoint
 progress can consume the payload. Route/session/progress authority remains in
 Hibana.

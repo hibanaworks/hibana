@@ -39,7 +39,7 @@ impl Lane {
 /// Session identifier (newtype for type safety).
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SessionId(pub u32);
+pub struct SessionId(u32);
 
 impl SessionId {
     /// Create a new session identifier.

@@ -21,7 +21,7 @@ pub enum DecisionArm {
 
 impl DecisionArm {
     #[inline]
-    pub const fn index(self) -> u8 {
+    pub(crate) const fn index(self) -> u8 {
         match self {
             Self::Left => 0,
             Self::Right => 1,

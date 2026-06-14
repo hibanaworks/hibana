@@ -63,7 +63,7 @@ impl EventSemanticKind {
         match bits {
             0 => Self::ProtocolEvent,
             1 => Self::DecisionArm,
-            _ => panic!("invalid packed event semantic bits"),
+            _ => crate::invariant(),
         }
     }
 }

@@ -1,5 +1,61 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+struct CapacitySendTransport(());
+
+impl Transport for CapacitySendTransport {
+    type Error = hibana::runtime::transport::TransportError;
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = ()
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        _port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        ((), ())
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: hibana::runtime::transport::Outgoing<'f>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Err(hibana::runtime::transport::TransportError::Capacity))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        _rx: &'a mut Self::Rx<'a>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+        Poll::Pending
+    }
+
+    fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
+
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+type CapacitySendKitStorage = SessionKitStorage<'static, CapacitySendTransport, CounterClock, 2>;
+
+std::thread_local! {
+    static CAPACITY_SEND_SESSION_SLOT: UnsafeCell<CapacitySendKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+}
+
 #[test]
 fn cursor_send_and_recv_roundtrip() {
     with_runtime_workspace(|_clock, tap_buf, slab| {
@@ -39,6 +95,58 @@ fn cursor_send_and_recv_roundtrip() {
             assert_eq!(payload, 42u32);
             assert!(transport_queue_is_empty(&transport));
         });
+    });
+}
+
+#[test]
+fn direct_send_capacity_emits_transport_fault_tap() {
+    with_runtime_workspace(|_clock, tap_buf, slab| {
+        let tap_ptr = tap_buf as *mut _;
+        with_resident_tls_ref(&CAPACITY_SEND_SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<3, FramePayload>>();
+            let origin_program: RoleProgram<0> = project(&program);
+            let rv = cluster
+                .rendezvous(
+                    Config::from_resources((unsafe { &mut *tap_ptr }, slab), CounterClock::zero()),
+                    CapacitySendTransport(()),
+                )
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(74);
+            let mut origin_endpoint = rv
+                .session(sid)
+                .role(&origin_program)
+                .enter()
+                .expect("origin endpoint");
+            let error = futures::executor::block_on(
+                origin_endpoint
+                    .flow::<Msg<3, FramePayload>>()
+                    .expect("send flow")
+                    .send(&FramePayload(*b"full")),
+            )
+            .expect_err("capacity send must surface transport error");
+            let rendered = format!("{error:?}");
+            assert!(
+                rendered.contains("Capacity") || rendered.contains("Transport(C)"),
+                "send error must preserve capacity transport cause: {rendered}"
+            );
+        });
+
+        let fault = unsafe { &*tap_ptr }
+            .iter()
+            .copied()
+            .find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
+            .expect("capacity send must emit transport fault evidence");
+        assert_eq!(
+            fault.evidence().reason(),
+            hibana::runtime::tap::TRANSPORT_FAULT_CAPACITY
+        );
+        assert_eq!(fault.arg0, 74);
+        assert_eq!(fault.arg1, 0);
+        assert_eq!(
+            fault.arg2,
+            u32::from(hibana::runtime::tap::TRANSPORT_FAULT_CAPACITY)
+        );
     });
 }
 

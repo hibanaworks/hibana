@@ -296,15 +296,15 @@ fn frame_label_has_single_runtime_owner() {
 }
 
 #[test]
-fn runtime_eff_index_surface_is_segmented_not_flat() {
-    let _: fn(hibana::runtime::ids::EffIndex) -> u16 = hibana::runtime::ids::EffIndex::segment;
-    let _: fn(hibana::runtime::ids::EffIndex) -> u16 = hibana::runtime::ids::EffIndex::offset;
-
+fn eff_index_stays_internal_descriptor_id() {
+    let runtime_rs = runtime_source();
     let eff_rs = read("src/eff.rs");
     assert!(
-        eff_rs.contains("pub const fn segment(self) -> u16")
-            && eff_rs.contains("pub const fn offset(self) -> u16"),
-        "EffIndex must expose segment and segment-local offset as the runtime shape"
+        !runtime_rs.contains("EffIndex")
+            && eff_rs.contains("pub(crate) struct EffIndex")
+            && eff_rs.contains("pub(crate) const fn segment(self) -> u16")
+            && eff_rs.contains("pub(crate) const fn offset(self) -> u16"),
+        "EffIndex must remain an internal segmented descriptor id, not public runtime authority"
     );
     assert!(
         !eff_rs.contains("pub const fn as_usize")
@@ -388,9 +388,7 @@ fn runtime_root_exposes_only_core_buckets() {
         "pub mod wire {",
         "pub mod transport {",
         "pub use crate::observe::core::TapEvent;",
-        "pub use crate::eff::EffIndex;",
         "pub use crate::global::program::Projectable;",
-        "IngressEvidence,",
         "Transport,",
         "WirePayload",
     ] {
@@ -452,6 +450,8 @@ fn runtime_root_exposes_only_core_buckets() {
         "TransportAlgorithm",
         "TransportMetricsTapPayload",
         "TransportAlgorithm, TransportError",
+        "EffIndex",
+        "IngressEvidence",
         "pub mod replay {",
         "ResolverAttrs",
         "pub mod advanced {",
@@ -530,6 +530,8 @@ fn runtime_allowlist_tracks_core_boundary() {
         "pub use crate::session::types::{Lane, SessionId};",
         "pub use crate::session::types::Lane",
         "runtime::ids::{EffIndex, Lane, SessionId}",
+        "EffIndex",
+        "IngressEvidence",
         "pub mod replay {",
         "ResolverAttrs",
         "pub mod advanced {",

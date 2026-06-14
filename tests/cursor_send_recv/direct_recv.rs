@@ -169,7 +169,7 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
 }
 
 #[test]
-fn transport_poll_recv_returns_frame_header_with_payload() {
+fn transport_poll_recv_returns_framed_payload() {
     let transport = TestTransport::new();
     let sid = SessionId::new(94);
     let mut tx = TestTx {
@@ -192,22 +192,6 @@ fn transport_poll_recv_returns_frame_header_with_payload() {
         Poll::Ready(Err(err)) => panic!("staged frame must poll successfully: {err:?}"),
         Poll::Pending => panic!("staged frame must be ready"),
     };
-    let IngressEvidence::Framed {
-        session,
-        carrier,
-        source,
-        target,
-        label,
-    } = received.evidence()
-    else {
-        panic!("staged transport frame must carry framed ingress evidence");
-    };
-    assert_eq!(session, sid);
-    assert_eq!(carrier, 0);
-    assert_eq!(source, 0);
-    assert_eq!(target, 1);
-    assert_eq!(label.raw(), 6);
-
     assert_eq!(received.payload().as_bytes(), b"peek");
 }
 

@@ -177,7 +177,7 @@ impl EventCursor {
             }
             return self.route_scope_materialization_index(target_scope);
         }
-        panic!("passive route materialization exceeded PackedEventConflict::MAX_CHAIN_DEPTH");
+        crate::invariant();
     }
 
     pub(crate) fn route_scope_materialization_index(&self, scope_id: ScopeId) -> Option<usize> {

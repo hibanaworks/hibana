@@ -5,7 +5,6 @@ pub mod program {
 
 /// Protocol-neutral identifiers used by runtime crates.
 pub mod ids {
-    pub use crate::eff::EffIndex;
     pub use crate::session::types::SessionId;
 }
 
@@ -39,7 +38,6 @@ pub mod wire {
 /// Transport I/O surface plus observation/detail owners.
 pub mod transport {
     pub use crate::transport::{
-        FrameHeader, FrameLabel, IngressEvidence, Outgoing, PortOpen, ReceivedFrame, Transport,
-        TransportError,
+        FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedFrame, Transport, TransportError,
     };
 }

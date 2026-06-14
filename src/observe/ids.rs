@@ -45,7 +45,7 @@ pub const ENDPOINT_SESSION: u16 = 0x0204;
 /// - `causal_key`: expected lane in high byte, mismatch reason in low byte
 /// - `arg0`: Expected session identifier (u32)
 /// - `arg1`: Observed session identifier (u32)
-/// - `arg2`: observed_lane<<24 | source_role<<16 | peer_role<<8 | frame_label
+/// - `arg2`: observed_lane<<24 | source_role<<16 | target_role<<8 | frame_label
 pub const TRANSPORT_MISMATCH: u16 = 0x0205;
 
 pub const TRANSPORT_MISMATCH_SESSION: u8 = 1;
@@ -60,7 +60,7 @@ pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
 /// remains represented by `ENDPOINT_RECV` / `ENDPOINT_SESSION`.
 ///
 /// - `arg0`: Observed session identifier (u32)
-/// - `arg1`: observed_lane<<24 | source_role<<16 | peer_role<<8 | frame_label
+/// - `arg1`: observed_lane<<24 | source_role<<16 | target_role<<8 | frame_label
 pub const TRANSPORT_FRAME: u16 = 0x0206;
 
 /// Transport operation reached a carrier-local terminal condition.

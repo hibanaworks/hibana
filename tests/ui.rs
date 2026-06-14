@@ -60,10 +60,18 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/role_program_lifetime_free.rs");
     t.pass("tests/ui-pass/readme-route-example.rs");
     t.pass("tests/ui-pass/runtime-config-resources.rs");
+    t.pass("tests/ui-pass/runtime-transport-recv-frame.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/g-generic-role-ids.rs");
 
     t.compile_fail("tests/ui/runtime-storage-removed.rs");
+    t.compile_fail("tests/ui/runtime-eff-index-removed.rs");
+    t.compile_fail("tests/ui/runtime-session-id-field-private.rs");
+    t.compile_fail("tests/ui/runtime-ingress-evidence-private.rs");
+    t.compile_fail("tests/ui/runtime-received-frame-evidence-private.rs");
+    t.compile_fail("tests/ui/runtime-decision-arm-index-private.rs");
+    t.compile_fail("tests/ui/runtime-frame-header-peer-role-removed.rs");
+    t.compile_fail("tests/ui/runtime-outgoing-peer-removed.rs");
     t.compile_fail("tests/ui/public_step_name_import.rs");
     t.compile_fail("tests/ui/public_compile_link_boundary.rs");
     t.compile_fail("tests/ui/public_fragment_boundary.rs");

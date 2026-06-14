@@ -1,0 +1,5 @@
+error[E0425]: cannot find type `EffIndex` in module `hibana::runtime::ids`
+ --> tests/ui/runtime-eff-index-removed.rs:2:56
+  |
+2 |     let _ = core::mem::size_of::<hibana::runtime::ids::EffIndex>();
+  |                                                        ^^^^^^^^ not found in `hibana::runtime::ids`
