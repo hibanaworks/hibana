@@ -612,7 +612,7 @@ Useful runtime owners:
 - `runtime::transport::Transport`
 - `runtime::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
 - `runtime::wire::{Payload, WireEncode, WirePayload}`
-- `runtime::TapEvent`
+- `runtime::tap::{TapEvent, TapPort}`
 
 ### Transport
 

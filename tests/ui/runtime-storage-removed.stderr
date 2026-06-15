@@ -1,9 +1,10 @@
-error[E0432]: unresolved imports `hibana::runtime::Clock`, `hibana::runtime::CounterClock`, `hibana::runtime::RING_EVENTS`, `hibana::runtime::RuntimeStorage`
+error[E0432]: unresolved imports `hibana::runtime::Clock`, `hibana::runtime::CounterClock`, `hibana::runtime::RING_EVENTS`, `hibana::runtime::RuntimeStorage`, `hibana::runtime::TapEvent`
  --> tests/ui/runtime-storage-removed.rs:1:23
   |
 1 | use hibana::runtime::{Clock, Config, CounterClock, RING_EVENTS, RuntimeStorage, TapEvent};
-  |                       ^^^^^          ^^^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^^^ no `RuntimeStorage` in `runtime`
-  |                       |              |             |
+  |                       ^^^^^          ^^^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^ no `TapEvent` in `runtime`
+  |                       |              |             |            |
+  |                       |              |             |            no `RuntimeStorage` in `runtime`
   |                       |              |             no `RING_EVENTS` in `runtime`
   |                       |              no `CounterClock` in `runtime`
   |                       no `Clock` in `runtime`

@@ -129,7 +129,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`runtime::wire::{Payload, WireEncode, WirePayload}`",
         "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
         "`runtime::ids::SessionId`",
-        "`runtime::TapEvent`",
+        "`runtime::tap::{TapEvent, TapPort}`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --features std --lib -p hibana",
         "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",

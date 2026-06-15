@@ -362,15 +362,23 @@ fn runtime_surface_hides_tap_storage_resource() {
 
     assert!(
         !runtime_src.contains("pub mod runtime {")
-            && runtime_src.contains("pub use crate::observe::core::TapEvent;")
+            && runtime_src.contains("pub mod tap {")
+            && runtime_src.contains("pub use crate::observe::core::{Evidence, TapEvent, TapPort};")
             && !runtime_src.contains("pub use crate::runtime_core::consts::RING_EVENTS;")
+            && !runtime_src
+                .lines()
+                .any(|line| line.trim() == "pub use crate::observe::core::TapEvent;")
             && !runtime_src.contains("CounterClock")
             && !runtime_src.contains("Clock")
             && !runtime_src.contains("RING_EVENTS")
+            && runtime_allowlist.contains("pub mod tap {")
+            && runtime_allowlist
+                .contains("pub use crate::observe::core::{Evidence, TapEvent, TapPort};")
+            && !runtime_allowlist.contains("pub use crate::observe::core::TapEvent;")
             && !runtime_allowlist.contains("CounterClock")
             && !runtime_allowlist.contains("Clock")
             && !runtime_allowlist.contains("RING_EVENTS"),
-        "runtime surface may expose TapEvent diagnostics but must hide tap storage and clock resources"
+        "runtime surface may expose tap diagnostics only under runtime::tap and must hide tap storage and clock resources"
     );
 
     for forbidden in [

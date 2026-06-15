@@ -45,7 +45,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
         "pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub use crate::session::cluster::error::AttachError;",
-        "pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, false, MAX_RV>, AttachError> {",
+        "pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError> {",
     ] {
         assert!(
             public_allowlists.contains(required),

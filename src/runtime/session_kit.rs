@@ -44,30 +44,73 @@ impl SessionKitStorageState {
     }
 }
 
-/// Rendezvous-scoped runtime witness.
-pub struct RendezvousKit<'kit, 'cfg, T, const HAS_SESSION: bool, const MAX_RV: usize>
+pub(super) struct RendezvousBase<'kit, 'cfg, T, const MAX_RV: usize>
 where
     T: crate::transport::Transport + 'cfg,
 {
     pub(super) kit: &'kit SessionKit<'cfg, T, MAX_RV>,
     pub(super) rv: crate::session::types::RendezvousId,
+}
+
+impl<'kit, 'cfg, T, const MAX_RV: usize> Copy for RendezvousBase<'kit, 'cfg, T, MAX_RV> where
+    T: crate::transport::Transport + 'cfg
+{
+}
+
+impl<'kit, 'cfg, T, const MAX_RV: usize> Clone for RendezvousBase<'kit, 'cfg, T, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'kit, 'cfg, T, const MAX_RV: usize> RendezvousBase<'kit, 'cfg, T, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    #[inline]
+    pub(super) fn tap_port(&self) -> crate::runtime::tap::TapPort<'_> {
+        crate::invariant_some(self.kit.inner.get_local(&self.rv))
+            .tap()
+            .port()
+    }
+}
+
+/// Registered rendezvous witness.
+pub struct RendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
+}
+
+/// Session-bound rendezvous witness.
+pub struct SessionRendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
     pub(super) sid: crate::runtime::ids::SessionId,
 }
 
-/// Projected role witness within a rendezvous or one session attach.
-pub struct RoleKit<
-    'kit,
-    'cfg,
-    'prog,
-    const ROLE: u8,
-    T,
-    const HAS_SESSION: bool,
-    const MAX_RV: usize,
-> where
+/// Projected role witness before a session id is selected.
+pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
+where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) kit: &'kit SessionKit<'cfg, T, MAX_RV>,
-    pub(super) rv: crate::session::types::RendezvousId,
+    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
+    pub(super) program: &'prog crate::runtime::program::RoleProgram<ROLE>,
+}
+
+/// Session-bound projected role witness.
+pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
     pub(super) sid: crate::runtime::ids::SessionId,
     pub(super) program: &'prog crate::runtime::program::RoleProgram<ROLE>,
 }
@@ -143,7 +186,7 @@ where
         &self,
         config: crate::runtime::Config<'cfg>,
         transport: T,
-    ) -> Result<RendezvousKit<'_, 'cfg, T, false, MAX_RV>, AttachError> {
+    ) -> Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError> {
         let location = Callsite::caller();
         let rv = self
             .inner
@@ -155,9 +198,7 @@ where
                 )
             })?;
         Ok(RendezvousKit {
-            kit: self,
-            rv,
-            sid: crate::runtime::ids::SessionId::new(0),
+            base: RendezvousBase { kit: self, rv },
         })
     }
 

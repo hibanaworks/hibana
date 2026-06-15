@@ -515,7 +515,7 @@ fn run_attached_shape(
         let runtime_snapshot = {
             let local_rv = kit
                 .inner
-                .get_local(&rv.rv)
+                .get_local(&rv.base.rv)
                 .expect("registered rendezvous must stay reachable");
             let sidecar_scratch_high_water_bytes = local_rv.endpoint_lease_floor();
             let frontier_workspace_bytes = local_rv.resident_frontier_workspace_floor();

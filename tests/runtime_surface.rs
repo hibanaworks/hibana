@@ -381,24 +381,34 @@ fn runtime_root_exposes_only_core_buckets() {
         "runtime root must not keep identifier aliases outside runtime::ids"
     );
     assert!(
-        runtime_rs.contains("Result<RendezvousKit<'_, 'cfg, T, false, MAX_RV>, AttachError>")
+        runtime_rs.contains("Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError>")
             && runtime_rs.contains("pub fn rendezvous(")
+            && runtime_rs.contains("pub struct SessionRendezvousKit")
+            && runtime_rs.contains("pub struct SessionRoleKit")
             && !runtime_rs.contains("pub fn add_rendezvous(")
             && !runtime_rs.contains("pub fn add_rendezvous( &self")
             && !runtime_rs.contains("crate::runtime::ids::RendezvousId")
-            && runtime_rs.contains("crate::runtime::ids::SessionId"),
-        "SessionKit must expose registered RendezvousKit witnesses, not raw RendezvousId attach authority"
+            && runtime_rs.contains("crate::runtime::ids::SessionId")
+            && !runtime_rs.contains("HAS_SESSION")
+            && !runtime_rs.contains("RendezvousKit<'_, 'cfg, T, false")
+            && !runtime_rs.contains("RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, false"),
+        "SessionKit must expose named rendezvous witnesses, not raw RendezvousId attach authority or bool typestate"
     );
 
     for required in [
-        "pub use session_kit::{RendezvousKit, RoleKit, SessionKit, SessionKitStorage};",
+        "RendezvousKit",
+        "RoleKit",
+        "SessionRendezvousKit",
+        "SessionRoleKit",
+        "SessionKitStorage",
         "pub use crate::runtime_core::config::Config;",
         "pub mod ids {",
+        "pub mod tap {",
+        "pub use crate::observe::core::{Evidence, TapEvent, TapPort};",
         "pub mod resolver {",
         "ResolverRef",
         "pub mod wire {",
         "pub mod transport {",
-        "pub use crate::observe::core::TapEvent;",
         "pub use crate::global::program::Projectable;",
         "Transport,",
         "WirePayload",
@@ -419,6 +429,12 @@ fn runtime_root_exposes_only_core_buckets() {
             "runtime surface must not expose public clock or tap-buffer resources: {forbidden}"
         );
     }
+    assert!(
+        !runtime_public
+            .lines()
+            .any(|line| line.trim() == "pub use crate::observe::core::TapEvent;"),
+        "TapEvent diagnostics must stay under runtime::tap, not the runtime root"
+    );
     assert!(
         !runtime_rs.contains("pub mod binding {") && !runtime_rs.contains("pub fn ingress("),
         "ingress binding must not remain a public runtime bucket or attach verb"
@@ -514,7 +530,11 @@ fn runtime_allowlist_tracks_core_boundary() {
     let allowlist = compact_ws(&read(".github/allowlists/runtime-public-api.txt"));
 
     for required in [
-        "pub use crate::observe::core::TapEvent;",
+        "pub mod tap {",
+        "pub use crate::observe::core::{Evidence, TapEvent, TapPort};",
+        "pub struct RendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>",
+        "pub struct SessionRendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>",
+        "pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>",
         "pub struct SessionKitStorage",
         "Projectable",
         "WirePayload",
@@ -559,6 +579,10 @@ fn runtime_allowlist_tracks_core_boundary() {
         "Clock",
         "CounterClock",
         "RING_EVENTS",
+        "HAS_SESSION",
+        "RendezvousKit<'_, 'cfg, T, false",
+        "RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, false",
+        "pub use crate::observe::core::TapEvent;",
     ] {
         assert!(
             !allowlist.contains(forbidden),

@@ -1,5 +1,6 @@
-use super::{AttachError, RendezvousKit, RoleKit};
-impl<'kit, 'cfg, T, const MAX_RV: usize> RendezvousKit<'kit, 'cfg, T, false, MAX_RV>
+use super::{AttachError, RendezvousKit, RoleKit, SessionRendezvousKit, SessionRoleKit};
+
+impl<'kit, 'cfg, T, const MAX_RV: usize> RendezvousKit<'kit, 'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -7,35 +8,46 @@ where
     pub fn session(
         &self,
         sid: crate::runtime::ids::SessionId,
-    ) -> RendezvousKit<'kit, 'cfg, T, true, MAX_RV> {
-        RendezvousKit {
-            kit: self.kit,
-            rv: self.rv,
+    ) -> SessionRendezvousKit<'kit, 'cfg, T, MAX_RV> {
+        SessionRendezvousKit {
+            base: self.base,
             sid,
         }
     }
-}
 
-impl<'kit, 'cfg, T, const HAS_SESSION: bool, const MAX_RV: usize>
-    RendezvousKit<'kit, 'cfg, T, HAS_SESSION, MAX_RV>
-where
-    T: crate::transport::Transport + 'cfg,
-{
     #[inline]
     pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
-        crate::invariant_some(self.kit.inner.get_local(&self.rv))
-            .tap()
-            .port()
+        self.base.tap_port()
     }
 
     #[inline]
     pub fn role<'prog, const ROLE: u8>(
         &self,
         program: &'prog crate::runtime::program::RoleProgram<ROLE>,
-    ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, HAS_SESSION, MAX_RV> {
+    ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV> {
         RoleKit {
-            kit: self.kit,
-            rv: self.rv,
+            base: self.base,
+            program,
+        }
+    }
+}
+
+impl<'kit, 'cfg, T, const MAX_RV: usize> SessionRendezvousKit<'kit, 'cfg, T, MAX_RV>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    #[inline]
+    pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
+        self.base.tap_port()
+    }
+
+    #[inline]
+    pub fn role<'prog, const ROLE: u8>(
+        &self,
+        program: &'prog crate::runtime::program::RoleProgram<ROLE>,
+    ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV> {
+        SessionRoleKit {
+            base: self.base,
             sid: self.sid,
             program,
         }
@@ -43,7 +55,7 @@ where
 }
 
 impl<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
-    RoleKit<'kit, 'cfg, 'prog, ROLE, T, true, MAX_RV>
+    SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
     'cfg: 'kit,
@@ -52,12 +64,14 @@ where
     #[inline]
     #[track_caller]
     pub fn enter(self) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
-        self.kit.enter_attached(self.rv, self.sid, self.program)
+        self.base
+            .kit
+            .enter_attached(self.base.rv, self.sid, self.program)
     }
 }
 
 impl<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
-    RoleKit<'kit, 'cfg, 'prog, ROLE, T, false, MAX_RV>
+    RoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -71,7 +85,8 @@ where
         self,
         resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), crate::runtime::resolver::ResolverError> {
-        self.kit
-            .set_role_resolver::<RESOLVER, ROLE>(self.rv, self.program, resolver)
+        self.base
+            .kit
+            .set_role_resolver::<RESOLVER, ROLE>(self.base.rv, self.program, resolver)
     }
 }

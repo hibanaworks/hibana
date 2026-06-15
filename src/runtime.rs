@@ -53,4 +53,6 @@ mod session_kit;
 mod tests;
 
 pub use buckets::*;
-pub use session_kit::{RendezvousKit, RoleKit, SessionKit, SessionKitStorage};
+pub use session_kit::{
+    RendezvousKit, RoleKit, SessionKit, SessionKitStorage, SessionRendezvousKit, SessionRoleKit,
+};
