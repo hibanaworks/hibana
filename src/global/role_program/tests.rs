@@ -6,9 +6,13 @@ use crate::global::const_dsl::{EffList, ScopeKind};
 use crate::global::program::Projectable;
 use crate::global::typestate::LocalConflict;
 
+#[macro_use]
+#[path = "tests/final_form_protocol_matrix.rs"]
+mod final_form_protocol_matrix;
 mod protocol_matrix;
 
 const TAP_EVENT_STRESS_ROW_BUDGET: usize = 512;
+const _: () = assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
 
 const fn test_atom(label: u8, lane: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -149,7 +153,6 @@ fn resident_lane_view_and_route_caps_stay_compact() {
         crate::eff::meta::MAX_EFF_NODES,
         "max local rows are scratch/projection capacity only"
     );
-    assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
     assert_eq!(MAX_ROUTE_ARM_LANE_ROWS, MAX_ROUTE_SCOPE_LANE_ROWS * 2);
 }
 

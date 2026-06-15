@@ -440,38 +440,44 @@ fn source_text_does_not_regrow_old_private_boundary_vocabulary() {
 }
 
 #[test]
-fn public_failure_evidence_keeps_callsite_accessors() {
+fn public_failure_evidence_is_compact_operation_only() {
     for (name, source) in [
         ("EndpointError", endpoint_facade_source()),
         ("AttachError", read("src/session/cluster/error.rs")),
         ("ResolverError", cluster_core_source()),
     ] {
-        for required in [
-            "pub const fn operation(&self) -> &'static str",
+        let required = "pub const fn operation(&self) -> &'static str";
+        assert!(
+            source.contains(required),
+            "{name} must keep compact public operation diagnostics: {required}"
+        );
+        for forbidden in [
             "pub const fn file(&self) -> &'static str",
             "pub const fn line(&self) -> u32",
             "pub const fn column(&self) -> u32",
         ] {
             assert!(
-                source.contains(required),
-                "{name} must keep stable public operation/file/line/column diagnostics: {required}"
+                !source.contains(forbidden),
+                "{name} must not expose source-location diagnostics: {forbidden}"
             );
         }
     }
 }
 
 #[test]
-fn production_callsite_location_storage_has_one_owner() {
+fn production_callsite_location_storage_is_std_cfg_only() {
     let production = read_production_rs_tree("src");
     let diag = read("src/diag.rs");
     let without_diag = production.replace(&diag, "");
 
     assert!(
         diag.contains("pub(crate) struct Callsite")
+            && diag.contains("#[cfg(feature = \"std\")]")
+            && diag.contains("#[cfg(not(feature = \"std\"))]")
             && diag.contains("use core::panic::Location;")
             && diag.contains("location: &'static Location<'static>")
             && diag.contains("Location::caller()"),
-        "diag::Callsite must remain the single callsite Location owner"
+        "diag::Callsite must keep Location behind the std cfg and provide a no_std compact shape"
     );
     for forbidden in [
         "core::panic::Location",

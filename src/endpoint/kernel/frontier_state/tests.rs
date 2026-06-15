@@ -30,8 +30,7 @@ fn observed_key_storage(
     }
     let mut key_slots = std::vec::Vec::with_capacity(entries.len().max(1));
     key_slots.resize(entries.len().max(1), FrontierObservationSlot::EMPTY);
-    let mut offer_lanes = std::vec::Vec::with_capacity(lane_word_count(1));
-    offer_lanes.resize(lane_word_count(1), 0usize);
+    let mut offer_lanes = std::vec![0usize; lane_word_count(1)];
     let mut key = FrontierObservationKey::from_parts(
         key_slots.as_mut_ptr(),
         key_slots.len(),

@@ -2,15 +2,13 @@ use super::{BranchPreviewView, CursorEndpoint, EndpointRxAuditPlan};
 use crate::{
     observe::ids,
     resolver_audit::ResolverSlot,
-    runtime_core::config::Clock,
     session::types::Lane,
     transport::{Transport, wire::FrameFlags},
 };
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn build_endpoint_rx_audit_plan(
         &self,

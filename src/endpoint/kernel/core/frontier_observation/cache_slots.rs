@@ -9,10 +9,9 @@ use super::{
 };
 use crate::endpoint::kernel::offer::CurrentReentryControllerEvidence;
 use crate::transport::Transport;
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     pub(super) fn cached_active_entries_len(cached_key: FrontierObservationKey) -> usize {

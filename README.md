@@ -295,9 +295,9 @@ The public evidence envelopes are domain-specific:
 - `AttachError` for rendezvous and endpoint attach.
 
 There is no public wide `HibanaError`, and public error-kind enums are not part
-of the application decision surface. The `Debug` output records the operation
-and callsite so top-level runners and panic handlers can report where a failure
-was observed without requiring a second error layer at every call.
+of the application decision surface. Public diagnostics expose the compact
+operation name; host `Debug` output may include extra detail, but Pico-facing
+code does not need source-path accessors.
 
 ### Parallel Composition
 
@@ -574,16 +574,14 @@ The canonical runtime path is borrowed and caller-provided:
 ```rust,ignore
 use hibana::runtime;
 use hibana::runtime::ids::SessionId;
-use hibana::runtime::{Config, CounterClock, RING_EVENTS};
+use hibana::runtime::Config;
 
-let mut tap_buf = [runtime::TapEvent::zero(); RING_EVENTS];
 let mut slab = [0u8; 64 * 1024];
 
-let clock = CounterClock::zero();
 let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 let kit = kit_storage.init();
 
-let config = Config::from_resources((&mut tap_buf, &mut slab), clock);
+let config = Config::from_resources(&mut slab);
 let rv = kit.rendezvous(config, transport)?;
 let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;
 ```
@@ -593,14 +591,14 @@ kit in place into caller-owned storage, returns the stable borrow used
 by endpoint attach, and drops the initialized kit exactly once. The raw unsafe
 initializer and `MaybeUninit` protocol are not part of the public surface.
 
-`Config::from_resources` borrows the caller-owned tap ring and slab, and carries
-the clock authority. Lane domain and endpoint lease capacity are not
-caller-selected config. A fresh rendezvous starts with no materialized lane
-storage and no endpoint lease table. Role attach reads the projected descriptor,
-grows exactly the lane tables and endpoint lease entries it needs, and preserves
-existing session state if a later projected role needs a wider lane span.
-Runtime code must not pass caller-chosen lane windows, endpoint counts, or
-deadline knobs.
+`Config::from_resources` borrows the caller-owned runtime slab. A fresh
+rendezvous carves its runtime prefix from that slab and starts with no
+materialized lane storage and no endpoint lease table. Role attach reads the
+projected descriptor, grows exactly the lane tables and endpoint lease entries it
+needs, and preserves existing session state if a later projected role needs a
+wider lane span. Runtime code obtains all runtime resources from that one slab;
+lane windows, endpoint counts, and diagnostics capacity stay descriptor- or
+runtime-derived.
 
 The protocol crate owns concrete `MyTransport` and any ingress demux state. The
 application receives only `Endpoint`.
@@ -609,7 +607,7 @@ Useful runtime owners:
 
 - `runtime::program::{project, RoleProgram}`
 - `runtime::SessionKit`
-- `runtime::{Config, CounterClock, RING_EVENTS}`
+- `runtime::Config`
 - `runtime::ids::SessionId`
 - `runtime::transport::Transport`
 - `runtime::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
@@ -647,10 +645,10 @@ The canonical receive-side observation is the `ReceivedFrame` returned by
 together; there is no separate receive-observation hook.
 `ReceivedFrame::deterministic(...)` is valid only for a single deterministic
 receive; route, offer, and decode demux require
-`ReceivedFrame::framed(header, payload)`, where Hibana compares the header with
-the endpoint's expected session/lane/role/label context before any endpoint
-progress can consume the payload. Route/session/progress authority remains in
-Hibana.
+`ReceivedFrame::framed(FrameHeader::from_raw(raw_header), payload)`, where the
+transport supplies one carrier-owned `u64` observation and Hibana performs the
+session/lane/role/label comparison internally before any endpoint progress can
+consume the payload. Route/session/progress authority remains in Hibana.
 
 ### Ingress Demux
 

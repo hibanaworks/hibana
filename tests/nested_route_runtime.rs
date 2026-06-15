@@ -20,13 +20,13 @@ use ::core::{
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
 use placement_support::write_value;
 use runtime_support::with_runtime_workspace;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 const ROUTE_BRANCH_BYTES_MAX: usize = 32;
 const OFFER_FUTURE_BYTES_MAX: usize = 48;
 const DECODE_FUTURE_BYTES_MAX: usize = 48;
@@ -74,10 +74,9 @@ fn worker_program() -> RoleProgram<1> {
 // Test nested first-visible routes.
 #[test]
 fn nested_branch_commit_stack() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config =
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
+            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport.clone())
@@ -172,10 +171,9 @@ fn nested_branch_commit_stack() {
 
 #[test]
 fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config =
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
+            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster.rendezvous(config, transport).expect("register rv");
 
@@ -247,10 +245,9 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
 
 #[test]
 fn localside_offer_decode_sizes_stay_compact() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config =
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
+            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster.rendezvous(config, transport).expect("register rv");
 

@@ -1,12 +1,12 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
-    ActiveEntrySet, Arm, Clock, ControlFlow, CurrentFrontierSelectionState,
-    CurrentScopeSelectionMeta, CursorEndpoint, DeferReason, FrontierDeferOutcome,
-    FrontierObservationDomain, FrontierObservationKey, FrontierVisitSet, IngressEvidenceState,
-    LaneSetView, ObservedEntrySet, OfferEntryObservedState, OfferEntryPosition,
-    OfferEvidenceOutcome, OfferLaneEntrySlotMasks, OfferProgressState, OfferScopeSelection,
-    OfferStagedIngress, Poll, Port, RecvError, RecvResult, ResolverDeferProgress, RouteArmToken,
-    ScopeFrameLabelMeta, ScopeId, Transport, frontier_observation_key_view_from_storage,
+    ActiveEntrySet, Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
+    CursorEndpoint, DeferReason, FrontierDeferOutcome, FrontierObservationDomain,
+    FrontierObservationKey, FrontierVisitSet, IngressEvidenceState, LaneSetView, ObservedEntrySet,
+    OfferEntryObservedState, OfferEntryPosition, OfferEvidenceOutcome, OfferLaneEntrySlotMasks,
+    OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult,
+    ResolverDeferProgress, RouteArmToken, ScopeFrameLabelMeta, ScopeId, Transport,
+    frontier_observation_key_view_from_storage,
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     lane_port, state_index_to_usize,
 };
@@ -21,13 +21,12 @@ pub(super) struct FrontierDeferRequest {
     pub(super) selected_arm: Option<u8>,
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(in crate::endpoint::kernel) fn offer_entry_frame_label_meta(
-        endpoint: &CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<ScopeFrameLabelMeta> {
@@ -37,13 +36,13 @@ where
         {
             return None;
         }
-        let reentry_meta = CursorEndpoint::<ROLE, T, C, MAX_RV>::scope_reentry_meta_at(
+        let reentry_meta = CursorEndpoint::<ROLE, T, MAX_RV>::scope_reentry_meta_at(
             &endpoint.cursor,
             scope_id,
             entry_idx,
         );
         Some(
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::scope_frame_label_meta_at(
+            CursorEndpoint::<ROLE, T, MAX_RV>::scope_frame_label_meta_at(
                 &endpoint.cursor,
                 scope_id,
                 reentry_meta,
@@ -54,7 +53,7 @@ where
 
     #[inline]
     pub(super) fn offer_refresh_mask(
-        endpoint: &CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         lane_idx: usize,
     ) -> bool {
         endpoint.cursor.lane_has_pending_step(lane_idx)
@@ -83,7 +82,7 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn frontier_observation_active_entries(
-        endpoint: &CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         domain: FrontierObservationDomain,
     ) -> ActiveEntrySet {
         if domain.uses_root_entries() {
@@ -95,7 +94,7 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn frontier_observation_offer_lane_entry_slot_masks(
-        endpoint: &CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         domain: FrontierObservationDomain,
     ) -> OfferLaneEntrySlotMasks {
         let active_entries = Self::frontier_observation_active_entries(endpoint, domain);
@@ -106,7 +105,7 @@ where
             frontier_offer_lane_entry_slot_masks_view_from_storage(scratch_ptr, layout);
         let mut remaining_slots = active_entries.occupancy_mask();
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut remaining_slots)
+            CursorEndpoint::<ROLE, T, MAX_RV>::next_slot_in_mask(&mut remaining_slots)
         {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
@@ -131,7 +130,7 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn frontier_observation_key(
-        endpoint: &CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         domain: FrontierObservationDomain,
     ) -> FrontierObservationKey {
         let active_entries = Self::frontier_observation_active_entries(endpoint, domain);
@@ -147,7 +146,7 @@ where
         key.set_active_entries_from(active_entries);
         let mut remaining_entries = active_entries.occupancy_mask();
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
+            CursorEndpoint::<ROLE, T, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
         {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
@@ -173,7 +172,7 @@ where
         }
         let mut remaining_entries = active_entries.occupancy_mask();
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
+            CursorEndpoint::<ROLE, T, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
         {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
@@ -209,14 +208,14 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn ensure_global_frontier_scratch_ready(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &mut CursorEndpoint<'r, ROLE, T, MAX_RV>,
     ) {
         endpoint.init_global_frontier_scratch_if_needed();
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn frontier_observation_cache(
-        endpoint: &CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         domain: FrontierObservationDomain,
     ) -> (FrontierObservationKey, ObservedEntrySet) {
         endpoint.frontier_observation_cache_snapshot(domain)
@@ -224,7 +223,7 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn store_frontier_observation(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &mut CursorEndpoint<'r, ROLE, T, MAX_RV>,
         domain: FrontierObservationDomain,
         key: FrontierObservationKey,
         observed_entries: ObservedEntrySet,
@@ -234,7 +233,7 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn cached_offer_entry_observed_state_for_rebuild(
-        endpoint: &CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         entry_idx: usize,
         observation_key: FrontierObservationKey,
         cached_key: FrontierObservationKey,
@@ -249,7 +248,7 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+        endpoint: &mut CursorEndpoint<'r, ROLE, T, MAX_RV>,
         domain: FrontierObservationDomain,
     ) {
         endpoint.refresh_frontier_observation_cache_impl(domain)
@@ -296,7 +295,7 @@ where
             OfferEntryPosition::AfterRouteEntry
         };
         let frontier_parallel_root =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::parallel_scope_root(&self.cursor, scope_id);
+            CursorEndpoint::<ROLE, T, MAX_RV>::parallel_scope_root(&self.cursor, scope_id);
         Ok(OfferScopeSelection {
             scope_id,
             frontier_parallel_root,
@@ -405,7 +404,7 @@ where
             ResolverDeferProgress::Settled
         };
         let is_controller = self.cursor.is_route_controller(scope_id);
-        let frontier = CursorEndpoint::<ROLE, T, C, MAX_RV>::frontier_kind_for_cursor(
+        let frontier = CursorEndpoint::<ROLE, T, MAX_RV>::frontier_kind_for_cursor(
             &self.cursor,
             scope_id,
             is_controller,
@@ -435,7 +434,7 @@ where
                 Some(root) => root,
                 None => ScopeId::none(),
             },
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::frontier_kind_for_cursor(
+            CursorEndpoint::<ROLE, T, MAX_RV>::frontier_kind_for_cursor(
                 &self.cursor,
                 scope_id,
                 current_is_controller,
@@ -556,7 +555,7 @@ where
                 .cursor
                 .route_scope_controller_resolver(scope_id)
                 .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
-        let frontier_facts = CursorEndpoint::<ROLE, T, C, MAX_RV>::frontier_facts_at(
+        let frontier_facts = CursorEndpoint::<ROLE, T, MAX_RV>::frontier_facts_at(
             &self.cursor,
             scope_id,
             current_is_controller,
@@ -564,7 +563,7 @@ where
             current_idx,
         );
         let cursor_parallel =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::parallel_scope_root(&self.cursor, scope_id);
+            CursorEndpoint::<ROLE, T, MAX_RV>::parallel_scope_root(&self.cursor, scope_id);
         let cursor_parallel_has_offer =
             cursor_parallel.is_some_and(|root| self.root_frontier_active_mask(root) != 0);
         let current_entry_has_offer = self.offer_entry_has_active_lanes(current_idx);

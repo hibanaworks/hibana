@@ -55,6 +55,14 @@ impl SessionFaultKind {
     }
 }
 
+#[derive(Clone, Copy)]
+struct AssocStorageParts {
+    lane_to_sid: *mut SessionId,
+    ref_counts: *mut u8,
+    faults: *mut u8,
+    waiters: *mut WaiterSlot,
+}
+
 /// Association table (session ID ↔ lane mapping).
 ///
 /// Tracks which lane is assigned to each lane slot inside the configured
@@ -158,6 +166,49 @@ impl AssocTable {
         )
     }
 
+    unsafe fn storage_parts(storage: *mut u8, lane_slots: usize) -> AssocStorageParts {
+        let lane_to_sid = storage.cast::<SessionId>();
+        let count_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    storage as usize,
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<SessionId>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
+        let ref_counts = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(count_offset) }.cast::<u8>();
+        let fault_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    Self::checked_add_usize(storage as usize, count_offset),
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<u8>(),
+            ),
+            storage as usize,
+        );
+        let faults = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(fault_offset) }.cast::<u8>();
+        let waiter_offset = Self::checked_sub_usize(
+            Self::align_up(
+                Self::checked_add_usize(
+                    Self::checked_add_usize(storage as usize, fault_offset),
+                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
+                ),
+                core::mem::align_of::<WaiterSlot>(),
+            ),
+            storage as usize,
+        );
+        let waiters = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
+        AssocStorageParts {
+            lane_to_sid,
+            ref_counts,
+            faults,
+            waiters,
+        }
+    }
+
     unsafe fn bind_storage(
         &mut self,
         lane_base: u32,
@@ -192,49 +243,18 @@ impl AssocTable {
         lane_base: u32,
         lane_slots: usize,
     ) {
-        let lane_to_sid = storage.cast::<SessionId>();
-        let count_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    storage as usize,
-                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<SessionId>()),
-                ),
-                core::mem::align_of::<u8>(),
-            ),
-            storage as usize,
-        );
-        let ref_counts = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(count_offset) }.cast::<u8>();
-        let fault_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    Self::checked_add_usize(storage as usize, count_offset),
-                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
-                ),
-                core::mem::align_of::<u8>(),
-            ),
-            storage as usize,
-        );
-        let faults = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(fault_offset) }.cast::<u8>();
-        let waiter_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    Self::checked_add_usize(storage as usize, fault_offset),
-                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
-                ),
-                core::mem::align_of::<WaiterSlot>(),
-            ),
-            storage as usize,
-        );
-        let waiters = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
+        let parts = /* SAFETY: the caller supplies the assoc-table arena with `lane_slots` capacity. */ unsafe {
+            Self::storage_parts(storage, lane_slots)
+        };
         /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
         unsafe {
             self.bind_storage(
                 lane_base,
                 lane_slots,
-                lane_to_sid,
-                ref_counts,
-                faults,
-                waiters,
+                parts.lane_to_sid,
+                parts.ref_counts,
+                parts.faults,
+                parts.waiters,
             );
         }
     }
@@ -244,18 +264,8 @@ impl AssocTable {
         !self.lane_to_sid_ptr().is_null()
     }
 
-    #[inline]
-    pub(super) fn storage_ptr(&self) -> *mut u8 {
-        self.lane_to_sid_ptr().cast::<u8>()
-    }
-
-    #[inline]
-    pub(super) const fn storage_bytes_current(&self) -> usize {
-        Self::storage_bytes(self.lane_slots as usize)
-    }
-
-    pub(super) unsafe fn rebind_from_storage_copying_entries(
-        &mut self,
+    pub(super) unsafe fn init_replacement_storage(
+        &self,
         storage: *mut u8,
         lane_base: u32,
         lane_slots: usize,
@@ -266,48 +276,17 @@ impl AssocTable {
         let source_counts = self.ref_counts_ptr();
         let source_faults = self.faults_ptr();
         let source_waiters = self.waiters_ptr();
-        let lane_to_sid = storage.cast::<SessionId>();
-        let count_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    storage as usize,
-                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<SessionId>()),
-                ),
-                core::mem::align_of::<u8>(),
-            ),
-            storage as usize,
-        );
-        let ref_counts = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(count_offset) }.cast::<u8>();
-        let fault_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    Self::checked_add_usize(storage as usize, count_offset),
-                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
-                ),
-                core::mem::align_of::<u8>(),
-            ),
-            storage as usize,
-        );
-        let faults = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(fault_offset) }.cast::<u8>();
-        let waiter_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    Self::checked_add_usize(storage as usize, fault_offset),
-                    Self::checked_mul_usize(lane_slots, core::mem::size_of::<u8>()),
-                ),
-                core::mem::align_of::<WaiterSlot>(),
-            ),
-            storage as usize,
-        );
-        let waiters = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
+        let parts = /* SAFETY: `storage` is the freshly leased assoc-table arena. */ unsafe {
+            Self::storage_parts(storage, lane_slots)
+        };
         let mut idx = 0usize;
         while idx < lane_slots {
             /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
             unsafe {
-                lane_to_sid.add(idx).write(SessionId::new(0));
-                ref_counts.add(idx).write(0);
-                faults.add(idx).write(SessionFaultKind::ABSENT_CODE);
-                WaiterSlot::init_empty(waiters.add(idx));
+                parts.lane_to_sid.add(idx).write(SessionId::new(0));
+                parts.ref_counts.add(idx).write(0);
+                parts.faults.add(idx).write(SessionFaultKind::ABSENT_CODE);
+                WaiterSlot::init_empty(parts.waiters.add(idx));
             }
             idx += 1;
         }
@@ -319,25 +298,70 @@ impl AssocTable {
                 if new_idx < lane_slots {
                     /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                     unsafe {
-                        lane_to_sid.add(new_idx).write(*source_sids.add(source_idx));
-                        ref_counts
+                        parts
+                            .lane_to_sid
+                            .add(new_idx)
+                            .write(*source_sids.add(source_idx));
+                        parts
+                            .ref_counts
                             .add(new_idx)
                             .write(*source_counts.add(source_idx));
-                        faults.add(new_idx).write(*source_faults.add(source_idx));
-                        waiters
+                        parts
+                            .faults
                             .add(new_idx)
-                            .write(core::ptr::read(source_waiters.add(source_idx)));
+                            .write(*source_faults.add(source_idx));
+                        WaiterSlot::init_clone_from(
+                            parts.waiters.add(new_idx),
+                            &*source_waiters.add(source_idx),
+                        );
                     }
                 }
             }
             source_idx += 1;
         }
+    }
+
+    pub(super) unsafe fn clear_waiters_in_storage(storage: *mut u8, lane_slots: usize) {
+        let parts = /* SAFETY: the caller passes an initialized assoc-table arena. */ unsafe {
+            Self::storage_parts(storage, lane_slots)
+        };
+        let mut idx = 0usize;
+        while idx < lane_slots {
+            /* SAFETY: waiters were initialized as part of assoc-table storage staging or binding. */
+            unsafe {
+                (*parts.waiters.add(idx)).clear();
+            }
+            idx += 1;
+        }
+    }
+
+    pub(super) fn clear_current_waiters(&self) {
+        let waiters = self.waiters_ptr();
+        let mut idx = 0usize;
+        while idx < self.lane_slots() {
+            /* SAFETY: waiters_ptr points at the currently bound assoc-table waiter column. */
+            unsafe {
+                (*waiters.add(idx)).clear();
+            }
+            idx += 1;
+        }
+    }
+
+    pub(super) unsafe fn commit_storage(
+        &mut self,
+        storage: *mut u8,
+        lane_base: u32,
+        lane_slots: usize,
+    ) {
+        let parts = /* SAFETY: `storage` is an initialized assoc-table arena staged for publication. */ unsafe {
+            Self::storage_parts(storage, lane_slots)
+        };
         self.lane_base = lane_base;
         self.lane_slots = lane_slots as u16;
-        *self.lane_to_sid.get_mut() = lane_to_sid;
-        *self.ref_counts.get_mut() = ref_counts;
-        *self.faults.get_mut() = faults;
-        *self.waiters.get_mut() = waiters;
+        *self.lane_to_sid.get_mut() = parts.lane_to_sid;
+        *self.ref_counts.get_mut() = parts.ref_counts;
+        *self.faults.get_mut() = parts.faults;
+        *self.waiters.get_mut() = parts.waiters;
     }
 
     #[inline]

@@ -68,7 +68,7 @@ impl Transport for DeadlineRecvTransport {
     }
 }
 
-type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport, CounterClock, 2>;
+type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport, 2>;
 
 std::thread_local! {
     static DEADLINE_SESSION_SLOT: UnsafeCell<DeadlineKitStorage> = const {
@@ -78,17 +78,14 @@ std::thread_local! {
 
 #[test]
 fn cursor_recv_can_return_borrowed_frame_views() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let borrowed_program = g::send::<0, 1, Msg<2, FramePayload>>();
             let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
             let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(2);
@@ -121,19 +118,19 @@ fn cursor_recv_can_return_borrowed_frame_views() {
 
 #[test]
 fn direct_recv_deadline_emits_transport_fault_tap() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
-        let tap_ptr = tap_buf as *mut _;
-        with_resident_tls_ref(&DEADLINE_SESSION_SLOT, |cluster| {
+    with_runtime_workspace(|slab| {
+        let fault = with_resident_tls_ref(&DEADLINE_SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::from_resources((unsafe { &mut *tap_ptr }, slab), CounterClock::zero()),
+                    Config::from_resources(slab),
                     DeadlineRecvTransport {
                         error: hibana::runtime::transport::TransportError::Deadline,
                     },
                 )
                 .expect("register rendezvous");
+            let mut tap = rv.tap();
 
             let sid = SessionId::new(73);
             let mut target_endpoint = rv
@@ -148,13 +145,9 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
                 rendered.contains("Deadline") || rendered.contains("Transport(D)"),
                 "recv error must preserve deadline transport cause: {rendered}"
             );
+            tap.find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
+                .expect("deadline must emit transport fault evidence")
         });
-
-        let fault = unsafe { &*tap_ptr }
-            .iter()
-            .copied()
-            .find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
-            .expect("deadline must emit transport fault evidence");
         assert_eq!(
             fault.evidence().reason(),
             hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE
@@ -197,18 +190,15 @@ fn transport_poll_recv_returns_framed_payload() {
 
 #[test]
 fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
-        let tap_ptr = tap_buf as *mut _;
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((unsafe { &mut *tap_ptr }, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
+            let mut tap = rv.tap();
 
             let sid = SessionId::new(71);
             let bad_sid = SessionId::new(72);
@@ -244,9 +234,7 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
                 }
             }
 
-            let mismatch = unsafe { &*tap_ptr }
-                .iter()
-                .copied()
+            let mismatch = tap
                 .find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
                 .expect("session mismatch must emit transport mismatch evidence");
             assert_eq!(
@@ -256,7 +244,7 @@ fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
             assert_eq!(mismatch.arg0, sid.raw());
             assert_eq!(mismatch.arg1, bad_sid.raw());
             assert!(
-                !unsafe { &*tap_ptr }.iter().any(|event| event.id == 0x0206),
+                !tap.any(|event| event.id == 0x0206),
                 "mismatched frames must emit TransportMismatch only, not duplicate TransportFrame"
             );
 

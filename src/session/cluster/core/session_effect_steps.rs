@@ -1,11 +1,10 @@
 use super::{
     ClusterError, DecisionResolution, DynamicResolverEntry, DynamicResolverKey,
-    DynamicResolverResolution, EffIndex, RendezvousId, ResolverRef, SessionCluster,
+    DynamicResolverResolution, EffIndex, RendezvousId, ResolverRef, ResourceScope, SessionCluster,
 };
-impl<'cfg, T, C, const MAX_RV: usize> SessionCluster<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> SessionCluster<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     fn ensure_dynamic_resolver_capacity(
         &self,
@@ -30,8 +29,11 @@ where
                 |bytes, align| /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */ unsafe {
                     (&mut *rv_ptr).allocate_external_persistent_sidecar_bytes(bytes, align)
                 },
-                |ptr, bytes, reclaim_delta| /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */ unsafe {
-                    (&mut *rv_ptr).free_external_persistent_sidecar_bytes(ptr, bytes, reclaim_delta)
+                |sidecar| /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */ unsafe {
+                    (&mut *rv_ptr).free_external_persistent_sidecar(
+                        sidecar,
+                        ResourceScope::ResolverTable,
+                    )
                 },
             )
         })

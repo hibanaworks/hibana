@@ -7,14 +7,12 @@ use crate::{
     endpoint::kernel::lane_port::{self, FrameMismatch},
     endpoint::{RecvError, RecvResult},
     observe::{events, ids},
-    runtime_core::config::Clock,
     transport::{Transport, TransportError},
 };
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     #[cold]
     #[inline]

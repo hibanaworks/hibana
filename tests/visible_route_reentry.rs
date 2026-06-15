@@ -11,11 +11,11 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::g::{self, Message, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 
 const TOP_BODY_REQ: u8 = 151;
 const TOP_BODY_ACK: u8 = 152;
@@ -89,10 +89,9 @@ fn with_visible_reentry_workspace(
     worker_program: RoleProgram<1>,
     run: impl FnOnce(&mut hibana::Endpoint<'static, 0>, &mut hibana::Endpoint<'static, 1>),
 ) {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config =
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
+            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)

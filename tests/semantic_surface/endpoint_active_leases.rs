@@ -13,8 +13,13 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let branch = read("src/endpoint/branch.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview_flow.rs");
     let lifecycle_tests = format!(
-        "{}\n{}\n{}\n{}",
-        read("tests/cursor_send_recv/session_lifecycle.rs"),
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        read("tests/cursor_send_recv/session_progress.rs"),
+        read("tests/cursor_send_recv/session_forget_flow.rs"),
+        read("tests/cursor_send_recv/session_forget_send.rs"),
+        read("tests/cursor_send_recv/session_forget_recv.rs"),
+        read("tests/cursor_send_recv/session_fault_cancel.rs"),
+        read("tests/cursor_send_recv/session_drop_wake.rs"),
         read("tests/offer_decode_receive_evidence.rs"),
         read("tests/nested_route_runtime.rs"),
         read("tests/affine_progression.rs")

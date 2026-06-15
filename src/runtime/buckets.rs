@@ -9,8 +9,7 @@ pub mod ids {
 }
 
 pub use crate::observe::core::TapEvent;
-pub use crate::runtime_core::config::{Clock, Config, CounterClock};
-pub use crate::runtime_core::consts::RING_EVENTS;
+pub use crate::runtime_core::config::Config;
 
 /// Read-only tap observation surface.
 pub mod tap {

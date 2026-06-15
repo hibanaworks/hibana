@@ -240,6 +240,9 @@ fn docs_do_not_regrow_forbidden_attach_api() {
             "kit.enter::<",
             "enter(rv, sid",
             "from_resources(\n//!     &mut tap_buf,\n//!     &mut slab",
+            "CounterClock",
+            "RING_EVENTS",
+            "tap_buf",
         ] {
             assert!(
                 !source.contains(forbidden),
@@ -255,6 +258,7 @@ fn public_docs_do_not_expose_internal_storage_vocabulary() {
         "README.md",
         "src/lib.rs",
         "src/runtime.rs",
+        "src/runtime/session_kit.rs",
         ".github/allowlists/lib-public-api.txt",
         ".github/allowlists/g-public-api.txt",
         ".github/allowlists/endpoint-public-api.txt",
@@ -267,6 +271,21 @@ fn public_docs_do_not_expose_internal_storage_vocabulary() {
                 "{path} must keep resident descriptor/storage vocabulary internal: {forbidden}"
             );
         }
+    }
+}
+
+#[test]
+fn transport_docs_do_not_reference_private_runtime_storage() {
+    let transport = read("src/transport.rs");
+    for forbidden in [
+        "runtime_core::config::Config::slab",
+        "Config::slab",
+        "provides a slab",
+    ] {
+        assert!(
+            !transport.contains(forbidden),
+            "transport docs must not point implementors at private runtime storage: {forbidden}"
+        );
     }
 }
 

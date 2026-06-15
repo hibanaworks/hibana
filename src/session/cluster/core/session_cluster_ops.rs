@@ -32,29 +32,25 @@ use super::{
 /// These helpers are not reentrant guards. Crate-internal callers must keep
 /// endpoint cleanup, descriptor publication, and other callback-capable work in
 /// their typed post-mutation phases so no nested mutable borrow is created.
-pub(crate) struct SessionCluster<'cfg, T, C, const MAX_RV: usize>
+pub(crate) struct SessionCluster<'cfg, T, const MAX_RV: usize>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     /// Session state guarded by interior mutability.
-    pub(crate) storage: core::cell::UnsafeCell<SessionStorage<'cfg, T, C, MAX_RV>>,
+    pub(crate) storage: core::cell::UnsafeCell<SessionStorage<'cfg, T, MAX_RV>>,
     /// Dynamic resolver table separated from core storage state.
     resolvers: core::cell::UnsafeCell<ResolverCore<'cfg, MAX_RV>>,
     _local_only: crate::local::LocalOnly,
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> SessionCluster<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> SessionCluster<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
-            SessionStorage::<T, C, MAX_RV>::init_empty(
-                core::ptr::addr_of_mut!((*dst).storage).cast(),
-            );
+            SessionStorage::<T, MAX_RV>::init_empty(core::ptr::addr_of_mut!((*dst).storage).cast());
             ResolverCore::<'cfg, MAX_RV>::init_empty(
                 core::ptr::addr_of_mut!((*dst).resolvers).cast(),
             );
@@ -63,13 +59,13 @@ where
     }
 
     #[inline]
-    fn storage_ptr(&self) -> *mut SessionStorage<'cfg, T, C, MAX_RV> {
+    fn storage_ptr(&self) -> *mut SessionStorage<'cfg, T, MAX_RV> {
         self.storage.get()
     }
 
     #[inline]
-    pub(crate) fn storage_ref_ptr(&self) -> *const SessionStorage<'cfg, T, C, MAX_RV> {
-        self.storage.get() as *const SessionStorage<'cfg, T, C, MAX_RV>
+    pub(crate) fn storage_ref_ptr(&self) -> *const SessionStorage<'cfg, T, MAX_RV> {
+        self.storage.get() as *const SessionStorage<'cfg, T, MAX_RV>
     }
 
     #[inline]
@@ -85,7 +81,7 @@ where
     /// Runs a mutation inside the session storage owner.
     pub(crate) fn with_storage_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut SessionStorage<'cfg, T, C, MAX_RV>) -> R,
+        F: FnOnce(&mut SessionStorage<'cfg, T, MAX_RV>) -> R,
     {
         /* SAFETY: the session table lives in pinned cluster-owned storage, and crate-internal mutation phases are structured so no nested session borrow is active for the closure duration. */
         unsafe { f(&mut *self.storage_ptr()) }
@@ -115,11 +111,10 @@ where
         role_image: RoleImageSlice<ROLE>,
     ) -> PublicEndpointStorageLayout {
         let arena_layout = role_image.endpoint_arena_layout();
-        let storage_layout =
-            crate::endpoint::kernel::cursor_endpoint_storage_layout::<0, T, C, MAX_RV>(
-                &arena_layout,
-                role_image.endpoint_lane_slot_count(),
-            );
+        let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<0, T, MAX_RV>(
+            &arena_layout,
+            role_image.endpoint_lane_slot_count(),
+        );
         PublicEndpointStorageLayout {
             total_bytes: storage_layout.total_bytes(),
             total_align: storage_layout.total_align(),
@@ -134,7 +129,7 @@ where
         crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
             compiled_role.route_table_frame_slots(),
             compiled_role.route_table_lane_slots(),
-            crate::rendezvous::core::Rendezvous::<T, C>::frontier_workspace_guard_bytes(
+            crate::rendezvous::core::Rendezvous::<T>::frontier_workspace_guard_bytes(
                 compiled_role.descriptor().frontier_scratch_layout(),
             ),
         )
@@ -151,7 +146,7 @@ where
         (
             EndpointLeaseId,
             u32,
-            *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+            *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>,
         ),
         ClusterError,
     >
@@ -174,19 +169,22 @@ where
             .map_err(ClusterError::resource_exhausted)?;
         let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
         let Some(storage_end) = offset.checked_add(required_bytes) else {
-            rv.release_endpoint_lease(slot, generation);
+            rv.release_endpoint_lease(slot, generation)
+                .map_err(ClusterError::resource_exhausted)?;
             return Err(ClusterError::resource_exhausted(
                 ResourceScope::EndpointBounds,
             ));
         };
         if storage_end > slab_len {
-            rv.release_endpoint_lease(slot, generation);
+            rv.release_endpoint_lease(slot, generation)
+                .map_err(ClusterError::resource_exhausted)?;
             return Err(ClusterError::resource_exhausted(
                 ResourceScope::EndpointBounds,
             ));
         }
         if let Err(resource) = rv.ensure_endpoint_lease_live(slot, generation) {
-            rv.release_endpoint_lease(slot, generation);
+            rv.release_endpoint_lease(slot, generation)
+                .map_err(ClusterError::resource_exhausted)?;
             return Err(ClusterError::resource_exhausted(resource));
         }
         Ok((
@@ -197,7 +195,6 @@ where
                 'r,
                 ROLE,
                 T,
-                C,
                 MAX_RV,
             >>(),
         ))
@@ -326,12 +323,13 @@ where
         rv_id: RendezvousId,
         slot: EndpointLeaseId,
         generation: u32,
-    ) {
+    ) -> Result<(), ResourceScope> {
         self.with_storage_mut(|core| {
             if let Some(rv) = core.locals.get_mut(&rv_id) {
-                rv.release_endpoint_lease(slot, generation);
+                rv.release_endpoint_lease(slot, generation)?;
             }
-        });
+            Ok(())
+        })
     }
 
     #[inline]
@@ -343,7 +341,12 @@ where
     ) {
         /* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
         unsafe {
-            self.release_public_endpoint_slot(rv_id, slot, generation);
+            if self
+                .release_public_endpoint_slot(rv_id, slot, generation)
+                .is_err()
+            {
+                crate::invariant();
+            }
         }
     }
 
@@ -397,7 +400,7 @@ where
     /// rendezvous internals directly.
     pub(crate) fn register_rendezvous(
         &self,
-        config: crate::runtime_core::config::Config<'cfg, C>,
+        config: crate::runtime_core::config::Config<'cfg>,
         transport: T,
     ) -> Result<RendezvousId, ClusterError> {
         self.with_storage_mut(|core| {
@@ -422,7 +425,7 @@ where
     ///
     /// Returns a shared reference from cluster-owned storage. Callers must keep
     /// this borrow out of phases that can enter `with_storage_mut`.
-    pub(crate) fn get_local(&self, id: &RendezvousId) -> Option<&Rendezvous<'cfg, 'cfg, T, C>> {
+    pub(crate) fn get_local(&self, id: &RendezvousId) -> Option<&Rendezvous<'cfg, 'cfg, T>> {
         // SAFETY: We're returning a shared reference from UnsafeCell.
         // This is safe because:
         // - The reference is borrowed from `&self`, so it can't outlive the cluster
@@ -455,7 +458,7 @@ where
         lane: Lane,
         role: u8,
         role_count: u8,
-    ) -> Result<LaneLease<'lease, 'cfg, T, C, MAX_RV>, RendezvousError>
+    ) -> Result<LaneLease<'lease, 'cfg, T, MAX_RV>, RendezvousError>
     where
         'cfg: 'lease,
     {

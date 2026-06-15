@@ -6,9 +6,6 @@ use crate::global::compiled::images::{
 use std::println;
 
 #[macro_use]
-#[path = "final_form_protocol_matrix.rs"]
-mod final_form_protocol_matrix;
-#[macro_use]
 #[path = "final_form_protocol_measure_roles.rs"]
 mod final_form_protocol_measure_roles;
 

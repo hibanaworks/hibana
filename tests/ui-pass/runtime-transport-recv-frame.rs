@@ -1,6 +1,5 @@
 use hibana::runtime::{
-    ids::SessionId,
-    transport::{FrameHeader, FrameLabel, ReceivedFrame},
+    transport::{FrameHeader, ReceivedFrame},
     wire::Payload,
 };
 
@@ -9,8 +8,8 @@ fn main() {
     let deterministic = ReceivedFrame::deterministic(Payload::new(&payload));
     let _ = deterministic.payload();
 
-    let header = FrameHeader::new(SessionId::new(1), 2, 3, 4, FrameLabel::new(5));
+    let header = FrameHeader::from_raw(0x0000_0001_0203_0405);
     let framed = ReceivedFrame::framed(header, Payload::new(&payload));
     let _ = framed.payload();
-    let _ = header.target_role();
+    let _ = header.raw();
 }

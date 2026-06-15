@@ -4,10 +4,10 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    Clock, CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome,
-    FrontierDeferRequest, FrontierVisitSet, IngressEvidenceState, OfferAuthorityPath,
-    OfferResolveState, RecvError, RecvResult, ResolveTokenOutcome, ResolvedRouteArm,
-    RouteArmCommitEvidence, RouteArmToken, RouteResolveStep, Transport,
+    CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
+    FrontierVisitSet, IngressEvidenceState, OfferAuthorityPath, OfferResolveState, RecvError,
+    RecvResult, ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
+    RouteResolveStep, Transport,
 };
 pub(super) struct RouteAuthorityResolution {
     pub(super) route_token: RouteArmToken,
@@ -36,10 +36,9 @@ enum PassiveRouteAuthorityOutcome {
     RestartFrontier,
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn resolve_token(
         &mut self,

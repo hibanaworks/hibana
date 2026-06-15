@@ -20,11 +20,11 @@ use hibana::{
     Endpoint, g,
     g::Msg,
     runtime::program::{RoleProgram, project},
-    runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId},
+    runtime::{Config, SessionKitStorage, ids::SessionId},
 };
 
-type HugeKitStorage<'a> = SessionKitStorage<'a, TestTransport, CounterClock, 2>;
-type DeepScopeKitStorage<'a> = SessionKitStorage<'a, TestTransport, CounterClock, 4>;
+type HugeKitStorage<'a> = SessionKitStorage<'a, TestTransport, 2>;
+type DeepScopeKitStorage<'a> = SessionKitStorage<'a, TestTransport, 4>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);
@@ -200,15 +200,12 @@ fn run_attached_sample(
     assert_eq!(route_scope_count, expected_branch_labels.len());
     assert_eq!(route_scope_count, expected_acks.len());
 
-    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+    runtime_support::with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
-                transport.clone(),
-            )
+            .rendezvous(Config::from_resources(slab), transport.clone())
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
         let mut controller = rv
@@ -272,15 +269,12 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
     let controller_program: RoleProgram<0> = project(&program);
     let worker_program: RoleProgram<1> = project(&program);
 
-    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+    runtime_support::with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
-                transport.clone(),
-            )
+            .rendezvous(Config::from_resources(slab), transport.clone())
             .expect("register rendezvous");
         let sid = SessionId::new(0x6300);
         let mut controller = rv
@@ -305,15 +299,12 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
 
 #[test]
 fn high_lane_route_runs_to_completion_on_actual_localside() {
-    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+    runtime_support::with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
-                transport.clone(),
-            )
+            .rendezvous(Config::from_resources(slab), transport.clone())
             .expect("register rendezvous");
 
         let mut controller = rv
@@ -373,15 +364,12 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
 
 #[test]
 fn active_scope_depth_above_128_enters_public_sessionkit_path() {
-    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+    runtime_support::with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let mut kit_storage = DeepScopeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
-                transport.clone(),
-            )
+            .rendezvous(Config::from_resources(slab), transport.clone())
             .expect("register deep-scope rendezvous");
 
         let controller = rv
@@ -395,15 +383,12 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
 
 #[test]
 fn lane_255_runs_to_completion_on_public_sessionkit_path() {
-    runtime_support::with_runtime_workspace(|_clock, tap_buf, slab| {
+    runtime_support::with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
-                transport.clone(),
-            )
+            .rendezvous(Config::from_resources(slab), transport.clone())
             .expect("register rendezvous with the full wire lane domain");
 
         let mut controller = rv

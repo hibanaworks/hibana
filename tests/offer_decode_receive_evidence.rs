@@ -16,16 +16,15 @@ use hibana::g::Message;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{
-    Config, CounterClock, SessionKitStorage,
+    Config, SessionKitStorage,
     ids::SessionId,
     transport::{ReceivedFrame, Transport},
 };
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
-type DeterministicKitStorage =
-    SessionKitStorage<'static, DeterministicRecvTransport, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport, 2>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -125,11 +124,10 @@ fn with_route_workspace(
         &TestTransport,
     ),
 ) {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config =
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
+            let config = Config::from_resources(slab);
             let rv = cluster
                 .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
@@ -158,11 +156,10 @@ fn with_deterministic_route_workspace(
         &DeterministicRecvTransport,
     ),
 ) {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = DeterministicRecvTransport::new();
         with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
-            let config =
-                Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero());
+            let config = Config::from_resources(slab);
             let rv = cluster
                 .rendezvous(config, transport.clone())
                 .expect("register rendezvous");
@@ -355,7 +352,6 @@ fn codec_error_in_public_decode_poisons_same_generation() {
         futures::executor::block_on(async {
             send_left(controller, 1234).await;
             let branch = worker.offer().await.expect("offer left arm");
-            let decode_line = line!() + 1;
             let decode_result = branch.decode::<Msg<71, u64>>().await;
             let err = match decode_result {
                 Ok(_) => panic!("wrong payload shape must fail decode"),
@@ -363,10 +359,9 @@ fn codec_error_in_public_decode_poisons_same_generation() {
             };
             assert_eq!(err.operation(), "decode");
             assert!(
-                err.file()
-                    .ends_with("tests/offer_decode_receive_evidence.rs")
+                format!("{err:?}").contains("Codec"),
+                "wrong payload shape must preserve codec evidence: {err:?}"
             );
-            assert_eq!(err.line(), decode_line);
 
             let err = match worker.offer().await {
                 Ok(_) => panic!("poisoned generation must not re-offer the route arm"),

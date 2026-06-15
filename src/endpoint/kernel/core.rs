@@ -283,11 +283,10 @@ pub(crate) fn kernel_send<'r>(
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> SendKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> SendKernelEndpoint<'r>
+    for CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     fn poll_send_init_kernel(
@@ -371,10 +370,9 @@ pub(in crate::endpoint::kernel) use route_preview::{
 };
 pub(crate) use runtime_types::*;
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     /// Rendezvous id for the primary port.
     #[inline]
@@ -450,10 +448,9 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> Drop for CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> Drop for CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     fn drop(&mut self) {
         if self.public_generation != 0 && !self.cursor.is_terminal() {

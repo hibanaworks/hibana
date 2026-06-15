@@ -59,6 +59,195 @@ fn transport_source() -> String {
 }
 
 #[test]
+fn sidecar_owner_single_authority() {
+    let storage_layout = read("src/rendezvous/core/storage_layout.rs");
+    assert!(
+        storage_layout.contains("pub(crate) struct Sidecar<T>")
+            && storage_layout.contains("ptr: *mut T")
+            && storage_layout.contains("bytes: usize")
+            && storage_layout.contains("reclaim_delta: usize"),
+        "storage layout must keep the single sidecar owner for ptr/bytes/reclaim_delta"
+    );
+
+    for path in [
+        "src/rendezvous/association.rs",
+        "src/rendezvous/tables/route_table.rs",
+        "src/rendezvous/tables/route_table/storage.rs",
+        "src/session/cluster/core/dynamic_resolvers.rs",
+        "src/rendezvous/core.rs",
+        "src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs",
+    ] {
+        let source = read(path);
+        for forbidden in [
+            "storage_reclaim_delta",
+            "STORAGE_TAG_MASK",
+            "encode_frames_ptr",
+            "encode_entries_ptr",
+            "endpoint_lease_reclaim_delta",
+            "reclaim_delta:",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must not independently retain sidecar reclaim authority: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn resolver_sidecar_replacement_publishes_after_release() {
+    let cluster_storage = read("src/session/cluster/core/cluster_storage.rs");
+    let source_pos = cluster_storage
+        .find("let source_storage = bucket.storage_sidecar();")
+        .expect("resolver capacity growth must capture the source sidecar");
+    let stage_pos = cluster_storage
+        .find("bucket.init_replacement_storage(storage.cast(), required);")
+        .expect("resolver replacement must stage entries before release");
+    let release_pos = cluster_storage
+        .find("free(source_storage.cast())")
+        .expect("resolver replacement must release the source sidecar");
+    let commit_pos = cluster_storage
+        .find("bucket.commit_storage(storage.cast(), required);")
+        .expect("resolver replacement must publish the staged sidecar");
+    assert!(
+        source_pos < stage_pos && stage_pos < release_pos && release_pos < commit_pos,
+        "resolver replacement must stage into the new sidecar, release the old sidecar, then publish"
+    );
+
+    let resolver = read("src/session/cluster/core/dynamic_resolvers.rs");
+    assert!(
+        resolver
+            .contains("pub(in crate::session::cluster::core) unsafe fn init_replacement_storage")
+            && resolver.contains("if let Some(entry) = *source_entries.add(source_idx)")
+            && !resolver.contains("(*source_entries.add(source_idx)).take()"),
+        "resolver staging must copy entries without mutating the published source bucket"
+    );
+}
+
+#[test]
+fn assoc_and_route_sidecar_replacement_stage_before_release() {
+    let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
+    let assoc_stage_pos = capacity
+        .find(".init_replacement_storage(lease.ptr(), lane_base, target_slots);")
+        .expect("assoc replacement must stage entries before release");
+    let assoc_release_pos = capacity
+        .find("self.release_sidecar(source_assoc, ResourceScope::LaneStorage)")
+        .expect("assoc replacement must release the source sidecar");
+    let assoc_commit_pos = capacity
+        .find(".commit_storage(lease.ptr(), lane_base, target_slots);")
+        .expect("assoc replacement must publish only after release");
+    assert!(
+        assoc_stage_pos < assoc_release_pos && assoc_release_pos < assoc_commit_pos,
+        "assoc replacement must stage, release, then publish"
+    );
+
+    let route_stage_pos = capacity
+        .find("self.routes.migrate_from_storage(")
+        .expect("route replacement must stage entries before release");
+    let route_release_pos = capacity
+        .find("self.release_sidecar(source_route, ResourceScope::RouteTable)")
+        .expect("route replacement must release the source sidecar");
+    let route_commit_pos = capacity
+        .find("self.routes.rebind_from_storage(")
+        .expect("route replacement must publish only after release");
+    assert!(
+        route_stage_pos < route_release_pos && route_release_pos < route_commit_pos,
+        "route replacement must stage, release, then publish"
+    );
+
+    let assoc = read("src/rendezvous/association.rs");
+    assert!(
+        assoc.contains("pub(super) unsafe fn init_replacement_storage")
+            && assoc.contains("WaiterSlot::init_clone_from")
+            && !assoc.contains("core::ptr::read(source_waiters.add(source_idx))"),
+        "assoc staging must not move out of the published source waiter column"
+    );
+
+    let route = read("src/rendezvous/tables/route_table/storage.rs");
+    assert!(
+        route.contains("WaiterSlot::init_clone_from") && !route.contains("src_waiter.take()"),
+        "route staging must not move out of the published source waiter column"
+    );
+}
+
+#[test]
+fn public_header_surface_minimal() {
+    let transport = read("src/transport.rs");
+    let impl_start = transport
+        .find("impl FrameHeader {")
+        .expect("FrameHeader impl block");
+    let frame_header_source = &transport[impl_start..];
+    let impl_open = frame_header_source
+        .find('{')
+        .expect("FrameHeader impl open");
+    let mut depth = 0usize;
+    let mut impl_end = None;
+    for (idx, byte) in frame_header_source[impl_open..].bytes().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    impl_end = Some(impl_open + idx + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let frame_header_impl = &frame_header_source[..impl_end.expect("FrameHeader impl close")];
+    assert!(
+        frame_header_impl.contains("pub const fn from_raw(raw: u64) -> Self")
+            && frame_header_impl.contains("pub const fn raw(self) -> u64"),
+        "FrameHeader public surface must expose raw evidence roundtrip"
+    );
+    for forbidden in [
+        "pub const fn new(",
+        "pub const fn session(",
+        "pub const fn lane(",
+        "pub const fn source_role(",
+        "pub const fn target_role(",
+        "pub const fn label(",
+    ] {
+        assert!(
+            !frame_header_impl.contains(forbidden),
+            "FrameHeader must not expose public field packing or unpacking: {forbidden}"
+        );
+    }
+    assert!(
+        !read(".github/allowlists/runtime-public-api.txt").contains("FrameHeader::new"),
+        "public allowlist must not preserve FrameHeader::new"
+    );
+}
+
+#[test]
+fn localside_transport_seal() {
+    let localside_sources = [
+        "src/local.rs",
+        "src/endpoint.rs",
+        "src/endpoint/ops.rs",
+        "src/endpoint/flow.rs",
+        "src/endpoint/branch.rs",
+    ]
+    .map(read)
+    .join("\n");
+
+    for forbidden in [
+        "FrameHeader::from_parts",
+        "FrameHeader::new",
+        "pack_frame_header",
+        "ReceivedFrame::framed",
+        "Transport::poll_recv",
+        "Transport::poll_send",
+    ] {
+        assert!(
+            !localside_sources.contains(forbidden),
+            "localside surface must not expose or direct-call transport substrate: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
     for forbidden in [
         repo_path("src/runtime/mgmt.rs"),
@@ -166,15 +355,22 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_resolver_lifecycle_internal_only(
 }
 
 #[test]
-fn runtime_runtime_surface_owns_tapevent_resource() {
-    let runtime_src = runtime_source();
+fn runtime_surface_hides_tap_storage_resource() {
+    let mut runtime_src = read("src/runtime.rs");
+    runtime_src.push_str(&read("src/runtime/buckets.rs"));
+    let runtime_allowlist = read(".github/allowlists/runtime-public-api.txt");
 
     assert!(
         !runtime_src.contains("pub mod runtime {")
             && runtime_src.contains("pub use crate::observe::core::TapEvent;")
-            && runtime_src.contains("pub use crate::runtime_core::consts::RING_EVENTS;")
-            && runtime_src.contains("RING_EVENTS"),
-        "runtime surface must expose TapEvent with the storage envelope without nested runtime buckets"
+            && !runtime_src.contains("pub use crate::runtime_core::consts::RING_EVENTS;")
+            && !runtime_src.contains("CounterClock")
+            && !runtime_src.contains("Clock")
+            && !runtime_src.contains("RING_EVENTS")
+            && !runtime_allowlist.contains("CounterClock")
+            && !runtime_allowlist.contains("Clock")
+            && !runtime_allowlist.contains("RING_EVENTS"),
+        "runtime surface may expose TapEvent diagnostics but must hide tap storage and clock resources"
     );
 
     for forbidden in [

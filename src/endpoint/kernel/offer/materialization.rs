@@ -9,7 +9,6 @@ use super::{
 use crate::{
     endpoint::{RecvError, RecvResult},
     global::typestate::state_index_to_usize,
-    runtime_core::config::Clock,
     transport::Transport,
 };
 
@@ -23,10 +22,9 @@ enum MaterializedTransport<'r> {
     DiscardedAndPending,
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(in crate::endpoint::kernel) fn produce_branch(
         &mut self,
@@ -34,7 +32,7 @@ where
         resolved: ResolvedRouteArm,
         profile: OfferScopeProfile,
         transport_payload: Option<lane_port::PreambleFrame<'r>>,
-    ) -> RecvResult<Option<RouteBranch<'r, ROLE, T, C, MAX_RV>>> {
+    ) -> RecvResult<Option<RouteBranch<'r, ROLE, T, MAX_RV>>> {
         let mut transport_payload = transport_payload;
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;

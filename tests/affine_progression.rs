@@ -19,7 +19,7 @@ use hibana::{
     g::Msg,
     runtime::program::{RoleProgram, project},
     runtime::{
-        Config, CounterClock, SessionKitStorage,
+        Config, SessionKitStorage,
         ids::SessionId,
         transport::{Outgoing, ReceivedFrame, Transport},
     },
@@ -29,7 +29,7 @@ use tls_ref_support::with_resident_tls_ref;
 
 const SEND_LOGICAL: u8 = 10;
 
-type TestKitStorage<T> = SessionKitStorage<'static, T, CounterClock, 2>;
+type TestKitStorage<T> = SessionKitStorage<'static, T, 2>;
 
 struct PendingSendState {
     ready: Cell<bool>,
@@ -129,16 +129,13 @@ impl Transport for PendingSendTransport {
 
 #[test]
 fn drop_flow_keeps_endpoint_on_same_send_step() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&TEST_KIT_SLOT, |cluster| {
             let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
             let controller_send_program: RoleProgram<0> = project(&send_protocol);
             let worker_send_program: RoleProgram<1> = project(&send_protocol);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), hibana::runtime::CounterClock::zero()),
-                    TestTransport::new(),
-                )
+                .rendezvous(Config::from_resources(slab), TestTransport::new())
                 .expect("register rendezvous");
             let sid = SessionId::new(401);
 
@@ -182,7 +179,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
         state.reset();
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
 
-        with_runtime_workspace(|_clock, tap_buf, slab| {
+        with_runtime_workspace(|slab| {
             with_resident_tls_ref(&PENDING_SEND_KIT_SLOT, |cluster| {
                 let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
@@ -192,13 +189,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     state,
                 };
                 let rv = cluster
-                    .rendezvous(
-                        Config::from_resources(
-                            (tap_buf, slab),
-                            hibana::runtime::CounterClock::zero(),
-                        ),
-                        transport,
-                    )
+                    .rendezvous(Config::from_resources(slab), transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(402);
 
@@ -250,7 +241,7 @@ fn forgotten_started_send_future_leaves_flow_fail_closed() {
         state.reset();
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
 
-        with_runtime_workspace(|_clock, tap_buf, slab| {
+        with_runtime_workspace(|slab| {
             with_resident_tls_ref(&PENDING_SEND_KIT_SLOT, |cluster| {
                 let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
                 let controller_send_program: RoleProgram<0> = project(&send_protocol);
@@ -260,13 +251,7 @@ fn forgotten_started_send_future_leaves_flow_fail_closed() {
                     state,
                 };
                 let rv = cluster
-                    .rendezvous(
-                        Config::from_resources(
-                            (tap_buf, slab),
-                            hibana::runtime::CounterClock::zero(),
-                        ),
-                        transport,
-                    )
+                    .rendezvous(Config::from_resources(slab), transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(403);
 

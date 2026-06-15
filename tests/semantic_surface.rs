@@ -8,6 +8,8 @@ mod descriptor_measurement;
 mod endpoint_active_leases;
 #[path = "semantic_surface/lease_owner.rs"]
 mod lease_owner;
+#[path = "semantic_surface/measurement_gates.rs"]
+mod measurement_gates;
 #[path = "semantic_surface/source_residue.rs"]
 mod source_residue;
 #[path = "semantic_surface/source_residue_commit.rs"]

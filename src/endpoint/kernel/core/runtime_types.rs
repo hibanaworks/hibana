@@ -376,23 +376,22 @@ const fn storage_checked_mul(lhs: usize, rhs: usize) -> usize {
 }
 
 #[inline]
-pub(crate) const fn cursor_endpoint_storage_layout<'r, const ROLE: u8, T, C, const MAX_RV: usize>(
+pub(crate) const fn cursor_endpoint_storage_layout<'r, const ROLE: u8, T, const MAX_RV: usize>(
     arena_layout: &EndpointArenaLayout,
     lane_slot_count: usize,
 ) -> CursorEndpointStorageLayout
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock + 'r,
 {
-    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T, C, MAX_RV>>();
-    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T, C, MAX_RV>>();
+    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T, MAX_RV>>();
+    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T, MAX_RV>>();
     let port_slots_align = core::mem::align_of::<Option<Port<'r, T>>>();
     let port_slots_bytes =
         storage_checked_mul(core::mem::size_of::<Option<Port<'r, T>>>(), lane_slot_count);
     let port_slots_offset = storage_align_up(header_bytes, port_slots_align);
-    let guard_slots_align = core::mem::align_of::<Option<LaneGuard<'r, T, C>>>();
+    let guard_slots_align = core::mem::align_of::<Option<LaneGuard<'r, T>>>();
     let guard_slots_bytes = storage_checked_mul(
-        core::mem::size_of::<Option<LaneGuard<'r, T, C>>>(),
+        core::mem::size_of::<Option<LaneGuard<'r, T>>>(),
         lane_slot_count,
     );
     let guard_slots_offset = storage_align_up(

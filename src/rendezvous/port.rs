@@ -4,7 +4,7 @@
 //! scratch buffers, tap rings, and state tables.
 
 use core::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     marker::PhantomData,
     task::{Context, Poll},
 };
@@ -14,7 +14,6 @@ use crate::{
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
     observe::core::TapRing,
-    runtime_core::config::Clock,
     session::types::{Lane, RendezvousId},
     transport::{FrameLabelMask, Transport},
 };
@@ -83,7 +82,7 @@ pub(crate) struct Port<'r, T: Transport> {
     _no_send_sync: PhantomData<*mut ()>,
     tap: *const TapRing<'static>,
     tap_marker: PhantomData<&'r TapRing<'r>>,
-    clock: &'r dyn Clock,
+    tap_counter: &'r Cell<u32>,
     routes: *const RouteTable,
     routes_marker: PhantomData<&'r RouteTable>,
     recv_frame_receipt: RecvFrameReceiptState,
@@ -92,7 +91,7 @@ pub(crate) struct Port<'r, T: Transport> {
 pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub(crate) transport: &'r T,
     pub(crate) tap: &'tap TapRing<'tap>,
-    pub(crate) clock: &'tap dyn Clock,
+    pub(crate) tap_counter: &'tap Cell<u32>,
     pub(crate) routes: &'tap RouteTable,
     pub(crate) slab: *mut [u8],
     pub(crate) image_frontier: *const u32,
@@ -140,7 +139,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
         let PortInit {
             transport,
             tap,
-            clock,
+            tap_counter,
             routes,
             slab,
             image_frontier,
@@ -157,7 +156,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
         #[cfg(all(not(test), not(feature = "std")))]
         {
             let _ = tap;
-            let _ = clock;
         }
         Self {
             transport,
@@ -176,7 +174,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             _no_send_sync: PhantomData,
             tap: (tap as *const TapRing<'tap>).cast::<TapRing<'static>>(),
             tap_marker: PhantomData,
-            clock,
+            tap_counter,
             routes: routes as *const RouteTable,
             routes_marker: PhantomData,
             recv_frame_receipt: RecvFrameReceiptState::new(),
@@ -389,7 +387,11 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
 
     #[inline]
     pub(crate) fn now32(&self) -> u32 {
-        self.clock.now32()
+        let current = self.tap_counter.get();
+        if current != u32::MAX {
+            self.tap_counter.set(current + 1);
+        }
+        current
     }
 
     #[inline]

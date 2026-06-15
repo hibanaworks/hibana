@@ -2,6 +2,7 @@ use super::{
     ClusterError, DynamicResolverEntry, DynamicResolverKey, RendezvousId, ResolverBucket,
     ResourceScope, SessionId, cluster_rendezvous_slot,
 };
+use crate::rendezvous::core::Sidecar;
 
 const ROLE_BINDING_SLOTS: usize = crate::g::ROLE_DOMAIN_SIZE as usize;
 
@@ -137,13 +138,12 @@ impl<const MAX_RV: usize> SessionRoleBindings<MAX_RV> {
 ///
 /// Violations of these invariants are guarded by the lease table where possible
 /// and audited through TAP events and focused invariant tests.
-pub(crate) struct SessionStorage<'cfg, T, C, const MAX_RV: usize>
+pub(crate) struct SessionStorage<'cfg, T, const MAX_RV: usize>
 where
     T: crate::transport::Transport,
-    C: crate::runtime_core::config::Clock,
 {
     /// Owned local Rendezvous instances (same process/node).
-    pub(crate) locals: crate::session::lease::core::RendezvousTable<'cfg, T, C, MAX_RV>,
+    pub(crate) locals: crate::session::lease::core::RendezvousTable<'cfg, T, MAX_RV>,
 
     /// Attached session-role bindings.
     pub(crate) role_bindings: SessionRoleBindings<MAX_RV>,
@@ -152,10 +152,9 @@ where
     pub(crate) active_leases: core::cell::Cell<u32>,
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> SessionStorage<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> SessionStorage<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport,
-    C: crate::runtime_core::config::Clock,
 {
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
@@ -200,11 +199,11 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
         rv_id: RendezvousId,
         additional_entries: usize,
         allocate: FA,
-        free: FF,
+        mut free: FF,
     ) -> Result<(), ClusterError>
     where
-        FA: FnOnce(usize, usize) -> Option<(*mut u8, usize)>,
-        FF: FnOnce(*mut u8, usize, usize),
+        FA: FnOnce(usize, usize) -> Option<Sidecar<u8>>,
+        FF: FnMut(Sidecar<u8>) -> Result<(), ResourceScope>,
     {
         if additional_entries == 0 {
             return Ok(());
@@ -222,10 +221,8 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
             return Ok(());
         }
 
-        let source_ptr = bucket.storage_ptr();
-        let source_len = bucket.storage_len();
-        let source_reclaim_delta = bucket.storage_reclaim_delta();
-        let (storage, reclaim_delta) = allocate(
+        let source_storage = bucket.storage_sidecar();
+        let storage = allocate(
             ResolverBucket::storage_bytes(required),
             ResolverBucket::storage_align(),
         )
@@ -234,11 +231,17 @@ impl<'cfg, const MAX_RV: usize> ResolverCore<'cfg, MAX_RV> {
         ))?;
         /* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
         unsafe {
-            if source_ptr.is_null() {
-                bucket.bind_from_storage(storage, required, reclaim_delta);
+            if source_storage.ptr().is_null() {
+                bucket.bind_from_storage(storage.cast(), required);
             } else {
-                bucket.rebind_from_storage(storage, required, reclaim_delta);
-                free(source_ptr, source_len, source_reclaim_delta);
+                bucket.init_replacement_storage(storage.cast(), required);
+                if let Err(resource) = free(source_storage.cast()) {
+                    if free(storage).is_err() {
+                        crate::invariant();
+                    }
+                    return Err(ClusterError::resource_exhausted(resource));
+                }
+                bucket.commit_storage(storage.cast(), required);
             }
         }
         Ok(())

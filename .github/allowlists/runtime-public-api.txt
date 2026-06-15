@@ -1,13 +1,13 @@
 pub use crate::session::cluster::error::AttachError;
-pub struct SessionKit<'cfg, T, C, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, C: crate::runtime_core::config::Clock + 'cfg, {
-pub struct SessionKitStorage<'cfg, T, C = crate::runtime_core::config::CounterClock, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, C: crate::runtime_core::config::Clock + 'cfg, {
+pub struct SessionKit<'cfg, T, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, {
+pub struct SessionKitStorage<'cfg, T, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, {
 pub const fn uninit() -> Self {
-pub fn init(&mut self) -> &SessionKit<'cfg, T, C, MAX_RV> {
-pub fn rendezvous( &self, config: crate::runtime::Config<'cfg, C>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, C, false, MAX_RV>, AttachError> {
-pub struct RendezvousKit<'kit, 'cfg, T, C, const HAS_SESSION: bool, const MAX_RV: usize> {
-pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, C, const HAS_SESSION: bool, const MAX_RV: usize> {
-pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> RendezvousKit<'kit, 'cfg, T, C, true, MAX_RV> {
-pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, C, HAS_SESSION, MAX_RV> {
+pub fn init(&mut self) -> &SessionKit<'cfg, T, MAX_RV> {
+pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, false, MAX_RV>, AttachError> {
+pub struct RendezvousKit<'kit, 'cfg, T, const HAS_SESSION: bool, const MAX_RV: usize> {
+pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const HAS_SESSION: bool, const MAX_RV: usize> {
+pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> RendezvousKit<'kit, 'cfg, T, true, MAX_RV> {
+pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, HAS_SESSION, MAX_RV> {
 pub fn enter( self, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
 pub fn set_resolver<const RESOLVER: u16>( self, resolver: crate::runtime::resolver::ResolverRef<'cfg>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
 pub mod program {
@@ -16,8 +16,7 @@ pub use crate::global::role_program::{RoleProgram, project};
 pub mod ids {
 pub use crate::session::types::SessionId;
 pub use crate::observe::core::TapEvent;
-pub use crate::runtime_core::config::{Clock, Config, CounterClock};
-pub use crate::runtime_core::consts::RING_EVENTS;
+pub use crate::runtime_core::config::Config;
 pub mod resolver {
 pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };
 pub mod wire {

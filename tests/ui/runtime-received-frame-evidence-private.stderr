@@ -1,7 +1,7 @@
 error[E0624]: method `evidence` is private
-  --> tests/ui/runtime-received-frame-evidence-private.rs:11:19
+  --> tests/ui/runtime-received-frame-evidence-private.rs:10:19
    |
-11 |     let _ = frame.evidence();
+10 |     let _ = frame.evidence();
    |                   ^^^^^^^^ private method
    |
   ::: src/transport.rs

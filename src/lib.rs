@@ -78,13 +78,8 @@
 //! let program = g::seq(transport_prefix, app);
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut tap_buf = [runtime::TapEvent::zero(); runtime::RING_EVENTS];
 //! let mut slab = [0u8; 4096];
-//! let clock = runtime::CounterClock::zero();
-//! let config = runtime::Config::from_resources(
-//!     (&mut tap_buf, &mut slab),
-//!     clock,
-//! );
+//! let config = runtime::Config::from_resources(&mut slab);
 //! let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 //! let kit = kit_storage.init();
 //! let rv = kit.rendezvous(config, transport)?;
@@ -94,10 +89,9 @@
 //!     .enter()?;
 //! ```
 //!
-//! `Config` carries storage and clock only. Lane domain and endpoint slots are
-//! derived from Hibana's wire/domain limits and projected descriptors, not
-//! chosen by callers. Hidden timeout fuses are not protocol API or attach
-//! config.
+//! `Config` carries the runtime slab only. Runtime capacities are derived from
+//! Hibana's wire/domain limits and projected descriptors, not chosen by callers.
+//! Hidden timeout fuses are not protocol API or attach config.
 //! Protocol-invisible carrier watchdogs live inside the transport implementation:
 //! terminal I/O waits are reported as [`runtime::transport::TransportError`]
 //! from `poll_send` or `poll_recv`, not as Hibana timeout branches.
@@ -131,8 +125,8 @@
 //!   descriptor facts;
 //! - endpoint progress is affine: successful sends, receives, and route decodes
 //!   commit progress, while dropped previews restore the endpoint;
-//! - `EndpointError` fails closed, carries the endpoint operation callsite, and
-//!   never authorizes hidden progress.
+//! - `EndpointError` fails closed, carries compact endpoint operation evidence,
+//!   and never authorizes hidden progress.
 //!
 //! ## Features
 //!

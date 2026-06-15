@@ -1,13 +1,12 @@
 use super::{
-    Clock, CursorEndpoint, FrontierObservationDomain, FrontierObservationKey,
-    FrontierObservationSlot, ObservedEntrySet, ScopeId, Transport, checked_state_index,
+    CursorEndpoint, FrontierObservationDomain, FrontierObservationKey, FrontierObservationSlot,
+    ObservedEntrySet, ScopeId, Transport, checked_state_index,
     frontier_observed_entries_view_from_storage,
     frontier_working_observation_key_view_from_storage, lane_port, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(in crate::endpoint::kernel) fn refresh_cached_frontier_observation_entry(
         &mut self,
@@ -98,7 +97,7 @@ where
             return false;
         }
         let Some((source_slot_idx, new_slot_idx)) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::cached_entry_slot_move(
+            CursorEndpoint::<ROLE, T, MAX_RV>::cached_entry_slot_move(
                 active_entries,
                 cached_key,
                 entry_idx,
@@ -109,7 +108,7 @@ where
         if !cached_observed_entries.move_entry_slot(entry_idx, new_slot_idx) {
             return false;
         }
-        CursorEndpoint::<ROLE, T, C, MAX_RV>::move_slot_in_array(
+        CursorEndpoint::<ROLE, T, MAX_RV>::move_slot_in_array(
             &mut cached_key.slots,
             active_entries.len(),
             source_slot_idx,
@@ -160,7 +159,7 @@ where
         if cached_key == FrontierObservationKey::EMPTY {
             return false;
         }
-        let Some(insert_slot_idx) = CursorEndpoint::<ROLE, T, C, MAX_RV>::cached_entry_slot_insert(
+        let Some(insert_slot_idx) = CursorEndpoint::<ROLE, T, MAX_RV>::cached_entry_slot_insert(
             active_entries,
             cached_key,
             entry_idx,
@@ -190,7 +189,7 @@ where
         let Some(entry) = checked_state_index(entry_idx) else {
             return false;
         };
-        CursorEndpoint::<ROLE, T, C, MAX_RV>::insert_slot_in_array(
+        CursorEndpoint::<ROLE, T, MAX_RV>::insert_slot_in_array(
             &mut cached_key.slots,
             len,
             insert_slot_idx,
@@ -239,13 +238,11 @@ where
         if cached_key == FrontierObservationKey::EMPTY {
             return false;
         }
-        let Some(detached_slot_idx) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::detached_cached_entry_slot(
-                active_entries,
-                cached_key,
-                entry_idx,
-            )
-        else {
+        let Some(detached_slot_idx) = CursorEndpoint::<ROLE, T, MAX_RV>::detached_cached_entry_slot(
+            active_entries,
+            cached_key,
+            entry_idx,
+        ) else {
             return false;
         };
         let slot_masks = Self::frontier_observation_offer_lane_entry_slot_masks(self, domain);
@@ -268,7 +265,7 @@ where
             return false;
         }
         let cached_len = cached_key.len();
-        CursorEndpoint::<ROLE, T, C, MAX_RV>::remove_slot_from_array(
+        CursorEndpoint::<ROLE, T, MAX_RV>::remove_slot_from_array(
             &mut cached_key.slots,
             cached_len,
             detached_slot_idx,
@@ -299,7 +296,7 @@ where
             return false;
         }
         let Some((slot_idx, source_entry_idx, new_entry_idx)) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::cached_entry_slot_replace(
+            CursorEndpoint::<ROLE, T, MAX_RV>::cached_entry_slot_replace(
                 active_entries,
                 cached_key,
                 entry_idx,
@@ -360,7 +357,7 @@ where
         let mut remaining_entries = active_entries.occupancy_mask();
         let mut patched = false;
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
+            CursorEndpoint::<ROLE, T, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
         {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
@@ -433,7 +430,7 @@ where
         let mut remaining_entries = active_entries.occupancy_mask();
         let mut patched = false;
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
+            CursorEndpoint::<ROLE, T, MAX_RV>::next_slot_in_mask(&mut remaining_entries)
         {
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;

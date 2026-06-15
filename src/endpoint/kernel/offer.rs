@@ -42,7 +42,6 @@ use crate::global::const_dsl::{ReentryMark, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::state_index_to_usize;
 use crate::rendezvous::port::Port;
-use crate::runtime_core::config::Clock;
 use crate::transport::Transport;
 
 pub(in crate::endpoint::kernel) use self::commit_types::{
@@ -74,10 +73,9 @@ pub(in crate::endpoint::kernel) enum FrameHintIngestion {
     Dynamic,
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     fn ingest_scope_evidence_for_lane(
         &mut self,

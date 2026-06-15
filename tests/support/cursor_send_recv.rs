@@ -1,35 +1,31 @@
-mod common;
-#[path = "support/runtime.rs"]
-mod runtime_support;
-#[path = "support/tls_ref.rs"]
-mod tls_ref_support;
+#![allow(dead_code, unused_imports)]
 
-use core::{
+pub(crate) use core::{
     cell::{Cell, UnsafeCell},
     future::Future,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
-use std::{
+pub(crate) use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
 };
 
-use common::{TestTransport, TestTransportError, TestTx};
-use hibana::{
+pub(crate) use crate::common::{TestTransport, TestTransportError, TestTx};
+pub(crate) use crate::runtime_support::with_runtime_workspace;
+pub(crate) use crate::tls_ref_support::with_resident_tls_ref;
+pub(crate) use hibana::{
     g::{self, Msg},
     runtime::program::{RoleProgram, project},
     runtime::{
-        Config, CounterClock, SessionKitStorage,
+        Config, SessionKitStorage,
         ids::SessionId,
         transport::{Outgoing, ReceivedFrame, Transport},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
-use runtime_support::with_runtime_workspace;
-use tls_ref_support::with_resident_tls_ref;
 
 #[derive(Clone, Copy)]
-struct FramePayload([u8; 4]);
+pub(crate) struct FramePayload(pub(crate) [u8; 4]);
 
 impl WireEncode for FramePayload {
     fn encoded_len(&self) -> Option<usize> {
@@ -69,27 +65,27 @@ impl WirePayload for FramePayload {
     }
 }
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 
 #[derive(Clone)]
-struct PendingCancelTransport {
+pub(crate) struct PendingCancelTransport {
     inner: TestTransport,
     cancel_count: Rc<Cell<usize>>,
 }
 
 impl PendingCancelTransport {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: TestTransport::new(),
             cancel_count: Rc::new(Cell::new(0)),
         }
     }
 
-    fn cancel_count(&self) -> Rc<Cell<usize>> {
+    pub(crate) fn cancel_count(&self) -> Rc<Cell<usize>> {
         self.cancel_count.clone()
     }
 
-    fn queue_is_empty(&self) -> bool {
+    pub(crate) fn queue_is_empty(&self) -> bool {
         self.inner.queue_is_empty()
     }
 }
@@ -101,7 +97,7 @@ impl Transport for PendingCancelTransport {
     where
         Self: 'a;
     type Rx<'a>
-        = common::TestRx<'a>
+        = crate::common::TestRx<'a>
     where
         Self: 'a;
 
@@ -149,26 +145,17 @@ impl Transport for PendingCancelTransport {
     }
 }
 
-type PendingCancelKitStorage = SessionKitStorage<'static, PendingCancelTransport, CounterClock, 2>;
+type PendingCancelKitStorage = SessionKitStorage<'static, PendingCancelTransport, 2>;
 
 std::thread_local! {
-    static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
+    pub(crate) static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
-    static PENDING_CANCEL_SESSION_SLOT: UnsafeCell<PendingCancelKitStorage> = const {
+    pub(crate) static PENDING_CANCEL_SESSION_SLOT: UnsafeCell<PendingCancelKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
 
-fn transport_queue_is_empty(transport: &TestTransport) -> bool {
+pub(crate) fn transport_queue_is_empty(transport: &TestTransport) -> bool {
     transport.queue_is_empty()
 }
-
-#[path = "cursor_send_recv/codec_demux.rs"]
-mod codec_demux;
-#[path = "cursor_send_recv/direct_recv.rs"]
-mod direct_recv;
-#[path = "cursor_send_recv/send_recv.rs"]
-mod send_recv;
-#[path = "cursor_send_recv/session_lifecycle.rs"]
-mod session_lifecycle;

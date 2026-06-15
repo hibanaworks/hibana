@@ -23,7 +23,6 @@ use super::{
 use crate::{
     endpoint::{RecvError, RecvResult},
     global::typestate::{EventCursor, RecvMeta, StateIndex, state_index_to_usize},
-    runtime_core::config::Clock,
     transport::{Transport, wire::Payload},
 };
 
@@ -58,15 +57,14 @@ struct PreparedDecodePublishPlan<'r> {
     committed_payload: Payload<'r>,
 }
 
-struct DecodeCommitBuilder<'build, 'r, const ROLE: u8, T, C, const MAX_RV: usize>
+struct DecodeCommitBuilder<'build, 'r, const ROLE: u8, T, const MAX_RV: usize>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     cursor: &'build EventCursor,
     decision_state: &'build mut RouteState,
     route_rows: Option<SelectedRouteCommitRows>,
-    _role: core::marker::PhantomData<(&'r T, C)>,
+    _role: core::marker::PhantomData<&'r T>,
 }
 
 #[inline]

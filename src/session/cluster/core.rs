@@ -10,7 +10,6 @@
 //! `UnsafeCell` state, but must keep one mutable owner per closure, preserve
 //! initialized-bucket ranges, and keep endpoint/lease generations coherent.
 
-use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
@@ -36,10 +35,9 @@ struct EndpointInitArgs<
     'r,
     const ROLE: u8,
     T: crate::transport::Transport + 'r,
-    C: crate::runtime_core::config::Clock,
     const MAX_RV: usize,
 > {
-    dst: *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, C, MAX_RV>,
+    dst: *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>,
     arena_storage: *mut u8,
     rv_id: RendezvousId,
     sid: SessionId,
@@ -60,10 +58,9 @@ pub(crate) use dynamic_resolvers::*;
 pub use dynamic_resolvers::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
 pub(crate) use session_cluster_ops::*;
 
-impl<'cfg, T, C, const MAX_RV: usize> Drop for SessionCluster<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> Drop for SessionCluster<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     fn drop(&mut self) {
         // SAFETY: `core` is owned by `self` and we're in `drop`, so no aliases exist.

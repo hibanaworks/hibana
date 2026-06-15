@@ -12,7 +12,7 @@ use common::TestTransport;
 use hibana::{
     g::{self, Msg},
     runtime::{
-        Config, CounterClock, SessionKitStorage,
+        Config, SessionKitStorage,
         ids::SessionId,
         program::{RoleProgram, project},
         resolver::{DecisionResolution, ResolverError, ResolverRef},
@@ -21,8 +21,8 @@ use hibana::{
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
-type ZeroRendezvousKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 0>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type ZeroRendezvousKitStorage = SessionKitStorage<'static, TestTransport, 0>;
 
 std::thread_local! {
     static TEST_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -33,25 +33,16 @@ std::thread_local! {
     };
 }
 
-fn assert_endpoint_callsite(error: hibana::EndpointError, operation: &str, line: u32) {
+fn assert_endpoint_operation(error: hibana::EndpointError, operation: &str) {
     assert_eq!(error.operation(), operation);
-    assert!(error.file().ends_with("tests/callsite_regression.rs"));
-    assert_eq!(error.line(), line);
-    assert!(error.column() > 0);
 }
 
-fn assert_attach_callsite(error: hibana::runtime::AttachError, operation: &str, line: u32) {
+fn assert_attach_operation(error: hibana::runtime::AttachError, operation: &str) {
     assert_eq!(error.operation(), operation);
-    assert!(error.file().ends_with("tests/callsite_regression.rs"));
-    assert_eq!(error.line(), line);
-    assert!(error.column() > 0);
 }
 
-fn assert_resolver_callsite(error: ResolverError, operation: &str, line: u32) {
+fn assert_resolver_operation(error: ResolverError, operation: &str) {
     assert_eq!(error.operation(), operation);
-    assert!(error.file().ends_with("tests/callsite_regression.rs"));
-    assert_eq!(error.line(), line);
-    assert!(error.column() > 0);
 }
 
 fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
@@ -60,12 +51,12 @@ fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
 }
 
 #[test]
-fn endpoint_errors_keep_public_operation_callsites() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+fn endpoint_errors_keep_public_operations() {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
             let (origin_program, target_program) = project_pair::<11>();
-            let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
+            let config = Config::from_resources(slab);
             let rv = cluster.rendezvous(config, transport.clone()).expect("rv");
             let sid = SessionId::new(411);
             let mut origin = rv
@@ -79,7 +70,6 @@ fn endpoint_errors_keep_public_operation_callsites() {
                 .enter()
                 .expect("target");
 
-            let flow_line = line!() + 1;
             let flow_error = match origin.flow::<Msg<12, u32>>() {
                 Ok(flow) => {
                     drop(flow);
@@ -87,67 +77,62 @@ fn endpoint_errors_keep_public_operation_callsites() {
                 }
                 Err(error) => error,
             };
-            assert_endpoint_callsite(flow_error, "flow", flow_line);
+            assert_endpoint_operation(flow_error, "flow");
 
             futures::executor::block_on(origin.flow::<Msg<11, u32>>().expect("flow").send(&1234))
                 .expect("send");
 
-            let recv_line = line!() + 1;
             let recv_result = futures::executor::block_on(target.recv::<Msg<11, u64>>());
             let recv_error = match recv_result {
                 Ok(_) => panic!("wrong recv payload must fail"),
                 Err(error) => error,
             };
-            assert_endpoint_callsite(recv_error, "recv", recv_line);
+            assert_endpoint_operation(recv_error, "recv");
         });
     });
 }
 
 #[test]
-fn attach_and_resolver_errors_keep_public_callsites() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+fn attach_and_resolver_errors_keep_public_operations() {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&ZERO_RENDEZVOUS_SLOT, |cluster| {
-            let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
-            let rendezvous_line = line!() + 1;
+            let config = Config::from_resources(slab);
             let rendezvous_result = cluster.rendezvous(config, TestTransport::new());
             let rendezvous_error = match rendezvous_result {
                 Ok(_) => panic!("zero-capacity rendezvous table must fail"),
                 Err(error) => error,
             };
-            assert_attach_callsite(rendezvous_error, "rendezvous", rendezvous_line);
+            assert_attach_operation(rendezvous_error, "rendezvous");
         });
     });
 
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
             let (origin_program, _target_program) = project_pair::<42>();
-            let config = Config::from_resources((tap_buf, &mut slab[..1024]), CounterClock::zero());
+            let config = Config::from_resources(&mut slab[..4096]);
             let rv = cluster
                 .rendezvous(config, TestTransport::new())
                 .expect("rv");
             let sid = SessionId::new(441);
             let constrained_role = rv.session(sid).role(&origin_program);
-            let enter_line = line!() + 1;
             let enter_result = constrained_role.enter();
             let enter_error = match enter_result {
                 Ok(_) => panic!("resource-constrained role enter must fail"),
                 Err(error) => error,
             };
-            assert_attach_callsite(enter_error, "enter", enter_line);
+            assert_attach_operation(enter_error, "enter");
 
             let resolver_role = rv.role(&origin_program);
             let resolver = ResolverRef::<77>::decision_fn(|| Ok(DecisionResolution::Defer));
-            let set_resolver_line = line!() + 1;
             let set_resolver_result = resolver_role.set_resolver(resolver);
             let set_resolver_error = match set_resolver_result {
                 Ok(_) => panic!("resolver without projected site must fail"),
                 Err(error) => error,
             };
-            assert_resolver_callsite(set_resolver_error, "set_resolver", set_resolver_line);
+            assert_resolver_operation(set_resolver_error, "set_resolver");
         });
     });
 
-    let reject_line = line!() + 1;
     let reject_error = ResolverError::reject();
-    assert_resolver_callsite(reject_error, "reject", reject_line);
+    assert_resolver_operation(reject_error, "reject");
 }

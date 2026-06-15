@@ -5,10 +5,9 @@ use super::{
     checked_state_index, offer_entry_frontier_candidate, offer_entry_observed_state,
     state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_has_active_lanes(

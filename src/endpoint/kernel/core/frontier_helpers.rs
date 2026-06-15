@@ -3,10 +3,9 @@ use super::{
     FrontierReadiness, OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta,
     ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     pub(crate) fn parallel_scope_root(cursor: &EventCursor, scope_id: ScopeId) -> Option<ScopeId> {
         cursor.parallel_scope_root(scope_id)

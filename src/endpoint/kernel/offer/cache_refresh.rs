@@ -1,10 +1,9 @@
 use super::{
-    Clock, CursorEndpoint, FrontierObservationDomain, FrontierObservationKey, ScopeId, Transport,
+    CursorEndpoint, FrontierObservationDomain, FrontierObservationKey, ScopeId, Transport,
 };
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache_for_scope(
         &mut self,
@@ -18,7 +17,7 @@ where
         let mut root_len = 0usize;
         let mut matches_scope = false;
         while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::next_slot_in_mask(&mut active_entries)
+            CursorEndpoint::<ROLE, T, MAX_RV>::next_slot_in_mask(&mut active_entries)
         {
             let Some(entry_idx) = global_active_entries.entry_at(slot_idx) else {
                 continue;

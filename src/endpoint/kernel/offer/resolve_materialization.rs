@@ -4,15 +4,14 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    Clock, CursorEndpoint, DeferReason, FrontierDeferOutcome, FrontierDeferRequest,
-    FrontierVisitSet, OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmCommitEvidence,
-    RouteArmToken, Transport,
+    CursorEndpoint, DeferReason, FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet,
+    OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
+    Transport,
 };
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn ensure_materialization_ready(
         &mut self,

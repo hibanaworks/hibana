@@ -14,7 +14,6 @@ use crate::{
     global::typestate::{CursorInvariantError, StateIndex, state_index_to_usize},
     observe::ids,
     resolver_audit::ResolverSlot,
-    runtime_core::config::Clock,
     transport::{
         Transport,
         trace::TapFrameMeta,
@@ -78,10 +77,9 @@ pub(crate) struct RecvDescriptor {
     pub(crate) lane_wire: u8,
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     fn prepare_recv_descriptor(
         &mut self,
@@ -316,11 +314,10 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> super::core::RecvKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> super::core::RecvKernelEndpoint<'r>
+    for CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     #[inline]
     fn prepare_recv_kernel_descriptor(

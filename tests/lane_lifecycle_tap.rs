@@ -12,12 +12,12 @@ use common::TestTransport;
 use hibana::{
     g::{self, Msg},
     runtime::program::{RoleProgram, project},
-    runtime::{Config, SessionKitStorage, TapEvent, ids::SessionId},
+    runtime::{Config, SessionKitStorage, ids::SessionId},
 };
-use runtime_support::{RING_EVENTS, with_runtime_workspace};
+use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, hibana::runtime::CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -41,59 +41,52 @@ fn decode_sid_lane(packed: u32) -> (u32, u16) {
 
 #[test]
 fn lane_lifecycle_emits_acquire_and_release_taps() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
-        let tap_ptr = tap_buf as *mut [TapEvent; runtime_support::RING_EVENTS];
         let slab_ptr = slab as *mut [u8];
-        let (expected_rv, expected_sid, expected_lane) =
+        let (acquire_count, release_count, has_expected_acquire, has_expected_release) =
             with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-                let tap_buf = unsafe { &mut *tap_ptr };
                 let slab = unsafe { &mut *slab_ptr };
                 let rv = cluster
-                    .rendezvous(
-                        Config::from_resources(
-                            (tap_buf, slab),
-                            hibana::runtime::CounterClock::zero(),
-                        ),
-                        transport.clone(),
-                    )
+                    .rendezvous(Config::from_resources(slab), transport.clone())
                     .expect("register rendezvous");
+                let mut tap = rv.tap();
 
                 let sid = SessionId::new(7);
                 let controller_program = controller_program();
-                let endpoint = rv
-                    .session(sid)
-                    .role(&controller_program)
-                    .enter()
-                    .expect("attach cursor");
-                core::hint::black_box(&endpoint);
+                {
+                    let endpoint = rv
+                        .session(sid)
+                        .role(&controller_program)
+                        .enter()
+                        .expect("attach cursor");
+                    core::hint::black_box(&endpoint);
+                }
 
-                (1u32, sid.raw(), 0)
+                let mut acquire_count = 0usize;
+                let mut release_count = 0usize;
+                let mut has_expected_acquire = false;
+                let mut has_expected_release = false;
+                for event in &mut tap {
+                    if event.id == LANE_ACQUIRE_ID {
+                        acquire_count += 1;
+                        let (event_sid, event_lane) = decode_sid_lane(event.arg1);
+                        has_expected_acquire |=
+                            event.arg0 == 1u32 && event_sid == sid.raw() && event_lane == 0;
+                    } else if event.id == LANE_RELEASE_ID {
+                        release_count += 1;
+                        let (event_sid, event_lane) = decode_sid_lane(event.arg1);
+                        has_expected_release |=
+                            event.arg0 == 1u32 && event_sid == sid.raw() && event_lane == 0;
+                    }
+                }
+                (
+                    acquire_count,
+                    release_count,
+                    has_expected_acquire,
+                    has_expected_release,
+                )
             });
-
-        let events = unsafe { &*tap_ptr };
-        let mut acquire_count = 0usize;
-        let mut release_count = 0usize;
-        let mut has_expected_acquire = false;
-        let mut has_expected_release = false;
-        let mut idx = 0usize;
-        while idx < RING_EVENTS {
-            let event = events[idx];
-            if event.id == LANE_ACQUIRE_ID {
-                acquire_count += 1;
-                let (event_sid, event_lane) = decode_sid_lane(event.arg1);
-                has_expected_acquire |= event.arg0 == expected_rv
-                    && event_sid == expected_sid
-                    && event_lane == expected_lane;
-            } else if event.id == LANE_RELEASE_ID {
-                release_count += 1;
-                let (event_sid, event_lane) = decode_sid_lane(event.arg1);
-                has_expected_release |= event.arg0 == expected_rv
-                    && event_sid == expected_sid
-                    && event_lane == expected_lane;
-            }
-            idx += 1;
-        }
 
         assert!(has_expected_acquire, "expected lane acquire event");
         assert!(has_expected_release, "expected lane release event");

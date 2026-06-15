@@ -4,10 +4,9 @@ use super::super::{
     CursorEndpoint, DynamicResolverResolution, EventSemanticKind, ResolverSlot, ScopeId, SendError,
     SendMeta, SendResult, Transport, events, ids,
 };
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     pub(crate) fn evaluate_dynamic_resolver(
         &mut self,

@@ -7,7 +7,6 @@
 use core::cell::Cell;
 use core::marker::PhantomData;
 
-use crate::runtime_core::config::Clock;
 use crate::{
     rendezvous::core::{LaneRelease, Rendezvous},
     session::types::Lane,
@@ -19,17 +18,16 @@ use crate::{
 /// Dropping the guard releases the lane via the underlying rendezvous.
 /// The raw pointer erases the longer rendezvous lifetime; the shorter endpoint
 /// borrow is carried by `active_leases`.
-pub(crate) struct LaneGuard<'lease, T: Transport, C: Clock> {
+pub(crate) struct LaneGuard<'lease, T: Transport> {
     rendezvous: *const (),
     lane: Lane,
     active_leases: &'lease Cell<u32>,
-    _marker: PhantomData<fn() -> (T, C)>,
+    _marker: PhantomData<fn() -> T>,
 }
 
-impl<'lease, T, C> LaneGuard<'lease, T, C>
+impl<'lease, T> LaneGuard<'lease, T>
 where
     T: Transport,
-    C: Clock,
 {
     pub(crate) fn new_detached(
         rendezvous: *const (),
@@ -45,17 +43,16 @@ where
     }
 }
 
-impl<'lease, T, C> Drop for LaneGuard<'lease, T, C>
+impl<'lease, T> Drop for LaneGuard<'lease, T>
 where
     T: Transport,
-    C: Clock,
 {
     fn drop(&mut self) {
         let lane = self.lane;
         if !self.rendezvous.is_null() {
             /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
             unsafe {
-                let rv = &*self.rendezvous.cast::<Rendezvous<'static, 'static, T, C>>();
+                let rv = &*self.rendezvous.cast::<Rendezvous<'static, 'static, T>>();
                 match rv.release_lane(lane) {
                     LaneRelease::Released(sid) => rv.emit_lane_release(sid, lane),
                     LaneRelease::StillHeld => {}

@@ -10,22 +10,20 @@ use core::ptr::NonNull;
 use crate::{session::types::Lane, transport::Transport};
 
 /// Rendezvous-scoped session context stored inside endpoints.
-pub(crate) struct SessionCtx<'rv, T, C, const MAX_RV: usize = 8>
+pub(crate) struct SessionCtx<'rv, T, const MAX_RV: usize = 8>
 where
     T: Transport,
-    C: crate::runtime_core::config::Clock,
 {
-    cluster: NonNull<crate::session::cluster::core::SessionCluster<'rv, T, C, MAX_RV>>,
+    cluster: NonNull<crate::session::cluster::core::SessionCluster<'rv, T, MAX_RV>>,
 }
 
-impl<'rv, T, C, const MAX_RV: usize> SessionCtx<'rv, T, C, MAX_RV>
+impl<'rv, T, const MAX_RV: usize> SessionCtx<'rv, T, MAX_RV>
 where
     T: Transport,
-    C: crate::runtime_core::config::Clock,
 {
     pub(crate) fn new(
         _lane: Lane,
-        cluster: &'rv crate::session::cluster::core::SessionCluster<'rv, T, C, MAX_RV>,
+        cluster: &'rv crate::session::cluster::core::SessionCluster<'rv, T, MAX_RV>,
     ) -> Self {
         Self {
             cluster: NonNull::from(cluster),
@@ -35,7 +33,7 @@ where
     #[inline]
     pub(crate) fn cluster(
         &self,
-    ) -> &'rv crate::session::cluster::core::SessionCluster<'rv, T, C, MAX_RV> {
+    ) -> &'rv crate::session::cluster::core::SessionCluster<'rv, T, MAX_RV> {
         /* SAFETY: endpoints are constructed only from resident cluster attach,
         and the cluster outlives attached endpoint storage. */
         unsafe { self.cluster.as_ref() }

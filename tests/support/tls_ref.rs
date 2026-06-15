@@ -11,16 +11,15 @@ pub(crate) trait ResidentSlot {
     fn reset_slot(&mut self);
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> ResidentSlot
-    for hibana::runtime::SessionKitStorage<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> ResidentSlot
+    for hibana::runtime::SessionKitStorage<'cfg, T, MAX_RV>
 where
     T: hibana::runtime::transport::Transport + 'cfg,
-    C: hibana::runtime::Clock + 'cfg,
     'cfg: 'static,
 {
-    type Target = hibana::runtime::SessionKit<'cfg, T, C, MAX_RV>;
+    type Target = hibana::runtime::SessionKit<'cfg, T, MAX_RV>;
     type Guard<'a>
-        = &'a hibana::runtime::SessionKit<'cfg, T, C, MAX_RV>
+        = &'a hibana::runtime::SessionKit<'cfg, T, MAX_RV>
     where
         Self: 'a;
 

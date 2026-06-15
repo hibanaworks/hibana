@@ -1,8 +1,8 @@
 use super::{
-    Clock, CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome,
-    FrontierDeferRequest, FrontierVisitSet, IngressEvidenceState, OfferProgressState,
-    OfferResolveState, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError,
-    RecvResult, ResolvePendingState, ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
+    CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
+    FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
+    OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
+    ResolvePendingState, ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput<'a> {
     pub(super) selection: OfferScopeSelection,
@@ -81,10 +81,9 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn poll_resolve_pending_state(
         &mut self,

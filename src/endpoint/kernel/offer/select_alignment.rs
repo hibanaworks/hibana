@@ -1,4 +1,4 @@
-use super::{Clock, CursorEndpoint, FrontierObservationDomain, RecvError, RecvResult, Transport};
+use super::{CursorEndpoint, FrontierObservationDomain, RecvError, RecvResult, Transport};
 
 mod candidates;
 mod model;
@@ -6,10 +6,9 @@ use self::model::{
     CurrentOfferAuthority, CurrentOfferEntry, OfferAlignmentCandidateInput, ProgressSiblingPresence,
 };
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(in crate::endpoint::kernel) fn align_cursor_to_selected_scope(&mut self) -> RecvResult<()> {
         let node_scope = self.cursor.node_scope_id();

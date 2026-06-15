@@ -34,22 +34,16 @@ pub(crate) enum PublicSlotOwnership {
 /// release handle. Dropping the endpoint releases the lane back to the
 /// `SessionCluster` via the handle.
 #[repr(C)]
-pub(crate) struct CursorEndpoint<
-    'r,
-    const ROLE: u8,
+pub(crate) struct CursorEndpoint<'r, const ROLE: u8, T: Transport + 'r, const MAX_RV: usize = 8>
+where
     T: Transport + 'r,
-    C = crate::runtime_core::config::CounterClock,
-    const MAX_RV: usize = 8,
-> where
-    T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     pub(crate) public_header: crate::endpoint::carrier::KernelEndpointHeader<'r>,
     /// Multi-lane port array. Each active lane has its own port.
     /// For single-lane programs, only `ports[0]` is used.
     pub(in crate::endpoint::kernel) ports: LaneSlotArray<Port<'r, T>>,
     /// Multi-lane guard array. Each active lane has its own guard.
-    pub(in crate::endpoint::kernel) guards: LaneSlotArray<LaneGuard<'r, T, C>>,
+    pub(in crate::endpoint::kernel) guards: LaneSlotArray<LaneGuard<'r, T>>,
     /// Primary lane index (first live application lane, not always lane 0).
     pub(crate) primary_lane: usize,
     pub(crate) sid: SessionId,
@@ -66,20 +60,17 @@ pub(crate) struct CursorEndpoint<
     pub(in crate::endpoint) public_recv_state: recv::RecvState,
     pub(in crate::endpoint) public_decode_state: decode::DecodeState<'r>,
     pub(in crate::endpoint) public_send_state: SendState<'r>,
-    pub(crate) session: SessionCtx<'r, T, C, MAX_RV>,
+    pub(crate) session: SessionCtx<'r, T, MAX_RV>,
     pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,
     pub(in crate::endpoint::kernel) route_commit_rows: LeasedState<RouteCommitRowSetBuilder>,
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
 }
 
-pub(crate) struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r, C, const MAX_RV: usize>
-where
-    C: crate::runtime_core::config::Clock,
-{
+pub(crate) struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r, const MAX_RV: usize> {
     pub(crate) label: u8,
     pub(crate) staged_payload: Option<StagedPayload<'r>>,
     pub(crate) branch_meta: BranchMeta,
-    pub(crate) _cfg: core::marker::PhantomData<fn() -> (&'r T, C)>,
+    pub(crate) _cfg: core::marker::PhantomData<fn() -> &'r T>,
 }
 
 pub(crate) struct MaterializedRouteBranch<'r> {
@@ -189,14 +180,13 @@ impl SendPreview {
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> From<RouteBranch<'r, ROLE, T, C, MAX_RV>>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> From<RouteBranch<'r, ROLE, T, MAX_RV>>
     for MaterializedRouteBranch<'r>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     #[inline]
-    fn from(branch: RouteBranch<'r, ROLE, T, C, MAX_RV>) -> Self {
+    fn from(branch: RouteBranch<'r, ROLE, T, MAX_RV>) -> Self {
         Self {
             label: branch.label,
             staged_payload: branch.staged_payload,

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and Pico-class aggregate SRAM must keep at least 64 bytes of headroom.",
+  "description": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack and resident prefix/tap storage, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and Pico-class aggregate SRAM must keep at least 64 bytes of headroom.",
   "toolchain": "1.95.0",
   "host": "aarch64-apple-darwin",
   "flash_measurement": {
@@ -28,25 +28,37 @@
     },
     "runtime_shapes": {
       "route_heavy": {
-        "sidecar_scratch_high_water_bytes": 3287,
-        "live_endpoint_bytes": 4464,
-        "peak_live_slab_bytes": 7751,
-        "localside_peak_stack_bytes": 7487,
-        "peak_stack_bytes": 7487
+        "session_kit_storage_bytes": 392,
+        "resident_prefix_bytes": 3000,
+        "tap_ring_bytes": 2560,
+        "sidecar_scratch_high_water_bytes": 811,
+        "live_endpoint_bytes": 3216,
+        "peak_live_slab_bytes": 4027,
+        "localside_peak_stack_bytes": 3871,
+        "peak_stack_bytes": 3871,
+        "pico_total_sram_bytes": 11802
       },
       "linear_heavy": {
-        "sidecar_scratch_high_water_bytes": 2731,
-        "live_endpoint_bytes": 3776,
-        "peak_live_slab_bytes": 6495,
-        "localside_peak_stack_bytes": 6895,
-        "peak_stack_bytes": 6895
+        "session_kit_storage_bytes": 392,
+        "resident_prefix_bytes": 3000,
+        "tap_ring_bytes": 2560,
+        "sidecar_scratch_high_water_bytes": 259,
+        "live_endpoint_bytes": 2784,
+        "peak_live_slab_bytes": 3043,
+        "localside_peak_stack_bytes": 2399,
+        "peak_stack_bytes": 2399,
+        "pico_total_sram_bytes": 9346
       },
       "fanout_heavy": {
-        "sidecar_scratch_high_water_bytes": 3287,
-        "live_endpoint_bytes": 4768,
-        "peak_live_slab_bytes": 8055,
-        "localside_peak_stack_bytes": 7407,
-        "peak_stack_bytes": 7407
+        "session_kit_storage_bytes": 392,
+        "resident_prefix_bytes": 3000,
+        "tap_ring_bytes": 2560,
+        "sidecar_scratch_high_water_bytes": 811,
+        "live_endpoint_bytes": 3328,
+        "peak_live_slab_bytes": 4139,
+        "localside_peak_stack_bytes": 3791,
+        "peak_stack_bytes": 3791,
+        "pico_total_sram_bytes": 11834
       }
     }
   }

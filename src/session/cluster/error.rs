@@ -1,9 +1,9 @@
 //! Cluster error types.
 //!
 //! `ClusterError` is the internal cluster failure catalogue. Public attach
-//! failures use `AttachError`, which records the public attach operation
-//! callsite so protocol runtimes can propagate attach errors with `?`
-//! without adding an extra context type at every call site.
+//! failures use `AttachError`, which records the public attach operation so
+//! protocol runtimes can propagate attach errors with `?` without adding an
+//! extra context type at every call site.
 
 use crate::diag::Callsite;
 use core::fmt;
@@ -25,7 +25,7 @@ pub(crate) enum AttachOp {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AttachError {
     op: AttachOp,
-    location: Callsite,
+    _location: Callsite,
     kind: AttachErrorKind,
 }
 
@@ -37,14 +37,16 @@ enum AttachErrorKind {
 
 impl fmt::Debug for AttachError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("AttachError")
-            .field("operation", &self.operation())
-            .field("file", &self.file())
-            .field("line", &self.line())
-            .field("column", &self.column())
-            .field("kind", &self.kind)
-            .finish()
+        let mut debug = formatter.debug_struct("AttachError");
+        debug.field("operation", &self.operation());
+        #[cfg(feature = "std")]
+        {
+            debug
+                .field("file", &self._location.file())
+                .field("line", &self._location.line())
+                .field("column", &self._location.column());
+        }
+        debug.field("kind", &self.kind).finish()
     }
 }
 
@@ -54,7 +56,7 @@ impl AttachError {
     pub(crate) fn cluster(error: ClusterError) -> Self {
         Self {
             op: AttachOp::Attach,
-            location: Callsite::caller(),
+            _location: Callsite::caller(),
             kind: AttachErrorKind::Cluster(error),
         }
     }
@@ -64,7 +66,7 @@ impl AttachError {
     pub(crate) fn rendezvous(error: crate::rendezvous::error::RendezvousError) -> Self {
         Self {
             op: AttachOp::Attach,
-            location: Callsite::caller(),
+            _location: Callsite::caller(),
             kind: AttachErrorKind::Rendezvous(error),
         }
     }
@@ -72,7 +74,7 @@ impl AttachError {
     #[inline]
     pub(crate) const fn with_operation(mut self, op: AttachOp, location: Callsite) -> Self {
         self.op = op;
-        self.location = location;
+        self._location = location;
         self
     }
 
@@ -91,21 +93,6 @@ impl AttachError {
             AttachOp::Rendezvous => "rendezvous",
             AttachOp::Enter => "enter",
         }
-    }
-
-    #[inline]
-    pub const fn file(&self) -> &'static str {
-        self.location.file()
-    }
-
-    #[inline]
-    pub const fn line(&self) -> u32 {
-        self.location.line()
-    }
-
-    #[inline]
-    pub const fn column(&self) -> u32 {
-        self.location.column()
     }
 }
 

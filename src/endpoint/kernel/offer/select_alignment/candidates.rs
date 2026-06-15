@@ -4,7 +4,7 @@ use super::model::{
     OfferAlignmentCandidateInput, OfferAlignmentCandidatePool, OfferAlignmentSelection,
     OfferEntrySet, ProgressEvidence, ProgressSiblingPresence,
 };
-use super::{Clock, CursorEndpoint, Transport};
+use super::{CursorEndpoint, Transport};
 use crate::endpoint::kernel::frontier::FrontierKind;
 
 #[derive(Clone, Copy)]
@@ -164,10 +164,9 @@ impl OfferAlignmentCurrent {
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn offer_alignment_candidates(
         &self,

@@ -20,9 +20,8 @@
 //!
 //! - [`runtime::program`](crate::runtime::program) for projection and
 //!   role-local witnesses;
-//! - [`runtime::Config`](crate::runtime::Config) and
-//!   [`runtime::CounterClock`](crate::runtime::CounterClock) for
-//!   caller-provided buffers and clocks;
+//! - [`runtime::Config`](crate::runtime::Config) for the caller-provided runtime
+//!   slab;
 //! - [`runtime::wire`](crate::runtime::wire) for payload codecs;
 //! - [`runtime::transport`](crate::runtime::transport) and
 //!   [`runtime::transport::Transport`] for I/O readiness and ingress

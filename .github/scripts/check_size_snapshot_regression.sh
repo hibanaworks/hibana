@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
@@ -253,6 +255,22 @@ for line in os.environ["STACK_OUTPUT"].splitlines():
     }
     runtime_shapes[shape_name] = metrics
 
+data_bss_bytes = sections.get(".data", 0) + sections.get(".bss", 0)
+for metrics in runtime_shapes.values():
+    if metrics.get("resident_prefix_bytes", 0) < metrics.get("tap_ring_bytes", 0):
+        raise SystemExit(
+            "resident_prefix_bytes must include the internal tap ring carved before the runtime slab"
+        )
+    # resident_prefix_bytes is the full pre-runtime carve:
+    # Rendezvous header, transport T field, alignment padding, and tap ring.
+    metrics["pico_total_sram_bytes"] = (
+        data_bss_bytes
+        + metrics.get("session_kit_storage_bytes", 0)
+        + metrics.get("resident_prefix_bytes", 0)
+        + metrics.get("peak_live_slab_bytes", 0)
+        + metrics.get("localside_peak_stack_bytes", 0)
+    )
+
 runtime_max = {}
 for metrics in runtime_shapes.values():
     for key, value in metrics.items():
@@ -294,11 +312,15 @@ failures = []
 
 expected_shapes = {"route_heavy", "linear_heavy", "fanout_heavy"}
 runtime_metrics = {
+    "session_kit_storage_bytes",
+    "resident_prefix_bytes",
+    "tap_ring_bytes",
     "sidecar_scratch_high_water_bytes",
     "live_endpoint_bytes",
     "peak_live_slab_bytes",
     "localside_peak_stack_bytes",
     "peak_stack_bytes",
+    "pico_total_sram_bytes",
 }
 
 shapes = current.get("runtime_shapes", {})
@@ -348,16 +370,8 @@ for shape in sorted(expected_shapes):
 
 current_max_stack = current["runtime_max"].get("peak_stack_bytes", 0)
 budget_max_stack = max(metrics["peak_stack_bytes"] for metrics in runtime_budget.values())
-current_sram = (
-    current["sections"].get(".data", 0)
-    + current["sections"].get(".bss", 0)
-    + current["runtime_max"].get("peak_live_slab_bytes", 0)
-)
-budget_sram = (
-    section_budget.get(".data", 0)
-    + section_budget.get(".bss", 0)
-    + max(metrics["peak_live_slab_bytes"] for metrics in runtime_budget.values())
-)
+current_sram = current["runtime_max"].get("pico_total_sram_bytes", 0)
+budget_sram = max(metrics["pico_total_sram_bytes"] for metrics in runtime_budget.values())
 current_flash = current["sections"].get("flash_total", 0)
 aggregate = [
     ("max_stack", current_max_stack, budget_max_stack),

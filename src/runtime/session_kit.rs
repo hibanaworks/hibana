@@ -10,12 +10,11 @@ use crate::{
 /// `Sync`, and mutation is centralised inside the single-thread runtime
 /// owner.
 #[repr(transparent)]
-pub struct SessionKit<'cfg, T, C, const MAX_RV: usize = 4>
+pub struct SessionKit<'cfg, T, const MAX_RV: usize = 4>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
-    pub(super) inner: crate::session::cluster::core::SessionCluster<'cfg, T, C, MAX_RV>,
+    pub(super) inner: crate::session::cluster::core::SessionCluster<'cfg, T, MAX_RV>,
     _local_only: crate::local::LocalOnly,
 }
 
@@ -23,16 +22,11 @@ where
 ///
 /// The storage is caller-owned and heapless. Initialization writes the kit in
 /// place and returns the stable borrow tied to the storage owner.
-pub struct SessionKitStorage<
-    'cfg,
-    T,
-    C = crate::runtime_core::config::CounterClock,
-    const MAX_RV: usize = 4,
-> where
+pub struct SessionKitStorage<'cfg, T, const MAX_RV: usize = 4>
+where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
-    storage: core::mem::MaybeUninit<SessionKit<'cfg, T, C, MAX_RV>>,
+    storage: core::mem::MaybeUninit<SessionKit<'cfg, T, MAX_RV>>,
     state: SessionKitStorageState,
 }
 
@@ -51,12 +45,11 @@ impl SessionKitStorageState {
 }
 
 /// Rendezvous-scoped runtime witness.
-pub struct RendezvousKit<'kit, 'cfg, T, C, const HAS_SESSION: bool, const MAX_RV: usize>
+pub struct RendezvousKit<'kit, 'cfg, T, const HAS_SESSION: bool, const MAX_RV: usize>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
-    pub(super) kit: &'kit SessionKit<'cfg, T, C, MAX_RV>,
+    pub(super) kit: &'kit SessionKit<'cfg, T, MAX_RV>,
     pub(super) rv: crate::session::types::RendezvousId,
     pub(super) sid: crate::runtime::ids::SessionId,
 }
@@ -68,23 +61,20 @@ pub struct RoleKit<
     'prog,
     const ROLE: u8,
     T,
-    C,
     const HAS_SESSION: bool,
     const MAX_RV: usize,
 > where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
-    pub(super) kit: &'kit SessionKit<'cfg, T, C, MAX_RV>,
+    pub(super) kit: &'kit SessionKit<'cfg, T, MAX_RV>,
     pub(super) rv: crate::session::types::RendezvousId,
     pub(super) sid: crate::runtime::ids::SessionId,
     pub(super) program: &'prog crate::runtime::program::RoleProgram<ROLE>,
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> SessionKitStorage<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> SessionKitStorage<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     /// Create uninitialized kit storage.
     pub const fn uninit() -> Self {
@@ -95,7 +85,7 @@ where
     }
 
     /// Initialize the kit in place.
-    pub fn init(&mut self) -> &SessionKit<'cfg, T, C, MAX_RV> {
+    pub fn init(&mut self) -> &SessionKit<'cfg, T, MAX_RV> {
         if self.state.is_initialized() {
             crate::invariant();
         }
@@ -114,10 +104,9 @@ where
     }
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> Drop for SessionKitStorage<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> Drop for SessionKitStorage<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     fn drop(&mut self) {
         if self.state.is_initialized() {
@@ -130,10 +119,9 @@ where
     }
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> SessionKit<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> SessionKit<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     unsafe fn init_unregistered(dst: *mut Self) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
@@ -148,16 +136,14 @@ where
     #[inline]
     /// Obtain one registered rendezvous witness from caller-provided config and transport.
     ///
-    /// The config owns only the tap buffer, slab, and clock envelope used by
-    /// the rendezvous. Lane storage and endpoint leases are derived when a
-    /// projected role descriptor attaches. The transport owns I/O
-    /// state.
+    /// The config borrows the single runtime slab. Runtime capacity is carved
+    /// or derived by Hibana; the transport owns only I/O state.
     #[track_caller]
     pub fn rendezvous(
         &self,
-        config: crate::runtime::Config<'cfg, C>,
+        config: crate::runtime::Config<'cfg>,
         transport: T,
-    ) -> Result<RendezvousKit<'_, 'cfg, T, C, false, MAX_RV>, AttachError> {
+    ) -> Result<RendezvousKit<'_, 'cfg, T, false, MAX_RV>, AttachError> {
         let location = Callsite::caller();
         let rv = self
             .inner

@@ -5,7 +5,6 @@ use core::task::Poll;
 use super::{CursorEndpoint, OfferScopeProfile, OfferScopeSelection, OfferStagedIngress};
 use crate::{
     endpoint::{RecvError, RecvResult},
-    runtime_core::config::Clock,
     transport::Transport,
 };
 
@@ -36,10 +35,9 @@ pub(super) enum OfferIngressMode {
     TransportFrame,
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn await_transport_payload_for_offer_lane(
         &mut self,

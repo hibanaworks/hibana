@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
@@ -187,7 +189,11 @@ import struct
 import sys
 
 line = next(
-    (line for line in os.environ["FUTURE_LAYOUT_OUTPUT"].splitlines() if line.startswith("future-layout ")),
+    (
+        line[line.index("future-layout "):]
+        for line in os.environ["FUTURE_LAYOUT_OUTPUT"].splitlines()
+        if "future-layout " in line
+    ),
     None,
 )
 if line is None:
@@ -250,8 +256,9 @@ expected = {
 }
 rows = {}
 for line in os.environ["PROTOCOL_MATRIX_OUTPUT"].splitlines():
-    if not line.startswith("protocol-matrix "):
+    if "protocol-matrix " not in line:
         continue
+    line = line[line.index("protocol-matrix "):]
     name_match = re.search(r"name=([A-Za-z0-9_]+)", line)
     if not name_match:
         continue
@@ -365,8 +372,9 @@ import sys
 
 target = os.environ["PROTOCOL_NAME"]
 for line in os.environ["PROTOCOL_MATRIX_OUTPUT"].splitlines():
-    if not line.startswith("protocol-matrix "):
+    if "protocol-matrix " not in line:
         continue
+    line = line[line.index("protocol-matrix "):]
     name_match = re.search(r"name=([A-Za-z0-9_]+)", line)
     if not name_match or name_match.group(1) != target:
         continue
@@ -532,8 +540,9 @@ expected = {
 }
 rows = {}
 for line in os.environ["PROTOCOL_ARTIFACT_OUTPUT"].splitlines():
-    if not line.startswith("protocol-artifact "):
+    if "protocol-artifact " not in line:
         continue
+    line = line[line.index("protocol-artifact "):]
     name_match = re.search(r"name=([A-Za-z0-9_]+)", line)
     if not name_match:
         continue
@@ -683,6 +692,32 @@ if missing:
     )
     sys.exit(1)
 
+thumb_values = {}
+for line in os.environ["THUMB_SECTION_OUTPUT"].splitlines():
+    match = re.search(r"thumb section name=(\.[A-Za-z0-9_]+) bytes=([0-9]+)", line)
+    if match:
+        thumb_values[match.group(1)] = int(match.group(2))
+thumb_values["flash_total"] = (
+    thumb_values.get(".text", 0) + thumb_values.get(".rodata", 0) + thumb_values.get(".data", 0)
+)
+data_bss_bytes = thumb_values.get(".data", 0) + thumb_values.get(".bss", 0)
+for metrics in seen.values():
+    if metrics.get("resident_prefix_bytes", 0) < metrics.get("tap_ring_bytes", 0):
+        print(
+            "final-form measurement violation: resident_prefix_bytes must include the internal tap ring carved before the runtime slab",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # resident_prefix_bytes is the full pre-runtime carve:
+    # Rendezvous header, transport T field, alignment padding, and tap ring.
+    metrics["pico_total_sram_bytes"] = (
+        data_bss_bytes
+        + metrics.get("session_kit_storage_bytes", 0)
+        + metrics.get("resident_prefix_bytes", 0)
+        + metrics.get("peak_live_slab_bytes", 0)
+        + metrics.get("localside_peak_stack_bytes", 0)
+    )
+
 for shape in sorted(expected):
     for key, maximum in sorted(budget[shape].items()):
         actual = seen[shape].get(key)
@@ -710,25 +745,9 @@ if actual_max_stack > budget_max_stack:
     )
     sys.exit(1)
 
-thumb_values = {}
-for line in os.environ["THUMB_SECTION_OUTPUT"].splitlines():
-    match = re.search(r"thumb section name=(\.[A-Za-z0-9_]+) bytes=([0-9]+)", line)
-    if match:
-        thumb_values[match.group(1)] = int(match.group(2))
-thumb_values["flash_total"] = (
-    thumb_values.get(".text", 0) + thumb_values.get(".rodata", 0) + thumb_values.get(".data", 0)
-)
 section_budget = snapshot["budget"]["thumbv6m_none_eabi_no_std_release_lib"]["sections"]
-actual_sram = (
-    thumb_values.get(".data", 0)
-    + thumb_values.get(".bss", 0)
-    + max(metrics["peak_live_slab_bytes"] for metrics in seen.values())
-)
-budget_sram = (
-    section_budget.get(".data", 0)
-    + section_budget.get(".bss", 0)
-    + max(metrics["peak_live_slab_bytes"] for metrics in budget.values())
-)
+actual_sram = max(metrics["pico_total_sram_bytes"] for metrics in seen.values())
+budget_sram = max(metrics["pico_total_sram_bytes"] for metrics in budget.values())
 aggregate = [
     ("max_stack", budget_max_stack, actual_max_stack),
     ("sram", budget_sram, actual_sram),

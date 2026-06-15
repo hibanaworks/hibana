@@ -26,13 +26,14 @@ use crate::{
         core::{TapRing, emit},
         events,
     },
-    runtime_core::config::{Clock, Config, CounterClock},
+    runtime_core::config::Config,
     session::{
         brand::{self, Guard},
         cluster::error::ResourceScope,
     },
     transport::Transport,
 };
+pub(crate) use storage_layout::Sidecar;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -93,9 +94,9 @@ impl core::fmt::Display for EndpointLeaseId {
     }
 }
 
-pub(crate) struct LanePortAccess<'lease, 'cfg, T: Transport, C: Clock> {
+pub(crate) struct LanePortAccess<'lease, 'cfg, T: Transport> {
     pub(crate) port: Port<'lease, T>,
-    pub(crate) lane_guard: LaneGuard<'lease, T, C>,
+    pub(crate) lane_guard: LaneGuard<'lease, T>,
     pub(crate) brand: Guard<'cfg>,
 }
 
@@ -232,26 +233,27 @@ impl FreeRegionState {
     }
 }
 
-pub(crate) struct Rendezvous<'rv, 'cfg, T: Transport, C: Clock = CounterClock>
+pub(crate) struct Rendezvous<'rv, 'cfg, T: Transport>
 where
     'cfg: 'rv,
 {
     brand_marker: PhantomData<brand::Brand<'rv>>,
     id: RendezvousId,
     tap: TapRing<'cfg>,
+    tap_counter: Cell<u32>,
     slab: *mut [u8],
     slab_marker: PhantomData<&'cfg mut [u8]>,
     image_frontier: u32,
     frontier_workspace_bytes: u32,
-    endpoint_leases: *mut EndpointLeaseSlot,
+    endpoint_lease_storage: Sidecar<EndpointLeaseSlot>,
     endpoint_lease_capacity: EndpointLeaseId,
-    endpoint_lease_reclaim_delta: u16,
     free_regions: [FreeRegion; FREE_REGION_CAPACITY],
     lane_range: Range<u32>,
     transport: T,
+    assoc_storage: Sidecar<u8>,
+    route_storage: Sidecar<u8>,
     assoc: AssocTable,
     routes: RouteTable,
-    clock: C,
 }
 
 mod endpoint_leases;
@@ -326,14 +328,13 @@ mod storage_runtime_budget;
 /// - LANE_ACQUIRE tap event on lease creation (via `SessionKit::lease_port`)
 /// - LANE_RELEASE tap event on Drop
 /// - Streaming checker verifies acquire/release pairs match
-pub(crate) struct LaneLease<'lease, 'cfg, T, C, const MAX_RV: usize>
+pub(crate) struct LaneLease<'lease, 'cfg, T, const MAX_RV: usize>
 where
     T: Transport,
-    C: Clock + 'cfg,
     'cfg: 'lease,
 {
     /// Borrow-bound lease over the parent rendezvous.
-    lease: Option<crate::session::lease::core::RendezvousLease<'lease, 'cfg, T, C>>,
+    lease: Option<crate::session::lease::core::RendezvousLease<'lease, 'cfg, T>>,
     /// Session identifier.
     sid: SessionId,
     /// Lane identifier.
@@ -348,16 +349,15 @@ where
     brand: crate::session::brand::Guard<'cfg>,
 }
 
-impl<'lease, 'cfg, T, C, const MAX_RV: usize> LaneLease<'lease, 'cfg, T, C, MAX_RV>
+impl<'lease, 'cfg, T, const MAX_RV: usize> LaneLease<'lease, 'cfg, T, MAX_RV>
 where
     T: Transport,
-    C: Clock,
     'cfg: 'lease,
 {
     /// Constructs a rendezvous entry that has already been marked
     /// active by the lease table.
     pub(crate) fn new(
-        lease: crate::session::lease::core::RendezvousLease<'lease, 'cfg, T, C>,
+        lease: crate::session::lease::core::RendezvousLease<'lease, 'cfg, T>,
         sid: SessionId,
         lane: Lane,
         role: u8,
@@ -376,16 +376,15 @@ where
         }
     }
 
-    pub(crate) fn into_port_guard(mut self) -> LanePortAccess<'lease, 'cfg, T, C> {
+    pub(crate) fn into_port_guard(mut self) -> LanePortAccess<'lease, 'cfg, T> {
         let (port, guard) = {
             let lease = crate::invariant_some(self.lease.as_mut());
             // SAFETY: `RendezvousLease<'lease, 'cfg, ...>` holds the unique mutable
             // entry borrow for `'lease`, so reborrowing the rendezvous as shared for
             // the same `'lease` lifetime is sound as long as we do not use the lease
             // mutably while the shared reference is live.
-            let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T, C> =
-                lease.with_rendezvous(core::ptr::from_mut);
-            let rv: &'lease Rendezvous<'cfg, 'cfg, T, C> =
+            let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T> = lease.with_rendezvous(core::ptr::from_mut);
+            let rv: &'lease Rendezvous<'cfg, 'cfg, T> =
                 /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*rv_ptr };
             let active_leases = *crate::invariant_some(self.active_leases.as_ref());
             rv.open_port_guard(
@@ -408,17 +407,16 @@ where
     #[inline]
     pub(crate) fn with_rendezvous_mut<R>(
         &mut self,
-        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, C>) -> R,
+        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T>) -> R,
     ) -> R {
         let lease = crate::invariant_some(self.lease.as_mut());
         lease.with_rendezvous(f)
     }
 }
 
-impl<'lease, 'cfg, T, C, const MAX_RV: usize> Drop for LaneLease<'lease, 'cfg, T, C, MAX_RV>
+impl<'lease, 'cfg, T, const MAX_RV: usize> Drop for LaneLease<'lease, 'cfg, T, MAX_RV>
 where
     T: Transport,
-    C: Clock,
     'cfg: 'lease,
 {
     fn drop(&mut self) {

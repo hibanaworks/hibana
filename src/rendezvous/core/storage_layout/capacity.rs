@@ -1,8 +1,10 @@
 use super::{
-    AssocTable, Clock, FREE_REGION_CAPACITY, FreeRegion, Rendezvous, RouteTable, Transport,
+    AssocTable, FREE_REGION_CAPACITY, FreeRegion, Rendezvous, RouteTable, Sidecar, Transport,
 };
 use crate::session::cluster::error::ResourceScope;
 mod endpoint_lease;
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 // # Unsafe Owner Contract
 //
@@ -13,29 +15,7 @@ mod endpoint_lease;
 // migration copies initialized entries into freshly allocated owner storage
 // before publishing the new table ingress.
 
-#[derive(Clone, Copy)]
-struct SidecarLease {
-    ptr: *mut u8,
-    bytes: usize,
-    reclaim_delta: usize,
-}
-
-impl SidecarLease {
-    #[inline]
-    const fn new(ptr: *mut u8, bytes: usize, reclaim_delta: usize) -> Self {
-        Self {
-            ptr,
-            bytes,
-            reclaim_delta,
-        }
-    }
-}
-
-struct LaneStorageLeaseSet {
-    association: Option<SidecarLease>,
-}
-
-impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
+impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
@@ -71,9 +51,20 @@ where
         }
     }
 
-    fn release_persistent_region(&mut self, offset: u32, len: u32) {
+    #[inline]
+    fn record_free_region_fragment(&mut self, offset: u32, len: u32) {
         if len == 0 {
             return;
+        }
+        let Some(idx) = self.first_empty_free_region_slot() else {
+            crate::invariant();
+        };
+        self.free_regions[idx] = FreeRegion::recorded(offset, len);
+    }
+
+    fn release_persistent_region(&mut self, offset: u32, len: u32) -> Result<(), ()> {
+        if len == 0 {
+            return Ok(());
         }
         let mut start = offset;
         let mut end = crate::invariant_some(offset.checked_add(len));
@@ -118,13 +109,15 @@ where
                     break;
                 }
             }
-            return;
+            return Ok(());
         }
 
         if let Some(idx) = self.first_empty_free_region_slot() {
             self.free_regions[idx] =
                 FreeRegion::recorded(start, crate::invariant_some(end.checked_sub(start)));
+            return Ok(());
         }
+        Err(())
     }
 
     unsafe fn allocate_from_free_regions(
@@ -159,12 +152,12 @@ where
             self.clear_free_region(idx);
             if prefix_len != 0 {
                 let prefix_len = crate::invariant_ok(u32::try_from(prefix_len));
-                self.release_persistent_region(region.offset, prefix_len);
+                self.record_free_region_fragment(region.offset, prefix_len);
             }
             if suffix_len != 0 {
                 let alloc_end = crate::invariant_ok(u32::try_from(alloc_end));
                 let suffix_len = crate::invariant_ok(u32::try_from(suffix_len));
-                self.release_persistent_region(alloc_end, suffix_len);
+                self.record_free_region_fragment(alloc_end, suffix_len);
             }
             let alloc_start_u32 = crate::invariant_ok(u32::try_from(alloc_start));
             return Some((
@@ -213,7 +206,7 @@ where
         &mut self,
         bytes: usize,
         align: usize,
-    ) -> Option<(*mut u8, usize)> {
+    ) -> Option<Sidecar<u8>> {
         let source_frontier = self.image_frontier;
         let (ptr, offset) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe { self.allocate_persistent_sidecar_bytes(bytes, align) }?;
         let reclaim_delta = if offset > source_frontier {
@@ -221,50 +214,50 @@ where
         } else {
             0
         };
-        Some((ptr, reclaim_delta))
+        Some(Sidecar::from_raw_parts(ptr, bytes, reclaim_delta))
     }
 
     #[inline]
-    pub(crate) fn reclaim_offset_for_payload(&self, ptr: *mut u8, reclaim_delta: usize) -> u32 {
+    fn reclaim_offset_for_sidecar<S>(&self, sidecar: Sidecar<S>) -> u32 {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
-        let payload_start = crate::invariant_some(ptr.addr().checked_sub(base));
-        let reclaim_start = crate::invariant_some(payload_start.checked_sub(reclaim_delta));
+        let payload_start = crate::invariant_some(sidecar.ptr().addr().checked_sub(base));
+        let reclaim_start =
+            crate::invariant_some(payload_start.checked_sub(sidecar.reclaim_delta()));
         crate::invariant_ok(u32::try_from(reclaim_start))
     }
 
     #[inline]
-    pub(crate) fn free_bound_persistent_region(
+    fn free_bound_persistent_region<S>(
         &mut self,
         reclaim_offset: u32,
-        ptr: *mut u8,
-        bytes: usize,
-    ) {
-        if ptr.is_null() || bytes == 0 {
-            return;
+        sidecar: Sidecar<S>,
+    ) -> Result<(), ()> {
+        if sidecar.is_empty() {
+            return Ok(());
         }
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
-        let payload_start = crate::invariant_some(ptr.addr().checked_sub(base));
+        let payload_start = crate::invariant_some(sidecar.ptr().addr().checked_sub(base));
         let reclaim_start = reclaim_offset as usize;
-        let payload_end = crate::invariant_some(payload_start.checked_add(bytes));
+        let payload_end = crate::invariant_some(payload_start.checked_add(sidecar.bytes()));
         let release_len = crate::invariant_some(payload_end.checked_sub(reclaim_start));
         let release_len = crate::invariant_ok(u32::try_from(release_len));
-        self.release_persistent_region(reclaim_offset, release_len);
+        self.release_persistent_region(reclaim_offset, release_len)
     }
 
     #[inline]
-    pub(crate) fn free_external_persistent_sidecar_bytes(
+    pub(crate) fn free_external_persistent_sidecar(
         &mut self,
-        ptr: *mut u8,
-        bytes: usize,
-        reclaim_delta: usize,
-    ) {
-        if ptr.is_null() || bytes == 0 {
-            return;
+        sidecar: Sidecar<u8>,
+        failure_scope: ResourceScope,
+    ) -> Result<(), ResourceScope> {
+        if sidecar.is_empty() {
+            return Ok(());
         }
-        let reclaim_offset = self.reclaim_offset_for_payload(ptr, reclaim_delta);
-        self.free_bound_persistent_region(reclaim_offset, ptr, bytes);
+        let reclaim_offset = self.reclaim_offset_for_sidecar(sidecar);
+        self.free_bound_persistent_region(reclaim_offset, sidecar)
+            .map_err(|()| failure_scope)
     }
 
     #[inline]
@@ -289,37 +282,34 @@ where
     }
 
     #[inline]
-    fn lease_sidecar(&mut self, bytes: usize, align: usize) -> Option<SidecarLease> {
-        let (ptr, reclaim_delta) = self.allocate_external_persistent_sidecar_bytes(bytes, align)?;
-        Some(SidecarLease::new(ptr, bytes, reclaim_delta))
+    fn lease_sidecar<S>(&mut self, bytes: usize, align: usize) -> Option<Sidecar<S>> {
+        Some(
+            self.allocate_external_persistent_sidecar_bytes(bytes, align)?
+                .cast::<S>(),
+        )
     }
 
     #[inline]
-    fn release_sidecar_lease(&mut self, lease: &mut Option<SidecarLease>) {
-        if let Some(lease) = lease.take() {
-            self.free_external_persistent_sidecar_bytes(
-                lease.ptr,
-                lease.bytes,
-                lease.reclaim_delta,
-            );
-        }
-    }
-
-    fn release_lane_storage_leases(&mut self, leases: &mut LaneStorageLeaseSet) {
-        self.release_sidecar_lease(&mut leases.association);
-    }
-
-    fn lease_lane_storage_sidecar(
+    fn release_sidecar<S>(
         &mut self,
-        leases: &mut LaneStorageLeaseSet,
-        bytes: usize,
-        align: usize,
-    ) -> Option<SidecarLease> {
-        let Some(lease) = self.lease_sidecar(bytes, align) else {
-            self.release_lane_storage_leases(leases);
-            return None;
-        };
-        Some(lease)
+        sidecar: Sidecar<S>,
+        failure_scope: ResourceScope,
+    ) -> Result<(), ResourceScope> {
+        self.free_external_persistent_sidecar(sidecar.cast::<u8>(), failure_scope)
+    }
+
+    #[inline]
+    fn release_new_sidecar_or_invariant<S>(
+        &mut self,
+        sidecar: Sidecar<S>,
+        failure_scope: ResourceScope,
+    ) {
+        if self
+            .free_external_persistent_sidecar(sidecar.cast::<u8>(), failure_scope)
+            .is_err()
+        {
+            crate::invariant();
+        }
     }
 
     fn ensure_lane_storage_for_lane_slots(
@@ -344,41 +334,42 @@ where
             return Ok(());
         }
 
-        let source_assoc_ptr = self.assoc.storage_ptr();
-        let source_assoc_bytes = self.assoc.storage_bytes_current();
+        let source_assoc = self.assoc_storage;
+        let lease = self
+            .lease_sidecar::<u8>(
+                AssocTable::storage_bytes(target_slots),
+                AssocTable::storage_align(),
+            )
+            .ok_or(ResourceScope::LaneStorage)?;
 
-        let mut leases = LaneStorageLeaseSet { association: None };
-
-        if need_assoc {
-            leases.association = Some(
-                self.lease_lane_storage_sidecar(
-                    &mut leases,
-                    AssocTable::storage_bytes(target_slots),
-                    AssocTable::storage_align(),
-                )
-                .ok_or(ResourceScope::LaneStorage)?,
-            );
-        }
-        if let Some(lease) = leases.association.take() {
-            /* SAFETY: all required sidecar storage was leased before any table owner is rebound. */
-            unsafe {
-                if assoc_was_bound {
-                    self.assoc.rebind_from_storage_copying_entries(
-                        lease.ptr,
-                        lane_base,
-                        target_slots,
-                    );
-                } else {
-                    self.assoc
-                        .bind_from_storage(lease.ptr, lane_base, target_slots);
-                }
+        /* SAFETY: all required sidecar storage was leased before any table owner is rebound. */
+        unsafe {
+            if assoc_was_bound {
+                self.assoc
+                    .init_replacement_storage(lease.ptr(), lane_base, target_slots);
+            } else {
+                self.assoc
+                    .bind_from_storage(lease.ptr(), lane_base, target_slots);
             }
         }
-        self.lane_range = lane_base..lane_end;
-
-        if need_assoc && assoc_was_bound {
-            self.free_external_persistent_sidecar_bytes(source_assoc_ptr, source_assoc_bytes, 0);
+        if assoc_was_bound {
+            if let Err(error) = self.release_sidecar(source_assoc, ResourceScope::LaneStorage) {
+                /* SAFETY: the replacement assoc arena was initialized above but not published. */
+                unsafe {
+                    AssocTable::clear_waiters_in_storage(lease.ptr(), target_slots);
+                }
+                self.release_new_sidecar_or_invariant(lease, ResourceScope::LaneStorage);
+                return Err(error);
+            }
+            self.assoc.clear_current_waiters();
+            /* SAFETY: the replacement assoc arena was staged before source release succeeded. */
+            unsafe {
+                self.assoc
+                    .commit_storage(lease.ptr(), lane_base, target_slots);
+            }
         }
+        self.assoc_storage = lease;
+        self.lane_range = lane_base..lane_end;
         Ok(())
     }
 
@@ -400,52 +391,59 @@ where
         {
             return Ok(());
         }
-        let source_frontier = self.image_frontier;
-        let (storage, storage_offset) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe {
-            self.allocate_persistent_sidecar_bytes(
+        let lease = self
+            .lease_sidecar::<u8>(
                 RouteTable::storage_bytes(required_frame_slots, required_lane_slots),
                 RouteTable::storage_align(),
             )
-        }.ok_or(ResourceScope::RouteTable)?;
-        let reclaim_delta = if storage_offset > source_frontier {
-            (storage_offset - source_frontier) as usize
-        } else {
-            0
-        };
-        let source_ptr = self.routes.storage_ptr();
-        let source_bytes = self.routes.storage_bytes_current();
+            .ok_or(ResourceScope::RouteTable)?;
+        let source_route = self.route_storage;
         if self.routes.route_slots() == 0 {
             /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
             unsafe {
                 self.routes.bind_from_storage_with_layout(
-                    storage,
+                    lease.ptr(),
                     required_frame_slots,
                     self.lane_base(),
                     required_lane_slots,
-                    reclaim_delta,
                 );
             }
-        } else {
-            let source_reclaim_offset =
-                self.reclaim_offset_for_payload(source_ptr, self.routes.storage_reclaim_delta());
-            /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
-            unsafe {
-                self.routes.migrate_from_storage(
-                    storage,
-                    required_frame_slots,
-                    self.lane_base(),
-                    required_lane_slots,
-                );
-                self.routes.rebind_from_storage(
-                    storage,
-                    required_frame_slots,
-                    self.lane_base(),
-                    required_lane_slots,
-                    reclaim_delta,
-                );
-            }
-            self.free_bound_persistent_region(source_reclaim_offset, source_ptr, source_bytes);
+            self.route_storage = lease;
+            return Ok(());
         }
+
+        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
+        unsafe {
+            self.routes.migrate_from_storage(
+                lease.ptr(),
+                required_frame_slots,
+                self.lane_base(),
+                required_lane_slots,
+            );
+        }
+        if let Err(error) = self.release_sidecar(source_route, ResourceScope::RouteTable) {
+            /* SAFETY: the replacement route arena was initialized above but not published. */
+            unsafe {
+                RouteTable::clear_waiters_in_storage(
+                    lease.ptr(),
+                    required_frame_slots,
+                    required_lane_slots,
+                );
+            }
+            self.release_new_sidecar_or_invariant(lease, ResourceScope::RouteTable);
+            return Err(error);
+        }
+        self.routes.clear_current_waiters();
+        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
+        unsafe {
+            self.routes.rebind_from_storage(
+                lease.ptr(),
+                required_frame_slots,
+                self.lane_base(),
+                required_lane_slots,
+            );
+        }
+        self.route_storage = lease;
         Ok(())
     }
 }

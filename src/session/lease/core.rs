@@ -16,21 +16,20 @@ use core::{marker::PhantomData, ptr, ptr::NonNull};
 
 use crate::rendezvous::core::{LaneRelease, Rendezvous};
 use crate::session::types::{Lane, RendezvousId, SessionId};
-use crate::{runtime_core::config::Clock, session::lease::map::ArrayMap, transport::Transport};
+use crate::{session::lease::map::ArrayMap, transport::Transport};
 
 /// Fixed-size rendezvous table.
 ///
-/// `RendezvousTable` is parameterised by the transport and clock used by the
-/// rendezvous layer. The `MAX_RV` const parameter fixes the maximum number of
-/// rendezvous that can be registered in `no_alloc` environments.
-pub(crate) struct RendezvousTable<'cfg, T: Transport, C: Clock, const MAX_RV: usize> {
-    entries: ArrayMap<RendezvousId, RendezvousEntry<'cfg, T, C>, MAX_RV>,
+/// `RendezvousTable` is parameterised by the transport used by the rendezvous
+/// layer. The `MAX_RV` const parameter fixes the maximum number of rendezvous
+/// that can be registered in `no_alloc` environments.
+pub(crate) struct RendezvousTable<'cfg, T: Transport, const MAX_RV: usize> {
+    entries: ArrayMap<RendezvousId, RendezvousEntry<'cfg, T>, MAX_RV>,
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> RendezvousTable<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> RendezvousTable<'cfg, T, MAX_RV>
 where
     T: Transport,
-    C: Clock,
 {
     /// Initialize an empty rendezvous table in place without constructing the full
     /// fixed-capacity storage on the caller's stack first.
@@ -45,17 +44,14 @@ where
     }
 
     /// Borrow a rendezvous by shared reference when no lease is active.
-    pub(crate) fn get(&self, id: &RendezvousId) -> Option<&Rendezvous<'cfg, 'cfg, T, C>> {
+    pub(crate) fn get(&self, id: &RendezvousId) -> Option<&Rendezvous<'cfg, 'cfg, T>> {
         self.entries
             .get(id)
             .and_then(|entry| entry.rendezvous_ref())
     }
 
     /// Borrow a rendezvous by mutable reference when no lease is active.
-    pub(crate) fn get_mut(
-        &mut self,
-        id: &RendezvousId,
-    ) -> Option<&mut Rendezvous<'cfg, 'cfg, T, C>> {
+    pub(crate) fn get_mut(&mut self, id: &RendezvousId) -> Option<&mut Rendezvous<'cfg, 'cfg, T>> {
         self.entries
             .get_mut(id)
             .and_then(|entry| entry.rendezvous_mut())
@@ -66,7 +62,7 @@ where
     pub(crate) fn get_mut_checked(
         &mut self,
         id: &RendezvousId,
-    ) -> Result<&mut Rendezvous<'cfg, 'cfg, T, C>, LeaseError> {
+    ) -> Result<&mut Rendezvous<'cfg, 'cfg, T>, LeaseError> {
         let slot = self
             .entries
             .get_mut(id)
@@ -81,7 +77,7 @@ where
     pub(crate) fn lease<'lease>(
         &'lease mut self,
         rv_id: RendezvousId,
-    ) -> Result<RendezvousLease<'lease, 'cfg, T, C>, LeaseError>
+    ) -> Result<RendezvousLease<'lease, 'cfg, T>, LeaseError>
     where
         'cfg: 'lease,
     {
@@ -97,10 +93,9 @@ where
     }
 }
 
-impl<'cfg, T, C, const MAX_RV: usize> RendezvousTable<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> RendezvousTable<'cfg, T, MAX_RV>
 where
     T: Transport,
-    C: Clock,
 {
     fn next_available_rendezvous_id(&self) -> Option<RendezvousId> {
         let mut raw = 1u16;
@@ -118,7 +113,7 @@ where
 
     pub(crate) fn register_local_from_config_auto(
         &mut self,
-        config: crate::runtime_core::config::Config<'cfg, C>,
+        config: crate::runtime_core::config::Config<'cfg>,
         transport: T,
     ) -> Result<RendezvousId, RegisterRendezvousError> {
         if self.entries.is_full() {
@@ -168,14 +163,13 @@ pub(crate) enum LeaseError {
 }
 
 /// Resident rendezvous slot used by [`RendezvousTable`].
-struct RendezvousEntry<'cfg, T, C>
+struct RendezvousEntry<'cfg, T>
 where
     T: Transport,
-    C: Clock,
 {
-    rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T, C>>,
+    rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T>>,
     state: RendezvousEntryState,
-    _marker: PhantomData<&'cfg mut Rendezvous<'cfg, 'cfg, T, C>>,
+    _marker: PhantomData<&'cfg mut Rendezvous<'cfg, 'cfg, T>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -184,10 +178,9 @@ enum RendezvousEntryState {
     Leased,
 }
 
-impl<'cfg, T, C> RendezvousEntry<'cfg, T, C>
+impl<'cfg, T> RendezvousEntry<'cfg, T>
 where
     T: Transport,
-    C: Clock,
 {
     fn is_active(&self) -> bool {
         self.state == RendezvousEntryState::Leased
@@ -201,7 +194,7 @@ where
         self.state = RendezvousEntryState::Available;
     }
 
-    fn rendezvous_ref(&self) -> Option<&Rendezvous<'cfg, 'cfg, T, C>> {
+    fn rendezvous_ref(&self) -> Option<&Rendezvous<'cfg, 'cfg, T>> {
         match self.state {
             RendezvousEntryState::Available => Some(
                 /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
@@ -211,7 +204,7 @@ where
         }
     }
 
-    fn rendezvous_mut(&mut self) -> Option<&mut Rendezvous<'cfg, 'cfg, T, C>> {
+    fn rendezvous_mut(&mut self) -> Option<&mut Rendezvous<'cfg, 'cfg, T>> {
         match self.state {
             RendezvousEntryState::Available => Some(
                 /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
@@ -221,21 +214,20 @@ where
         }
     }
 
-    fn rendezvous(&mut self) -> &mut Rendezvous<'cfg, 'cfg, T, C> {
+    fn rendezvous(&mut self) -> &mut Rendezvous<'cfg, 'cfg, T> {
         /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
         unsafe { self.rendezvous.as_mut() }
     }
 }
 
-impl<'cfg, T, C> RendezvousEntry<'cfg, T, C>
+impl<'cfg, T> RendezvousEntry<'cfg, T>
 where
     T: Transport,
-    C: Clock,
 {
     unsafe fn init_from_config_auto(
         dst: *mut Self,
         rv_id: RendezvousId,
-        config: crate::runtime_core::config::Config<'cfg, C>,
+        config: crate::runtime_core::config::Config<'cfg>,
         transport: T,
     ) -> Result<(), RegisterRendezvousError> {
         let rendezvous = /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */ unsafe {
@@ -252,10 +244,9 @@ where
     }
 }
 
-impl<'cfg, T, C> Drop for RendezvousEntry<'cfg, T, C>
+impl<'cfg, T> Drop for RendezvousEntry<'cfg, T>
 where
     T: Transport,
-    C: Clock,
 {
     fn drop(&mut self) {
         /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
@@ -269,25 +260,24 @@ where
 ///
 /// The lease is affine: it cannot be cloned, and dropping it automatically marks
 /// the underlying rendezvous as available again.
-pub(crate) struct RendezvousLease<'lease, 'cfg, T: Transport, C: Clock>
+pub(crate) struct RendezvousLease<'lease, 'cfg, T: Transport>
 where
     'cfg: 'lease,
 {
-    slot: Option<&'lease mut RendezvousEntry<'cfg, T, C>>,
+    slot: Option<&'lease mut RendezvousEntry<'cfg, T>>,
 }
 
-impl<'lease, 'cfg, T, C> RendezvousLease<'lease, 'cfg, T, C>
+impl<'lease, 'cfg, T> RendezvousLease<'lease, 'cfg, T>
 where
     T: Transport,
-    C: Clock,
     'cfg: 'lease,
 {
-    fn new(slot: &'lease mut RendezvousEntry<'cfg, T, C>) -> Self {
+    fn new(slot: &'lease mut RendezvousEntry<'cfg, T>) -> Self {
         Self { slot: Some(slot) }
     }
 
     #[inline]
-    fn entry_mut(&mut self) -> &mut RendezvousEntry<'cfg, T, C> {
+    fn entry_mut(&mut self) -> &mut RendezvousEntry<'cfg, T> {
         match self.slot.as_mut() {
             Some(slot) => slot,
             None => crate::invariant(),
@@ -297,7 +287,7 @@ where
     #[inline]
     pub(crate) fn with_rendezvous<R>(
         &mut self,
-        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T, C>) -> R,
+        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T>) -> R,
     ) -> R {
         let entry = self.entry_mut();
         f(entry.rendezvous())
@@ -338,10 +328,9 @@ where
     }
 }
 
-impl<'lease, 'cfg, T, C> Drop for RendezvousLease<'lease, 'cfg, T, C>
+impl<'lease, 'cfg, T> Drop for RendezvousLease<'lease, 'cfg, T>
 where
     T: Transport,
-    C: Clock,
     'cfg: 'lease,
 {
     fn drop(&mut self) {

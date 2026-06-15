@@ -16,6 +16,22 @@ const TEST_LANE_CAPACITY: usize = 256;
 const TEST_FRAME_PAYLOAD_CAPACITY: usize = 128;
 const TEST_TRANSPORT_POOL_CAPACITY: usize = 4;
 
+pub(crate) const fn frame_header_from_parts(
+    session: SessionId,
+    lane: u8,
+    source_role: u8,
+    target_role: u8,
+    label: FrameLabel,
+) -> FrameHeader {
+    FrameHeader::from_raw(
+        ((session.raw() as u64) << 32)
+            | ((lane as u64) << 24)
+            | ((source_role as u64) << 16)
+            | ((target_role as u64) << 8)
+            | (label.raw() as u64),
+    )
+}
+
 unsafe fn init_option_array<T, const N: usize>(dst: *mut Option<T>) {
     let mut idx = 0usize;
     while idx < N {
@@ -473,7 +489,7 @@ impl TestTransport {
             }
         }
         let frame = rx.current.as_ref().expect("current frame");
-        let header = FrameHeader::new(
+        let header = frame_header_from_parts(
             frame.session_id,
             frame.lane,
             frame.source_role,

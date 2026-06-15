@@ -48,7 +48,7 @@ impl Transport for CapacitySendTransport {
     }
 }
 
-type CapacitySendKitStorage = SessionKitStorage<'static, CapacitySendTransport, CounterClock, 2>;
+type CapacitySendKitStorage = SessionKitStorage<'static, CapacitySendTransport, 2>;
 
 std::thread_local! {
     static CAPACITY_SEND_SESSION_SLOT: UnsafeCell<CapacitySendKitStorage> = const {
@@ -58,17 +58,14 @@ std::thread_local! {
 
 #[test]
 fn cursor_send_and_recv_roundtrip() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(1);
@@ -100,17 +97,14 @@ fn cursor_send_and_recv_roundtrip() {
 
 #[test]
 fn direct_send_capacity_emits_transport_fault_tap() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
-        let tap_ptr = tap_buf as *mut _;
-        with_resident_tls_ref(&CAPACITY_SEND_SESSION_SLOT, |cluster| {
+    with_runtime_workspace(|slab| {
+        let fault = with_resident_tls_ref(&CAPACITY_SEND_SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<3, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((unsafe { &mut *tap_ptr }, slab), CounterClock::zero()),
-                    CapacitySendTransport(()),
-                )
+                .rendezvous(Config::from_resources(slab), CapacitySendTransport(()))
                 .expect("register rendezvous");
+            let mut tap = rv.tap();
 
             let sid = SessionId::new(74);
             let mut origin_endpoint = rv
@@ -130,13 +124,9 @@ fn direct_send_capacity_emits_transport_fault_tap() {
                 rendered.contains("Capacity") || rendered.contains("Transport(C)"),
                 "send error must preserve capacity transport cause: {rendered}"
             );
+            tap.find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
+                .expect("capacity send must emit transport fault evidence")
         });
-
-        let fault = unsafe { &*tap_ptr }
-            .iter()
-            .copied()
-            .find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
-            .expect("capacity send must emit transport fault evidence");
         assert_eq!(
             fault.evidence().reason(),
             hibana::runtime::tap::TRANSPORT_FAULT_CAPACITY
@@ -152,7 +142,7 @@ fn direct_send_capacity_emits_transport_fault_tap() {
 
 #[test]
 fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
@@ -162,10 +152,7 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(41);
@@ -226,7 +213,7 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
 
 #[test]
 fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::seq(
@@ -236,10 +223,7 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(42);
@@ -302,18 +286,15 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
 }
 
 #[test]
-fn flow_error_captures_public_callsite() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+fn flow_error_reports_public_operation() {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(11);
@@ -329,14 +310,11 @@ fn flow_error_captures_public_callsite() {
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
-            let flow_line = line!() + 1;
             let err = match origin_endpoint.flow::<Msg<2, u32>>() {
                 Ok(_) => panic!("flow with wrong logical label must fail"),
                 Err(err) => err,
             };
             assert_eq!(err.operation(), "flow");
-            assert!(err.file().ends_with("tests/cursor_send_recv/send_recv.rs"));
-            assert_eq!(err.line(), flow_line);
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("LabelMismatch"),
@@ -347,14 +325,11 @@ fn flow_error_captures_public_callsite() {
                 "failed send preview must not poison before send consumes progress: {rendered}"
             );
 
-            let offer_line = line!() + 1;
             let err = match futures::executor::block_on(origin_endpoint.offer()) {
                 Ok(_) => panic!("offer at deterministic send step must fail"),
                 Err(err) => err,
             };
             assert_eq!(err.operation(), "offer");
-            assert!(err.file().ends_with("tests/cursor_send_recv/send_recv.rs"));
-            assert_eq!(err.line(), offer_line);
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("PhaseInvariant")

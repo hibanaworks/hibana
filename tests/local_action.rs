@@ -11,7 +11,7 @@ use hibana::{
     g::{self, Msg},
     runtime::program::{RoleProgram, project},
     runtime::{
-        Config, CounterClock, SessionKit, SessionKitStorage, TapEvent,
+        Config, SessionKit, SessionKitStorage,
         ids::SessionId,
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
@@ -67,8 +67,8 @@ impl WirePayload for InstallPayload {
     }
 }
 
-type TestKit = SessionKit<'static, TestTransport, CounterClock, 2>;
-type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
+type TestKit = SessionKit<'static, TestTransport, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -82,17 +82,13 @@ fn transport_queue_is_empty(transport: &TestTransport) -> bool {
 
 fn run_local_action_flow(
     cluster: &'static TestKit,
-    tap_buf: &'static mut [TapEvent; runtime_support::RING_EVENTS],
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
     let program = g::send::<0, 0, Msg<7, InstallPayload>>();
     let actor_program: RoleProgram<0> = project(&program);
     let rv = cluster
-        .rendezvous(
-            Config::from_resources((tap_buf, slab), CounterClock::zero()),
-            transport.clone(),
-        )
+        .rendezvous(Config::from_resources(slab), transport.clone())
         .expect("register rendezvous");
 
     let sid = SessionId::new(42);
@@ -118,10 +114,10 @@ fn run_local_action_flow(
 
 #[test]
 fn local_action_flow_executes() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            run_local_action_flow(cluster, tap_buf, slab, &transport);
+            run_local_action_flow(cluster, slab, &transport);
         });
     });
 }

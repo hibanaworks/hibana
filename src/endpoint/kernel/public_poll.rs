@@ -12,17 +12,15 @@ use super::{
 };
 use crate::{
     endpoint::{RecvError, RecvResult, SendError, SendResult},
-    runtime_core::config::Clock,
     transport::{
         Transport,
         wire::{CodecError, Payload},
     },
 };
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     #[inline]
     pub(in crate::endpoint) fn poll_public_offer(

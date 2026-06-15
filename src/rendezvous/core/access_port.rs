@@ -1,8 +1,8 @@
 use super::{
-    Cell, Clock, Guard, Lane, LaneGuard, Port, PortInit, Rendezvous, RendezvousError, SessionId,
-    TapRing, Transport, emit, events,
+    Cell, Guard, Lane, LaneGuard, Port, PortInit, Rendezvous, RendezvousError, SessionId, TapRing,
+    Transport, emit, events,
 };
-impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
+impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
@@ -18,7 +18,11 @@ where
     }
 
     pub(crate) fn now32(&self) -> u32 {
-        self.clock.now32()
+        let current = self.tap_counter.get();
+        if current != u32::MAX {
+            self.tap_counter.set(current + 1);
+        }
+        current
     }
 
     pub(crate) fn activate_lane_attachment(
@@ -53,7 +57,7 @@ where
             emit(
                 self.tap(),
                 events::raw_event(
-                    self.clock.now32(),
+                    self.now32(),
                     crate::session::cluster::effects::lane_open_tap_event_id(),
                 )
                 .with_arg0(sid.raw())
@@ -72,7 +76,7 @@ where
         role: u8,
         role_count: u8,
         active_leases: &'a Cell<u32>,
-    ) -> (Port<'a, T>, LaneGuard<'a, T, C>)
+    ) -> (Port<'a, T>, LaneGuard<'a, T>)
     where
         'rv: 'a,
     {
@@ -82,12 +86,12 @@ where
         let port = Port::new(PortInit {
             transport: &self.transport,
             tap: self.tap(),
-            clock: &self.clock,
+            tap_counter: &self.tap_counter,
             routes: &self.routes,
             slab: self.slab,
             image_frontier: core::ptr::addr_of!(self.image_frontier),
             frontier_workspace_bytes: core::ptr::addr_of!(self.frontier_workspace_bytes),
-            endpoint_leases: self.endpoint_leases.cast_const(),
+            endpoint_leases: self.endpoint_leases_ptr().cast_const(),
             endpoint_lease_capacity: self.endpoint_lease_capacity,
             lane,
             role,

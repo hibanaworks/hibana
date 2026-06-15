@@ -2,17 +2,14 @@ use super::*;
 
 #[test]
 fn recv_codec_error_poisons_before_same_generation_continuation() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<1, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(12);
@@ -35,17 +32,11 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
             )
             .expect("send succeeds");
 
-            let recv_line = line!() + 1;
             let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u64>>()) {
                 Ok(_) => panic!("recv with wrong payload shape must fail"),
                 Err(err) => err,
             };
             assert_eq!(err.operation(), "recv");
-            assert!(
-                err.file()
-                    .ends_with("tests/cursor_send_recv/codec_demux.rs")
-            );
-            assert_eq!(err.line(), recv_line);
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("Codec"),
@@ -56,7 +47,6 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 "first recv fault must not be replaced by session poison: {rendered}"
             );
 
-            let continuation_line = line!() + 1;
             let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>()) {
                 Ok(_) => {
                     panic!("poisoned generation must not continue after recv decode fault")
@@ -64,11 +54,6 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 Err(err) => err,
             };
             assert_eq!(err.operation(), "recv");
-            assert!(
-                err.file()
-                    .ends_with("tests/cursor_send_recv/codec_demux.rs")
-            );
-            assert_eq!(err.line(), continuation_line);
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("SessionFault") && rendered.contains("DecodeFailed"),
@@ -80,17 +65,14 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
 
 #[test]
 fn cursor_send_and_recv_high_logical_label_roundtrip() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let program = g::send::<0, 1, Msg<200, u32>>();
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources((tap_buf, slab), CounterClock::zero()),
-                    transport.clone(),
-                )
+                .rendezvous(Config::from_resources(slab), transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(200);

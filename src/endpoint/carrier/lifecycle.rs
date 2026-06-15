@@ -1,8 +1,7 @@
 use super::{NonNull, PackedEndpointHandle};
-impl<'cfg, T, C, const MAX_RV: usize> crate::runtime::SessionKit<'cfg, T, C, MAX_RV>
+impl<'cfg, T, const MAX_RV: usize> crate::runtime::SessionKit<'cfg, T, MAX_RV>
 where
     T: crate::transport::Transport + 'cfg,
-    C: crate::runtime_core::config::Clock + 'cfg,
 {
     pub(super) unsafe fn drop_public_endpoint_raw<const ROLE: u8>(
         ptr: NonNull<()>,

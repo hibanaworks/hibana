@@ -135,32 +135,21 @@ unsafe fn flag_waker(flag: &Cell<bool>) -> Waker {
 
 #[test]
 fn frame_header_preserves_full_wire_domain() {
-    let header = FrameHeader::new(
-        crate::session::types::SessionId::new(u32::MAX),
-        u8::MAX,
-        u8::MAX,
-        u8::MAX,
-        FrameLabel::new(u8::MAX),
-    );
+    let header = FrameHeader::from_raw(u64::MAX);
 
-    assert_eq!(header.session().raw(), u32::MAX);
-    assert_eq!(header.lane(), u8::MAX);
-    assert_eq!(header.source_role(), u8::MAX);
-    assert_eq!(header.target_role(), u8::MAX);
-    assert_eq!(header.label().raw(), u8::MAX);
+    assert_eq!(header.raw(), u64::MAX);
 }
 
 #[test]
 fn recv_future_records_waker_and_wakes() {
     let transport = WakerAwareTransport::new();
     let shared = transport.state();
-    let mut rx = transport
-        .open(PortOpen::from_descriptor(
-            0,
-            crate::session::types::SessionId::new(0),
-            crate::session::types::Lane::new(0),
-        ))
-        .1;
+    transport.open(PortOpen::from_descriptor(
+        0,
+        crate::session::types::SessionId::new(0),
+        crate::session::types::Lane::new(0),
+    ));
+    let mut rx = ();
 
     assert!(shared.take_waker().is_none(), "no waker before polling");
 

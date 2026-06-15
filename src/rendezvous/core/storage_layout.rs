@@ -1,6 +1,8 @@
+use core::marker::PhantomData;
+
 use super::{
-    AssocTable, Clock, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY, FreeRegion,
-    Rendezvous, RouteTable, Transport,
+    AssocTable, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY, FreeRegion, Rendezvous,
+    RouteTable, Transport,
 };
 mod capacity;
 
@@ -15,7 +17,72 @@ mod capacity;
 // allocated sidecar storage before rebinding, and source regions are tracked only
 // as rendezvous-local free regions for later resident allocation.
 
-impl<'rv, 'cfg, T: Transport, C: Clock> Rendezvous<'rv, 'cfg, T, C>
+pub(crate) struct Sidecar<T> {
+    ptr: *mut T,
+    bytes: usize,
+    reclaim_delta: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<T> Clone for Sidecar<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Sidecar<T> {}
+
+impl<T> Sidecar<T> {
+    pub(crate) const EMPTY: Self = Self {
+        ptr: core::ptr::null_mut(),
+        bytes: 0,
+        reclaim_delta: 0,
+        _marker: PhantomData,
+    };
+
+    #[inline]
+    pub(crate) const fn from_raw_parts(ptr: *mut T, bytes: usize, reclaim_delta: usize) -> Self {
+        Self {
+            ptr,
+            bytes,
+            reclaim_delta,
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn ptr(self) -> *mut T {
+        self.ptr
+    }
+
+    #[inline]
+    pub(crate) const fn bytes(self) -> usize {
+        self.bytes
+    }
+
+    #[inline]
+    pub(crate) const fn reclaim_delta(self) -> usize {
+        self.reclaim_delta
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(self) -> bool {
+        self.ptr.is_null() || self.bytes == 0
+    }
+
+    #[inline]
+    pub(crate) const fn cast<U>(self) -> Sidecar<U> {
+        Sidecar {
+            ptr: self.ptr.cast::<U>(),
+            bytes: self.bytes,
+            reclaim_delta: self.reclaim_delta,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
@@ -68,9 +135,10 @@ where
     pub(crate) fn endpoint_storage_floor(&self) -> usize {
         let (_, slab_len) = self.slab_ptr_and_len();
         let mut floor = slab_len;
+        let endpoint_leases = self.endpoint_leases_ptr();
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.endpoint_leases.add(idx) };
+            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
             if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }
@@ -84,6 +152,11 @@ where
         crate::invariant_some(
             (self.image_frontier as usize).checked_add(self.frontier_workspace_bytes as usize),
         )
+    }
+
+    #[inline]
+    pub(crate) fn endpoint_leases_ptr(&self) -> *mut EndpointLeaseSlot {
+        self.endpoint_lease_storage.ptr()
     }
 
     #[inline]

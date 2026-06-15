@@ -1,7 +1,5 @@
-use super::{
-    ClusterError, EffIndex, MaybeUninit, PhantomData, RendezvousId, ResourceScope, UnsafeCell, fmt,
-};
-use crate::diag::Callsite;
+use super::{ClusterError, EffIndex, MaybeUninit, PhantomData, RendezvousId, ResourceScope, fmt};
+use crate::{diag::Callsite, rendezvous::core::Sidecar};
 // # Unsafe Owner Contract
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
@@ -67,20 +65,22 @@ enum ResolverErrorKind {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ResolverError {
     pub(crate) op: ResolverOp,
-    location: Callsite,
+    _location: Callsite,
     kind: ResolverErrorKind,
 }
 
 impl fmt::Debug for ResolverError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ResolverError")
-            .field("operation", &self.operation())
-            .field("file", &self.file())
-            .field("line", &self.line())
-            .field("column", &self.column())
-            .field("kind", &self.kind)
-            .finish()
+        let mut debug = formatter.debug_struct("ResolverError");
+        debug.field("operation", &self.operation());
+        #[cfg(feature = "std")]
+        {
+            debug
+                .field("file", &self._location.file())
+                .field("line", &self._location.line())
+                .field("column", &self._location.column());
+        }
+        debug.field("kind", &self.kind).finish()
     }
 }
 
@@ -90,7 +90,7 @@ impl ResolverError {
     pub fn reject() -> Self {
         Self {
             op: ResolverOp::Reject,
-            location: Callsite::caller(),
+            _location: Callsite::caller(),
             kind: ResolverErrorKind::Reject,
         }
     }
@@ -100,7 +100,7 @@ impl ResolverError {
     pub(crate) fn cluster(error: ClusterError) -> Self {
         Self {
             op: ResolverOp::SetResolver,
-            location: Callsite::caller(),
+            _location: Callsite::caller(),
             kind: ResolverErrorKind::Cluster(error),
         }
     }
@@ -114,7 +114,7 @@ impl ResolverError {
     #[inline]
     pub(crate) const fn with_operation_at(mut self, op: ResolverOp, location: Callsite) -> Self {
         self.op = op;
-        self.location = location;
+        self._location = location;
         self
     }
 
@@ -125,21 +125,6 @@ impl ResolverError {
             ResolverOp::ResolveDecision => "resolve_decision",
             ResolverOp::SetResolver => "set_resolver",
         }
-    }
-
-    #[inline]
-    pub const fn file(&self) -> &'static str {
-        self.location.file()
-    }
-
-    #[inline]
-    pub const fn line(&self) -> u32 {
-        self.location.line()
-    }
-
-    #[inline]
-    pub const fn column(&self) -> u32 {
-        self.location.column()
     }
 }
 
@@ -325,18 +310,16 @@ pub(in crate::session::cluster::core) struct ResolverBucketEntry<'cfg> {
 }
 
 pub(crate) struct ResolverBucket<'cfg> {
-    entries: UnsafeCell<*mut Option<ResolverBucketEntry<'cfg>>>,
+    storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
     capacity: usize,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
 impl<'cfg> ResolverBucket<'cfg> {
-    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
-
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
-            core::ptr::addr_of_mut!((*dst).entries).write(UnsafeCell::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*dst).storage).write(Sidecar::EMPTY);
             core::ptr::addr_of_mut!((*dst).capacity).write(0);
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
@@ -357,48 +340,17 @@ impl<'cfg> ResolverBucket<'cfg> {
     }
 
     #[inline]
-    pub(in crate::session::cluster::core) fn raw_entries(
-        &self,
-    ) -> *mut Option<ResolverBucketEntry<'cfg>> {
-        /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
-        unsafe { *self.entries.get() }
-    }
-
-    #[inline]
     pub(in crate::session::cluster::core) fn entries_ptr(
         &self,
     ) -> *mut Option<ResolverBucketEntry<'cfg>> {
-        self.raw_entries()
-            .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
+        self.storage.ptr()
     }
 
     #[inline]
-    fn encode_entries_ptr(
-        entries: *mut Option<ResolverBucketEntry<'cfg>>,
-        reclaim_delta: usize,
-    ) -> *mut Option<ResolverBucketEntry<'cfg>> {
-        if entries.addr() & Self::STORAGE_TAG_MASK != 0 {
-            crate::invariant();
-        }
-        if reclaim_delta > Self::STORAGE_TAG_MASK {
-            crate::invariant();
-        }
-        entries.map_addr(|addr| addr | reclaim_delta)
-    }
-
-    #[inline]
-    pub(crate) fn storage_ptr(&self) -> *mut u8 {
-        self.entries_ptr().cast::<u8>()
-    }
-
-    #[inline]
-    pub(crate) fn storage_reclaim_delta(&self) -> usize {
-        self.raw_entries().addr() & Self::STORAGE_TAG_MASK
-    }
-
-    #[inline]
-    pub(crate) fn storage_len(&self) -> usize {
-        Self::storage_bytes(self.capacity)
+    pub(in crate::session::cluster::core) fn storage_sidecar(
+        &self,
+    ) -> Sidecar<Option<ResolverBucketEntry<'cfg>>> {
+        self.storage
     }
 
     #[inline]
@@ -425,13 +377,12 @@ impl<'cfg> ResolverBucket<'cfg> {
         count
     }
 
-    pub(crate) unsafe fn bind_from_storage(
+    pub(in crate::session::cluster::core) unsafe fn bind_from_storage(
         &mut self,
-        storage: *mut u8,
+        storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
         capacity: usize,
-        reclaim_delta: usize,
     ) {
-        let entries = storage.cast::<Option<ResolverBucketEntry<'cfg>>>();
+        let entries = storage.ptr();
         let mut idx = 0usize;
         while idx < capacity {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -440,19 +391,17 @@ impl<'cfg> ResolverBucket<'cfg> {
             }
             idx += 1;
         }
-        *self.entries.get_mut() = Self::encode_entries_ptr(entries, reclaim_delta);
-        self.capacity = capacity;
+        self.commit_storage(storage, capacity);
     }
 
-    pub(crate) unsafe fn rebind_from_storage(
-        &mut self,
-        storage: *mut u8,
+    pub(in crate::session::cluster::core) unsafe fn init_replacement_storage(
+        &self,
+        storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
         new_capacity: usize,
-        reclaim_delta: usize,
     ) {
         let source_entries = self.entries_ptr();
         let source_capacity = self.capacity;
-        let new_entries = storage.cast::<Option<ResolverBucketEntry<'cfg>>>();
+        let new_entries = storage.ptr();
         let mut idx = 0usize;
         while idx < new_capacity {
             /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
@@ -468,7 +417,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             while source_idx < source_capacity {
                 /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
                 unsafe {
-                    if let Some(entry) = (*source_entries.add(source_idx)).take() {
+                    if let Some(entry) = *source_entries.add(source_idx) {
                         if next >= new_capacity {
                             crate::invariant();
                         }
@@ -479,8 +428,15 @@ impl<'cfg> ResolverBucket<'cfg> {
                 source_idx += 1;
             }
         }
+    }
 
-        *self.entries.get_mut() = Self::encode_entries_ptr(new_entries, reclaim_delta);
+    #[inline]
+    pub(in crate::session::cluster::core) fn commit_storage(
+        &mut self,
+        storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
+        new_capacity: usize,
+    ) {
+        self.storage = storage;
         self.capacity = new_capacity;
     }
 

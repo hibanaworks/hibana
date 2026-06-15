@@ -1,16 +1,15 @@
 use super::{
-    BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint, DecodeCommitBuilder,
+    BranchCommitPlan, BranchKind, BranchPreviewView, CursorEndpoint, DecodeCommitBuilder,
     DecodeCommitPlan, DecodeProgressPlan, EndpointRxAuditPlan, Payload, RecvError, RecvMeta,
     RecvResult, StateIndex, Transport, decode_phase_invariant, scope_slot_for_route_from_cursor,
     state_index_to_usize,
 };
 use crate::endpoint::kernel::core::{CommitDelta, CommitRow};
 
-impl<'build, 'r, const ROLE: u8, T, C, const MAX_RV: usize>
-    DecodeCommitBuilder<'build, 'r, ROLE, T, C, MAX_RV>
+impl<'build, 'r, const ROLE: u8, T, const MAX_RV: usize>
+    DecodeCommitBuilder<'build, 'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn build_decode_commit_plan(
         &mut self,
@@ -22,7 +21,7 @@ where
         committed_payload: Payload<'r>,
     ) -> RecvResult<DecodeCommitPlan<'r>> {
         let mut route_rows = self.route_rows.take().ok_or_else(decode_phase_invariant)?;
-        CursorEndpoint::<ROLE, T, C, MAX_RV>::collect_decode_reentry_route_rows_from_parts(
+        CursorEndpoint::<ROLE, T, MAX_RV>::collect_decode_reentry_route_rows_from_parts(
             self.cursor,
             self.decision_state,
             meta,
@@ -42,7 +41,7 @@ where
                     branch_meta.lane,
                 ),
                 |candidate| {
-                    CursorEndpoint::<ROLE, T, C, MAX_RV>::authorized_route_arm_for_decode(
+                    CursorEndpoint::<ROLE, T, MAX_RV>::authorized_route_arm_for_decode(
                         self.decision_state,
                         self.cursor,
                         &route_rows,
@@ -52,7 +51,7 @@ where
             )
             .map_err(|_| decode_phase_invariant())?;
         let reentry_cursor =
-            CursorEndpoint::<ROLE, T, C, MAX_RV>::decode_reentry_cursor_step_from_parts(
+            CursorEndpoint::<ROLE, T, MAX_RV>::decode_reentry_cursor_step_from_parts(
                 self.cursor,
                 self.decision_state,
                 &route_rows,

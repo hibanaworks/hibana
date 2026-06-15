@@ -215,8 +215,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ///
     /// The returned flow value must be consumed with `.send(...)` to make
     /// progress. Dropping it leaves the endpoint on the same typestate step. A
-    /// preview mismatch reports [`EndpointError`] at this callsite and must not
-    /// be treated as permission to choose another branch.
+    /// preview mismatch reports [`EndpointError`] for this operation and must
+    /// not be treated as permission to choose another branch.
     #[track_caller]
     pub fn flow<'e, M>(&'e mut self) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>>
     where

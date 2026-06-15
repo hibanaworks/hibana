@@ -45,7 +45,6 @@ impl RouteTableStorageParts {
 
 impl RouteTable {
     pub(crate) const FRAME_LIST_END: u16 = u16::MAX;
-    pub(crate) const STORAGE_TAG_MASK: usize = Self::storage_align() - 1;
 
     #[inline(always)]
     pub(crate) const fn align_up(value: usize, align: usize) -> usize {
@@ -107,21 +106,6 @@ impl RouteTable {
     }
 
     #[inline]
-    pub(crate) fn storage_ptr(&self) -> *mut u8 {
-        self.frames_ptr().cast::<u8>()
-    }
-
-    #[inline]
-    pub(crate) fn storage_reclaim_delta(&self) -> usize {
-        self.raw_frames().addr() & Self::STORAGE_TAG_MASK
-    }
-
-    #[inline]
-    pub(crate) const fn storage_bytes_current(&self) -> usize {
-        Self::storage_bytes(self.route_slots, self.lane_slots())
-    }
-
-    #[inline]
     pub(crate) const fn storage_align() -> usize {
         let frame_align = core::mem::align_of::<RouteFrame>();
         let u16_align = core::mem::align_of::<u16>();
@@ -168,16 +152,6 @@ impl RouteTable {
         )
     }
 
-    fn encode_frames_ptr(frames: *mut RouteFrame, reclaim_delta: usize) -> *mut RouteFrame {
-        if frames.addr() & Self::STORAGE_TAG_MASK != 0 {
-            crate::invariant();
-        }
-        if reclaim_delta > Self::STORAGE_TAG_MASK {
-            crate::invariant();
-        }
-        frames.map_addr(|addr| addr | reclaim_delta)
-    }
-
     #[inline]
     fn raw_frames(&self) -> *mut RouteFrame {
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
@@ -191,11 +165,7 @@ impl RouteTable {
     }
 
     unsafe fn bind_storage(&mut self, binding: RouteTableStorageBinding) {
-        let RouteTableStorageBinding {
-            parts,
-            shape,
-            reclaim_delta,
-        } = binding;
+        let RouteTableStorageBinding { parts, shape } = binding;
         let mut idx = 0usize;
         while idx < shape.route_slots {
             let next = if idx + 1 < shape.route_slots {
@@ -250,7 +220,7 @@ impl RouteTable {
             }
             waiter_idx += 1;
         }
-        *self.frames.get_mut() = Self::encode_frames_ptr(parts.frames, reclaim_delta);
+        *self.frames.get_mut() = parts.frames;
         self.route_slots = shape.route_slots;
         self.lane_base = shape.lane_base;
         self.lane_slots = shape.lane_slots as u16;
@@ -262,8 +232,7 @@ impl RouteTable {
     }
 
     unsafe fn rebind_storage(&mut self, binding: RouteTableStorageBinding) {
-        *self.frames.get_mut() =
-            Self::encode_frames_ptr(binding.parts.frames, binding.reclaim_delta);
+        *self.frames.get_mut() = binding.parts.frames;
         self.route_slots = binding.shape.route_slots;
         self.lane_base = binding.shape.lane_base;
         self.lane_slots = binding.shape.lane_slots as u16;
@@ -364,12 +333,8 @@ impl RouteTable {
         while waiter_idx < src_waiter_count {
             /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
             unsafe {
-                let src_waiter = &mut *self.waiters_ptr().add(waiter_idx);
-                if let Some(waker) = src_waiter.take() {
-                    WaiterSlot::init_owned(dst_parts.waiters.add(waiter_idx), waker);
-                } else {
-                    WaiterSlot::init_empty(dst_parts.waiters.add(waiter_idx));
-                }
+                let src_waiter = &*self.waiters_ptr().add(waiter_idx);
+                WaiterSlot::init_clone_from(dst_parts.waiters.add(waiter_idx), src_waiter);
             }
             waiter_idx += 1;
         }
@@ -427,7 +392,6 @@ impl RouteTable {
         route_slots: usize,
         lane_base: u32,
         lane_slots: usize,
-        reclaim_delta: usize,
     ) {
         let parts = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
@@ -439,7 +403,6 @@ impl RouteTable {
                     lane_base,
                     lane_slots,
                 },
-                reclaim_delta,
             });
         }
     }
@@ -471,7 +434,6 @@ impl RouteTable {
         route_slots: usize,
         lane_base: u32,
         lane_slots: usize,
-        reclaim_delta: usize,
     ) {
         let parts = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
         /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
@@ -483,8 +445,39 @@ impl RouteTable {
                     lane_base,
                     lane_slots,
                 },
-                reclaim_delta,
             });
+        }
+    }
+
+    pub(crate) unsafe fn clear_waiters_in_storage(
+        storage: *mut u8,
+        route_slots: usize,
+        lane_slots: usize,
+    ) {
+        let parts = /* SAFETY: the caller passes initialized route-table storage. */ unsafe {
+            Self::storage_parts(storage, route_slots, lane_slots)
+        };
+        let waiter_count = checked_mul_usize(lane_slots, MAX_TRACKED_ROLES);
+        let mut waiter_idx = 0usize;
+        while waiter_idx < waiter_count {
+            /* SAFETY: the waiter column was initialized during route-table staging or binding. */
+            unsafe {
+                (*parts.waiters.add(waiter_idx)).clear();
+            }
+            waiter_idx += 1;
+        }
+    }
+
+    pub(crate) fn clear_current_waiters(&self) {
+        let waiters = self.waiters_ptr();
+        let waiter_count = checked_mul_usize(self.lane_slots(), MAX_TRACKED_ROLES);
+        let mut waiter_idx = 0usize;
+        while waiter_idx < waiter_count {
+            /* SAFETY: waiters_ptr points at the currently bound route-table waiter column. */
+            unsafe {
+                (*waiters.add(waiter_idx)).clear();
+            }
+            waiter_idx += 1;
         }
     }
 
@@ -557,7 +550,6 @@ impl RouteTable {
     #[inline]
     pub(super) fn frames_ptr(&self) -> *mut RouteFrame {
         self.raw_frames()
-            .map_addr(|addr| addr & !Self::STORAGE_TAG_MASK)
     }
 
     #[inline]

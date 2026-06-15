@@ -9,10 +9,9 @@ use super::super::super::{
 };
 use crate::eff::EventOrigin;
 use crate::global::typestate::RouteChoiceMark;
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     /// Preview recv metadata from a precomputed route-arm entry table.
     fn select_cached_route_arm_recv_meta(

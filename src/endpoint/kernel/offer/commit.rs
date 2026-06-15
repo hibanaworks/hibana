@@ -1,6 +1,5 @@
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::typestate::{ARM_SHARED, state_index_to_usize};
-use crate::runtime_core::config::Clock;
 use crate::transport::Transport;
 
 use super::super::authority::{Arm, RouteArmToken};
@@ -9,10 +8,9 @@ use super::super::core::{
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use super::{BranchCommitPlan, BranchKind};
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(in crate::endpoint::kernel) fn preflight_branch_preview_commit_plan(
         &mut self,

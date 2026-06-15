@@ -1,5 +1,5 @@
 use super::{
-    BranchCommitPlan, BranchKind, BranchPreviewView, Clock, CursorEndpoint, DecodeCommitBuilder,
+    BranchCommitPlan, BranchKind, BranchPreviewView, CursorEndpoint, DecodeCommitBuilder,
     DecodeCommitPlan, DecodeProgressPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EventCursor,
     MaterializedRouteBranch, Payload, Poll, PreparedDecodeProgressPlan, PreparedDecodePublishPlan,
     RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRows, StateIndex, Transport,
@@ -11,10 +11,9 @@ use crate::global::typestate::RelocatableResidentLaneStep;
 
 mod commit_builder;
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     fn prepare_decode_transport_wait(
         &mut self,
@@ -175,7 +174,7 @@ where
         &mut self,
         route_seed_rows: super::SelectedRouteCommitRowsRef,
         f: impl for<'build> FnOnce(
-            DecodeCommitBuilder<'build, 'r, ROLE, T, C, MAX_RV>,
+            DecodeCommitBuilder<'build, 'r, ROLE, T, MAX_RV>,
         ) -> RecvResult<DecodeCommitPlan<'r>>,
     ) -> RecvResult<PreparedDecodePublishPlan<'r>> {
         let plan = {
@@ -297,10 +296,9 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     fn publish_decode_commit_plan(&mut self, plan: PreparedDecodePublishPlan<'r>) -> Payload<'r> {
         match plan.progress {
@@ -317,12 +315,10 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize>
-    crate::endpoint::kernel::core::DecodeKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize>
+    crate::endpoint::kernel::core::DecodeKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     #[inline]
     fn prepare_decode_kernel_transport_wait(

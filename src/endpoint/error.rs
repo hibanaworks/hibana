@@ -16,27 +16,29 @@ pub(crate) enum EndpointOp {
 /// Domain error for endpoint progress.
 ///
 /// The API shape stays on `flow/send/recv/offer/decode`; this error records
-/// which operation failed and where the public operation was started, so callers
-/// can keep using plain `?` without extra context types. The diagnostic kind is deliberately
-/// private: application code should not match endpoint failures to continue the
-/// same generation on an alternate route.
+/// which operation failed, so callers can keep using plain `?` without extra
+/// context types. The diagnostic kind is deliberately private: application code
+/// should not match endpoint failures to continue the same generation on an
+/// alternate route.
 #[derive(Clone, Copy)]
 pub struct EndpointError {
     op: EndpointOp,
-    location: Callsite,
+    _location: Callsite,
     kind: EndpointErrorKind,
 }
 
 impl fmt::Debug for EndpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EndpointError")
-            .field("operation", &self.operation())
-            .field("file", &self.file())
-            .field("line", &self.line())
-            .field("column", &self.column())
-            .field("kind", &self.kind)
-            .finish()
+        let mut debug = formatter.debug_struct("EndpointError");
+        debug.field("operation", &self.operation());
+        #[cfg(feature = "std")]
+        {
+            debug
+                .field("file", &self._location.file())
+                .field("line", &self._location.line())
+                .field("column", &self._location.column());
+        }
+        debug.field("kind", &self.kind).finish()
     }
 }
 
@@ -48,7 +50,7 @@ impl EndpointError {
     {
         Self {
             op,
-            location,
+            _location: location,
             kind: EndpointErrorKind::from(error),
         }
     }
@@ -63,24 +65,9 @@ impl EndpointError {
             EndpointOp::Decode => "decode",
         }
     }
-
-    #[inline]
-    pub const fn file(&self) -> &'static str {
-        self.location.file()
-    }
-
-    #[inline]
-    pub const fn line(&self) -> u32 {
-        self.location.line()
-    }
-
-    #[inline]
-    pub const fn column(&self) -> u32 {
-        self.location.column()
-    }
 }
 
-/// Endpoint progress failure kind independent of the operation callsite.
+/// Endpoint progress failure kind independent of the public operation.
 #[derive(Clone, Copy)]
 pub(super) enum EndpointErrorKind {
     Codec(CodecError),

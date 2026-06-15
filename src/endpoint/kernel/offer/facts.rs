@@ -3,14 +3,11 @@
 mod evidence;
 mod planner;
 
-use super::{
-    Clock, CursorEndpoint, FrontierVisitSet, OfferFrontierFacts, OfferScopeSelection, Transport,
-};
+use super::{CursorEndpoint, FrontierVisitSet, OfferFrontierFacts, OfferScopeSelection, Transport};
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: Clock,
 {
     pub(super) fn prepare_frontier_facts(
         &mut self,

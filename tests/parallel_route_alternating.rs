@@ -9,16 +9,14 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, CounterClock, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, CounterClock, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 
 const LOCAL_ROLE: u8 = 1;
 const WORKER_ROLE: u8 = 2;
-const SIDE_ROLE: u8 = 3;
-const OBSERVER_ROLE: u8 = 4;
 
 const ALT_D: u8 = 213;
 const ALT_A: u8 = 215;
@@ -40,15 +38,15 @@ fn alternating_route_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
         g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_B, u8>>(),
     );
     let outer_left = g::seq(
-        g::par(inner, g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<ALT_C, u8>>()),
+        g::par(inner, g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_C, u8>>()),
         g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_D, u8>>(),
     );
     let outer_right = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_R, u8>>();
     let routed = g::route(outer_left, outer_right);
-    let sibling = g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ALT_E, u8>>();
+    let sibling = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_E, u8>>();
     project(&g::seq(
         g::par(routed, sibling),
-        g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ALT_POST, u8>>(),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ALT_POST, u8>>(),
     ))
 }
 
@@ -61,9 +59,9 @@ fn assert_join_blocked(rendered: &str) {
 
 #[test]
 fn alternating_route_parallel_join_uses_only_selected_arms() {
-    with_runtime_workspace(|_clock, tap_buf, slab| {
+    with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources((tap_buf, slab), CounterClock::zero());
+            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
                 .rendezvous(config, transport)
@@ -81,16 +79,6 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
                 .role(&alternating_route_parallel_program::<WORKER_ROLE>())
                 .enter()
                 .expect("attach worker role");
-            let mut side = rv
-                .session(sid)
-                .role(&alternating_route_parallel_program::<SIDE_ROLE>())
-                .enter()
-                .expect("attach side role");
-            let mut observer = rv
-                .session(sid)
-                .role(&alternating_route_parallel_program::<OBSERVER_ROLE>())
-                .enter()
-                .expect("attach observer role");
 
             futures::executor::block_on(async {
                 local
@@ -146,14 +134,11 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
                     branch.decode::<Msg<ALT_A, u8>>().await.expect("decode A"),
                     1
                 );
-                assert_eq!(side.recv::<Msg<ALT_C, u8>>().await.expect("recv C"), 2);
+                assert_eq!(worker.recv::<Msg<ALT_C, u8>>().await.expect("recv C"), 2);
                 assert_eq!(worker.recv::<Msg<ALT_D, u8>>().await.expect("recv D"), 5);
-                assert_eq!(observer.recv::<Msg<ALT_E, u8>>().await.expect("recv E"), 3);
+                assert_eq!(worker.recv::<Msg<ALT_E, u8>>().await.expect("recv E"), 3);
                 assert_eq!(
-                    observer
-                        .recv::<Msg<ALT_POST, u8>>()
-                        .await
-                        .expect("recv Post"),
+                    worker.recv::<Msg<ALT_POST, u8>>().await.expect("recv Post"),
                     4
                 );
             });

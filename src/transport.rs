@@ -4,11 +4,10 @@
 //! explicit `poll_*` methods. The transport owns whatever pending state and
 //! waker bookkeeping it needs inside its `Tx` / `Rx` handles or shared state.
 //!
-//! Receive buffers must be exposed as borrowed views. The rendezvous layer
-//! provides a slab (see [`crate::runtime_core::config::Config::slab`]) that transports can pin
-//! behind their `Rx` handle so [`Transport::poll_recv`] yields payload views borrowed
-//! from that storage. This keeps the runtime allocation-free while allowing
-//! DMA/SHM backed zero-copy paths.
+//! Receive buffers must be exposed as borrowed views. Transport implementations
+//! keep receive storage inside their `Rx` handle or medium-owned state so
+//! [`Transport::poll_recv`] yields payload views without allocating. This keeps
+//! the runtime allocation-free while allowing DMA/SHM backed zero-copy paths.
 //!
 //! Implementations also bridge device interrupts to the task waker stored by
 //! their pending send/recv state. When a poll parks it must record the current
@@ -112,7 +111,17 @@ pub struct FrameHeader(u64);
 
 impl FrameHeader {
     #[inline]
-    pub const fn new(
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    #[inline]
+    pub(crate) const fn from_parts(
         session: SessionId,
         carrier: u8,
         source_role: u8,
@@ -129,33 +138,28 @@ impl FrameHeader {
     }
 
     #[inline]
-    pub const fn session(self) -> SessionId {
+    pub(crate) const fn session(self) -> SessionId {
         SessionId::new((self.raw() >> 32) as u32)
     }
 
     #[inline]
-    pub const fn lane(self) -> u8 {
+    pub(crate) const fn lane(self) -> u8 {
         ((self.raw() >> 24) & 0xff) as u8
     }
 
     #[inline]
-    pub const fn source_role(self) -> u8 {
+    pub(crate) const fn source_role(self) -> u8 {
         (self.raw() >> 16) as u8
     }
 
     #[inline]
-    pub const fn target_role(self) -> u8 {
+    pub(crate) const fn target_role(self) -> u8 {
         (self.raw() >> 8) as u8
     }
 
     #[inline]
-    pub const fn label(self) -> FrameLabel {
+    pub(crate) const fn label(self) -> FrameLabel {
         FrameLabel::new(self.raw() as u8)
-    }
-
-    #[inline]
-    const fn raw(self) -> u64 {
-        self.0
     }
 }
 
@@ -201,7 +205,9 @@ impl IngressEvidence {
                 source,
                 target,
                 label,
-            } => Some(FrameHeader::new(session, carrier, source, target, label)),
+            } => Some(FrameHeader::from_parts(
+                session, carrier, source, target, label,
+            )),
         }
     }
 }

@@ -86,7 +86,6 @@ struct RouteTableStorageShape {
 struct RouteTableStorageBinding {
     parts: RouteTableStorageParts,
     shape: RouteTableStorageShape,
-    reclaim_delta: usize,
 }
 
 pub(crate) struct RouteTable {

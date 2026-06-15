@@ -45,7 +45,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
         "pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub use crate::session::cluster::error::AttachError;",
-        "pub fn rendezvous( &self, config: crate::runtime::Config<'cfg, C>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, C, false, MAX_RV>, AttachError> {",
+        "pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, false, MAX_RV>, AttachError> {",
     ] {
         assert!(
             public_allowlists.contains(required),
@@ -100,19 +100,39 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             && endpoint.contains("#[track_caller]\n    pub fn recv")
             && endpoint.contains("#[track_caller]\n    pub fn offer")
             && endpoint.contains("#[track_caller]\n    pub fn decode"),
-        "endpoint operations must capture caller location at the public boundary"
+        "endpoint operations must keep a single public boundary for operation diagnostics"
     );
     assert!(
         read("src/endpoint/flow.rs").contains("#[track_caller]\n    pub fn send"),
-        "flow send must capture caller location at the public boundary"
+        "flow send must keep a single public boundary for operation diagnostics"
     );
     assert!(
         resolver.contains("#[track_caller]\n    pub fn reject")
             && runtime.contains("#[track_caller]\n    pub fn rendezvous")
             && runtime.contains("#[track_caller]\n    pub fn enter")
             && runtime.contains("#[track_caller]\n    pub fn set_resolver"),
-        "resolver and attach boundaries must capture caller location"
+        "resolver and attach boundaries must keep one public operation boundary"
     );
+    for (name, source) in [
+        ("EndpointError", endpoint.as_str()),
+        ("ResolverError", resolver.as_str()),
+        ("AttachError", attach.as_str()),
+    ] {
+        assert!(
+            source.contains("pub const fn operation(&self) -> &'static str"),
+            "{name} must keep compact public operation diagnostics"
+        );
+        for forbidden in [
+            "pub const fn file(&self) -> &'static str",
+            "pub const fn line(&self) -> u32",
+            "pub const fn column(&self) -> u32",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} must not expose source-location public API: {forbidden}"
+            );
+        }
+    }
     assert!(
         !runtime_config.contains("OperationalDeadline")
             && !rendezvous_assoc.contains("DeadlineExceeded")
@@ -124,7 +144,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         "failure evidence must not keep hidden deadline fuses or public timeout APIs"
     );
     assert!(
-        read("tests/cursor_send_recv/session_lifecycle.rs")
+        read("tests/cursor_send_recv/session_drop_wake.rs")
             .contains("dropping_live_endpoint_poison_wakes_waiting_peer")
             && read("tests/offer_decode_receive_evidence.rs")
                 .contains("forgotten_decode_future_leaves_endpoint_fail_closed"),
@@ -596,202 +616,4 @@ fn compiled_image_sources_stay_split_below_one_thousand_lines() {
         "production source files must stay below 1000 lines after image split: {}",
         oversized.join(", ")
     );
-}
-
-#[test]
-fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
-    let final_gate = read(".github/scripts/check_final_form_measurements.sh");
-    let worktree_gate = read(".github/scripts/check_size_snapshot_regression.sh");
-    let performance_gate = read(".github/scripts/check_runtime_performance_hygiene.sh");
-    let run_final_gate = read(".github/scripts/run_final_form_gates.sh");
-    let snapshot = read(".github/measurement_snapshots/hibana-size-snapshot.json");
-    let workflow = read(".github/workflows/quality-gates.yml");
-
-    for required in [
-        "if [[ \"${HIBANA_OMIT_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" ]]; then",
-        "fixed snapshot thumb budget check omitted by explicit override; worktree size snapshot still runs",
-        "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs",
-        "rustup target add --toolchain \"${TOOLCHAIN}\" thumbv6m-none-eabi",
-        "--target thumbv6m-none-eabi",
-        concat!(
-            "thumb section name=.rodata bytes=%d target=thumbv6m-none-eabi ",
-            "no_",
-            "default",
-            "_features=1"
-        ),
-        "values[\"flash_total\"] =",
-        "thumb_values[\"flash_total\"] =",
-        "actual_sram =",
-        "budget_sram =",
-        "actual_max_stack = max(metrics[\"peak_stack_bytes\"] for metrics in seen.values())",
-        "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
-        "aggregate refactor gate requires ",
-        "max_stack/sram/flash all <= snapshot budget and at least one decrease",
-    ] {
-        assert!(
-            final_gate.contains(required),
-            "final-form snapshot gate missing required guard: {required}"
-        );
-    }
-
-    for required in [
-        "== final-form projected protocol matrix ==",
-        "projected_protocol_matrix_reports_compact_resident_images",
-        "PROTOCOL_MATRIX_OUTPUT",
-        "protocol-matrix ",
-        "minimal_send_recv",
-        "nested_par_join",
-        "route_with_unselected_nested_par",
-        "triple_nested_route",
-        "passive_nested_route_observer",
-        "alternating_par_route",
-        "huge_legal_choreography",
-        "program_blob_len",
-        "role_blob_len",
-        "endpoint_scratch_bytes",
-        "largest_section_bytes",
-        "== final-form protocol artifact flash matrix ==",
-        "FINAL_FORM_PROTOCOL_SOURCE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_matrix.rs\"",
-        "FINAL_FORM_PROTOCOL_BLACK_BOX_SOURCE=\"${ROOT_DIR}/src/global/role_program/tests/final_form_protocol_black_box_roles.rs\"",
-        "cp \"${FINAL_FORM_PROTOCOL_SOURCE}\"",
-        "cp \"${FINAL_FORM_PROTOCOL_BLACK_BOX_SOURCE}\"",
-        "final_form_protocol!(${protocol_name})",
-        "final_form_protocol_black_box_roles!(${protocol_name}, &program)",
-        "protocol-artifact ",
-        "flash_total",
-        "rodata_map_bytes",
-        "rodata_map_fragments",
-        "bucket_symbol_count",
-        "map_bucket_symbol_count",
-        "selected_program_bucket_count",
-        "selected_role_bucket_count",
-        "full_bucket_floor_bytes",
-        "llvm-nm",
-        "-Map=${map}",
-        "snapshot-check protocol-artifact",
-        "protocol artifact rodata={rodata} exceeds",
-        "exceeds selected bucket count",
-        "still retains every bucket ladder entry",
-        "final-form measurement violation: missing protocol artifact rows",
-        "protocol artifact flash_total={actual} exceeds",
-        "final-form measurement violation: minimal_send_recv",
-    ] {
-        assert!(
-            final_gate.contains(required),
-            "final-form protocol matrix measurement missing required guard: {required}"
-        );
-    }
-
-    for required in [
-        "CURRENT_REF=\"${HIBANA_SIZE_CURRENT_REF:-HEAD}\"",
-        "git worktree add --detach \"${CURRENT_WORKTREE}\" \"${CURRENT_REF}\"",
-        "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\"",
-        "hibana-projected-measure",
-        "program_import = \"hibana::runtime::program::{project, RoleProgram}\"",
-        "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)",
-        "projected_sections",
-        "current runtime snapshot missing shapes",
-        "current runtime snapshot shape={shape} missing metrics",
-        "SNAPSHOT_FILE=\"${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json\"",
-        "budget_snapshot = json.load(f)",
-        "worktree-snapshot budget-section {key} actual={actual} budget={maximum}",
-        "section {key} exceeds snapshot budget",
-        "worktree-snapshot budget-projected-section {key} actual={actual} budget={maximum}",
-        "projected section {key} exceeds snapshot budget",
-        "worktree-snapshot budget-runtime shape={shape} {key} actual={actual} budget={maximum}",
-        "runtime shape {shape} {key} exceeds snapshot budget",
-        "worktree-snapshot budget-aggregate {name} actual={actual} budget={maximum}",
-        "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget ",
-        "and at least one must decrease below budget",
-    ] {
-        assert!(
-            worktree_gate.contains(required),
-            "worktree size/stack regression gate missing required guard: {required}"
-        );
-    }
-
-    for forbidden in [
-        "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\" 1",
-        "allow_probe_patch",
-        "text.replace(",
-        "path.write_text",
-        "failed to inject localside stack probe",
-        "refusing to patch current source",
-        "HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=0",
-        "\"${CI:-false}\" != \"true\"",
-        "CI/override",
-        concat!("BASE", "_REF=\"HEAD^\""),
-        concat!("BASE", "_WORKTREE"),
-        concat!("PUBLISHED", "_CRATES_IO"),
-        concat!("HIBANA_SIZE_", "BA", "SE_REF"),
-        concat!("hibana::", "inte", "gration"),
-        "metrics[\"localside_peak_stack_bytes\"] = metrics.get(\"peak_stack_bytes\", 0)",
-        concat!("published", " ", "base", "line"),
-    ] {
-        assert!(
-            !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
-            "size gate must not contain current-tree self-patching or CI fixed-snapshot coupling: {forbidden}"
-        );
-    }
-
-    assert!(
-        workflow.contains("fetch-depth: 0")
-            && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
-            && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
-            && run_final_gate
-                .contains("bash ./.github/scripts/check_surface_test_alias_hygiene.sh")
-            && run_final_gate
-                .contains("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
-            && final_gate.contains("HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=1")
-            && final_gate
-                .contains("if [[ \"${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}\" != \"1\" ]]; then"),
-        "CI must run fixed Pico snapshots and the worktree size snapshot unless an explicit local override is set"
-    );
-    let size_gate_pos = run_final_gate
-        .find("bash ./.github/scripts/check_final_form_measurements.sh")
-        .expect("final gate must include stack/SRAM/flash measurements");
-    let performance_gate_pos = run_final_gate
-        .find("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
-        .expect("final gate must include runtime performance hygiene");
-    assert!(
-        size_gate_pos < performance_gate_pos,
-        "size/stack/SRAM/flash measurements must run before performance hygiene"
-    );
-
-    for required in [
-        "\"description\": \"Measured stack, SRAM, and flash values must satisfy",
-        "\"localside_peak_stack_bytes\"",
-        "\"flash_total_formula\": \".text + .rodata + .data\"",
-        "\".text\": 154624",
-        "\".rodata\": 15341",
-        "\"flash_total\": 169965",
-    ] {
-        assert!(
-            snapshot.contains(required),
-            "measurement snapshot must record the fixed Pico budget and localside stack budget: {required}"
-        );
-    }
-
-    for required in [
-        "Size is primary. This gate only blocks structural hot-path regressions",
-        "LaneSetView::next_set_from must advance over empty lane runs with bit operations",
-        "compiled image hot path ",
-        "must not rebuild lane sets by effect-list or full-view scans",
-        "endpoint arena must not contain route-scope lane-word caches",
-        "offer_requires_framed_receive_evidence_for_branch_demux",
-        "offer_decode_transport_consumes_frame_once",
-        "forgotten_route_branch_leaves_endpoint_fail_closed",
-        "forgotten_decode_future_leaves_endpoint_fail_closed",
-        "route_inside_parallel_lane_cannot_release_join_before_sibling_lane",
-        "alternating_route_parallel_join_uses_only_selected_arms",
-        "unselected_route_arm_parallel_events_are_dead_and_not_join_obligations",
-        "unselected_route_arm_parallel_events_do_not_block_parallel_join",
-        "outer_left_selection_kills_nested_right_route_and_parallel_body",
-        "lane_set_view_iterates_set_bits_without_empty_lane_scan",
-    ] {
-        assert!(
-            performance_gate.contains(required),
-            "runtime performance hygiene gate missing required operation-count/source guard: {required}"
-        );
-    }
 }

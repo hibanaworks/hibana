@@ -3,10 +3,9 @@ use super::{
     Transport,
 };
 
-impl<'r, const ROLE: u8, T, C, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, C, MAX_RV>
+impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
-    C: crate::runtime_core::config::Clock,
 {
     #[inline]
     fn preview_flow_arm_for_scope(&self, scope_id: ScopeId) -> Option<u8> {

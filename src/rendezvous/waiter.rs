@@ -28,6 +28,24 @@ impl WaiterSlot {
     }
 
     #[inline]
+    pub(crate) unsafe fn init_clone_from(dst: *mut Self, source: &Self) {
+        match source.waker.as_ref() {
+            Some(waker) => {
+                /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+                unsafe {
+                    Self::init_owned(dst, waker.clone());
+                }
+            }
+            None => {
+                /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+                unsafe {
+                    Self::init_empty(dst);
+                }
+            }
+        }
+    }
+
+    #[inline]
     pub(crate) fn set(&mut self, waker: &Waker) {
         self.clear();
         self.set_owned(waker.clone());

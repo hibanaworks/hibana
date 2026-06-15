@@ -5,13 +5,13 @@ use std::mem::size_of_val;
 use std::path::{Path, PathBuf};
 
 use hibana::g;
+use hibana::runtime::SessionKit;
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
-use hibana::runtime::{CounterClock, SessionKit};
 use hibana::{Endpoint, RouteBranch};
 use static_assertions::assert_not_impl_any;
 
-type StaticTestKit = SessionKit<'static, common::TestTransport, CounterClock, 2>;
+type StaticTestKit = SessionKit<'static, common::TestTransport, 2>;
 
 assert_not_impl_any!(StaticTestKit: Send, Sync);
 assert_not_impl_any!(Endpoint<'static, 0>: Send, Sync);
@@ -55,6 +55,14 @@ fn read_dir_rs(path: &str) -> String {
 fn runtime_source() -> String {
     let mut source = read("src/runtime.rs");
     source.push_str(&read_dir_rs("src/runtime"));
+    source
+}
+
+fn runtime_public_surface_source() -> String {
+    let mut source = read("src/runtime.rs");
+    source.push_str(&read("src/runtime/buckets.rs"));
+    source.push_str(&read("src/runtime/session_kit.rs"));
+    source.push_str(&read("src/runtime/fluent.rs"));
     source
 }
 
@@ -211,7 +219,7 @@ fn session_kit_construction_is_in_place_only() {
 }
 
 #[test]
-fn clock_authority_is_config_only() {
+fn single_slab_config_is_runtime_resource_authority() {
     let runtime_rs = compact_ws(&runtime_source());
     let cluster_rs = read("src/session/cluster/core.rs");
     let allowlist = compact_ws(&read(".github/allowlists/runtime-public-api.txt"));
@@ -237,7 +245,7 @@ fn clock_authority_is_config_only() {
         ) && !allowlist.contains(
             "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
         ),
-        "resident init_in_place must not accept a clock; Config owns rendezvous clock authority"
+        "resident init_in_place must not accept a clock; Config owns the single runtime slab authority"
     );
     assert!(
         !cluster_rs.contains("clock: &'cfg C") && !cluster_rs.contains("self.clock.now32()"),
@@ -245,11 +253,14 @@ fn clock_authority_is_config_only() {
     );
     assert!(
         readme.contains("let kit = kit_storage.init();")
-            && readme
-                .contains("let config = Config::from_resources((&mut tap_buf, &mut slab), clock);")
+            && readme.contains("let config = Config::from_resources(&mut slab);")
             && crate_docs.contains("let kit = kit_storage.init();")
-            && crate_docs.contains("clock,"),
-        "public docs must teach unified storage-owned SessionKit construction and Config-owned clock authority"
+            && crate_docs.contains("let config = runtime::Config::from_resources(&mut slab);")
+            && !readme.contains("CounterClock")
+            && !readme.contains("tap_buf")
+            && !crate_docs.contains("CounterClock")
+            && !crate_docs.contains("tap_buf"),
+        "public docs must teach unified storage-owned SessionKit construction and single-slab Config authority"
     );
 }
 
@@ -370,7 +381,7 @@ fn runtime_root_exposes_only_core_buckets() {
         "runtime root must not keep identifier aliases outside runtime::ids"
     );
     assert!(
-        runtime_rs.contains("Result<RendezvousKit<'_, 'cfg, T, C, false, MAX_RV>, AttachError>")
+        runtime_rs.contains("Result<RendezvousKit<'_, 'cfg, T, false, MAX_RV>, AttachError>")
             && runtime_rs.contains("pub fn rendezvous(")
             && !runtime_rs.contains("pub fn add_rendezvous(")
             && !runtime_rs.contains("pub fn add_rendezvous( &self")
@@ -381,7 +392,7 @@ fn runtime_root_exposes_only_core_buckets() {
 
     for required in [
         "pub use session_kit::{RendezvousKit, RoleKit, SessionKit, SessionKitStorage};",
-        "pub use crate::runtime_core::config::{Clock, Config, CounterClock};",
+        "pub use crate::runtime_core::config::Config;",
         "pub mod ids {",
         "pub mod resolver {",
         "ResolverRef",
@@ -401,6 +412,13 @@ fn runtime_root_exposes_only_core_buckets() {
         !runtime_rs.contains(concat!("Runtime", "Storage")),
         "runtime resources must be owned by Config without a public storage envelope"
     );
+    let runtime_public = runtime_public_surface_source();
+    for forbidden in ["Clock", "CounterClock", "RING_EVENTS"] {
+        assert!(
+            !runtime_public.contains(forbidden),
+            "runtime surface must not expose public clock or tap-buffer resources: {forbidden}"
+        );
+    }
     assert!(
         !runtime_rs.contains("pub mod binding {") && !runtime_rs.contains("pub fn ingress("),
         "ingress binding must not remain a public runtime bucket or attach verb"
@@ -497,7 +515,6 @@ fn runtime_allowlist_tracks_core_boundary() {
 
     for required in [
         "pub use crate::observe::core::TapEvent;",
-        "RING_EVENTS",
         "pub struct SessionKitStorage",
         "Projectable",
         "WirePayload",
@@ -539,6 +556,9 @@ fn runtime_allowlist_tracks_core_boundary() {
         "pub mod inspect {",
         "ProjectionMetadataVisitor",
         "ProjectionProgramFacts",
+        "Clock",
+        "CounterClock",
+        "RING_EVENTS",
     ] {
         assert!(
             !allowlist.contains(forbidden),
