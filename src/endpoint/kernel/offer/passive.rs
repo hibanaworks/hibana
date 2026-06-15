@@ -2,7 +2,8 @@ use super::{
     CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
     FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
     OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    ResolvePendingState, ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
+    ResolvePendingState, ResolveTokenOutcome, RouteArmToken, ScopeFrameLabelScratch, Transport,
+    lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput<'a> {
     pub(super) selection: OfferScopeSelection,
@@ -213,7 +214,9 @@ where
             let Some(frame_label) = state.transport_frame_label_raw() else {
                 return Ok(FrameHintResolution::unresolved());
             };
-            let frame_label_meta = self.selection_frame_label_meta(selection);
+            let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
+            self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
+            let frame_label_meta = frame_label_scratch.view();
             if frame_label_meta
                 .frame_hint_mask()
                 .contains_frame_label(frame_label)
@@ -229,12 +232,13 @@ where
             return Ok(FrameHintResolution::unresolved());
         }
 
-        let frame_label_meta = self.selection_frame_label_meta(selection);
+        let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
+        self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
         self.ingest_scope_evidence_for_offer(
             scope_id,
             offer_lanes,
             profile.frame_hint_ingestion(),
-            frame_label_meta,
+            frame_label_scratch.view(),
         );
         if self.scope_evidence_conflicted(scope_id) {
             return Err(RecvError::PhaseInvariant);
@@ -269,23 +273,23 @@ where
             Poll::Ready(Err(err)) => return Err(err),
         };
         let observed_frame_label = frame.observed_frame_label_raw();
-        state.stage_transport(frame);
-        let frame_label_meta = self.selection_frame_label_meta(selection);
+        let observed = frame.observed_transport_frame(self.sid.raw(), recv_lane, ROLE);
+        let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
+        self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
+        let frame_label_meta = frame_label_scratch.view();
         if frame_label_meta
             .frame_hint_mask()
             .contains_frame_label(observed_frame_label)
         {
+            state.stage_transport(frame);
             return Ok(FrameHintResolution::resolved());
         }
-        Ok(
-            if self
-                .peek_scope_frame_hint_with_lane(selection.scope_id)
-                .is_some()
-            {
-                FrameHintResolution::resolved()
-            } else {
-                FrameHintResolution::unresolved()
-            },
-        )
+        self.emit_materialization_mismatch_observation(
+            recv_lane_idx,
+            recv_lane,
+            lane_port::FrameMismatch::label_mismatch(observed),
+        );
+        frame.discard_uncommitted();
+        Err(RecvError::PhaseInvariant)
     }
 }

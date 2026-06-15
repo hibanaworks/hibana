@@ -270,6 +270,26 @@ impl FrameMismatch {
     }
 
     #[inline]
+    pub(crate) const fn headerless_preamble(
+        session_raw: u32,
+        lane_wire: u8,
+        target_role: u8,
+    ) -> Self {
+        Self {
+            observation: FrameObservation::new(session_raw, lane_wire, 0, target_role, 0),
+            kind: FrameMismatchKind::Label,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn label_mismatch(observation: FrameObservation) -> Self {
+        Self {
+            observation,
+            kind: FrameMismatchKind::Label,
+        }
+    }
+
+    #[inline]
     pub(crate) fn tap_event(
         self,
         now32: u32,

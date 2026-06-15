@@ -18,6 +18,7 @@ use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{
     Config, SessionKitStorage,
     ids::SessionId,
+    resolver::{DecisionArm, DecisionResolution, ResolverRef},
     transport::{ReceivedFrame, Transport},
 };
 use runtime_support::with_runtime_workspace;
@@ -25,12 +26,17 @@ use tls_ref_support::with_resident_tls_ref;
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport, 2>;
+type LabelRewriteKitStorage = SessionKitStorage<'static, LabelRewriteTransport, 2>;
+const MATERIALIZED_MISMATCH_RESOLVER: u16 = 41;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
     static DETERMINISTIC_SESSION_SLOT: UnsafeCell<DeterministicKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+    static LABEL_REWRITE_SESSION_SLOT: UnsafeCell<LabelRewriteKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
@@ -101,6 +107,104 @@ impl Transport for DeterministicRecvTransport {
     }
 }
 
+#[derive(Clone)]
+struct LabelRewriteTransport {
+    inner: TestTransport,
+    frame_label: u8,
+}
+
+struct LabelRewriteRx<'a> {
+    inner: <TestTransport as Transport>::Rx<'a>,
+    session_id: SessionId,
+    lane: u8,
+    local_role: u8,
+}
+
+impl LabelRewriteTransport {
+    fn new(frame_label: u8) -> Self {
+        Self {
+            inner: TestTransport::new(),
+            frame_label,
+        }
+    }
+
+    fn queue_is_empty(&self) -> bool {
+        self.inner.queue_is_empty()
+    }
+}
+
+impl Transport for LabelRewriteTransport {
+    type Error = TestTransportError;
+    type Tx<'a>
+        = <TestTransport as Transport>::Tx<'a>
+    where
+        Self: 'a;
+    type Rx<'a>
+        = LabelRewriteRx<'a>
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        let session_id = port.session_id();
+        let lane = port.lane();
+        let local_role = port.local_role();
+        let (tx, inner) = self.inner.open(port);
+        (
+            tx,
+            LabelRewriteRx {
+                inner,
+                session_id,
+                lane,
+                local_role,
+            },
+        )
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: hibana::runtime::transport::Outgoing<'f>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        self.inner.poll_send(tx, outgoing, cx)
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        self.inner.cancel_send(tx);
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+        match self.inner.poll_recv(&mut rx.inner, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(frame)) => {
+                let header = common::frame_header_from_parts(
+                    rx.session_id,
+                    rx.lane,
+                    0,
+                    rx.local_role,
+                    hibana::runtime::transport::FrameLabel::new(self.frame_label),
+                );
+                Poll::Ready(Ok(ReceivedFrame::framed(header, frame.payload())))
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        }
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        self.inner.requeue(&mut rx.inner)
+    }
+}
+
 fn controller_program() -> RoleProgram<0> {
     let left_arm = g::send::<0, 1, Msg<71, u32>>();
     let right_arm = g::send::<0, 1, Msg<72, u32>>();
@@ -115,6 +219,26 @@ fn worker_program() -> RoleProgram<1> {
     let route = g::route(left_arm, right_arm);
     let program = g::seq(route, g::send::<0, 1, Msg<73, u32>>());
     project(&program)
+}
+
+fn resolved_controller_program() -> RoleProgram<0> {
+    let left_arm = g::send::<0, 1, Msg<71, u32>>();
+    let right_arm = g::send::<0, 1, Msg<72, u32>>();
+    let route = g::route(left_arm, right_arm).resolve::<MATERIALIZED_MISMATCH_RESOLVER>();
+    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>>());
+    project(&program)
+}
+
+fn resolved_worker_program() -> RoleProgram<1> {
+    let left_arm = g::send::<0, 1, Msg<71, u32>>();
+    let right_arm = g::send::<0, 1, Msg<72, u32>>();
+    let route = g::route(left_arm, right_arm).resolve::<MATERIALIZED_MISMATCH_RESOLVER>();
+    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>>());
+    project(&program)
+}
+
+fn choose_left() -> Result<DecisionResolution, hibana::runtime::resolver::ResolverError> {
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
 fn with_route_workspace(
@@ -332,17 +456,109 @@ fn completed_decode_future_repoll_is_fail_fast_and_does_not_advance_again() {
 }
 
 #[test]
-fn offer_requires_framed_receive_evidence_for_branch_demux() {
+fn offer_headerless_demux_frame_fails_closed_not_pending() {
     with_deterministic_route_workspace(|controller, worker, transport| {
         futures::executor::block_on(send_left(controller, 1234));
+        let error = match worker
+            .offer()
+            .now_or_never()
+            .expect("headerless demux frame must fail closed")
+        {
+            Ok(_) => panic!("headerless demux frame must not materialize a route branch"),
+            Err(error) => error,
+        };
+        assert_eq!(error.operation(), "offer");
+        let rendered = format!("{error:?}");
         assert!(
-            worker.offer().now_or_never().is_none(),
-            "route offer must not infer a branch from deterministic/headerless receive evidence"
+            rendered.contains("PhaseInvariant"),
+            "headerless demux frame must report terminal invariant evidence: {rendered}"
         );
         assert!(
             transport.queue_is_empty(),
-            "headerless demux frame must be discarded instead of buffered as route authority"
+            "headerless demux frame must not be buffered as route authority"
         );
+
+        let poisoned = match futures::executor::block_on(worker.offer()) {
+            Ok(_) => panic!("headerless demux frame must poison the same generation"),
+            Err(error) => error,
+        };
+        let rendered = format!("{poisoned:?}");
+        assert!(
+            rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
+            "headerless demux frame must poison same generation: {rendered}"
+        );
+    });
+}
+
+#[test]
+fn offer_materialized_label_mismatch_fails_closed() {
+    with_runtime_workspace(|slab| {
+        let transport = LabelRewriteTransport::new(1);
+        with_resident_tls_ref(&LABEL_REWRITE_SESSION_SLOT, |cluster| {
+            let config = Config::from_resources(slab);
+            let rv = cluster
+                .rendezvous(config, transport.clone())
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
+            let sid = SessionId::new(903);
+            let controller_program = resolved_controller_program();
+            let worker_program = resolved_worker_program();
+            rv.role(&controller_program)
+                .set_resolver(ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_fn(
+                    choose_left,
+                ))
+                .expect("install controller resolver");
+            rv.role(&worker_program)
+                .set_resolver(ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_fn(
+                    choose_left,
+                ))
+                .expect("install worker resolver");
+            let mut controller = rv
+                .session(sid)
+                .role(&controller_program)
+                .enter()
+                .expect("attach controller");
+            let mut worker = rv
+                .session(sid)
+                .role(&worker_program)
+                .enter()
+                .expect("attach worker");
+
+            futures::executor::block_on(send_left(&mut controller, 1234));
+            let error = match worker
+                .offer()
+                .now_or_never()
+                .expect("materialized label mismatch must fail closed")
+            {
+                Ok(_) => panic!("materialized label mismatch must fail closed"),
+                Err(error) => error,
+            };
+            assert_eq!(error.operation(), "offer");
+            let rendered = format!("{error:?}");
+            assert!(
+                rendered.contains("PhaseInvariant"),
+                "label mismatch must report terminal invariant evidence: {rendered}"
+            );
+
+            let mismatch = tap
+                .find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                .expect("materialized label mismatch must emit transport mismatch evidence");
+            assert_eq!(
+                mismatch.evidence().reason(),
+                hibana::runtime::tap::TRANSPORT_MISMATCH_LABEL
+            );
+            assert!(transport.queue_is_empty());
+
+            let poisoned = match futures::executor::block_on(worker.offer()) {
+                Ok(_) => panic!("materialized label mismatch must poison same generation"),
+                Err(error) => error,
+            };
+            let rendered = format!("{poisoned:?}");
+            assert!(
+                rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
+                "label mismatch must poison same generation: {rendered}"
+            );
+        });
     });
 }
 

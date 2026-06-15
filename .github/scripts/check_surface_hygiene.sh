@@ -594,6 +594,15 @@ check_absent "\\b(${FOR_TEST_WORD}|${FOR_TEST_SUFFIX})\\b|test-only|Test-only|\\
 check_absent "(?i)\\b(${MODE_WORD}(ibility|ible)?|${OLD_WORD}|${RECOVERY_WORD}|${GUESS_WORD}|${ALT_WORD}|state machine|infer(red|ence|s|ring)?|absorb mismatch|absorption)\\b" \
   "runtime-intelligence vocabulary residue in public docs or core source" \
   src README.md
+check_absent "#\\[allow\\(dead_code\\)\\]|DiscardedAndPending|keeps_waiting|absorbed" \
+  "static hygiene residue in production source" \
+  src
+check_absent_multiline "wake_by_ref\\(\\);[[:space:]]*\\n[[:space:]]*return Poll::Pending" \
+  "transport mismatch wake-and-pending recovery path" \
+  src/endpoint/kernel/lane_port.rs src/endpoint/kernel/observe.rs src/endpoint/kernel/offer.rs src/endpoint/kernel/offer/materialization.rs
+check_absent_multiline "wake_by_ref\\(\\);[[:space:]]*\\n[[:space:]]*Poll::Pending" \
+  "transport mismatch wake-and-pending recovery expression" \
+  src/endpoint/kernel/lane_port.rs src/endpoint/kernel/observe.rs src/endpoint/kernel/offer.rs src/endpoint/kernel/offer/materialization.rs
 check_absent "\\b(test_from_slice|bind_test_storage)\\b" \
   "named cfg-test constructor/helper residue in production source" \
   src
@@ -783,6 +792,17 @@ check_absent "\\bStepNonEmpty\\b" \
 check_absent "(?i)\\b(quic|h3|hq|qpack|alpn)\\b|http/3" \
   "protocol-specific vocabulary in hibana/src" \
   src
+check_absent "\\bu64\\b|1u64|\\[u64;|word[0-9]|>>[[:space:]]*6|<<[[:space:]]*6|\\*[[:space:]]*64|/[[:space:]]*64" \
+  "wide integer FrameLabelMask helper detected" \
+  src/transport/labels.rs
+check_absent "ScopeFrameLabelMasks::EMPTY|frame_label_masks|frame_label_meta:[[:space:]]*&[[:space:]]*ScopeFrameLabelMeta|\\)[[:space:]]*->[[:space:]]*ScopeFrameLabelMeta|\\.frame_hint_mask\\(&|fn[[:space:]]+selection_frame_label_meta\\(|fn[[:space:]]+offer_scope_frame_label_meta\\(|fn[[:space:]]+scope_frame_label_meta(_at)?\\(" \
+  "scope frame-label hot path by-value mask plumbing detected" \
+  src/endpoint/kernel/core/frontier_helpers.rs \
+  src/endpoint/kernel/core/scope_evidence_logic.rs \
+  src/endpoint/kernel/offer.rs \
+  src/endpoint/kernel/offer/facts.rs \
+  src/endpoint/kernel/offer/passive.rs \
+  src/endpoint/kernel/offer/select.rs
 
 
 bash ./.github/scripts/check_endpoint_surface_owner.sh

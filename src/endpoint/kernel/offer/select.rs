@@ -5,8 +5,8 @@ use super::{
     FrontierObservationKey, FrontierVisitSet, IngressEvidenceState, LaneSetView, ObservedEntrySet,
     OfferEntryObservedState, OfferEntryPosition, OfferEvidenceOutcome, OfferLaneEntrySlotMasks,
     OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult,
-    ResolverDeferProgress, RouteArmToken, ScopeFrameLabelMeta, ScopeId, Transport,
-    frontier_observation_key_view_from_storage,
+    ResolverDeferProgress, RouteArmToken, ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId,
+    Transport, frontier_observation_key_view_from_storage,
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     lane_port, state_index_to_usize,
 };
@@ -25,30 +25,33 @@ impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX
 where
     T: Transport + 'r,
 {
-    pub(in crate::endpoint::kernel) fn offer_entry_frame_label_meta(
+    pub(in crate::endpoint::kernel) fn write_offer_entry_frame_label_meta(
         endpoint: &CursorEndpoint<'r, ROLE, T, MAX_RV>,
         scope_id: ScopeId,
         entry_idx: usize,
-    ) -> Option<ScopeFrameLabelMeta> {
-        endpoint.offer_entry_state_snapshot(entry_idx)?;
+        out: &mut ScopeFrameLabelScratch,
+    ) -> bool {
+        if endpoint.offer_entry_state_snapshot(entry_idx).is_none() {
+            return false;
+        }
         if !endpoint.offer_entry_has_active_lanes(entry_idx)
             || endpoint.offer_entry_scope_id(entry_idx) != scope_id
         {
-            return None;
+            return false;
         }
         let reentry_meta = CursorEndpoint::<ROLE, T, MAX_RV>::scope_reentry_meta_at(
             &endpoint.cursor,
             scope_id,
             entry_idx,
         );
-        Some(
-            CursorEndpoint::<ROLE, T, MAX_RV>::scope_frame_label_meta_at(
-                &endpoint.cursor,
-                scope_id,
-                reentry_meta,
-                entry_idx,
-            ),
-        )
+        CursorEndpoint::<ROLE, T, MAX_RV>::write_scope_frame_label_meta_at(
+            &endpoint.cursor,
+            scope_id,
+            reentry_meta,
+            entry_idx,
+            out,
+        );
+        true
     }
 
     #[inline]
@@ -333,7 +336,7 @@ where
         scope_id: ScopeId,
         lane: u8,
         frame_label: u8,
-        frame_label_meta: ScopeFrameLabelMeta,
+        frame_label_meta: ScopeFrameLabelView<'_>,
     ) {
         let exact_passive_arm = self
             .cursor

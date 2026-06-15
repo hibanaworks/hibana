@@ -70,10 +70,152 @@ impl Transport for DeadlineRecvTransport {
 
 type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport, 2>;
 
+#[derive(Clone, Copy)]
+struct MalformedRecvTransport {
+    header: hibana::runtime::transport::FrameHeader,
+}
+
+struct MalformedRx {
+    delivered: bool,
+}
+
+impl Transport for MalformedRecvTransport {
+    type Error = TestTransportError;
+    type Tx<'a>
+        = ()
+    where
+        Self: 'a;
+    type Rx<'a>
+        = MalformedRx
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        core::hint::black_box(port);
+        ((), MalformedRx { delivered: false })
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _tx: &'a mut Self::Tx<'a>,
+        _outgoing: hibana::runtime::transport::Outgoing<'f>,
+        _context: &mut Context<'_>,
+    ) -> Poll<Result<(), Self::Error>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+        core::hint::black_box(context.waker());
+        if rx.delivered {
+            return Poll::Pending;
+        }
+        rx.delivered = true;
+        Poll::Ready(Ok(ReceivedFrame::framed(
+            self.header,
+            Payload::new(b"bad!"),
+        )))
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        core::hint::black_box(tx);
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        core::hint::black_box(rx);
+        Ok(())
+    }
+}
+
+type MalformedKitStorage = SessionKitStorage<'static, MalformedRecvTransport, 2>;
+
 std::thread_local! {
     static DEADLINE_SESSION_SLOT: UnsafeCell<DeadlineKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
+    static MALFORMED_SESSION_SLOT: UnsafeCell<MalformedKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+}
+
+fn malformed_header(
+    session_id: SessionId,
+    lane: u8,
+    source_role: u8,
+    target_role: u8,
+    frame_label: u8,
+) -> hibana::runtime::transport::FrameHeader {
+    hibana::runtime::transport::FrameHeader::from_raw(
+        ((session_id.raw() as u64) << 32)
+            | ((lane as u64) << 24)
+            | ((source_role as u64) << 16)
+            | ((target_role as u64) << 8)
+            | u64::from(frame_label),
+    )
+}
+
+fn assert_malformed_direct_recv_fails_closed(
+    sid: SessionId,
+    header: hibana::runtime::transport::FrameHeader,
+    expected_reason: u8,
+) {
+    with_runtime_workspace(|slab| {
+        let mismatch = with_resident_tls_ref(&MALFORMED_SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<1, FramePayload>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(
+                    Config::from_resources(slab),
+                    MalformedRecvTransport { header },
+                )
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
+
+            let mut target_endpoint = rv
+                .session(sid)
+                .role(&target_program)
+                .enter()
+                .expect("target endpoint");
+
+            let error = futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+                .expect_err("descriptor mismatch must fail closed");
+            let rendered = format!("{error:?}");
+            assert!(
+                rendered.contains("PhaseInvariant"),
+                "descriptor mismatch must report terminal invariant evidence: {rendered}"
+            );
+
+            let mismatch = tap
+                .find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                .expect("descriptor mismatch must emit transport mismatch evidence");
+            assert_eq!(mismatch.evidence().reason(), expected_reason);
+            assert_eq!(mismatch.arg0, sid.raw());
+            assert!(
+                !tap.any(|event| event.id == hibana::runtime::tap::TRANSPORT_FRAME),
+                "rejected mismatch must not also emit accepted frame evidence"
+            );
+
+            let poisoned =
+                futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
+                    .expect_err("same generation must be poisoned after mismatch");
+            let rendered = format!("{poisoned:?}");
+            assert!(
+                rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
+                "mismatch must poison same generation: {rendered}"
+            );
+            mismatch
+        });
+        assert_eq!(mismatch.evidence().reason(), expected_reason);
+    });
 }
 
 #[test]
@@ -189,84 +331,84 @@ fn transport_poll_recv_returns_framed_payload() {
 }
 
 #[test]
-fn direct_recv_session_mismatch_emits_tap_and_keeps_waiting() {
+fn direct_recv_session_mismatch_fails_closed_and_poisons_generation() {
+    let sid = SessionId::new(71);
+    let bad_sid = SessionId::new(72);
+    assert_malformed_direct_recv_fails_closed(
+        sid,
+        malformed_header(bad_sid, 0, 0, 1, 0),
+        hibana::runtime::tap::TRANSPORT_MISMATCH_SESSION,
+    );
+}
+
+#[test]
+fn direct_recv_lane_source_target_label_mismatch_fails_closed() {
+    let cases = [
+        (
+            SessionId::new(81),
+            malformed_header(SessionId::new(81), 1, 0, 1, 0),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_LANE,
+        ),
+        (
+            SessionId::new(82),
+            malformed_header(SessionId::new(82), 0, 2, 1, 0),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_SOURCE_ROLE,
+        ),
+        (
+            SessionId::new(83),
+            malformed_header(SessionId::new(83), 0, 0, 2, 0),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_PEER_ROLE,
+        ),
+        (
+            SessionId::new(84),
+            malformed_header(SessionId::new(84), 0, 0, 1, 9),
+            hibana::runtime::tap::TRANSPORT_MISMATCH_LABEL,
+        ),
+    ];
+    for (sid, header, reason) in cases {
+        assert_malformed_direct_recv_fails_closed(sid, header, reason);
+    }
+}
+
+#[test]
+fn mismatch_tap_is_emitted_before_terminal_error() {
     with_runtime_workspace(|slab| {
-        let transport = TestTransport::new();
-        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        with_resident_tls_ref(&MALFORMED_SESSION_SLOT, |cluster| {
+            let sid = SessionId::new(85);
             let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(
+                    Config::from_resources(slab),
+                    MalformedRecvTransport {
+                        header: malformed_header(sid, 0, 0, 1, 9),
+                    },
+                )
                 .expect("register rendezvous");
             let mut tap = rv.tap();
-
-            let sid = SessionId::new(71);
-            let bad_sid = SessionId::new(72);
             let mut target_endpoint = rv
                 .session(sid)
                 .role(&target_program)
                 .enter()
                 .expect("target endpoint");
 
-            let mut bad_tx = TestTx {
-                session_id: bad_sid,
-                local_role: 0,
-                pending_role: None,
-                pending_frame: None,
-            };
-            transport.stage_send_with_session(&mut bad_tx, bad_sid, 1, 0, 0, b"bad!");
-            assert!(matches!(
-                transport.poll_send_staged(&mut bad_tx),
-                Poll::Ready(Ok(()))
-            ));
-
             let mut recv = core::pin::pin!(target_endpoint.recv::<Msg<1, FramePayload>>());
             let waker = futures::task::noop_waker_ref();
             let mut context = Context::from_waker(waker);
-            if let Poll::Ready(result) = recv.as_mut().poll(&mut context) {
-                match result {
-                    Ok(_) => panic!("session mismatch must not commit recv"),
-                    Err(error) => {
-                        panic!(
-                            "session mismatch must stay pending until a transport fault: {error:?}"
-                        )
-                    }
-                }
-            }
-
-            let mismatch = tap
-                .find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
-                .expect("session mismatch must emit transport mismatch evidence");
-            assert_eq!(
-                mismatch.evidence().reason(),
-                hibana::runtime::tap::TRANSPORT_MISMATCH_SESSION
-            );
-            assert_eq!(mismatch.arg0, sid.raw());
-            assert_eq!(mismatch.arg1, bad_sid.raw());
-            assert!(
-                !tap.any(|event| event.id == 0x0206),
-                "mismatched frames must emit TransportMismatch only, not duplicate TransportFrame"
-            );
-
-            let mut good_tx = TestTx {
-                session_id: sid,
-                local_role: 0,
-                pending_role: None,
-                pending_frame: None,
-            };
-            transport.stage_send_with_session(&mut good_tx, sid, 1, 0, 0, b"good");
-            assert!(matches!(
-                transport.poll_send_staged(&mut good_tx),
-                Poll::Ready(Ok(()))
-            ));
-
             match recv.as_mut().poll(&mut context) {
-                Poll::Ready(Ok(payload)) => assert_eq!(payload.as_bytes(), b"good"),
-                Poll::Ready(Err(error)) => panic!("matching frame must complete recv: {error:?}"),
-                Poll::Pending => {
-                    panic!("matching frame should be available after mismatch discard")
+                Poll::Ready(Err(error)) => {
+                    let rendered = format!("{error:?}");
+                    assert!(
+                        rendered.contains("PhaseInvariant"),
+                        "mismatch must be terminal: {rendered}"
+                    );
                 }
+                Poll::Ready(Ok(_)) => panic!("mismatch must not commit recv"),
+                Poll::Pending => panic!("mismatch must not remain pending"),
             }
+
+            tap.find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                .expect("mismatch tap must be emitted by the failing poll");
         });
     });
 }

@@ -22,7 +22,7 @@ impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX
 where
     T: Transport + 'r,
 {
-    #[inline]
+    #[inline(never)]
     pub(in crate::endpoint) fn poll_public_offer(
         &mut self,
         cx: &mut core::task::Context<'_>,
@@ -122,7 +122,7 @@ where
         }
     }
 
-    #[inline]
+    #[inline(never)]
     pub(in crate::endpoint) fn poll_public_decode(
         &mut self,
         logical_label: u8,

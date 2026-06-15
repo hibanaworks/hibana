@@ -358,6 +358,7 @@ where
         Ok(meta)
     }
 
+    #[inline(never)]
     pub(in crate::endpoint::kernel) fn descend_selected_passive_route(
         &mut self,
         selection: OfferScopeSelection,

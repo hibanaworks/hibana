@@ -120,6 +120,26 @@ pub(super) enum OfferExecution<'a> {
     },
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum OfferExecutionKind {
+    Uninitialized,
+    Selecting,
+    Collecting,
+    Resolving,
+}
+
+impl OfferExecution<'_> {
+    #[inline]
+    pub(super) const fn kind(&self) -> OfferExecutionKind {
+        match self {
+            Self::Uninitialized => OfferExecutionKind::Uninitialized,
+            Self::Selecting { .. } => OfferExecutionKind::Selecting,
+            Self::Collecting { .. } => OfferExecutionKind::Collecting,
+            Self::Resolving { .. } => OfferExecutionKind::Resolving,
+        }
+    }
+}
+
 pub(in crate::endpoint::kernel) struct OfferDetachedIngress<'r> {
     pub(in crate::endpoint::kernel) carried_transport_payload: Option<lane_port::PreambleFrame<'r>>,
     pub(in crate::endpoint::kernel) stage_transport_payload: Option<lane_port::PreambleFrame<'r>>,

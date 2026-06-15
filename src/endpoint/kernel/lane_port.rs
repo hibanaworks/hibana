@@ -6,7 +6,7 @@ use core::{
 };
 
 use crate::{
-    endpoint::SendError,
+    endpoint::{RecvError, RecvResult, SendError},
     rendezvous::port::Port,
     transport::{
         Outgoing, Transport, TransportError,
@@ -160,14 +160,14 @@ pub(super) fn poll_recv_frame<'r, T>(
     port: &Port<'r, T>,
     expected: FrameExpectation,
     cx: &mut Context<'_>,
-) -> Poll<Result<ReceivedFrame<'r>, TransportError>>
+) -> Poll<RecvResult<ReceivedFrame<'r>>>
 where
     T: Transport + 'r,
 {
     let (payload, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
         Poll::Ready(Ok(frame)) => frame,
-        Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+        Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
     };
     let Some(observation) = observed else {
         return Poll::Ready(Ok(ReceivedFrame::from_descriptor_checked_payload(
@@ -190,8 +190,7 @@ where
             expected.lane_wire,
             FrameMismatch::new(observation, kind),
         );
-        cx.waker().wake_by_ref();
-        return Poll::Pending;
+        return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
     let frame = PreambleFrame::from_accepted_payload(port, payload, observation);
     match frame.accept_parts(
@@ -211,8 +210,7 @@ where
                 expected.lane_wire,
                 mismatch,
             );
-            cx.waker().wake_by_ref();
-            Poll::Pending
+            Poll::Ready(Err(RecvError::PhaseInvariant))
         }
     }
 }
@@ -225,14 +223,14 @@ pub(super) fn poll_recv_frame_preamble<'r, T>(
     expected_lane_wire: u8,
     expected_target_role: u8,
     cx: &mut Context<'_>,
-) -> Poll<Result<PreambleFrame<'r>, TransportError>>
+) -> Poll<RecvResult<PreambleFrame<'r>>>
 where
     T: Transport + 'r,
 {
     let (payload, observed) = match poll_recv_payload(pending, port, cx) {
         Poll::Pending => return Poll::Pending,
         Poll::Ready(Ok(frame)) => frame,
-        Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+        Poll::Ready(Err(err)) => return Poll::Ready(Err(RecvError::Transport(err))),
     };
     if let Some(observation) = observed
         && let Some(kind) = observation.mismatch_preamble(
@@ -247,12 +245,20 @@ where
             expected_lane_wire,
             FrameMismatch::new(observation, kind),
         );
-        cx.waker().wake_by_ref();
-        return Poll::Pending;
+        return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
     let Some(observed) = observed else {
-        cx.waker().wake_by_ref();
-        return Poll::Pending;
+        emit_transport_mismatch_observation(
+            port,
+            expected_session_raw,
+            expected_lane_wire,
+            FrameMismatch::headerless_preamble(
+                expected_session_raw,
+                expected_lane_wire,
+                expected_target_role,
+            ),
+        );
+        return Poll::Ready(Err(RecvError::PhaseInvariant));
     };
     Poll::Ready(Ok(PreambleFrame::from_accepted_payload(
         port, payload, observed,

@@ -16,7 +16,7 @@ where
 {
     #[cold]
     #[inline]
-    fn emit_materialization_mismatch_observation(
+    pub(in crate::endpoint::kernel) fn emit_materialization_mismatch_observation(
         &self,
         lane_idx: usize,
         lane_wire: u8,
@@ -58,10 +58,11 @@ where
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(frame)) => Poll::Ready(Ok(frame)),
-            Poll::Ready(Err(err)) => {
+            Poll::Ready(Err(RecvError::Transport(err))) => {
                 self.emit_transport_fault_event(lane_idx, lane_wire, err);
                 Poll::Ready(Err(RecvError::Transport(err)))
             }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 
@@ -77,10 +78,11 @@ where
         match lane_port::poll_recv_frame(pending_recv, port, expected, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(frame)) => Poll::Ready(Ok(frame)),
-            Poll::Ready(Err(err)) => {
+            Poll::Ready(Err(RecvError::Transport(err))) => {
                 self.emit_transport_fault_event(lane_idx, expected.lane_wire, err);
                 Poll::Ready(Err(RecvError::Transport(err)))
             }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 
@@ -92,16 +94,16 @@ where
         source_role: u8,
         frame_label: u8,
         frame: lane_port::PreambleFrame<'r>,
-    ) -> Option<lane_port::ReceivedFrame<'r>> {
+    ) -> RecvResult<lane_port::ReceivedFrame<'r>> {
         let observed = frame.observed_transport_frame(self.sid.raw(), lane_wire, ROLE);
         match frame.accept_parts(self.sid.raw(), ROLE, source_role, frame_label) {
             Ok(frame) => {
                 self.emit_materialized_transport_frame_observation(lane_idx, observed);
-                Some(frame)
+                Ok(frame)
             }
             Err(mismatch) => {
                 self.emit_materialization_mismatch_observation(lane_idx, lane_wire, mismatch);
-                None
+                Err(RecvError::PhaseInvariant)
             }
         }
     }

@@ -41,109 +41,89 @@ impl FrameLabel {
 }
 
 /// Fixed mask over the complete `FrameLabel` domain.
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct FrameLabelMask {
-    word0: u64,
-    word1: u64,
-    word2: u64,
-    word3: u64,
+    limbs: [u8; 32],
 }
 
 impl FrameLabelMask {
-    pub(crate) const EMPTY: Self = Self {
-        word0: 0,
-        word1: 0,
-        word2: 0,
-        word3: 0,
-    };
+    pub(crate) const EMPTY: Self = Self { limbs: [0; 32] };
 
     #[inline]
     pub(crate) const fn from_frame_label(frame_label: u8) -> Self {
-        let bit = 1u64 << ((frame_label & 63) as u32);
-        match frame_label >> 6 {
-            0 => Self {
-                word0: bit,
-                ..Self::EMPTY
-            },
-            1 => Self {
-                word1: bit,
-                ..Self::EMPTY
-            },
-            2 => Self {
-                word2: bit,
-                ..Self::EMPTY
-            },
-            3 => Self {
-                word3: bit,
-                ..Self::EMPTY
-            },
-            _ => crate::invariant(),
-        }
+        let mut limbs = [0u8; 32];
+        limbs[(frame_label >> 3) as usize] = 1u8 << (frame_label & 7);
+        Self { limbs }
     }
 
     #[inline]
     pub(crate) const fn contains_frame_label(self, frame_label: u8) -> bool {
-        let bit = 1u64 << ((frame_label & 63) as u32);
-        match frame_label >> 6 {
-            0 => (self.word0 & bit) != 0,
-            1 => (self.word1 & bit) != 0,
-            2 => (self.word2 & bit) != 0,
-            3 => (self.word3 & bit) != 0,
-            _ => crate::invariant(),
-        }
+        let limb = self.limbs[(frame_label >> 3) as usize];
+        let bit = 1u8 << (frame_label & 7);
+        (limb & bit) != 0
     }
 
     #[inline]
     pub(crate) const fn intersects(self, other: Self) -> bool {
-        (self.word0 & other.word0) != 0
-            || (self.word1 & other.word1) != 0
-            || (self.word2 & other.word2) != 0
-            || (self.word3 & other.word3) != 0
+        let mut idx = 0usize;
+        while idx < self.limbs.len() {
+            if (self.limbs[idx] & other.limbs[idx]) != 0 {
+                return true;
+            }
+            idx += 1;
+        }
+        false
     }
 
     #[inline]
     pub(crate) const fn without(self, other: Self) -> Self {
-        Self {
-            word0: self.word0 & !other.word0,
-            word1: self.word1 & !other.word1,
-            word2: self.word2 & !other.word2,
-            word3: self.word3 & !other.word3,
+        let mut limbs = [0u8; 32];
+        let mut idx = 0usize;
+        while idx < limbs.len() {
+            limbs[idx] = self.limbs[idx] & !other.limbs[idx];
+            idx += 1;
         }
+        Self { limbs }
     }
 
     #[inline]
     pub(crate) fn insert_frame_label(&mut self, frame_label: u8) -> bool {
-        let before = *self;
-        *self |= Self::from_frame_label(frame_label);
-        before != *self
+        let idx = (frame_label >> 3) as usize;
+        let bit = 1u8 << (frame_label & 7);
+        let before = self.limbs[idx];
+        self.limbs[idx] = before | bit;
+        before != self.limbs[idx]
     }
 
     #[inline]
     pub(crate) fn remove_frame_label(&mut self, frame_label: u8) {
-        *self = self.without(Self::from_frame_label(frame_label));
+        let idx = (frame_label >> 3) as usize;
+        let bit = 1u8 << (frame_label & 7);
+        self.limbs[idx] &= !bit;
     }
 
     #[inline]
-    fn next_word_frame_label(word_idx: usize, remaining: &mut u64) -> Option<u8> {
+    fn next_limb_frame_label(limb_idx: usize, remaining: &mut u8) -> Option<u8> {
         if *remaining == 0 {
             return None;
         }
         let bit_idx = remaining.trailing_zeros() as u8;
         *remaining &= *remaining - 1;
-        Some((word_idx as u8) * 64 + bit_idx)
+        Some((limb_idx as u8) * 8 + bit_idx)
     }
 
     #[inline]
-    fn take_matching_in_word<F>(
+    fn take_matching_in_limb<F>(
         &mut self,
-        word_idx: usize,
-        mut remaining: u64,
+        limb_idx: usize,
+        mut remaining: u8,
         matches: &mut F,
     ) -> Option<u8>
     where
         F: FnMut(u8) -> bool,
     {
-        while let Some(frame_label) = Self::next_word_frame_label(word_idx, &mut remaining) {
+        while let Some(frame_label) = Self::next_limb_frame_label(limb_idx, &mut remaining) {
             if matches(frame_label) {
                 self.remove_frame_label(frame_label);
                 return Some(frame_label);
@@ -157,16 +137,16 @@ impl FrameLabelMask {
     where
         F: FnMut(u8) -> bool,
     {
-        if let Some(frame_label) = self.take_matching_in_word(0, self.word0, &mut matches) {
-            return Some(frame_label);
+        let mut idx = 0usize;
+        while idx < self.limbs.len() {
+            if let Some(frame_label) =
+                self.take_matching_in_limb(idx, self.limbs[idx], &mut matches)
+            {
+                return Some(frame_label);
+            }
+            idx += 1;
         }
-        if let Some(frame_label) = self.take_matching_in_word(1, self.word1, &mut matches) {
-            return Some(frame_label);
-        }
-        if let Some(frame_label) = self.take_matching_in_word(2, self.word2, &mut matches) {
-            return Some(frame_label);
-        }
-        self.take_matching_in_word(3, self.word3, &mut matches)
+        None
     }
 }
 
@@ -175,22 +155,24 @@ impl BitOr for FrameLabelMask {
 
     #[inline]
     fn bitor(self, rhs: Self) -> Self::Output {
-        Self {
-            word0: self.word0 | rhs.word0,
-            word1: self.word1 | rhs.word1,
-            word2: self.word2 | rhs.word2,
-            word3: self.word3 | rhs.word3,
+        let mut limbs = [0u8; 32];
+        let mut idx = 0usize;
+        while idx < limbs.len() {
+            limbs[idx] = self.limbs[idx] | rhs.limbs[idx];
+            idx += 1;
         }
+        Self { limbs }
     }
 }
 
 impl BitOrAssign for FrameLabelMask {
     #[inline]
     fn bitor_assign(&mut self, rhs: Self) {
-        self.word0 |= rhs.word0;
-        self.word1 |= rhs.word1;
-        self.word2 |= rhs.word2;
-        self.word3 |= rhs.word3;
+        let mut idx = 0usize;
+        while idx < self.limbs.len() {
+            self.limbs[idx] |= rhs.limbs[idx];
+            idx += 1;
+        }
     }
 }
 
@@ -199,22 +181,24 @@ impl BitAnd for FrameLabelMask {
 
     #[inline]
     fn bitand(self, rhs: Self) -> Self::Output {
-        Self {
-            word0: self.word0 & rhs.word0,
-            word1: self.word1 & rhs.word1,
-            word2: self.word2 & rhs.word2,
-            word3: self.word3 & rhs.word3,
+        let mut limbs = [0u8; 32];
+        let mut idx = 0usize;
+        while idx < limbs.len() {
+            limbs[idx] = self.limbs[idx] & rhs.limbs[idx];
+            idx += 1;
         }
+        Self { limbs }
     }
 }
 
 impl BitAndAssign for FrameLabelMask {
     #[inline]
     fn bitand_assign(&mut self, rhs: Self) {
-        self.word0 &= rhs.word0;
-        self.word1 &= rhs.word1;
-        self.word2 &= rhs.word2;
-        self.word3 &= rhs.word3;
+        let mut idx = 0usize;
+        while idx < self.limbs.len() {
+            self.limbs[idx] &= rhs.limbs[idx];
+            idx += 1;
+        }
     }
 }
 
@@ -223,11 +207,12 @@ impl Not for FrameLabelMask {
 
     #[inline]
     fn not(self) -> Self::Output {
-        Self {
-            word0: !self.word0,
-            word1: !self.word1,
-            word2: !self.word2,
-            word3: !self.word3,
+        let mut limbs = [0u8; 32];
+        let mut idx = 0usize;
+        while idx < limbs.len() {
+            limbs[idx] = !self.limbs[idx];
+            idx += 1;
         }
+        Self { limbs }
     }
 }

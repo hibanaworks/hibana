@@ -8,6 +8,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let kernel_monomorphization_gate =
         read(".github/scripts/check_kernel_monomorphization_quarantine.sh");
     let run_final_gate = read(".github/scripts/run_final_form_gates.sh");
+    let thumb_mask_gate = read(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
+    let final_gate_with_helpers = format!("{final_gate}\n{thumb_mask_gate}");
     let snapshot = read(".github/measurement_snapshots/hibana-size-snapshot.json");
     let workflow = read(".github/workflows/quality-gates.yml");
     let endpoint_kernel = read("src/endpoint/kernel/core.rs")
@@ -30,6 +32,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         ),
         "values[\"flash_total\"] =",
         "thumb_values[\"flash_total\"] =",
+        "bash \"${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_label_mask_codegen.sh\"",
+        "__aeabi_(lmul|lcmp|ulcmp|ldivmod|uldivmod|llsl|llsr|lasr)\\\\b",
+        "thumbv6m FrameLabelMask codegen has no aeabi u64 helpers",
         "resident_prefix_bytes must include the internal tap ring carved before the runtime slab",
         "Rendezvous header, transport T field, alignment padding, and tap ring",
         "actual_sram =",
@@ -41,7 +46,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
     ] {
         assert!(
-            final_gate.contains(required),
+            final_gate_with_helpers.contains(required),
             "final-form snapshot gate missing required guard: {required}"
         );
     }
@@ -251,4 +256,26 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             "runtime performance hygiene gate missing required operation-count/source guard: {required}"
         );
     }
+}
+
+#[test]
+fn thumbv6m_mask_codegen_has_no_aeabi_u64_helpers() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let script = root.join(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
+    let output = std::process::Command::new("bash")
+        .arg(&script)
+        .env("TOOLCHAIN", "stable")
+        .env("CARGO_BUILD_JOBS", "1")
+        .output()
+        .unwrap_or_else(|err| panic!("run {} failed: {err}", script.display()));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "thumbv6m FrameLabelMask codegen check failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("thumbv6m FrameLabelMask codegen has no aeabi u64 helpers"),
+        "thumbv6m FrameLabelMask codegen check did not report success\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
 }

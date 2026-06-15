@@ -40,6 +40,7 @@ impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX
 where
     T: Transport + 'r,
 {
+    #[inline(never)]
     pub(super) fn resolve_token(
         &mut self,
         state: &mut OfferResolveState<'r>,
@@ -79,6 +80,7 @@ where
         Poll::Ready(Ok(ResolveTokenOutcome::Resolved(resolved)))
     }
 
+    #[inline(never)]
     fn collect_route_authority(
         &mut self,
         state: &mut OfferResolveState<'r>,
@@ -209,6 +211,7 @@ where
         }
     }
 
+    #[inline(never)]
     fn poll_route_authority_after_local_sources_miss(
         &mut self,
         state: &mut OfferResolveState<'r>,
@@ -390,6 +393,7 @@ where
         }
     }
 
+    #[inline(never)]
     fn poll_or_defer_route_authority(
         &mut self,
         state: &mut OfferResolveState<'r>,

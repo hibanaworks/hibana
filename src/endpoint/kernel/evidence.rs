@@ -64,9 +64,24 @@ pub(super) struct ScopeFrameLabelMeta {
     pub(super) recv_frame_label: u8,
     pub(super) recv_arm: u8,
     pub(super) controller_frame_labels: [u8; 2],
-    pub(super) arm_frame_label_masks: [FrameLabelMask; 2],
-    pub(super) evidence_arm_frame_label_masks: [FrameLabelMask; 2],
     pub(super) flags: u8,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ScopeFrameLabelMasks {
+    pub(super) arm_frame_label_masks: [FrameLabelMask; 2],
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ScopeFrameLabelScratch {
+    meta: ScopeFrameLabelMeta,
+    masks: ScopeFrameLabelMasks,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ScopeFrameLabelView<'a> {
+    meta: ScopeFrameLabelMeta,
+    masks: &'a ScopeFrameLabelMasks,
 }
 
 impl ScopeFrameLabelMeta {
@@ -75,20 +90,111 @@ impl ScopeFrameLabelMeta {
     pub(super) const FLAG_CONTROLLER_ARM0: u8 = 1 << 2;
     pub(super) const FLAG_CONTROLLER_ARM1: u8 = 1 << 3;
     pub(super) const FLAG_CURRENT_RECV_BINDING_EXCLUDED: u8 = 1 << 4;
+    const FLAG_CONTROLLER_ARM0_EVIDENCE_EXCLUDED: u8 = 1 << 5;
+    const FLAG_CONTROLLER_ARM1_EVIDENCE_EXCLUDED: u8 = 1 << 6;
 
     pub(super) const EMPTY: Self = Self {
         recv_frame_label: 0,
         recv_arm: 0,
         controller_frame_labels: [0; 2],
-        arm_frame_label_masks: [FrameLabelMask::EMPTY; 2],
-        evidence_arm_frame_label_masks: [FrameLabelMask::EMPTY; 2],
         flags: 0,
+    };
+}
+
+impl ScopeFrameLabelMasks {
+    pub(super) const EMPTY: Self = Self {
+        arm_frame_label_masks: [FrameLabelMask::EMPTY; 2],
+    };
+}
+
+impl ScopeFrameLabelScratch {
+    pub(super) const EMPTY: Self = Self {
+        meta: ScopeFrameLabelMeta::EMPTY,
+        masks: ScopeFrameLabelMasks::EMPTY,
     };
 
     #[inline]
-    pub(super) fn evidence_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
-        let left = self.evidence_arm_frame_label_masks[0].contains_frame_label(frame_label);
-        let right = self.evidence_arm_frame_label_masks[1].contains_frame_label(frame_label);
+    pub(super) fn clear(&mut self) {
+        *self = Self::EMPTY;
+    }
+
+    #[inline]
+    pub(super) fn meta_mut(&mut self) -> &mut ScopeFrameLabelMeta {
+        &mut self.meta
+    }
+
+    #[inline]
+    pub(super) const fn view(&self) -> ScopeFrameLabelView<'_> {
+        ScopeFrameLabelView {
+            meta: self.meta,
+            masks: &self.masks,
+        }
+    }
+
+    #[inline]
+    pub(super) fn record_arm_frame_label(&mut self, arm: u8, frame_label: u8) {
+        self.meta
+            .record_arm_frame_label(&mut self.masks, arm, frame_label);
+    }
+
+    #[inline]
+    pub(super) fn record_dispatch_arm_frame_label_mask(
+        &mut self,
+        arm: u8,
+        frame_label_mask: FrameLabelMask,
+    ) {
+        self.meta
+            .record_dispatch_arm_frame_label_mask(&mut self.masks, arm, frame_label_mask);
+    }
+
+    #[inline]
+    pub(super) fn exclude_controller_arm_frame_label_from_evidence(
+        &mut self,
+        arm: u8,
+        frame_label: u8,
+    ) {
+        self.meta
+            .exclude_controller_arm_frame_label_from_evidence(arm, frame_label);
+    }
+}
+
+impl ScopeFrameLabelMeta {
+    #[inline]
+    fn controller_evidence_excluded(self, arm: u8, frame_label: u8) -> bool {
+        match arm {
+            0 => {
+                self.controller_frame_labels[0] == frame_label
+                    && (self.flags & Self::FLAG_CONTROLLER_ARM0_EVIDENCE_EXCLUDED) != 0
+            }
+            1 => {
+                self.controller_frame_labels[1] == frame_label
+                    && (self.flags & Self::FLAG_CONTROLLER_ARM1_EVIDENCE_EXCLUDED) != 0
+            }
+            _ => false,
+        }
+    }
+
+    #[inline]
+    fn arm_contains_evidence_frame_label(
+        self,
+        masks: &ScopeFrameLabelMasks,
+        arm: u8,
+        frame_label: u8,
+    ) -> bool {
+        let arm_idx = arm as usize;
+        arm_idx < masks.arm_frame_label_masks.len()
+            && masks.arm_frame_label_masks[arm_idx].contains_frame_label(frame_label)
+            && !self.controller_evidence_excluded(arm, frame_label)
+    }
+
+    #[inline]
+    pub(super) fn evidence_arm_for_frame_label(
+        &self,
+        masks: &ScopeFrameLabelMasks,
+        frame_label: u8,
+    ) -> Option<u8> {
+        let left = self.arm_contains_evidence_frame_label(masks, 0, frame_label);
+        let right = self.arm_contains_evidence_frame_label(masks, 1, frame_label);
         if left == right {
             return None;
         }
@@ -99,10 +205,10 @@ impl ScopeFrameLabelMeta {
     }
 
     #[inline]
-    pub(super) fn frame_hint_mask(self) -> FrameLabelMask {
-        let shared = self.arm_frame_label_masks[0] & self.arm_frame_label_masks[1];
+    pub(super) fn frame_hint_mask(&self, masks: &ScopeFrameLabelMasks) -> FrameLabelMask {
+        let shared = masks.arm_frame_label_masks[0] & masks.arm_frame_label_masks[1];
         let mut mask =
-            (self.arm_frame_label_masks[0] | self.arm_frame_label_masks[1]).without(shared);
+            (masks.arm_frame_label_masks[0] | masks.arm_frame_label_masks[1]).without(shared);
         if (self.flags & Self::FLAG_CURRENT_RECV_FRAME_LABEL) != 0 {
             mask |= FrameLabelMask::from_frame_label(self.recv_frame_label);
         }
@@ -110,11 +216,14 @@ impl ScopeFrameLabelMeta {
     }
 
     #[inline]
-    pub(super) fn record_arm_frame_label(&mut self, arm: u8, frame_label: u8) {
-        if (arm as usize) < self.arm_frame_label_masks.len() {
-            self.arm_frame_label_masks[arm as usize] |=
-                FrameLabelMask::from_frame_label(frame_label);
-            self.evidence_arm_frame_label_masks[arm as usize] |=
+    pub(super) fn record_arm_frame_label(
+        &mut self,
+        masks: &mut ScopeFrameLabelMasks,
+        arm: u8,
+        frame_label: u8,
+    ) {
+        if (arm as usize) < masks.arm_frame_label_masks.len() {
+            masks.arm_frame_label_masks[arm as usize] |=
                 FrameLabelMask::from_frame_label(frame_label);
         }
     }
@@ -122,19 +231,43 @@ impl ScopeFrameLabelMeta {
     #[inline]
     pub(super) fn record_dispatch_arm_frame_label_mask(
         &mut self,
+        masks: &mut ScopeFrameLabelMasks,
         arm: u8,
         frame_label_mask: FrameLabelMask,
     ) {
-        if (arm as usize) < self.arm_frame_label_masks.len() {
-            self.arm_frame_label_masks[arm as usize] |= frame_label_mask;
+        if (arm as usize) < masks.arm_frame_label_masks.len() {
+            masks.arm_frame_label_masks[arm as usize] |= frame_label_mask;
         }
     }
 
     #[inline]
-    pub(super) fn clear_evidence_arm_frame_label(&mut self, arm: u8, frame_label: u8) {
-        if (arm as usize) < self.evidence_arm_frame_label_masks.len() {
-            self.evidence_arm_frame_label_masks[arm as usize].remove_frame_label(frame_label);
+    pub(super) fn exclude_controller_arm_frame_label_from_evidence(
+        &mut self,
+        arm: u8,
+        frame_label: u8,
+    ) {
+        match arm {
+            0 if self.controller_frame_labels[0] == frame_label => {
+                self.flags |= Self::FLAG_CONTROLLER_ARM0_EVIDENCE_EXCLUDED;
+            }
+            1 if self.controller_frame_labels[1] == frame_label => {
+                self.flags |= Self::FLAG_CONTROLLER_ARM1_EVIDENCE_EXCLUDED;
+            }
+            _ => crate::invariant(),
         }
+    }
+}
+
+impl ScopeFrameLabelView<'_> {
+    #[inline]
+    pub(super) fn evidence_arm_for_frame_label(self, frame_label: u8) -> Option<u8> {
+        self.meta
+            .evidence_arm_for_frame_label(self.masks, frame_label)
+    }
+
+    #[inline]
+    pub(super) fn frame_hint_mask(self) -> FrameLabelMask {
+        self.meta.frame_hint_mask(self.masks)
     }
 }
 
@@ -175,13 +308,14 @@ impl ScopeEvidence {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameLabelMask, ScopeFrameLabelMeta};
+    use super::{FrameLabelMask, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeFrameLabelView};
 
     #[test]
     fn overlapping_frame_label_is_not_route_evidence() {
-        let mut meta = ScopeFrameLabelMeta::EMPTY;
-        meta.record_arm_frame_label(0, 7);
-        meta.record_arm_frame_label(1, 7);
+        let mut scratch = ScopeFrameLabelScratch::EMPTY;
+        scratch.record_arm_frame_label(0, 7);
+        scratch.record_arm_frame_label(1, 7);
+        let meta = scratch.view();
 
         assert_eq!(meta.evidence_arm_for_frame_label(7), None);
         assert!(!meta.frame_hint_mask().contains_frame_label(7));
@@ -189,14 +323,36 @@ mod tests {
 
     #[test]
     fn unique_frame_label_remains_route_evidence() {
-        let mut meta = ScopeFrameLabelMeta::EMPTY;
-        meta.record_arm_frame_label(0, 7);
-        meta.record_arm_frame_label(1, 8);
+        let mut scratch = ScopeFrameLabelScratch::EMPTY;
+        scratch.record_arm_frame_label(0, 7);
+        scratch.record_arm_frame_label(1, 8);
+        let meta = scratch.view();
 
         assert_eq!(meta.evidence_arm_for_frame_label(7), Some(0));
         assert_eq!(meta.evidence_arm_for_frame_label(8), Some(1));
         assert!(meta.frame_hint_mask().contains_frame_label(7));
         assert!(meta.frame_hint_mask().contains_frame_label(8));
         assert!(!FrameLabelMask::EMPTY.contains_frame_label(7));
+    }
+
+    #[test]
+    fn controller_frame_label_exclusion_does_not_need_duplicate_masks() {
+        let mut scratch = ScopeFrameLabelScratch::EMPTY;
+        scratch.meta_mut().controller_frame_labels[0] = 7;
+        scratch.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0;
+        scratch.record_arm_frame_label(0, 7);
+        scratch.exclude_controller_arm_frame_label_from_evidence(0, 7);
+        let meta = scratch.view();
+
+        assert_eq!(meta.evidence_arm_for_frame_label(7), None);
+        assert!(meta.frame_hint_mask().contains_frame_label(7));
+    }
+
+    #[test]
+    fn scope_frame_label_meta_size_budget() {
+        assert_eq!(core::mem::size_of::<ScopeFrameLabelMeta>(), 5);
+        assert_eq!(core::mem::align_of::<ScopeFrameLabelMeta>(), 1);
+        assert!(core::mem::size_of::<ScopeFrameLabelView<'_>>() <= 16);
+        assert!(core::mem::size_of::<ScopeFrameLabelScratch>() <= 72);
     }
 }

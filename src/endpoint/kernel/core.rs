@@ -6,7 +6,10 @@
 use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::{Arm, DeferReason, RouteArmToken, RouteResolveStep};
-use super::evidence::{ScopeEvidence, ScopeFrameLabelMeta, ScopeReentryMeta};
+use super::evidence::{
+    ScopeEvidence, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeFrameLabelView,
+    ScopeReentryMeta,
+};
 use super::frontier::*;
 use super::frontier_state::{FrontierScratchState, FrontierState};
 use super::lane_port;

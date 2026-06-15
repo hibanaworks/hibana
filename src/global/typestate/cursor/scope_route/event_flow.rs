@@ -399,7 +399,7 @@ impl EventCursor {
         &self,
         target_label: u8,
         mut committed_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        mut inferred_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut lane_for_label_or_offer: impl FnMut(ScopeId, u8) -> u8,
     ) -> Result<(SendMeta, StateIndex), FlowPreviewError> {
         let roll_reentry =
@@ -441,7 +441,7 @@ impl EventCursor {
                 }
             } else if at_decision {
                 let lane_wire = lane_for_label_or_offer(scope_id, target_label);
-                let selected_arm = inferred_arm_for_scope(scope_id).or_else(|| {
+                let selected_arm = selected_arm_for_scope(scope_id).or_else(|| {
                     preview_route_arm.and_then(|preview| {
                         (preview.lane == lane_wire && preview.scope == scope_id)
                             .then_some(preview.arm)
@@ -478,7 +478,7 @@ impl EventCursor {
                     self.flow_selected_arm_for_scope_with_route(
                         scope,
                         preview_route_arm,
-                        &mut inferred_arm_for_scope,
+                        &mut selected_arm_for_scope,
                     )
                 },
             ) {
@@ -499,7 +499,7 @@ impl EventCursor {
                     && let Some(end) = self.flow_route_scope_end_if_complete(
                         region.scope(),
                         preview_route_arm,
-                        &mut inferred_arm_for_scope,
+                        &mut selected_arm_for_scope,
                     )
                 {
                     idx = end;
@@ -536,7 +536,7 @@ impl EventCursor {
                     self.flow_selected_arm_for_scope_with_route(
                         scope,
                         preview_route_arm,
-                        &mut inferred_arm_for_scope,
+                        &mut selected_arm_for_scope,
                     )
                 })
                 .map_err(|_| FlowPreviewError::Invariant)?
@@ -548,7 +548,7 @@ impl EventCursor {
                 self.flow_selected_arm_for_scope_with_route(
                     scope,
                     preview_route_arm,
-                    &mut inferred_arm_for_scope,
+                    &mut selected_arm_for_scope,
                 )
             }) {
                 return Err(FlowPreviewError::Invariant);
@@ -559,7 +559,7 @@ impl EventCursor {
                     self.flow_selected_arm_for_scope_with_route(
                         scope,
                         preview_route_arm,
-                        &mut inferred_arm_for_scope,
+                        &mut selected_arm_for_scope,
                     )
                 })
                 .map_err(|_| FlowPreviewError::Invariant)?;
@@ -570,7 +570,7 @@ impl EventCursor {
                 && let Some(end) = self.flow_route_scope_end_if_complete(
                     region.scope(),
                     preview_route_arm,
-                    &mut inferred_arm_for_scope,
+                    &mut selected_arm_for_scope,
                 )
             {
                 idx = end;

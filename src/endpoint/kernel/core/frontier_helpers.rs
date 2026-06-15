@@ -1,7 +1,7 @@
 use super::{
     CachedRecvMeta, CursorEndpoint, EventCursor, FrameLabelMask, FrontierFacts, FrontierKind,
     FrontierReadiness, OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta,
-    ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
+    ScopeFrameLabelScratch, ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
@@ -67,64 +67,66 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn scope_frame_label_meta(
+    pub(in crate::endpoint::kernel) fn write_scope_frame_label_meta(
         cursor: &EventCursor,
         scope_id: ScopeId,
         reentry_meta: ScopeReentryMeta,
-    ) -> ScopeFrameLabelMeta {
-        Self::scope_frame_label_meta_at(cursor, scope_id, reentry_meta, cursor.index())
+        out: &mut ScopeFrameLabelScratch,
+    ) {
+        Self::write_scope_frame_label_meta_at(cursor, scope_id, reentry_meta, cursor.index(), out)
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn scope_frame_label_meta_at(
+    pub(in crate::endpoint::kernel) fn write_scope_frame_label_meta_at(
         cursor: &EventCursor,
         scope_id: ScopeId,
         reentry_meta: ScopeReentryMeta,
         idx: usize,
-    ) -> ScopeFrameLabelMeta {
+        out: &mut ScopeFrameLabelScratch,
+    ) {
         let is_controller = cursor.is_route_controller(scope_id);
-        let mut meta = ScopeFrameLabelMeta::EMPTY;
+        out.clear();
         if let Some(recv_meta) = cursor.try_recv_meta_at(idx)
             && recv_meta.scope == scope_id
         {
-            meta.recv_frame_label = recv_meta.frame_label;
-            meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL;
+            out.meta_mut().recv_frame_label = recv_meta.frame_label;
+            out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL;
             if let Some(arm) = recv_meta.route_arm {
-                meta.recv_arm = arm;
-                meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM;
-                meta.record_arm_frame_label(arm, recv_meta.frame_label);
+                out.meta_mut().recv_arm = arm;
+                out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM;
+                out.record_arm_frame_label(arm, recv_meta.frame_label);
                 if !cursor.current_recv_matches_scope_arm(
                     scope_id,
                     recv_meta.lane,
                     recv_meta.frame_label,
                     arm,
                 ) {
-                    meta.flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED;
+                    out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED;
                 }
             }
         }
         if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
-            meta.controller_frame_labels[0] = label;
-            meta.flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0;
-            meta.record_arm_frame_label(0, label);
+            out.meta_mut().controller_frame_labels[0] = label;
+            out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0;
+            out.record_arm_frame_label(0, label);
             if !is_controller {
-                meta.clear_evidence_arm_frame_label(0, label);
+                out.exclude_controller_arm_frame_label_from_evidence(0, label);
             }
         }
         if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
-            meta.controller_frame_labels[1] = label;
-            meta.flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1;
-            meta.record_arm_frame_label(1, label);
+            out.meta_mut().controller_frame_labels[1] = label;
+            out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1;
+            out.record_arm_frame_label(1, label);
             if !is_controller {
-                meta.clear_evidence_arm_frame_label(1, label);
+                out.exclude_controller_arm_frame_label_from_evidence(1, label);
             }
         }
         if reentry_meta.route_reentry_scope() {
             if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
-                meta.record_arm_frame_label(0, label);
+                out.record_arm_frame_label(0, label);
             }
             if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
-                meta.record_arm_frame_label(1, label);
+                out.record_arm_frame_label(1, label);
             }
         }
         if let Some((dispatch, len)) = cursor.route_scope_first_recv_dispatch_table(scope_id) {
@@ -137,7 +139,7 @@ where
                         .try_recv_meta_at(state_index_to_usize(entry.target()))
                         .is_some()
                     {
-                        meta.record_dispatch_arm_frame_label_mask(
+                        out.record_dispatch_arm_frame_label_mask(
                             entry.arm(),
                             FrameLabelMask::from_frame_label(entry.frame_label()),
                         );
@@ -148,33 +150,34 @@ where
                 }
                 dispatch_idx += 1;
             }
-            meta.record_dispatch_arm_frame_label_mask(0, dispatch_arm_masks[0]);
-            meta.record_dispatch_arm_frame_label_mask(1, dispatch_arm_masks[1]);
+            out.record_dispatch_arm_frame_label_mask(0, dispatch_arm_masks[0]);
+            out.record_dispatch_arm_frame_label_mask(1, dispatch_arm_masks[1]);
         }
-        meta
     }
 
     #[inline]
-    fn offer_scope_frame_label_meta(
+    fn write_offer_scope_frame_label_meta(
         &self,
         scope_id: ScopeId,
         offer_lane_idx: usize,
-    ) -> ScopeFrameLabelMeta {
+        out: &mut ScopeFrameLabelScratch,
+    ) {
         if offer_lane_idx < self.cursor.logical_lane_count() {
             let info = self.decision_state.lane_offer_state(offer_lane_idx);
             if info.scope == scope_id {
                 let entry_idx = state_index_to_usize(info.entry);
-                if let Some(cached) = Self::offer_entry_frame_label_meta(self, scope_id, entry_idx)
-                {
-                    return cached;
+                if Self::write_offer_entry_frame_label_meta(self, scope_id, entry_idx, out) {
+                    return;
                 }
                 let reentry_meta = Self::scope_reentry_meta_at(&self.cursor, scope_id, entry_idx);
-                return Self::scope_frame_label_meta_at(
+                Self::write_scope_frame_label_meta_at(
                     &self.cursor,
                     scope_id,
                     reentry_meta,
                     entry_idx,
+                    out,
                 );
+                return;
             }
         }
         if let Some(offer_entry) = self.cursor.route_scope_offer_entry(scope_id) {
@@ -183,19 +186,21 @@ where
             } else {
                 state_index_to_usize(offer_entry)
             };
-            if let Some(cached) = Self::offer_entry_frame_label_meta(self, scope_id, entry_idx) {
-                return cached;
+            if Self::write_offer_entry_frame_label_meta(self, scope_id, entry_idx, out) {
+                return;
             }
             let reentry_meta = Self::scope_reentry_meta_at(&self.cursor, scope_id, entry_idx);
-            return Self::scope_frame_label_meta_at(
+            Self::write_scope_frame_label_meta_at(
                 &self.cursor,
                 scope_id,
                 reentry_meta,
                 entry_idx,
+                out,
             );
+            return;
         }
         let reentry_meta = Self::scope_reentry_meta(&self.cursor, scope_id);
-        Self::scope_frame_label_meta(&self.cursor, scope_id, reentry_meta)
+        Self::write_scope_frame_label_meta(&self.cursor, scope_id, reentry_meta, out);
     }
 
     #[inline]
@@ -227,11 +232,16 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn selection_frame_label_meta(
+    pub(in crate::endpoint::kernel) fn write_selection_frame_label_meta(
         &self,
         selection: OfferScopeSelection,
-    ) -> ScopeFrameLabelMeta {
-        self.offer_scope_frame_label_meta(selection.scope_id, selection.offer_lane as usize)
+        out: &mut ScopeFrameLabelScratch,
+    ) {
+        self.write_offer_scope_frame_label_meta(
+            selection.scope_id,
+            selection.offer_lane as usize,
+            out,
+        );
     }
 
     #[inline]
