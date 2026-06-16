@@ -376,15 +376,15 @@ const fn storage_checked_mul(lhs: usize, rhs: usize) -> usize {
 }
 
 #[inline]
-pub(crate) const fn cursor_endpoint_storage_layout<'r, const ROLE: u8, T, const MAX_RV: usize>(
+pub(crate) const fn cursor_endpoint_storage_layout<'r, const ROLE: u8, T>(
     arena_layout: &EndpointArenaLayout,
     lane_slot_count: usize,
 ) -> CursorEndpointStorageLayout
 where
     T: Transport + 'r,
 {
-    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T, MAX_RV>>();
-    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T, MAX_RV>>();
+    let header_bytes = core::mem::size_of::<CursorEndpoint<'r, ROLE, T>>();
+    let header_align = core::mem::align_of::<CursorEndpoint<'r, ROLE, T>>();
     let port_slots_align = core::mem::align_of::<Option<Port<'r, T>>>();
     let port_slots_bytes =
         storage_checked_mul(core::mem::size_of::<Option<Port<'r, T>>>(), lane_slot_count);

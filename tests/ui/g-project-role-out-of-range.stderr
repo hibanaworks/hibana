@@ -1,7 +1,8 @@
 error[E0080]: evaluation panicked: role index must be < 16
  --> $RUST/core/src/panic.rs
   |
-  = note: evaluation of `hibana::g::project::<16, hibana::g::Send<0, 1, hibana::g::Msg<1, ()>>>::{constant#1}` failed here
+  |         $crate::panicking::panic_display(&$arg);
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<16, hibana::g::Send<0, 1, hibana::g::Msg<1, ()>>>::{constant#1}` failed here
   |
  ::: src/g.rs
   |

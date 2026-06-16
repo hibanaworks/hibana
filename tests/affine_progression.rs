@@ -29,7 +29,7 @@ use tls_ref_support::with_resident_tls_ref;
 
 const SEND_LOGICAL: u8 = 10;
 
-type TestKitStorage<T> = SessionKitStorage<'static, T, 2>;
+type TestKitStorage<T> = SessionKitStorage<'static, T>;
 
 struct PendingSendState {
     ready: Cell<bool>,

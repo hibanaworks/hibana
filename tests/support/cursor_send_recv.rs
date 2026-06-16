@@ -65,7 +65,7 @@ impl WirePayload for FramePayload {
     }
 }
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 #[derive(Clone)]
 pub(crate) struct PendingCancelTransport {
@@ -145,7 +145,7 @@ impl Transport for PendingCancelTransport {
     }
 }
 
-type PendingCancelKitStorage = SessionKitStorage<'static, PendingCancelTransport, 2>;
+type PendingCancelKitStorage = SessionKitStorage<'static, PendingCancelTransport>;
 
 std::thread_local! {
     pub(crate) static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {

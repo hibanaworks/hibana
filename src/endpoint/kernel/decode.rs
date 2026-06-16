@@ -57,7 +57,7 @@ struct PreparedDecodePublishPlan<'r> {
     committed_payload: Payload<'r>,
 }
 
-struct DecodeCommitBuilder<'build, 'r, const ROLE: u8, T, const MAX_RV: usize>
+struct DecodeCommitBuilder<'build, 'r, const ROLE: u8, T>
 where
     T: Transport + 'r,
 {

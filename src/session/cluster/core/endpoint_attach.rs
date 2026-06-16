@@ -3,11 +3,11 @@ use super::{
     RoleImageSlice, SessionCluster, SessionId,
 };
 
-struct SecondaryEndpointLaneAttach<'lease, const ROLE: u8, T, const MAX_RV: usize>
+struct SecondaryEndpointLaneAttach<'lease, const ROLE: u8, T>
 where
     T: crate::transport::Transport + 'lease,
 {
-    dst: *mut crate::endpoint::kernel::CursorEndpoint<'lease, ROLE, T, MAX_RV>,
+    dst: *mut crate::endpoint::kernel::CursorEndpoint<'lease, ROLE, T>,
     rv_id: RendezvousId,
     sid: SessionId,
     role_count: u8,
@@ -16,14 +16,14 @@ where
     occupied_lane_index: usize,
 }
 
-impl<'cfg, T, const MAX_RV: usize> SessionCluster<'cfg, T, MAX_RV>
+impl<'cfg, T> SessionCluster<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
     #[inline(never)]
     fn attach_secondary_endpoint_lanes<'lease, const ROLE: u8>(
         &'lease self,
-        attach: SecondaryEndpointLaneAttach<'lease, ROLE, T, MAX_RV>,
+        attach: SecondaryEndpointLaneAttach<'lease, ROLE, T>,
     ) -> Result<(), AttachError>
     where
         'cfg: 'lease,
@@ -74,7 +74,7 @@ where
     #[inline(never)]
     unsafe fn init_endpoint_with_compiled_into<'r, const ROLE: u8>(
         &'r self,
-        args: EndpointInitArgs<'r, ROLE, T, MAX_RV>,
+        args: EndpointInitArgs<'r, ROLE, T>,
     ) -> Result<(), AttachError>
     where
         'cfg: 'r,
@@ -107,14 +107,13 @@ where
         let owner: crate::session::brand::Owner<'r> = /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
             core::mem::transmute(crate::session::brand::Owner::<'cfg>::new(session_access.brand))
         };
-        let session: crate::endpoint::session::SessionCtx<'r, T, MAX_RV> =
+        let session: crate::endpoint::session::SessionCtx<'r, T> =
             /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
             unsafe {
-                core::mem::transmute(crate::endpoint::session::SessionCtx::<
-                    'cfg,
-                    T,
-                    MAX_RV,
-                >::new(session_wire_lane, &*(self as *const Self)))
+                core::mem::transmute(crate::endpoint::session::SessionCtx::<'cfg, T>::new(
+                    session_wire_lane,
+                    &*(self as *const Self),
+                ))
             };
 
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
@@ -244,8 +243,7 @@ where
                         resident_budget,
                     )?;
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
-                let public_ops =
-                    crate::runtime::SessionKit::<'cfg, T, MAX_RV>::endpoint_ops::<ROLE>();
+                let public_ops = crate::runtime::SessionKit::<'cfg, T>::endpoint_ops::<ROLE>();
                 if let Err(err) = self.init_endpoint_with_compiled_into::<ROLE>(EndpointInitArgs {
                     dst,
                     arena_storage,

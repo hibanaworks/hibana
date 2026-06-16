@@ -68,7 +68,7 @@ impl Transport for DeadlineRecvTransport {
     }
 }
 
-type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport, 2>;
+type DeadlineKitStorage = SessionKitStorage<'static, DeadlineRecvTransport>;
 
 #[derive(Clone, Copy)]
 struct MalformedRecvTransport {
@@ -136,7 +136,7 @@ impl Transport for MalformedRecvTransport {
     }
 }
 
-type MalformedKitStorage = SessionKitStorage<'static, MalformedRecvTransport, 2>;
+type MalformedKitStorage = SessionKitStorage<'static, MalformedRecvTransport>;
 
 std::thread_local! {
     static DEADLINE_SESSION_SLOT: UnsafeCell<DeadlineKitStorage> = const {

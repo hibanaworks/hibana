@@ -17,7 +17,7 @@ use crate::endpoint::kernel::{
     lane_port,
 };
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
@@ -28,7 +28,7 @@ where
         resolved: ResolvedRouteArm,
         profile: OfferScopeProfile,
         transport_payload: Option<lane_port::PreambleFrame<'r>>,
-    ) -> RecvResult<RouteBranch<'r, ROLE, T, MAX_RV>> {
+    ) -> RecvResult<RouteBranch<'r, ROLE, T>> {
         let mut transport_payload = transport_payload;
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;

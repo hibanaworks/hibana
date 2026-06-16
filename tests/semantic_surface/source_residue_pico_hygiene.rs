@@ -245,36 +245,79 @@ fn port_does_not_snapshot_endpoint_lease_raw_root() {
 }
 
 #[test]
-fn max_rv_remains_public_local_rendezvous_budget() {
+fn public_runtime_surface_does_not_accept_max_rv_budget_parameter() {
     let runtime = read("src/runtime/session_kit.rs");
     let allowlist = read(".github/allowlists/runtime-public-api.txt");
     for required in [
-        "pub struct SessionKit<'cfg, T, const MAX_RV: usize = 4>",
-        "pub struct SessionKitStorage<'cfg, T, const MAX_RV: usize = 4>",
-        "Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError>",
+        "pub struct SessionKit<'cfg, T>",
+        "pub struct SessionKitStorage<'cfg, T>",
+        "Result<RendezvousKit<'_, 'cfg, T>, AttachError>",
     ] {
         assert!(
             runtime.contains(required) && allowlist.contains(required),
-            "MAX_RV must remain part of the public runtime rendezvous budget surface: {required}"
+            "runtime surface must keep the single resident SessionKit shape: {required}"
         );
     }
-    assert!(
-        runtime.contains("caller-owned local rendezvous budget")
-            && runtime.contains("protocol role count")
-            && runtime.contains("cluster member count")
-            && runtime.contains("node count")
-            && runtime.contains("transport\n/// connection limit"),
-        "MAX_RV docs must describe local rendezvous budget semantics"
-    );
+    for forbidden in [
+        "const MAX_RV",
+        "MAX_RV>",
+        "MAX_RV),",
+        "MAX_RV>,",
+        "SessionKitStorage::<T, N>",
+        "caller-owned local rendezvous budget",
+    ] {
+        assert!(
+            !runtime.contains(forbidden) && !allowlist.contains(forbidden),
+            "public runtime surface must not re-grow caller-selected rendezvous capacity: {forbidden}"
+        );
+    }
 }
 
 #[test]
-fn production_does_not_hard_code_pico_default_max_rv() {
+fn production_does_not_reintroduce_fixed_rendezvous_capacity() {
     let production = read_production_rs_tree("src");
-    for forbidden in ["MAX_RV == 4", "MAX_RV != 4", "MAX_RV > 4", "MAX_RV < 4"] {
+    for forbidden in [
+        "const MAX_RV",
+        "MAX_RV == 4",
+        "MAX_RV != 4",
+        "MAX_RV > 4",
+        "MAX_RV < 4",
+        "RUNTIME_RENDEZVOUS_CAPACITY",
+        "cluster_rendezvous_slot",
+    ] {
         assert!(
             !production.contains(forbidden),
-            "production code must not treat MAX_RV=4 as a semantic branch: {forbidden}"
+            "production code must not re-grow fixed rendezvous capacity: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn packed_endpoint_handle_does_not_pack_rendezvous_or_slot() {
+    let carrier = read("src/endpoint/carrier.rs");
+    for required in [
+        "pub(crate) struct PackedEndpointHandle(u32);",
+        "pub(crate) const fn new(generation: u32) -> Self",
+        "pub(crate) const fn generation(self) -> u32 {\n        self.0\n    }",
+    ] {
+        assert!(
+            carrier.contains(required),
+            "PackedEndpointHandle must stay a generation-only witness: {required}"
+        );
+    }
+    for forbidden in [
+        "pub(crate) struct PackedEndpointHandle(u64);",
+        "RendezvousId",
+        "EndpointLeaseId",
+        "<< 32",
+        "<< 16",
+        ">> 32",
+        "u16::from(slot)",
+        "rv.raw()",
+    ] {
+        assert!(
+            !carrier.contains(forbidden),
+            "PackedEndpointHandle must not re-grow rv/slot/u64 packing: {forbidden}"
         );
     }
 }
@@ -341,6 +384,59 @@ fn frame_label_mask_has_no_u64_storage() {
 fn frame_label_mask_ops_do_not_use_u64() {
     let labels = read("src/transport/labels.rs");
     assert_frame_label_mask_ops_use_no_u64(&labels);
+}
+
+#[test]
+fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
+    let dependency_facts = read("src/global/typestate/facts/dependency.rs");
+    let image_types = read("src/global/role_program/image_types.rs");
+    let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
+    let blob_image = read("src/global/role_program/image_impl/blob_image.rs");
+
+    let dependency = named_struct_body(&dependency_facts, "PackedLocalDependency");
+    let route_arm = named_struct_body(&image_types, "PackedRouteArmRow");
+    let roll_scope = named_struct_body(&image_types, "PackedRollScopeRow");
+    for required in [
+        "start: u16",
+        "end: u16",
+        "dep_ordinal: u16",
+        "conflict_route: u16",
+    ] {
+        assert!(
+            dependency.contains(required),
+            "dependency descriptor row must stay u16-limb based: {required}"
+        );
+    }
+    for required in ["event_and_child: u32", "lane_step_row: PackedLaneRange"] {
+        assert!(
+            route_arm.contains(required),
+            "route-arm descriptor row must stay u32/range based: {required}"
+        );
+    }
+    for required in ["scope: u16", "event_row: PackedLaneRange"] {
+        assert!(
+            roll_scope.contains(required),
+            "roll-scope descriptor row must stay u16/range based: {required}"
+        );
+    }
+
+    let descriptor_hot_path = [dependency_facts, image_types, lane_image, blob_image].join("\n");
+    for forbidden in [
+        "struct PackedLocalDependency(u64)",
+        "struct PackedRouteArmRow(u64)",
+        "struct PackedRollScopeRow(u64)",
+        "const fn read_u64",
+        "const fn write_u64",
+        "const fn w64",
+        "from_raw(raw: u64)",
+        "raw(self) -> u64",
+        "ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 8",
+    ] {
+        assert!(
+            !descriptor_hot_path.contains(forbidden),
+            "role descriptor hot path must not re-grow u64 storage/helpers: {forbidden}"
+        );
+    }
 }
 
 #[test]

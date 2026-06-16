@@ -72,16 +72,6 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn read_u64(&self, column: ColumnRange, row: usize, stride: usize) -> Option<u64> {
-        match self.column_offset(column, row, stride) {
-            Some(offset) => Some(
-                self.read_u32_at(offset) as u64 | ((self.read_u32_at(offset + 4) as u64) << 32),
-            ),
-            None => None,
-        }
-    }
-
-    #[inline(always)]
     pub(crate) const fn local_step_event(&self, step_idx: usize) -> Option<PackedLocalEventRow> {
         match self.column_offset(self.columns.events, step_idx, ROLE_IMAGE_EVENT_STRIDE) {
             Some(offset) => Some(PackedLocalEventRow::from_packed_parts(
@@ -205,8 +195,8 @@ impl RoleLaneImage {
         if row >= self.columns.dependencies.len as usize {
             crate::invariant();
         } else {
-            match self.read_u64(self.columns.dependencies, row, ROLE_IMAGE_DEPENDENCY_STRIDE) {
-                Some(raw) => PackedLocalDependency::from_raw(raw).to_dependency(),
+            match self.packed_dependency_row(row) {
+                Some(row) => row.to_dependency(),
                 None => crate::invariant(),
             }
         }
@@ -267,9 +257,12 @@ impl RoleLaneImage {
 
     #[inline(always)]
     pub(crate) const fn roll_scope_row(&self, slot: usize) -> Option<PackedRollScopeRow> {
-        match self.read_u64(self.columns.roll_scopes, slot, ROLE_IMAGE_ROLL_SCOPE_STRIDE) {
-            Some(raw) => {
-                let row = PackedRollScopeRow::from_raw(raw);
+        match self.column_offset(self.columns.roll_scopes, slot, ROLE_IMAGE_ROLL_SCOPE_STRIDE) {
+            Some(offset) => {
+                let row = PackedRollScopeRow::from_packed_parts(
+                    self.read_u16_at(offset),
+                    self.read_u32_at(offset + 2),
+                );
                 if row.is_empty() { None } else { Some(row) }
             }
             None => None,
@@ -306,13 +299,29 @@ impl RoleLaneImage {
 
     #[inline(always)]
     const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
-        match self.read_u64(
+        match self.column_offset(
             self.columns.route_arms,
             row_idx,
             ROLE_IMAGE_ROUTE_ARM_STRIDE,
         ) {
-            Some(raw) => PackedRouteArmRow::from_raw(raw),
+            Some(offset) => PackedRouteArmRow::from_packed_parts(
+                self.read_u32_at(offset),
+                self.read_u32_at(offset + 4),
+            ),
             None => panic!("role image"),
+        }
+    }
+
+    #[inline(always)]
+    const fn packed_dependency_row(&self, row: usize) -> Option<PackedLocalDependency> {
+        match self.column_offset(self.columns.dependencies, row, ROLE_IMAGE_DEPENDENCY_STRIDE) {
+            Some(offset) => Some(PackedLocalDependency::from_packed_parts(
+                self.read_u16_at(offset),
+                self.read_u16_at(offset + 2),
+                self.read_u16_at(offset + 4),
+                self.read_u16_at(offset + 6),
+            )),
+            None => None,
         }
     }
 

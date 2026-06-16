@@ -26,7 +26,7 @@ use runtime_support::with_runtime_workspace;
 use tls_mut_support::with_tls_mut;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 const ROUTE_BRANCH_BYTES_MAX: usize = 32;
 const OFFER_FUTURE_BYTES_MAX: usize = 48;
 const DECODE_FUTURE_BYTES_MAX: usize = 48;

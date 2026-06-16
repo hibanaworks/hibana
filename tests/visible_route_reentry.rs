@@ -15,7 +15,7 @@ use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const TOP_BODY_REQ: u8 = 151;
 const TOP_BODY_ACK: u8 = 152;

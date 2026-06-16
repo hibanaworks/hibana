@@ -1,5 +1,5 @@
 use super::super::{
-    ColumnRange, LANE_DOMAIN_SIZE, PackedLaneRange, PackedLocalEventRow,
+    ColumnRange, LANE_DOMAIN_SIZE, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
     ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
     ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
     ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE,
@@ -161,12 +161,6 @@ impl<const N: usize> RoleImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn write_u64(&mut self, offset: usize, value: u64) {
-        self.write_u32(offset, value as u32);
-        self.write_u32(offset + 4, (value >> 32) as u32);
-    }
-
-    #[inline(always)]
     const fn column_offset(column: ColumnRange, row: usize, stride: usize) -> usize {
         if row >= column.len as usize {
             panic!("role image");
@@ -187,11 +181,6 @@ impl<const N: usize> RoleImageBytes<N> {
     #[inline(always)]
     const fn w32(&mut self, column: ColumnRange, row: usize, stride: usize, value: u32) {
         self.write_u32(Self::column_offset(column, row, stride), value);
-    }
-
-    #[inline(always)]
-    const fn w64(&mut self, column: ColumnRange, row: usize, stride: usize, value: u64) {
-        self.write_u64(Self::column_offset(column, row, stride), value);
     }
 
     #[inline(always)]
@@ -216,6 +205,44 @@ impl<const N: usize> RoleImageBytes<N> {
         self.write_u8(offset, step.lane());
         self.write_u16(offset + 1, step.first_step());
         self.write_u16(offset + 3, step.last_step());
+    }
+
+    #[inline(always)]
+    const fn write_dependency_row(
+        &mut self,
+        column: ColumnRange,
+        row: usize,
+        dependency: PackedLocalDependency,
+    ) {
+        let offset = Self::column_offset(column, row, ROLE_IMAGE_DEPENDENCY_STRIDE);
+        self.write_u16(offset, dependency.start());
+        self.write_u16(offset + 2, dependency.end());
+        self.write_u16(offset + 4, dependency.dep_ordinal());
+        self.write_u16(offset + 6, dependency.conflict_route());
+    }
+
+    #[inline(always)]
+    const fn write_route_arm_row(
+        &mut self,
+        column: ColumnRange,
+        row: usize,
+        arm_row: super::super::PackedRouteArmRow,
+    ) {
+        let offset = Self::column_offset(column, row, ROLE_IMAGE_ROUTE_ARM_STRIDE);
+        self.write_u32(offset, arm_row.event_and_child_raw());
+        self.write_u32(offset + 4, arm_row.lane_step_raw());
+    }
+
+    #[inline(always)]
+    const fn write_roll_scope_row(
+        &mut self,
+        column: ColumnRange,
+        row: usize,
+        roll_row: PackedRollScopeRow,
+    ) {
+        let offset = Self::column_offset(column, row, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
+        self.write_u16(offset, roll_row.scope_raw());
+        self.write_u32(offset + 2, roll_row.event_row_raw());
     }
 
     #[inline(always)]
@@ -332,7 +359,7 @@ impl<const N: usize> RoleImageBytes<N> {
     ) {
         let mut idx = 0usize;
         while idx < len {
-            self.w64(column, idx, ROLE_IMAGE_DEPENDENCY_STRIDE, values[idx].raw());
+            self.write_dependency_row(column, idx, values[idx]);
             idx += 1;
         }
     }
@@ -360,7 +387,7 @@ impl<const N: usize> RoleImageBytes<N> {
     ) {
         let mut idx = 0usize;
         while idx < len {
-            self.w64(column, idx, ROLE_IMAGE_ROUTE_ARM_STRIDE, values[idx].raw());
+            self.write_route_arm_row(column, idx, values[idx]);
             idx += 1;
         }
     }
@@ -514,12 +541,7 @@ impl<const N: usize> RoleImageBytes<N> {
 
         idx = 0;
         while idx < roll_scope_len {
-            out.w64(
-                columns.roll_scopes,
-                idx,
-                ROLE_IMAGE_ROLL_SCOPE_STRIDE,
-                scratch.roll_scope_rows[idx].raw(),
-            );
+            out.write_roll_scope_row(columns.roll_scopes, idx, scratch.roll_scope_rows[idx]);
             idx += 1;
         }
 

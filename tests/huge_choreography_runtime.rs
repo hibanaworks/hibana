@@ -23,8 +23,8 @@ use hibana::{
     runtime::{Config, SessionKitStorage, ids::SessionId},
 };
 
-type HugeKitStorage<'a> = SessionKitStorage<'a, TestTransport, 2>;
-type DeepScopeKitStorage<'a> = SessionKitStorage<'a, TestTransport, 4>;
+type HugeKitStorage<'a> = SessionKitStorage<'a, TestTransport>;
+type DeepScopeKitStorage<'a> = SessionKitStorage<'a, TestTransport>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);

@@ -77,7 +77,7 @@ pub(crate) struct RecvDescriptor {
     pub(crate) lane_wire: u8,
 }
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
@@ -313,8 +313,7 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> super::core::RecvKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> super::core::RecvKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {

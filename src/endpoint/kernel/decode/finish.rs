@@ -11,7 +11,7 @@ use crate::global::typestate::RelocatableResidentLaneStep;
 
 mod commit_builder;
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
@@ -174,7 +174,7 @@ where
         &mut self,
         route_seed_rows: super::SelectedRouteCommitRowsRef,
         f: impl for<'build> FnOnce(
-            DecodeCommitBuilder<'build, 'r, ROLE, T, MAX_RV>,
+            DecodeCommitBuilder<'build, 'r, ROLE, T>,
         ) -> RecvResult<DecodeCommitPlan<'r>>,
     ) -> RecvResult<PreparedDecodePublishPlan<'r>> {
         let plan = {
@@ -296,7 +296,7 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
@@ -315,8 +315,8 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize>
-    crate::endpoint::kernel::core::DecodeKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> crate::endpoint::kernel::core::DecodeKernelEndpoint<'r>
+    for CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {

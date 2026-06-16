@@ -13,7 +13,7 @@ use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const LOCAL_ROLE: u8 = 1;
 const WORKER_ROLE: u8 = 2;

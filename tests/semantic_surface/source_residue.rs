@@ -56,7 +56,8 @@ fn decode_failure_completion_is_terminal_without_branch_restore() {
 fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let route_preview_flow = read("src/endpoint/kernel/core/route_preview_flow.rs");
     let recv = read("src/endpoint/kernel/recv.rs");
-    let facts = read("src/global/typestate/facts.rs");
+    let facts =
+        read("src/global/typestate/facts.rs") + &read("src/global/typestate/facts/dependency.rs");
     let event_program = read("src/global/event_program.rs");
     let cursor = read("src/global/typestate/cursor.rs");
     let cursor_scope_route = cursor_scope_route_source();

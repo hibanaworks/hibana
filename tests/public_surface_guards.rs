@@ -96,30 +96,29 @@ fn sidecar_owner_single_authority() {
 
 #[test]
 fn resolver_sidecar_replacement_publishes_after_release() {
-    let cluster_storage = read("src/session/cluster/core/cluster_storage.rs");
-    let source_pos = cluster_storage
-        .find("let source_storage = bucket.storage_sidecar();")
+    let resolver_bucket = read("src/session/cluster/core/dynamic_resolvers/bucket.rs");
+    let source_pos = resolver_bucket
+        .find("let source_storage = self.storage_sidecar();")
         .expect("resolver capacity growth must capture the source sidecar");
-    let stage_pos = cluster_storage
-        .find("bucket.init_replacement_storage(storage.cast(), required);")
+    let stage_pos = resolver_bucket
+        .find("self.init_replacement_storage(storage.cast(), required);")
         .expect("resolver replacement must stage entries before release");
-    let release_pos = cluster_storage
+    let release_pos = resolver_bucket
         .find("free(source_storage.cast())")
         .expect("resolver replacement must release the source sidecar");
-    let commit_pos = cluster_storage
-        .find("bucket.commit_storage(storage.cast(), required);")
+    let commit_pos = resolver_bucket
+        .find("self.commit_storage(storage.cast(), required);")
         .expect("resolver replacement must publish the staged sidecar");
     assert!(
         source_pos < stage_pos && stage_pos < release_pos && release_pos < commit_pos,
         "resolver replacement must stage into the new sidecar, release the old sidecar, then publish"
     );
 
-    let resolver = read("src/session/cluster/core/dynamic_resolvers.rs");
     assert!(
-        resolver
+        resolver_bucket
             .contains("pub(in crate::session::cluster::core) unsafe fn init_replacement_storage")
-            && resolver.contains("if let Some(entry) = *source_entries.add(source_idx)")
-            && !resolver.contains("(*source_entries.add(source_idx)).take()"),
+            && resolver_bucket.contains("if let Some(entry) = *source_entries.add(source_idx)")
+            && !resolver_bucket.contains("(*source_entries.add(source_idx)).take()"),
         "resolver staging must copy entries without mutating the published source bucket"
     );
 }

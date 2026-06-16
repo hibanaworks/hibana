@@ -11,7 +11,7 @@ use super::{
     frontier_global_active_entries_view_from_storage, frontier_observed_entries_view_from_storage,
     lane_port, state_index_to_usize,
 };
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {

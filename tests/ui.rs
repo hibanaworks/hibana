@@ -73,6 +73,7 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/runtime-tap-event-fields-private.rs");
     t.compile_fail("tests/ui/runtime-frame-header-peer-role-removed.rs");
     t.compile_fail("tests/ui/runtime-outgoing-peer-removed.rs");
+    t.compile_fail("tests/ui/runtime-session-kit-storage-max-rv-removed.rs");
     t.compile_fail("tests/ui/public_step_name_import.rs");
     t.compile_fail("tests/ui/public_compile_link_boundary.rs");
     t.compile_fail("tests/ui/public_fragment_boundary.rs");

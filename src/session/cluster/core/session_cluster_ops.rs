@@ -1,7 +1,7 @@
 use super::{
     AttachError, ClusterError, CompiledProgramRef, EndpointLeaseId, Lane, LaneLease, LeaseError,
     PublicEndpointStorageLayout, RegisterRendezvousError, Rendezvous, RendezvousError,
-    RendezvousId, ResolverCore, ResourceScope, RoleImageSlice, SessionId, SessionStorage,
+    RendezvousId, ResourceScope, RoleBindingError, RoleImageSlice, SessionId, SessionStorage,
 };
 
 // # Unsafe Owner Contract
@@ -9,8 +9,8 @@ use super::{
 // This file owns the `SessionCluster` interior-mutability boundary. The
 // cluster is local-only and uses `UnsafeCell` so resident endpoint leases can
 // hold shared cluster references while cluster operations still mutate the
-// session table and dynamic resolver table. All mutable access must pass through
-// the local `with_storage_mut` / `with_resolvers_mut` closures, and raw resident
+// session table. All mutable access must pass through
+// the local `with_storage_mut` closure, and raw resident
 // storage pointers returned here are tied to cluster-owned generation,
 // endpoint-slot, and graph-storage metadata before they are exposed to endpoint
 // construction.
@@ -23,77 +23,53 @@ use super::{
 ///
 /// # Safety
 ///
-/// All mutable access to the storage or resolver tables goes through
-/// `with_storage_mut()` / `with_resolvers_mut()`, which centralize:
-/// - the single mutable access boundary for the selected table;
+/// All mutable access to the storage table goes through `with_storage_mut()`,
+/// which centralizes:
+/// - the single mutable access boundary for resident registry state;
 /// - documented invariants (see `SessionStorage`);
 /// - TAP event monitoring for lane lifecycle.
 ///
 /// These helpers are not reentrant guards. Crate-internal callers must keep
 /// endpoint cleanup, descriptor publication, and other callback-capable work in
 /// their typed post-mutation phases so no nested mutable borrow is created.
-pub(crate) struct SessionCluster<'cfg, T, const MAX_RV: usize>
+pub(crate) struct SessionCluster<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
     /// Session state guarded by interior mutability.
-    pub(crate) storage: core::cell::UnsafeCell<SessionStorage<'cfg, T, MAX_RV>>,
-    /// Dynamic resolver table separated from core storage state.
-    resolvers: core::cell::UnsafeCell<ResolverCore<'cfg, MAX_RV>>,
+    pub(crate) storage: core::cell::UnsafeCell<SessionStorage<'cfg, T>>,
     _local_only: crate::local::LocalOnly,
 }
 
-impl<'cfg, T, const MAX_RV: usize> SessionCluster<'cfg, T, MAX_RV>
+impl<'cfg, T> SessionCluster<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
-            SessionStorage::<T, MAX_RV>::init_empty(core::ptr::addr_of_mut!((*dst).storage).cast());
-            ResolverCore::<'cfg, MAX_RV>::init_empty(
-                core::ptr::addr_of_mut!((*dst).resolvers).cast(),
-            );
+            SessionStorage::<T>::init_empty(core::ptr::addr_of_mut!((*dst).storage).cast());
             core::ptr::addr_of_mut!((*dst)._local_only).write(crate::local::LocalOnly::new());
         }
     }
 
     #[inline]
-    fn storage_ptr(&self) -> *mut SessionStorage<'cfg, T, MAX_RV> {
+    fn storage_ptr(&self) -> *mut SessionStorage<'cfg, T> {
         self.storage.get()
     }
 
     #[inline]
-    pub(crate) fn storage_ref_ptr(&self) -> *const SessionStorage<'cfg, T, MAX_RV> {
-        self.storage.get() as *const SessionStorage<'cfg, T, MAX_RV>
-    }
-
-    #[inline]
-    pub(crate) fn resolvers_ptr(&self) -> *mut ResolverCore<'cfg, MAX_RV> {
-        self.resolvers.get()
-    }
-
-    #[inline]
-    pub(crate) fn resolvers_ref_ptr(&self) -> *const ResolverCore<'cfg, MAX_RV> {
-        self.resolvers.get() as *const ResolverCore<'cfg, MAX_RV>
+    pub(crate) fn storage_ref_ptr(&self) -> *const SessionStorage<'cfg, T> {
+        self.storage.get() as *const SessionStorage<'cfg, T>
     }
 
     /// Runs a mutation inside the session storage owner.
     pub(crate) fn with_storage_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut SessionStorage<'cfg, T, MAX_RV>) -> R,
+        F: FnOnce(&mut SessionStorage<'cfg, T>) -> R,
     {
         /* SAFETY: the session table lives in pinned cluster-owned storage, and crate-internal mutation phases are structured so no nested session borrow is active for the closure duration. */
         unsafe { f(&mut *self.storage_ptr()) }
-    }
-
-    /// Runs a mutation inside the resolver storage owner.
-    pub(crate) fn with_resolvers_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut ResolverCore<'cfg, MAX_RV>) -> R,
-    {
-        /* SAFETY: the resolver table lives in pinned cluster-owned storage, and crate-internal mutation phases are structured so no nested resolver borrow is active for the closure duration. */
-        unsafe { f(&mut *self.resolvers_ptr()) }
     }
 
     #[inline]
@@ -111,7 +87,7 @@ where
         role_image: RoleImageSlice<ROLE>,
     ) -> PublicEndpointStorageLayout {
         let arena_layout = role_image.endpoint_arena_layout();
-        let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<0, T, MAX_RV>(
+        let storage_layout = crate::endpoint::kernel::cursor_endpoint_storage_layout::<0, T>(
             &arena_layout,
             role_image.endpoint_lane_slot_count(),
         );
@@ -146,7 +122,7 @@ where
         (
             EndpointLeaseId,
             u32,
-            *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>,
+            *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>,
         ),
         ClusterError,
     >
@@ -191,12 +167,8 @@ where
             slot,
             generation,
             /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe { slab_ptr.add(offset) }.cast::<crate::endpoint::kernel::CursorEndpoint<
-                'r,
-                ROLE,
-                T,
-                MAX_RV,
-            >>(),
+            unsafe { slab_ptr.add(offset) }
+                .cast::<crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>(),
         ))
     }
 
@@ -357,12 +329,26 @@ where
         role: u8,
         rv_id: RendezvousId,
     ) -> Result<(), ClusterError> {
-        self.with_storage_mut(|core| core.role_bindings.bind(sid, role, rv_id))
+        self.with_storage_mut(|core| {
+            core.locals
+                .bind_session_role(sid, role, rv_id)
+                .map_err(|error| match error {
+                    RoleBindingError::RendezvousUnregistered(id) => {
+                        ClusterError::RendezvousUnregistered { id: id.raw() }
+                    }
+                    RoleBindingError::RendezvousMismatch { expected, actual } => {
+                        ClusterError::RendezvousMismatch { expected, actual }
+                    }
+                    RoleBindingError::CapacityExceeded => {
+                        ClusterError::resource_exhausted(ResourceScope::RendezvousTable)
+                    }
+                })
+        })
     }
 
     #[inline]
     pub(crate) fn unbind_session_role(&self, sid: SessionId, role: u8, rv_id: RendezvousId) {
-        self.with_storage_mut(|core| core.role_bindings.unbind(sid, role, rv_id));
+        self.with_storage_mut(|core| core.locals.unbind_session_role(sid, role, rv_id));
     }
 
     pub(crate) fn with_resident_program_ref<const ROLE: u8, P, F, R, E>(
@@ -458,7 +444,7 @@ where
         lane: Lane,
         role: u8,
         role_count: u8,
-    ) -> Result<LaneLease<'lease, 'cfg, T, MAX_RV>, RendezvousError>
+    ) -> Result<LaneLease<'lease, 'cfg, T>, RendezvousError>
     where
         'cfg: 'lease,
     {

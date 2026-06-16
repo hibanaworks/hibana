@@ -12,9 +12,7 @@ use core::{
     task::{Context, Poll},
 };
 
-use crate::{
-    rendezvous::core::EndpointLeaseId, session::types::RendezvousId, transport::wire::Payload,
-};
+use crate::transport::wire::Payload;
 
 mod lifecycle;
 mod recv;
@@ -187,17 +185,17 @@ pub(crate) struct EndpointOps<'r> {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub(crate) struct PackedEndpointHandle(u64);
+pub(crate) struct PackedEndpointHandle(u32);
 
 impl PackedEndpointHandle {
     #[inline]
-    pub(crate) fn new(rv: RendezvousId, slot: EndpointLeaseId, generation: u32) -> Self {
-        Self(((generation as u64) << 32) | ((rv.raw() as u64) << 16) | (u16::from(slot) as u64))
+    pub(crate) const fn new(generation: u32) -> Self {
+        Self(generation)
     }
 
     #[inline]
     pub(crate) const fn generation(self) -> u32 {
-        (self.0 >> 32) as u32
+        self.0
     }
 
     #[inline]
@@ -206,14 +204,14 @@ impl PackedEndpointHandle {
     }
 }
 
-impl<'cfg, T, const MAX_RV: usize> crate::runtime::SessionKit<'cfg, T, MAX_RV>
+impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
     unsafe fn public_endpoint_ptr_from_header<'r, const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> Option<*mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>>
+    ) -> Option<*mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>
     where
         'cfg: 'r,
     {
@@ -222,7 +220,7 @@ where
             return None;
         }
         Some(
-            ptr.cast::<crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>>()
+            ptr.cast::<crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>()
                 .as_ptr(),
         )
     }
@@ -230,7 +228,7 @@ where
     unsafe fn public_endpoint_mut_from_header<'r, const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> Option<&'r mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>>
+    ) -> Option<&'r mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>
     where
         'cfg: 'r,
     {
@@ -251,7 +249,7 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         missing: R,
-        f: impl FnOnce(&mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>) -> R,
+        f: impl FnOnce(&mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>) -> R,
     ) -> R
     where
         'cfg: 'r,

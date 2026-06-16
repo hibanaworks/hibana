@@ -1,8 +1,8 @@
 use super::{
     ClusterError, DecisionResolution, DynamicResolverEntry, DynamicResolverKey,
-    DynamicResolverResolution, EffIndex, RendezvousId, ResolverRef, ResourceScope, SessionCluster,
+    DynamicResolverResolution, EffIndex, RendezvousId, ResolverRef, SessionCluster,
 };
-impl<'cfg, T, const MAX_RV: usize> SessionCluster<'cfg, T, MAX_RV>
+impl<'cfg, T> SessionCluster<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -15,27 +15,8 @@ where
             return Ok(());
         }
         self.with_storage_mut(|core| {
-            let rv = core
-                .locals
-                .get_mut(&rv_id)
-                .ok_or(ClusterError::RendezvousMismatch {
-                    expected: rv_id.raw(),
-                    actual: 0,
-                })?;
-            let rv_ptr = ::core::ptr::from_mut(rv);
-            /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.resolvers_ptr() }.ensure_capacity(
-                rv_id,
-                additional_entries,
-                |bytes, align| /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */ unsafe {
-                    (&mut *rv_ptr).allocate_external_persistent_sidecar_bytes(bytes, align)
-                },
-                |sidecar| /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */ unsafe {
-                    (&mut *rv_ptr).free_external_persistent_sidecar(
-                        sidecar,
-                        ResourceScope::ResolverTable,
-                    )
-                },
-            )
+            core.locals
+                .ensure_dynamic_resolver_capacity(rv_id, additional_entries)
         })
     }
 
@@ -43,8 +24,8 @@ where
         &self,
         key: DynamicResolverKey,
     ) -> Option<&DynamicResolverEntry<'cfg>> {
-        /* SAFETY: resolver references are read through the cluster-owned resolver table after key validation. */
-        unsafe { (*self.resolvers_ref_ptr()).get(key) }
+        /* SAFETY: resolver references are read through the cluster-owned registry after key validation. */
+        unsafe { (*self.storage_ref_ptr()).locals.dynamic_resolver(key) }
     }
 
     pub(crate) fn set_resolver<const RESOLVER: u16, const ROLE: u8>(
@@ -126,7 +107,7 @@ where
         if self.dynamic_resolver(key).is_none() {
             self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
         }
-        self.with_resolvers_mut(|core| core.insert(key, entry))
+        self.with_storage_mut(|core| core.locals.insert_dynamic_resolver(key, entry))
     }
 
     pub(crate) fn resolve_dynamic_resolver(

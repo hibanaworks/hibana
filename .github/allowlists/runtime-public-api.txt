@@ -1,16 +1,16 @@
 pub use crate::session::cluster::error::AttachError;
-pub struct SessionKit<'cfg, T, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, {
-pub struct SessionKitStorage<'cfg, T, const MAX_RV: usize = 4> where T: crate::transport::Transport + 'cfg, {
+pub struct SessionKit<'cfg, T> where T: crate::transport::Transport + 'cfg, {
+pub struct SessionKitStorage<'cfg, T> where T: crate::transport::Transport + 'cfg, {
 pub const fn uninit() -> Self {
-pub fn init(&mut self) -> &SessionKit<'cfg, T, MAX_RV> {
-pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError> {
-pub struct RendezvousKit<'kit, 'cfg, T, const MAX_RV: usize> {
-pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize> {
-pub struct SessionRendezvousKit<'kit, 'cfg, T, const MAX_RV: usize> {
-pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize> {
-pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> SessionRendezvousKit<'kit, 'cfg, T, MAX_RV> {
-pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV> {
-pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV> {
+pub fn init(&mut self) -> &SessionKit<'cfg, T> {
+pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {
+pub struct RendezvousKit<'kit, 'cfg, T> {
+pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> {
+pub struct SessionRendezvousKit<'kit, 'cfg, T> {
+pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> {
+pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> SessionRendezvousKit<'kit, 'cfg, T> {
+pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T> {
+pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T> {
 pub fn enter( self, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
 pub fn set_resolver<const RESOLVER: u16>( self, resolver: crate::runtime::resolver::ResolverRef<'cfg>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
 pub mod program {

@@ -48,7 +48,7 @@ impl Transport for CapacitySendTransport {
     }
 }
 
-type CapacitySendKitStorage = SessionKitStorage<'static, CapacitySendTransport, 2>;
+type CapacitySendKitStorage = SessionKitStorage<'static, CapacitySendTransport>;
 
 std::thread_local! {
     static CAPACITY_SEND_SESSION_SLOT: UnsafeCell<CapacitySendKitStorage> = const {

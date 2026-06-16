@@ -285,8 +285,7 @@ pub(crate) fn kernel_send<'r>(
     }
 }
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> SendKernelEndpoint<'r>
-    for CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> SendKernelEndpoint<'r> for CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
@@ -372,7 +371,7 @@ pub(in crate::endpoint::kernel) use route_preview::{
 };
 pub(crate) use runtime_types::*;
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
@@ -450,7 +449,7 @@ where
     }
 }
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> Drop for CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> Drop for CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {

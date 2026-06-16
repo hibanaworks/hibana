@@ -16,47 +16,79 @@ use core::{marker::PhantomData, ptr, ptr::NonNull};
 
 use crate::rendezvous::core::{LaneRelease, Rendezvous};
 use crate::session::types::{Lane, RendezvousId, SessionId};
-use crate::{session::lease::map::ArrayMap, transport::Transport};
+use crate::transport::Transport;
 
-/// Fixed-size local rendezvous table.
-///
-/// `RendezvousTable` is parameterised by the transport used by the rendezvous
-/// layer. The `MAX_RV` const parameter fixes the maximum number of rendezvous
-/// owners that caller-provided storage can register in `no_alloc`
-/// environments. It is a local storage budget, not a protocol role or cluster
-/// membership count.
-pub(crate) struct RendezvousTable<'cfg, T: Transport, const MAX_RV: usize> {
-    entries: ArrayMap<RendezvousId, RendezvousEntry<'cfg, T>, MAX_RV>,
+mod registry_ops;
+pub(crate) use registry_ops::{RegisterRendezvousError, RoleBindingError};
+
+const ROLE_BINDING_SLOTS: usize = crate::g::ROLE_DOMAIN_SIZE as usize;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SessionRoleBinding {
+    sid: SessionId,
+    role: u8,
+    rv: RendezvousId,
+    refs: u8,
 }
 
-impl<'cfg, T, const MAX_RV: usize> RendezvousTable<'cfg, T, MAX_RV>
+/// Local rendezvous registry backed by nodes carved from each rendezvous slab.
+pub(crate) struct RendezvousTable<'cfg, T: Transport> {
+    head: Option<NonNull<RendezvousEntry<'cfg, T>>>,
+    len: u16,
+}
+
+impl<'cfg, T> RendezvousTable<'cfg, T>
 where
     T: Transport,
 {
-    /// Initialize an empty rendezvous table in place without constructing the full
-    /// fixed-capacity storage on the caller's stack first.
+    /// Initialize an empty rendezvous registry in place.
     ///
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
         unsafe {
-            ArrayMap::init_empty(core::ptr::addr_of_mut!((*dst).entries));
+            core::ptr::addr_of_mut!((*dst).head).write(None);
+            core::ptr::addr_of_mut!((*dst).len).write(0);
         }
+    }
+
+    fn entry_ref(&self, id: &RendezvousId) -> Option<&RendezvousEntry<'cfg, T>> {
+        let mut current = self.head;
+        while let Some(entry_ptr) = current {
+            let entry = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
+                entry_ptr.as_ref()
+            };
+            if entry.id == *id {
+                return Some(entry);
+            }
+            current = entry.next;
+        }
+        None
+    }
+
+    fn entry_mut(&mut self, id: &RendezvousId) -> Option<&mut RendezvousEntry<'cfg, T>> {
+        let mut current = self.head;
+        while let Some(mut entry_ptr) = current {
+            let entry = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
+                entry_ptr.as_mut()
+            };
+            if entry.id == *id {
+                return Some(entry);
+            }
+            current = entry.next;
+        }
+        None
     }
 
     /// Borrow a rendezvous by shared reference when no lease is active.
     pub(crate) fn get(&self, id: &RendezvousId) -> Option<&Rendezvous<'cfg, 'cfg, T>> {
-        self.entries
-            .get(id)
-            .and_then(|entry| entry.rendezvous_ref())
+        self.entry_ref(id).and_then(|entry| entry.rendezvous_ref())
     }
 
     /// Borrow a rendezvous by mutable reference when no lease is active.
     pub(crate) fn get_mut(&mut self, id: &RendezvousId) -> Option<&mut Rendezvous<'cfg, 'cfg, T>> {
-        self.entries
-            .get_mut(id)
-            .and_then(|entry| entry.rendezvous_mut())
+        self.entry_mut(id).and_then(|entry| entry.rendezvous_mut())
     }
 
     /// Borrow a rendezvous mutably, keeping the distinction between an
@@ -66,8 +98,7 @@ where
         id: &RendezvousId,
     ) -> Result<&mut Rendezvous<'cfg, 'cfg, T>, LeaseError> {
         let slot = self
-            .entries
-            .get_mut(id)
+            .entry_mut(id)
             .ok_or(LeaseError::RendezvousUnregistered(*id))?;
         if slot.is_active() {
             return Err(LeaseError::AlreadyLeased(*id));
@@ -84,8 +115,7 @@ where
         'cfg: 'lease,
     {
         let slot = self
-            .entries
-            .get_mut(&rv_id)
+            .entry_mut(&rv_id)
             .ok_or(LeaseError::RendezvousUnregistered(rv_id))?;
         if slot.is_active() {
             return Err(LeaseError::AlreadyLeased(rv_id));
@@ -93,66 +123,6 @@ where
         slot.mark_active();
         Ok(RendezvousLease::new(slot))
     }
-}
-
-impl<'cfg, T, const MAX_RV: usize> RendezvousTable<'cfg, T, MAX_RV>
-where
-    T: Transport,
-{
-    fn next_available_rendezvous_id(&self) -> Option<RendezvousId> {
-        let mut raw = 1u16;
-        loop {
-            let id = RendezvousId::new(raw);
-            if !self.entries.contains_key(&id) {
-                return Some(id);
-            }
-            raw = raw.wrapping_add(1);
-            if raw == 0 {
-                return None;
-            }
-        }
-    }
-
-    pub(crate) fn register_local_from_config_auto(
-        &mut self,
-        config: crate::runtime_core::config::Config<'cfg>,
-        transport: T,
-    ) -> Result<RendezvousId, RegisterRendezvousError> {
-        if self.entries.is_full() {
-            return Err(RegisterRendezvousError::CapacityExceeded);
-        }
-        let id = self
-            .next_available_rendezvous_id()
-            .ok_or(RegisterRendezvousError::CapacityExceeded)?;
-        // SAFETY: The key written before entry initialization is `RendezvousId: Copy`
-        // and leaves no droppable state on failure. `init_from_config_auto`
-        // returns `Err` before writing `RendezvousEntry` fields, or writes the
-        // complete entry before returning `Ok(())`.
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            self.entries
-                .try_push_with(RegisterRendezvousError::CapacityExceeded, |slot| {
-                    let entry = slot.as_mut_ptr();
-                    core::ptr::addr_of_mut!((*entry).0).write(id);
-                    RendezvousEntry::init_from_config_auto(
-                        core::ptr::addr_of_mut!((*entry).1),
-                        id,
-                        config,
-                        transport,
-                    )
-                })?;
-        }
-        Ok(id)
-    }
-}
-
-/// Failure modes for rendezvous registration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RegisterRendezvousError {
-    /// Attempted to register more rendezvous than the fixed capacity allows.
-    CapacityExceeded,
-    /// Caller-provided slab cannot fit the rendezvous resident header.
-    StorageExhausted,
 }
 
 /// Leasing failures.
@@ -169,8 +139,12 @@ struct RendezvousEntry<'cfg, T>
 where
     T: Transport,
 {
+    id: RendezvousId,
     rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T>>,
     state: RendezvousEntryState,
+    resolver_bucket: crate::session::cluster::core::ResolverBucket<'cfg>,
+    role_bindings: [Option<SessionRoleBinding>; ROLE_BINDING_SLOTS],
+    next: Option<NonNull<RendezvousEntry<'cfg, T>>>,
     _marker: PhantomData<&'cfg mut Rendezvous<'cfg, 'cfg, T>>,
 }
 
@@ -226,23 +200,24 @@ impl<'cfg, T> RendezvousEntry<'cfg, T>
 where
     T: Transport,
 {
-    unsafe fn init_from_config_auto(
+    unsafe fn init_from_parts(
         dst: *mut Self,
         rv_id: RendezvousId,
-        config: crate::runtime_core::config::Config<'cfg>,
-        transport: T,
-    ) -> Result<(), RegisterRendezvousError> {
-        let rendezvous = /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */ unsafe {
-            Rendezvous::init_in_slab_auto(rv_id, config, transport)
-                .ok_or(RegisterRendezvousError::StorageExhausted)?
-        };
+        rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T>>,
+        next: Option<NonNull<RendezvousEntry<'cfg, T>>>,
+    ) {
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
         unsafe {
-            core::ptr::addr_of_mut!((*dst).rendezvous).write(NonNull::new_unchecked(rendezvous));
+            core::ptr::addr_of_mut!((*dst).id).write(rv_id);
+            core::ptr::addr_of_mut!((*dst).rendezvous).write(rendezvous);
             core::ptr::addr_of_mut!((*dst).state).write(RendezvousEntryState::Available);
+            crate::session::cluster::core::ResolverBucket::init_empty(core::ptr::addr_of_mut!(
+                (*dst).resolver_bucket
+            ));
+            core::ptr::addr_of_mut!((*dst).role_bindings).write([None; ROLE_BINDING_SLOTS]);
+            core::ptr::addr_of_mut!((*dst).next).write(next);
             core::ptr::addr_of_mut!((*dst)._marker).write(PhantomData);
         }
-        Ok(())
     }
 }
 

@@ -33,11 +33,6 @@ src/session	src/session/cluster.rs
 src/session	src/session/lease
 src/session	src/session/lease.rs
 src/session	src/session/types.rs
-src/session/cluster	src/session/cluster/core
-src/session/cluster	src/session/cluster/core.rs
-src/session/cluster	src/session/cluster/effects.rs
-src/session/cluster	src/session/cluster/error
-src/session/cluster	src/session/cluster/error.rs
 src/endpoint	src/endpoint/affine.rs
 src/endpoint	src/endpoint/branch.rs
 src/endpoint	src/endpoint/carrier

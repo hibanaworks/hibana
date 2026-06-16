@@ -1,6 +1,6 @@
 use super::{AttachError, RendezvousKit, RoleKit, SessionRendezvousKit, SessionRoleKit};
 
-impl<'kit, 'cfg, T, const MAX_RV: usize> RendezvousKit<'kit, 'cfg, T, MAX_RV>
+impl<'kit, 'cfg, T> RendezvousKit<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -8,7 +8,7 @@ where
     pub fn session(
         &self,
         sid: crate::runtime::ids::SessionId,
-    ) -> SessionRendezvousKit<'kit, 'cfg, T, MAX_RV> {
+    ) -> SessionRendezvousKit<'kit, 'cfg, T> {
         SessionRendezvousKit {
             base: self.base,
             sid,
@@ -24,7 +24,7 @@ where
     pub fn role<'prog, const ROLE: u8>(
         &self,
         program: &'prog crate::runtime::program::RoleProgram<ROLE>,
-    ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV> {
+    ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T> {
         RoleKit {
             base: self.base,
             program,
@@ -32,7 +32,7 @@ where
     }
 }
 
-impl<'kit, 'cfg, T, const MAX_RV: usize> SessionRendezvousKit<'kit, 'cfg, T, MAX_RV>
+impl<'kit, 'cfg, T> SessionRendezvousKit<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -45,7 +45,7 @@ where
     pub fn role<'prog, const ROLE: u8>(
         &self,
         program: &'prog crate::runtime::program::RoleProgram<ROLE>,
-    ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV> {
+    ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T> {
         SessionRoleKit {
             base: self.base,
             sid: self.sid,
@@ -54,8 +54,7 @@ where
     }
 }
 
-impl<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
-    SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV>
+impl<'kit, 'cfg, 'prog, const ROLE: u8, T> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T>
 where
     T: crate::transport::Transport + 'cfg,
     'cfg: 'kit,
@@ -70,8 +69,7 @@ where
     }
 }
 
-impl<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
-    RoleKit<'kit, 'cfg, 'prog, ROLE, T, MAX_RV>
+impl<'kit, 'cfg, 'prog, const ROLE: u8, T> RoleKit<'kit, 'cfg, 'prog, ROLE, T>
 where
     T: crate::transport::Transport + 'cfg,
 {

@@ -24,9 +24,9 @@ use hibana::runtime::{
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
-type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport, 2>;
-type LabelRewriteKitStorage = SessionKitStorage<'static, LabelRewriteTransport, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
+type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport>;
+type LabelRewriteKitStorage = SessionKitStorage<'static, LabelRewriteTransport>;
 const MATERIALIZED_MISMATCH_RESOLVER: u16 = 41;
 
 std::thread_local! {

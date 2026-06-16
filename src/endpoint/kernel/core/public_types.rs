@@ -34,7 +34,7 @@ pub(crate) enum PublicSlotOwnership {
 /// release handle. Dropping the endpoint releases the lane back to the
 /// `SessionCluster` via the handle.
 #[repr(C)]
-pub(crate) struct CursorEndpoint<'r, const ROLE: u8, T: Transport + 'r, const MAX_RV: usize = 8>
+pub(crate) struct CursorEndpoint<'r, const ROLE: u8, T: Transport + 'r>
 where
     T: Transport + 'r,
 {
@@ -60,13 +60,13 @@ where
     pub(in crate::endpoint) public_recv_state: recv::RecvState,
     pub(in crate::endpoint) public_decode_state: decode::DecodeState<'r>,
     pub(in crate::endpoint) public_send_state: SendState<'r>,
-    pub(crate) session: SessionCtx<'r, T, MAX_RV>,
+    pub(crate) session: SessionCtx<'r, T>,
     pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,
     pub(in crate::endpoint::kernel) route_commit_rows: LeasedState<RouteCommitRowSetBuilder>,
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
 }
 
-pub(crate) struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r, const MAX_RV: usize> {
+pub(crate) struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r> {
     pub(crate) label: u8,
     pub(crate) staged_payload: Option<StagedPayload<'r>>,
     pub(crate) branch_meta: BranchMeta,
@@ -180,13 +180,12 @@ impl SendPreview {
     }
 }
 
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> From<RouteBranch<'r, ROLE, T, MAX_RV>>
-    for MaterializedRouteBranch<'r>
+impl<'r, const ROLE: u8, T> From<RouteBranch<'r, ROLE, T>> for MaterializedRouteBranch<'r>
 where
     T: Transport + 'r,
 {
     #[inline]
-    fn from(branch: RouteBranch<'r, ROLE, T, MAX_RV>) -> Self {
+    fn from(branch: RouteBranch<'r, ROLE, T>) -> Self {
         Self {
             label: branch.label,
             staged_payload: branch.staged_payload,

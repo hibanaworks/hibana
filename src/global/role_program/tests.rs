@@ -629,7 +629,7 @@ fn lane_resident_route_rows_do_not_restore_full_domain_copies() {
 }
 
 #[test]
-fn route_arm_row_packs_exact_ranges_into_one_word() {
+fn route_arm_row_keeps_exact_ranges_in_compact_scalar_limbs() {
     let separate_exact_range_columns =
         (core::mem::size_of::<PackedLaneRange>() * 2) + core::mem::size_of::<u8>();
     assert_eq!(
@@ -638,7 +638,7 @@ fn route_arm_row_packs_exact_ranges_into_one_word() {
     );
     assert!(
         ROLE_IMAGE_ROUTE_ARM_STRIDE < separate_exact_range_columns,
-        "route arm row should keep event range, child delta, and lane-step range in one packed word"
+        "route arm row should keep event range, child delta, and lane-step range in one compact scalar row"
     );
 }
 

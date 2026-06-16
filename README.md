@@ -586,13 +586,6 @@ let rv = kit.rendezvous(config, transport)?;
 let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;
 ```
 
-`SessionKitStorage::<T>` uses the default local rendezvous budget of `4`, which
-is the Pico-class canonical path. `SessionKitStorage::<T, N>` only changes how
-many independent local rendezvous owners the caller's no-alloc storage can
-register. It is not a choreography role count, node count, cluster member
-count, or transport connection limit; dynamic node, member, and connection
-identity belongs in resolver inputs, transport handles, or payloads.
-
 `SessionKitStorage::init()` is the only public construction path. It writes the
 kit in place into caller-owned storage, returns the stable borrow used
 by endpoint attach, and drops the initialized kit exactly once. The raw unsafe

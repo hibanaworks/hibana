@@ -1,5 +1,5 @@
 use super::{Context, NonNull, OutSlot, PackedEndpointHandle, Poll};
-impl<'cfg, T, const MAX_RV: usize> crate::runtime::SessionKit<'cfg, T, MAX_RV>
+impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {

@@ -1,35 +1,42 @@
 use super::common::*;
 
 #[test]
-fn array_map_unsafe_boundaries_are_explicit_and_panic_safe() {
-    let map = read("src/session/lease/map.rs");
+fn intrusive_rendezvous_registry_replaces_fixed_array_map() {
     let lease_core = read("src/session/lease/core.rs");
+    let registry_ops = read("src/session/lease/core/registry_ops.rs");
 
     assert!(
-        map.contains("pub(crate) unsafe fn try_push_with")
-            && map.contains(
-                "`init` must fully initialize the provided slot before returning `Ok(())`"
-            ),
-        "ArrayMap::try_push_with must expose its MaybeUninit invariant as an unsafe contract"
+        !repo_file_exists("src/session/lease/map.rs")
+            && !lease_core.contains("ArrayMap")
+            && !registry_ops.contains("ArrayMap"),
+        "fixed ArrayMap rendezvous registry must stay deleted"
     );
     assert!(
-        lease_core.contains(
-            "SAFETY: The key written before entry initialization is `RendezvousId: Copy`"
-        ) && lease_core.contains(".try_push_with("),
-        "ArrayMap::try_push_with callers must document the exact initialized-state invariant"
+        lease_core.contains("head: Option<NonNull<RendezvousEntry<'cfg, T>>>")
+            && lease_core.contains("next: Option<NonNull<RendezvousEntry<'cfg, T>>>")
+            && registry_ops.contains("Rendezvous::init_in_slab_auto(id, config, transport)")
+            && registry_ops.contains("allocate_external_persistent_sidecar_bytes")
+            && registry_ops.contains("RendezvousEntry::init_from_parts("),
+        "rendezvous registry must stay intrusive and slab-resident"
+    );
+    let init_pos = registry_ops
+        .find("RendezvousEntry::init_from_parts(")
+        .expect("registry entry initialization must stay explicit");
+    let link_pos = registry_ops
+        .find("self.head = NonNull::new(entry_ptr);")
+        .expect("registry entry must publish by linking at the head");
+    assert!(
+        init_pos < link_pos,
+        "registry entry must be fully initialized before it is linked"
     );
     assert!(
-        !map.contains(
-            "assume_init_drop();\n                    self.entries[i].write((key, value));"
-        ),
-        "ArrayMap::insert must not drop a live slot before replacement is committed"
+        registry_ops.contains("ptr::drop_in_place(rendezvous);")
+            && registry_ops.contains("return Err(RegisterRendezvousError::StorageExhausted);"),
+        "entry allocation failure must drop the unlinked rendezvous before returning"
     );
     assert!(
-        !map.contains("pub(crate) fn retain(") && !map.contains("fn retain("),
-        "ArrayMap must not retain a generic panic-unsafe compactor"
-    );
-    assert!(
-        !map.contains("let forbidden_len = self.len;\n        // compact retained entries later"),
-        "ArrayMap::retain must not contain a deferred-compaction shape that leaves len inconsistent during unwinding"
+        !registry_ops.contains("self.head = NonNull::new(entry_ptr);\n        unsafe")
+            && !registry_ops.contains("self.len = self.len.wrapping_add"),
+        "registry publication must not link before initialization or use wrapping length growth"
     );
 }

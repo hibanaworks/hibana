@@ -67,8 +67,8 @@ impl WirePayload for InstallPayload {
     }
 }
 
-type TestKit = SessionKit<'static, TestTransport, 2>;
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type TestKit = SessionKit<'static, TestTransport>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {

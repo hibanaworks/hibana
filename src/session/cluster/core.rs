@@ -13,7 +13,7 @@
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
-use crate::session::lease::core::{LeaseError, RegisterRendezvousError};
+use crate::session::lease::core::{LeaseError, RegisterRendezvousError, RoleBindingError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PublicEndpointStorageLayout {
@@ -31,13 +31,8 @@ use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::session::types::{Lane, RendezvousId, SessionId};
 
-struct EndpointInitArgs<
-    'r,
-    const ROLE: u8,
-    T: crate::transport::Transport + 'r,
-    const MAX_RV: usize,
-> {
-    dst: *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T, MAX_RV>,
+struct EndpointInitArgs<'r, const ROLE: u8, T: crate::transport::Transport + 'r> {
+    dst: *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>,
     arena_storage: *mut u8,
     rv_id: RendezvousId,
     sid: SessionId,
@@ -58,7 +53,7 @@ pub(crate) use dynamic_resolvers::*;
 pub use dynamic_resolvers::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
 pub(crate) use session_cluster_ops::*;
 
-impl<'cfg, T, const MAX_RV: usize> Drop for SessionCluster<'cfg, T, MAX_RV>
+impl<'cfg, T> Drop for SessionCluster<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {

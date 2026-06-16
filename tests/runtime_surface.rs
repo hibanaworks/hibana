@@ -11,7 +11,7 @@ use hibana::runtime::resolver::{DecisionArm, DecisionResolution, ResolverError, 
 use hibana::{Endpoint, RouteBranch};
 use static_assertions::assert_not_impl_any;
 
-type StaticTestKit = SessionKit<'static, common::TestTransport, 2>;
+type StaticTestKit = SessionKit<'static, common::TestTransport>;
 
 assert_not_impl_any!(StaticTestKit: Send, Sync);
 assert_not_impl_any!(Endpoint<'static, 0>: Send, Sync);
@@ -381,7 +381,7 @@ fn runtime_root_exposes_only_core_buckets() {
         "runtime root must not keep identifier aliases outside runtime::ids"
     );
     assert!(
-        runtime_rs.contains("Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError>")
+        runtime_rs.contains("Result<RendezvousKit<'_, 'cfg, T>, AttachError>")
             && runtime_rs.contains("pub fn rendezvous(")
             && runtime_rs.contains("pub struct SessionRendezvousKit")
             && runtime_rs.contains("pub struct SessionRoleKit")
@@ -390,9 +390,11 @@ fn runtime_root_exposes_only_core_buckets() {
             && !runtime_rs.contains("crate::runtime::ids::RendezvousId")
             && runtime_rs.contains("crate::runtime::ids::SessionId")
             && !runtime_rs.contains("HAS_SESSION")
+            && !runtime_rs.contains("pub struct SessionKit<'cfg, T, const MAX_RV")
+            && !runtime_rs.contains("pub struct SessionKitStorage<'cfg, T, const MAX_RV")
             && !runtime_rs.contains("RendezvousKit<'_, 'cfg, T, false")
             && !runtime_rs.contains("RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, false"),
-        "SessionKit must expose named rendezvous witnesses, not raw RendezvousId attach authority or bool typestate"
+        "SessionKit must expose named rendezvous witnesses without caller-selected capacity, raw RendezvousId attach authority, or bool typestate"
     );
 
     for required in [
@@ -532,10 +534,12 @@ fn runtime_allowlist_tracks_core_boundary() {
     for required in [
         "pub mod tap {",
         "pub use crate::observe::core::{Evidence, TapEvent, TapPort};",
-        "pub struct RendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>",
-        "pub struct SessionRendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>",
-        "pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>",
-        "pub struct SessionKitStorage",
+        "pub struct SessionKit<'cfg, T>",
+        "pub struct SessionKitStorage<'cfg, T>",
+        "pub struct RendezvousKit<'kit, 'cfg, T>",
+        "pub struct SessionRendezvousKit<'kit, 'cfg, T>",
+        "pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T>",
+        "Result<RendezvousKit<'_, 'cfg, T>, AttachError>",
         "Projectable",
         "WirePayload",
     ] {
@@ -580,6 +584,9 @@ fn runtime_allowlist_tracks_core_boundary() {
         "CounterClock",
         "RING_EVENTS",
         "HAS_SESSION",
+        "const MAX_RV",
+        "SessionKitStorage::<T, N>",
+        "caller-owned local rendezvous budget",
         "RendezvousKit<'_, 'cfg, T, false",
         "RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, false",
         "pub use crate::observe::core::TapEvent;",

@@ -17,7 +17,7 @@ use hibana::{
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {

@@ -10,11 +10,11 @@ use crate::{
 /// `Sync`, and mutation is centralised inside the single-thread runtime
 /// owner.
 #[repr(transparent)]
-pub struct SessionKit<'cfg, T, const MAX_RV: usize = 4>
+pub struct SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) inner: crate::session::cluster::core::SessionCluster<'cfg, T, MAX_RV>,
+    pub(super) inner: crate::session::cluster::core::SessionCluster<'cfg, T>,
     _local_only: crate::local::LocalOnly,
 }
 
@@ -22,17 +22,11 @@ where
 ///
 /// The storage is caller-owned and heapless. Initialization writes the kit in
 /// place and returns the stable borrow tied to the storage owner.
-///
-/// `MAX_RV` is the caller-owned local rendezvous budget. The default `4` is
-/// the Pico-class runtime path; larger const values let host protocols keep
-/// more independent local rendezvous owners without allocation. It is not a
-/// protocol role count, cluster member count, node count, or transport
-/// connection limit.
-pub struct SessionKitStorage<'cfg, T, const MAX_RV: usize = 4>
+pub struct SessionKitStorage<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    storage: core::mem::MaybeUninit<SessionKit<'cfg, T, MAX_RV>>,
+    storage: core::mem::MaybeUninit<SessionKit<'cfg, T>>,
     state: SessionKitStorageState,
 }
 
@@ -50,20 +44,20 @@ impl SessionKitStorageState {
     }
 }
 
-pub(super) struct RendezvousBase<'kit, 'cfg, T, const MAX_RV: usize>
+pub(super) struct RendezvousBase<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) kit: &'kit SessionKit<'cfg, T, MAX_RV>,
+    pub(super) kit: &'kit SessionKit<'cfg, T>,
     pub(super) rv: crate::session::types::RendezvousId,
 }
 
-impl<'kit, 'cfg, T, const MAX_RV: usize> Copy for RendezvousBase<'kit, 'cfg, T, MAX_RV> where
+impl<'kit, 'cfg, T> Copy for RendezvousBase<'kit, 'cfg, T> where
     T: crate::transport::Transport + 'cfg
 {
 }
 
-impl<'kit, 'cfg, T, const MAX_RV: usize> Clone for RendezvousBase<'kit, 'cfg, T, MAX_RV>
+impl<'kit, 'cfg, T> Clone for RendezvousBase<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -73,7 +67,7 @@ where
     }
 }
 
-impl<'kit, 'cfg, T, const MAX_RV: usize> RendezvousBase<'kit, 'cfg, T, MAX_RV>
+impl<'kit, 'cfg, T> RendezvousBase<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -86,42 +80,42 @@ where
 }
 
 /// Registered rendezvous witness.
-pub struct RendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>
+pub struct RendezvousKit<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
+    pub(super) base: RendezvousBase<'kit, 'cfg, T>,
 }
 
 /// Session-bound rendezvous witness.
-pub struct SessionRendezvousKit<'kit, 'cfg, T, const MAX_RV: usize>
+pub struct SessionRendezvousKit<'kit, 'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
+    pub(super) base: RendezvousBase<'kit, 'cfg, T>,
     pub(super) sid: crate::runtime::ids::SessionId,
 }
 
 /// Projected role witness before a session id is selected.
-pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
+pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
+    pub(super) base: RendezvousBase<'kit, 'cfg, T>,
     pub(super) program: &'prog crate::runtime::program::RoleProgram<ROLE>,
 }
 
 /// Session-bound projected role witness.
-pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, const MAX_RV: usize>
+pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) base: RendezvousBase<'kit, 'cfg, T, MAX_RV>,
+    pub(super) base: RendezvousBase<'kit, 'cfg, T>,
     pub(super) sid: crate::runtime::ids::SessionId,
     pub(super) program: &'prog crate::runtime::program::RoleProgram<ROLE>,
 }
 
-impl<'cfg, T, const MAX_RV: usize> SessionKitStorage<'cfg, T, MAX_RV>
+impl<'cfg, T> SessionKitStorage<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -134,7 +128,7 @@ where
     }
 
     /// Initialize the kit in place.
-    pub fn init(&mut self) -> &SessionKit<'cfg, T, MAX_RV> {
+    pub fn init(&mut self) -> &SessionKit<'cfg, T> {
         if self.state.is_initialized() {
             crate::invariant();
         }
@@ -153,7 +147,7 @@ where
     }
 }
 
-impl<'cfg, T, const MAX_RV: usize> Drop for SessionKitStorage<'cfg, T, MAX_RV>
+impl<'cfg, T> Drop for SessionKitStorage<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -168,7 +162,7 @@ where
     }
 }
 
-impl<'cfg, T, const MAX_RV: usize> SessionKit<'cfg, T, MAX_RV>
+impl<'cfg, T> SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
@@ -192,7 +186,7 @@ where
         &self,
         config: crate::runtime::Config<'cfg>,
         transport: T,
-    ) -> Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError> {
+    ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {
         let location = Callsite::caller();
         let rv = self
             .inner
@@ -242,7 +236,7 @@ where
             .ok_or(AttachError::cluster(ClusterError::resource_exhausted(
                 ResourceScope::EndpointHeader,
             )))?;
-        let handle = crate::endpoint::carrier::PackedEndpointHandle::new(rv, slot, generation);
+        let handle = crate::endpoint::carrier::PackedEndpointHandle::new(generation);
         Ok(crate::endpoint::Endpoint::from_handle(ptr, handle))
     }
 

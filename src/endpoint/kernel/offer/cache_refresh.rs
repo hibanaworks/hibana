@@ -1,7 +1,7 @@
 use super::{
     CursorEndpoint, FrontierObservationDomain, FrontierObservationKey, ScopeId, Transport,
 };
-impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
+impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
@@ -16,8 +16,7 @@ where
         roots.fill(ScopeId::none());
         let mut root_len = 0usize;
         let mut matches_scope = false;
-        while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T, MAX_RV>::next_slot_in_mask(&mut active_entries)
+        while let Some(slot_idx) = CursorEndpoint::<ROLE, T>::next_slot_in_mask(&mut active_entries)
         {
             let Some(entry_idx) = global_active_entries.entry_at(slot_idx) else {
                 continue;

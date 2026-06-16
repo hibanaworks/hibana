@@ -609,6 +609,12 @@ check_absent "\\b(test_from_slice|bind_test_storage)\\b" \
 check_absent "SessionKit::new|pub[[:space:]]+fn[[:space:]]+new\\(clock:|init_in_place\\([^)]*clock:" \
   "owned or clock-bearing SessionKit construction must not be detected" \
   src README.md .github/allowlists/runtime-public-api.txt
+check_absent "pub[[:space:]]+struct[[:space:]]+SessionKit(Storage)?<'cfg,[[:space:]]*T,[[:space:]]*const[[:space:]]+MAX_RV|RendezvousKit<'_,[[:space:]]*'cfg,[[:space:]]*T,[[:space:]]*MAX_RV|SessionKitStorage::<T,[[:space:]]*N>|caller-owned local rendezvous budget" \
+  "public runtime MAX_RV budget surface must not be detected" \
+  src/runtime.rs src/runtime README.md .github/allowlists/runtime-public-api.txt
+check_absent "\\b(MAX_RV|RUNTIME_RENDEZVOUS_CAPACITY|cluster_rendezvous_slot|ArrayMap)\\b" \
+  "fixed rendezvous-capacity registry residue must not be detected" \
+  src/endpoint src/session src/runtime src/runtime_core
 check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Arm|Decision)[A-Za-z0-9_]*[[:space:]]*=" \
   "step/composition alias residue in production source" \
   src/global/steps.rs
@@ -795,9 +801,19 @@ check_absent "(?i)\\b(quic|h3|hq|qpack|alpn)\\b|http/3" \
 check_absent "FrameHeader\\(u64\\)|from_raw\\(raw:[[:space:]]*u64\\)|raw\\(self\\)[[:space:]]*->[[:space:]]*u64|pack_frame_header|raw_header|carrier-owned \`u64\`" \
   "u64 FrameHeader public/raw header surface detected" \
   src/transport.rs README.md .github/allowlists/runtime-public-api.txt
+check_absent "PackedEndpointHandle\\(u64\\)|PackedEndpointHandle::new\\([^)]*(rv|slot)|<<[[:space:]]*32|>>[[:space:]]*32|rv\\.raw\\(\\)|u16::from\\(slot\\)" \
+  "packed endpoint handle must stay generation-only" \
+  src/endpoint/carrier.rs
 check_absent "\\bu64\\b|1u64|\\[u64;|word[0-9]|>>[[:space:]]*6|<<[[:space:]]*6|\\*[[:space:]]*64|/[[:space:]]*64" \
   "wide integer FrameLabelMask helper detected" \
   src/transport/labels.rs
+check_absent "\\bu64\\b|read_u64|write_u64|\\bw64\\b|ROLE_IMAGE_ROLL_SCOPE_STRIDE:[[:space:]]*usize[[:space:]]*=[[:space:]]*8" \
+  "wide integer role descriptor row helper detected" \
+  src/global/typestate/facts.rs \
+  src/global/typestate/facts/dependency.rs \
+  src/global/role_program/image_types.rs \
+  src/global/role_program/image_impl/lane_image.rs \
+  src/global/role_program/image_impl/blob_image.rs
 check_absent "ScopeFrameLabelMasks::EMPTY|frame_label_masks|frame_label_meta:[[:space:]]*&[[:space:]]*ScopeFrameLabelMeta|\\)[[:space:]]*->[[:space:]]*ScopeFrameLabelMeta|\\.frame_hint_mask\\(&|fn[[:space:]]+selection_frame_label_meta\\(|fn[[:space:]]+offer_scope_frame_label_meta\\(|fn[[:space:]]+scope_frame_label_meta(_at)?\\(" \
   "scope frame-label hot path by-value mask plumbing detected" \
   src/endpoint/kernel/core/frontier_helpers.rs \

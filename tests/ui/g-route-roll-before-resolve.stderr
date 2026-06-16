@@ -4,5 +4,4 @@ error[E0599]: no method named `resolve` found for struct `Program<Roll<Route<hib
 9 |     let _ = g::route(left, right).roll().resolve::<ROUTE_DECISION>();
   |                                          ^^^^^^^ method not found in `Program<Roll<Route<hibana::g::Send<0, 1, Msg<10, ()>>, hibana::g::Send<0, 1, Msg<20, ()>>>>>`
   |
-  = note: the method was found for
-          - `Program<Route<LeftSteps, RightSteps>>`
+  = note: the method was found for `Program<Route<LeftSteps, RightSteps>>`

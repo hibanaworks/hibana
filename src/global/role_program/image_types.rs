@@ -11,7 +11,7 @@ pub(crate) const MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NO
 pub(crate) const MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2;
 pub(crate) const MAX_RESIDENT_LANE_BIT_BYTES: usize = LANE_DOMAIN_SIZE * 4;
 pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
-pub(crate) const PACKED_ROUTE_ARM_ROW_EMPTY: u64 = u64::MAX;
+pub(crate) const PACKED_ROUTE_ARM_ROW_EMPTY: u32 = u32::MAX;
 pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 10;
 pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
 pub(crate) const ROLE_IMAGE_DEPENDENCY_STRIDE: usize = 8;
@@ -20,7 +20,7 @@ pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
-pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 8;
+pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -127,16 +127,19 @@ impl RouteArmLaneStepRow {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PackedRouteArmRow(u64);
+pub(crate) struct PackedRouteArmRow {
+    event_and_child: u32,
+    lane_step_row: PackedLaneRange,
+}
 
 impl PackedRouteArmRow {
-    pub(crate) const EMPTY: Self = Self(PACKED_ROUTE_ARM_ROW_EMPTY);
+    pub(crate) const EMPTY: Self = Self {
+        event_and_child: PACKED_ROUTE_ARM_ROW_EMPTY,
+        lane_step_row: PackedLaneRange::EMPTY,
+    };
     const CHILD_SHIFT: u32 = 24;
-    const LANE_START_SHIFT: u32 = 48;
-    const LANE_LEN_SHIFT: u32 = 32;
     const START_SHIFT: u32 = 12;
     const FIELD_MASK: u32 = 0x0fff;
-    const LANE_FIELD_MASK: u64 = 0xffff;
     const CHILD_ABSENT_DELTA: u32 = 0;
 
     #[inline(always)]
@@ -152,8 +155,8 @@ impl PackedRouteArmRow {
             panic!("route arm projection row event range overflow");
         }
         if !lane_step_row.is_empty()
-            && (lane_step_row.start() > Self::LANE_FIELD_MASK as usize
-                || lane_step_row.len() > Self::LANE_FIELD_MASK as usize)
+            && (lane_step_row.start() > u16::MAX as usize
+                || lane_step_row.len() > u16::MAX as usize)
         {
             panic!("route arm lane step row range overflow");
         }
@@ -166,38 +169,40 @@ impl PackedRouteArmRow {
             }
             None => Self::CHILD_ABSENT_DELTA,
         };
-        let lane_start = if lane_step_row.is_empty() {
-            0u64
+        let lane_step_row = if lane_step_row.is_empty() {
+            PackedLaneRange::new(0, 0)
         } else {
-            lane_step_row.start() as u64
+            lane_step_row
         };
-        let lane_len = if lane_step_row.is_empty() {
-            0u64
-        } else {
-            lane_step_row.len() as u64
-        };
-        Self(
-            (lane_start << Self::LANE_START_SHIFT)
-                | (lane_len << Self::LANE_LEN_SHIFT)
-                | ((child as u64) << Self::CHILD_SHIFT)
-                | ((event_row.start() as u64) << Self::START_SHIFT)
-                | event_row.len() as u64,
-        )
+        Self {
+            event_and_child: (child << Self::CHILD_SHIFT)
+                | ((event_row.start() as u32) << Self::START_SHIFT)
+                | event_row.len() as u32,
+            lane_step_row,
+        }
     }
 
     #[inline(always)]
-    pub(crate) const fn from_raw(raw: u64) -> Self {
-        Self(raw)
+    pub(crate) const fn from_packed_parts(event_and_child: u32, lane_step_raw: u32) -> Self {
+        Self {
+            event_and_child,
+            lane_step_row: PackedLaneRange::from_raw(lane_step_raw),
+        }
     }
 
     #[inline(always)]
-    pub(crate) const fn raw(self) -> u64 {
-        self.0
+    pub(crate) const fn event_and_child_raw(self) -> u32 {
+        self.event_and_child
+    }
+
+    #[inline(always)]
+    pub(crate) const fn lane_step_raw(self) -> u32 {
+        self.lane_step_row.raw()
     }
 
     #[inline(always)]
     pub(crate) const fn is_empty(self) -> bool {
-        self.0 == PACKED_ROUTE_ARM_ROW_EMPTY
+        self.event_and_child == PACKED_ROUTE_ARM_ROW_EMPTY
     }
 
     #[inline(always)]
@@ -206,8 +211,8 @@ impl PackedRouteArmRow {
             PackedLaneRange::EMPTY
         } else {
             PackedLaneRange::new(
-                ((self.0 >> Self::START_SHIFT) & Self::FIELD_MASK as u64) as usize,
-                (self.0 & Self::FIELD_MASK as u64) as usize,
+                ((self.event_and_child >> Self::START_SHIFT) & Self::FIELD_MASK) as usize,
+                (self.event_and_child & Self::FIELD_MASK) as usize,
             )
         }
     }
@@ -217,9 +222,7 @@ impl PackedRouteArmRow {
         if self.is_empty() {
             PackedLaneRange::EMPTY
         } else {
-            let start = ((self.0 >> Self::LANE_START_SHIFT) & Self::LANE_FIELD_MASK) as usize;
-            let len = ((self.0 >> Self::LANE_LEN_SHIFT) & Self::LANE_FIELD_MASK) as usize;
-            PackedLaneRange::new(start, len)
+            self.lane_step_row
         }
     }
 
@@ -228,7 +231,7 @@ impl PackedRouteArmRow {
         if self.is_empty() {
             None
         } else {
-            let delta = (self.0 >> Self::CHILD_SHIFT) as u8;
+            let delta = (self.event_and_child >> Self::CHILD_SHIFT) as u8;
             if delta == Self::CHILD_ABSENT_DELTA as u8 {
                 None
             } else {
@@ -239,13 +242,16 @@ impl PackedRouteArmRow {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PackedRollScopeRow(u64);
+pub(crate) struct PackedRollScopeRow {
+    scope: u16,
+    event_row: PackedLaneRange,
+}
 
 impl PackedRollScopeRow {
-    pub(crate) const EMPTY: Self = Self(u64::MAX);
-    const START_SHIFT: u32 = 16;
-    const LEN_SHIFT: u32 = 32;
-    const FIELD_MASK: u64 = 0xffff;
+    pub(crate) const EMPTY: Self = Self {
+        scope: u16::MAX,
+        event_row: PackedLaneRange::EMPTY,
+    };
 
     #[inline(always)]
     pub(crate) const fn new(
@@ -255,31 +261,38 @@ impl PackedRollScopeRow {
         if scope.is_none()
             || !matches!(scope.kind(), crate::global::const_dsl::ScopeKind::Roll)
             || row.is_empty()
-            || row.start() > Self::FIELD_MASK as usize
-            || row.len() > Self::FIELD_MASK as usize
+            || row.start() > u16::MAX as usize
+            || row.len() > u16::MAX as usize
         {
             panic!("roll scope row overflow");
         }
-        Self(
-            scope.local_ordinal() as u64
-                | ((row.start() as u64) << Self::START_SHIFT)
-                | ((row.len() as u64) << Self::LEN_SHIFT),
-        )
+        Self {
+            scope: scope.local_ordinal(),
+            event_row: row,
+        }
     }
 
     #[inline(always)]
-    pub(crate) const fn from_raw(raw: u64) -> Self {
-        Self(raw)
+    pub(crate) const fn from_packed_parts(scope: u16, event_row_raw: u32) -> Self {
+        Self {
+            scope,
+            event_row: PackedLaneRange::from_raw(event_row_raw),
+        }
     }
 
     #[inline(always)]
-    pub(crate) const fn raw(self) -> u64 {
-        self.0
+    pub(crate) const fn scope_raw(self) -> u16 {
+        self.scope
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_row_raw(self) -> u32 {
+        self.event_row.raw()
     }
 
     #[inline(always)]
     pub(crate) const fn is_empty(self) -> bool {
-        self.0 == u64::MAX
+        self.scope == u16::MAX
     }
 
     #[inline(always)]
@@ -287,9 +300,7 @@ impl PackedRollScopeRow {
         if self.is_empty() {
             None
         } else {
-            Some(crate::global::const_dsl::ScopeId::roll_scope(
-                (self.0 & Self::FIELD_MASK) as u16,
-            ))
+            Some(crate::global::const_dsl::ScopeId::roll_scope(self.scope))
         }
     }
 
@@ -297,11 +308,10 @@ impl PackedRollScopeRow {
     pub(crate) const fn event_row(self) -> PackedLaneRange {
         if self.is_empty() {
             PackedLaneRange::EMPTY
+        } else if self.event_row.is_empty() {
+            crate::invariant();
         } else {
-            PackedLaneRange::new(
-                ((self.0 >> Self::START_SHIFT) & Self::FIELD_MASK) as usize,
-                ((self.0 >> Self::LEN_SHIFT) & Self::FIELD_MASK) as usize,
-            )
+            self.event_row
         }
     }
 }

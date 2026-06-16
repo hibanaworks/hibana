@@ -480,6 +480,19 @@ print(
 PY
 }
 
+protocol_artifact_aeabi_metrics() {
+  local bin="$1"
+  local matches
+  matches="$("${LLVM_NM}" "${bin}" 2>/dev/null \
+    | rg -n "__aeabi_(lmul|lcmp|ulcmp|ldivmod|uldivmod|llsl|llsr|lasr)\\b" || true)"
+  if [[ -n "${matches}" ]]; then
+    printf '%s\n' "${matches}" >&2
+    echo "final-form protocol artifact regained aeabi u64 helper calls" >&2
+    exit 1
+  fi
+  printf 'aeabi_u64_helper_count=0'
+}
+
 build_protocol_artifact() {
   local protocol_name="$1"
   local package_name="hibana-protocol-${protocol_name//_/-}"
@@ -520,7 +533,7 @@ build_protocol_artifact() {
   printf 'protocol-artifact name=%s %s %s\n' \
     "${protocol_name}" \
     "$(protocol_matrix_metrics_for "${protocol_name}")" \
-    "selected_program_bucket_count=1 selected_role_bucket_count=$(protocol_artifact_role_bucket_count "${protocol_name}") ${section_metrics} $(protocol_artifact_map_metrics "${map}" "${bin}")"
+    "selected_program_bucket_count=1 selected_role_bucket_count=$(protocol_artifact_role_bucket_count "${protocol_name}") ${section_metrics} $(protocol_artifact_map_metrics "${map}" "${bin}") $(protocol_artifact_aeabi_metrics "${bin}")"
 }
 
 PROTOCOL_ARTIFACT_OUTPUT="$(

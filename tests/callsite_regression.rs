@@ -21,18 +21,10 @@ use hibana::{
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
-type ZeroRendezvousKitStorage = SessionKitStorage<'static, TestTransport, 0>;
-type WideRendezvousKitStorage = SessionKitStorage<'static, TestTransport, 32>;
+type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 std::thread_local! {
     static TEST_SLOT: UnsafeCell<TestKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static ZERO_RENDEZVOUS_SLOT: UnsafeCell<ZeroRendezvousKitStorage> = const {
-        UnsafeCell::new(SessionKitStorage::uninit())
-    };
-    static WIDE_RENDEZVOUS_SLOT: UnsafeCell<WideRendezvousKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
@@ -55,9 +47,9 @@ fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
 }
 
 #[test]
-fn max_rv_is_caller_owned_local_rendezvous_budget() {
+fn runtime_registers_multiple_rendezvous_from_resident_resources() {
     with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&WIDE_RENDEZVOUS_SLOT, |cluster| {
+        with_resident_tls_ref(&TEST_SLOT, |cluster| {
             let (role0, _) = project_pair::<7>();
             let transport = TestTransport::new();
             const CHUNK: usize = 16 * 1024;
@@ -73,7 +65,7 @@ fn max_rv_is_caller_owned_local_rendezvous_budget() {
             {
                 let rv = cluster
                     .rendezvous(Config::from_resources(chunk), transport.clone())
-                    .expect("MAX_RV=32 must register more than the Pico default");
+                    .expect("runtime registry must grow from each resident rendezvous resource");
                 let endpoint = rv
                     .session(SessionId::new(700 + idx as u32))
                     .role(&role0)
@@ -131,11 +123,11 @@ fn endpoint_errors_keep_public_operations() {
 #[test]
 fn attach_and_resolver_errors_keep_public_operations() {
     with_runtime_workspace(|slab| {
-        with_resident_tls_ref(&ZERO_RENDEZVOUS_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
+        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+            let config = Config::from_resources(&mut slab[..1]);
             let rendezvous_result = cluster.rendezvous(config, TestTransport::new());
             let rendezvous_error = match rendezvous_result {
-                Ok(_) => panic!("zero-capacity rendezvous table must fail"),
+                Ok(_) => panic!("resource-constrained rendezvous slab must fail"),
                 Err(error) => error,
             };
             assert_attach_operation(rendezvous_error, "rendezvous");

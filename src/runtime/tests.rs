@@ -17,7 +17,7 @@ use crate::{
     runtime_core::consts::RING_EVENTS,
 };
 
-type LargeChoreographyKit<'a> = SessionKitStorage<'a, LargeChoreographyTransport, 2>;
+type LargeChoreographyKit<'a> = SessionKitStorage<'a, LargeChoreographyTransport>;
 
 const TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES: usize = 32_768;
 const HOST_MEASURE_SLAB_BYTES: usize = 262_144;

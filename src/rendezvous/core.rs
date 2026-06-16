@@ -328,7 +328,7 @@ mod storage_runtime_budget;
 /// - LANE_ACQUIRE tap event on lease creation (via `SessionKit::lease_port`)
 /// - LANE_RELEASE tap event on Drop
 /// - Streaming checker verifies acquire/release pairs match
-pub(crate) struct LaneLease<'lease, 'cfg, T, const MAX_RV: usize>
+pub(crate) struct LaneLease<'lease, 'cfg, T>
 where
     T: Transport,
     'cfg: 'lease,
@@ -349,7 +349,7 @@ where
     brand: crate::session::brand::Guard<'cfg>,
 }
 
-impl<'lease, 'cfg, T, const MAX_RV: usize> LaneLease<'lease, 'cfg, T, MAX_RV>
+impl<'lease, 'cfg, T> LaneLease<'lease, 'cfg, T>
 where
     T: Transport,
     'cfg: 'lease,
@@ -414,7 +414,7 @@ where
     }
 }
 
-impl<'lease, 'cfg, T, const MAX_RV: usize> Drop for LaneLease<'lease, 'cfg, T, MAX_RV>
+impl<'lease, 'cfg, T> Drop for LaneLease<'lease, 'cfg, T>
 where
     T: Transport,
     'cfg: 'lease,
