@@ -10,7 +10,7 @@ use super::{
     lane_port,
 };
 use crate::{
-    endpoint::{RecvError, RecvResult, kernel::RecvPayloadMode},
+    endpoint::{RecvError, RecvResult},
     global::typestate::{CursorInvariantError, StateIndex, state_index_to_usize},
     observe::ids,
     resolver_audit::ResolverSlot,
@@ -20,11 +20,6 @@ use crate::{
         wire::{CodecError, FrameFlags, Payload},
     },
 };
-
-pub(crate) enum RecvPayloadSource<'a> {
-    ZeroLength,
-    Direct(Payload<'a>),
-}
 
 struct RecvCommitPlan<'a> {
     desc: RecvDescriptor,
@@ -81,11 +76,7 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    fn prepare_recv_descriptor(
-        &mut self,
-        target_label: u8,
-        payload_mode: RecvPayloadMode,
-    ) -> RecvResult<PreparedRecv> {
+    fn prepare_recv_descriptor(&mut self, target_label: u8) -> RecvResult<PreparedRecv> {
         let idx = self
             .cursor
             .recv_descriptor_index_for_label(target_label, |scope| {
@@ -134,7 +125,6 @@ where
         let runtime = RecvRuntimeDesc::new(
             target_label,
             crate::transport::FrameLabel::new(meta.frame_label),
-            payload_mode,
         );
         if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
@@ -148,10 +138,9 @@ where
     fn poll_recv_payload_source(
         &mut self,
         desc: RecvDescriptor,
-        payload_mode: RecvPayloadMode,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<RecvPayloadSource<'r>>> {
+    ) -> Poll<RecvResult<Payload<'r>>> {
         let frame = match self.poll_accepted_transport_frame(
             pending_recv,
             desc.lane_idx,
@@ -169,24 +158,13 @@ where
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
         };
 
-        if frame.is_empty() {
-            if payload_mode.allows_zero_length() {
-                if !frame.into_payload().as_bytes().is_empty() {
-                    crate::invariant();
-                }
-                return Poll::Ready(Ok(RecvPayloadSource::ZeroLength));
-            }
-            frame.discard_uncommitted();
-            return Poll::Ready(Ok(RecvPayloadSource::ZeroLength));
-        }
-
-        Poll::Ready(Ok(RecvPayloadSource::Direct(frame.into_payload())))
+        Poll::Ready(Ok(frame.into_payload()))
     }
 
     fn build_recv_commit_plan(
         &mut self,
         desc: RecvDescriptor,
-        payload_source: RecvPayloadSource<'r>,
+        payload: Payload<'r>,
         erased: RecvRuntimeDesc,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
@@ -197,13 +175,6 @@ where
         if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
         }
-        let payload = match payload_source {
-            RecvPayloadSource::ZeroLength if erased.payload_mode().allows_zero_length() => {
-                Payload::new(&[])
-            }
-            RecvPayloadSource::ZeroLength => return Err(RecvError::PhaseInvariant),
-            RecvPayloadSource::Direct(payload) => payload,
-        };
         if let Err(err) = validate(payload) {
             return Err(RecvError::Codec(err));
         }
@@ -304,11 +275,11 @@ where
     fn finish_recv_payload(
         &mut self,
         desc: RecvDescriptor,
-        payload_source: RecvPayloadSource<'r>,
+        payload: Payload<'r>,
         erased: RecvRuntimeDesc,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        let plan = self.build_recv_commit_plan(desc, payload_source, erased, validate)?;
+        let plan = self.build_recv_commit_plan(desc, payload, erased, validate)?;
         Ok(self.publish_recv_commit_plan(plan))
     }
 }
@@ -318,34 +289,29 @@ where
     T: Transport + 'r,
 {
     #[inline]
-    fn prepare_recv_kernel_descriptor(
-        &mut self,
-        label: u8,
-        payload_mode: RecvPayloadMode,
-    ) -> RecvResult<PreparedRecv> {
-        self.prepare_recv_descriptor(label, payload_mode)
+    fn prepare_recv_kernel_descriptor(&mut self, label: u8) -> RecvResult<PreparedRecv> {
+        self.prepare_recv_descriptor(label)
     }
 
     #[inline]
     fn poll_recv_kernel_payload_source(
         &mut self,
         desc: RecvDescriptor,
-        payload_mode: RecvPayloadMode,
         state: &mut RecvState,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<RecvPayloadSource<'r>>> {
+    ) -> Poll<RecvResult<Payload<'r>>> {
         let pending_recv = &mut state.pending_recv;
-        self.poll_recv_payload_source(desc, payload_mode, pending_recv, cx)
+        self.poll_recv_payload_source(desc, pending_recv, cx)
     }
 
     #[inline]
     fn finish_recv_kernel_payload(
         &mut self,
         desc: RecvDescriptor,
-        payload_source: RecvPayloadSource<'r>,
+        payload: Payload<'r>,
         erased: RecvRuntimeDesc,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_recv_payload(desc, payload_source, erased, validate)
+        self.finish_recv_payload(desc, payload, erased, validate)
     }
 }

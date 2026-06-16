@@ -30,7 +30,7 @@ fn forgotten_recv_future_leaves_endpoint_fail_closed() {
 
             let error = futures::executor::block_on(target_endpoint.recv::<Msg<55, u32>>())
                 .expect_err("forgotten recv future must leave endpoint fail-closed");
-            assert_eq!(error.operation(), "recv");
+            assert!(format!("{error:?}").contains("operation: \"recv\""));
             assert!(
                 format!("{error:?}").contains("PhaseInvariant")
                     || format!("{error:?}").contains("ProgressInvariantViolated"),

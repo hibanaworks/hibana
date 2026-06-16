@@ -3,7 +3,7 @@ use super::common::*;
 fn cursor_scope_route_source() -> String {
     let mut source = read("src/global/typestate/cursor/scope_route.rs");
     source.push_str(&read(
-        "src/global/typestate/cursor/scope_route/event_flow.rs",
+        "src/global/typestate/cursor/scope_route/event_progress.rs",
     ));
     source.push_str(&read(
         "src/global/typestate/cursor/scope_route/navigation.rs",
@@ -54,7 +54,7 @@ fn decode_failure_completion_is_terminal_without_branch_restore() {
 
 #[test]
 fn endpoint_dependency_guard_uses_local_dependency_facts() {
-    let route_preview_flow = read("src/endpoint/kernel/core/route_preview_flow.rs");
+    let send_preview = read("src/endpoint/kernel/core/send_preview.rs");
     let recv = read("src/endpoint/kernel/recv.rs");
     let facts =
         read("src/global/typestate/facts.rs") + &read("src/global/typestate/facts/dependency.rs");
@@ -289,14 +289,14 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && selected_arm_membership_guard
                 .contains("self.machine().event_conflict_for_index(idx)")
             && lane_head_guard.contains("self.event_conflict_row_allows_with_preview(")
-            && cursor_scope_route.contains("pub(crate) fn flow_preview_send_meta_for_label")
+            && cursor_scope_route.contains("pub(crate) fn send_preview_meta_for_label")
             && cursor_scope_route.contains(".event_enabled(")
-            && route_preview_flow.contains(".flow_preview_send_meta_for_label::<ROLE>(")
+            && send_preview.contains(".send_preview_meta_for_label::<ROLE>(")
             && recv.contains(".event_enabled(")
             && !recv.contains(".event_dependency_allows(")
             && !recv.contains(".event_conflict_allows(")
-            && !route_preview_flow.contains(".event_dependency_allows(")
-            && !route_preview_flow.contains("dependencies_complete_for_index")
+            && !send_preview.contains(".event_dependency_allows(")
+            && !send_preview.contains("dependencies_complete_for_index")
             && !recv.contains("dependencies_complete_for_index")
             && !dependency_guard.contains("current_phase_eff_done(")
             && !dependency_guard.contains("scope_region_by_id(")
@@ -473,7 +473,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let cursor_scope_route = cursor_scope_route_source();
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let role_scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
-    let event_flow = read("src/global/typestate/cursor/scope_route/event_flow.rs");
+    let event_progress = read("src/global/typestate/cursor/scope_route/event_progress.rs");
     let first_recv_dispatch = read("src/global/compiled/lowering/seal/first_recv_dispatch.rs");
     let passive_child = read("src/global/compiled/lowering/seal/passive_child.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
@@ -572,10 +572,10 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         "route scope dependency bounds must fail closed when binary arm ranges are missing"
     );
     assert!(
-        event_flow.contains("fn flow_start_index_for_label(")
-            && event_flow.contains("selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>")
-            && event_flow.contains("if self.route_scope_rows_at(self.index()).is_some()")
-            && !event_flow.contains(".unwrap_or_else(|| self.index())"),
+        event_progress.contains("fn send_preview_start_index_for_label(")
+            && event_progress.contains("selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>")
+            && event_progress.contains("if self.route_scope_rows_at(self.index()).is_some()")
+            && !event_progress.contains(".unwrap_or_else(|| self.index())"),
         "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind cursor resume shortcut"
     );
     for (name, body) in [

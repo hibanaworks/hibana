@@ -1,9 +1,9 @@
 //! Cluster error types.
 //!
 //! `ClusterError` is the internal cluster failure catalogue. Public attach
-//! failures use `AttachError`, which records the public attach operation so
-//! protocol runtimes can propagate attach errors with `?` without adding an
-//! extra context type at every call site.
+//! failures use `AttachError`, which records the attach boundary for Debug
+//! evidence so protocol runtimes can propagate attach errors with `?` without
+//! adding an extra context type at every call site.
 
 use crate::diag::Callsite;
 use core::fmt;
@@ -38,7 +38,7 @@ enum AttachErrorKind {
 impl fmt::Debug for AttachError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("AttachError");
-        debug.field("operation", &self.operation());
+        debug.field("operation", &self.op_name());
         #[cfg(feature = "std")]
         {
             debug
@@ -87,7 +87,7 @@ impl AttachError {
     }
 
     #[inline]
-    pub const fn operation(&self) -> &'static str {
+    const fn op_name(&self) -> &'static str {
         match self.op {
             AttachOp::Attach => "attach",
             AttachOp::Rendezvous => "rendezvous",

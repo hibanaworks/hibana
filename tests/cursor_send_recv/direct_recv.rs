@@ -247,10 +247,7 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<2, FramePayload>>()
-                    .expect("send flow")
-                    .send(&FramePayload(*b"hiba")),
+                origin_endpoint.send::<Msg<2, FramePayload>>(&FramePayload(*b"hiba")),
             )
             .expect("send succeeds");
             let payload =
@@ -258,6 +255,84 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                     .expect("recv succeeds");
             assert_eq!(payload.as_bytes(), b"hiba");
             assert!(transport_queue_is_empty(&transport));
+        });
+    });
+}
+
+#[test]
+fn zero_length_transport_frame_recv_unit_commits() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<30, ()>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let sid = SessionId::new(30);
+            let mut tx = TestTx {
+                session_id: sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
+            transport.stage_send_with_session(&mut tx, sid, 1, 0, 0, &[]);
+            assert!(matches!(
+                transport.poll_send_staged(&mut tx),
+                Poll::Ready(Ok(()))
+            ));
+            let rv = cluster
+                .rendezvous(Config::from_resources(slab), transport.clone())
+                .expect("register rendezvous");
+            let mut target_endpoint = rv
+                .session(sid)
+                .role(&target_program)
+                .enter()
+                .expect("target endpoint");
+
+            let () = futures::executor::block_on(target_endpoint.recv::<Msg<30, ()>>())
+                .expect("unit payload accepts canonical empty frame");
+            assert!(transport_queue_is_empty(&transport));
+        });
+    });
+}
+
+#[test]
+fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<31, u8>>();
+            let target_program: RoleProgram<1> = project(&program);
+            let sid = SessionId::new(31);
+            let mut tx = TestTx {
+                session_id: sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
+            transport.stage_send_with_session(&mut tx, sid, 1, 0, 0, &[]);
+            assert!(matches!(
+                transport.poll_send_staged(&mut tx),
+                Poll::Ready(Ok(()))
+            ));
+            let rv = cluster
+                .rendezvous(Config::from_resources(slab), transport.clone())
+                .expect("register rendezvous");
+            let mut target_endpoint = rv
+                .session(sid)
+                .role(&target_program)
+                .enter()
+                .expect("target endpoint");
+
+            let error = futures::executor::block_on(target_endpoint.recv::<Msg<31, u8>>())
+                .expect_err("u8 payload must reject canonical empty frame");
+            let rendered = format!("{error:?}");
+            assert!(
+                rendered.contains("Codec") && rendered.contains("Truncated"),
+                "zero-length u8 recv must fail through payload validation: {rendered}"
+            );
+            assert!(
+                !rendered.contains("PhaseInvariant"),
+                "zero-length u8 recv must not be classified as a phase invariant: {rendered}"
+            );
         });
     });
 }

@@ -23,8 +23,8 @@ use crate::global::compiled::images::EventSemanticKind;
 use crate::global::const_dsl::{RouteResolver, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
-    CursorInvariantError, CursorRefresh, EventCursor, FlowPreviewError, RecvMeta,
-    RelocatableResidentLaneStep, SendMeta, StateIndex, state_index_to_usize,
+    CursorInvariantError, CursorRefresh, EventCursor, RecvMeta, RelocatableResidentLaneStep,
+    SendMeta, SendPreviewError, StateIndex, state_index_to_usize,
 };
 use crate::{
     endpoint::{
@@ -58,21 +58,19 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn prepare_recv_kernel_descriptor(
         &mut self,
         label: u8,
-        payload_mode: RecvPayloadMode,
     ) -> RecvResult<super::recv::PreparedRecv>;
 
     fn poll_recv_kernel_payload_source(
         &mut self,
         desc: super::recv::RecvDescriptor,
-        payload_mode: RecvPayloadMode,
         state: &mut super::recv::RecvState,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<super::recv::RecvPayloadSource<'r>>>;
+    ) -> Poll<RecvResult<Payload<'r>>>;
 
     fn finish_recv_kernel_payload(
         &mut self,
         desc: super::recv::RecvDescriptor,
-        payload_source: super::recv::RecvPayloadSource<'r>,
+        payload: Payload<'r>,
         erased: RecvRuntimeDesc,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
@@ -125,7 +123,6 @@ pub(crate) trait SendKernelEndpoint<'r> {
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
     logical_label: u8,
-    payload_mode: RecvPayloadMode,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
@@ -133,29 +130,23 @@ pub(crate) fn kernel_recv<'r>(
     let prepared = match state.prepared() {
         Some(prepared) => prepared,
         None => {
-            let prepared =
-                match endpoint.prepare_recv_kernel_descriptor(logical_label, payload_mode) {
-                    Ok(prepared) => prepared,
-                    Err(err) => return Poll::Ready(Err(err)),
-                };
+            let prepared = match endpoint.prepare_recv_kernel_descriptor(logical_label) {
+                Ok(prepared) => prepared,
+                Err(err) => return Poll::Ready(Err(err)),
+            };
             state.set_prepared(prepared);
             prepared
         }
     };
-    match endpoint.poll_recv_kernel_payload_source(
-        prepared.descriptor,
-        prepared.runtime.payload_mode(),
-        state,
-        cx,
-    ) {
+    match endpoint.poll_recv_kernel_payload_source(prepared.descriptor, state, cx) {
         Poll::Pending => Poll::Pending,
-        Poll::Ready(Ok(payload_source)) => {
+        Poll::Ready(Ok(payload)) => {
             state.clear_prepared();
             Poll::Ready(
                 endpoint
                     .finish_recv_kernel_payload(
                         prepared.descriptor,
-                        payload_source,
+                        payload,
                         prepared.runtime,
                         validate,
                     )
@@ -356,9 +347,9 @@ mod decision_resolver;
 mod frontier_helpers;
 mod public_types;
 mod route_preview;
-mod route_preview_flow;
 mod runtime_types;
 mod send_ops;
+mod send_preview;
 
 pub(crate) use super::decision_state::{
     PreparedRouteCommitRows, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,

@@ -11,7 +11,6 @@
 //! initialized-bucket ranges, and keep endpoint/lease generations coherent.
 
 use core::marker::PhantomData;
-use core::mem::MaybeUninit;
 
 use crate::session::lease::core::{LeaseError, RegisterRendezvousError, RoleBindingError};
 

@@ -16,7 +16,7 @@ pub struct Endpoint<'r, const ROLE: u8> {
 ///
 /// `RouteBranch` exposes the selected logical label. If the selected arm begins
 /// with a receive, call [`RouteBranch::decode`]. If it begins with a send, drop
-/// the branch preview and call [`Endpoint::flow`] for that arm's first message.
+/// the branch preview and call [`Endpoint::send`] for that arm's first message.
 /// The label is descriptor/resolver evidence, not the result of parsing payload
 /// bytes.
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {

@@ -41,20 +41,22 @@ fn multiphase_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
-fn assert_flow_blocked<T, E: core::fmt::Debug>(result: Result<T, E>) {
-    let err = match result {
-        Ok(_) => panic!("post-route flow must wait for the selected route path"),
-        Err(err) => err,
-    };
+async fn assert_send_blocked<F>(future: F)
+where
+    F: core::future::Future<Output = hibana::EndpointResult<()>>,
+{
+    let err = future
+        .await
+        .expect_err("post-route send must wait for the selected route path");
     let rendered = format!("{err:?}");
     assert!(
         rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
-        "post-route flow must be rejected by selected path progress: {rendered}"
+        "post-route send must be rejected by selected path progress: {rendered}"
     );
 }
 
 #[test]
-fn route_arm_future_phase_blocks_post_route_flow() {
+fn route_arm_future_phase_blocks_post_route_send() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let config = Config::from_resources(slab);
@@ -79,12 +81,10 @@ fn route_arm_future_phase_blocks_post_route_flow() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<ROUTE_FIRST, u8>>()
-                    .expect("first route step flow")
-                    .send(&10)
+                    .send::<Msg<ROUTE_FIRST, u8>>(&10)
                     .await
                     .expect("send first route step");
-                assert_flow_blocked(local.flow::<Msg<POST_ROUTE, u8>>());
+                assert_send_blocked(local.send::<Msg<POST_ROUTE, u8>>(&0)).await;
 
                 let branch = worker.offer().await.expect("offer first route step");
                 assert_eq!(branch.label(), ROUTE_FIRST);
@@ -96,9 +96,7 @@ fn route_arm_future_phase_blocks_post_route_flow() {
                     10
                 );
                 local
-                    .flow::<Msg<ROUTE_SECOND, u8>>()
-                    .expect("second route step flow")
-                    .send(&20)
+                    .send::<Msg<ROUTE_SECOND, u8>>(&20)
                     .await
                     .expect("send second route step");
                 assert_eq!(
@@ -109,9 +107,7 @@ fn route_arm_future_phase_blocks_post_route_flow() {
                     20
                 );
                 local
-                    .flow::<Msg<POST_ROUTE, u8>>()
-                    .expect("post-route flow")
-                    .send(&30)
+                    .send::<Msg<POST_ROUTE, u8>>(&30)
                     .await
                     .expect("send post-route");
                 assert_eq!(

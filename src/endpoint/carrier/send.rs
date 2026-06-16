@@ -3,7 +3,7 @@ impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
 {
-    pub(super) unsafe fn preview_public_endpoint<const ROLE: u8>(
+    pub(super) unsafe fn preview_public_send<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         logical_label: u8,
@@ -19,7 +19,7 @@ where
                     crate::transport::TransportError::Failed,
                 )),
                 |kernel| {
-                    let preview = kernel.preview_flow_meta(logical_label)?;
+                    let preview = kernel.preview_send_meta(logical_label)?;
                     OutSlot::new(out).write(preview);
                     Ok(())
                 },

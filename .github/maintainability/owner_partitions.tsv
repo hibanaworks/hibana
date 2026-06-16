@@ -39,7 +39,7 @@ src/endpoint	src/endpoint/carrier
 src/endpoint	src/endpoint/carrier.rs
 src/endpoint	src/endpoint/session.rs
 src/endpoint	src/endpoint/error.rs
-src/endpoint	src/endpoint/flow.rs
+src/endpoint	src/endpoint/send.rs
 src/endpoint	src/endpoint/futures.rs
 src/endpoint	src/endpoint/kernel
 src/endpoint	src/endpoint/ops.rs
@@ -77,7 +77,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/route_commit_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview_flow.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/send_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types/commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
@@ -176,7 +176,6 @@ tests	tests/cursor_send_recv_direct_recv.rs
 tests	tests/cursor_send_recv_send_recv.rs
 tests	tests/cursor_send_recv_session_drop_wake.rs
 tests	tests/cursor_send_recv_session_fault_cancel.rs
-tests	tests/cursor_send_recv_session_forget_flow.rs
 tests	tests/cursor_send_recv_session_forget_recv.rs
 tests	tests/cursor_send_recv_session_forget_send.rs
 tests	tests/cursor_send_recv_session_progress.rs
@@ -198,6 +197,7 @@ tests	tests/root_surface.rs
 tests	tests/route_multiphase_progress_arm.rs
 tests	tests/route_multiphase_progress_inner.rs
 tests	tests/route_with_internal_parallel.rs
+tests	tests/transport_resolver_signal_surface.rs
 tests	tests/visible_route_reentry.rs
 tests	tests/semantic_surface
 tests	tests/semantic_surface.rs

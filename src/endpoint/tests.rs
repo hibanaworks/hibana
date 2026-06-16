@@ -1,7 +1,7 @@
 use crate::endpoint::{
-    Endpoint, RouteBranch, flow, futures::DecodeFuture, futures::OfferFuture,
-    futures::OfferFutureLease, futures::RawOfferFuture, futures::RawRecvFuture,
-    futures::RecvFuture, futures::RecvFutureLease, kernel, kernel::RecvPayloadMode,
+    Endpoint, RouteBranch, futures::DecodeFuture, futures::OfferFuture, futures::OfferFutureLease,
+    futures::RawOfferFuture, futures::RawRecvFuture, futures::RecvFuture, futures::RecvFutureLease,
+    kernel, send,
 };
 use core::mem::size_of;
 
@@ -13,9 +13,7 @@ type RecvFutBytes = RecvFuture<'static, 'static, 0, crate::g::Msg<10, [u8; 32]>>
 type DecodeFutU8 = DecodeFuture<'static, 'static, 0, crate::g::Msg<11, u8>>;
 type DecodeFutU64 = DecodeFuture<'static, 'static, 0, crate::g::Msg<12, u64>>;
 type DecodeFutBytes = DecodeFuture<'static, 'static, 0, crate::g::Msg<13, [u8; 32]>>;
-type FlowU8 = flow::Flow<'static, 'static, 0, crate::g::Msg<14, u8>>;
-type FlowBytes = flow::Flow<'static, 'static, 0, crate::g::Msg<15, [u8; 32]>>;
-type SendFut = flow::SendFuture<'static, 'static, 'static, 0>;
+type SendFut = send::SendFuture<'static, 'static, 'static, 0>;
 type RawOfferFut = RawOfferFuture<'static, 'static, 0>;
 type RawRecvFut = RawRecvFuture<'static, 'static, 0>;
 
@@ -31,11 +29,6 @@ fn endpoint_surface_size_gates_hold() {
         size_of::<RecvFutureLease>(),
         1,
         "RecvFutureLease must stay a byte-sized state enum"
-    );
-    assert_eq!(
-        size_of::<RecvPayloadMode>(),
-        1,
-        "RecvPayloadMode must stay a byte-sized payload-mode enum"
     );
     assert!(
         size_of::<RawOfferFut>() <= 2 * WORD,
@@ -78,7 +71,7 @@ fn message_type_variation_does_not_change_future_layout() {
 }
 
 #[test]
-fn recv_future_state_caches_payload_mode_and_completion() {
+fn recv_future_state_caches_completion() {
     let mut lease =
         RecvFutureLease::from_public_lease(crate::endpoint::kernel::PublicOpLease::Held);
     assert_eq!(lease, RecvFutureLease::RestoreOnDrop);
@@ -88,26 +81,14 @@ fn recv_future_state_caches_payload_mode_and_completion() {
     let rejected =
         RecvFutureLease::from_public_lease(crate::endpoint::kernel::PublicOpLease::Rejected);
     assert_eq!(rejected, RecvFutureLease::Rejected);
-
-    assert!(RecvPayloadMode::AllowsZeroLength.allows_zero_length());
-    assert!(!RecvPayloadMode::RequiresPayload.allows_zero_length());
 }
 
 #[test]
-fn send_flow_and_runtime_descriptor_size_gates_hold() {
+fn send_future_and_runtime_descriptor_size_gates_hold() {
     const WORD: usize = size_of::<usize>();
-    assert_eq!(
-        size_of::<FlowU8>(),
-        size_of::<FlowBytes>(),
-        "Flow layout must remain payload-type independent",
-    );
     assert!(
-        size_of::<FlowU8>() <= 2 * WORD,
-        "Flow must stay a drop guard, not a send preview owner",
-    );
-    assert!(
-        size_of::<SendFut>() <= 3 * WORD,
-        "SendFuture must stay within the raw-future wrapper budget",
+        size_of::<SendFut>() <= 5 * WORD,
+        "SendFuture must stay within the direct-send future budget",
     );
     assert!(
         size_of::<kernel::RecvRuntimeDesc>() <= WORD,
@@ -126,19 +107,17 @@ fn send_flow_and_runtime_descriptor_size_gates_hold() {
 #[test]
 fn final_form_future_layout_measurement_report() {
     std::println!(
-        "future-layout Endpoint={} RouteBranch={} OfferFuture={} RecvFuture={} DecodeFuture={} SendFuture={} Flow={} RawOfferFuture={} RawRecvFuture={} OfferFutureLease={} RecvFutureLease={} RecvPayloadMode={} RecvFutureU8={} RecvFutureU64={} RecvFutureBytes={} DecodeFutureU8={} DecodeFutureU64={} DecodeFutureBytes={}",
+        "future-layout Endpoint={} RouteBranch={} OfferFuture={} RecvFuture={} DecodeFuture={} SendFuture={} RawOfferFuture={} RawRecvFuture={} OfferFutureLease={} RecvFutureLease={} RecvFutureU8={} RecvFutureU64={} RecvFutureBytes={} DecodeFutureU8={} DecodeFutureU64={} DecodeFutureBytes={}",
         size_of::<Endpoint<'static, 0>>(),
         size_of::<RouteBranch<'static, 'static, 0>>(),
         size_of::<OfferFuture<'static, 'static, 0>>(),
         size_of::<RecvFut>(),
         size_of::<DecodeFut>(),
         size_of::<SendFut>(),
-        size_of::<FlowU8>(),
         size_of::<RawOfferFut>(),
         size_of::<RawRecvFut>(),
         size_of::<OfferFutureLease>(),
         size_of::<RecvFutureLease>(),
-        size_of::<RecvPayloadMode>(),
         size_of::<RecvFutU8>(),
         size_of::<RecvFutU64>(),
         size_of::<RecvFutBytes>(),

@@ -6,8 +6,6 @@ use hibana::{
 struct RecvOnly;
 
 impl WirePayload for RecvOnly {
-    const ALLOWS_ZERO_LENGTH: bool = true;
-
     type Decoded<'a> = ();
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -25,10 +23,7 @@ impl WirePayload for RecvOnly {
 
 fn send_recv_only(endpoint: &mut Endpoint<'_, 0>) {
     let payload = RecvOnly;
-    let Ok(flow) = endpoint.flow::<g::Msg<36, RecvOnly>>() else {
-        return;
-    };
-    let future = flow.send(&payload);
+    let future = endpoint.send::<g::Msg<36, RecvOnly>>(&payload);
     core::mem::drop(future);
 }
 

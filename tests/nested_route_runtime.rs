@@ -115,9 +115,7 @@ fn nested_branch_commit_stack() {
                                 // Outer route: Controller sends wire data to Worker
                                 // =========================================================================
                                 controller
-                                    .flow::<Msg<5, u32>>()
-                                    .expect("outer left data flow")
-                                    .send(&1234)
+                                    .send::<Msg<5, u32>>(&1234)
                                     .await
                                     .expect("send outer left data");
 
@@ -140,9 +138,7 @@ fn nested_branch_commit_stack() {
                                 // Inner route: Controller sends wire data to Worker
                                 // =========================================================================
                                 controller
-                                    .flow::<Msg<7, u32>>()
-                                    .expect("inner left data flow")
-                                    .send(&5678)
+                                    .send::<Msg<7, u32>>(&5678)
                                     .await
                                     .expect("send inner left data");
 
@@ -227,7 +223,7 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
                                 ),
                                 Err(error) => error,
                             };
-                            assert_eq!(error.operation(), "offer");
+                            assert!(format!("{error:?}").contains("operation: \"offer\""));
                             let rendered = format!("{error:?}");
                             assert!(
                                 rendered.contains("PhaseInvariant")
@@ -283,13 +279,8 @@ fn localside_offer_decode_sizes_stay_compact() {
                             let offer_bytes = size_of_val(&offer);
                             drop(offer);
 
-                            futures::executor::block_on(
-                                controller
-                                    .flow::<Msg<5, u32>>()
-                                    .expect("outer left data flow")
-                                    .send(&1234),
-                            )
-                            .expect("send outer left data");
+                            futures::executor::block_on(controller.send::<Msg<5, u32>>(&1234))
+                                .expect("send outer left data");
 
                             let branch =
                                 futures::executor::block_on(worker.offer()).expect("offer route");

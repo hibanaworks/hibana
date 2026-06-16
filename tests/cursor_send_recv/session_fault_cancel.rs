@@ -27,10 +27,8 @@ fn send_session_fault_cancels_pending_transport_state_once() {
 
             let payload = FramePayload(*b"hiba");
             {
-                let flow = origin_endpoint
-                    .flow::<Msg<2, FramePayload>>()
-                    .expect("send flow");
-                let mut send_future = std::pin::pin!(flow.send(&payload));
+                let mut send_future =
+                    std::pin::pin!(origin_endpoint.send::<Msg<2, FramePayload>>(&payload));
                 let waker = futures::task::noop_waker_ref();
                 let mut context = Context::from_waker(waker);
                 if let Poll::Ready(result) = send_future.as_mut().poll(&mut context) {
@@ -51,7 +49,7 @@ fn send_session_fault_cancels_pending_transport_state_once() {
 
                 match send_future.as_mut().poll(&mut context) {
                     Poll::Ready(Err(error)) => {
-                        assert_eq!(error.operation(), "send");
+                        assert!(format!("{error:?}").contains("operation: \"send\""));
                         assert!(
                             format!("{error:?}").contains("EndpointDropped"),
                             "send error must keep session fault evidence: {error:?}"

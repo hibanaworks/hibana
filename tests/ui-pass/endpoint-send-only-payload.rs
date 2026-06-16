@@ -17,10 +17,7 @@ impl WireEncode for SendOnly {
 
 fn send_only(endpoint: &mut Endpoint<'_, 0>) {
     let payload = SendOnly(7);
-    let Ok(flow) = endpoint.flow::<g::Msg<33, SendOnly>>() else {
-        return;
-    };
-    let future = flow.send(&payload);
+    let future = endpoint.send::<g::Msg<33, SendOnly>>(&payload);
     core::mem::drop(future);
 }
 

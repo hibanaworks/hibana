@@ -32,8 +32,9 @@ impl WirePayload for FramePayload {
 fn borrowed_recv_keeps_endpoint_borrow<'r>(endpoint: &mut Endpoint<'r, 0>) {
     let payload = futures::executor::block_on(endpoint.recv::<g::Msg<7, FramePayload>>())
         .expect("test setup");
-    let flow_again = endpoint.flow::<g::Msg<8, u8>>().expect("test setup");
-    core::hint::black_box(&flow_again);
+    let next_payload = 8u8;
+    let send_again = endpoint.send::<g::Msg<8, u8>>(&next_payload);
+    core::hint::black_box(&send_again);
     core::hint::black_box(&payload);
 }
 

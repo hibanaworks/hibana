@@ -53,15 +53,14 @@ where
         };
 
         if first_attach {
-            // Emit lane_open_tap_event_id() for the lane's inaugural attachment.
             emit(
                 self.tap(),
-                events::raw_event(
+                events::lane_acquire(
                     self.now32(),
-                    crate::session::cluster::effects::lane_open_tap_event_id(),
-                )
-                .with_arg0(sid.raw())
-                .with_arg1(lane.raw()),
+                    self.id.raw() as u32,
+                    sid.raw(),
+                    lane.raw() as u16,
+                ),
             );
 
             self.reset_lane_recycled_state(lane);

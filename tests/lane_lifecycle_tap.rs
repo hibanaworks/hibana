@@ -36,6 +36,32 @@ fn decode_sid_lane(packed: u32) -> (u32, u16) {
     (sid, lane)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LaneEvent {
+    ts: u32,
+    id: u16,
+    rv: u32,
+    sid: u32,
+    lane: u16,
+}
+
+fn collect_lane_events(mut port: impl Iterator<Item = tap::TapEvent>) -> Vec<LaneEvent> {
+    let mut events = Vec::new();
+    for event in &mut port {
+        if event.id() == tap::LANE_ACQUIRE || event.id() == tap::LANE_RELEASE {
+            let (sid, lane) = decode_sid_lane(event.arg1());
+            events.push(LaneEvent {
+                ts: event.ts(),
+                id: event.id(),
+                rv: event.arg0(),
+                sid,
+                lane,
+            });
+        }
+    }
+    events
+}
+
 #[test]
 fn lane_lifecycle_emits_acquire_and_release_taps() {
     with_runtime_workspace(|slab| {
@@ -89,5 +115,140 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
         assert!(has_expected_release, "expected lane release event");
         assert_eq!(acquire_count, 1, "expected exactly one acquire event");
         assert_eq!(release_count, 1, "expected exactly one release event");
+    });
+}
+
+#[test]
+fn shared_sid_lane_emits_one_association_pair() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        let (mid_events, final_events) = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let slab = unsafe { &mut *slab_ptr };
+            let rv = cluster
+                .rendezvous(Config::from_resources(slab), transport.clone())
+                .expect("register rendezvous");
+            let mut tap_port = rv.tap();
+
+            let sid = SessionId::new(11);
+            let controller_program = controller_program();
+            let endpoint_a = rv
+                .session(sid)
+                .role(&controller_program)
+                .enter()
+                .expect("attach first cursor");
+            let endpoint_b = rv
+                .session(sid)
+                .role(&controller_program)
+                .enter()
+                .expect("attach second cursor");
+
+            drop(endpoint_a);
+            let mid_events = collect_lane_events(tap_port.by_ref());
+            drop(endpoint_b);
+            let final_events = collect_lane_events(tap_port);
+            (mid_events, final_events)
+        });
+
+        assert_eq!(
+            mid_events,
+            vec![LaneEvent {
+                ts: 0,
+                id: tap::LANE_ACQUIRE,
+                rv: 1,
+                sid: 11,
+                lane: 0,
+            }],
+            "first drop must not release a shared session/lane association"
+        );
+        assert_eq!(
+            final_events,
+            vec![LaneEvent {
+                ts: 1,
+                id: tap::LANE_RELEASE,
+                rv: 1,
+                sid: 11,
+                lane: 0,
+            }],
+            "last drop must release the shared session/lane association exactly once"
+        );
+    });
+}
+
+#[test]
+fn new_tap_port_reads_all_retained_runtime_events_beyond_old_half_ring() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let slab = unsafe { &mut *slab_ptr };
+            let rv = cluster
+                .rendezvous(Config::from_resources(slab), transport.clone())
+                .expect("register rendezvous");
+            let controller_program = controller_program();
+
+            for sid_raw in 100..120 {
+                let endpoint = rv
+                    .session(SessionId::new(sid_raw))
+                    .role(&controller_program)
+                    .enter()
+                    .expect("attach cursor");
+                drop(endpoint);
+            }
+
+            collect_lane_events(rv.tap())
+        });
+
+        assert_eq!(events.len(), 40, "new tap port must retain 40 lane events");
+        assert_eq!(events.first().map(|event| event.ts), Some(0));
+        assert_eq!(events.last().map(|event| event.ts), Some(39));
+    });
+}
+
+#[test]
+fn new_tap_port_reads_latest_sixty_four_runtime_events_after_wrap() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let slab = unsafe { &mut *slab_ptr };
+            let rv = cluster
+                .rendezvous(Config::from_resources(slab), transport.clone())
+                .expect("register rendezvous");
+            let controller_program = controller_program();
+
+            for sid_raw in 200..235 {
+                let endpoint = rv
+                    .session(SessionId::new(sid_raw))
+                    .role(&controller_program)
+                    .enter()
+                    .expect("attach cursor");
+                drop(endpoint);
+            }
+
+            collect_lane_events(rv.tap())
+        });
+
+        assert_eq!(
+            events.len(),
+            64,
+            "new tap port must expose only the retained 64-event window"
+        );
+        assert_eq!(events.first().map(|event| event.ts), Some(6));
+        assert_eq!(events.last().map(|event| event.ts), Some(69));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.id == tap::LANE_ACQUIRE)
+                .count(),
+            32
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.id == tap::LANE_RELEASE)
+                .count(),
+            32
+        );
     });
 }

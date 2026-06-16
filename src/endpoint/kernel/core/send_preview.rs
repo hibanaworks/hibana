@@ -1,5 +1,5 @@
 use super::{
-    Arm, CursorEndpoint, FlowPreviewError, PublicActiveOp, ScopeId, SendError, SendResult,
+    Arm, CursorEndpoint, PublicActiveOp, ScopeId, SendError, SendPreviewError, SendResult,
     Transport,
 };
 
@@ -8,7 +8,7 @@ where
     T: Transport + 'r,
 {
     #[inline]
-    fn preview_flow_arm_for_scope(&self, scope_id: ScopeId) -> Option<u8> {
+    fn preview_send_arm_for_scope(&self, scope_id: ScopeId) -> Option<u8> {
         if scope_id.is_none() {
             return None;
         }
@@ -23,17 +23,17 @@ where
     }
 
     #[inline]
-    fn map_flow_preview_error(error: FlowPreviewError) -> SendError {
+    fn map_send_preview_error(error: SendPreviewError) -> SendError {
         match error {
-            FlowPreviewError::Invariant => SendError::PhaseInvariant,
-            FlowPreviewError::LabelMismatch { expected, actual } => {
+            SendPreviewError::Invariant => SendError::PhaseInvariant,
+            SendPreviewError::LabelMismatch { expected, actual } => {
                 SendError::LabelMismatch { expected, actual }
             }
         }
     }
 
     /// Preview the current send transition without mutating endpoint state.
-    pub(crate) fn preview_flow_meta(
+    pub(crate) fn preview_send_meta(
         &mut self,
         target_label: u8,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
@@ -46,13 +46,13 @@ where
         }
         let (meta, cursor_index) = self
             .cursor
-            .flow_preview_send_meta_for_label::<ROLE>(
+            .send_preview_meta_for_label::<ROLE>(
                 target_label,
                 |scope| self.selected_arm_for_scope(scope),
-                |scope| self.preview_flow_arm_for_scope(scope),
+                |scope| self.preview_send_arm_for_scope(scope),
                 |scope, label| self.lane_for_label_or_offer(scope, label),
             )
-            .map_err(Self::map_flow_preview_error)?;
+            .map_err(Self::map_send_preview_error)?;
         Ok(crate::endpoint::kernel::SendPreview::new(
             meta,
             cursor_index,

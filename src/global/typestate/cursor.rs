@@ -42,7 +42,7 @@ impl CursorInvariantError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FlowPreviewError {
+pub(crate) enum SendPreviewError {
     Invariant,
     LabelMismatch { expected: u8, actual: u8 },
 }

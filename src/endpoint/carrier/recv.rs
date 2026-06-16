@@ -39,7 +39,6 @@ where
             ptr,
             handle,
             logical_label,
-            payload_mode,
             validate,
             cx,
             out,
@@ -53,7 +52,7 @@ where
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| match kernel.poll_public_recv(logical_label, payload_mode, validate, cx) {
+                |kernel| match kernel.poll_public_recv(logical_label, validate, cx) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),

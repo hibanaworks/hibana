@@ -78,7 +78,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
             );
             match recv_future.as_mut().poll(&mut context) {
                 Poll::Ready(Err(error)) => {
-                    assert_eq!(error.operation(), "recv");
+                    assert!(format!("{error:?}").contains("operation: \"recv\""));
                     assert!(
                         format!("{error:?}").contains("EndpointDropped"),
                         "waiting peer must observe EndpointDropped evidence: {error:?}"

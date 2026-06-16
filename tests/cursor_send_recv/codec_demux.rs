@@ -24,19 +24,14 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 .enter()
                 .expect("target endpoint");
 
-            futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<1, u32>>()
-                    .expect("send flow")
-                    .send(&42),
-            )
-            .expect("send succeeds");
+            futures::executor::block_on(origin_endpoint.send::<Msg<1, u32>>(&42))
+                .expect("send succeeds");
 
             let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u64>>()) {
                 Ok(_) => panic!("recv with wrong payload shape must fail"),
                 Err(err) => err,
             };
-            assert_eq!(err.operation(), "recv");
+            assert!(format!("{err:?}").contains("operation: \"recv\""));
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("Codec"),
@@ -53,7 +48,7 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 }
                 Err(err) => err,
             };
-            assert_eq!(err.operation(), "recv");
+            assert!(format!("{err:?}").contains("operation: \"recv\""));
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("SessionFault") && rendered.contains("DecodeFailed"),
@@ -87,13 +82,9 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 .enter()
                 .expect("target endpoint");
 
-            let () = futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<200, u32>>()
-                    .expect("send flow")
-                    .send(&0xC8C8_C8C8),
-            )
-            .expect("send succeeds");
+            let () =
+                futures::executor::block_on(origin_endpoint.send::<Msg<200, u32>>(&0xC8C8_C8C8))
+                    .expect("send succeeds");
             let payload = futures::executor::block_on(target_endpoint.recv::<Msg<200, u32>>())
                 .expect("recv succeeds");
             assert_eq!(payload, 0xC8C8_C8C8);

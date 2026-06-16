@@ -68,7 +68,7 @@ pub(crate) enum BranchKind {
     /// meta fields directly.
     LocalAction,
     /// Arm starts with Send operation (passive observer scenario).
-    /// The driver should continue on the same borrowed endpoint with `flow().send()`.
+    /// The driver should continue on the same borrowed endpoint with `send()`.
     ArmSendHint,
     /// Terminal arm without a resident receive/send event.
     /// Decode validates Hibana's canonical empty payload and advances to scope end.

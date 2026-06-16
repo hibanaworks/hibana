@@ -29,22 +29,16 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
             core::hint::black_box(&target_endpoint);
 
             let payload = 53u32;
-            let future = origin_endpoint
-                .flow::<Msg<53, u32>>()
-                .expect("first flow preview")
-                .send(&payload);
+            let future = origin_endpoint.send::<Msg<53, u32>>(&payload);
             core::mem::forget(future);
 
-            match origin_endpoint.flow::<Msg<53, u32>>() {
-                Ok(_) => panic!("forgotten send future must reject even the same send preview"),
-                Err(error) => {
-                    assert_eq!(error.operation(), "flow");
-                    assert!(
-                        format!("{error:?}").contains("PhaseInvariant"),
-                        "busy endpoint must report phase invariant evidence: {error:?}"
-                    );
-                }
-            }
+            let error = futures::executor::block_on(origin_endpoint.send::<Msg<53, u32>>(&payload))
+                .expect_err("forgotten send future must reject even the same send");
+            assert!(format!("{error:?}").contains("operation: \"send\""));
+            assert!(
+                format!("{error:?}").contains("PhaseInvariant"),
+                "busy endpoint must report phase invariant evidence: {error:?}"
+            );
         });
     });
 }

@@ -325,9 +325,9 @@ mod storage_runtime_budget;
 ///
 /// # Observable Properties
 ///
-/// - LANE_ACQUIRE tap event on lease creation (via `SessionKit::lease_port`)
-/// - LANE_RELEASE tap event on Drop
-/// - Streaming checker verifies acquire/release pairs match
+/// - LANE_ACQUIRE tap event when a session/lane association count moves 0->1
+/// - LANE_RELEASE tap event when that association count moves 1->0
+/// - Streaming checker verifies association acquire/release pairs match
 pub(crate) struct LaneLease<'lease, 'cfg, T>
 where
     T: Transport,

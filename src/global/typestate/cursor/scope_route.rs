@@ -1,4 +1,4 @@
-mod event_flow;
+mod event_progress;
 mod navigation;
 mod roll;
 mod row_completion;
@@ -686,7 +686,7 @@ impl EventCursor {
     }
 
     /// Get the controller arm entry index for a given label.
-    /// Returns the StateIndex of the arm whose label matches, used by flow() for O(1) lookup.
+    /// Returns the StateIndex of the arm whose label matches, used by send preview for O(1) lookup.
     pub(crate) fn controller_arm_entry_for_label(
         &self,
         scope_id: ScopeId,

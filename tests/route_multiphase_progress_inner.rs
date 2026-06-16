@@ -46,15 +46,17 @@ fn nested_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
-fn assert_flow_blocked<T, E: core::fmt::Debug>(result: Result<T, E>) {
-    let err = match result {
-        Ok(_) => panic!("post-route flow must wait for the selected route path"),
-        Err(err) => err,
-    };
+async fn assert_send_blocked<F>(future: F)
+where
+    F: core::future::Future<Output = hibana::EndpointResult<()>>,
+{
+    let err = future
+        .await
+        .expect_err("post-route send must wait for the selected route path");
     let rendered = format!("{err:?}");
     assert!(
         rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
-        "post-route flow must be rejected by selected path progress: {rendered}"
+        "post-route send must be rejected by selected path progress: {rendered}"
     );
 }
 
@@ -84,12 +86,10 @@ fn inner_route_completion_does_not_exit_outer_route_early() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<INNER_PAYLOAD, u8>>()
-                    .expect("inner payload flow")
-                    .send(&40)
+                    .send::<Msg<INNER_PAYLOAD, u8>>(&40)
                     .await
                     .expect("send inner payload");
-                assert_flow_blocked(local.flow::<Msg<POST_OUTER, u8>>());
+                assert_send_blocked(local.send::<Msg<POST_OUTER, u8>>(&0)).await;
 
                 let branch = worker.offer().await.expect("offer inner payload");
                 assert_eq!(branch.label(), INNER_PAYLOAD);
@@ -101,9 +101,7 @@ fn inner_route_completion_does_not_exit_outer_route_early() {
                     40
                 );
                 local
-                    .flow::<Msg<OUTER_LATER, u8>>()
-                    .expect("outer later flow")
-                    .send(&50)
+                    .send::<Msg<OUTER_LATER, u8>>(&50)
                     .await
                     .expect("send outer later");
                 assert_eq!(
@@ -114,9 +112,7 @@ fn inner_route_completion_does_not_exit_outer_route_early() {
                     50
                 );
                 local
-                    .flow::<Msg<POST_OUTER, u8>>()
-                    .expect("post outer flow")
-                    .send(&60)
+                    .send::<Msg<POST_OUTER, u8>>(&60)
                     .await
                     .expect("send post outer");
                 assert_eq!(

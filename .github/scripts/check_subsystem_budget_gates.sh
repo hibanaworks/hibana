@@ -35,7 +35,7 @@ run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  endpoint::tests::send_flow_and_runtime_descriptor_size_gates_hold \
+  endpoint::tests::send_future_and_runtime_descriptor_size_gates_hold \
   -- \
   --exact \
   --nocapture

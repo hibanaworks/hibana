@@ -57,7 +57,7 @@ fn panic(_: &PanicInfo<'_>) -> ! {
 pub extern "C" fn _start() -> ! {
     let header = FrameHeader::from_bytes([0, 0, 0, 0, 0, 0, 0, 7]);
     let err = ResolverError::reject();
-    let _ = header.bytes()[7] ^ (err.operation().as_bytes().len() as u8);
+    let _ = header.bytes()[7] ^ (core::mem::size_of_val(&err) as u8);
     loop {}
 }
 "#,

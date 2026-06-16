@@ -6,8 +6,6 @@ use hibana::{
 struct RecvOnly;
 
 impl WirePayload for RecvOnly {
-    const ALLOWS_ZERO_LENGTH: bool = true;
-
     type Decoded<'a> = Payload<'a>;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {

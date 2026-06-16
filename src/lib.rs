@@ -35,13 +35,13 @@
 //!     g::send::<1, 0, g::Msg<2, u32>>(),
 //! );
 //!
-//! endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+//! endpoint.send::<g::Msg<1, u32>>(&7).await?;
 //! let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
 //! ```
 //!
 //! The localside API is deliberately small:
 //!
-//! - [`Endpoint::flow`] previews the next send, and `.send(...)` consumes it;
+//! - [`Endpoint::send`] sends the next deterministic message;
 //! - [`Endpoint::recv`] receives a deterministic message;
 //! - [`Endpoint::offer`] observes a route branch;
 //! - [`RouteBranch::label`] reports the selected choreography label;
@@ -49,7 +49,7 @@
 //!   arm.
 //!
 //! A route branch whose selected arm begins with a send is handled by dropping
-//! the preview branch and then calling [`Endpoint::flow`] for that arm's first
+//! the preview branch and then calling [`Endpoint::send`] for that arm's first
 //! message.
 //!
 //! ```rust,ignore
@@ -60,7 +60,7 @@
 //!     }
 //!     11 => {
 //!         drop(branch);
-//!         endpoint.flow::<g::Msg<11, ()>>()?.send(&()).await?;
+//!         endpoint.send::<g::Msg<11, ()>>(&()).await?;
 //!     }
 //!     label => panic!("unexpected route label {label}"),
 //! }
@@ -212,4 +212,4 @@ mod rendezvous;
 // ============================================================================
 
 // Endpoint facade
-pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};
+pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};

@@ -28,6 +28,7 @@ type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport>;
 type LabelRewriteKitStorage = SessionKitStorage<'static, LabelRewriteTransport>;
 const MATERIALIZED_MISMATCH_RESOLVER: u16 = 41;
+static MATERIALIZED_MISMATCH_STATE: () = ();
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -248,7 +249,7 @@ fn route_with_late_role2<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&program)
 }
 
-fn choose_left() -> Result<DecisionResolution, hibana::runtime::resolver::ResolverError> {
+fn choose_left(_: &()) -> Result<DecisionResolution, hibana::runtime::resolver::ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
@@ -318,18 +319,14 @@ fn with_deterministic_route_workspace(
 
 async fn send_left(controller: &mut hibana::Endpoint<'static, 0>, value: u32) {
     controller
-        .flow::<Msg<71, u32>>()
-        .expect("left data flow")
-        .send(&value)
+        .send::<Msg<71, u32>>(&value)
         .await
         .expect("send left data");
 }
 
 async fn send_tail(controller: &mut hibana::Endpoint<'static, 0>, value: u32) {
     controller
-        .flow::<Msg<73, u32>>()
-        .expect("tail flow")
-        .send(&value)
+        .send::<Msg<73, u32>>(&value)
         .await
         .expect("send tail");
 }
@@ -421,7 +418,7 @@ fn forgotten_route_branch_leaves_endpoint_fail_closed() {
                 Ok(_) => panic!("forgotten route branch must leave endpoint fail-closed"),
                 Err(err) => err,
             };
-            assert_eq!(err.operation(), "offer");
+            assert!(format!("{err:?}").contains("operation: \"offer\""));
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("PhaseInvariant")
@@ -527,7 +524,7 @@ fn assert_headerless_demux_frame_fails_closed_not_pending() {
             Ok(_) => panic!("headerless demux frame must not materialize a route branch"),
             Err(error) => error,
         };
-        assert_eq!(error.operation(), "offer");
+        assert!(format!("{error:?}").contains("operation: \"offer\""));
         let rendered = format!("{error:?}");
         assert!(
             rendered.contains("PhaseInvariant"),
@@ -574,14 +571,20 @@ fn offer_materialized_label_mismatch_fails_closed() {
             let controller_program = resolved_controller_program();
             let worker_program = resolved_worker_program();
             rv.role(&controller_program)
-                .set_resolver(ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_fn(
-                    choose_left,
-                ))
+                .set_resolver(
+                    ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_state(
+                        &MATERIALIZED_MISMATCH_STATE,
+                        choose_left,
+                    ),
+                )
                 .expect("install controller resolver");
             rv.role(&worker_program)
-                .set_resolver(ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_fn(
-                    choose_left,
-                ))
+                .set_resolver(
+                    ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_state(
+                        &MATERIALIZED_MISMATCH_STATE,
+                        choose_left,
+                    ),
+                )
                 .expect("install worker resolver");
             let mut controller = rv
                 .session(sid)
@@ -603,7 +606,7 @@ fn offer_materialized_label_mismatch_fails_closed() {
                 Ok(_) => panic!("materialized label mismatch must fail closed"),
                 Err(error) => error,
             };
-            assert_eq!(error.operation(), "offer");
+            assert!(format!("{error:?}").contains("operation: \"offer\""));
             let rendered = format!("{error:?}");
             assert!(
                 rendered.contains("PhaseInvariant"),
@@ -643,7 +646,7 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                 Ok(_) => panic!("wrong payload shape must fail decode"),
                 Err(err) => err,
             };
-            assert_eq!(err.operation(), "decode");
+            assert!(format!("{err:?}").contains("operation: \"decode\""));
             assert!(
                 format!("{err:?}").contains("Codec"),
                 "wrong payload shape must preserve codec evidence: {err:?}"
@@ -653,7 +656,7 @@ fn codec_error_in_public_decode_poisons_same_generation() {
                 Ok(_) => panic!("poisoned generation must not re-offer the route arm"),
                 Err(err) => err,
             };
-            assert_eq!(err.operation(), "offer");
+            assert!(format!("{err:?}").contains("operation: \"offer\""));
         });
     });
 }
@@ -671,7 +674,7 @@ fn forgotten_decode_future_leaves_endpoint_fail_closed() {
                 Ok(_) => panic!("forgotten decode future must leave endpoint fail-closed"),
                 Err(err) => err,
             };
-            assert_eq!(err.operation(), "offer");
+            assert!(format!("{err:?}").contains("operation: \"offer\""));
         });
     });
 }

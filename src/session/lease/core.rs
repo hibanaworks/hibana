@@ -275,26 +275,6 @@ where
     }
 
     #[inline]
-    pub(crate) fn emit_lane_acquire(
-        &mut self,
-        rv_id: crate::session::types::RendezvousId,
-        sid: SessionId,
-        lane: Lane,
-    ) {
-        self.with_rendezvous(|rv| {
-            crate::observe::core::emit(
-                rv.tap(),
-                crate::observe::events::lane_acquire(
-                    rv.now32(),
-                    rv_id.raw() as u32,
-                    sid.raw(),
-                    lane.raw() as u16,
-                ),
-            );
-        });
-    }
-
-    #[inline]
     pub(crate) fn release_lane_with_tap(&mut self, lane: Lane) {
         self.with_rendezvous(|rv| match rv.release_lane(lane) {
             LaneRelease::Released(sid) => {

@@ -162,16 +162,16 @@ fn runtime_public_api_has_no_frame_header_u64_raw() {
             && header_impl.contains("pub const fn bytes(self) -> [u8; 8]"),
         "FrameHeader public surface must stay byte-based"
     );
-    for forbidden in [
-        "FrameHeader::from_raw",
-        "FrameHeader::raw",
-        "pub const fn from_raw(",
-        "pub const fn raw(",
-        "raw_header",
-    ] {
+    for forbidden in ["pub const fn from_raw(", "pub const fn raw(", "raw_header"] {
         assert!(
-            !header_impl.contains(forbidden) && !allowlist.contains(forbidden),
+            !header_impl.contains(forbidden),
             "runtime public API must not expose FrameHeader u64 raw surface: {forbidden}"
+        );
+    }
+    for forbidden in ["FrameHeader::from_raw", "FrameHeader::raw", "raw_header"] {
+        assert!(
+            !allowlist.contains(forbidden),
+            "runtime allowlist must not expose FrameHeader u64 raw surface: {forbidden}"
         );
     }
 }
@@ -217,6 +217,8 @@ fn tap_event_is_opaque_sixteen_byte_record() {
 #[test]
 fn tap_ring_bytes_stay_under_one_kib() {
     let consts = read("src/runtime_core/consts.rs");
+    let observe = read("src/observe/core.rs");
+    let runtime = read("src/runtime.rs");
     assert!(
         consts.contains("pub const RING_EVENTS: usize = 64;"),
         "mandatory tap ring capacity must stay at 64 events"
@@ -225,6 +227,26 @@ fn tap_ring_bytes_stay_under_one_kib() {
         core::mem::size_of::<[TapEvent; 64]>() <= 1024,
         "mandatory tap ring must stay at or below 1024 bytes"
     );
+    for forbidden in [
+        "RING_BUFFER_SIZE",
+        "USER_EVENT_RANGE_END",
+        "TapBuffer",
+        "tap_buffer",
+        "TapCapacity",
+        "tap_capacity",
+        "TapConfig",
+        "tap_config",
+        "cfg(feature = \"std\")",
+        "cfg(not(feature = \"std\"))",
+        "cfg(target_arch",
+    ] {
+        assert!(
+            !consts.contains(forbidden)
+                && !observe.contains(forbidden)
+                && !runtime.contains(forbidden),
+            "tap must stay one fixed Pico-class evidence surface without public capacity/config or host split: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -575,7 +597,7 @@ fn no_by_value_scope_frame_label_scratch_in_hot_paths() {
     ] {
         assert!(
             !hot_path.contains(forbidden),
-            "scope frame-label scratch must not flow by value through hot path signatures: {forbidden}"
+            "scope frame-label scratch must not move by value through hot path signatures: {forbidden}"
         );
     }
     assert!(

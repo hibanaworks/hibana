@@ -128,7 +128,7 @@ impl Transport for PendingSendTransport {
 }
 
 #[test]
-fn drop_flow_keeps_endpoint_on_same_send_step() {
+fn drop_unpolled_send_future_keeps_endpoint_on_same_send_step() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&TEST_KIT_SLOT, |cluster| {
             let send_protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
@@ -151,22 +151,19 @@ fn drop_flow_keeps_endpoint_on_same_send_step() {
                 .expect("attach worker");
 
             futures::executor::block_on(async {
-                let flow = controller
-                    .flow::<Msg<SEND_LOGICAL, u32>>()
-                    .expect("initial flow preview");
-                drop(flow);
+                let dropped_payload = 66u32;
+                let send = controller.send::<Msg<SEND_LOGICAL, u32>>(&dropped_payload);
+                drop(send);
 
                 let () = controller
-                    .flow::<Msg<SEND_LOGICAL, u32>>()
-                    .expect("flow must remain available after drop")
-                    .send(&77)
+                    .send::<Msg<SEND_LOGICAL, u32>>(&77)
                     .await
-                    .expect("send after dropped flow");
+                    .expect("send after dropped send future");
 
                 let payload = worker
                     .recv::<Msg<SEND_LOGICAL, u32>>()
                     .await
-                    .expect("worker recv after dropped flow");
+                    .expect("worker recv after dropped send future");
                 assert_eq!(payload, 77);
             });
         });
@@ -207,10 +204,8 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                 let waker = noop_waker_ref();
                 let mut cx = Context::from_waker(waker);
                 {
-                    let flow = controller
-                        .flow::<Msg<SEND_LOGICAL, u32>>()
-                        .expect("initial flow preview");
-                    let mut send = pin!(flow.send(&88));
+                    let payload = 88u32;
+                    let mut send = pin!(controller.send::<Msg<SEND_LOGICAL, u32>>(&payload));
                     assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
                 }
                 assert_eq!(state.polls.get(), 1, "pending send future should poll once");
@@ -218,9 +213,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                 state.set_ready(true);
                 futures::executor::block_on(async {
                     let () = controller
-                        .flow::<Msg<SEND_LOGICAL, u32>>()
-                        .expect("flow must remain available after cancellation")
-                        .send(&99)
+                        .send::<Msg<SEND_LOGICAL, u32>>(&99)
                         .await
                         .expect("send after cancelled future");
 
@@ -236,7 +229,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
 }
 
 #[test]
-fn forgotten_started_send_future_leaves_flow_fail_closed() {
+fn forgotten_started_send_future_leaves_send_fail_closed() {
     PENDING_SEND_STATE.with(|state| {
         state.reset();
         let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
@@ -270,20 +263,15 @@ fn forgotten_started_send_future_leaves_flow_fail_closed() {
                 let waker = noop_waker_ref();
                 let mut cx = Context::from_waker(waker);
                 let payload = 88u32;
-                let flow = controller
-                    .flow::<Msg<SEND_LOGICAL, u32>>()
-                    .expect("initial flow preview");
-                let mut send = Box::pin(flow.send(&payload));
+                let mut send = Box::pin(controller.send::<Msg<SEND_LOGICAL, u32>>(&payload));
                 assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
                 core::mem::forget(send);
 
-                let err = match controller.flow::<Msg<SEND_LOGICAL, u32>>() {
-                    Ok(_) => {
-                        panic!("forgotten started send future must reject the same send preview")
-                    }
-                    Err(err) => err,
-                };
-                assert_eq!(err.operation(), "flow");
+                let err = futures::executor::block_on(
+                    controller.send::<Msg<SEND_LOGICAL, u32>>(&payload),
+                )
+                .expect_err("forgotten started send future must reject the same send");
+                assert!(format!("{err:?}").contains("operation: \"send\""));
                 assert!(
                     format!("{err:?}").contains("PhaseInvariant"),
                     "busy endpoint must report phase invariant evidence: {err:?}"

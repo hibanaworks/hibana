@@ -43,7 +43,7 @@ src/endpoint/kernel/layout.rs	590	1	recursive
 src/endpoint/kernel/decision_state.rs	900	1	recursive
 src/endpoint/kernel/endpoint_init.rs	520	1	recursive
 src/endpoint/kernel/public_ops.rs	460	1	recursive
-src/endpoint/kernel/core.rs	650	1	recursive
+src/endpoint/kernel/core.rs	560	1	recursive
 src/endpoint/kernel/core/commit_delta.rs	520	1	recursive
 src/endpoint/kernel/core/frontier_helpers.rs	430	1	recursive
 src/endpoint/kernel/core/public_types.rs	210	1	recursive
@@ -51,8 +51,8 @@ src/endpoint/kernel/core/decision_resolver.rs	50	1	recursive
 src/endpoint/kernel/core/decision_resolver/impls.rs	160	1	recursive
 src/endpoint/kernel/core/decision_resolver/impls/select.rs	650	1	recursive
 src/endpoint/kernel/core/route_preview.rs	360	1	recursive
-src/endpoint/kernel/core/route_preview_flow.rs	160	1	recursive
-src/endpoint/kernel/core/runtime_types.rs	560	1	recursive
+src/endpoint/kernel/core/send_preview.rs	160	1	recursive
+src/endpoint/kernel/core/runtime_types.rs	480	1	recursive
 src/endpoint/kernel/core/send_ops.rs	500	1	recursive
 src/rendezvous/core/access_port.rs	250	1	recursive
 src/rendezvous/core/endpoint_leases.rs	200	1	recursive
@@ -106,9 +106,9 @@ src/global/typestate/cursor/scope_route.rs	860	1	recursive
 src/global/typestate/cursor/scope_route/navigation.rs	620	1	recursive
 src/global/typestate/facts.rs	700	1	recursive
 src/global/typestate/facts/meta.rs	140	1	recursive
-src/observe/core.rs	360	1	recursive
+src/observe/core.rs	220	1	recursive
 src/transport.rs	420	1	recursive
 src/endpoint/kernel/recv.rs	380	1	recursive
-src/transport/wire.rs	584	1	recursive
+src/transport/wire.rs	520	1	recursive
 src/endpoint/kernel/core/runtime_types/commit.rs	400	1	recursive
-src/global/typestate/cursor/scope_route/event_flow.rs	730	1	recursive
+src/global/typestate/cursor/scope_route/event_progress.rs	730	1	recursive

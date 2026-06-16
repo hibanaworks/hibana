@@ -1,23 +1,8 @@
 //! Tap event identifiers for the core observability surface.
 //!
-//! These constants define the tap event IDs used throughout the observability
-//! infrastructure. Keep them in sync with the documentation in `observe::core`.
-//!
-//! # Dual-Ring Event ID Allocation
-//!
-//! Events are routed to separate ring buffers based on ID range:
-//!
-//! - **User Ring** (`0x0000..0x00FF`): application/custom events
-//! - **Infra Ring** (`0x0100..0xFFFF`): System events (ENDPOINT_SEND, LANE_ACQUIRE, etc.)
-//!
-//! This separation prevents Observer Effect feedback loops where streaming
-//! infrastructure events flood the ring and trigger continuous wake cycles.
-
-// ────────────── Event ID Range Boundaries ──────────────
-
-/// Upper bound (exclusive) for User Ring events.
-/// Events with `id < USER_EVENT_RANGE_END` are routed to the User Ring.
-pub const USER_EVENT_RANGE_END: u16 = 0x0100;
+//! These constants define the canonical runtime evidence IDs emitted by Hibana
+//! internals. Application telemetry belongs in choreography, not in the tap
+//! ring.
 
 // ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
@@ -77,17 +62,19 @@ pub const TRANSPORT_FAULT_FAILED: u8 = 4;
 
 // ───────────── Lane lifecycle (0x0210-0x021F) ─────────────
 
-/// Lane acquired via LaneLease (RAII lifecycle start).
+/// Session/lane association acquired when the resident association count moves
+/// from zero to one.
 ///
 /// - `arg0`: Rendezvous identifier (u32)
 /// - `arg1`: Packed session/lane (u32)
 ///
 /// # Observable Properties
 /// - Every LANE_ACQUIRE must eventually have a matching LANE_RELEASE
-/// - Multiple LANE_ACQUIRE for the same lane without RELEASE indicates violation
+/// - Multiple LANE_ACQUIRE for the same session/lane without RELEASE indicates violation
 pub const LANE_ACQUIRE: u16 = 0x0210;
 
-/// Lane released via LaneLease::Drop (RAII lifecycle end).
+/// Session/lane association released when the resident association count moves
+/// from one to zero.
 ///
 /// - `arg0`: Rendezvous identifier (u32)
 /// - `arg1`: Packed session/lane (u32)

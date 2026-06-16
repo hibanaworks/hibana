@@ -1,6 +1,15 @@
-pub use Program;
-pub use Message;
-pub use Msg;
-pub use send, seq, route, par;
-pub fn roll(self) -> Program<Roll<Steps>>;
-pub use Send, Seq, Route, Par, Resolve, Roll;
+pub use crate::global::Message;
+pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
+pub struct Program<Steps> {
+pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>> where M: Message, {
+Program::roll pub const fn roll(self) -> Program<Roll<Steps>> {
+pub const fn seq<LeftSteps, RightSteps>( left: Program<LeftSteps>, right: Program<RightSteps>, ) -> Program<Seq<LeftSteps, RightSteps>> {
+pub const fn route<LeftSteps, RightSteps>( left: Program<LeftSteps>, right: Program<RightSteps>, ) -> Program<Route<LeftSteps, RightSteps>> {
+pub const fn par<LeftSteps, RightSteps>( left: Program<LeftSteps>, right: Program<RightSteps>, ) -> Program<Par<LeftSteps, RightSteps>> {
+Program::resolve pub const fn resolve<const RESOLVER_ID: u16>( self, ) -> Program<Resolve<Route<LeftSteps, RightSteps>, RESOLVER_ID>> {
+pub struct Send<const FROM: u8, const TO: u8, M>(PhantomData<M>);
+pub struct Seq<Left, Right>(PhantomData<(Left, Right)>);
+pub struct Route<Left, Right>(PhantomData<(Left, Right)>);
+pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
+pub struct Resolve<Inner, const RESOLVER_ID: u16>(PhantomData<Inner>);
+pub struct Roll<Inner>(PhantomData<Inner>);

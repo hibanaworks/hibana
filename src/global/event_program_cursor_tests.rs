@@ -107,8 +107,8 @@ fn production_cursor_reenters_completed_rolled_seq_head() {
     );
     let (meta, cursor_index) = runtime
         .cursor()
-        .flow_preview_send_meta_for_label::<0>(91, |_| None, |_| None, |_, _| 0)
-        .expect("rolled head should be flow-previewable");
+        .send_preview_meta_for_label::<0>(91, |_| None, |_| None, |_, _| 0)
+        .expect("rolled head should be send-previewable");
     assert_eq!(meta.label, 91);
     assert_eq!(state_index_to_usize(cursor_index), 0);
 }
@@ -129,13 +129,13 @@ fn production_cursor_reenters_rolled_route_head_inside_sequence() {
     runtime.commit_label(161);
     runtime
         .cursor()
-        .flow_preview_send_meta_for_label::<0>(162, |_| None, |_| None, |_, _| 0)
-        .expect("rolled route head should be flow-previewable after prefix");
+        .send_preview_meta_for_label::<0>(162, |_| None, |_| None, |_, _| 0)
+        .expect("rolled route head should be send-previewable after prefix");
     runtime.commit_label(162);
     runtime
         .cursor()
-        .flow_preview_send_meta_for_label::<0>(162, |_| None, |_| None, |_, _| 0)
-        .expect("rolled route head should be flow-previewable after selected arm completes");
+        .send_preview_meta_for_label::<0>(162, |_| None, |_| None, |_, _| 0)
+        .expect("rolled route head should be send-previewable after selected arm completes");
 }
 
 #[test]

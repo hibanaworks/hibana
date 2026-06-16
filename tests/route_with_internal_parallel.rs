@@ -109,16 +109,12 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
 
             futures::executor::block_on(async {
                 controller
-                    .flow::<Msg<1, u8>>()
-                    .expect("prefix request 1 flow")
-                    .send(&1)
+                    .send::<Msg<1, u8>>(&1)
                     .await
                     .expect("send prefix request 1");
                 assert_eq!(local.recv::<Msg<1, u8>>().await.expect("recv prefix 1"), 1);
                 local
-                    .flow::<Msg<2, u8>>()
-                    .expect("prefix reply 1 flow")
-                    .send(&2)
+                    .send::<Msg<2, u8>>(&2)
                     .await
                     .expect("send prefix reply 1");
                 assert_eq!(
@@ -129,16 +125,12 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                     2
                 );
                 controller
-                    .flow::<Msg<3, u8>>()
-                    .expect("prefix request 2 flow")
-                    .send(&3)
+                    .send::<Msg<3, u8>>(&3)
                     .await
                     .expect("send prefix request 2");
                 assert_eq!(local.recv::<Msg<3, u8>>().await.expect("recv prefix 2"), 3);
                 local
-                    .flow::<Msg<4, u8>>()
-                    .expect("prefix reply 2 flow")
-                    .send(&4)
+                    .send::<Msg<4, u8>>(&4)
                     .await
                     .expect("send prefix reply 2");
                 assert_eq!(
@@ -149,16 +141,12 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                     4
                 );
                 controller
-                    .flow::<Msg<5, u8>>()
-                    .expect("prefix request 3 flow")
-                    .send(&5)
+                    .send::<Msg<5, u8>>(&5)
                     .await
                     .expect("send prefix request 3");
                 assert_eq!(local.recv::<Msg<5, u8>>().await.expect("recv prefix 3"), 5);
                 local
-                    .flow::<Msg<6, u8>>()
-                    .expect("prefix reply 3 flow")
-                    .send(&6)
+                    .send::<Msg<6, u8>>(&6)
                     .await
                     .expect("send prefix reply 3");
                 assert_eq!(
@@ -169,9 +157,7 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                     6
                 );
                 controller
-                    .flow::<Msg<ROUTE_LEFT, ()>>()
-                    .expect("left route choice flow")
-                    .send(&())
+                    .send::<Msg<ROUTE_LEFT, ()>>(&())
                     .await
                     .expect("commit left route choice");
                 let branch = local.offer().await.expect("offer selected route choice");
@@ -181,9 +167,7 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                     .await
                     .expect("decode left route choice");
                 controller
-                    .flow::<Msg<FD_READ_REQ, u8>>()
-                    .expect("outer lane request flow")
-                    .send(&7)
+                    .send::<Msg<FD_READ_REQ, u8>>(&7)
                     .await
                     .expect("send outer lane request");
                 assert_eq!(
@@ -195,30 +179,26 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                 );
 
                 local
-                    .flow::<Msg<HUMAN_REQ, u8>>()
-                    .expect("parallel human request flow")
-                    .send(&1)
+                    .send::<Msg<HUMAN_REQ, u8>>(&1)
                     .await
                     .expect("send parallel human request");
-                let err = match local.flow::<Msg<FD_READ_RET, u8>>() {
-                    Ok(_) => panic!("join must stay blocked until every parallel lane completes"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<FD_READ_RET, u8>>(&0)
+                    .await
+                    .expect_err("join must stay blocked until every parallel lane completes");
                 let rendered = format!("{err:?}");
                 assert!(
                     rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
                     "early join must be rejected by progress evidence: {rendered}"
                 );
                 local
-                    .flow::<Msg<SENSOR_REQ, u8>>()
-                    .expect("parallel sensor request flow")
-                    .send(&2)
+                    .send::<Msg<SENSOR_REQ, u8>>(&2)
                     .await
                     .expect("send parallel sensor request");
-                let err = match local.flow::<Msg<FD_READ_RET, u8>>() {
-                    Ok(_) => panic!("join must stay blocked until nested lane reply completes"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<FD_READ_RET, u8>>(&0)
+                    .await
+                    .expect_err("join must stay blocked until nested lane reply completes");
                 let rendered = format!("{err:?}");
                 assert!(
                     rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
@@ -239,9 +219,7 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                     2
                 );
                 human
-                    .flow::<Msg<HUMAN_TEXT, u8>>()
-                    .expect("human response flow")
-                    .send(&3)
+                    .send::<Msg<HUMAN_TEXT, u8>>(&3)
                     .await
                     .expect("send human response");
                 assert_eq!(
@@ -252,9 +230,7 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                     3
                 );
                 local
-                    .flow::<Msg<FD_READ_RET, u8>>()
-                    .expect("join response flow")
-                    .send(&4)
+                    .send::<Msg<FD_READ_RET, u8>>(&4)
                     .await
                     .expect("send join response");
                 assert_eq!(

@@ -1,15 +1,15 @@
-use super::{ClusterError, EffIndex, MaybeUninit, PhantomData, RendezvousId, fmt};
+use super::{ClusterError, EffIndex, PhantomData, RendezvousId, fmt};
 use crate::diag::Callsite;
 // # Unsafe Owner Contract
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
-// cluster. Resolver registration records either a stateless function pointer or
-// a typed state pointer together with the matching trampoline; invocation must
-// use the recorded trampoline for that exact resolver slot. The resident
-// resolver table is supplied by the cluster storage owner and bound/rebound
-// only through the explicit storage-layout paths in this module. Slot contents
-// are represented as initialized `Option<DynamicResolverEntry>` values, and the
-// raw state pointer is never exposed outside the resolver dispatch boundary.
+// cluster. Resolver registration records one typed state pointer together with
+// the matching trampoline; invocation must use the recorded trampoline for that
+// exact resolver slot. The resident resolver table is supplied by the cluster
+// storage owner and bound/rebound only through the explicit storage-layout paths
+// in this module. Slot contents are represented as initialized
+// `Option<DynamicResolverEntry>` values, and the raw state pointer is never
+// exposed outside the resolver dispatch boundary.
 
 mod bucket;
 pub(crate) use bucket::ResolverBucket;
@@ -75,7 +75,7 @@ pub struct ResolverError {
 impl fmt::Debug for ResolverError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("ResolverError");
-        debug.field("operation", &self.operation());
+        debug.field("operation", &self.op_name());
         #[cfg(feature = "std")]
         {
             debug
@@ -122,7 +122,7 @@ impl ResolverError {
     }
 
     #[inline]
-    pub const fn operation(&self) -> &'static str {
+    const fn op_name(&self) -> &'static str {
         match self.op {
             ResolverOp::Reject => "reject",
             ResolverOp::ResolveDecision => "resolve_decision",
@@ -147,9 +147,48 @@ struct DecisionResolverStatePayload<S> {
 }
 
 #[derive(Clone, Copy)]
-union DecisionResolverStorage {
-    stateless: fn() -> Result<DecisionResolution, ResolverError>,
-    _stateful: DecisionResolverStatePayload<()>,
+struct DecisionResolverStorage {
+    payload: DecisionResolverStatePayload<()>,
+}
+
+impl DecisionResolverStorage {
+    #[inline]
+    fn erase<S>(payload: DecisionResolverStatePayload<S>) -> Self {
+        const {
+            assert!(
+                core::mem::size_of::<DecisionResolverStatePayload<S>>()
+                    == core::mem::size_of::<DecisionResolverStatePayload<()>>()
+            );
+            assert!(
+                core::mem::align_of::<DecisionResolverStatePayload<S>>()
+                    == core::mem::align_of::<DecisionResolverStatePayload<()>>()
+            );
+        }
+        Self {
+            payload: unsafe {
+                /* SAFETY: the payload layout is asserted above; the typed trampoline restores S before invocation. */
+                core::mem::transmute_copy(&payload)
+            },
+        }
+    }
+
+    #[inline]
+    unsafe fn restore<S>(self) -> DecisionResolverStatePayload<S> {
+        const {
+            assert!(
+                core::mem::size_of::<DecisionResolverStatePayload<S>>()
+                    == core::mem::size_of::<DecisionResolverStatePayload<()>>()
+            );
+            assert!(
+                core::mem::align_of::<DecisionResolverStatePayload<S>>()
+                    == core::mem::align_of::<DecisionResolverStatePayload<()>>()
+            );
+        }
+        unsafe {
+            /* SAFETY: `erase::<S>` stored the payload together with the matching typed trampoline. */
+            core::mem::transmute_copy(&self.payload)
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -187,45 +226,14 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
         state: &'cfg S,
         resolver: fn(&S) -> Result<DecisionResolution, ResolverError>,
     ) -> Self {
-        const {
-            assert!(
-                core::mem::size_of::<DecisionResolverStatePayload<S>>()
-                    == core::mem::size_of::<DecisionResolverStatePayload<()>>()
-            );
-            assert!(
-                core::mem::align_of::<DecisionResolverStatePayload<S>>()
-                    == core::mem::align_of::<DecisionResolverStatePayload<()>>()
-            );
-        }
         let payload = DecisionResolverStatePayload {
             state: core::ptr::from_ref(state),
             resolver,
         };
-        let mut storage = MaybeUninit::<DecisionResolverStorage>::uninit();
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
-        unsafe {
-            storage
-                .as_mut_ptr()
-                .cast::<DecisionResolverStatePayload<S>>()
-                .write(payload);
-        }
         Self {
             inner: ErasedResolverRef {
-                storage: /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { storage.assume_init() },
+                storage: DecisionResolverStorage::erase(payload),
                 dispatch: dispatch_decision_state::<S>,
-                _marker: PhantomData,
-            },
-        }
-    }
-
-    #[inline]
-    pub fn decision_fn(resolver: fn() -> Result<DecisionResolution, ResolverError>) -> Self {
-        Self {
-            inner: ErasedResolverRef {
-                storage: DecisionResolverStorage {
-                    stateless: resolver,
-                },
-                dispatch: dispatch_decision_fn,
                 _marker: PhantomData,
             },
         }
@@ -249,30 +257,9 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
 unsafe fn dispatch_decision_state<S>(
     storage: DecisionResolverStorage,
 ) -> Result<DecisionResolution, ResolverError> {
-    const {
-        assert!(
-            core::mem::size_of::<DecisionResolverStatePayload<S>>()
-                == core::mem::size_of::<DecisionResolverStatePayload<()>>()
-        );
-        assert!(
-            core::mem::align_of::<DecisionResolverStatePayload<S>>()
-                == core::mem::align_of::<DecisionResolverStatePayload<()>>()
-        );
-    }
-    let payload = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe {
-        (&storage as *const DecisionResolverStorage)
-            .cast::<DecisionResolverStatePayload<S>>()
-            .read()
-    };
+    let payload = unsafe { storage.restore::<S>() };
     let state = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*payload.state };
     (payload.resolver)(state)
-}
-
-unsafe fn dispatch_decision_fn(
-    storage: DecisionResolverStorage,
-) -> Result<DecisionResolution, ResolverError> {
-    let resolver = /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */ unsafe { storage.stateless };
-    resolver()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

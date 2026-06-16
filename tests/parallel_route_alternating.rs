@@ -81,50 +81,28 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
                 .expect("attach worker role");
 
             futures::executor::block_on(async {
-                local
-                    .flow::<Msg<ALT_A, u8>>()
-                    .expect("A flow")
-                    .send(&1)
+                local.send::<Msg<ALT_A, u8>>(&1).await.expect("send A");
+                let err = local
+                    .send::<Msg<ALT_B, u8>>(&0)
                     .await
-                    .expect("send A");
-                let err = match local.flow::<Msg<ALT_B, u8>>() {
-                    Ok(_) => panic!("inner right payload must be unselected"),
-                    Err(err) => err,
-                };
+                    .expect_err("inner right payload must be unselected");
                 assert_join_blocked(&format!("{err:?}"));
-                let err = match local.flow::<Msg<ALT_R, u8>>() {
-                    Ok(_) => panic!("outer right payload must be unselected"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<ALT_R, u8>>(&0)
+                    .await
+                    .expect_err("outer right payload must be unselected");
                 assert_join_blocked(&format!("{err:?}"));
-                local
-                    .flow::<Msg<ALT_C, u8>>()
-                    .expect("C flow")
-                    .send(&2)
+                local.send::<Msg<ALT_C, u8>>(&2).await.expect("send C");
+                local.send::<Msg<ALT_D, u8>>(&5).await.expect("send D");
+                let err = local
+                    .send::<Msg<ALT_POST, u8>>(&0)
                     .await
-                    .expect("send C");
-                local
-                    .flow::<Msg<ALT_D, u8>>()
-                    .expect("D flow after A and C")
-                    .send(&5)
-                    .await
-                    .expect("send D");
-                let err = match local.flow::<Msg<ALT_POST, u8>>() {
-                    Ok(_) => panic!("Post must wait for sibling E"),
-                    Err(err) => err,
-                };
+                    .expect_err("Post must wait for sibling E");
                 assert_join_blocked(&format!("{err:?}"));
 
+                local.send::<Msg<ALT_E, u8>>(&3).await.expect("send E");
                 local
-                    .flow::<Msg<ALT_E, u8>>()
-                    .expect("E flow")
-                    .send(&3)
-                    .await
-                    .expect("send E");
-                local
-                    .flow::<Msg<ALT_POST, u8>>()
-                    .expect("Post flow")
-                    .send(&4)
+                    .send::<Msg<ALT_POST, u8>>(&4)
                     .await
                     .expect("send Post");
 

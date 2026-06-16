@@ -37,7 +37,7 @@ hibana::g choreography
   -> registered rendezvous .session(...).role(...)
   -> role witness .enter()
   -> Endpoint
-  -> flow().send() / recv() / offer() / RouteBranch::decode()
+  -> send() / recv() / offer() / RouteBranch::decode()
 ```
 
 There are only two public surfaces:
@@ -120,7 +120,7 @@ Shared memory is especially not protocol authority. A runtime crate may
 use memory, atomics, interrupts, DMA, or OS primitives as private transport or
 resolver implementation mechanics, but those mechanics must first become
 transport frames, descriptor-checked ingress evidence, or route resolver inputs
-at explicit resolver sites. They never replace `flow().send()`, `recv()`,
+at explicit resolver sites. They never replace `send()`, `recv()`,
 `offer()`, or `RouteBranch::decode()`.
 
 ## Quick Start
@@ -131,7 +131,7 @@ attached.
 ```rust,ignore
 use hibana::g;
 
-endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+endpoint.send::<g::Msg<1, u32>>(&7).await?;
 let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
 ```
 
@@ -139,10 +139,10 @@ That is the main user path:
 
 1. define messages and choreography with `hibana::g`;
 2. receive an attached `Endpoint` from your protocol crate;
-3. call `flow().send()`, `recv()`, `offer()`, and `RouteBranch::decode()`.
+3. call `send()`, `recv()`, `offer()`, and `RouteBranch::decode()`.
 
-`flow()` and `offer()` are previews. Endpoint progress happens when
-`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds. A failed preview
+`offer()` previews route selection. Endpoint progress happens when `send()`,
+`recv()`, or `RouteBranch::decode()` succeeds. A failed send descriptor check
 does not move the endpoint and does not choose an alternate route. Preview
 evidence can wake or guide polling, but it cannot create a continuation.
 
@@ -177,13 +177,12 @@ transport handle, heap object, or reusable runtime object.
 
 ### Sending And Receiving
 
-Use `flow().send()` when the next local step is a send known from the
+Use `send()` when the next local step is a send known from the
 choreography:
 
 ```rust,ignore
 endpoint
-    .flow::<g::Msg<10, [u8; 4]>>()?
-    .send(&[1, 2, 3, 4])
+    .send::<g::Msg<10, [u8; 4]>>(&[1, 2, 3, 4])
     .await?;
 ```
 
@@ -237,7 +236,7 @@ let branch = endpoint.offer().await?;
 match branch.label() {
     40 => {
         drop(branch);
-        endpoint.flow::<g::Msg<40, ()>>()?.send(&()).await?;
+        endpoint.send::<g::Msg<40, ()>>(&()).await?;
     }
     41 => {
         let bytes = branch.decode::<g::Msg<41, [u8; 8]>>().await?;
@@ -259,7 +258,7 @@ Endpoint operations return `EndpointResult<T>`, so application code should use
 ordinary `?`:
 
 ```rust,ignore
-endpoint.flow::<g::Msg<1, u32>>()?.send(&7).await?;
+endpoint.send::<g::Msg<1, u32>>(&7).await?;
 let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
 let branch = endpoint.offer().await?;
 let payload = branch.decode::<g::Msg<3, [u8; 4]>>().await?;
@@ -290,14 +289,14 @@ hidden route authority or an alternate branch inside the current generation.
 
 The public evidence envelopes are domain-specific:
 
-- `EndpointError` for `flow`, `send`, `recv`, `offer`, and `decode`;
+- `EndpointError` for `send`, `recv`, `offer`, and `decode`;
 - `ResolverError` for resolver registration and resolver decisions;
 - `AttachError` for rendezvous and endpoint attach.
 
 There is no public wide `HibanaError`, and public error-kind enums are not part
-of the application decision surface. Public diagnostics expose the compact
-operation name; host `Debug` output may include extra detail, but Pico-facing
-code does not need source-path accessors.
+of the application decision surface. Error values travel as their domain type;
+runtime evidence uses tap, and host `Debug` output records the compact boundary
+name. Pico-facing code does not need string accessors or source-path accessors.
 
 ### Parallel Composition
 
@@ -479,7 +478,9 @@ struct ExternalResolverOwner {
     local_resolver: ResolverRef<'static, ROUTE_RESOLVER>,
 }
 
-fn local_decision() -> Result<DecisionResolution, ResolverError> {
+static LOCAL_ROUTE_STATE: () = ();
+
+fn local_decision(_: &()) -> Result<DecisionResolution, ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
@@ -497,7 +498,10 @@ let routed = g::route(local_arm, external_arm).resolve::<ROUTE_RESOLVER>();
 let role0: RoleProgram<0> = project(&routed);
 let owner = ExternalResolverOwner {
     loaded: true,
-    local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_fn(local_decision),
+    local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_state(
+        &LOCAL_ROUTE_STATE,
+        local_decision,
+    ),
 };
 
 rv.role(&role0)

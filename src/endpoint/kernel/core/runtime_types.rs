@@ -57,29 +57,6 @@ pub(crate) struct SendCommitOutcome<'rv> {
     pub(crate) _borrow: core::marker::PhantomData<&'rv ()>,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RecvPayloadMode {
-    RequiresPayload = 0,
-    AllowsZeroLength = 1,
-}
-
-impl RecvPayloadMode {
-    #[inline]
-    pub(crate) const fn from_allows_zero_length(allows_zero_length: bool) -> Self {
-        if allows_zero_length {
-            Self::AllowsZeroLength
-        } else {
-            Self::RequiresPayload
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn allows_zero_length(self) -> bool {
-        matches!(self, Self::AllowsZeroLength)
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct MsgCore {
@@ -111,30 +88,19 @@ impl MsgCore {
 #[derive(Clone, Copy)]
 pub(crate) struct RecvRuntimeDesc {
     pub(crate) core: MsgCore,
-    payload_mode: RecvPayloadMode,
 }
 
 impl RecvRuntimeDesc {
     #[inline]
-    pub(crate) const fn new(
-        logical_label: u8,
-        frame_label: crate::transport::FrameLabel,
-        payload_mode: RecvPayloadMode,
-    ) -> Self {
+    pub(crate) const fn new(logical_label: u8, frame_label: crate::transport::FrameLabel) -> Self {
         Self {
             core: MsgCore::new(logical_label, frame_label),
-            payload_mode,
         }
     }
 
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
-    }
-
-    #[inline]
-    pub(crate) const fn payload_mode(self) -> RecvPayloadMode {
-        self.payload_mode
     }
 }
 

@@ -1,18 +1,4 @@
 pub use crate::session::cluster::error::AttachError;
-pub struct SessionKit<'cfg, T> where T: crate::transport::Transport + 'cfg, {
-pub struct SessionKitStorage<'cfg, T> where T: crate::transport::Transport + 'cfg, {
-pub const fn uninit() -> Self {
-pub fn init(&mut self) -> &SessionKit<'cfg, T> {
-pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {
-pub struct RendezvousKit<'kit, 'cfg, T> {
-pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> {
-pub struct SessionRendezvousKit<'kit, 'cfg, T> {
-pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> {
-pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> SessionRendezvousKit<'kit, 'cfg, T> {
-pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T> {
-pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T> {
-pub fn enter( self, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
-pub fn set_resolver<const RESOLVER: u16>( &self, resolver: crate::runtime::resolver::ResolverRef<'cfg>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
 pub mod program {
 pub use crate::global::program::Projectable;
 pub use crate::global::role_program::{RoleProgram, project};
@@ -27,4 +13,76 @@ pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, Resolv
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 pub mod transport {
-pub use crate::transport::{FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedFrame, Transport, TransportError};
+pub use crate::transport::{ FrameHeader, FrameLabel, Outgoing, PortOpen, ReceivedFrame, Transport, TransportError, };
+pub struct SessionKit<'cfg, T> where T: crate::transport::Transport + 'cfg, {
+pub struct SessionKitStorage<'cfg, T> where T: crate::transport::Transport + 'cfg, {
+pub struct RendezvousKit<'kit, 'cfg, T> where T: crate::transport::Transport + 'cfg, {
+pub struct SessionRendezvousKit<'kit, 'cfg, T> where T: crate::transport::Transport + 'cfg, {
+pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> where T: crate::transport::Transport + 'cfg, {
+pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> where T: crate::transport::Transport + 'cfg, {
+SessionKitStorage::uninit pub const fn uninit() -> Self {
+SessionKitStorage::init pub fn init(&mut self) -> &SessionKit<'cfg, T> {
+SessionKit::rendezvous pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {
+RendezvousKit::session pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> SessionRendezvousKit<'kit, 'cfg, T> {
+RendezvousKit::tap pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
+RendezvousKit::role pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T> {
+SessionRendezvousKit::role pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T> {
+SessionRoleKit::enter pub fn enter(self) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
+RoleKit::set_resolver pub fn set_resolver<const RESOLVER: u16>( &self, resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
+pub struct Config<'a> {
+Config::from_resources pub fn from_resources(slab: &'a mut [u8]) -> Self {
+pub enum DecisionArm {
+pub enum DecisionResolution {
+pub struct ResolverError {
+ResolverError::reject pub fn reject() -> Self {
+pub struct ResolverRef<'cfg, const RESOLVER_ID: u16> {
+ResolverRef::decision_state pub fn decision_state<S: 'cfg>( state: &'cfg S, resolver: fn(&S) -> Result<DecisionResolution, ResolverError>, ) -> Self {
+ResolverRef::evaluate pub fn evaluate(self) -> Result<DecisionResolution, ResolverError> {
+pub struct AttachError {
+pub struct TapPort<'a> {
+pub const ENDPOINT_SEND: u16 = 0x0202;
+pub const ENDPOINT_RECV: u16 = 0x0203;
+pub const ENDPOINT_SESSION: u16 = 0x0204;
+pub const TRANSPORT_MISMATCH: u16 = 0x0205;
+pub const TRANSPORT_MISMATCH_SESSION: u8 = 1;
+pub const TRANSPORT_MISMATCH_LANE: u8 = 2;
+pub const TRANSPORT_MISMATCH_SOURCE_ROLE: u8 = 3;
+pub const TRANSPORT_MISMATCH_PEER_ROLE: u8 = 4;
+pub const TRANSPORT_MISMATCH_LABEL: u8 = 5;
+pub const TRANSPORT_FRAME: u16 = 0x0206;
+pub const TRANSPORT_FAULT: u16 = 0x0207;
+pub const TRANSPORT_FAULT_OFFLINE: u8 = 1;
+pub const TRANSPORT_FAULT_DEADLINE: u8 = 2;
+pub const TRANSPORT_FAULT_CAPACITY: u8 = 3;
+pub const TRANSPORT_FAULT_FAILED: u8 = 4;
+pub const LANE_ACQUIRE: u16 = 0x0210;
+pub const LANE_RELEASE: u16 = 0x0211;
+pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
+pub const RESOLVER_AUDIT: u16 = 0x0407;
+pub struct Outgoing<'f> {
+Outgoing::frame_label pub const fn frame_label(&self) -> FrameLabel {
+Outgoing::target_role pub const fn target_role(&self) -> u8 {
+Outgoing::lane pub const fn lane(&self) -> u8 {
+Outgoing::payload pub const fn payload(&self) -> Payload<'f> {
+pub enum TransportError {
+pub struct FrameHeader([u8; 8]);
+FrameHeader::from_bytes pub const fn from_bytes(bytes: [u8; 8]) -> Self {
+FrameHeader::bytes pub const fn bytes(self) -> [u8; 8] {
+pub struct ReceivedFrame<'f> {
+ReceivedFrame::deterministic pub const fn deterministic(payload: Payload<'f>) -> Self {
+ReceivedFrame::framed pub const fn framed(header: FrameHeader, payload: Payload<'f>) -> Self {
+ReceivedFrame::payload pub const fn payload(self) -> Payload<'f> {
+pub struct PortOpen {
+PortOpen::local_role pub const fn local_role(self) -> u8 {
+PortOpen::session_id pub const fn session_id(self) -> crate::session::types::SessionId {
+PortOpen::lane pub const fn lane(self) -> u8 {
+pub trait Transport {
+pub struct FrameLabel(u8);
+FrameLabel::new pub const fn new(raw: u8) -> Self {
+FrameLabel::raw pub const fn raw(self) -> u8 {
+pub enum CodecError {
+pub trait WireEncode {
+pub trait WirePayload {
+pub struct Payload<'a> {
+Payload::new pub const fn new(data: &'a [u8]) -> Self {
+Payload::as_bytes pub fn as_bytes(&self) -> &'a [u8] {

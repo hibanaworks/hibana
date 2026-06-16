@@ -7,11 +7,11 @@
 // cache raw kernel pointers or publish progress without the carrier operation.
 
 use super::{
-    Endpoint, EndpointError, EndpointOp, EndpointResult, RecvFuture, RecvResult, RouteBranch,
-    SendResult, carrier, flow, futures::OfferFuture, kernel,
+    Endpoint, EndpointResult, RecvFuture, RecvResult, RouteBranch, SendResult, carrier,
+    futures::OfferFuture, kernel, send,
 };
 use crate::diag::Callsite;
-use crate::transport::wire::{CodecError, Payload, WirePayload};
+use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 use core::task::{Context, Poll};
 
 impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
@@ -126,16 +126,15 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_flow(&mut self, logical_label: u8, out: *mut kernel::SendPreview) -> SendResult<()> {
+    fn preview_send(&mut self, logical_label: u8, out: *mut kernel::SendPreview) -> SendResult<()> {
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe { (self.ops().preview_flow)(self.erased_ptr(), self.handle, logical_label, out) }
+        unsafe { (self.ops().preview_send)(self.erased_ptr(), self.handle, logical_label, out) }
     }
 
     #[inline]
     pub(super) fn poll_recv(
         &mut self,
         logical_label: u8,
-        payload_mode: kernel::RecvPayloadMode,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -146,7 +145,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 ptr: self.erased_ptr(),
                 handle: self.handle,
                 logical_label,
-                payload_mode,
                 validate,
                 cx,
                 out: out.as_mut_ptr(),
@@ -209,40 +207,45 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    /// Preview the next send for message `M`.
+    /// Send the next deterministic message as `M`.
     ///
-    /// The returned flow value must be consumed with `.send(...)` to make
-    /// progress. Dropping it leaves the endpoint on the same typestate step. A
-    /// preview mismatch reports [`EndpointError`] for this operation and must
-    /// not be treated as permission to choose another branch.
+    /// The endpoint previews the projected send descriptor before returning the
+    /// future. Dropping the future before completion leaves the endpoint on the
+    /// same typestate step. A preview mismatch is reported as a send failure
+    /// and must not be treated as permission to choose another branch.
     #[track_caller]
-    pub fn flow<'e, M>(&'e mut self) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>>
+    pub fn send<'a, 'e, M>(
+        &'e mut self,
+        payload: &'a M::Payload,
+    ) -> impl core::future::Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, M, ROLE>
     where
-        M: crate::g::Message,
+        M: crate::g::Message + 'a,
+        M::Payload: WireEncode + 'a,
+        'e: 'a,
+        'r: 'a,
     {
         let location = Callsite::caller();
         let endpoint = core::ptr::from_mut(self);
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
         let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
-        if let Err(error) = self.preview_flow(logical_label, preview.as_mut_ptr()) {
-            return Err(EndpointError::new(EndpointOp::Flow, location, error));
+        if let Err(error) = self.preview_send(logical_label, preview.as_mut_ptr()) {
+            return send::SendFuture::ready_error(error, location);
         }
         let preview = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { preview.assume_init() };
         let desc =
-            flow::send_runtime_desc::<M>(crate::transport::FrameLabel::new(preview.frame_label()));
+            send::send_runtime_desc::<M>(crate::transport::FrameLabel::new(preview.frame_label()));
         let init = kernel::SendInit::new(desc, preview);
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
         match unsafe { self.init_public_send_state(&init) } {
             kernel::PublicOpLease::Held => {}
             kernel::PublicOpLease::Rejected => {
-                return Err(EndpointError::new(
-                    EndpointOp::Flow,
-                    location,
+                return send::SendFuture::ready_error(
                     crate::endpoint::SendError::PhaseInvariant,
-                ));
+                    location,
+                );
             }
         }
-        Ok(flow::Flow::new(endpoint))
+        send::SendFuture::pending(endpoint, payload, location)
     }
 
     #[inline]

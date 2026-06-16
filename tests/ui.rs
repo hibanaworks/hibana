@@ -66,6 +66,7 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-codec-free-message-project.rs");
     t.pass("tests/ui-pass/endpoint-send-only-payload.rs");
     t.pass("tests/ui-pass/endpoint-recv-only-payload.rs");
+    t.pass("tests/ui-pass/resolver-state-unit.rs");
 
     t.compile_fail("tests/ui/runtime-storage-removed.rs");
     t.compile_fail("tests/ui/runtime-eff-index-removed.rs");
@@ -87,4 +88,8 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/send-future-endpoint-alias.rs");
     t.compile_fail("tests/ui/endpoint-send-only-payload-cannot-recv.rs");
     t.compile_fail("tests/ui/endpoint-recv-only-payload-cannot-send.rs");
+    t.compile_fail("tests/ui/endpoint-error-operation-removed.rs");
+    t.compile_fail("tests/ui/attach-error-operation-removed.rs");
+    t.compile_fail("tests/ui/resolver-error-operation-removed.rs");
+    t.compile_fail("tests/ui/resolver-decision-fn-removed.rs");
 }

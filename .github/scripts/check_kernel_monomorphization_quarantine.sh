@@ -68,7 +68,7 @@ endpoint = "\n".join(
         "src/endpoint/tests.rs",
     ]
 )
-flow = read("src/endpoint/flow.rs")
+send = read("src/endpoint/send.rs")
 
 for required in [
     "pub(crate) struct MsgCore",
@@ -129,12 +129,12 @@ if not poll_public_recv or not all(
     for required in [
         "kernel_recv(",
         "logical_label",
-        "payload_mode",
+        "validate",
         "recv_state",
         "cx",
     ]
 ):
-    fail("generic poll_public_recv must delegate to non-generic kernel_recv with label and payload evidence")
+    fail("generic poll_public_recv must delegate to non-generic kernel_recv with label and validation evidence")
 if "kernel_decode(self, descriptor, &mut decode_state, cx)" not in public_runtime:
     fail("generic poll_public_decode must delegate to non-generic kernel_decode")
 
@@ -144,21 +144,21 @@ if re.search(
 ):
     fail("forbidden per-operation message descriptor names must not return")
 
-if "MsgRuntimeDesc" in core + runtime_types + endpoint + flow:
+if "MsgRuntimeDesc" in core + runtime_types + endpoint + send:
     fail("MsgRuntimeDesc hid operation-specific descriptor meaning")
 
-if re.search(r"send_descriptor_.*" "un" "used", flow):
+if re.search(r"send_descriptor_.*" "un" "used", send):
     fail("send runtime descriptors must not carry inert validate/zero_payload callbacks")
 
 for path, source in [
     ("src/endpoint.rs", endpoint),
-    ("src/endpoint/flow.rs", flow),
+    ("src/endpoint/send.rs", send),
 ]:
     if "RuntimeDesc" not in source:
         fail(f"{path} must build message-erased runtime descriptors")
 
-if "send_flow_and_runtime_descriptor_size_gates_hold" not in endpoint:
-    fail("send flow and runtime descriptor size gates must guard the descriptor split")
+if "send_future_and_runtime_descriptor_size_gates_hold" not in endpoint:
+    fail("send future and runtime descriptor size gates must guard the descriptor split")
 
 print("kernel monomorphization quarantine check passed")
 PY

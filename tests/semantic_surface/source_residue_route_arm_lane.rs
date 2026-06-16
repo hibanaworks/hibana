@@ -3,7 +3,7 @@ use super::common::*;
 fn cursor_scope_route_source() -> String {
     let mut source = read("src/global/typestate/cursor/scope_route.rs");
     source.push_str(&read(
-        "src/global/typestate/cursor/scope_route/event_flow.rs",
+        "src/global/typestate/cursor/scope_route/event_progress.rs",
     ));
     source.push_str(&read(
         "src/global/typestate/cursor/scope_route/navigation.rs",

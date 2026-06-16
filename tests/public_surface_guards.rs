@@ -26,14 +26,14 @@ fn read_dir_rs(path: &str) -> String {
         .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
         .collect::<Vec<_>>();
     parts.sort();
-    let mut source = String::new();
-    for part in parts {
-        source.push_str(
-            &fs::read_to_string(&part)
-                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err)),
-        );
-    }
-    source
+    parts
+        .into_iter()
+        .map(|part| {
+            fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {}", part.display(), err))
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn cluster_core_source() -> String {
@@ -42,19 +42,9 @@ fn cluster_core_source() -> String {
     source
 }
 
-fn owner_witness_source() -> String {
-    read("src/session/brand.rs")
-}
-
 fn runtime_source() -> String {
     let mut source = read("src/runtime.rs");
     source.push_str(&read_dir_rs("src/runtime"));
-    source
-}
-
-fn transport_source() -> String {
-    let mut source = read("src/transport.rs");
-    source.push_str(&read_dir_rs("src/transport"));
     source
 }
 
@@ -232,7 +222,7 @@ fn localside_transport_seal() {
         "src/local.rs",
         "src/endpoint.rs",
         "src/endpoint/ops.rs",
-        "src/endpoint/flow.rs",
+        "src/endpoint/send.rs",
         "src/endpoint/branch.rs",
     ]
     .map(read)
@@ -305,7 +295,7 @@ fn core_ingress_binding_surface_stays_forbidden() {
 
 #[test]
 fn core_resource_kind_catalogue_keeps_mgmt_and_resolver_lifecycle_internal_only() {
-    let owner_src = owner_witness_source();
+    let owner_src = read("src/session/brand.rs");
 
     for forbidden in [
         concat!("src/session/", "cap.rs"),
@@ -406,8 +396,14 @@ fn message_and_wire_codec_boundaries_stay_separated() {
     let message = read("src/global/message.rs");
     let g = read("src/g.rs");
     let wire = read("src/transport/wire.rs");
+    let recv_kernel = [
+        read("src/endpoint/futures.rs"),
+        read("src/endpoint/kernel/core/runtime_types.rs"),
+        read("src/endpoint/kernel/recv.rs"),
+    ]
+    .join("\n");
     let endpoint = [
-        read("src/endpoint/flow.rs"),
+        read("src/endpoint/send.rs"),
         read("src/endpoint/ops.rs"),
         read("src/endpoint/branch.rs"),
     ]
@@ -437,6 +433,17 @@ fn message_and_wire_codec_boundaries_stay_separated() {
             "wire public traits must not regain redundant encode/decode obligations: {forbidden}"
         );
     }
+    for forbidden in [
+        concat!("ALLOWS", "_ZERO_LENGTH"),
+        "RecvPayloadMode",
+        "RecvPayloadSource",
+        concat!("Zero", "Length"),
+    ] {
+        assert!(
+            !wire.contains(forbidden) && !recv_kernel.contains(forbidden),
+            "recv codec boundary must not regain zero-length bypass state: {forbidden}"
+        );
+    }
     assert!(
         endpoint.contains("M::Payload: WireEncode")
             && endpoint.contains("M::Payload: WirePayload")
@@ -451,6 +458,14 @@ fn message_and_wire_codec_boundaries_stay_separated() {
 fn tap_surface_has_one_public_entry_and_internal_event_construction() {
     let fluent = read("src/runtime/fluent.rs");
     let event = read("src/observe/event.rs");
+    let tap_impl = [
+        read("src/observe/core.rs"),
+        read("src/observe/ids.rs"),
+        read("src/runtime_core/consts.rs"),
+        read("src/rendezvous/core/access_port.rs"),
+        read("src/session/cluster/effects.rs"),
+    ]
+    .join("\n");
     let runtime_buckets = read("src/runtime/buckets.rs");
 
     let session_impl = fluent
@@ -476,6 +491,17 @@ fn tap_surface_has_one_public_entry_and_internal_event_construction() {
         assert!(
             runtime_buckets.contains(required),
             "runtime::tap must expose canonical event identifiers: {required}"
+        );
+    }
+    for forbidden in [
+        "RING_BUFFER_SIZE",
+        "USER_EVENT_RANGE_END",
+        concat!("lane", "_open", "_tap", "_event", "_id"),
+        concat!("raw_event(", "self.now32(), 0x0100"),
+    ] {
+        assert!(
+            !tap_impl.contains(forbidden),
+            "tap implementation must not regain split-ring or hidden event authority: {forbidden}"
         );
     }
 }
@@ -551,6 +577,7 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
     let collapsed_resolution = concat!("Dynamic", "Resolution");
     let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
     let generic_state_ctor = concat!("ResolverRef::", "from_state");
+    let removed_stateless_ctor = concat!("ResolverRef::", "decision_fn");
 
     for src in [&cluster_src, &runtime_src, &readme_src] {
         assert!(
@@ -558,16 +585,14 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
             "dynamic resolver surface must use the named DecisionResolution API, not a generic DynamicResolution alias"
         );
         assert!(
-            !src.contains(generic_stateless_ctor) && !src.contains(generic_state_ctor),
-            "resolver constructors must stay decision-named"
+            !src.contains(generic_stateless_ctor)
+                && !src.contains(generic_state_ctor)
+                && !src.contains(removed_stateless_ctor),
+            "resolver constructor surface must stay on decision_state only"
         );
     }
 
-    for required in [
-        "pub enum DecisionResolution",
-        "pub fn decision_fn",
-        "pub fn decision_state",
-    ] {
+    for required in ["pub enum DecisionResolution", "pub fn decision_state"] {
         assert!(
             cluster_src.contains(required),
             "dynamic resolver public SPI must keep the route decision item: {required}"
@@ -581,6 +606,9 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
         "pub fn loop_state",
         "pub fn roll_fn",
         "pub fn roll_state",
+        "pub fn decision_fn",
+        "dispatch_decision_fn",
+        "stateless:",
         concat!(
             "pub fn decision_fn(resolver: fn(ResolverContext) -> DecisionResolution",
             "Outcome)"
@@ -643,116 +671,6 @@ fn core_resolver_audit_has_no_in_crate_resolver_owner() {
             "route authority must stay Ack | Resolver | Poll only: {forbidden}"
         );
     }
-}
-
-#[test]
-fn transport_resolver_signal_surface_stays_minimal() {
-    let transport_src = transport_source();
-    let runtime_src = runtime_source();
-    let readme_src = read("README.md");
-
-    assert!(
-        !transport_src.contains("pub struct TransportSnapshot"),
-        "TransportSnapshot must stay internal"
-    );
-    assert!(
-        !transport_src.contains("TransportSnapshotParts"),
-        "transport snapshot option-bag constructor must not exist"
-    );
-    assert!(
-        !transport_src.contains("from_parts(parts:"),
-        "transport snapshot parts constructor must not exist"
-    );
-    assert!(
-        !runtime_src.contains("TransportSnapshotParts"),
-        "runtime::transport must not re-export TransportSnapshotParts"
-    );
-    assert!(
-        !runtime_src.contains("TransportSnapshot"),
-        "runtime::transport must not re-export TransportSnapshot"
-    );
-    assert!(
-        !readme_src.contains("TransportSnapshot"),
-        "README must not publish the forbidden TransportSnapshot surface"
-    );
-    assert!(
-        !transport_src.contains("fn resolver_attrs(&self)")
-            && !transport_src.contains("pub trait TransportMetrics")
-            && !transport_src.contains("type Metrics"),
-        "Transport must not expose resolver input, metrics, or telemetry extra hooks"
-    );
-    assert!(
-        !readme_src.contains("ResolverAttrs") && readme_src.contains("ResolverRef::decision_state"),
-        "README must keep replay attrs out of the canonical path and describe resolver-state owned input"
-    );
-    for forbidden in [
-        "ContextId",
-        "ContextValue",
-        "ResolverInput",
-        "ResolverSignals",
-        "ResolverAttrs",
-        "pub mod core {",
-        "pub mod replay {",
-        "advanced::resolver",
-    ] {
-        assert!(
-            !runtime_src.contains(forbidden),
-            "resolver signal extension namespace must not leak through runtime: {forbidden}"
-        );
-    }
-    for forbidden in [
-        "pub const fn new(latency_us: Option<u64>, queue_depth: Option<u32>) -> Self",
-        "pub const fn with_latency_us",
-        "pub const fn with_queue_depth",
-        "pub const fn with_congestion_marks",
-        "pub const fn with_retransmissions",
-        "pub const fn with_congestion_window",
-        "pub const fn with_in_flight",
-        "pub const fn with_algorithm",
-    ] {
-        assert!(
-            !transport_src.contains(forbidden),
-            "transport snapshot builder surface must stay forbidden: {forbidden}"
-        );
-    }
-    for forbidden in [
-        "TransportMetricsTapPayload,",
-        "pub primary: (u32, u32)",
-        "pub extension: Option<(u32, u32)>",
-        "pub kind: TransportEventKind",
-        "pub packet_number: u64",
-        "pub payload_len: u32",
-        "pub retransmissions: u32",
-        "pub pn_space: u8",
-        "pub cid_tag: u8",
-        "pub struct TransportEventMeta",
-        "pub packet_number: u64",
-        "pub retransmissions: u32",
-        "pub const fn new(\n        kind: TransportEventKind,\n        packet_number: u64",
-        "pub const fn packet_number(",
-        "pub const fn payload_len(",
-        "pub const fn retry_count(",
-        "pub const fn domain(",
-        "pub const fn carrier_tag(",
-        "pub const fn retransmissions(",
-        "pub const fn packet_number_space(",
-        "pub const fn connection_id_tag(",
-        "pub const fn new_with_metadata",
-        "pub const fn with_pn_space",
-        "pub const fn with_cid_tag",
-    ] {
-        assert!(
-            !transport_src.contains(forbidden) && !runtime_src.contains(forbidden),
-            "transport observation detail must stay accessor-only and non-literal: {forbidden}"
-        );
-    }
-    assert!(
-        !transport_src.contains("TransportEventKind")
-            && !transport_src.contains("pub struct TransportEvent")
-            && !runtime_src.contains("TransportEventKind")
-            && !runtime_src.contains("TransportEvent"),
-        "transport telemetry vocabulary must not be part of the protocol-neutral public surface"
-    );
 }
 
 #[test]

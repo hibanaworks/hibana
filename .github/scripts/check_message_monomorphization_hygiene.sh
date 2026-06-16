@@ -22,7 +22,7 @@ endpoint = "\n".join(
         "src/endpoint/tests.rs",
     ]
 )
-flow = (root / "src/endpoint/flow.rs").read_text()
+send = (root / "src/endpoint/send.rs").read_text()
 
 
 def fail(message: str) -> None:
@@ -53,7 +53,7 @@ raw_owners = {
     "RawRecvFuture": ("src/endpoint/futures.rs", endpoint, ".poll_recv("),
     "RawDecodeFuture": ("src/endpoint/futures.rs", endpoint, ".poll_decode("),
     "RawOfferFuture": ("src/endpoint/branch.rs", endpoint, ".poll_offer("),
-    "RawSendFuture": ("src/endpoint/flow.rs", flow, ".poll_send("),
+    "RawSendFuture": ("src/endpoint/send.rs", send, ".poll_send("),
 }
 
 for name, (_path, source, call) in raw_owners.items():
@@ -78,13 +78,13 @@ for name, (_path, source, call) in raw_owners.items():
     if call in outside:
         fail(f"{call} left {name}; poll loop would monomorphize outside raw owner")
 
-send_decl = re.search(r"struct\s+SendFuture\s*<([^>]*)>", flow)
+send_decl = re.search(r"struct\s+SendFuture\s*<([^>]*)>", send)
 if not send_decl:
     fail("SendFuture declaration missing")
 if re.search(r"\b(M|A)\b", send_decl.group(1)):
     fail("SendFuture must not carry message or send-argument type parameters")
 
-if re.search(r"impl<[^>]*(M|A)[^>]*>\s+Future\s+for\s+SendFuture", flow, re.S):
+if re.search(r"impl<[^>]*(M|A)[^>]*>\s+Future\s+for\s+SendFuture", send, re.S):
     fail("SendFuture Future impl must stay message-independent")
 
 for future_name, raw_name in [
@@ -103,16 +103,22 @@ if "Payload::new(&[])" in recv_future_block:
     fail("RecvFuture poll must not recompute empty-payload codec authority")
 for required in [
     "lease: RecvFutureLease",
-    "payload_mode: RecvPayloadMode",
-    "RecvPayloadMode::from_allows_zero_length",
 ]:
     if required not in endpoint:
         fail(f"RawRecvFuture must cache typed recv future state: {required}")
+for forbidden in [
+    "RecvPayloadMode",
+    "payload_mode",
+    "from_allows_zero_length",
+    "ALLOWS_ZERO_LENGTH",
+]:
+    if forbidden in endpoint:
+        fail(f"endpoint futures must not own codec zero-length authority: {forbidden}")
 for forbidden in ["Raw" "Recv" "Flags", "Raw" "Offer" "Lease"]:
     if forbidden in endpoint:
         fail(f"endpoint futures must not regrow bitflag lease state: {forbidden}")
 
-send_future_block = block_after(flow, "impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture")
+send_future_block = block_after(send, "impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture")
 if "this.raw.poll_raw(" not in send_future_block:
     fail("SendFuture must delegate progress to RawSendFuture::poll_raw")
 for forbidden in ["poll_recv(", "poll_decode(", "poll_offer(", "poll_send("]:
@@ -123,15 +129,14 @@ if "message_type_variation_does_not_change_future_layout" not in endpoint:
     fail("endpoint future layout must be tested across multiple message payload shapes")
 for required in [
     "endpoint_surface_size_gates_hold",
-    "recv_future_state_caches_payload_mode_and_completion",
+    "recv_future_state_caches_completion",
     "final_form_future_layout_measurement_report",
     "OfferFutureLease must stay a byte-sized state enum",
     "RecvFutureLease must stay a byte-sized state enum",
-    "RecvPayloadMode must stay a byte-sized payload-mode enum",
 ]:
     if required not in endpoint:
         fail(f"endpoint future state/size guard missing: {required}")
-if "send_future_layout_is_message_independent" not in flow:
+if "send_future_layout_is_message_independent" not in send:
     fail("send future layout independence test missing")
 
 print("message monomorphization hygiene check passed")

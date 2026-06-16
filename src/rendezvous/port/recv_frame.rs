@@ -410,11 +410,6 @@ impl<'r> ReceivedFrameCore<'r> {
     }
 
     #[inline]
-    fn is_empty(&self) -> bool {
-        self.payload.as_bytes().is_empty()
-    }
-
-    #[inline]
     fn validated_payload<E, F>(&self, validate: F) -> Result<Payload<'r>, E>
     where
         F: FnOnce(Payload<'r>) -> Result<(), E>,
@@ -624,11 +619,6 @@ impl<'r> ReceivedFrame<'r> {
     #[inline]
     pub(crate) const fn frame_label_raw(&self) -> u8 {
         self.core.frame_label_raw()
-    }
-
-    #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.core.is_empty()
     }
 
     #[inline]

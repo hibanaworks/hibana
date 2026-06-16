@@ -39,6 +39,11 @@ fn endpoint_rs() -> String {
     read_plain(&path)
 }
 
+fn endpoint_ops_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/ops.rs");
+    read_plain(&path)
+}
+
 fn global_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global.rs");
     read_plain(&path)
@@ -56,8 +61,8 @@ fn g_rs() -> String {
     read_plain(&path)
 }
 
-fn flow_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/flow.rs");
+fn send_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/send.rs");
     read_plain(&path)
 }
 
@@ -69,6 +74,12 @@ fn role_program_rs() -> String {
 fn public_api_script_rs() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".github/scripts/check_hibana_public_api.sh");
+    read_plain(&path)
+}
+
+fn public_surface_budget_script_rs() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".github/scripts/check_public_surface_budget.sh");
     read_plain(&path)
 }
 
@@ -93,10 +104,11 @@ fn compact_ws(input: &str) -> String {
 fn root_visible_surface_stays_minimal() {
     let lib_rs = lib_rs();
     let endpoint_rs = endpoint_rs();
+    let endpoint_ops_rs = endpoint_ops_rs();
     let global_rs = global_rs();
     let runtime_rs = runtime_rs();
     let g_rs = g_rs();
-    let flow_rs = flow_rs();
+    let send_rs = send_rs();
     let role_program_rs = role_program_rs();
     let g_ws = compact_ws(&g_rs);
     let program_head = {
@@ -149,9 +161,9 @@ fn root_visible_surface_stays_minimal() {
         "hibana root must expose runtime surface"
     );
     assert!(
-        lib_rs.contains(
-            "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};"
-        ),
+        lib_rs
+            .contains("pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};")
+            && !lib_rs.contains(concat!("Fl", "ow")),
         "hibana root must expose endpoint core API"
     );
 
@@ -169,13 +181,12 @@ fn root_visible_surface_stays_minimal() {
         );
     }
     assert!(
-        !flow_rs.contains("ErasedSendInput")
-            && flow_rs.contains("pub fn send<'a>(")
-            && flow_rs.contains("payload: &'a M::Payload")
-            && flow_rs.contains("kernel::RawSendPayload::from_typed::<M::Payload>(payload)")
-            && !flow_rs.contains("Into<Option<&'a M::Payload>>")
-            && !flow_rs.contains(".into()"),
-        "Flow::send must stay a single required typed-payload API without optional or private-bound argument wrappers"
+        endpoint_ops_rs.contains("pub fn send<'a, 'e, M>(")
+            && endpoint_ops_rs.contains("payload: &'a M::Payload")
+            && send_rs.contains("kernel::RawSendPayload::from_typed(payload)")
+            && !send_rs.contains("Into<Option<&'a M::Payload>>")
+            && !send_rs.contains(".into()"),
+        "Endpoint::send must stay a single required typed-payload API without optional or private-bound argument wrappers"
     );
 
     for forbidden in [
@@ -239,27 +250,27 @@ fn root_visible_surface_stays_minimal() {
         concat!("Mi", "nt", "Config"),
         &["#[", "allow(", "private_bounds", ")]"].concat(),
         "#[expect(private_bounds)]",
-        concat!("Flow", "Send", "Arg"),
+        concat!("Fl", "ow", "Send", "Arg"),
         concat!("Send", "Outcome", "Kind"),
         concat!("pub struct ", "Send", "Value"),
         "trait SendArg",
         "trait SendOutcome",
         "HibanaSend",
-        concat!("Cap", "Flow"),
-        concat!("Flow", "Inner"),
+        concat!("Cap", "Fl", "ow"),
+        concat!("Fl", "ow", "Inner"),
         "CapRegisteredToken",
-        concat!("Cap", "Flow", "Token"),
+        concat!("Cap", "Fl", "ow", "Token"),
         "CapFrameToken",
     ] {
         assert!(
-            !flow_rs.contains(forbidden),
-            "app-facing flow surface must not mention forbidden resolver internals: {forbidden}"
+            !send_rs.contains(forbidden),
+            "app-facing send surface must not mention forbidden resolver internals: {forbidden}"
         );
     }
 
     for forbidden in [
         "CapRegisteredToken",
-        concat!("Cap", "Flow", "Token"),
+        concat!("Cap", "Fl", "ow", "Token"),
         "CapFrameToken",
         "pub(crate) mod handle;",
     ] {
@@ -326,6 +337,7 @@ fn root_visible_surface_stays_minimal() {
 #[test]
 fn public_api_gate_tracks_g_and_runtime_surfaces() {
     let script = public_api_script_rs();
+    let budget_script = public_surface_budget_script_rs();
 
     for required in [
         "export TOOLCHAIN=\"${TOOLCHAIN:-1.95.0}\"",
@@ -342,6 +354,10 @@ fn public_api_gate_tracks_g_and_runtime_surfaces() {
             "crate-local public API gate must run the Rust 1.95 surface verifier: {required}"
         );
     }
+    assert!(
+        budget_script.contains("check_public_api_allowlists.py"),
+        "public surface budget gate must run the stable allowlist scanner"
+    );
 
     for forbidden in [
         "target/doc/hibana.json",

@@ -2,7 +2,6 @@ use super::{
     Endpoint, EndpointError, EndpointOp, EndpointResult, RecvResult, RouteBranch, carrier,
 };
 use crate::diag::Callsite;
-use crate::endpoint::kernel::RecvPayloadMode;
 use crate::transport::wire::{CodecError, Payload, WirePayload};
 use core::{
     future::Future,
@@ -46,7 +45,6 @@ where
 pub(crate) struct RawRecvFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     lease: RecvFutureLease,
-    payload_mode: RecvPayloadMode,
     _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
@@ -149,14 +147,13 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
-    fn new(endpoint: &'e mut Endpoint<'r, ROLE>, payload_mode: RecvPayloadMode) -> Self {
+    fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
         /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
         let lease =
             RecvFutureLease::from_public_lease(unsafe { endpoint.init_public_recv_state() });
         Self {
             endpoint: core::ptr::from_mut(endpoint),
             lease,
-            payload_mode,
             _borrow: core::marker::PhantomData,
         }
     }
@@ -177,7 +174,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
             RecvFutureLease::RestoreOnDrop => {}
         }
         let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(logical_label, self.payload_mode, validate, cx) {
+        match endpoint.poll_recv(logical_label, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.lease = RecvFutureLease::Completed;
@@ -212,11 +209,8 @@ where
 {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: Callsite) -> Self {
-        let payload_mode = RecvPayloadMode::from_allows_zero_length(
-            <M::Payload as WirePayload>::ALLOWS_ZERO_LENGTH,
-        );
         Self {
-            raw: RawRecvFuture::new(endpoint, payload_mode),
+            raw: RawRecvFuture::new(endpoint),
             location,
             _msg: core::marker::PhantomData,
         }

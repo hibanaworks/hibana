@@ -33,14 +33,11 @@ impl WirePayload for TestPayload {
 }
 
 fn pending_send_keeps_endpoint_borrow<'r>(endpoint: &mut Endpoint<'r, 0>) {
-    let flow = endpoint
-        .flow::<g::Msg<7, TestPayload>>()
-        .expect("test setup");
-    let send = flow.send(&TestPayload(1));
-    let flow_again = endpoint
-        .flow::<g::Msg<7, TestPayload>>()
-        .expect("test setup");
-    core::hint::black_box(&flow_again);
+    let payload = TestPayload(1);
+    let send = endpoint.send::<g::Msg<7, TestPayload>>(&payload);
+    let next_payload = TestPayload(2);
+    let send_again = endpoint.send::<g::Msg<7, TestPayload>>(&next_payload);
+    core::hint::black_box(&send_again);
     core::hint::black_box(send);
 }
 

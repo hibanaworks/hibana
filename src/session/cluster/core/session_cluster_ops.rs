@@ -432,11 +432,6 @@ where
     /// - normal mutable rendezvous lookups fail while that active marker is set
     /// - callback-capable endpoint cleanup must not run while this lease is held
     ///
-    /// # Tap Events
-    ///
-    /// Emits `LANE_ACQUIRE` with:
-    /// - `arg0`: Rendezvous ID (u32)
-    /// - `arg1`: Packed session/lane (u32)
     pub(crate) fn lease_port<'lease>(
         &'lease self,
         rv_id: RendezvousId,
@@ -469,9 +464,7 @@ where
         let current = active.get();
         active.set(current + 1);
 
-        // Extract rendezvous brand before moving lease into guard and emit acquire tap.
         let brand = lease.brand();
-        lease.emit_lane_acquire(rv_id, sid, lane);
 
         Ok(LaneLease::new(
             lease, sid, lane, role, role_count, active, brand,

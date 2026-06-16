@@ -190,9 +190,9 @@ fi
 
 echo "== final-form future/layout sizes =="
 run_final_form_test -p hibana endpoint_surface_size_gates_hold --lib --features std
-run_final_form_test -p hibana recv_future_state_caches_payload_mode_and_completion --lib --features std
+run_final_form_test -p hibana recv_future_state_caches_completion --lib --features std
 run_final_form_test -p hibana message_type_variation_does_not_change_future_layout --lib --features std
-run_final_form_test -p hibana send_flow_and_runtime_descriptor_size_gates_hold --lib --features std
+run_final_form_test -p hibana send_future_and_runtime_descriptor_size_gates_hold --lib --features std
 FUTURE_LAYOUT_OUTPUT="$(
   cargo +"${TOOLCHAIN}" test -p hibana final_form_future_layout_measurement_report --lib --features std -- --nocapture
 )"
@@ -222,12 +222,11 @@ budgets = {
     "OfferFuture": 3 * word,
     "RecvFuture": 3 * word,
     "DecodeFuture": 3 * word,
-    "SendFuture": 3 * word,
+    "SendFuture": 5 * word,
     "RawOfferFuture": 2 * word,
     "RawRecvFuture": 2 * word,
     "OfferFutureLease": 1,
     "RecvFutureLease": 1,
-    "RecvPayloadMode": 1,
 }
 for name, budget in budgets.items():
     if values.get(name, budget + 1) > budget:

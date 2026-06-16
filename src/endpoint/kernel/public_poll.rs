@@ -4,8 +4,8 @@ use core::task::Poll;
 
 use super::{
     core::{
-        CursorEndpoint, DecodeRuntimeDesc, PublicActiveOp, RecvPayloadMode, SendCommitOutcome,
-        SendState, kernel_decode, kernel_recv, kernel_send,
+        CursorEndpoint, DecodeRuntimeDesc, PublicActiveOp, SendCommitOutcome, SendState,
+        kernel_decode, kernel_recv, kernel_send,
     },
     lane_port,
     offer::OfferState,
@@ -78,7 +78,6 @@ where
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
         logical_label: u8,
-        payload_mode: RecvPayloadMode,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
@@ -94,14 +93,7 @@ where
         }
         let mut recv_state =
             core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
-        match kernel_recv(
-            self,
-            logical_label,
-            payload_mode,
-            validate,
-            &mut recv_state,
-            cx,
-        ) {
+        match kernel_recv(self, logical_label, validate, &mut recv_state, cx) {
             Poll::Pending => {
                 self.register_session_waiter(cx.waker());
                 self.public_recv_state = recv_state;

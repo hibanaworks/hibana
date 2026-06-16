@@ -7,15 +7,14 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let public_poll = read("src/endpoint/kernel/public_poll.rs");
     let public_runtime = format!("{public_ops}\n{public_poll}");
     let endpoint_ops = read("src/endpoint/ops.rs");
-    let flow = read("src/endpoint/flow.rs");
+    let send = read("src/endpoint/send.rs");
     let futures = read("src/endpoint/futures.rs");
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let branch = read("src/endpoint/branch.rs");
-    let route_preview = read("src/endpoint/kernel/core/route_preview_flow.rs");
+    let route_preview = read("src/endpoint/kernel/core/send_preview.rs");
     let lifecycle_tests = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         read("tests/cursor_send_recv/session_progress.rs"),
-        read("tests/cursor_send_recv/session_forget_flow.rs"),
         read("tests/cursor_send_recv/session_forget_send.rs"),
         read("tests/cursor_send_recv/session_forget_recv.rs"),
         read("tests/cursor_send_recv/session_fault_cancel.rs"),
@@ -77,31 +76,36 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Decode)")
             && public_runtime.contains("if self.public_route_branch.is_some() {\n            self.clear_session_waiter();\n            self.public_op_busy_fault();")
             && public_runtime.contains("let Some(branch) = decode_state.branch() else {\n            self.clear_session_waiter();\n            self.public_decode_state = super::decode::DecodeState::empty();\n            self.public_op_busy_fault();"),
-        "public operations must start only from Idle, checked completion must poison on wrong active-op order, and terminal sweep must use an explicit lenient clear path"
+        "endpoint API calls must start only from Idle, checked completion must poison on wrong active-op order, and terminal sweep must use an explicit lenient clear path"
     );
     assert!(
         route_preview.contains("if self.public_active_op != PublicActiveOp::Idle")
             && route_preview.contains("self.public_op_busy_fault();")
             && route_preview.contains("return Err(SendError::PhaseInvariant);"),
-        "flow preview must not overwrite a forgotten active operation"
+        "send preview must not overwrite a forgotten active operation"
     );
     assert!(
         endpoint_ops.contains("match unsafe { self.init_public_send_state(&init) }")
             && endpoint_ops.contains("kernel::PublicOpLease::Held => {}")
             && endpoint_ops.contains("kernel::PublicOpLease::Rejected =>")
             && endpoint_ops.contains("crate::endpoint::SendError::PhaseInvariant"),
-        "flow must not return an affine Flow handle when send active-lease initialization fails after preview"
+        "send must return a ready error future when send active-lease initialization fails after preview"
     );
     assert!(
-        flow.contains("impl<'e, 'r, const ROLE: u8, M> Drop for Flow")
-            && flow.contains("impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture")
+        send.contains("impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture")
+            && send.contains(
+                "pub(crate) fn ready_error(error: SendError, location: Callsite) -> Self"
+            )
+            && endpoint_ops.contains("pub fn send<'a, 'e, M>(")
+            && !endpoint_ops.contains(concat!("pub fn ", "fl", "ow"))
+            && !send.contains(concat!("struct ", "Fl", "ow"))
             && futures.contains("enum OfferFutureLease")
             && futures.contains("enum RecvFutureLease")
-            && runtime_types.contains("pub(crate) enum RecvPayloadMode")
             && branch.contains("OfferFutureLease::from_public_lease")
             && futures.contains("RecvFutureLease::from_public_lease")
-            && runtime_types.contains("const fn from_allows_zero_length")
-            && futures.contains("RecvPayloadMode::from_allows_zero_length")
+            && !runtime_types.contains("RecvPayloadMode")
+            && !futures.contains("RecvPayloadMode")
+            && !futures.contains("payload_mode")
             && branch.contains("let lease = unsafe { endpoint.init_public_offer_state() };")
             && branch.contains("lease: OfferFutureLease::from_public_lease(lease)")
             && branch.contains("OfferFutureLease::Rejected =>")
@@ -122,9 +126,9 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"
     );
     for required in [
-        "forgotten_flow_leaves_endpoint_fail_closed",
         "forgotten_send_future_leaves_endpoint_fail_closed",
-        "forgotten_started_send_future_leaves_flow_fail_closed",
+        "forgotten_started_send_future_leaves_send_fail_closed",
+        "drop_unpolled_send_future_keeps_endpoint_on_same_send_step",
         "forgotten_recv_future_leaves_endpoint_fail_closed",
         "forgotten_started_offer_future_leaves_endpoint_fail_closed",
         "forgotten_route_branch_leaves_endpoint_fail_closed",

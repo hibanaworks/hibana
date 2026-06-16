@@ -79,8 +79,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Validation",
         "cargo add hibana",
         "The default feature set is empty.",
-        "flow().send() / recv() / offer() / RouteBranch::decode()",
-        "`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds",
+        "send() / recv() / offer() / RouteBranch::decode()",
+        "`recv()`, or `RouteBranch::decode()` succeeds",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
         "are implementing a protocol crate, use `hibana::runtime`",
         "install explicit route resolvers when needed",
@@ -113,7 +113,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "treats external telemetry",
         "transport readiness",
         "authority by itself",
-        "local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_fn(local_decision)",
+        "local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_state(",
+        "&LOCAL_ROUTE_STATE,",
         "`offer()` and `RouteBranch::decode()`",
         "require `ReceivedFrame::framed(...)`",
         "Protocol crates use the same `hibana::g` language as applications.",
@@ -333,7 +334,7 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
         "endpoint docs must include direct recv() as a committed progress operation"
     );
     assert!(
-        readme.contains("`flow().send()`, `recv()`, or `RouteBranch::decode()` succeeds")
+        readme.contains("Endpoint progress happens when `send()`,\n`recv()`, or `RouteBranch::decode()` succeeds")
             && !readme.contains("Endpoint progress happens when a send or\ndecode succeeds"),
         "README progress contract must include recv(), not only send/decode"
     );

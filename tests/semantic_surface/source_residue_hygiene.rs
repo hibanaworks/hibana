@@ -439,28 +439,48 @@ fn source_text_does_not_regrow_old_private_boundary_vocabulary() {
 }
 
 #[test]
-fn public_failure_evidence_is_compact_operation_only() {
+fn public_failure_evidence_has_no_stringly_accessors() {
     for (name, source) in [
         ("EndpointError", endpoint_facade_source()),
         ("AttachError", read("src/session/cluster/error.rs")),
         ("ResolverError", cluster_core_source()),
     ] {
-        let required = "pub const fn operation(&self) -> &'static str";
-        assert!(
-            source.contains(required),
-            "{name} must keep compact public operation diagnostics: {required}"
-        );
         for forbidden in [
+            "pub const fn operation(&self) -> &'static str",
+            "pub fn operation(&self) -> &'static str",
             "pub const fn file(&self) -> &'static str",
             "pub const fn line(&self) -> u32",
             "pub const fn column(&self) -> u32",
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{name} must not expose source-location diagnostics: {forbidden}"
+                "{name} must not expose stringly public diagnostics: {forbidden}"
             );
         }
     }
+}
+
+#[test]
+fn resolver_registration_has_only_stateful_entry() {
+    let resolver = cluster_core_source();
+    let readme = read("README.md");
+    for forbidden in [
+        "pub fn decision_fn",
+        "ResolverRef::<ROUTE_RESOLVER>::decision_fn",
+        "dispatch_decision_fn",
+        "stateless:",
+        "stateless resolver",
+    ] {
+        assert!(
+            !resolver.contains(forbidden) && !readme.contains(forbidden),
+            "resolver registration must stay on decision_state only: {forbidden}"
+        );
+    }
+    assert!(
+        resolver.contains("pub fn decision_state<S: 'cfg>")
+            && readme.contains("ResolverRef::<ROUTE_RESOLVER>::decision_state("),
+        "resolver registration must document and expose only the stateful entry"
+    );
 }
 
 #[test]
@@ -604,27 +624,30 @@ fn runtime_production_path_has_no_string_panic_alternate_paths() {
 }
 
 #[test]
-fn tap_ring_storage_shape_is_a_type_sized_dual_ring() {
+fn tap_ring_storage_shape_is_a_single_type_sized_ring() {
     let observe = read("src/observe/core.rs");
     assert!(
-        observe.contains("const _: [(); RING_EVENTS] = [(); RING_BUFFER_SIZE * 2];"),
-        "tap ring storage layout must be fixed by a compile-time equality"
+        observe.contains("PhantomData<&'a mut [TapEvent; RING_EVENTS]>")
+            && observe.contains("let idx = head % RING_EVENTS")
+            && observe.contains("let cursor = head.saturating_sub(RING_EVENTS)")
+            && observe.contains("RingBuffer::from_ptr(storage.as_mut_ptr())"),
+        "tap ring storage layout must be one fixed 64-event runtime evidence ring"
     );
     for forbidden in [
         "RingBuffer::new",
         "assert!(storage.len()",
-        "storage.len() >= RING_BUFFER_SIZE",
+        "storage.len() >=",
+        "RING_BUFFER_SIZE",
+        "USER_EVENT_RANGE_END",
+        "storage.add(RING_BUFFER_SIZE)",
+        "storage.add(RING_EVENTS)",
+        "tap_event_precedes",
     ] {
         assert!(
             !observe.contains(forbidden),
-            "tap ring construction must not keep slice-length runtime fallback: {forbidden}"
+            "tap ring construction must not keep split-ring or slice-length fallback residue: {forbidden}"
         );
     }
-    assert!(
-        observe.contains("RingBuffer::from_ptr(storage)")
-            && observe.contains("storage.add(RING_BUFFER_SIZE)"),
-        "tap ring halves must be split from the fixed storage array"
-    );
 }
 
 #[test]

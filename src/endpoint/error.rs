@@ -6,7 +6,6 @@ use core::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EndpointOp {
-    Flow,
     Send,
     Recv,
     Offer,
@@ -15,7 +14,7 @@ pub(crate) enum EndpointOp {
 
 /// Domain error for endpoint progress.
 ///
-/// The API shape stays on `flow/send/recv/offer/decode`; this error records
+/// The API shape stays on `send/recv/offer/decode`; this error records
 /// which operation failed, so callers can keep using plain `?` without extra
 /// context types. The diagnostic kind is deliberately private: application code
 /// should not match endpoint failures to continue the same generation on an
@@ -30,7 +29,7 @@ pub struct EndpointError {
 impl fmt::Debug for EndpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("EndpointError");
-        debug.field("operation", &self.operation());
+        debug.field("operation", &self.op_name());
         #[cfg(feature = "std")]
         {
             debug
@@ -56,9 +55,8 @@ impl EndpointError {
     }
 
     #[inline]
-    pub const fn operation(&self) -> &'static str {
+    const fn op_name(&self) -> &'static str {
         match self.op {
-            EndpointOp::Flow => "flow",
             EndpointOp::Send => "send",
             EndpointOp::Recv => "recv",
             EndpointOp::Offer => "offer",
@@ -67,7 +65,7 @@ impl EndpointError {
     }
 }
 
-/// Endpoint progress failure kind independent of the public operation.
+/// Endpoint progress failure kind independent of the public call boundary.
 #[derive(Clone, Copy)]
 pub(super) enum EndpointErrorKind {
     Codec(CodecError),

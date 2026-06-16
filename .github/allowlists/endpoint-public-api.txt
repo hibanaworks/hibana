@@ -1,10 +1,9 @@
 pub struct Endpoint<'r, const ROLE: u8> {
 pub struct RouteBranch<'e, 'r, const ROLE: u8> {
-pub struct Flow<'e, 'r, const ROLE: u8, M> where M: crate::g::Message, {
-pub fn flow<'e, M>( &'e mut self, ) -> EndpointResult<crate::Flow<'e, 'r, ROLE, M>> where M: crate::g::Message, {
-pub fn recv<'e, M>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + 'e where M: crate::g::Message + 'e, M::Payload: WirePayload, {
-pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
-pub fn label(&self) -> u8 {
-pub fn decode<M>( self, ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> where M: crate::g::Message, M::Payload: WirePayload, {
+Endpoint::send pub fn send<'a, 'e, M>( &'e mut self, payload: &'a M::Payload, ) -> impl core::future::Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, M, ROLE> where M: crate::g::Message + 'a, M::Payload: WireEncode + 'a, 'e: 'a, 'r: 'a, {
+Endpoint::recv pub fn recv<'e, M>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + 'e where M: crate::g::Message + 'e, M::Payload: WirePayload, {
+Endpoint::offer pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
+RouteBranch::label pub fn label(&self) -> u8 {
+RouteBranch::decode pub fn decode<M>( self, ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + use<'e, 'r, M, ROLE> where M: crate::g::Message, M::Payload: WirePayload, {
 pub struct EndpointError {
 pub type EndpointResult<T> = core::result::Result<T, EndpointError>;

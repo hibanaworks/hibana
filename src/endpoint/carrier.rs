@@ -72,7 +72,6 @@ pub(crate) struct RecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
     pub(crate) handle: PackedEndpointHandle,
     pub(crate) logical_label: u8,
-    pub(crate) payload_mode: crate::endpoint::kernel::RecvPayloadMode,
     pub(crate) validate:
         for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
     pub(crate) cx: &'a mut Context<'cx>,
@@ -156,7 +155,7 @@ pub(crate) struct EndpointOps<'r> {
         handle: PackedEndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) reset_public_decode_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) preview_flow: unsafe fn(
+    pub(crate) preview_send: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         logical_label: u8,
@@ -273,7 +272,7 @@ where
             reset_public_recv_state: Self::reset_public_recv_state_raw::<ROLE>,
             begin_public_decode_state: Self::begin_public_decode_state_raw::<ROLE>,
             reset_public_decode_state: Self::reset_public_decode_state_raw::<ROLE>,
-            preview_flow: Self::preview_public_endpoint::<ROLE>,
+            preview_send: Self::preview_public_send::<ROLE>,
             poll_recv: Self::poll_recv_public_endpoint::<ROLE>,
             poll_offer: Self::poll_offer_public_endpoint::<ROLE>,
             poll_decode: Self::poll_decode_public_endpoint::<ROLE>,

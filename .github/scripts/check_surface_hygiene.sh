@@ -561,7 +561,7 @@ REMOVED_RESOURCE='Con''trol''Resource'
 check_absent "^type[[:space:]]+${REMOVED_RESOURCE}<" \
   "endpoint forbidden descriptor shorthand alias forbidden path" \
   src/endpoint/kernel/core.rs \
-  src/endpoint/flow.rs
+  src/endpoint/send.rs
 check_absent "mem::transmute::<Guard<'_>, Guard<'static>>|mem::transmute::<Guard<'static>, Guard<'rv>>|core::mem::transmute::<_, Port<[^>]+>>" \
   "rendezvous brand or port transmute forbidden path" \
   src/rendezvous/core.rs
@@ -620,7 +620,7 @@ check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Arm|Decision)[A-Za-z0-9_
   src/global/steps.rs
 check_absent "\\bEndpointBinding\\b" \
   "endpoint binding synonym alias residue in production source" \
-  src/endpoint.rs src/endpoint/flow.rs src/endpoint/carrier.rs
+  src/endpoint.rs src/endpoint/send.rs src/endpoint/carrier.rs
 check_absent "pub[[:space:]]+struct[[:space:]]+StateIndex|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new|from_usize|raw|as_usize|is_max)\\(" \
   "typestate StateIndex flat-index helpers must remain crate-private" \
   src/global/typestate/facts.rs

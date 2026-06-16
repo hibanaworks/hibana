@@ -117,18 +117,14 @@ async fn send_from_controller<const MSG: u8>(
     value: u8,
 ) {
     controller
-        .flow::<Msg<MSG, u8>>()
-        .unwrap_or_else(|err| panic!("controller flow label {MSG}: {err:?}"))
-        .send(&value)
+        .send::<Msg<MSG, u8>>(&value)
         .await
         .unwrap_or_else(|err| panic!("controller send label {MSG}: {err:?}"));
 }
 
 async fn send_from_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>, value: u8) {
     worker
-        .flow::<Msg<MSG, u8>>()
-        .expect("worker flow")
-        .send(&value)
+        .send::<Msg<MSG, u8>>(&value)
         .await
         .expect("worker send");
 }
@@ -153,15 +149,17 @@ async fn recv_controller<const MSG: u8>(controller: &mut hibana::Endpoint<'stati
         .expect("controller recv")
 }
 
-fn assert_controller_flow_blocked<const MSG: u8>(controller: &mut hibana::Endpoint<'static, 0>) {
-    let err = match controller.flow::<Msg<MSG, u8>>() {
-        Ok(_) => panic!("controller flow label {MSG} must be blocked"),
+async fn assert_controller_send_blocked<const MSG: u8>(
+    controller: &mut hibana::Endpoint<'static, 0>,
+) {
+    let err = match controller.send::<Msg<MSG, u8>>(&0).await {
+        Ok(()) => panic!("controller send label {MSG} must be blocked"),
         Err(err) => err,
     };
     let rendered = format!("{err:?}");
     assert!(
         rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
-        "controller flow label {MSG} must remain blocked by roll/par progress: {rendered}"
+        "controller send label {MSG} must remain blocked by roll/par progress: {rendered}"
     );
 }
 
@@ -211,12 +209,12 @@ fn rolled_par_reenters_only_after_both_lanes_settle() {
         |controller, worker| {
             futures::executor::block_on(async {
                 send_from_controller::<PAR_LEFT>(controller, 10).await;
-                assert_controller_flow_blocked::<PAR_LEFT>(controller);
-                assert_controller_flow_blocked::<PAR_EXIT>(controller);
+                assert_controller_send_blocked::<PAR_LEFT>(controller).await;
+                assert_controller_send_blocked::<PAR_EXIT>(controller).await;
 
                 send_from_controller::<PAR_RIGHT>(controller, 11).await;
                 send_from_controller::<PAR_LEFT>(controller, 20).await;
-                assert_controller_flow_blocked::<PAR_EXIT>(controller);
+                assert_controller_send_blocked::<PAR_EXIT>(controller).await;
 
                 send_from_controller::<PAR_RIGHT>(controller, 21).await;
                 send_from_controller::<PAR_EXIT>(controller, 99).await;
@@ -292,7 +290,7 @@ fn nested_roll_scopes_reenter_inner_until_outer_scope_completes() {
                 assert_eq!(recv_worker::<NESTED_BODY>(worker).await, 40);
                 send_from_worker::<NESTED_OTHER>(worker, 41).await;
                 assert_eq!(recv_controller::<NESTED_OTHER>(controller).await, 41);
-                assert_controller_flow_blocked::<NESTED_EXIT>(controller);
+                assert_controller_send_blocked::<NESTED_EXIT>(controller).await;
 
                 send_from_controller::<NESTED_TAIL>(controller, 50).await;
                 assert_eq!(recv_worker::<NESTED_TAIL>(worker).await, 50);

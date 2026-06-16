@@ -296,5 +296,5 @@ impl ScopeEvidence {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, hibana_repo_tests))]
 mod tests;

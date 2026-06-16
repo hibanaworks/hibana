@@ -57,10 +57,6 @@ unsafe fn encode_erased<P: WireEncode>(
 /// `Decoded<'a>` describes what `recv()` / `decode()` yield when the
 /// wire bytes are borrowed for the duration of the endpoint borrow.
 pub trait WirePayload {
-    /// Compile-time fact used by the descriptor kernel when a transport returns an
-    /// empty payload without ingress evidence.
-    const ALLOWS_ZERO_LENGTH: bool = false;
-
     type Decoded<'a>;
 
     /// Validate payload-local bytes before endpoint progress can commit.
@@ -93,8 +89,6 @@ impl WireEncode for () {
 }
 
 impl WirePayload for () {
-    const ALLOWS_ZERO_LENGTH: bool = true;
-
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -186,8 +180,6 @@ impl WireEncode for &[u8] {
 }
 
 impl WirePayload for &[u8] {
-    const ALLOWS_ZERO_LENGTH: bool = true;
-
     type Decoded<'a> = &'a [u8];
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -211,8 +203,6 @@ impl<const N: usize> WireEncode for [u8; N] {
 }
 
 impl<const N: usize> WirePayload for [u8; N] {
-    const ALLOWS_ZERO_LENGTH: bool = N == 0;
-
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {

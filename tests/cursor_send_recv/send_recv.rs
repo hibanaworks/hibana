@@ -80,13 +80,8 @@ fn cursor_send_and_recv_roundtrip() {
                 .enter()
                 .expect("target endpoint");
 
-            let () = futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<1, u32>>()
-                    .expect("send flow")
-                    .send(&42),
-            )
-            .expect("send succeeds");
+            let () = futures::executor::block_on(origin_endpoint.send::<Msg<1, u32>>(&42))
+                .expect("send succeeds");
             let payload = futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>())
                 .expect("recv succeeds");
             assert_eq!(payload, 42u32);
@@ -129,10 +124,7 @@ fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
                 .expect("attach role2 and grow lease table again");
 
             futures::executor::block_on(
-                endpoint0
-                    .flow::<Msg<8, FramePayload>>()
-                    .expect("role0 send flow")
-                    .send(&FramePayload(*b"r0-1")),
+                endpoint0.send::<Msg<8, FramePayload>>(&FramePayload(*b"r0-1")),
             )
             .expect("role0 send survives endpoint lease root relocation");
             let payload = futures::executor::block_on(endpoint1.recv::<Msg<8, FramePayload>>())
@@ -140,10 +132,7 @@ fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
             assert_eq!(payload.as_bytes(), b"r0-1");
 
             futures::executor::block_on(
-                endpoint2
-                    .flow::<Msg<9, FramePayload>>()
-                    .expect("role2 send flow")
-                    .send(&FramePayload(*b"r2-0")),
+                endpoint2.send::<Msg<9, FramePayload>>(&FramePayload(*b"r2-0")),
             )
             .expect("role2 send succeeds");
             let payload = futures::executor::block_on(endpoint0.recv::<Msg<9, FramePayload>>())
@@ -180,10 +169,7 @@ fn live_endpoint_send_survives_failed_later_attach_rollback() {
                 }
 
                 futures::executor::block_on(
-                    endpoint0
-                        .flow::<Msg<10, FramePayload>>()
-                        .expect("role0 flow after failed attach")
-                        .send(&FramePayload(*b"r0ok")),
+                    endpoint0.send::<Msg<10, FramePayload>>(&FramePayload(*b"r0ok")),
                 )
                 .expect("existing endpoint send survives failed later attach rollback");
                 exercised = true;
@@ -216,10 +202,7 @@ fn direct_send_capacity_emits_transport_fault_tap() {
                 .enter()
                 .expect("origin endpoint");
             let error = futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<3, FramePayload>>()
-                    .expect("send flow")
-                    .send(&FramePayload(*b"full")),
+                origin_endpoint.send::<Msg<3, FramePayload>>(&FramePayload(*b"full")),
             )
             .expect_err("capacity send must surface transport error");
             let rendered = format!("{error:?}");
@@ -267,20 +250,10 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .enter()
                 .expect("target endpoint");
 
-            futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<41, u32>>()
-                    .expect("first send flow")
-                    .send(&11),
-            )
-            .expect("first send succeeds");
-            futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<41, u32>>()
-                    .expect("second send flow")
-                    .send(&22),
-            )
-            .expect("second send succeeds");
+            futures::executor::block_on(origin_endpoint.send::<Msg<41, u32>>(&11))
+                .expect("first send succeeds");
+            futures::executor::block_on(origin_endpoint.send::<Msg<41, u32>>(&22))
+                .expect("second send succeeds");
 
             let mut recv_future = Box::pin(target_endpoint.recv::<Msg<41, u32>>());
             let waker = futures::task::noop_waker_ref();
@@ -339,12 +312,7 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .expect("target endpoint");
 
             let first = 11u32;
-            let mut send_future = Box::pin(
-                origin_endpoint
-                    .flow::<Msg<42, u32>>()
-                    .expect("first send flow")
-                    .send(&first),
-            );
+            let mut send_future = Box::pin(origin_endpoint.send::<Msg<42, u32>>(&first));
             let waker = futures::task::noop_waker_ref();
             let mut context = Context::from_waker(waker);
             let first_poll = Future::poll(send_future.as_mut(), &mut context);
@@ -363,13 +331,8 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
             drop(send_future);
 
             let second = 22u32;
-            futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<42, u32>>()
-                    .expect("second send flow")
-                    .send(&second),
-            )
-            .expect("second send succeeds");
+            futures::executor::block_on(origin_endpoint.send::<Msg<42, u32>>(&second))
+                .expect("second send succeeds");
 
             let first_recv = futures::executor::block_on(target_endpoint.recv::<Msg<42, u32>>())
                 .expect("first recv remains available");
@@ -386,7 +349,7 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
 }
 
 #[test]
-fn flow_error_reports_public_operation() {
+fn send_preview_error_reports_debug_boundary() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -410,11 +373,9 @@ fn flow_error_reports_public_operation() {
                 .expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
-            let err = match origin_endpoint.flow::<Msg<2, u32>>() {
-                Ok(_) => panic!("flow with wrong logical label must fail"),
-                Err(err) => err,
-            };
-            assert_eq!(err.operation(), "flow");
+            let err = futures::executor::block_on(origin_endpoint.send::<Msg<2, u32>>(&22))
+                .expect_err("send with wrong logical label must fail");
+            assert!(format!("{err:?}").contains("operation: \"send\""));
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("LabelMismatch"),
@@ -429,7 +390,7 @@ fn flow_error_reports_public_operation() {
                 Ok(_) => panic!("offer at deterministic send step must fail"),
                 Err(err) => err,
             };
-            assert_eq!(err.operation(), "offer");
+            assert!(format!("{err:?}").contains("operation: \"offer\""));
             let rendered = format!("{err:?}");
             assert!(
                 rendered.contains("PhaseInvariant")

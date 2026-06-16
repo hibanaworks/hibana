@@ -143,11 +143,11 @@ fn assert_join_blocked(rendered: &str) {
     );
 }
 
-fn assert_flow_rejected<T, E: core::fmt::Debug>(result: Result<T, E>, context: &str) {
-    let err = match result {
-        Ok(_) => panic!("{context}"),
-        Err(err) => err,
-    };
+async fn assert_send_rejected<F>(future: F, context: &str)
+where
+    F: core::future::Future<Output = hibana::EndpointResult<()>>,
+{
+    let err = future.await.expect_err(context);
     assert_join_blocked(&format!("{err:?}"));
 }
 
@@ -180,25 +180,23 @@ fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<DEAD_RIGHT_A, u8>>()
-                    .expect("left route flow")
-                    .send(&1)
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                     .await
                     .expect("send left route event");
 
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_B, u8>>(),
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
                     "unselected right nested-par B must be dead",
-                );
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_C, u8>>(),
+                )
+                .await;
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
                     "unselected right nested-par C must be dead",
-                );
+                )
+                .await;
 
                 local
-                    .flow::<Msg<DEAD_RIGHT_POST, u8>>()
-                    .expect("post route flow ignores unselected right par")
-                    .send(&2)
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
                     .await
                     .expect("send post route");
 
@@ -252,35 +250,32 @@ fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<DEAD_RIGHT_A, u8>>()
-                    .expect("left route flow")
-                    .send(&1)
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                     .await
                     .expect("send left route event");
 
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_B, u8>>(),
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
                     "unselected right nested-par B must be dead",
-                );
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_C, u8>>(),
+                )
+                .await;
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
                     "unselected right nested-par C must be dead",
-                );
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_POST, u8>>(),
+                )
+                .await;
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_POST, u8>>(&0),
                     "outer par join must still wait for sibling E",
-                );
+                )
+                .await;
 
                 local
-                    .flow::<Msg<DEAD_RIGHT_E, u8>>()
-                    .expect("parallel sibling E flow")
-                    .send(&2)
+                    .send::<Msg<DEAD_RIGHT_E, u8>>(&2)
                     .await
                     .expect("send parallel sibling E");
                 local
-                    .flow::<Msg<DEAD_RIGHT_POST, u8>>()
-                    .expect("post flow after selected route and sibling")
-                    .send(&3)
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&3)
                     .await
                     .expect("send post");
 
@@ -341,29 +336,28 @@ fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<DEAD_RIGHT_A, u8>>()
-                    .expect("outer left route flow")
-                    .send(&1)
+                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                     .await
                     .expect("send outer left route event");
 
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_B, u8>>(),
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
                     "inner-left nested-par B must be dead after outer left selection",
-                );
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_C, u8>>(),
+                )
+                .await;
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
                     "inner-left nested-par C must be dead after outer left selection",
-                );
-                assert_flow_rejected(
-                    local.flow::<Msg<DEAD_RIGHT_D, u8>>(),
+                )
+                .await;
+                assert_send_rejected(
+                    local.send::<Msg<DEAD_RIGHT_D, u8>>(&0),
                     "inner-right D must be dead after outer left selection",
-                );
+                )
+                .await;
 
                 local
-                    .flow::<Msg<DEAD_RIGHT_POST, u8>>()
-                    .expect("post route flow ignores nested unselected right route")
-                    .send(&2)
+                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
                     .await
                     .expect("send post route");
 
@@ -422,52 +416,42 @@ fn route_selected_left_keeps_entire_nested_parallel_path_live() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<ROUTE_PAR_A, u8>>()
-                    .expect("A flow")
-                    .send(&1)
+                    .send::<Msg<ROUTE_PAR_A, u8>>(&1)
                     .await
                     .expect("send A");
 
-                let err = match local.flow::<Msg<ROUTE_PAR_R, u8>>() {
-                    Ok(_) => panic!("right arm must be unselected after A commits"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<ROUTE_PAR_R, u8>>(&0)
+                    .await
+                    .expect_err("right arm must be unselected after A commits");
                 assert_join_blocked(&format!("{err:?}"));
 
-                let err = match local.flow::<Msg<ROUTE_PAR_D, u8>>() {
-                    Ok(_) => panic!("D must wait for B and C after A selects left"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<ROUTE_PAR_D, u8>>(&0)
+                    .await
+                    .expect_err("D must wait for B and C after A selects left");
                 assert_join_blocked(&format!("{err:?}"));
 
                 local
-                    .flow::<Msg<ROUTE_PAR_B, u8>>()
-                    .expect("B flow")
-                    .send(&2)
+                    .send::<Msg<ROUTE_PAR_B, u8>>(&2)
                     .await
                     .expect("send B");
-                let err = match local.flow::<Msg<ROUTE_PAR_D, u8>>() {
-                    Ok(_) => panic!("D must still wait for C"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<ROUTE_PAR_D, u8>>(&0)
+                    .await
+                    .expect_err("D must still wait for C");
                 assert_join_blocked(&format!("{err:?}"));
 
                 local
-                    .flow::<Msg<ROUTE_PAR_C, u8>>()
-                    .expect("C flow")
-                    .send(&3)
+                    .send::<Msg<ROUTE_PAR_C, u8>>(&3)
                     .await
                     .expect("send C");
                 local
-                    .flow::<Msg<ROUTE_PAR_D, u8>>()
-                    .expect("D flow after A/B/C")
-                    .send(&4)
+                    .send::<Msg<ROUTE_PAR_D, u8>>(&4)
                     .await
                     .expect("send D");
                 local
-                    .flow::<Msg<ROUTE_PAR_POST, u8>>()
-                    .expect("Post flow after selected left path")
-                    .send(&5)
+                    .send::<Msg<ROUTE_PAR_POST, u8>>(&5)
                     .await
                     .expect("send Post");
 
@@ -541,27 +525,23 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<ROUTE_PAYLOAD, u8>>()
-                    .expect("route payload flow")
-                    .send(&10)
+                    .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
                     .await
                     .expect("send route payload");
-                let err = match local.flow::<Msg<JOIN, u8>>() {
-                    Ok(_) => panic!("join must wait for the sibling parallel lane"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<JOIN, u8>>(&0)
+                    .await
+                    .expect_err("join must wait for the sibling parallel lane");
                 assert_join_blocked(&format!("{err:?}"));
 
                 local
-                    .flow::<Msg<SIDE_REQ, u8>>()
-                    .expect("side request flow")
-                    .send(&20)
+                    .send::<Msg<SIDE_REQ, u8>>(&20)
                     .await
                     .expect("send side request");
-                let err = match local.flow::<Msg<JOIN, u8>>() {
-                    Ok(_) => panic!("join must wait for the sibling lane response"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<JOIN, u8>>(&0)
+                    .await
+                    .expect_err("join must wait for the sibling lane response");
                 assert_join_blocked(&format!("{err:?}"));
 
                 let branch = worker.offer().await.expect("offer route payload");
@@ -579,9 +559,7 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                         .expect("recv side request"),
                     20
                 );
-                side.flow::<Msg<SIDE_RET, u8>>()
-                    .expect("side response flow")
-                    .send(&30)
+                side.send::<Msg<SIDE_RET, u8>>(&30)
                     .await
                     .expect("send side response");
                 assert_eq!(
@@ -593,9 +571,7 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                 );
 
                 local
-                    .flow::<Msg<JOIN, u8>>()
-                    .expect("post-par join flow")
-                    .send(&40)
+                    .send::<Msg<JOIN, u8>>(&40)
                     .await
                     .expect("send post-par join");
                 assert_eq!(
@@ -644,45 +620,26 @@ fn nested_parallel_join_requires_every_dependency_before_post() {
 
             futures::executor::block_on(async {
                 local
-                    .flow::<Msg<PAR_E, u8>>()
-                    .expect("E sibling flow is initially enabled")
-                    .send(&4)
+                    .send::<Msg<PAR_E, u8>>(&4)
                     .await
                     .expect("send E before nested left branch completes");
-                let err = match local.flow::<Msg<PAR_POST, u8>>() {
-                    Ok(_) => panic!("Post must still wait for the left parallel branch"),
-                    Err(err) => err,
-                };
+                let err = local
+                    .send::<Msg<PAR_POST, u8>>(&0)
+                    .await
+                    .expect_err("Post must still wait for the left parallel branch");
                 assert_join_blocked(&format!("{err:?}"));
 
-                local
-                    .flow::<Msg<PAR_A, u8>>()
-                    .expect("A flow")
-                    .send(&1)
+                local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
+                let err = local
+                    .send::<Msg<PAR_D, u8>>(&0)
                     .await
-                    .expect("send A");
-                let err = match local.flow::<Msg<PAR_D, u8>>() {
-                    Ok(_) => panic!("D must wait for both A and B"),
-                    Err(err) => err,
-                };
+                    .expect_err("D must wait for both A and B");
                 assert_join_blocked(&format!("{err:?}"));
 
+                local.send::<Msg<PAR_B, u8>>(&2).await.expect("send B");
+                local.send::<Msg<PAR_D, u8>>(&3).await.expect("send D");
                 local
-                    .flow::<Msg<PAR_B, u8>>()
-                    .expect("B flow")
-                    .send(&2)
-                    .await
-                    .expect("send B");
-                local
-                    .flow::<Msg<PAR_D, u8>>()
-                    .expect("D flow after A and B")
-                    .send(&3)
-                    .await
-                    .expect("send D");
-                local
-                    .flow::<Msg<PAR_POST, u8>>()
-                    .expect("Post flow after D and E")
-                    .send(&5)
+                    .send::<Msg<PAR_POST, u8>>(&5)
                     .await
                     .expect("send Post");
 

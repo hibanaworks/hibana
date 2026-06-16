@@ -59,6 +59,7 @@ impl WirePayload for InstallPayload {
 type TestKit = SessionKit<'static, TestTransport>;
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 const LOCAL_ROUTE_RESOLVER: u16 = 41;
+static LOCAL_ROUTE_STATE: () = ();
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -92,17 +93,12 @@ fn run_local_action_flow(
         .role(&actor_program)
         .enter()
         .expect("attach actor endpoint");
-    let () = futures::executor::block_on(
-        endpoint
-            .flow::<Msg<7, InstallPayload>>()
-            .expect("install flow")
-            .send(&payload),
-    )
-    .expect("local action succeeded");
+    let () = futures::executor::block_on(endpoint.send::<Msg<7, InstallPayload>>(&payload))
+        .expect("local action succeeded");
     assert!(transport_queue_is_empty(transport));
 }
 
-fn local_left() -> Result<DecisionResolution, ResolverError> {
+fn local_left(_: &()) -> Result<DecisionResolution, ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
 
@@ -125,8 +121,11 @@ fn run_local_route_decode_empty_payload(
         .rendezvous(Config::from_resources(slab), transport.clone())
         .expect("register rendezvous");
     let role = rv.role(&actor_program);
-    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_fn(local_left))
-        .expect("install resolver");
+    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(
+        &LOCAL_ROUTE_STATE,
+        local_left,
+    ))
+    .expect("install resolver");
     let mut endpoint = rv
         .session(SessionId::new(43))
         .role(&actor_program)
@@ -149,8 +148,11 @@ fn run_local_route_decode_non_empty_payload_fails_closed(
         .rendezvous(Config::from_resources(slab), transport.clone())
         .expect("register rendezvous");
     let role = rv.role(&actor_program);
-    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_fn(local_left))
-        .expect("install resolver");
+    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(
+        &LOCAL_ROUTE_STATE,
+        local_left,
+    ))
+    .expect("install resolver");
     let mut endpoint = rv
         .session(SessionId::new(44))
         .role(&actor_program)

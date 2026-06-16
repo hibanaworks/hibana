@@ -29,16 +29,31 @@ std::thread_local! {
     };
 }
 
-fn assert_endpoint_operation(error: hibana::EndpointError, operation: &str) {
-    assert_eq!(error.operation(), operation);
+fn assert_endpoint_debug_boundary(error: hibana::EndpointError, operation: &str) {
+    assert!(
+        format!("{error:?}").contains(&format!("operation: \"{operation}\"")),
+        "EndpointError Debug must include operation {operation}: {error:?}"
+    );
 }
 
-fn assert_attach_operation(error: hibana::runtime::AttachError, operation: &str) {
-    assert_eq!(error.operation(), operation);
+fn assert_attach_debug_boundary(error: hibana::runtime::AttachError, operation: &str) {
+    assert!(
+        format!("{error:?}").contains(&format!("operation: \"{operation}\"")),
+        "AttachError Debug must include operation {operation}: {error:?}"
+    );
 }
 
-fn assert_resolver_operation(error: ResolverError, operation: &str) {
-    assert_eq!(error.operation(), operation);
+fn assert_resolver_debug_boundary(error: ResolverError, operation: &str) {
+    assert!(
+        format!("{error:?}").contains(&format!("operation: \"{operation}\"")),
+        "ResolverError Debug must include operation {operation}: {error:?}"
+    );
+}
+
+static UNIT_RESOLVER_STATE: () = ();
+
+fn defer_from_unit(_: &()) -> Result<DecisionResolution, ResolverError> {
+    Ok(DecisionResolution::Defer)
 }
 
 fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
@@ -79,7 +94,7 @@ fn runtime_registers_multiple_rendezvous_from_resident_resources() {
 }
 
 #[test]
-fn endpoint_errors_keep_public_operations() {
+fn endpoint_errors_keep_debug_boundaries() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
@@ -98,30 +113,24 @@ fn endpoint_errors_keep_public_operations() {
                 .enter()
                 .expect("target");
 
-            let flow_error = match origin.flow::<Msg<12, u32>>() {
-                Ok(flow) => {
-                    drop(flow);
-                    panic!("wrong flow label must fail")
-                }
-                Err(error) => error,
-            };
-            assert_endpoint_operation(flow_error, "flow");
+            let send_error = futures::executor::block_on(origin.send::<Msg<12, u32>>(&1234))
+                .expect_err("wrong send label must fail");
+            assert_endpoint_debug_boundary(send_error, "send");
 
-            futures::executor::block_on(origin.flow::<Msg<11, u32>>().expect("flow").send(&1234))
-                .expect("send");
+            futures::executor::block_on(origin.send::<Msg<11, u32>>(&1234)).expect("send");
 
             let recv_result = futures::executor::block_on(target.recv::<Msg<11, u64>>());
             let recv_error = match recv_result {
                 Ok(_) => panic!("wrong recv payload must fail"),
                 Err(error) => error,
             };
-            assert_endpoint_operation(recv_error, "recv");
+            assert_endpoint_debug_boundary(recv_error, "recv");
         });
     });
 }
 
 #[test]
-fn attach_and_resolver_errors_keep_public_operations() {
+fn attach_and_resolver_errors_keep_debug_boundaries() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
             let config = Config::from_resources(&mut slab[..1]);
@@ -130,7 +139,7 @@ fn attach_and_resolver_errors_keep_public_operations() {
                 Ok(_) => panic!("resource-constrained rendezvous slab must fail"),
                 Err(error) => error,
             };
-            assert_attach_operation(rendezvous_error, "rendezvous");
+            assert_attach_debug_boundary(rendezvous_error, "rendezvous");
         });
     });
 
@@ -148,19 +157,19 @@ fn attach_and_resolver_errors_keep_public_operations() {
                 Ok(_) => panic!("resource-constrained role enter must fail"),
                 Err(error) => error,
             };
-            assert_attach_operation(enter_error, "enter");
+            assert_attach_debug_boundary(enter_error, "enter");
 
             let resolver_role = rv.role(&origin_program);
-            let resolver = ResolverRef::<77>::decision_fn(|| Ok(DecisionResolution::Defer));
+            let resolver = ResolverRef::<77>::decision_state(&UNIT_RESOLVER_STATE, defer_from_unit);
             let set_resolver_result = resolver_role.set_resolver(resolver);
             let set_resolver_error = match set_resolver_result {
                 Ok(_) => panic!("resolver without projected site must fail"),
                 Err(error) => error,
             };
-            assert_resolver_operation(set_resolver_error, "set_resolver");
+            assert_resolver_debug_boundary(set_resolver_error, "set_resolver");
         });
     });
 
     let reject_error = ResolverError::reject();
-    assert_resolver_operation(reject_error, "reject");
+    assert_resolver_debug_boundary(reject_error, "reject");
 }

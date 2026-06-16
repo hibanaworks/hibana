@@ -15,24 +15,12 @@ pub fn controller_send_u8<const LOGICAL_LABEL: u8>(
     controller: &mut ControllerEndpoint<'_>,
     value: u8,
 ) {
-    drive(
-        controller
-            .flow::<g::Msg<LOGICAL_LABEL, u8>>()
-            .expect("controller flow<u8>")
-            .send(&value),
-    )
-    .expect("controller send<u8>");
+    drive(controller.send::<g::Msg<LOGICAL_LABEL, u8>>(&value)).expect("controller send<u8>");
 }
 
 #[inline(never)]
 pub fn worker_send_u8<const LOGICAL_LABEL: u8>(worker: &mut WorkerEndpoint<'_>, value: u8) {
-    drive(
-        worker
-            .flow::<g::Msg<LOGICAL_LABEL, u8>>()
-            .expect("worker flow<u8>")
-            .send(&value),
-    )
-    .expect("worker send<u8>");
+    drive(worker.send::<g::Msg<LOGICAL_LABEL, u8>>(&value)).expect("worker send<u8>");
 }
 
 #[inline(never)]

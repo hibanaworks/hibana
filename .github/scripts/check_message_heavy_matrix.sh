@@ -87,7 +87,6 @@ with open(dst, "w", encoding="utf-8") as f:
         "    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> { Ok(out[..0].len()) }\n"
         "}\n\n"
         "impl<const ID: u16> WirePayload for Payload<ID> {\n"
-        "    const ALLOWS_ZERO_LENGTH: bool = true;\n"
         "    type Decoded<'a> = Self;\n"
         "    fn validate_payload(input: WirePayloadView<'_>) -> Result<(), CodecError> {\n"
         "        if input.as_bytes().is_empty() { Ok(()) } else { Err(CodecError::Malformed) }\n"

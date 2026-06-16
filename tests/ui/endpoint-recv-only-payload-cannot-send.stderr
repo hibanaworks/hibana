@@ -1,16 +1,59 @@
-error[E0599]: the method `send` exists for struct `Flow<'_, '_, 0, Msg<36, RecvOnly>>`, but its trait bounds were not satisfied
-  --> tests/ui/endpoint-recv-only-payload-cannot-send.rs:31:23
+error[E0277]: the trait bound `RecvOnly: WireEncode` is not satisfied
+  --> tests/ui/endpoint-recv-only-payload-cannot-send.rs:26:34
+   |
+26 |     let future = endpoint.send::<g::Msg<36, RecvOnly>>(&payload);
+   |                                  ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `WireEncode` is not implemented for `RecvOnly`
+  --> tests/ui/endpoint-recv-only-payload-cannot-send.rs:6:1
    |
  6 | struct RecvOnly;
-   | --------------- doesn't satisfy `RecvOnly: WireEncode`
+   | ^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `WireEncode`:
+             &[u8]
+             ()
+             [u8; N]
+             bool
+             i128
+             i16
+             i32
+             i64
+           and $N others
+note: required by a bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::send`
+  --> src/endpoint/ops.rs
+   |
+   |     pub fn send<'a, 'e, M>(
+   |            ---- required by a bound in this associated function
 ...
-31 |     let future = flow.send(&payload);
-   |                       ^^^^ method cannot be called on `Flow<'_, '_, 0, Msg<36, RecvOnly>>` due to unsatisfied trait bounds
+   |         M::Payload: WireEncode + 'a,
+   |                     ^^^^^^^^^^ required by this bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::send`
+
+error[E0277]: the trait bound `RecvOnly: WireEncode` is not satisfied
+  --> tests/ui/endpoint-recv-only-payload-cannot-send.rs:27:5
    |
-   = note: the following trait bounds were not satisfied:
-           `RecvOnly: WireEncode`
-note: the trait `WireEncode` must be implemented
-  --> src/transport/wire.rs
+27 |     core::mem::drop(future);
+   |     ^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
-   | pub trait WireEncode {
-   | ^^^^^^^^^^^^^^^^^^^^
+help: the trait `WireEncode` is not implemented for `RecvOnly`
+  --> tests/ui/endpoint-recv-only-payload-cannot-send.rs:6:1
+   |
+ 6 | struct RecvOnly;
+   | ^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `WireEncode`:
+             &[u8]
+             ()
+             [u8; N]
+             bool
+             i128
+             i16
+             i32
+             i64
+           and $N others
+note: required by a bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::send`
+  --> src/endpoint/ops.rs
+   |
+   |     pub fn send<'a, 'e, M>(
+   |            ---- required by a bound in this associated function
+...
+   |         M::Payload: WireEncode + 'a,
+   |                     ^^^^^^^^^^ required by this bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::send`

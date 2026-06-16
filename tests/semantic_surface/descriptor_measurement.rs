@@ -42,7 +42,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
 
     for required in [
         "pub type EndpointResult<T> = core::result::Result<T, EndpointError>;",
-        "pub use endpoint::{Endpoint, EndpointError, EndpointResult, Flow, RouteBranch};",
+        "pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};",
         "pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub use crate::session::cluster::error::AttachError;",
         "pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {",
@@ -96,40 +96,38 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     }
 
     assert!(
-        endpoint.contains("#[track_caller]\n    pub fn flow")
+        endpoint.contains("#[track_caller]\n    pub fn send")
             && endpoint.contains("#[track_caller]\n    pub fn recv")
             && endpoint.contains("#[track_caller]\n    pub fn offer")
             && endpoint.contains("#[track_caller]\n    pub fn decode"),
-        "endpoint operations must keep a single public boundary for operation diagnostics"
+        "endpoint operations must keep a single public call boundary for Debug operation diagnostics"
     );
     assert!(
-        read("src/endpoint/flow.rs").contains("#[track_caller]\n    pub fn send"),
-        "flow send must keep a single public boundary for operation diagnostics"
+        !endpoint.contains(concat!("pub fn ", "fl", "ow")),
+        "endpoint operations must not regain the removed send-preview boundary"
     );
     assert!(
         resolver.contains("#[track_caller]\n    pub fn reject")
             && runtime.contains("#[track_caller]\n    pub fn rendezvous")
             && runtime.contains("#[track_caller]\n    pub fn enter")
             && runtime.contains("#[track_caller]\n    pub fn set_resolver"),
-        "resolver and attach boundaries must keep one public operation boundary"
+        "resolver and attach boundaries must keep one public call boundary"
     );
     for (name, source) in [
         ("EndpointError", endpoint.as_str()),
         ("ResolverError", resolver.as_str()),
         ("AttachError", attach.as_str()),
     ] {
-        assert!(
-            source.contains("pub const fn operation(&self) -> &'static str"),
-            "{name} must keep compact public operation diagnostics"
-        );
         for forbidden in [
+            "pub const fn operation(&self) -> &'static str",
+            "pub fn operation(&self) -> &'static str",
             "pub const fn file(&self) -> &'static str",
             "pub const fn line(&self) -> u32",
             "pub const fn column(&self) -> u32",
         ] {
             assert!(
                 !source.contains(forbidden),
-                "{name} must not expose source-location public API: {forbidden}"
+                "{name} must not expose stringly public diagnostics: {forbidden}"
             );
         }
     }

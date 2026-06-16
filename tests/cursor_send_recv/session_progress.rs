@@ -30,27 +30,12 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
                 .enter()
                 .expect("target endpoint");
 
-            futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<31, u32>>()
-                    .expect("lane 0 first flow")
-                    .send(&31),
-            )
-            .expect("lane 0 first send");
-            futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<32, u32>>()
-                    .expect("lane 1 middle flow")
-                    .send(&32),
-            )
-            .expect("lane 1 middle send");
-            futures::executor::block_on(
-                origin_endpoint
-                    .flow::<Msg<33, u32>>()
-                    .expect("lane 0 final flow")
-                    .send(&33),
-            )
-            .expect("lane 0 final send");
+            futures::executor::block_on(origin_endpoint.send::<Msg<31, u32>>(&31))
+                .expect("lane 0 first send");
+            futures::executor::block_on(origin_endpoint.send::<Msg<32, u32>>(&32))
+                .expect("lane 1 middle send");
+            futures::executor::block_on(origin_endpoint.send::<Msg<33, u32>>(&33))
+                .expect("lane 0 final send");
 
             assert_eq!(
                 futures::executor::block_on(target_endpoint.recv::<Msg<31, u32>>())

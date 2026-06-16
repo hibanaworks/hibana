@@ -5,11 +5,6 @@ use crate::{
     global::compiled::images::{CompiledProgramRef, DynamicResolverSite},
 };
 
-#[inline(always)]
-pub(crate) const fn lane_open_tap_event_id() -> u16 {
-    0x0100
-}
-
 pub(crate) struct ProgramImageDynamicResolverSiteIter<'a> {
     program: &'a CompiledProgramRef,
     row: usize,

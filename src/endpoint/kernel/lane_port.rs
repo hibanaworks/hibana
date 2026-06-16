@@ -90,6 +90,14 @@ impl<'r> PendingSend<'r> {
 
 impl RawSendPayload {
     #[inline(always)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            ptr: None,
+            encode: crate::transport::wire::erased_encoder::<()>(),
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn from_typed<P: WireEncode>(payload: &P) -> Self {
         Self {
             ptr: Some(NonNull::from(payload).cast()),

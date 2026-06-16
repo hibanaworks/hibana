@@ -1,13 +1,13 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
-    CursorInvariantError, EnabledEventCommit, EventCursor, FlowPreviewError, LocalDependency,
-    PackedEventConflict, RelocatableResidentLaneStep, ScopeId, SendMeta, StateIndex,
+    CursorInvariantError, EnabledEventCommit, EventCursor, LocalDependency, PackedEventConflict,
+    RelocatableResidentLaneStep, ScopeId, SendMeta, SendPreviewError, StateIndex,
     state_index_to_usize,
 };
 use crate::global::typestate::EventCommitMeta;
 
 #[derive(Clone, Copy)]
-struct FlowPreviewRouteArm {
+struct SendPreviewRouteArm {
     lane: u8,
     scope: ScopeId,
     arm: u8,
@@ -235,7 +235,7 @@ impl EventCursor {
     }
 
     #[inline]
-    fn flow_is_at_controller_arm_entry(&self, scope_id: ScopeId, idx: usize) -> bool {
+    fn send_preview_is_at_controller_arm_entry(&self, scope_id: ScopeId, idx: usize) -> bool {
         let mut arm = 0u8;
         while arm <= 1 {
             if self
@@ -253,7 +253,7 @@ impl EventCursor {
     }
 
     #[inline]
-    fn flow_controller_arm_entry_for_label(
+    fn send_preview_controller_arm_entry_for_label(
         &self,
         scope_id: ScopeId,
         target_label: u8,
@@ -274,17 +274,17 @@ impl EventCursor {
     }
 
     #[inline]
-    fn flow_send_lane_at(&self, idx: usize) -> Option<u8> {
+    fn send_preview_lane_at(&self, idx: usize) -> Option<u8> {
         self.try_send_meta_at(idx)
             .map(|meta| meta.lane)
             .or_else(|| self.try_local_meta_at(idx).map(|meta| meta.lane))
     }
 
     #[inline]
-    fn flow_selected_arm_for_scope_with_route<F>(
+    fn send_preview_selected_arm_for_scope_with_route<F>(
         &self,
         scope_id: ScopeId,
-        preview_route_arm: Option<FlowPreviewRouteArm>,
+        preview_route_arm: Option<SendPreviewRouteArm>,
         arm_for_scope: &mut F,
     ) -> Option<u8>
     where
@@ -302,22 +302,26 @@ impl EventCursor {
         arm_for_scope(scope_id)
     }
 
-    fn flow_route_scope_end_if_complete<F>(
+    fn send_preview_route_scope_end_if_complete<F>(
         &self,
         scope_id: ScopeId,
-        preview_route_arm: Option<FlowPreviewRouteArm>,
+        preview_route_arm: Option<SendPreviewRouteArm>,
         arm_for_scope: &mut F,
     ) -> Option<usize>
     where
         F: FnMut(ScopeId) -> Option<u8>,
     {
-        let arm = self.flow_selected_arm_for_scope_with_route(
+        let arm = self.send_preview_selected_arm_for_scope_with_route(
             scope_id,
             preview_route_arm,
             arm_for_scope,
         )?;
         if !self.selected_route_arm_event_row_done(scope_id, arm, |scope| {
-            self.flow_selected_arm_for_scope_with_route(scope, preview_route_arm, arm_for_scope)
+            self.send_preview_selected_arm_for_scope_with_route(
+                scope,
+                preview_route_arm,
+                arm_for_scope,
+            )
         }) {
             return None;
         }
@@ -325,7 +329,7 @@ impl EventCursor {
     }
 
     #[inline]
-    fn flow_pending_label_index(&self, target_label: u8) -> Option<usize> {
+    fn send_preview_pending_label_index(&self, target_label: u8) -> Option<usize> {
         let idx = self.index();
         if let Some(meta) = self.try_recv_meta_at(idx)
             && meta.label == target_label
@@ -349,7 +353,7 @@ impl EventCursor {
     }
 
     #[inline]
-    fn flow_start_index_for_label(
+    fn send_preview_start_index_for_label(
         &self,
         target_label: u8,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
@@ -359,7 +363,7 @@ impl EventCursor {
         {
             return idx;
         }
-        if let Some(idx) = self.flow_pending_label_index(target_label) {
+        if let Some(idx) = self.send_preview_pending_label_index(target_label) {
             return idx;
         }
         if let Some((lane_idx, _)) = self.pending_step_for_label(target_label)
@@ -395,20 +399,22 @@ impl EventCursor {
         self.index()
     }
 
-    pub(crate) fn flow_preview_send_meta_for_label<const ROLE: u8>(
+    pub(crate) fn send_preview_meta_for_label<const ROLE: u8>(
         &self,
         target_label: u8,
         mut committed_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut lane_for_label_or_offer: impl FnMut(ScopeId, u8) -> u8,
-    ) -> Result<(SendMeta, StateIndex), FlowPreviewError> {
+    ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
         let roll_reentry =
             self.roll_reentry_index_for_label(target_label, &mut committed_arm_for_scope);
         let mut idx = match roll_reentry {
             Some(idx) => idx,
-            None => self.flow_start_index_for_label(target_label, &mut committed_arm_for_scope),
+            None => {
+                self.send_preview_start_index_for_label(target_label, &mut committed_arm_for_scope)
+            }
         };
-        let mut preview_route_arm: Option<FlowPreviewRouteArm> = None;
+        let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
         if let Some(region) = self.route_scope_rows_at(idx) {
             let scope_id = region.scope();
@@ -418,21 +424,21 @@ impl EventCursor {
             let at_decision = at_route_start || unlabeled;
 
             if self.is_route_controller(scope_id) {
-                let at_arm_entry = self.flow_is_at_controller_arm_entry(scope_id, idx);
+                let at_arm_entry = self.send_preview_is_at_controller_arm_entry(scope_id, idx);
                 let at_decision = at_arm_entry || at_decision;
                 if at_decision
                     && let Some((arm, entry_idx)) =
-                        self.flow_controller_arm_entry_for_label(scope_id, target_label)
+                        self.send_preview_controller_arm_entry_for_label(scope_id, target_label)
                 {
                     if let Some(selected) = committed_arm_for_scope(scope_id)
                         && selected != arm
                         && !self.route_scope_reentry(scope_id)
                     {
-                        return Err(FlowPreviewError::Invariant);
+                        return Err(SendPreviewError::Invariant);
                     }
                     idx = entry_idx;
-                    if let Some(lane) = self.flow_send_lane_at(idx) {
-                        preview_route_arm = Some(FlowPreviewRouteArm {
+                    if let Some(lane) = self.send_preview_lane_at(idx) {
+                        preview_route_arm = Some(SendPreviewRouteArm {
                             lane,
                             scope: scope_id,
                             arm,
@@ -448,7 +454,7 @@ impl EventCursor {
                     })
                 });
                 if let Some(selected_arm) = selected_arm {
-                    preview_route_arm = Some(FlowPreviewRouteArm {
+                    preview_route_arm = Some(SendPreviewRouteArm {
                         lane: lane_wire,
                         scope: scope_id,
                         arm: selected_arm,
@@ -467,7 +473,7 @@ impl EventCursor {
         loop {
             iter += 1;
             if iter > bound {
-                return Err(FlowPreviewError::Invariant);
+                return Err(SendPreviewError::Invariant);
             }
 
             let preview_conflict = self.machine().event_conflict_for_index(idx);
@@ -475,7 +481,7 @@ impl EventCursor {
                 preview_conflict,
                 preview_conflict,
                 |scope| {
-                    self.flow_selected_arm_for_scope_with_route(
+                    self.send_preview_selected_arm_for_scope_with_route(
                         scope,
                         preview_route_arm,
                         &mut selected_arm_for_scope,
@@ -496,7 +502,7 @@ impl EventCursor {
                     continue;
                 }
                 if let Some(region) = self.route_scope_rows_at(idx)
-                    && let Some(end) = self.flow_route_scope_end_if_complete(
+                    && let Some(end) = self.send_preview_route_scope_end_if_complete(
                         region.scope(),
                         preview_route_arm,
                         &mut selected_arm_for_scope,
@@ -505,13 +511,13 @@ impl EventCursor {
                     idx = end;
                     continue;
                 }
-                return Err(FlowPreviewError::Invariant);
+                return Err(SendPreviewError::Invariant);
             }
 
             let current_meta = if self.is_local_action_at(idx) {
                 let local = self
                     .try_local_meta_at(idx)
-                    .ok_or(FlowPreviewError::Invariant)?;
+                    .ok_or(SendPreviewError::Invariant)?;
                 SendMeta {
                     eff_index: local.eff_index,
                     peer: ROLE,
@@ -528,46 +534,46 @@ impl EventCursor {
                 }
             } else {
                 self.try_send_meta_at(idx)
-                    .ok_or(FlowPreviewError::Invariant)?
+                    .ok_or(SendPreviewError::Invariant)?
             };
 
             let Some(progress_step) = self
                 .pending_event_progress_step(idx, current_meta.lane, |scope| {
-                    self.flow_selected_arm_for_scope_with_route(
+                    self.send_preview_selected_arm_for_scope_with_route(
                         scope,
                         preview_route_arm,
                         &mut selected_arm_for_scope,
                     )
                 })
-                .map_err(|_| FlowPreviewError::Invariant)?
+                .map_err(|_| SendPreviewError::Invariant)?
             else {
                 idx = state_index_to_usize(self.node_next_index_at(idx));
                 continue;
             };
             if !self.event_lane_head_allows(progress_step, preview_conflict, |scope| {
-                self.flow_selected_arm_for_scope_with_route(
+                self.send_preview_selected_arm_for_scope_with_route(
                     scope,
                     preview_route_arm,
                     &mut selected_arm_for_scope,
                 )
             }) {
-                return Err(FlowPreviewError::Invariant);
+                return Err(SendPreviewError::Invariant);
             }
 
             if current_meta.label == target_label {
                 self.event_enabled(idx, EventCommitMeta::from(current_meta), |scope| {
-                    self.flow_selected_arm_for_scope_with_route(
+                    self.send_preview_selected_arm_for_scope_with_route(
                         scope,
                         preview_route_arm,
                         &mut selected_arm_for_scope,
                     )
                 })
-                .map_err(|_| FlowPreviewError::Invariant)?;
+                .map_err(|_| SendPreviewError::Invariant)?;
                 return Ok((current_meta, StateIndex::from_usize(idx)));
             }
 
             if let Some(region) = self.route_scope_rows_at(idx)
-                && let Some(end) = self.flow_route_scope_end_if_complete(
+                && let Some(end) = self.send_preview_route_scope_end_if_complete(
                     region.scope(),
                     preview_route_arm,
                     &mut selected_arm_for_scope,
@@ -577,7 +583,7 @@ impl EventCursor {
                 continue;
             }
 
-            return Err(FlowPreviewError::LabelMismatch {
+            return Err(SendPreviewError::LabelMismatch {
                 expected: current_meta.label,
                 actual: target_label,
             });
