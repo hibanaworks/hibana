@@ -114,16 +114,17 @@ impl<const MAX_RV: usize> SessionRoleBindings<MAX_RV> {
     }
 }
 
-/// SessionCluster - Owns multiple Rendezvous instances.
+/// SessionCluster - owns caller-budgeted local rendezvous instances.
 ///
 /// This is the top-level local session coordinator. It manages:
-/// - Local Rendezvous instances
+/// - Local rendezvous owners
 /// - Session-role bindings for resident endpoints
 /// - Dynamic route resolver storage
 ///
 /// # Type Parameters
 ///
-/// - `MAX_RV`: Maximum number of Rendezvous instances
+/// - `MAX_RV`: Caller-owned local rendezvous budget. It is not a protocol role,
+///   node, member, or transport connection count.
 ///
 /// Resident mutable state of SessionCluster.
 ///
@@ -142,7 +143,7 @@ pub(crate) struct SessionStorage<'cfg, T, const MAX_RV: usize>
 where
     T: crate::transport::Transport,
 {
-    /// Owned local Rendezvous instances (same process/node).
+    /// Owned local rendezvous instances.
     pub(crate) locals: crate::session::lease::core::RendezvousTable<'cfg, T, MAX_RV>,
 
     /// Attached session-role bindings.

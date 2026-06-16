@@ -1,7 +1,7 @@
 use super::{
     Arm, CursorEndpoint, DeferReason, FrameFlags, FrontierKind, Lane, RecvError, RecvResult,
-    ResolverSlot, ScopeId, ScopeTrace, TapEvent, TapFrameMeta, Transport, emit, events, ids,
-    resolver_audit, state_index_to_usize,
+    ResolverSlot, ScopeId, TapEvent, TapFrameMeta, Transport, emit, events, ids, resolver_audit,
+    state_index_to_usize,
 };
 
 const AUDIT_ABSENT_SCOPE_SLOT: u16 = u16::MAX;
@@ -15,7 +15,6 @@ pub(in crate::endpoint::kernel) struct ResolverDeferAudit {
     pub(in crate::endpoint::kernel) frontier: FrontierKind,
     pub(in crate::endpoint::kernel) selected_arm: Option<u8>,
     pub(in crate::endpoint::kernel) hint: Option<u8>,
-    pub(in crate::endpoint::kernel) ready_arm_mask: u8,
     pub(in crate::endpoint::kernel) ingress: IngressEvidenceState,
     pub(in crate::endpoint::kernel) progress: ResolverDeferProgress,
     pub(in crate::endpoint::kernel) lane: u8,
@@ -79,26 +78,10 @@ fn audit_arm(arm: Option<u8>) -> u32 {
     }
 }
 
-#[inline]
-fn audit_hint(hint: Option<u8>) -> (u32, u32) {
-    match hint {
-        Some(hint) => (u32::from(hint), AUDIT_HINT_PRESENT),
-        None => (0, 0),
-    }
-}
-
 impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
 where
     T: Transport + 'r,
 {
-    #[inline]
-    pub(crate) fn scope_trace(&self, scope: ScopeId) -> Option<ScopeTrace> {
-        if scope.is_none() {
-            return None;
-        }
-        Some(ScopeTrace::new(scope.range_ordinal(), scope.nest_ordinal()))
-    }
-
     pub(crate) fn is_reentry_route(&self, scope: ScopeId) -> bool {
         self.cursor.route_scope_reentry(scope)
     }
@@ -181,21 +164,13 @@ where
     }
 
     #[inline]
-    pub(crate) fn emit_resolver_audit_event(
-        &self,
-        id: u16,
-        arg0: u32,
-        arg1: u32,
-        arg2: u32,
-        lane: Lane,
-    ) {
+    pub(crate) fn emit_resolver_audit_event(&self, id: u16, arg0: u32, arg1: u32, lane: Lane) {
         let port = self.port_for_lane(lane.raw() as usize);
         let causal = TapEvent::make_causal_key(lane.as_wire(), 1);
         let event = events::raw_event(port.now32(), id)
             .with_causal_key(causal)
             .with_arg0(arg0)
-            .with_arg1(arg1)
-            .with_arg2(arg2);
+            .with_arg1(arg1);
         emit(port.tap(), event);
     }
 
@@ -204,13 +179,16 @@ where
         const RESOLVER_DEFER_AUDIT_TAG: u32 = 0x80;
         let scope_slot = audit_scope_slot(self.scope_slot_for_route(audit.scope_id));
         let arm = audit_arm(audit.selected_arm);
-        let (hint, hint_present) = audit_hint(audit.hint);
+        let hint_present = if audit.hint.is_some() {
+            AUDIT_HINT_PRESENT
+        } else {
+            0
+        };
         let progress = audit.progress.audit_bit();
-        let arg0 = (RESOLVER_DEFER_AUDIT_TAG << 24) | progress;
-        let arg1 = (scope_slot << 16) | (arm << 8) | (audit.ready_arm_mask as u32);
-        let arg2 = ((audit.reason as u32) << 16)
-            | (hint << 8)
-            | ((audit.frontier.as_audit_tag() as u32) << 4)
+        let arg0 = (RESOLVER_DEFER_AUDIT_TAG << 24) | (scope_slot << 8) | progress;
+        let arg1 = (arm << 24)
+            | ((audit.reason as u32) << 16)
+            | ((audit.frontier.as_audit_tag() as u32) << 12)
             | hint_present
             | (audit.ingress.audit_bit() << 1)
             | progress;
@@ -218,29 +196,19 @@ where
             ids::RESOLVER_AUDIT_DEFER,
             arg0,
             arg1,
-            arg2,
             Lane::new(audit.lane as u32),
         );
     }
 
-    pub(crate) fn emit_endpoint_event(
-        &self,
-        id: u16,
-        meta: TapFrameMeta,
-        scope_trace: Option<ScopeTrace>,
-        lane: u8,
-    ) {
+    pub(crate) fn emit_endpoint_event(&self, id: u16, meta: TapFrameMeta, lane: u8) {
         let port = self.port_for_lane(lane as usize);
         let packed = ((ROLE as u32) << 24)
             | ((meta.lane as u32) << 16)
             | ((meta.label as u32) << 8)
             | meta.flags.bits() as u32;
-        let mut event = events::raw_event(port.now32(), id)
+        let event = events::raw_event(port.now32(), id)
             .with_arg0(meta.sid)
             .with_arg1(packed);
-        if let Some(scope) = scope_trace {
-            event = event.with_arg2(scope.pack());
-        }
         emit(port.tap(), event);
     }
 
@@ -270,22 +238,19 @@ where
         self.emit_resolver_audit_event(
             ids::RESOLVER_AUDIT,
             event_hash,
-            event.id as u32,
-            u32::from(slot_id),
+            (u32::from(slot_id) << 16) | u32::from(event.id()),
             lane,
         );
         self.emit_resolver_audit_event(
             ids::RESOLVER_REPLAY_EVENT,
-            event.ts,
-            event.id as u32,
-            event.arg0,
+            event.ts(),
+            event.id() as u32,
             lane,
         );
         self.emit_resolver_audit_event(
             ids::RESOLVER_REPLAY_EVENT_EXT,
-            event.arg1,
-            event.arg2,
-            event.causal_key as u32,
+            event.arg1(),
+            event.causal_key() as u32,
             lane,
         );
     }

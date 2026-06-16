@@ -96,6 +96,110 @@ fn cursor_send_and_recv_roundtrip() {
 }
 
 #[test]
+fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::seq(
+                g::send::<0, 1, Msg<8, FramePayload>>(),
+                g::send::<2, 0, Msg<9, FramePayload>>(),
+            );
+            let role0: RoleProgram<0> = project(&program);
+            let role1: RoleProgram<1> = project(&program);
+            let role2: RoleProgram<2> = project(&program);
+            let rv = cluster
+                .rendezvous(Config::from_resources(slab), transport.clone())
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(8);
+            let mut endpoint0 = rv
+                .session(sid)
+                .role(&role0)
+                .enter()
+                .expect("attach role0 before lease table growth");
+            let mut endpoint1 = rv
+                .session(sid)
+                .role(&role1)
+                .enter()
+                .expect("attach role1 and grow lease table");
+            let mut endpoint2 = rv
+                .session(sid)
+                .role(&role2)
+                .enter()
+                .expect("attach role2 and grow lease table again");
+
+            futures::executor::block_on(
+                endpoint0
+                    .flow::<Msg<8, FramePayload>>()
+                    .expect("role0 send flow")
+                    .send(&FramePayload(*b"r0-1")),
+            )
+            .expect("role0 send survives endpoint lease root relocation");
+            let payload = futures::executor::block_on(endpoint1.recv::<Msg<8, FramePayload>>())
+                .expect("role1 recv succeeds");
+            assert_eq!(payload.as_bytes(), b"r0-1");
+
+            futures::executor::block_on(
+                endpoint2
+                    .flow::<Msg<9, FramePayload>>()
+                    .expect("role2 send flow")
+                    .send(&FramePayload(*b"r2-0")),
+            )
+            .expect("role2 send succeeds");
+            let payload = futures::executor::block_on(endpoint0.recv::<Msg<9, FramePayload>>())
+                .expect("role0 recv survives endpoint lease root relocation");
+            assert_eq!(payload.as_bytes(), b"r2-0");
+            assert!(transport_queue_is_empty(&transport));
+        });
+    });
+}
+
+#[test]
+fn live_endpoint_send_survives_failed_later_attach_rollback() {
+    let mut exercised = false;
+    for slab_bytes in [4608usize, 5120, 5632, 6144, 6656, 7168, 7680, 8192] {
+        with_runtime_workspace(|slab| {
+            let transport = TestTransport::new();
+            with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+                let program = g::send::<0, 1, Msg<10, FramePayload>>();
+                let role0: RoleProgram<0> = project(&program);
+                let role1: RoleProgram<1> = project(&program);
+                let rv = cluster
+                    .rendezvous(
+                        Config::from_resources(&mut slab[..slab_bytes]),
+                        transport.clone(),
+                    )
+                    .expect("register constrained rendezvous");
+                let sid = SessionId::new(10);
+                let Ok(mut endpoint0) = rv.session(sid).role(&role0).enter() else {
+                    return;
+                };
+
+                if rv.session(sid).role(&role1).enter().is_ok() {
+                    return;
+                }
+
+                futures::executor::block_on(
+                    endpoint0
+                        .flow::<Msg<10, FramePayload>>()
+                        .expect("role0 flow after failed attach")
+                        .send(&FramePayload(*b"r0ok")),
+                )
+                .expect("existing endpoint send survives failed later attach rollback");
+                exercised = true;
+            });
+        });
+        if exercised {
+            break;
+        }
+    }
+    assert!(
+        exercised,
+        "test must find a constrained slab where role0 attaches and role1 attach rolls back"
+    );
+}
+
+#[test]
 fn direct_send_capacity_emits_transport_fault_tap() {
     with_runtime_workspace(|slab| {
         let fault = with_resident_tls_ref(&CAPACITY_SEND_SESSION_SLOT, |cluster| {
@@ -124,19 +228,15 @@ fn direct_send_capacity_emits_transport_fault_tap() {
                 rendered.contains("Capacity") || rendered.contains("Transport(C)"),
                 "send error must preserve capacity transport cause: {rendered}"
             );
-            tap.find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
+            tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_FAULT)
                 .expect("capacity send must emit transport fault evidence")
         });
         assert_eq!(
             fault.evidence().reason(),
             hibana::runtime::tap::TRANSPORT_FAULT_CAPACITY
         );
-        assert_eq!(fault.arg0, 74);
-        assert_eq!(fault.arg1, 0);
-        assert_eq!(
-            fault.arg2,
-            u32::from(hibana::runtime::tap::TRANSPORT_FAULT_CAPACITY)
-        );
+        assert_eq!(fault.arg0(), 74);
+        assert_eq!(fault.arg1(), 0);
     });
 }
 

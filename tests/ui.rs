@@ -70,6 +70,7 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/runtime-ingress-evidence-private.rs");
     t.compile_fail("tests/ui/runtime-received-frame-evidence-private.rs");
     t.compile_fail("tests/ui/runtime-decision-arm-index-private.rs");
+    t.compile_fail("tests/ui/runtime-tap-event-fields-private.rs");
     t.compile_fail("tests/ui/runtime-frame-header-peer-role-removed.rs");
     t.compile_fail("tests/ui/runtime-outgoing-peer-removed.rs");
     t.compile_fail("tests/ui/public_step_name_import.rs");

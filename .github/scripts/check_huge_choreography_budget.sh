@@ -39,18 +39,6 @@ commands = [
         "--features",
         "std",
     ],
-    [
-        "cargo",
-        f"+{toolchain}",
-        "test",
-        "-p",
-        "hibana",
-        "huge_shape_matrix_resident_bytes_stay_measured_and_local",
-        "--lib",
-        "--features",
-        "std",
-        "--no-run",
-    ],
 ]
 
 for command in commands:

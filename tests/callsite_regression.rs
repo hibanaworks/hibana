@@ -23,12 +23,16 @@ use tls_ref_support::with_resident_tls_ref;
 
 type TestKitStorage = SessionKitStorage<'static, TestTransport, 2>;
 type ZeroRendezvousKitStorage = SessionKitStorage<'static, TestTransport, 0>;
+type WideRendezvousKitStorage = SessionKitStorage<'static, TestTransport, 32>;
 
 std::thread_local! {
     static TEST_SLOT: UnsafeCell<TestKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
     static ZERO_RENDEZVOUS_SLOT: UnsafeCell<ZeroRendezvousKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+    static WIDE_RENDEZVOUS_SLOT: UnsafeCell<WideRendezvousKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
@@ -48,6 +52,36 @@ fn assert_resolver_operation(error: ResolverError, operation: &str) {
 fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
     let program = g::send::<0, 1, Msg<MSG_ID, u32>>();
     (project(&program), project(&program))
+}
+
+#[test]
+fn max_rv_is_caller_owned_local_rendezvous_budget() {
+    with_runtime_workspace(|slab| {
+        with_resident_tls_ref(&WIDE_RENDEZVOUS_SLOT, |cluster| {
+            let (role0, _) = project_pair::<7>();
+            let transport = TestTransport::new();
+            const CHUNK: usize = 16 * 1024;
+            let (chunk0, rest) = slab.split_at_mut(CHUNK);
+            let (chunk1, rest) = rest.split_at_mut(CHUNK);
+            let (chunk2, rest) = rest.split_at_mut(CHUNK);
+            let (chunk3, rest) = rest.split_at_mut(CHUNK);
+            let (chunk4, rest) = rest.split_at_mut(CHUNK);
+            let (chunk5, _) = rest.split_at_mut(CHUNK);
+            for (idx, chunk) in [chunk0, chunk1, chunk2, chunk3, chunk4, chunk5]
+                .into_iter()
+                .enumerate()
+            {
+                let rv = cluster
+                    .rendezvous(Config::from_resources(chunk), transport.clone())
+                    .expect("MAX_RV=32 must register more than the Pico default");
+                let _endpoint = rv
+                    .session(SessionId::new(700 + idx as u32))
+                    .role(&role0)
+                    .enter()
+                    .expect("wide rendezvous budget must still attach endpoints");
+            }
+        });
+    });
 }
 
 #[test]
@@ -109,7 +143,7 @@ fn attach_and_resolver_errors_keep_public_operations() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
             let (origin_program, _target_program) = project_pair::<42>();
-            let config = Config::from_resources(&mut slab[..4096]);
+            let config = Config::from_resources(&mut slab[..2048]);
             let rv = cluster
                 .rendezvous(config, TestTransport::new())
                 .expect("rv");

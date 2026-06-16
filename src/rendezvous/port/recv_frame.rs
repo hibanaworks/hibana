@@ -297,14 +297,18 @@ impl FrameMismatch {
         expected_lane_wire: u8,
     ) -> TapEvent {
         let reason = self.kind.tap_reason();
+        let observed = if self.kind == FrameMismatchKind::Session {
+            self.observation.session_raw()
+        } else {
+            self.observation.meta()
+        };
         events::raw_event(now32, ids::TRANSPORT_MISMATCH)
             .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
                 expected_lane_wire,
                 reason,
             ))
             .with_arg0(expected_session_raw)
-            .with_arg1(self.observation.session_raw())
-            .with_arg2(self.observation.meta())
+            .with_arg1(observed)
     }
 }
 

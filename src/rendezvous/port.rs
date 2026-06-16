@@ -9,6 +9,7 @@ use core::{
     task::{Context, Poll},
 };
 
+use super::core::{EndpointLeaseId, EndpointLeaseSlot, Sidecar};
 use super::tables::RouteTable;
 use crate::{
     endpoint::kernel::FrontierScratchLayout,
@@ -72,8 +73,8 @@ pub(crate) struct Port<'r, T: Transport> {
     slab: *mut [u8],
     image_frontier: *const u32,
     frontier_workspace_bytes: *const u32,
-    endpoint_leases: *const super::core::EndpointLeaseSlot,
-    endpoint_lease_capacity: super::core::EndpointLeaseId,
+    endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>,
+    endpoint_lease_capacity: *const EndpointLeaseId,
     scratch_marker: PhantomData<&'r mut [u8]>,
     pub(crate) lane: Lane,
     role: u8,
@@ -96,8 +97,8 @@ pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub(crate) slab: *mut [u8],
     pub(crate) image_frontier: *const u32,
     pub(crate) frontier_workspace_bytes: *const u32,
-    pub(crate) endpoint_leases: *const super::core::EndpointLeaseSlot,
-    pub(crate) endpoint_lease_capacity: super::core::EndpointLeaseId,
+    pub(crate) endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>,
+    pub(crate) endpoint_lease_capacity: *const EndpointLeaseId,
     pub(crate) lane: Lane,
     pub(crate) role: u8,
     pub(crate) role_count: u8,
@@ -144,7 +145,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             slab,
             image_frontier,
             frontier_workspace_bytes,
-            endpoint_leases,
+            endpoint_lease_storage,
             endpoint_lease_capacity,
             lane,
             role,
@@ -164,7 +165,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             slab,
             image_frontier,
             frontier_workspace_bytes,
-            endpoint_leases,
+            endpoint_lease_storage,
             endpoint_lease_capacity,
             scratch_marker: PhantomData,
             lane,
@@ -197,14 +198,28 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
+    fn endpoint_lease_owner_view(&self) -> (*const EndpointLeaseSlot, EndpointLeaseId) {
+        // SAFETY: these pointers target pinned rendezvous owner fields bound
+        // during port construction. Capacity growth may replace the sidecar
+        // root value, so every floor computation reloads both fields.
+        let storage = unsafe { *self.endpoint_lease_storage };
+        let capacity = unsafe { *self.endpoint_lease_capacity };
+        if capacity != EndpointLeaseId::ZERO && storage.ptr().is_null() {
+            crate::invariant();
+        }
+        (storage.ptr().cast_const(), capacity)
+    }
+
+    #[inline]
     fn endpoint_storage_floor(&self) -> usize {
         let (_, slab_len) = self.slab_ptr_and_len();
+        let (endpoint_leases, endpoint_lease_capacity) = self.endpoint_lease_owner_view();
         let mut floor = slab_len;
         let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
+        while idx < usize::from(endpoint_lease_capacity) {
             // SAFETY: `endpoint_leases` has `endpoint_lease_capacity`
             // initialized slots owned by this port.
-            let slot = unsafe { &*self.endpoint_leases.add(idx) };
+            let slot = unsafe { &*endpoint_leases.add(idx) };
             if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }

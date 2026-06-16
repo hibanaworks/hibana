@@ -52,10 +52,9 @@ fn fnv32_mix_u32(hash: u32, value: u32) -> u32 {
 #[inline]
 pub(crate) fn hash_tap_event(event: &TapEvent) -> u32 {
     let mut hash = FNV32_OFFSET;
-    hash = fnv32_mix_u32(hash, event.ts);
-    hash = fnv32_mix_u16(hash, event.id);
-    hash = fnv32_mix_u16(hash, event.causal_key);
-    hash = fnv32_mix_u32(hash, event.arg0);
-    hash = fnv32_mix_u32(hash, event.arg1);
-    fnv32_mix_u32(hash, event.arg2)
+    hash = fnv32_mix_u32(hash, event.ts());
+    hash = fnv32_mix_u16(hash, event.id());
+    hash = fnv32_mix_u16(hash, event.causal_key());
+    hash = fnv32_mix_u32(hash, event.arg0());
+    fnv32_mix_u32(hash, event.arg1())
 }

@@ -204,26 +204,24 @@ if project_match is None:
 
 project_body = project_match.group("body")
 role_validation = project_body.find("if ROLE >= ROLE_DOMAIN_SIZE")
-role_dispatch = project_body.find("match ROLE {")
+role_projection = project_body.find("role_projection_image_for::<ROLE, Steps>()")
 role_program_publication = project_body.find("role_program_from_image(image)")
-if role_validation < 0 or role_dispatch < 0 or role_program_publication < 0:
-    fail("g project entry must validate, dispatch to resident descriptors, and publish from the selected image")
-if not (role_validation < role_dispatch < role_program_publication):
+if role_validation < 0 or role_projection < 0 or role_program_publication < 0:
+    fail("g project entry must validate, select the resident descriptor for ROLE, and publish from that image")
+if not (role_validation < role_projection < role_program_publication):
     fail("g project entry must validate the public role before selecting a resident descriptor image")
-if '16..=u8::MAX => panic!("{}", ROLE_INDEX_ERROR)' not in project_body:
-    fail("g project entry must fail closed for out-of-domain descriptor arms")
-for role in range(16):
-    required = f"role_projection_image_for::<{role}, Steps>()"
-    if required not in project_body:
-        fail(f"g project entry must dispatch role {role} through a resident role descriptor arm")
 for forbidden in [
+    "match ROLE {",
     "RoleProjection::<ROLE, Steps>",
-    "role_projection_image_for::<ROLE, Steps>()",
     "role_projection_image_for::<16",
     "_ => role_projection_image_for::<0, Steps>()",
 ]:
     if forbidden in project_body:
         fail(f"g project entry regressed to generic or out-of-domain projection instantiation: {forbidden}")
+for role in range(16):
+    forbidden = f"role_projection_image_for::<{role}, Steps>()"
+    if forbidden in project_body:
+        fail(f"g project entry must not re-grow hand-written descriptor arm {role}")
 
 for forbidden in [
     ": &'static CompiledProgramImage",

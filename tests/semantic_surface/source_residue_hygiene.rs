@@ -303,7 +303,6 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
         "FrameLabelMask::default",
         "TapFrameMeta::default",
         "LaneStorageLeaseSet::default",
-        "ScopeTrace::default",
         "EffList::default",
         "RouteTable::default",
         "AssocTable::default",

@@ -18,11 +18,13 @@ use crate::rendezvous::core::{LaneRelease, Rendezvous};
 use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::{session::lease::map::ArrayMap, transport::Transport};
 
-/// Fixed-size rendezvous table.
+/// Fixed-size local rendezvous table.
 ///
 /// `RendezvousTable` is parameterised by the transport used by the rendezvous
 /// layer. The `MAX_RV` const parameter fixes the maximum number of rendezvous
-/// that can be registered in `no_alloc` environments.
+/// owners that caller-provided storage can register in `no_alloc`
+/// environments. It is a local storage budget, not a protocol role or cluster
+/// membership count.
 pub(crate) struct RendezvousTable<'cfg, T: Transport, const MAX_RV: usize> {
     entries: ArrayMap<RendezvousId, RendezvousEntry<'cfg, T>, MAX_RV>,
 }

@@ -123,8 +123,7 @@ where
                 lane_wire, reason,
             ))
             .with_arg0(self.sid.raw())
-            .with_arg1(u32::from(lane_wire))
-            .with_arg2(u32::from(reason));
+            .with_arg1(u32::from(lane_wire));
         crate::observe::core::emit(port.tap(), event);
     }
 }

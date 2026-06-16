@@ -22,6 +22,12 @@ where
 ///
 /// The storage is caller-owned and heapless. Initialization writes the kit in
 /// place and returns the stable borrow tied to the storage owner.
+///
+/// `MAX_RV` is the caller-owned local rendezvous budget. The default `4` is
+/// the Pico-class runtime path; larger const values let host protocols keep
+/// more independent local rendezvous owners without allocation. It is not a
+/// protocol role count, cluster member count, node count, or transport
+/// connection limit.
 pub struct SessionKitStorage<'cfg, T, const MAX_RV: usize = 4>
 where
     T: crate::transport::Transport + 'cfg,

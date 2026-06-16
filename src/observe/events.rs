@@ -1,7 +1,6 @@
 //! TapEvent encoders owned by runtime operations.
 //!
-//! Production callers use the event owner that matches the runtime operation;
-//! Repository tests construct raw `TapEvent` values directly.
+//! Production callers use the event owner that matches the runtime operation.
 
 use super::core::TapEvent;
 use super::ids;
@@ -19,28 +18,14 @@ const fn pack_session_lane(sid: u32, lane: u16) -> u32 {
 #[inline(always)]
 pub(crate) const fn lane_acquire(ts: u32, rv_id: u32, sid: u32, lane: u16) -> TapEvent {
     let sid_lane = pack_session_lane(sid, lane);
-    TapEvent {
-        ts,
-        id: ids::LANE_ACQUIRE,
-        causal_key: 0,
-        arg0: rv_id,
-        arg1: sid_lane,
-        arg2: 0,
-    }
+    TapEvent::new(ts, ids::LANE_ACQUIRE, 0, rv_id, sid_lane)
 }
 
 /// Lane released via LaneLease::Drop.
 #[inline(always)]
 pub(crate) const fn lane_release(ts: u32, rv_id: u32, sid: u32, lane: u16) -> TapEvent {
     let sid_lane = pack_session_lane(sid, lane);
-    TapEvent {
-        ts,
-        id: ids::LANE_RELEASE,
-        causal_key: 0,
-        arg0: rv_id,
-        arg1: sid_lane,
-        arg2: 0,
-    }
+    TapEvent::new(ts, ids::LANE_RELEASE, 0, rv_id, sid_lane)
 }
 
 // ────────────── Route decision (0x0220-0x022F) ──────────────
@@ -53,14 +38,7 @@ pub(crate) const fn route_arm_selection_with_causal(
     sid: u32,
     arg1: u32,
 ) -> TapEvent {
-    TapEvent {
-        ts,
-        id: ids::ROUTE_ARM_SELECTION,
-        causal_key: causal,
-        arg0: sid,
-        arg1,
-        arg2: 0,
-    }
+    TapEvent::new(ts, ids::ROUTE_ARM_SELECTION, causal, sid, arg1)
 }
 
 // ────────────── Misuse detection (0x02FF) ──────────────
@@ -72,12 +50,5 @@ pub(crate) const fn route_arm_selection_with_causal(
 /// Raw TapEvent builder for callers that already own the event identifier.
 #[inline(always)]
 pub(crate) const fn raw_event(ts: u32, id: u16) -> TapEvent {
-    TapEvent {
-        ts,
-        id,
-        causal_key: 0,
-        arg0: 0,
-        arg1: 0,
-        arg2: 0,
-    }
+    TapEvent::new(ts, id, 0, 0, 0)
 }

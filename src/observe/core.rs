@@ -1,9 +1,8 @@
 //! Observation primitives (tap ring and association snapshots).
 //!
 //! The current implementation maintains a fixed-length dual-ring buffer of
-//! 20-byte tap events. Each entry captures coarse timing plus up to three
-//! contextual arguments. This is intentionally small so that the ring fits
-//! comfortably in cache or DMA-able memory regions.
+//! 16-byte tap events. Each entry captures coarse timing plus two contextual
+//! arguments. This is intentionally small enough for the Pico runtime path.
 //!
 //! # Dual-Ring Architecture
 //!
@@ -144,10 +143,10 @@ impl Iterator for TapPort<'_> {
 
 #[inline(always)]
 const fn tap_event_precedes(left: TapEvent, right: TapEvent) -> bool {
-    if left.ts != right.ts {
-        left.ts < right.ts
+    if left.ts() != right.ts() {
+        left.ts() < right.ts()
     } else {
-        left.id <= right.id
+        left.id() <= right.id()
     }
 }
 
@@ -175,7 +174,7 @@ impl<'a> TapRing<'a> {
     /// - `id < USER_EVENT_RANGE_END` (0x0100): User Ring (application/custom events)
     /// - `id >= USER_EVENT_RANGE_END`: Infra Ring (system events)
     pub(crate) fn push(&self, event: TapEvent) {
-        if event.id < ids::USER_EVENT_RANGE_END {
+        if event.id() < ids::USER_EVENT_RANGE_END {
             self.user.push(event);
         } else {
             self.infra.push(event);

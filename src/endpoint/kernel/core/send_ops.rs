@@ -352,9 +352,8 @@ where
             event.event_label(),
             FrameFlags::empty(),
         );
-        let scope_trace = self.scope_trace(event.scope());
         let event_id = event.event_id(ids::ENDPOINT_SEND, ids::ENDPOINT_SESSION);
-        self.emit_endpoint_event(event_id, logical_meta, scope_trace, lane);
+        self.emit_endpoint_event(event_id, logical_meta, lane);
     }
 
     #[inline(never)]

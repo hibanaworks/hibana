@@ -8,45 +8,67 @@ source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
+run_subsystem_budget_test() {
+  local output
+  if ! output="$(cargo +"${TOOLCHAIN}" test "$@" 2>&1)"; then
+    printf '%s\n' "${output}"
+    exit 1
+  fi
+  printf '%s\n' "${output}"
+  if ! grep -Eq "running [1-9][0-9]* tests?" <<<"${output}"; then
+    echo "subsystem budget gate violation: cargo test filter matched no tests: $*" >&2
+    exit 1
+  fi
+}
+
 # Compiled-role and resident atlas budgets.
-cargo +"${TOOLCHAIN}" test \
+run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  session::cluster::core::tests::resident_shape::pico2_resident_component_sizes \
+  endpoint::tests::endpoint_surface_size_gates_hold \
   -- \
   --exact \
   --nocapture
 
-cargo +"${TOOLCHAIN}" test \
+run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  session::cluster::core::tests::resident_shape::huge_shape_matrix_resident_bytes_stay_measured_and_local \
+  endpoint::tests::send_flow_and_runtime_descriptor_size_gates_hold \
   -- \
   --exact \
   --nocapture
 
-cargo +"${TOOLCHAIN}" test \
+run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
   --features std \
-  global::role_program::tests::tests::projected_protocol_matrix_reports_compact_resident_images \
+  endpoint::kernel::evidence::tests::scope_frame_label_meta_size_budget \
+  -- \
+  --exact \
+  --nocapture
+
+run_subsystem_budget_test \
+  --manifest-path "${MANIFEST_PATH}" \
+  --lib \
+  --features std \
+  global::role_program::tests::protocol_matrix::projected_protocol_matrix_reports_compact_resident_images \
   -- \
   --exact \
   --nocapture
 
 # Send/resolver hot-path ownership.
-cargo +"${TOOLCHAIN}" test \
+run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
-  --lib \
+  --test public_surface_guards \
   --features std \
-  endpoint::kernel::core::decision_resolver_tests::empty_resolver_audit_input_is_explicit \
+  core_resolver_audit_has_no_in_crate_resolver_owner \
   -- \
   --exact \
   --nocapture
 
-cargo +"${TOOLCHAIN}" test \
+run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \
@@ -55,7 +77,7 @@ cargo +"${TOOLCHAIN}" test \
   --exact \
   --nocapture
 
-cargo +"${TOOLCHAIN}" test \
+run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
   --features std \

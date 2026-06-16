@@ -31,7 +31,6 @@ use crate::{
         RecvError, RecvResult, SendError, SendResult, affine::LaneGuard, session::SessionCtx,
     },
     observe::core::{TapEvent, emit},
-    observe::scope::ScopeTrace,
     observe::{events, ids},
     rendezvous::SessionFaultKind,
     rendezvous::{core::EndpointLeaseId, port::Port},

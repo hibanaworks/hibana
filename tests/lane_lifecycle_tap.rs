@@ -68,16 +68,16 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                 let mut has_expected_acquire = false;
                 let mut has_expected_release = false;
                 for event in &mut tap {
-                    if event.id == LANE_ACQUIRE_ID {
+                    if event.id() == LANE_ACQUIRE_ID {
                         acquire_count += 1;
-                        let (event_sid, event_lane) = decode_sid_lane(event.arg1);
+                        let (event_sid, event_lane) = decode_sid_lane(event.arg1());
                         has_expected_acquire |=
-                            event.arg0 == 1u32 && event_sid == sid.raw() && event_lane == 0;
-                    } else if event.id == LANE_RELEASE_ID {
+                            event.arg0() == 1u32 && event_sid == sid.raw() && event_lane == 0;
+                    } else if event.id() == LANE_RELEASE_ID {
                         release_count += 1;
-                        let (event_sid, event_lane) = decode_sid_lane(event.arg1);
+                        let (event_sid, event_lane) = decode_sid_lane(event.arg1());
                         has_expected_release |=
-                            event.arg0 == 1u32 && event_sid == sid.raw() && event_lane == 0;
+                            event.arg0() == 1u32 && event_sid == sid.raw() && event_lane == 0;
                     }
                 }
                 (

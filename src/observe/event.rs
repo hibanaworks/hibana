@@ -1,29 +1,23 @@
-//! Canonical 20-byte tap event and semantic Evidence decode.
+//! Canonical 16-byte tap event and semantic Evidence decode.
 
 use crate::{
     observe::ids,
     transport::wire::{CodecError, Payload, WireEncode, WirePayload, require_exact_len},
 };
 
-/// 20-byte tap record with a compact causal key for evidence correlation.
+/// Opaque 16-byte tap record with a compact causal key for evidence correlation.
 ///
-/// Layout: `ts32, id16, causal_key16, arg0_32, arg1_32, arg2_32`
+/// Layout: `ts32, id16, causal_key16, arg0_32, arg1_32`
 /// - `ts`: Timestamp (monotonic counter or wall-clock tick)
 /// - `id`: Event identifier (from `crate::observe::ids::*`)
 /// - `causal_key`: Causal key for reversible evidence correlation
 ///   - High 8 bits: role/lane index
 ///   - Low 8 bits: sequence number within the route-table generation
-/// - `arg0`, `arg1`: Context-dependent arguments (sid, gen, label, etc.)
-/// - `arg2`: Extended context (e.g., ScopeId range/nest ordinals)
-#[repr(C)]
+/// - `arg0`, `arg1`: Context-dependent diagnostic words.
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TapEvent {
-    pub ts: u32,
-    pub id: u16,
-    pub causal_key: u16,
-    pub arg0: u32,
-    pub arg1: u32,
-    pub arg2: u32,
+    bytes: [u8; 16],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,39 +55,94 @@ impl Evidence {
 
 impl TapEvent {
     #[inline]
+    pub(crate) const fn new(ts: u32, id: u16, causal_key: u16, arg0: u32, arg1: u32) -> Self {
+        Self {
+            bytes: [
+                (ts >> 24) as u8,
+                (ts >> 16) as u8,
+                (ts >> 8) as u8,
+                ts as u8,
+                (id >> 8) as u8,
+                id as u8,
+                (causal_key >> 8) as u8,
+                causal_key as u8,
+                (arg0 >> 24) as u8,
+                (arg0 >> 16) as u8,
+                (arg0 >> 8) as u8,
+                arg0 as u8,
+                (arg1 >> 24) as u8,
+                (arg1 >> 16) as u8,
+                (arg1 >> 8) as u8,
+                arg1 as u8,
+            ],
+        }
+    }
+
+    #[inline]
+    pub const fn ts(self) -> u32 {
+        u32::from_be_bytes([self.bytes[0], self.bytes[1], self.bytes[2], self.bytes[3]])
+    }
+
+    #[inline]
+    pub const fn id(self) -> u16 {
+        u16::from_be_bytes([self.bytes[4], self.bytes[5]])
+    }
+
+    #[inline]
+    pub const fn causal_key(self) -> u16 {
+        u16::from_be_bytes([self.bytes[6], self.bytes[7]])
+    }
+
+    #[inline]
+    pub const fn arg0(self) -> u32 {
+        u32::from_be_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]])
+    }
+
+    #[inline]
+    pub const fn arg1(self) -> u32 {
+        u32::from_be_bytes([
+            self.bytes[12],
+            self.bytes[13],
+            self.bytes[14],
+            self.bytes[15],
+        ])
+    }
+
+    #[inline]
     pub const fn with_arg0(mut self, arg0: u32) -> Self {
-        self.arg0 = arg0;
+        self.bytes[8] = (arg0 >> 24) as u8;
+        self.bytes[9] = (arg0 >> 16) as u8;
+        self.bytes[10] = (arg0 >> 8) as u8;
+        self.bytes[11] = arg0 as u8;
         self
     }
 
     #[inline]
     pub const fn with_arg1(mut self, arg1: u32) -> Self {
-        self.arg1 = arg1;
-        self
-    }
-
-    #[inline]
-    pub const fn with_arg2(mut self, arg2: u32) -> Self {
-        self.arg2 = arg2;
+        self.bytes[12] = (arg1 >> 24) as u8;
+        self.bytes[13] = (arg1 >> 16) as u8;
+        self.bytes[14] = (arg1 >> 8) as u8;
+        self.bytes[15] = arg1 as u8;
         self
     }
 
     #[inline]
     pub const fn with_causal_key(mut self, causal_key: u16) -> Self {
-        self.causal_key = causal_key;
+        self.bytes[6] = (causal_key >> 8) as u8;
+        self.bytes[7] = causal_key as u8;
         self
     }
 
     /// Extract role/lane from causal key (high 8 bits).
     #[inline]
     pub const fn causal_role(self) -> u8 {
-        (self.causal_key >> 8) as u8
+        (self.causal_key() >> 8) as u8
     }
 
     /// Extract sequence number from causal key (low 8 bits).
     #[inline]
     pub const fn causal_seq(self) -> u8 {
-        (self.causal_key & 0xFF) as u8
+        (self.causal_key() & 0xFF) as u8
     }
 
     /// Construct causal key from role and sequence.
@@ -105,31 +154,25 @@ impl TapEvent {
     /// Create a zeroed event (for array initialization).
     #[inline]
     pub const fn zero() -> Self {
-        Self {
-            ts: 0,
-            id: 0,
-            causal_key: 0,
-            arg0: 0,
-            arg1: 0,
-            arg2: 0,
-        }
+        Self { bytes: [0; 16] }
     }
 
     #[inline]
     pub const fn evidence(self) -> Evidence {
-        if self.id == ids::TRANSPORT_FRAME {
+        let id = self.id();
+        if id == ids::TRANSPORT_FRAME {
             Evidence {
-                kind: self.id,
+                kind: id,
                 reason: 0,
-                input: [self.arg0, self.arg1, self.arg2, (self.id as u32) << 16],
+                input: [self.arg0(), self.arg1(), 0, (id as u32) << 16],
             }
-        } else if self.id == ids::TRANSPORT_MISMATCH || self.id == ids::TRANSPORT_FAULT {
+        } else if id == ids::TRANSPORT_MISMATCH || id == ids::TRANSPORT_FAULT {
             self.transport_evidence()
         } else {
             Evidence {
-                kind: self.id,
+                kind: id,
                 reason: 0,
-                input: [self.arg0, self.arg1, self.arg2, self.causal_key as u32],
+                input: [self.arg0(), self.arg1(), 0, self.causal_key() as u32],
             }
         }
     }
@@ -138,14 +181,15 @@ impl TapEvent {
     const fn transport_evidence(self) -> Evidence {
         let reason = self.causal_seq();
         let lane = self.causal_role() as u32;
+        let id = self.id();
         Evidence {
-            kind: self.id,
+            kind: id,
             reason,
             input: [
-                self.arg0,
-                self.arg1,
-                self.arg2,
-                ((self.id as u32) << 16) | (lane << 8) | (reason as u32),
+                self.arg0(),
+                self.arg1(),
+                0,
+                ((id as u32) << 16) | (lane << 8) | (reason as u32),
             ],
         }
     }
@@ -153,20 +197,15 @@ impl TapEvent {
 
 impl WireEncode for TapEvent {
     fn encoded_len(&self) -> Option<usize> {
-        Some(20)
+        Some(16)
     }
 
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.len() < 20 {
+        if out.len() < 16 {
             return Err(CodecError::Truncated);
         }
-        out[0..4].copy_from_slice(&self.ts.to_be_bytes());
-        out[4..6].copy_from_slice(&self.id.to_be_bytes());
-        out[6..8].copy_from_slice(&self.causal_key.to_be_bytes());
-        out[8..12].copy_from_slice(&self.arg0.to_be_bytes());
-        out[12..16].copy_from_slice(&self.arg1.to_be_bytes());
-        out[16..20].copy_from_slice(&self.arg2.to_be_bytes());
-        Ok(20)
+        out[..16].copy_from_slice(&self.bytes);
+        Ok(16)
     }
 }
 
@@ -174,34 +213,32 @@ impl WirePayload for TapEvent {
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        require_exact_len(input.as_bytes().len(), 20)
+        require_exact_len(input.as_bytes().len(), 16)
     }
 
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         let bytes = input.as_bytes();
-        Self {
-            ts: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-            id: u16::from_be_bytes([bytes[4], bytes[5]]),
-            causal_key: u16::from_be_bytes([bytes[6], bytes[7]]),
-            arg0: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-            arg1: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-            arg2: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-        }
+        let mut event_bytes = [0; 16];
+        event_bytes.copy_from_slice(bytes);
+        Self { bytes: event_bytes }
     }
 
     fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        if scratch.len() < 20 {
+        if scratch.len() < 16 {
             return Err(CodecError::Truncated);
         }
-        scratch[..20].fill(0);
-        Ok(Payload::new(&scratch[..20]))
+        scratch[..16].fill(0);
+        Ok(Payload::new(&scratch[..16]))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::TapEvent;
-    use crate::observe::ids;
+    use crate::{
+        observe::ids,
+        transport::wire::{WireEncode, WirePayload},
+    };
 
     #[test]
     fn transport_mismatch_evidence_carries_expected_lane_and_reason() {
@@ -211,12 +248,11 @@ mod tests {
                 ids::TRANSPORT_MISMATCH_SESSION,
             ))
             .with_arg0(0x1111_2222)
-            .with_arg1(0x3333_4444)
-            .with_arg2(0x0102_0304);
-        let event = TapEvent {
-            id: ids::TRANSPORT_MISMATCH,
-            ..event
-        };
+            .with_arg1(0x3333_4444);
+        let event = super::super::events::raw_event(0, ids::TRANSPORT_MISMATCH)
+            .with_causal_key(event.causal_key())
+            .with_arg0(event.arg0())
+            .with_arg1(event.arg1());
         let evidence = event.evidence();
         assert_eq!(evidence.kind(), ids::TRANSPORT_MISMATCH);
         assert_eq!(evidence.reason(), ids::TRANSPORT_MISMATCH_SESSION);
@@ -225,7 +261,7 @@ mod tests {
             [
                 0x1111_2222,
                 0x3333_4444,
-                0x0102_0304,
+                0,
                 ((ids::TRANSPORT_MISMATCH as u32) << 16)
                     | (1 << 8)
                     | ids::TRANSPORT_MISMATCH_SESSION as u32
@@ -238,10 +274,9 @@ mod tests {
         let event = TapEvent::zero()
             .with_causal_key(TapEvent::make_causal_key(2, ids::TRANSPORT_FAULT_DEADLINE))
             .with_arg0(0xaaaa_bbbb);
-        let event = TapEvent {
-            id: ids::TRANSPORT_FAULT,
-            ..event
-        };
+        let event = super::super::events::raw_event(0, ids::TRANSPORT_FAULT)
+            .with_causal_key(event.causal_key())
+            .with_arg0(event.arg0());
         let evidence = event.evidence();
         assert_eq!(evidence.kind(), ids::TRANSPORT_FAULT);
         assert_eq!(evidence.reason(), ids::TRANSPORT_FAULT_DEADLINE);
@@ -255,6 +290,33 @@ mod tests {
                     | (2 << 8)
                     | ids::TRANSPORT_FAULT_DEADLINE as u32
             ]
+        );
+    }
+
+    #[test]
+    fn tap_event_is_exactly_sixteen_bytes() {
+        assert_eq!(core::mem::size_of::<TapEvent>(), 16);
+        assert_eq!(core::mem::align_of::<TapEvent>(), 1);
+    }
+
+    #[test]
+    fn tap_event_wire_round_trip_is_exactly_sixteen_bytes() {
+        let event = super::super::events::raw_event(0x0102_0304, ids::TRANSPORT_FRAME)
+            .with_causal_key(0x0506)
+            .with_arg0(0x0708_090a)
+            .with_arg1(0x0b0c_0d0e);
+        let mut out = [0; 17];
+        assert_eq!(event.encode_into(&mut out).unwrap(), 16);
+        assert_eq!(
+            &out[..16],
+            &[
+                0x01, 0x02, 0x03, 0x04, 0x02, 0x06, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+                0x0d, 0x0e,
+            ]
+        );
+        assert_eq!(
+            TapEvent::decode_validated_payload(crate::transport::wire::Payload::new(&out[..16])),
+            event
         );
     }
 }

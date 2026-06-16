@@ -199,12 +199,12 @@ fn assert_malformed_direct_recv_fails_closed(
             );
 
             let mismatch = tap
-                .find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                .find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
                 .expect("descriptor mismatch must emit transport mismatch evidence");
             assert_eq!(mismatch.evidence().reason(), expected_reason);
-            assert_eq!(mismatch.arg0, sid.raw());
+            assert_eq!(mismatch.arg0(), sid.raw());
             assert!(
-                !tap.any(|event| event.id == hibana::runtime::tap::TRANSPORT_FRAME),
+                !tap.any(|event| event.id() == hibana::runtime::tap::TRANSPORT_FRAME),
                 "rejected mismatch must not also emit accepted frame evidence"
             );
 
@@ -291,19 +291,15 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
                 rendered.contains("Deadline") || rendered.contains("Transport(D)"),
                 "recv error must preserve deadline transport cause: {rendered}"
             );
-            tap.find(|event| event.id == hibana::runtime::tap::TRANSPORT_FAULT)
+            tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_FAULT)
                 .expect("deadline must emit transport fault evidence")
         });
         assert_eq!(
             fault.evidence().reason(),
             hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE
         );
-        assert_eq!(fault.arg0, 73);
-        assert_eq!(fault.arg1, 0);
-        assert_eq!(
-            fault.arg2,
-            u32::from(hibana::runtime::tap::TRANSPORT_FAULT_DEADLINE)
-        );
+        assert_eq!(fault.arg0(), 73);
+        assert_eq!(fault.arg1(), 0);
     });
 }
 
@@ -411,7 +407,7 @@ fn mismatch_tap_is_emitted_before_terminal_error() {
                 Poll::Pending => panic!("mismatch must not remain pending"),
             }
 
-            tap.find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
+            tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
                 .expect("mismatch tap must be emitted by the failing poll");
         });
     });

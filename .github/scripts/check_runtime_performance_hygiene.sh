@@ -32,6 +32,21 @@ reject_source() {
   fi
 }
 
+run_runtime_test() {
+  local output
+  output="$(mktemp "${TMPDIR:-/tmp}/hibana-runtime-performance.XXXXXX")"
+  if ! cargo +"${TOOLCHAIN}" test "$@" 2>&1 | tee "${output}"; then
+    rm -f "${output}"
+    exit 1
+  fi
+  if ! grep -Eq "running [1-9][0-9]* tests?" "${output}"; then
+    rm -f "${output}"
+    echo "runtime performance hygiene violation: cargo test filter matched no tests: $*" >&2
+    exit 1
+  fi
+  rm -f "${output}"
+}
+
 require_source \
   "src/global/role_program/lane_set.rs" \
   "fn next_set_from\\([^)]*\\)[[:space:]\n]*->[^{]+\\{[[:space:]\n\\S]*trailing_zeros\\(\\)" \
@@ -93,54 +108,54 @@ reject_source \
   "endpoint arena must not contain route-scope lane-word caches"
 
 echo "== runtime performance operation-count tests =="
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test offer_decode_receive_evidence \
   offer_requires_framed_receive_evidence_for_branch_demux \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test offer_decode_receive_evidence \
   offer_decode_transport_consumes_frame_once \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test offer_decode_receive_evidence \
   forgotten_route_branch_leaves_endpoint_fail_closed \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test offer_decode_receive_evidence \
   forgotten_decode_future_leaves_endpoint_fail_closed \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test parallel_route_nesting \
   route_inside_parallel_lane_cannot_release_join_before_sibling_lane \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test parallel_route_alternating \
   alternating_route_parallel_join_uses_only_selected_arms \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test parallel_route_nesting \
   unselected_route_arm_parallel_events_are_dead_and_not_join_obligations \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test parallel_route_nesting \
   unselected_route_arm_parallel_events_do_not_block_parallel_join \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
   --test parallel_route_nesting \
   outer_left_selection_kills_nested_right_route_and_parallel_body \
   --features std
-cargo +"${TOOLCHAIN}" test \
+run_runtime_test \
   -p hibana \
-  global::role_program::tests::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
+  global::role_program::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
   --lib \
   --features std
 

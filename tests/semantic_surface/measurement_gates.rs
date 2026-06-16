@@ -243,6 +243,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "compiled image hot path ",
         "must not rebuild lane sets by effect-list or full-view scans",
         "endpoint arena must not contain route-scope lane-word caches",
+        "cargo test filter matched no tests",
         "offer_requires_framed_receive_evidence_for_branch_demux",
         "offer_decode_transport_consumes_frame_once",
         "forgotten_route_branch_leaves_endpoint_fail_closed",

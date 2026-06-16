@@ -1,0 +1,5 @@
+error[E0451]: field `bytes` of struct `TapEvent` is private
+ --> tests/ui/runtime-tap-event-fields-private.rs:4:24
+  |
+4 |     let _ = TapEvent { bytes: [0; 16] };
+  |                        ^^^^^ private field

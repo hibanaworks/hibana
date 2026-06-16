@@ -44,6 +44,19 @@ else
   exit 1
 fi
 
+run_final_form_test() {
+  local output
+  if ! output="$(cargo +"${TOOLCHAIN}" test "$@" 2>&1)"; then
+    printf '%s\n' "${output}"
+    exit 1
+  fi
+  printf '%s\n' "${output}"
+  if ! grep -Eq "running [1-9][0-9]* tests?" <<<"${output}"; then
+    echo "final-form measurement violation: cargo test filter matched no tests: $*" >&2
+    exit 1
+  fi
+}
+
 MEASURE_DIR="${ROOT_DIR}/target/final_form_measurements"
 SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json"
 rm -rf "${MEASURE_DIR}"
@@ -176,10 +189,10 @@ else
 fi
 
 echo "== final-form future/layout sizes =="
-cargo +"${TOOLCHAIN}" test -p hibana endpoint_surface_size_gates_hold --lib --features std
-cargo +"${TOOLCHAIN}" test -p hibana recv_future_state_caches_payload_mode_and_completion --lib --features std
-cargo +"${TOOLCHAIN}" test -p hibana message_type_variation_does_not_change_future_layout --lib --features std
-cargo +"${TOOLCHAIN}" test -p hibana send_flow_and_runtime_descriptor_size_gates_hold --lib --features std
+run_final_form_test -p hibana endpoint_surface_size_gates_hold --lib --features std
+run_final_form_test -p hibana recv_future_state_caches_payload_mode_and_completion --lib --features std
+run_final_form_test -p hibana message_type_variation_does_not_change_future_layout --lib --features std
+run_final_form_test -p hibana send_flow_and_runtime_descriptor_size_gates_hold --lib --features std
 FUTURE_LAYOUT_OUTPUT="$(
   cargo +"${TOOLCHAIN}" test -p hibana final_form_future_layout_measurement_report --lib --features std -- --nocapture
 )"
@@ -228,17 +241,15 @@ if not (
     sys.exit(1)
 PY
 
-echo "== final-form resident descriptor high-water =="
-cargo +"${TOOLCHAIN}" test -p hibana huge_shape_matrix_resident_bytes_stay_measured_and_local --lib --features std -- --nocapture
-
 echo "== final-form projected protocol matrix =="
 PROTOCOL_MATRIX_OUTPUT="$(
   cargo +"${TOOLCHAIN}" test \
     -p hibana \
-    projected_protocol_matrix_reports_compact_resident_images \
+    global::role_program::tests::protocol_matrix::projected_protocol_matrix_reports_compact_resident_images \
     --lib \
     --features std \
     -- \
+    --exact \
     --nocapture
 )"
 printf '%s\n' "${PROTOCOL_MATRIX_OUTPUT}"

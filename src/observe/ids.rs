@@ -35,8 +35,8 @@ pub const ENDPOINT_RECV: u16 = 0x0203;
 
 /// Endpoint event whose committed choreography row is session-originated.
 ///
-/// - `arg0`: Packed role/lane/label/flags (u32)
-///
+/// - `arg0`: Session identifier (u32)
+/// - `arg1`: Packed role/lane/label/flags (u32)
 pub const ENDPOINT_SESSION: u16 = 0x0204;
 
 /// Transport frame observed but not delivered because its header did not match
@@ -44,8 +44,8 @@ pub const ENDPOINT_SESSION: u16 = 0x0204;
 ///
 /// - `causal_key`: expected lane in high byte, mismatch reason in low byte
 /// - `arg0`: Expected session identifier (u32)
-/// - `arg1`: Observed session identifier (u32)
-/// - `arg2`: observed_lane<<24 | source_role<<16 | target_role<<8 | frame_label
+/// - `arg1`: Observed session for session mismatch; otherwise observed
+///   lane/source/target/label packed as `lane<<24 | source<<16 | target<<8 | label`
 pub const TRANSPORT_MISMATCH: u16 = 0x0205;
 
 pub const TRANSPORT_MISMATCH_SESSION: u8 = 1;
@@ -68,7 +68,6 @@ pub const TRANSPORT_FRAME: u16 = 0x0206;
 /// - `causal_key`: lane in high byte, fault reason in low byte
 /// - `arg0`: Session identifier if available (u32)
 /// - `arg1`: Lane index encoded on the wire (u8 promoted to u32)
-/// - `arg2`: Fault reason (u8 promoted to u32)
 pub const TRANSPORT_FAULT: u16 = 0x0207;
 
 pub const TRANSPORT_FAULT_OFFLINE: u8 = 1;
@@ -111,29 +110,25 @@ pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 /// Resolver audit summary tuple.
 ///
 /// - `arg0`: triggering event hash
-/// - `arg1`: triggering event id (u16 promoted to u32)
-/// - `arg2`: resolver slot tag
+/// - `arg1`: resolver slot tag in high half, triggering event id in low half
 pub const RESOLVER_AUDIT: u16 = 0x0407;
 
 /// Resolver replay event tuple.
 ///
 /// - `arg0`: triggering event timestamp
 /// - `arg1`: triggering event id (u16 promoted to u32)
-/// - `arg2`: triggering event arg0
 pub(crate) const RESOLVER_REPLAY_EVENT: u16 = 0x0408;
 
 /// Resolver replay event extension tuple.
 ///
 /// - `arg0`: triggering event arg1
-/// - `arg1`: triggering event arg2
-/// - `arg2`: triggering event causal key (u16 promoted to u32)
+/// - `arg1`: triggering event causal key (u16 promoted to u32)
 pub(crate) const RESOLVER_REPLAY_EVENT_EXT: u16 = 0x0409;
 
 /// Resolver progress/defer audit tuple.
 ///
-/// - `arg0`: `defer_source<<24 | pending_flag`
+/// - `arg0`: `defer_source<<24 | scope_slot<<8 | pending_flag`
 ///   (`defer_source` is not a route-arm token tap sequence)
-/// - `arg1`: `scope_slot<<16 | selected_arm<<8 | ready_arm_mask`
+/// - `arg1`: `selected_arm<<24 | defer_reason<<16 | frontier<<12 | hint_present<<2 | ingress_ready<<1 | pending_flag`
 ///   (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means no selected arm)
-/// - `arg2`: `defer_reason<<16 | hint<<8 | frontier<<4 | hint_present<<2 | ingress_ready<<1 | pending_flag`
 pub(crate) const RESOLVER_AUDIT_DEFER: u16 = 0x040A;

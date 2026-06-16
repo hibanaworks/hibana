@@ -413,14 +413,12 @@ where
             is_controller,
         );
         let hint = self.peek_scope_frame_hint(scope_id);
-        let ready_arm_mask = self.scope_ready_arm_mask(scope_id);
         self.emit_resolver_defer_event(super::super::core::ResolverDeferAudit {
             reason,
             scope_id,
             frontier,
             selected_arm,
             hint,
-            ready_arm_mask,
             ingress,
             progress: defer_progress,
             lane: offer_lane,

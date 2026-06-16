@@ -267,25 +267,7 @@ where
         if ROLE >= ROLE_DOMAIN_SIZE {
             panic!("{}", ROLE_INDEX_ERROR);
         }
-        match ROLE {
-            0 => role_projection::role_projection_image_for::<0, Steps>(),
-            1 => role_projection::role_projection_image_for::<1, Steps>(),
-            2 => role_projection::role_projection_image_for::<2, Steps>(),
-            3 => role_projection::role_projection_image_for::<3, Steps>(),
-            4 => role_projection::role_projection_image_for::<4, Steps>(),
-            5 => role_projection::role_projection_image_for::<5, Steps>(),
-            6 => role_projection::role_projection_image_for::<6, Steps>(),
-            7 => role_projection::role_projection_image_for::<7, Steps>(),
-            8 => role_projection::role_projection_image_for::<8, Steps>(),
-            9 => role_projection::role_projection_image_for::<9, Steps>(),
-            10 => role_projection::role_projection_image_for::<10, Steps>(),
-            11 => role_projection::role_projection_image_for::<11, Steps>(),
-            12 => role_projection::role_projection_image_for::<12, Steps>(),
-            13 => role_projection::role_projection_image_for::<13, Steps>(),
-            14 => role_projection::role_projection_image_for::<14, Steps>(),
-            15 => role_projection::role_projection_image_for::<15, Steps>(),
-            16..=u8::MAX => panic!("{}", ROLE_INDEX_ERROR),
-        }
+        role_projection::role_projection_image_for::<ROLE, Steps>()
     };
     crate::global::role_program::role_program_from_image(image)
 }

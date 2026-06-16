@@ -290,13 +290,12 @@ where
             meta.label,
             FrameFlags::empty(),
         );
-        let scope_trace = self.scope_trace(meta.scope);
         let event_id = if meta.origin.is_session() {
             ids::ENDPOINT_SESSION
         } else {
             ids::ENDPOINT_RECV
         };
-        self.emit_endpoint_event(event_id, logical_meta, scope_trace, meta.lane);
+        self.emit_endpoint_event(event_id, logical_meta, meta.lane);
 
         self.commit_prepared_delta(delta);
         payload

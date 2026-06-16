@@ -50,7 +50,7 @@ src/endpoint/kernel/core/public_types.rs	210	1	recursive
 src/endpoint/kernel/core/decision_resolver.rs	50	1	recursive
 src/endpoint/kernel/core/decision_resolver/impls.rs	160	1	recursive
 src/endpoint/kernel/core/decision_resolver/impls/select.rs	650	1	recursive
-src/endpoint/kernel/core/route_preview.rs	420	1	recursive
+src/endpoint/kernel/core/route_preview.rs	360	1	recursive
 src/endpoint/kernel/core/route_preview_flow.rs	160	1	recursive
 src/endpoint/kernel/core/runtime_types.rs	560	1	recursive
 src/endpoint/kernel/core/send_ops.rs	500	1	recursive

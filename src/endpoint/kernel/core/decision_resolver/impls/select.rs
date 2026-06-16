@@ -443,10 +443,7 @@ where
         let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
         let arg0 = self.sid.raw();
         let arg1 = ((scope_id.raw() as u32) << 16) | (token.arm().as_u8() as u32);
-        let mut event = events::route_arm_selection_with_causal(port.now32(), causal, arg0, arg1);
-        if let Some(trace) = self.scope_trace(scope_id) {
-            event = event.with_arg2(trace.pack());
-        }
+        let event = events::route_arm_selection_with_causal(port.now32(), causal, arg0, arg1);
         emit(port.tap(), event);
     }
 
@@ -507,7 +504,7 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        self.emit_decision_resolver_audit(scope_id, offer_lane, resolver_id);
+        self.emit_decision_resolver_audit(offer_lane, resolver_id);
         let cluster = self.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let resolution = match cluster.resolve_dynamic_resolver(rv_id, eff_index, resolver_id) {

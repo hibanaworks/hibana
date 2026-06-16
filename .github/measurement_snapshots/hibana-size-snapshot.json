@@ -29,36 +29,36 @@
     "runtime_shapes": {
       "route_heavy": {
         "session_kit_storage_bytes": 392,
-        "resident_prefix_bytes": 3000,
-        "tap_ring_bytes": 2560,
+        "resident_prefix_bytes": 1464,
+        "tap_ring_bytes": 1024,
         "sidecar_scratch_high_water_bytes": 811,
         "live_endpoint_bytes": 3216,
         "peak_live_slab_bytes": 4027,
         "localside_peak_stack_bytes": 3871,
         "peak_stack_bytes": 3871,
-        "pico_total_sram_bytes": 11802
+        "pico_total_sram_bytes": 9610
       },
       "linear_heavy": {
         "session_kit_storage_bytes": 392,
-        "resident_prefix_bytes": 3000,
-        "tap_ring_bytes": 2560,
+        "resident_prefix_bytes": 1464,
+        "tap_ring_bytes": 1024,
         "sidecar_scratch_high_water_bytes": 259,
         "live_endpoint_bytes": 2784,
         "peak_live_slab_bytes": 3043,
         "localside_peak_stack_bytes": 2399,
         "peak_stack_bytes": 2399,
-        "pico_total_sram_bytes": 9346
+        "pico_total_sram_bytes": 7362
       },
       "fanout_heavy": {
         "session_kit_storage_bytes": 392,
-        "resident_prefix_bytes": 3000,
-        "tap_ring_bytes": 2560,
+        "resident_prefix_bytes": 1464,
+        "tap_ring_bytes": 1024,
         "sidecar_scratch_high_water_bytes": 811,
         "live_endpoint_bytes": 3328,
         "peak_live_slab_bytes": 4139,
         "localside_peak_stack_bytes": 3791,
         "peak_stack_bytes": 3791,
-        "pico_total_sram_bytes": 11834
+        "pico_total_sram_bytes": 9642
       }
     }
   }

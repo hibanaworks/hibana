@@ -237,6 +237,17 @@ fn resolved_worker_program() -> RoleProgram<1> {
     project(&program)
 }
 
+fn route_with_late_role2<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let left_arm = g::send::<0, 1, Msg<71, u32>>();
+    let right_arm = g::send::<0, 1, Msg<72, u32>>();
+    let route = g::route(left_arm, right_arm);
+    let program = g::seq(
+        g::seq(route, g::send::<0, 1, Msg<73, u32>>()),
+        g::send::<2, 0, Msg<74, u32>>(),
+    );
+    project(&program)
+}
+
 fn choose_left() -> Result<DecisionResolution, hibana::runtime::resolver::ResolverError> {
     Ok(DecisionResolution::Arm(DecisionArm::Left))
 }
@@ -342,6 +353,54 @@ fn drop_public_preview_branch_preserves_offer_progression() {
 
             send_tail(controller, 55).await;
             assert_eq!(worker.recv::<Msg<73, u32>>().await.expect("recv tail"), 55);
+        });
+    });
+}
+
+#[test]
+fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(Config::from_resources(slab), transport.clone())
+                .expect("register rendezvous");
+            let sid = SessionId::new(913);
+            let role0 = route_with_late_role2::<0>();
+            let role1 = route_with_late_role2::<1>();
+            let role2 = route_with_late_role2::<2>();
+            let mut controller = rv
+                .session(sid)
+                .role(&role0)
+                .enter()
+                .expect("attach route controller");
+            let mut worker = rv
+                .session(sid)
+                .role(&role1)
+                .enter()
+                .expect("attach route worker");
+            let _late_role = rv
+                .session(sid)
+                .role(&role2)
+                .enter()
+                .expect("attach late role and grow lease table");
+
+            futures::executor::block_on(async {
+                send_left(&mut controller, 8888).await;
+                let branch = worker
+                    .offer()
+                    .await
+                    .expect("offer survives endpoint lease root relocation");
+                let value = branch
+                    .decode::<Msg<71, u32>>()
+                    .await
+                    .expect("decode survives endpoint lease root relocation");
+                assert_eq!(value, 8888);
+
+                send_tail(&mut controller, 99).await;
+                assert_eq!(worker.recv::<Msg<73, u32>>().await.expect("recv tail"), 99);
+                assert!(transport.queue_is_empty());
+            });
         });
     });
 }
@@ -455,8 +514,7 @@ fn completed_decode_future_repoll_is_fail_fast_and_does_not_advance_again() {
     });
 }
 
-#[test]
-fn offer_headerless_demux_frame_fails_closed_not_pending() {
+fn assert_headerless_demux_frame_fails_closed_not_pending() {
     with_deterministic_route_workspace(|controller, worker, transport| {
         futures::executor::block_on(send_left(controller, 1234));
         let error = match worker
@@ -488,6 +546,16 @@ fn offer_headerless_demux_frame_fails_closed_not_pending() {
             "headerless demux frame must poison same generation: {rendered}"
         );
     });
+}
+
+#[test]
+fn offer_requires_framed_receive_evidence_for_branch_demux() {
+    assert_headerless_demux_frame_fails_closed_not_pending();
+}
+
+#[test]
+fn offer_headerless_demux_frame_fails_closed_not_pending() {
+    assert_headerless_demux_frame_fails_closed_not_pending();
 }
 
 #[test]
@@ -541,7 +609,7 @@ fn offer_materialized_label_mismatch_fails_closed() {
             );
 
             let mismatch = tap
-                .find(|event| event.id == hibana::runtime::tap::TRANSPORT_MISMATCH)
+                .find(|event| event.id() == hibana::runtime::tap::TRANSPORT_MISMATCH)
                 .expect("materialized label mismatch must emit transport mismatch evidence");
             assert_eq!(
                 mismatch.evidence().reason(),

@@ -8,7 +8,7 @@
 pub const LANE_DOMAIN_SIZE: u16 = u8::MAX as u16 + 1;
 
 /// Number of tap events maintained in the observation ring buffer.
-pub const RING_EVENTS: usize = 128;
+pub const RING_EVENTS: usize = 64;
 
 /// Size of each individual ring buffer (User and Infra).
 pub const RING_BUFFER_SIZE: usize = RING_EVENTS / 2;

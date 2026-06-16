@@ -15,6 +15,3 @@ pub(crate) mod ids;
 
 /// Tap event builders.
 pub(crate) mod events;
-
-/// Scope trace helpers.
-pub(crate) mod scope;

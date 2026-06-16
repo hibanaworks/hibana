@@ -1,7 +1,7 @@
 mod select;
 
 use super::super::{
-    CursorEndpoint, DynamicResolverResolution, EventSemanticKind, ResolverSlot, ScopeId, SendError,
+    CursorEndpoint, DynamicResolverResolution, EventSemanticKind, ResolverSlot, SendError,
     SendMeta, SendResult, Transport, events, ids,
 };
 impl<'r, const ROLE: u8, T, const MAX_RV: usize> CursorEndpoint<'r, ROLE, T, MAX_RV>
@@ -31,14 +31,11 @@ where
         }
     }
 
-    fn emit_decision_resolver_audit(&self, scope_id: ScopeId, lane: u8, resolver_id: u16) {
+    fn emit_decision_resolver_audit(&self, lane: u8, resolver_id: u16) {
         let port = self.port_for_lane(lane as usize);
-        let mut event = events::raw_event(port.now32(), ids::ROUTE_ARM_SELECTION)
+        let event = events::raw_event(port.now32(), ids::ROUTE_ARM_SELECTION)
             .with_arg0(self.sid.raw())
             .with_arg1(resolver_id as u32);
-        if let Some(trace) = self.scope_trace(scope_id) {
-            event = event.with_arg2(trace.pack());
-        }
         self.emit_resolver_audit_replay(ResolverSlot::Decision, event, port.lane());
     }
 
@@ -64,7 +61,7 @@ where
             return Err(SendError::PhaseInvariant);
         }
 
-        self.emit_decision_resolver_audit(scope_id, meta.lane, resolver_id);
+        self.emit_decision_resolver_audit(meta.lane, resolver_id);
 
         let cluster = self.session.cluster();
         let resolution = cluster

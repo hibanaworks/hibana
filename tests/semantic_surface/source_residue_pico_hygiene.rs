@@ -1,4 +1,5 @@
 use super::common::*;
+use hibana::runtime::tap::TapEvent;
 use std::{fs, path::PathBuf, process::Command};
 
 fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
@@ -34,6 +35,27 @@ fn frame_header_impl(source: &str) -> &str {
     panic!("FrameHeader impl close");
 }
 
+fn g_project_body(source: &str) -> &str {
+    let marker = "pub(crate) fn project<const ROLE: u8, Steps>";
+    let start = source.find(marker).expect("g::project function");
+    let tail = &source[start..];
+    let open = tail.find('{').expect("g::project function open");
+    let mut depth = 0usize;
+    for (idx, byte) in tail[open..].bytes().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &tail[..open + idx + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("g::project function close");
+}
+
 fn run_script(script: &str) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let output = Command::new("bash")
@@ -48,6 +70,25 @@ fn run_script(script: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn g_project_does_not_enumerate_role_projection_constructors() {
+    let g = read("src/g.rs");
+    let project = g_project_body(&g);
+    assert!(
+        project.contains("if ROLE >= ROLE_DOMAIN_SIZE")
+            && project.contains("role_projection::role_projection_image_for::<ROLE, Steps>()"),
+        "g::project must keep one const role-domain guard followed by direct projection"
+    );
+
+    for role in 0..16 {
+        let forbidden = format!("{}{}{}", "role_projection_image_for::<", role, ", Steps>()");
+        assert!(
+            !project.contains(&forbidden),
+            "g::project must not re-grow hand-written role dispatch: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -131,6 +172,109 @@ fn runtime_public_api_has_no_frame_header_u64_raw() {
         assert!(
             !header_impl.contains(forbidden) && !allowlist.contains(forbidden),
             "runtime public API must not expose FrameHeader u64 raw surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn tap_event_is_opaque_sixteen_byte_record() {
+    let event = read("src/observe/event.rs");
+    assert_eq!(
+        core::mem::size_of::<TapEvent>(),
+        16,
+        "TapEvent must stay a 16-byte Pico-class diagnostic record"
+    );
+    assert!(
+        event.contains("#[repr(transparent)]")
+            && event.contains("pub struct TapEvent {\n    bytes: [u8; 16],\n}"),
+        "TapEvent storage must stay an opaque [u8; 16] record"
+    );
+    for forbidden in [
+        "pub ts:",
+        "pub id:",
+        "pub causal_key:",
+        "pub arg0:",
+        "pub arg1:",
+        "arg2",
+        "with_arg2",
+        "encoded_len(&self) -> Option<usize> {\n        Some(20)",
+        "require_exact_len(input.as_bytes().len(), 20)",
+    ] {
+        assert!(
+            !event.contains(forbidden),
+            "TapEvent must not re-grow the public-field 20-byte record shape: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn tap_ring_bytes_stay_under_one_kib() {
+    let consts = read("src/runtime_core/consts.rs");
+    assert!(
+        consts.contains("pub const RING_EVENTS: usize = 64;"),
+        "mandatory tap ring capacity must stay at 64 events"
+    );
+    assert!(
+        core::mem::size_of::<[TapEvent; 64]>() <= 1024,
+        "mandatory tap ring must stay at or below 1024 bytes"
+    );
+}
+
+#[test]
+fn port_does_not_snapshot_endpoint_lease_raw_root() {
+    let port = read("src/rendezvous/port.rs");
+    for forbidden in [
+        "endpoint_leases: *const super::core::EndpointLeaseSlot",
+        "endpoint_leases: *const EndpointLeaseSlot",
+        "endpoint_lease_capacity: super::core::EndpointLeaseId,",
+        "endpoint_lease_capacity: EndpointLeaseId,",
+    ] {
+        assert!(
+            !port.contains(forbidden),
+            "Port must not snapshot endpoint lease table roots or capacity by value: {forbidden}"
+        );
+    }
+    assert!(
+        port.contains("endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>")
+            && port.contains("endpoint_lease_capacity: *const EndpointLeaseId")
+            && port.contains("fn endpoint_lease_owner_view(&self)")
+            && port.contains("let storage = unsafe { *self.endpoint_lease_storage };")
+            && port.contains("let capacity = unsafe { *self.endpoint_lease_capacity };"),
+        "Port must reload endpoint lease sidecar root and capacity from the rendezvous owner"
+    );
+}
+
+#[test]
+fn max_rv_remains_public_local_rendezvous_budget() {
+    let runtime = read("src/runtime/session_kit.rs");
+    let allowlist = read(".github/allowlists/runtime-public-api.txt");
+    for required in [
+        "pub struct SessionKit<'cfg, T, const MAX_RV: usize = 4>",
+        "pub struct SessionKitStorage<'cfg, T, const MAX_RV: usize = 4>",
+        "Result<RendezvousKit<'_, 'cfg, T, MAX_RV>, AttachError>",
+    ] {
+        assert!(
+            runtime.contains(required) && allowlist.contains(required),
+            "MAX_RV must remain part of the public runtime rendezvous budget surface: {required}"
+        );
+    }
+    assert!(
+        runtime.contains("caller-owned local rendezvous budget")
+            && runtime.contains("protocol role count")
+            && runtime.contains("cluster member count")
+            && runtime.contains("node count")
+            && runtime.contains("transport\n/// connection limit"),
+        "MAX_RV docs must describe local rendezvous budget semantics"
+    );
+}
+
+#[test]
+fn production_does_not_hard_code_pico_default_max_rv() {
+    let production = read_production_rs_tree("src");
+    for forbidden in ["MAX_RV == 4", "MAX_RV != 4", "MAX_RV > 4", "MAX_RV < 4"] {
+        assert!(
+            !production.contains(forbidden),
+            "production code must not treat MAX_RV=4 as a semantic branch: {forbidden}"
         );
     }
 }
