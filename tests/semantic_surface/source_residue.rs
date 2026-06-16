@@ -47,8 +47,8 @@ fn decode_failure_completion_is_terminal_without_branch_restore() {
 
     assert!(
         read("tests/offer_decode_receive_evidence.rs")
-            .contains("completed decode future must fail fast on post-Ready poll"),
-        "decode terminal paths must be guarded by behavior coverage, not private cleanup helper names"
+            .contains("completed route branch recv future must fail fast on post-Ready poll"),
+        "route branch recv terminal paths must be guarded by behavior coverage, not private cleanup helper names"
     );
 }
 

@@ -1,6 +1,6 @@
 use super::{
-    Arm, CursorEndpoint, PublicActiveOp, ScopeId, SendError, SendPreviewError, SendResult,
-    Transport,
+    Arm, BranchKind, CursorEndpoint, PublicActiveOp, ScopeId, SendError, SendPreviewError,
+    SendResult, Transport, state_index_to_usize,
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -32,17 +32,90 @@ where
         }
     }
 
+    #[inline]
+    fn fail_branch_send_preview(&mut self, error: SendError) -> SendError {
+        self.clear_session_waiter();
+        if let Some(branch) = self.public_route_branch.take() {
+            branch.discard_terminal();
+        }
+        self.public_active_op = PublicActiveOp::Poisoned;
+        self.poison_for_send_error(&error);
+        error
+    }
+
+    #[inline(never)]
+    fn preview_branch_send_meta(
+        &mut self,
+        target_label: u8,
+    ) -> SendResult<crate::endpoint::kernel::SendPreview> {
+        if let Some(kind) = self.session_fault() {
+            self.clear_session_waiter();
+            if let Some(branch) = self.public_route_branch.take() {
+                branch.discard_terminal();
+            }
+            self.clear_public_op_if_current(PublicActiveOp::RouteBranch);
+            return Err(SendError::SessionFault(kind));
+        }
+
+        let Some(branch) = self.public_route_branch.as_ref() else {
+            self.public_op_busy_fault();
+            return Err(SendError::PhaseInvariant);
+        };
+        let branch_meta = branch.branch_meta;
+        let branch_label = branch.label;
+        let has_staged_payload = branch.staged_payload.is_some();
+
+        if branch_meta.kind != BranchKind::ArmSendHint || has_staged_payload {
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+        }
+        if target_label != branch_label {
+            return Err(self.fail_branch_send_preview(SendError::LabelMismatch {
+                expected: branch_label,
+                actual: target_label,
+            }));
+        }
+
+        let cursor_index = state_index_to_usize(branch_meta.cursor_index);
+        let Some(mut meta) = self.cursor.try_send_meta_at(cursor_index) else {
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+        };
+        if meta.label != branch_meta.label
+            || meta.frame_label != branch_meta.frame_label
+            || meta.lane != branch_meta.lane_wire
+            || meta.scope != branch_meta.scope_id
+        {
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+        }
+        if meta
+            .route_arm
+            .is_some_and(|arm| arm != branch_meta.selected_arm)
+        {
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+        }
+        meta.route_arm = Some(branch_meta.selected_arm);
+
+        Ok(crate::endpoint::kernel::SendPreview::new(
+            meta,
+            branch_meta.cursor_index,
+        ))
+    }
+
     /// Preview the current send transition without mutating endpoint state.
     pub(crate) fn preview_send_meta(
         &mut self,
         target_label: u8,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
-        if let Some(kind) = self.session_fault() {
-            return Err(SendError::SessionFault(kind));
-        }
-        if self.public_active_op != PublicActiveOp::Idle {
-            self.public_op_busy_fault();
-            return Err(SendError::PhaseInvariant);
+        match self.public_active_op {
+            PublicActiveOp::Idle => {
+                if let Some(kind) = self.session_fault() {
+                    return Err(SendError::SessionFault(kind));
+                }
+            }
+            PublicActiveOp::RouteBranch => return self.preview_branch_send_meta(target_label),
+            _ => {
+                self.public_op_busy_fault();
+                return Err(SendError::PhaseInvariant);
+            }
         }
         let (meta, cursor_index) = self
             .cursor

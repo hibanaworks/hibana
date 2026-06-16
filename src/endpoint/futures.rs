@@ -238,7 +238,7 @@ where
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
-                EndpointOp::Decode,
+                EndpointOp::Recv,
                 this.location,
                 err,
             ))),

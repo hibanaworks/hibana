@@ -203,6 +203,7 @@ fn root_visible_surface_stays_minimal() {
         "pub use runtime::config::{Clock};",
         "pub use runtime::CounterClock;",
         "pub use runtime::RING_EVENTS;",
+        "pub use runtime::TAP_EVENTS;",
         "pub use runtime::consts::{",
         "pub mod global;",
         "pub mod session;",

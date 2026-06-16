@@ -152,7 +152,20 @@ where
         &mut self,
         init: &SendInit,
     ) -> super::core::PublicOpLease {
-        let lease = self.start_public_op(PublicActiveOp::Send);
+        let lease = match self.public_active_op {
+            PublicActiveOp::Idle => self.start_public_op(PublicActiveOp::Send),
+            PublicActiveOp::RouteBranch if self.public_route_branch.is_some() => {
+                self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::BranchSend)
+            }
+            PublicActiveOp::RouteBranch => {
+                self.public_op_busy_fault();
+                super::core::PublicOpLease::Rejected
+            }
+            _ => {
+                self.public_op_busy_fault();
+                super::core::PublicOpLease::Rejected
+            }
+        };
         match lease {
             super::core::PublicOpLease::Held => {}
             super::core::PublicOpLease::Rejected => return lease,
@@ -169,15 +182,29 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_send_state(&mut self) {
         self.clear_session_waiter();
-        self.finish_public_op(PublicActiveOp::Send);
+        let restore_branch = self.public_active_op == PublicActiveOp::BranchSend;
+        match self.public_active_op {
+            PublicActiveOp::Send => self.finish_public_op(PublicActiveOp::Send),
+            PublicActiveOp::BranchSend => self.finish_public_op(PublicActiveOp::BranchSend),
+            PublicActiveOp::Poisoned => {}
+            _ => self.public_op_busy_fault(),
+        }
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);
+        if restore_branch {
+            if let Some(branch) = self.public_route_branch.take() {
+                self.restore_materialized_route_branch(branch);
+            } else {
+                self.public_op_busy_fault();
+            }
+        }
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_send_state(&mut self) {
         self.clear_session_waiter();
         self.clear_public_op_if_current(PublicActiveOp::Send);
+        self.clear_public_op_if_current(PublicActiveOp::BranchSend);
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);
     }
@@ -221,7 +248,8 @@ where
     #[inline]
     #[must_use]
     pub(in crate::endpoint) fn begin_public_decode_state(&mut self) -> super::core::PublicOpLease {
-        let lease = self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::Decode);
+        let lease =
+            self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::BranchRecv);
         match lease {
             super::core::PublicOpLease::Held => {}
             super::core::PublicOpLease::Rejected => {
@@ -242,7 +270,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_decode_state(&mut self) {
         self.clear_session_waiter();
-        self.finish_public_op(PublicActiveOp::Decode);
+        self.finish_public_op(PublicActiveOp::BranchRecv);
         if self.public_decode_state.restore_on_drop() == super::decode::DecodeRestore::Armed
             && let Some(branch) = self.public_decode_state.branch.take()
         {
@@ -254,7 +282,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_decode_state(&mut self) {
         self.clear_session_waiter();
-        self.clear_public_op_if_current(PublicActiveOp::Decode);
+        self.clear_public_op_if_current(PublicActiveOp::BranchRecv);
         let mut state = core::mem::replace(
             &mut self.public_decode_state,
             super::decode::DecodeState::empty(),

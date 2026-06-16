@@ -45,22 +45,23 @@
 //! - [`Endpoint::recv`] receives a deterministic message;
 //! - [`Endpoint::offer`] observes a route branch;
 //! - [`RouteBranch::label`] reports the selected choreography label;
-//! - [`RouteBranch::decode`] receives the first payload in a selected receive
-//!   arm.
+//! - [`RouteBranch::recv`] receives the first payload in a selected receive arm;
+//! - [`RouteBranch::send`] sends the first payload in a selected send arm.
 //!
-//! A route branch whose selected arm begins with a send is handled by dropping
-//! the preview branch and then calling [`Endpoint::send`] for that arm's first
-//! message.
+//! A route branch whose selected arm begins with a send is handled by
+//! [`RouteBranch::send`]. Dropping the returned future restores the branch
+//! preview before any progress commits.
+//! Successful sends, receives, and route branch first-step operations consume
+//! progress.
 //!
 //! ```rust,ignore
 //! let branch = endpoint.offer().await?;
 //! match branch.label() {
 //!     10 => {
-//!         let value = branch.decode::<g::Msg<10, [u8; 4]>>().await?;
+//!         let value = branch.recv::<g::Msg<10, [u8; 4]>>().await?;
 //!     }
 //!     11 => {
-//!         drop(branch);
-//!         endpoint.send::<g::Msg<11, ()>>(&()).await?;
+//!         branch.send::<g::Msg<11, ()>>(&()).await?;
 //!     }
 //!     label => panic!("unexpected route label {label}"),
 //! }
@@ -123,8 +124,9 @@
 //!   ownership;
 //! - labels are choreography identities, while transport frame labels are
 //!   descriptor facts;
-//! - endpoint progress is affine: successful sends, receives, and route decodes
-//!   commit progress, while dropped previews restore the endpoint;
+//! - endpoint progress is affine: successful sends, receives, and route branch
+//!   first-step operations commit progress, while dropped previews restore the
+//!   endpoint;
 //! - `EndpointError` fails closed, carries compact endpoint operation evidence,
 //!   and never authorizes hidden progress.
 //!

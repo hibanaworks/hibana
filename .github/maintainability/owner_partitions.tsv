@@ -194,6 +194,7 @@ tests	tests/parallel_route_alternating.rs
 tests	tests/program_capacity_regression.rs
 tests	tests/public_surface_guards.rs
 tests	tests/root_surface.rs
+tests	tests/route_branch_send.rs
 tests	tests/route_multiphase_progress_arm.rs
 tests	tests/route_multiphase_progress_inner.rs
 tests	tests/route_with_internal_parallel.rs

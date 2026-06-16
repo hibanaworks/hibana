@@ -257,7 +257,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "offer_requires_framed_receive_evidence_for_branch_demux",
         "offer_decode_transport_consumes_frame_once",
         "forgotten_route_branch_leaves_endpoint_fail_closed",
-        "forgotten_decode_future_leaves_endpoint_fail_closed",
+        "forgotten_route_recv_future_leaves_endpoint_fail_closed",
         "route_inside_parallel_lane_cannot_release_join_before_sibling_lane",
         "alternating_route_parallel_join_uses_only_selected_arms",
         "unselected_route_arm_parallel_events_are_dead_and_not_join_obligations",

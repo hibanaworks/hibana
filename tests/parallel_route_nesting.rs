@@ -204,7 +204,7 @@ fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
                 assert_eq!(branch.label(), DEAD_RIGHT_A);
                 assert_eq!(
                     branch
-                        .decode::<Msg<DEAD_RIGHT_A, u8>>()
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
                         .await
                         .expect("decode left route event"),
                     1
@@ -283,7 +283,7 @@ fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
                 assert_eq!(branch.label(), DEAD_RIGHT_A);
                 assert_eq!(
                     branch
-                        .decode::<Msg<DEAD_RIGHT_A, u8>>()
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
                         .await
                         .expect("decode left route event"),
                     1
@@ -365,7 +365,7 @@ fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
                 assert_eq!(branch.label(), DEAD_RIGHT_A);
                 assert_eq!(
                     branch
-                        .decode::<Msg<DEAD_RIGHT_A, u8>>()
+                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
                         .await
                         .expect("decode outer left route event"),
                     1
@@ -459,7 +459,7 @@ fn route_selected_left_keeps_entire_nested_parallel_path_live() {
                 assert_eq!(branch.label(), ROUTE_PAR_A);
                 assert_eq!(
                     branch
-                        .decode::<Msg<ROUTE_PAR_A, u8>>()
+                        .recv::<Msg<ROUTE_PAR_A, u8>>()
                         .await
                         .expect("decode A"),
                     1
@@ -548,7 +548,7 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                 assert_eq!(branch.label(), ROUTE_PAYLOAD);
                 assert_eq!(
                     branch
-                        .decode::<Msg<ROUTE_PAYLOAD, u8>>()
+                        .recv::<Msg<ROUTE_PAYLOAD, u8>>()
                         .await
                         .expect("decode route payload"),
                     10

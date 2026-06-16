@@ -126,7 +126,7 @@ run_runtime_test \
 run_runtime_test \
   -p hibana \
   --test offer_decode_receive_evidence \
-  forgotten_decode_future_leaves_endpoint_fail_closed \
+  forgotten_route_recv_future_leaves_endpoint_fail_closed \
   --features std
 run_runtime_test \
   -p hibana \

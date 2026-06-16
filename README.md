@@ -37,7 +37,7 @@ hibana::g choreography
   -> registered rendezvous .session(...).role(...)
   -> role witness .enter()
   -> Endpoint
-  -> send() / recv() / offer() / RouteBranch::decode()
+  -> send() / recv() / offer() / RouteBranch::send() / RouteBranch::recv()
 ```
 
 There are only two public surfaces:
@@ -121,7 +121,7 @@ use memory, atomics, interrupts, DMA, or OS primitives as private transport or
 resolver implementation mechanics, but those mechanics must first become
 transport frames, descriptor-checked ingress evidence, or route resolver inputs
 at explicit resolver sites. They never replace `send()`, `recv()`,
-`offer()`, or `RouteBranch::decode()`.
+`offer()`, or route branch first-step operations.
 
 ## Quick Start
 
@@ -139,12 +139,13 @@ That is the main user path:
 
 1. define messages and choreography with `hibana::g`;
 2. receive an attached `Endpoint` from your protocol crate;
-3. call `send()`, `recv()`, `offer()`, and `RouteBranch::decode()`.
+3. call `send()`, `recv()`, `offer()`, and route branch first-step operations.
 
 `offer()` previews route selection. Endpoint progress happens when `send()`,
-`recv()`, or `RouteBranch::decode()` succeeds. A failed send descriptor check
-does not move the endpoint and does not choose an alternate route. Preview
-evidence can wake or guide polling, but it cannot create a continuation.
+`recv()`, or a route branch first-step operation succeeds. A failed send
+descriptor check does not move the endpoint and does not choose an alternate
+route. Preview evidence can wake or guide polling, but it cannot create a
+continuation.
 
 ## Application Guide
 
@@ -216,30 +217,29 @@ let branch = endpoint.offer().await?;
 
 match branch.label() {
     31 => {
-        let value = branch.decode::<g::Msg<31, u32>>().await?;
+        let value = branch.recv::<g::Msg<31, u32>>().await?;
         handle_accept(value);
     }
     33 => {
-        let () = branch.decode::<g::Msg<33, ()>>().await?;
+        let () = branch.recv::<g::Msg<33, ()>>().await?;
         handle_reject();
     }
     label => panic!("unexpected route label {label}"),
 }
 ```
 
-If the chosen route arm begins with a send, drop the preview branch and send
-the first message in that arm:
+If the chosen route arm begins with a send, send the first message through the
+branch:
 
 ```rust,ignore
 let branch = endpoint.offer().await?;
 
 match branch.label() {
     40 => {
-        drop(branch);
-        endpoint.send::<g::Msg<40, ()>>(&()).await?;
+        branch.send::<g::Msg<40, ()>>(&()).await?;
     }
     41 => {
-        let bytes = branch.decode::<g::Msg<41, [u8; 8]>>().await?;
+        let bytes = branch.recv::<g::Msg<41, [u8; 8]>>().await?;
         use_bytes(bytes);
     }
     label => panic!("unexpected route label {label}"),
@@ -261,7 +261,7 @@ ordinary `?`:
 endpoint.send::<g::Msg<1, u32>>(&7).await?;
 let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
 let branch = endpoint.offer().await?;
-let payload = branch.decode::<g::Msg<3, [u8; 4]>>().await?;
+let payload = branch.recv::<g::Msg<3, [u8; 4]>>().await?;
 ```
 
 This shape has only two committed outcomes:
@@ -289,7 +289,7 @@ hidden route authority or an alternate branch inside the current generation.
 
 The public evidence envelopes are domain-specific:
 
-- `EndpointError` for `send`, `recv`, `offer`, and `decode`;
+- `EndpointError` for endpoint and route branch progress;
 - `ResolverError` for resolver registration and resolver decisions;
 - `AttachError` for rendezvous and endpoint attach.
 
@@ -360,7 +360,7 @@ Decoded values may borrow from the received frame:
 
 ```rust
 // In a message type, use `g::Msg<LABEL, &[u8]>`.
-// The decoded value returned by recv/decode is borrowed from the endpoint
+// The decoded value returned by recv is borrowed from the endpoint
 // transport frame currently owned by the endpoint.
 ```
 
@@ -513,7 +513,7 @@ rv.role(&role0)
 
 Receive evidence is checked against the projected descriptor. `ReceivedFrame`
 has two construction paths: deterministic receive is valid only when a single
-active receive can be selected, while `offer()` and `RouteBranch::decode()`
+active receive can be selected, while `offer()` and `RouteBranch::recv()`
 require `ReceivedFrame::framed(...)` with descriptor-checked frame metadata.
 Payload shape, queue position, carrier id, and driver observations are never
 branch authority.
@@ -636,7 +636,7 @@ The canonical receive-side observation is the `ReceivedFrame` returned by
 `poll_recv(...)`. Payload and carrier observation cross the transport boundary
 together; there is no separate receive-observation hook.
 `ReceivedFrame::deterministic(...)` is valid only for a single deterministic
-receive; route, offer, and decode demux require
+receive; route offer and route branch receive demux require
 `ReceivedFrame::framed(FrameHeader::from_bytes(header_bytes), payload)`, where
 the transport supplies one carrier-owned eight-byte observation and Hibana
 performs the session/lane/role/label comparison internally before any endpoint
@@ -649,12 +649,12 @@ Ingress demux state belongs inside the transport owner. `poll_recv(...)`
 returns payload bytes and descriptor-checked ingress evidence as one receive
 value, so endpoint progress can verify the frame against the projected
 descriptor before previewing an `offer()` or committing a `recv()` or
-`RouteBranch::decode()`.
+route branch first-step operation.
 
 Headerless receive is only valid when the projected frontier contains one
-deterministic receive. Branch observation and route decode require framed,
-descriptor-checked evidence. Payload shape, frame label, queue position, and
-carrier-local hints do not select route arms.
+deterministic receive. Branch observation and route branch receive require
+framed, descriptor-checked evidence. Payload shape, frame label, queue
+position, and carrier-local hints do not select route arms.
 
 ### Resolvers
 
@@ -681,7 +681,7 @@ Core guarantees:
 - runtime cursor progress is one-way and affine;
 - protocol state is affine endpoint ownership, not shared atomic or shared
   memory state;
-- failed sends, receives, offers, and decodes do not authorize hidden progress;
+- failed endpoint and route branch operations do not authorize hidden progress;
 - payload decode is exact;
 - message logical labels and transport frame labels are separate concepts;
 - route-decision semantics are descriptor metadata, not protocol label numbers;

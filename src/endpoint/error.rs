@@ -9,7 +9,6 @@ pub(crate) enum EndpointOp {
     Send,
     Recv,
     Offer,
-    Decode,
 }
 
 /// Domain error for endpoint progress.
@@ -60,7 +59,6 @@ impl EndpointError {
             EndpointOp::Send => "send",
             EndpointOp::Recv => "recv",
             EndpointOp::Offer => "offer",
-            EndpointOp::Decode => "decode",
         }
     }
 }

@@ -3,7 +3,7 @@ use super::{
     PhantomData, Rendezvous, RendezvousId, RouteTable, SessionId, Sidecar, TapRing, Transport,
     Waker, emit, events,
 };
-use crate::{observe::core::TapEvent, runtime_core::consts::RING_EVENTS};
+use crate::{observe::core::TapEvent, runtime_core::consts::TAP_EVENTS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ResidentCarveLayout {
@@ -22,7 +22,7 @@ where
         let header_offset = Self::align_up(base, core::mem::align_of::<Self>());
         let header_end = header_offset.checked_add(core::mem::size_of::<Self>())?;
         let tap_offset = Self::align_up(header_end, core::mem::align_of::<TapEvent>());
-        let tap_end = tap_offset.checked_add(core::mem::size_of::<[TapEvent; RING_EVENTS]>())?;
+        let tap_end = tap_offset.checked_add(core::mem::size_of::<[TapEvent; TAP_EVENTS]>())?;
         let header_start = header_offset.checked_sub(base)?;
         let tap_start = tap_offset.checked_sub(base)?;
         let runtime_start = tap_end.checked_sub(base)?;
@@ -38,7 +38,7 @@ where
 
     unsafe fn carve_resident_storage(
         slab: &mut [u8],
-    ) -> Option<(*mut Self, &mut [TapEvent; RING_EVENTS], &mut [u8])> {
+    ) -> Option<(*mut Self, &mut [TapEvent; TAP_EVENTS], &mut [u8])> {
         let layout = Self::resident_carve_layout(slab)?;
         let header_ptr = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe {
             slab.as_mut_ptr().add(layout.header_start).cast::<Self>()
@@ -47,15 +47,15 @@ where
             slab.as_mut_ptr().add(layout.tap_start).cast::<TapEvent>()
         };
         let mut idx = 0usize;
-        while idx < RING_EVENTS {
+        while idx < TAP_EVENTS {
             /* SAFETY: tap storage is carved from the caller slab with TapEvent alignment and initialized exactly once. */
             unsafe {
                 tap_ptr.add(idx).write(TapEvent::zero());
             }
             idx += 1;
         }
-        let tap_storage = /* SAFETY: tap storage was carved at TapEvent alignment and initialized for exactly RING_EVENTS elements. */ unsafe {
-            &mut *(tap_ptr.cast::<[TapEvent; RING_EVENTS]>())
+        let tap_storage = /* SAFETY: tap storage was carved at TapEvent alignment and initialized for exactly TAP_EVENTS elements. */ unsafe {
+            &mut *(tap_ptr.cast::<[TapEvent; TAP_EVENTS]>())
         };
         let runtime_ptr = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { slab.as_mut_ptr().add(layout.runtime_start) };
         let runtime_len = slab.len() - layout.runtime_start;
@@ -238,7 +238,7 @@ mod tests {
         assert!(
             layout.runtime_start
                 >= core::mem::size_of::<TestRv<'_>>()
-                    + core::mem::size_of::<[TapEvent; RING_EVENTS]>(),
+                    + core::mem::size_of::<[TapEvent; TAP_EVENTS]>(),
             "resident prefix must include header and tap ring bytes"
         );
     }

@@ -12,17 +12,18 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let branch = read("src/endpoint/branch.rs");
     let route_preview = read("src/endpoint/kernel/core/send_preview.rs");
-    let lifecycle_tests = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+    let lifecycle_tests = [
         read("tests/cursor_send_recv/session_progress.rs"),
         read("tests/cursor_send_recv/session_forget_send.rs"),
         read("tests/cursor_send_recv/session_forget_recv.rs"),
         read("tests/cursor_send_recv/session_fault_cancel.rs"),
         read("tests/cursor_send_recv/session_drop_wake.rs"),
         read("tests/offer_decode_receive_evidence.rs"),
+        read("tests/route_branch_send.rs"),
         read("tests/nested_route_runtime.rs"),
-        read("tests/affine_progression.rs")
-    );
+        read("tests/affine_progression.rs"),
+    ]
+    .join("\n");
 
     for required in [
         "pub(in crate::endpoint) enum PublicActiveOp",
@@ -32,7 +33,8 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "Recv",
         "Offer",
         "RouteBranch",
-        "Decode",
+        "BranchRecv",
+        "BranchSend",
         "public_active_op: PublicActiveOp",
     ] {
         assert!(
@@ -55,7 +57,12 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("self.public_active_op != PublicActiveOp::Poisoned")
             && public_runtime.contains("fn clear_public_op_if_current(&mut self, op: PublicActiveOp)")
             && public_runtime.contains("fn init_public_send_state(\n        &mut self,\n        init: &SendInit,\n    ) -> super::core::PublicOpLease")
-            && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Send);")
+            && public_runtime.contains("PublicActiveOp::Idle => self.start_public_op(PublicActiveOp::Send)")
+            && public_runtime.contains("PublicActiveOp::RouteBranch =>")
+            && public_runtime.contains(
+                "self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::BranchSend)"
+            )
+            && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
             && public_runtime.contains("fn init_public_recv_state(&mut self) -> super::core::PublicOpLease")
             && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Recv);")
             && public_runtime.contains("fn init_public_offer_state(&mut self) -> super::core::PublicOpLease")
@@ -64,25 +71,31 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("if self.public_active_op != PublicActiveOp::Offer")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
             && public_runtime.contains("fn begin_public_decode_state(&mut self) -> super::core::PublicOpLease")
-            && public_runtime.contains("self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::Decode)")
+            && public_runtime.contains("PublicActiveOp::BranchRecv")
+            && public_runtime.contains("PublicActiveOp::BranchSend")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Send)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Recv)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Offer)")
-            && public_runtime.contains("self.finish_public_op(PublicActiveOp::Decode)")
+            && public_runtime.contains("self.finish_public_op(PublicActiveOp::BranchRecv)")
+            && public_runtime.contains("self.finish_public_op(PublicActiveOp::BranchSend)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::RouteBranch)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Send)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Recv)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Offer)")
-            && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Decode)")
+            && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchRecv)")
+            && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchSend)")
             && public_runtime.contains("if self.public_route_branch.is_some() {\n            self.clear_session_waiter();\n            self.public_op_busy_fault();")
             && public_runtime.contains("let Some(branch) = decode_state.branch() else {\n            self.clear_session_waiter();\n            self.public_decode_state = super::decode::DecodeState::empty();\n            self.public_op_busy_fault();"),
         "endpoint API calls must start only from Idle, checked completion must poison on wrong active-op order, and terminal sweep must use an explicit lenient clear path"
     );
     assert!(
-        route_preview.contains("if self.public_active_op != PublicActiveOp::Idle")
+        route_preview.contains("PublicActiveOp::Idle")
+            && route_preview.contains(
+                "PublicActiveOp::RouteBranch => return self.preview_branch_send_meta(target_label)"
+            )
             && route_preview.contains("self.public_op_busy_fault();")
             && route_preview.contains("return Err(SendError::PhaseInvariant);"),
-        "send preview must not overwrite a forgotten active operation"
+        "send preview must not overwrite a forgotten active operation and must route branch send through the selected-arm token"
     );
     assert!(
         endpoint_ops.contains("match unsafe { self.init_public_send_state(&init) }")
@@ -132,7 +145,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "forgotten_recv_future_leaves_endpoint_fail_closed",
         "forgotten_started_offer_future_leaves_endpoint_fail_closed",
         "forgotten_route_branch_leaves_endpoint_fail_closed",
-        "forgotten_decode_future_leaves_endpoint_fail_closed",
+        "forgotten_route_recv_future_leaves_endpoint_fail_closed",
         "core::mem::forget",
     ] {
         assert!(

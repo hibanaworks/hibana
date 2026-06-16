@@ -126,7 +126,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         }
     }
     #[inline]
-    fn preview_send(&mut self, logical_label: u8, out: *mut kernel::SendPreview) -> SendResult<()> {
+    pub(super) fn preview_send(
+        &mut self,
+        logical_label: u8,
+        out: *mut kernel::SendPreview,
+    ) -> SendResult<()> {
         /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
         unsafe { (self.ops().preview_send)(self.erased_ptr(), self.handle, logical_label, out) }
     }

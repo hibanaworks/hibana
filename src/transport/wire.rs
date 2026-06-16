@@ -54,8 +54,8 @@ unsafe fn encode_erased<P: WireEncode>(
 
 /// Receive-side payload decoding contract.
 ///
-/// `Decoded<'a>` describes what `recv()` / `decode()` yield when the
-/// wire bytes are borrowed for the duration of the endpoint borrow.
+/// `Decoded<'a>` describes what receive operations yield when wire bytes are
+/// borrowed for the duration of the endpoint borrow.
 pub trait WirePayload {
     type Decoded<'a>;
 
@@ -64,7 +64,7 @@ pub trait WirePayload {
     /// Checks that require choreography descriptor context, endpoint role, or
     /// session/lane identity are owned by the endpoint kernel. Those contextual
     /// checks run after payload-local validation and
-    /// before receive/decode progress commits.
+    /// before receive progress commits.
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;
 
     /// Decode bytes already accepted by payload-local validation and any

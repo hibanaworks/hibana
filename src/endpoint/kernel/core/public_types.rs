@@ -13,7 +13,8 @@ pub(in crate::endpoint) enum PublicActiveOp {
     Recv,
     Offer,
     RouteBranch,
-    Decode,
+    BranchRecv,
+    BranchSend,
 }
 
 #[repr(u8)]

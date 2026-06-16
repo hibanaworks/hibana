@@ -1,4 +1,4 @@
-//! Offer branch commit and decode metadata.
+//! Offer branch commit metadata.
 
 use super::super::authority::RouteArmToken;
 use super::super::core::BranchPreviewView;
@@ -28,7 +28,7 @@ impl BranchCommitPlan {
     }
 }
 
-/// Branch metadata carried from `offer()` to `decode()`.
+/// Branch metadata carried from `offer()` to the selected branch first step.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BranchMeta {
     /// The scope this branch belongs to.
@@ -47,7 +47,7 @@ pub(crate) struct BranchMeta {
     pub(crate) origin: EventOrigin,
     /// Transport/ingress discriminator expected for this branch.
     pub(crate) frame_label: u8,
-    /// Branch dispatch category for decode() dispatch.
+    /// Branch first-step category.
     pub(crate) kind: BranchKind,
     /// Route-shape profile captured during offer materialization.
     pub(in crate::endpoint::kernel) profile: OfferScopeProfile,
@@ -58,19 +58,19 @@ pub(crate) struct BranchMeta {
     pub(in crate::endpoint::kernel) route_arm_selection_commit_evidence: RouteArmCommitEvidence,
 }
 
-/// Branch type taxonomy for `decode()` dispatch.
+/// Branch first-step taxonomy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BranchKind {
     /// Normal wire recv: payload comes from transport/ingress.
     WireRecv,
     /// Endpoint-local action that does not go on wire.
-    /// Decode validates Hibana's canonical empty payload; route commit uses
+    /// Branch recv validates Hibana's canonical empty payload; route commit uses
     /// meta fields directly.
     LocalAction,
     /// Arm starts with Send operation (passive observer scenario).
-    /// The driver should continue on the same borrowed endpoint with `send()`.
+    /// The driver continues on the same borrowed endpoint with `send()`.
     ArmSendHint,
     /// Terminal arm without a resident receive/send event.
-    /// Decode validates Hibana's canonical empty payload and advances to scope end.
+    /// Branch recv validates Hibana's canonical empty payload and advances to scope end.
     TerminalArm,
 }

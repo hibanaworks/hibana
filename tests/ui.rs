@@ -82,9 +82,10 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/public_compile_link_boundary.rs");
     t.compile_fail("tests/ui/public_fragment_boundary.rs");
     t.compile_fail("tests/ui/port-open-constructor.rs");
-    t.compile_fail("tests/ui/decode-borrow-endpoint-alias.rs");
+    t.compile_fail("tests/ui/route-branch-decode-removed.rs");
+    t.compile_fail("tests/ui/route-recv-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/recv-borrow-endpoint-alias.rs");
-    t.compile_fail("tests/ui/route-branch-double-decode.rs");
+    t.compile_fail("tests/ui/route-branch-double-recv.rs");
     t.compile_fail("tests/ui/send-future-endpoint-alias.rs");
     t.compile_fail("tests/ui/endpoint-send-only-payload-cannot-recv.rs");
     t.compile_fail("tests/ui/endpoint-recv-only-payload-cannot-send.rs");

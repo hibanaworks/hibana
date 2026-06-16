@@ -29,7 +29,7 @@ use tls_ref_support::with_resident_tls_ref;
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 const ROUTE_BRANCH_BYTES_MAX: usize = 32;
 const OFFER_FUTURE_BYTES_MAX: usize = 48;
-const DECODE_FUTURE_BYTES_MAX: usize = 48;
+const BRANCH_RECV_FUTURE_BYTES_MAX: usize = 48;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -129,7 +129,7 @@ fn nested_branch_commit_stack() {
                                     "outer route should expose OuterLeftData"
                                 );
                                 let observed_outer = outer_branch
-                                    .decode::<Msg<5, u32>>()
+                                    .recv::<Msg<5, u32>>()
                                     .await
                                     .expect("decode outer left data");
                                 assert_eq!(observed_outer, 1234);
@@ -152,7 +152,7 @@ fn nested_branch_commit_stack() {
                                     "inner route should expose InnerLeftData"
                                 );
                                 let observed_inner = inner_branch
-                                    .decode::<Msg<7, u32>>()
+                                    .recv::<Msg<7, u32>>()
                                     .await
                                     .expect("decode inner left data");
                                 assert_eq!(observed_inner, 5678);
@@ -288,9 +288,9 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 size_of::<hibana::RouteBranch<'static, 'static, 1>>();
                             assert_eq!(branch.label(), 5, "route should expose outer left arm");
 
-                            let decode = branch.decode::<Msg<5, u32>>();
-                            let decode_bytes = size_of_val(&decode);
-                            drop(decode);
+                            let recv = branch.recv::<Msg<5, u32>>();
+                            let recv_bytes = size_of_val(&recv);
+                            drop(recv);
 
                             assert!(
                                 branch_bytes <= ROUTE_BRANCH_BYTES_MAX,
@@ -301,8 +301,8 @@ fn localside_offer_decode_sizes_stay_compact() {
                                 "offer future regressed: {offer_bytes} > {OFFER_FUTURE_BYTES_MAX}"
                             );
                             assert!(
-                                decode_bytes <= DECODE_FUTURE_BYTES_MAX,
-                                "decode future regressed: {decode_bytes} > {DECODE_FUTURE_BYTES_MAX}"
+                                recv_bytes <= BRANCH_RECV_FUTURE_BYTES_MAX,
+                                "branch recv future regressed: {recv_bytes} > {BRANCH_RECV_FUTURE_BYTES_MAX}"
                             );
                         },
                     );

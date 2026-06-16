@@ -1,9 +1,10 @@
 use super::{
     Endpoint, EndpointError, EndpointOp, EndpointResult, RecvResult, RouteBranch,
     futures::{DecodeFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
+    send::SendFuture,
 };
 use crate::diag::Callsite;
-use crate::transport::wire::WirePayload;
+use crate::transport::wire::{WireEncode, WirePayload};
 use core::{
     future::Future,
     pin::Pin,
@@ -21,21 +22,21 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         }
     }
 
-    #[inline]
     /// Return the selected choreography label for this route branch.
+    #[inline]
     pub fn label(&self) -> u8 {
         self.label
     }
 
-    #[inline]
     /// Receive the first payload of a selected route arm.
     ///
     /// This consumes the branch preview on success. The message `M` must match
     /// the selected branch label and payload family. Physical frame-label or
     /// descriptor mismatches are reported as invariant failures, not as route
     /// choices. A decode failure is terminal for the current generation.
+    #[inline]
     #[track_caller]
-    pub fn decode<M>(
+    pub fn recv<M>(
         self,
     ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>>
     + use<'e, 'r, M, ROLE>
@@ -44,6 +45,52 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         M::Payload: WirePayload,
     {
         DecodeFuture::<'e, 'r, ROLE, M>::new(self, Callsite::caller())
+    }
+
+    /// Send the first payload of a selected route arm.
+    ///
+    /// This consumes the branch preview only when the selected arm begins with
+    /// a send. Dropping the returned future before completion restores the
+    /// branch preview so the route can be offered again.
+    #[inline]
+    #[track_caller]
+    pub fn send<'a, M>(
+        self,
+        payload: &'a M::Payload,
+    ) -> impl core::future::Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, M, ROLE>
+    where
+        M: crate::g::Message + 'a,
+        M::Payload: WireEncode + 'a,
+        'e: 'a,
+        'r: 'a,
+    {
+        let branch = core::mem::ManuallyDrop::new(self);
+        let endpoint = branch.endpoint;
+        let location = Callsite::caller();
+        let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
+        let mut preview = core::mem::MaybeUninit::<crate::endpoint::kernel::SendPreview>::uninit();
+        if let Err(error) =
+            /* SAFETY: consuming the branch transfers its unique endpoint borrow into the returned future or a terminal ready error. */
+            unsafe { (&mut *endpoint).preview_send(logical_label, preview.as_mut_ptr()) }
+        {
+            return SendFuture::ready_error(error, location);
+        }
+        let preview = /* SAFETY: preview_send returned Ok and initialized the out slot. */ unsafe {
+            preview.assume_init()
+        };
+        let desc = crate::endpoint::send::send_runtime_desc::<M>(
+            crate::transport::FrameLabel::new(preview.frame_label()),
+        );
+        let init = crate::endpoint::kernel::SendInit::new(desc, preview);
+        match /* SAFETY: the consumed branch owns the in-flight kernel borrow until the returned future completes or drops. */ unsafe {
+            (&mut *endpoint).init_public_send_state(&init)
+        } {
+            crate::endpoint::kernel::PublicOpLease::Held => {}
+            crate::endpoint::kernel::PublicOpLease::Rejected => {
+                return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant, location);
+            }
+        }
+        SendFuture::pending(endpoint, payload, location)
     }
 }
 

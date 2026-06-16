@@ -176,7 +176,7 @@ fn shared_sid_lane_emits_one_association_pair() {
 }
 
 #[test]
-fn new_tap_port_reads_all_retained_runtime_events_beyond_old_half_ring() {
+fn new_tap_port_reads_all_runtime_events_before_wrap() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let slab_ptr = slab as *mut [u8];
@@ -187,7 +187,7 @@ fn new_tap_port_reads_all_retained_runtime_events_beyond_old_half_ring() {
                 .expect("register rendezvous");
             let controller_program = controller_program();
 
-            for sid_raw in 100..120 {
+            for sid_raw in 100..110 {
                 let endpoint = rv
                     .session(SessionId::new(sid_raw))
                     .role(&controller_program)
@@ -199,14 +199,18 @@ fn new_tap_port_reads_all_retained_runtime_events_beyond_old_half_ring() {
             collect_lane_events(rv.tap())
         });
 
-        assert_eq!(events.len(), 40, "new tap port must retain 40 lane events");
+        assert_eq!(
+            events.len(),
+            20,
+            "new tap port must retain pre-wrap lane events"
+        );
         assert_eq!(events.first().map(|event| event.ts), Some(0));
-        assert_eq!(events.last().map(|event| event.ts), Some(39));
+        assert_eq!(events.last().map(|event| event.ts), Some(19));
     });
 }
 
 #[test]
-fn new_tap_port_reads_latest_sixty_four_runtime_events_after_wrap() {
+fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let slab_ptr = slab as *mut [u8];
@@ -231,24 +235,24 @@ fn new_tap_port_reads_latest_sixty_four_runtime_events_after_wrap() {
 
         assert_eq!(
             events.len(),
-            64,
-            "new tap port must expose only the retained 64-event window"
+            32,
+            "new tap port must expose only the retained 32-event window"
         );
-        assert_eq!(events.first().map(|event| event.ts), Some(6));
+        assert_eq!(events.first().map(|event| event.ts), Some(38));
         assert_eq!(events.last().map(|event| event.ts), Some(69));
         assert_eq!(
             events
                 .iter()
                 .filter(|event| event.id == tap::LANE_ACQUIRE)
                 .count(),
-            32
+            16
         );
         assert_eq!(
             events
                 .iter()
                 .filter(|event| event.id == tap::LANE_RELEASE)
                 .count(),
-            32
+            16
         );
     });
 }

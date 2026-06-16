@@ -95,7 +95,7 @@ fn inner_route_completion_does_not_exit_outer_route_early() {
                 assert_eq!(branch.label(), INNER_PAYLOAD);
                 assert_eq!(
                     branch
-                        .decode::<Msg<INNER_PAYLOAD, u8>>()
+                        .recv::<Msg<INNER_PAYLOAD, u8>>()
                         .await
                         .expect("decode inner payload"),
                     40

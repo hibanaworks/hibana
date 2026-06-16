@@ -244,6 +244,27 @@ fn localside_transport_seal() {
 }
 
 #[test]
+fn route_branch_public_methods_stay_minimal() {
+    let allowlist = read(".github/allowlists/endpoint-public-api.txt");
+    let methods = allowlist
+        .lines()
+        .filter_map(|line| line.strip_prefix("RouteBranch::"))
+        .filter_map(|line| line.split_once(' ').map(|(name, _)| name))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        methods,
+        ["label", "recv", "send"],
+        "RouteBranch public methods must stay at label/recv/send only"
+    );
+    for forbidden in ["RouteBranch::decode", "pub fn decode<"] {
+        assert!(
+            !allowlist.contains(forbidden),
+            "RouteBranch allowlist must not retain removed branch decode surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn core_source_tree_no_longer_keeps_mgmt_or_epf_owners() {
     for forbidden in [
         repo_path("src/runtime/mgmt.rs"),
@@ -361,19 +382,22 @@ fn runtime_surface_hides_tap_storage_resource() {
             && runtime_src.contains("pub mod tap {")
             && runtime_src.contains("pub use crate::observe::core::{Evidence, TapEvent, TapPort};")
             && !runtime_src.contains("pub use crate::runtime_core::consts::RING_EVENTS;")
+            && !runtime_src.contains("pub use crate::runtime_core::consts::TAP_EVENTS;")
             && !runtime_src
                 .lines()
                 .any(|line| line.trim() == "pub use crate::observe::core::TapEvent;")
             && !runtime_src.contains("CounterClock")
             && !runtime_src.contains("Clock")
             && !runtime_src.contains("RING_EVENTS")
+            && !runtime_src.contains("TAP_EVENTS")
             && runtime_allowlist.contains("pub mod tap {")
             && runtime_allowlist
                 .contains("pub use crate::observe::core::{Evidence, TapEvent, TapPort};")
             && !runtime_allowlist.contains("pub use crate::observe::core::TapEvent;")
             && !runtime_allowlist.contains("CounterClock")
             && !runtime_allowlist.contains("Clock")
-            && !runtime_allowlist.contains("RING_EVENTS"),
+            && !runtime_allowlist.contains("RING_EVENTS")
+            && !runtime_allowlist.contains("TAP_EVENTS"),
         "runtime surface may expose tap diagnostics only under runtime::tap and must hide tap storage and clock resources"
     );
 
@@ -485,8 +509,8 @@ fn tap_surface_has_one_public_entry_and_internal_event_construction() {
             "TapEvent generation must stay internal while public readers stay immutable: {forbidden}"
         );
     }
-    for required in
-        "LANE_ACQUIRE|LANE_RELEASE|ROUTE_ARM_SELECTION|RESOLVER_AUDIT|TRANSPORT_FAULT".split('|')
+    for required in "LANE_ACQUIRE|LANE_RELEASE|ROUTE_ARM_SELECTION|RESOLVER_AUDIT|RESOLVER_REPLAY_EVENT|RESOLVER_REPLAY_EVENT_EXT|RESOLVER_AUDIT_DEFER|TRANSPORT_FAULT"
+        .split('|')
     {
         assert!(
             runtime_buckets.contains(required),

@@ -4,6 +4,7 @@ Endpoint::send pub fn send<'a, 'e, M>( &'e mut self, payload: &'a M::Payload, ) 
 Endpoint::recv pub fn recv<'e, M>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + 'e where M: crate::g::Message + 'e, M::Payload: WirePayload, {
 Endpoint::offer pub fn offer<'e>( &'e mut self, ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
 RouteBranch::label pub fn label(&self) -> u8 {
-RouteBranch::decode pub fn decode<M>( self, ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + use<'e, 'r, M, ROLE> where M: crate::g::Message, M::Payload: WirePayload, {
+RouteBranch::recv pub fn recv<M>( self, ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + use<'e, 'r, M, ROLE> where M: crate::g::Message, M::Payload: WirePayload, {
+RouteBranch::send pub fn send<'a, M>( self, payload: &'a M::Payload, ) -> impl core::future::Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, M, ROLE> where M: crate::g::Message + 'a, M::Payload: WireEncode + 'a, 'e: 'a, 'r: 'a, {
 pub struct EndpointError {
 pub type EndpointResult<T> = core::result::Result<T, EndpointError>;

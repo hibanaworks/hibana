@@ -29,12 +29,12 @@ impl WirePayload for FramePayload {
     }
 }
 
-fn branch_decode_is_affine<'r>(endpoint: &mut Endpoint<'r, 0>) {
+fn branch_recv_is_affine<'r>(endpoint: &mut Endpoint<'r, 0>) {
     let branch = futures::executor::block_on(endpoint.offer()).expect("test setup");
-    let first_decode = branch.decode::<g::Msg<7, FramePayload>>();
-    core::hint::black_box(&first_decode);
-    let second_decode = branch.decode::<g::Msg<7, FramePayload>>();
-    core::hint::black_box(&second_decode);
+    let first_recv = branch.recv::<g::Msg<7, FramePayload>>();
+    core::hint::black_box(&first_recv);
+    let second_recv = branch.recv::<g::Msg<7, FramePayload>>();
+    core::hint::black_box(&second_recv);
 }
 
 fn main() {}

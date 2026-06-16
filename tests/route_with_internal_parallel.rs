@@ -163,7 +163,7 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                 let branch = local.offer().await.expect("offer selected route choice");
                 assert_eq!(branch.label(), ROUTE_LEFT);
                 branch
-                    .decode::<Msg<ROUTE_LEFT, ()>>()
+                    .recv::<Msg<ROUTE_LEFT, ()>>()
                     .await
                     .expect("decode left route choice");
                 controller

@@ -132,10 +132,7 @@ async fn send_from_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 
 async fn offer_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) -> u8 {
     let branch = worker.offer().await.expect("worker offer");
     assert_eq!(branch.label(), <Msg<MSG, u8> as Message>::LOGICAL_LABEL);
-    branch
-        .decode::<Msg<MSG, u8>>()
-        .await
-        .expect("worker decode")
+    branch.recv::<Msg<MSG, u8>>().await.expect("worker recv")
 }
 
 async fn recv_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) -> u8 {

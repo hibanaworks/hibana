@@ -461,6 +461,27 @@ fn public_failure_evidence_has_no_stringly_accessors() {
 }
 
 #[test]
+fn route_branch_surface_has_no_decode_entrypoint() {
+    let public_endpoint = endpoint_facade_source();
+    let readme = read("README.md");
+    let endpoint_allowlist = read(".github/allowlists/endpoint-public-api.txt");
+    for forbidden in ["RouteBranch::decode", ".decode::<", "pub fn decode<M>"] {
+        assert!(
+            !public_endpoint.contains(forbidden)
+                && !readme.contains(forbidden)
+                && !endpoint_allowlist.contains(forbidden),
+            "RouteBranch public surface must stay on recv/send without decode residue: {forbidden}"
+        );
+    }
+    assert!(
+        endpoint_allowlist.contains("RouteBranch::label")
+            && endpoint_allowlist.contains("RouteBranch::send")
+            && endpoint_allowlist.contains("RouteBranch::recv"),
+        "RouteBranch allowlist must be the canonical label/send/recv authority"
+    );
+}
+
+#[test]
 fn resolver_registration_has_only_stateful_entry() {
     let resolver = cluster_core_source();
     let readme = read("README.md");
@@ -627,11 +648,11 @@ fn runtime_production_path_has_no_string_panic_alternate_paths() {
 fn tap_ring_storage_shape_is_a_single_type_sized_ring() {
     let observe = read("src/observe/core.rs");
     assert!(
-        observe.contains("PhantomData<&'a mut [TapEvent; RING_EVENTS]>")
-            && observe.contains("let idx = head % RING_EVENTS")
-            && observe.contains("let cursor = head.saturating_sub(RING_EVENTS)")
+        observe.contains("PhantomData<&'a mut [TapEvent; TAP_EVENTS]>")
+            && observe.contains("let idx = head % TAP_EVENTS")
+            && observe.contains("let cursor = head.saturating_sub(TAP_EVENTS)")
             && observe.contains("RingBuffer::from_ptr(storage.as_mut_ptr())"),
-        "tap ring storage layout must be one fixed 64-event runtime evidence ring"
+        "tap ring storage layout must be one fixed 32-event runtime evidence ring"
     );
     for forbidden in [
         "RingBuffer::new",
@@ -640,7 +661,7 @@ fn tap_ring_storage_shape_is_a_single_type_sized_ring() {
         "RING_BUFFER_SIZE",
         "USER_EVENT_RANGE_END",
         "storage.add(RING_BUFFER_SIZE)",
-        "storage.add(RING_EVENTS)",
+        "storage.add(TAP_EVENTS)",
         "tap_event_precedes",
     ] {
         assert!(

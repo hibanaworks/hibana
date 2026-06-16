@@ -1,5 +1,5 @@
 use hibana::{
-    Endpoint, g,
+    Endpoint, RouteBranch, g,
     runtime::wire::{CodecError, WireEncode},
 };
 
@@ -13,6 +13,11 @@ impl WireEncode for SendOnly {
 
 fn recv_send_only(endpoint: &mut Endpoint<'_, 0>) {
     let future = endpoint.recv::<g::Msg<35, SendOnly>>();
+    core::mem::drop(future);
+}
+
+fn branch_recv_send_only(branch: RouteBranch<'_, '_, 0>) {
+    let future = branch.recv::<g::Msg<35, SendOnly>>();
     core::mem::drop(future);
 }
 

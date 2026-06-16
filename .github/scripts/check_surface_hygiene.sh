@@ -269,7 +269,7 @@ if [[ -n "${INTERNAL_SOURCE_TEST_OWNER_HIDING_ALIASES}" ]]; then
 fi
 
 STACK_BACKED_TAP_STORAGE_RESIDUE="$(
-  rg -n "Box::new\\(\\[TapEvent::default\\(\\);[[:space:]]*RING_EVENTS\\]\\)" \
+  rg -n "Box::new\\(\\[TapEvent::default\\(\\);[[:space:]]*TAP_EVENTS\\]\\)" \
     tests/support/runtime.rs || true
 )"
 if [[ -n "${STACK_BACKED_TAP_STORAGE_RESIDUE}" ]]; then

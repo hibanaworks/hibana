@@ -133,7 +133,7 @@ fn run_local_route_decode_empty_payload(
         .expect("attach actor endpoint");
     let branch = futures::executor::block_on(endpoint.offer()).expect("offer local route");
     assert_eq!(branch.label(), 9);
-    let () = futures::executor::block_on(branch.decode::<Msg<9, ()>>())
+    let () = futures::executor::block_on(branch.recv::<Msg<9, ()>>())
         .expect("empty local branch payload commits");
     assert!(transport_queue_is_empty(transport));
 }
@@ -160,7 +160,7 @@ fn run_local_route_decode_non_empty_payload_fails_closed(
         .expect("attach actor endpoint");
     let branch = futures::executor::block_on(endpoint.offer()).expect("offer local route");
     assert_eq!(branch.label(), 10);
-    let error = futures::executor::block_on(branch.decode::<Msg<10, u8>>())
+    let error = futures::executor::block_on(branch.recv::<Msg<10, u8>>())
         .expect_err("non-empty local branch payload must fail closed");
     let rendered = format!("{error:?}");
     assert!(

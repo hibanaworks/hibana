@@ -425,7 +425,7 @@ fn runtime_root_exposes_only_core_buckets() {
         "runtime resources must be owned by Config without a public storage envelope"
     );
     let runtime_public = runtime_public_surface_source();
-    for forbidden in ["Clock", "CounterClock", "RING_EVENTS"] {
+    for forbidden in ["Clock", "CounterClock", "RING_EVENTS", "TAP_EVENTS"] {
         assert!(
             !runtime_public.contains(forbidden),
             "runtime surface must not expose public clock or tap-buffer resources: {forbidden}"
@@ -583,6 +583,7 @@ fn runtime_allowlist_tracks_core_boundary() {
         "Clock",
         "CounterClock",
         "RING_EVENTS",
+        "TAP_EVENTS",
         "HAS_SESSION",
         "const MAX_RV",
         "SessionKitStorage::<T, N>",

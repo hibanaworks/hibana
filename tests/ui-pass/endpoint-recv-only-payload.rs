@@ -26,8 +26,8 @@ fn recv_only(endpoint: &mut Endpoint<'_, 0>) {
     core::mem::drop(future);
 }
 
-fn decode_only(branch: RouteBranch<'_, '_, 0>) {
-    let future = branch.decode::<g::Msg<34, RecvOnly>>();
+fn branch_recv_only(branch: RouteBranch<'_, '_, 0>) {
+    let future = branch.recv::<g::Msg<34, RecvOnly>>();
     core::mem::drop(future);
 }
 

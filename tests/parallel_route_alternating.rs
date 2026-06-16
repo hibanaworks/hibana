@@ -108,10 +108,7 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
 
                 let branch = worker.offer().await.expect("offer A");
                 assert_eq!(branch.label(), ALT_A);
-                assert_eq!(
-                    branch.decode::<Msg<ALT_A, u8>>().await.expect("decode A"),
-                    1
-                );
+                assert_eq!(branch.recv::<Msg<ALT_A, u8>>().await.expect("recv A"), 1);
                 assert_eq!(worker.recv::<Msg<ALT_C, u8>>().await.expect("recv C"), 2);
                 assert_eq!(worker.recv::<Msg<ALT_D, u8>>().await.expect("recv D"), 5);
                 assert_eq!(worker.recv::<Msg<ALT_E, u8>>().await.expect("recv E"), 3);

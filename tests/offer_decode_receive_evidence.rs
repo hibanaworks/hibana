@@ -343,9 +343,9 @@ fn drop_public_preview_branch_preserves_offer_progression() {
 
             let branch = worker.offer().await.expect("re-offer left arm");
             let value = branch
-                .decode::<Msg<71, u32>>()
+                .recv::<Msg<71, u32>>()
                 .await
-                .expect("decode left data after dropped preview");
+                .expect("recv left data after dropped preview");
             assert_eq!(value, 4444);
 
             send_tail(controller, 55).await;
@@ -390,7 +390,7 @@ fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
                     .await
                     .expect("offer survives endpoint lease root relocation");
                 let value = branch
-                    .decode::<Msg<71, u32>>()
+                    .recv::<Msg<71, u32>>()
                     .await
                     .expect("decode survives endpoint lease root relocation");
                 assert_eq!(value, 8888);
@@ -438,10 +438,7 @@ fn offer_decode_transport_consumes_frame_once() {
             let branch = worker.offer().await.expect("offer left arm");
             assert_eq!(branch.label(), 71);
             assert_eq!(
-                branch
-                    .decode::<Msg<71, u32>>()
-                    .await
-                    .expect("decode left data"),
+                branch.recv::<Msg<71, u32>>().await.expect("recv left data"),
                 1234
             );
             assert!(
@@ -479,36 +476,36 @@ fn completed_offer_future_repoll_is_fail_fast_and_does_not_advance_again() {
         );
         drop(offer);
 
-        let value = futures::executor::block_on(branch.decode::<Msg<71, u32>>())
-            .expect("decode returned branch");
+        let value = futures::executor::block_on(branch.recv::<Msg<71, u32>>())
+            .expect("recv returned branch");
         assert_eq!(value, 1234);
         assert!(transport.queue_is_empty());
     });
 }
 
 #[test]
-fn completed_decode_future_repoll_is_fail_fast_and_does_not_advance_again() {
+fn completed_route_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
     with_route_workspace(|controller, worker, transport| {
         futures::executor::block_on(send_left(controller, 1234));
 
         let branch = futures::executor::block_on(worker.offer()).expect("offer left arm");
-        let mut decode = Box::pin(branch.decode::<Msg<71, u32>>());
+        let mut recv = Box::pin(branch.recv::<Msg<71, u32>>());
         let waker = futures::task::noop_waker_ref();
         let mut context = Context::from_waker(waker);
-        match Future::poll(decode.as_mut(), &mut context) {
+        match Future::poll(recv.as_mut(), &mut context) {
             Poll::Ready(Ok(value)) => assert_eq!(value, 1234),
-            Poll::Ready(Err(error)) => panic!("decode failed: {error:?}"),
-            Poll::Pending => panic!("decode must be ready"),
+            Poll::Ready(Err(error)) => panic!("route branch recv failed: {error:?}"),
+            Poll::Pending => panic!("route branch recv must be ready"),
         }
 
         let repoll = catch_unwind(AssertUnwindSafe(|| {
-            let _ = Future::poll(decode.as_mut(), &mut context);
+            let _ = Future::poll(recv.as_mut(), &mut context);
         }));
         assert!(
             repoll.is_err(),
-            "completed decode future must fail fast on post-Ready poll"
+            "completed route branch recv future must fail fast on post-Ready poll"
         );
-        drop(decode);
+        drop(recv);
         assert!(transport.queue_is_empty());
     });
 }
@@ -636,17 +633,17 @@ fn offer_materialized_label_mismatch_fails_closed() {
 }
 
 #[test]
-fn codec_error_in_public_decode_poisons_same_generation() {
+fn codec_error_in_public_route_recv_poisons_same_generation() {
     with_route_workspace(|controller, worker, _transport| {
         futures::executor::block_on(async {
             send_left(controller, 1234).await;
             let branch = worker.offer().await.expect("offer left arm");
-            let decode_result = branch.decode::<Msg<71, u64>>().await;
-            let err = match decode_result {
-                Ok(_) => panic!("wrong payload shape must fail decode"),
+            let recv_result = branch.recv::<Msg<71, u64>>().await;
+            let err = match recv_result {
+                Ok(_) => panic!("wrong payload shape must fail recv"),
                 Err(err) => err,
             };
-            assert!(format!("{err:?}").contains("operation: \"decode\""));
+            assert!(format!("{err:?}").contains("operation: \"recv\""));
             assert!(
                 format!("{err:?}").contains("Codec"),
                 "wrong payload shape must preserve codec evidence: {err:?}"
@@ -662,16 +659,18 @@ fn codec_error_in_public_decode_poisons_same_generation() {
 }
 
 #[test]
-fn forgotten_decode_future_leaves_endpoint_fail_closed() {
+fn forgotten_route_recv_future_leaves_endpoint_fail_closed() {
     with_route_workspace(|controller, worker, _transport| {
         futures::executor::block_on(async {
             send_left(controller, 1234).await;
             let branch = worker.offer().await.expect("offer left arm");
-            let decode = branch.decode::<Msg<71, u32>>();
-            core::mem::forget(decode);
+            let recv = branch.recv::<Msg<71, u32>>();
+            core::mem::forget(recv);
 
             let err = match worker.offer().await {
-                Ok(_) => panic!("forgotten decode future must leave endpoint fail-closed"),
+                Ok(_) => {
+                    panic!("forgotten route branch recv future must leave endpoint fail-closed")
+                }
                 Err(err) => err,
             };
             assert!(format!("{err:?}").contains("operation: \"offer\""));

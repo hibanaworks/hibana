@@ -215,17 +215,17 @@ fn tap_event_is_opaque_sixteen_byte_record() {
 }
 
 #[test]
-fn tap_ring_bytes_stay_under_one_kib() {
+fn tap_ring_bytes_stay_at_half_kib() {
     let consts = read("src/runtime_core/consts.rs");
     let observe = read("src/observe/core.rs");
     let runtime = read("src/runtime.rs");
     assert!(
-        consts.contains("pub const RING_EVENTS: usize = 64;"),
-        "mandatory tap ring capacity must stay at 64 events"
+        consts.contains("pub const TAP_EVENTS: usize = 32;"),
+        "mandatory tap ring capacity must stay at 32 events"
     );
     assert!(
-        core::mem::size_of::<[TapEvent; 64]>() <= 1024,
-        "mandatory tap ring must stay at or below 1024 bytes"
+        core::mem::size_of::<[TapEvent; 32]>() == 512,
+        "mandatory tap ring must stay exactly 512 bytes"
     );
     for forbidden in [
         "RING_BUFFER_SIZE",

@@ -99,7 +99,8 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         endpoint.contains("#[track_caller]\n    pub fn send")
             && endpoint.contains("#[track_caller]\n    pub fn recv")
             && endpoint.contains("#[track_caller]\n    pub fn offer")
-            && endpoint.contains("#[track_caller]\n    pub fn decode"),
+            && endpoint.contains("#[track_caller]\n    pub fn send<'a, M>")
+            && endpoint.contains("#[track_caller]\n    pub fn recv<M>"),
         "endpoint operations must keep a single public call boundary for Debug operation diagnostics"
     );
     assert!(
@@ -145,7 +146,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         read("tests/cursor_send_recv/session_drop_wake.rs")
             .contains("dropping_live_endpoint_poison_wakes_waiting_peer")
             && read("tests/offer_decode_receive_evidence.rs")
-                .contains("forgotten_decode_future_leaves_endpoint_fail_closed"),
+                .contains("forgotten_route_recv_future_leaves_endpoint_fail_closed"),
         "session fault cleanup must be behavior-covered instead of pinned to private cleanup helper names"
     );
     assert!(

@@ -1,12 +1,12 @@
 //! Observation primitives (tap ring and association snapshots).
 //!
 //! Tap is Hibana runtime evidence, not an application logger. The ring keeps a
-//! fixed 64-event postmortem window of 16-byte records for endpoint, transport,
+//! fixed 32-event postmortem window of 16-byte records for endpoint, transport,
 //! lane, route, and resolver evidence.
 
 use core::{cell::Cell, marker::PhantomData};
 
-use crate::runtime_core::consts::RING_EVENTS;
+use crate::runtime_core::consts::TAP_EVENTS;
 
 pub use crate::observe::event::{Evidence, TapEvent};
 
@@ -14,7 +14,7 @@ pub use crate::observe::event::{Evidence, TapEvent};
 struct RingBuffer<'a> {
     head: Cell<usize>,
     storage: *mut TapEvent,
-    _marker: PhantomData<&'a mut [TapEvent; RING_EVENTS]>,
+    _marker: PhantomData<&'a mut [TapEvent; TAP_EVENTS]>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
@@ -35,9 +35,9 @@ impl<'a> RingBuffer<'a> {
     /// Append an observation.
     fn push(&self, event: TapEvent) {
         let head = self.head.get();
-        let idx = head % RING_EVENTS;
+        let idx = head % TAP_EVENTS;
         self.head.set(head.wrapping_add(1));
-        /* SAFETY: `idx` is bounded by `RING_EVENTS`, and `storage` was
+        /* SAFETY: `idx` is bounded by `TAP_EVENTS`, and `storage` was
          * derived from a mutable slice with at least that many `TapEvent`
          * slots. `TapEvent` has no drop glue, so overwriting the ring slot is
          * sound; `RingBuffer` is single-producer and not `Sync`.
@@ -49,7 +49,7 @@ impl<'a> RingBuffer<'a> {
 
     fn port(&self) -> RingPort<'_> {
         let head = self.head.get();
-        let cursor = head.saturating_sub(RING_EVENTS);
+        let cursor = head.saturating_sub(TAP_EVENTS);
         RingPort {
             head: &self.head,
             storage: self.storage.cast_const(),
@@ -69,8 +69,8 @@ struct RingPort<'a> {
 impl RingPort<'_> {
     #[inline]
     fn normalize_cursor(&mut self, head: usize) {
-        if head.wrapping_sub(self.cursor) > RING_EVENTS {
-            self.cursor = head.wrapping_sub(RING_EVENTS);
+        if head.wrapping_sub(self.cursor) > TAP_EVENTS {
+            self.cursor = head.wrapping_sub(TAP_EVENTS);
         }
     }
 
@@ -81,9 +81,9 @@ impl RingPort<'_> {
         if self.cursor == head {
             return None;
         }
-        let index = self.cursor % RING_EVENTS;
+        let index = self.cursor % TAP_EVENTS;
         Some(unsafe {
-            // SAFETY: `index` is bounded by `RING_EVENTS`, and `storage`
+            // SAFETY: `index` is bounded by `TAP_EVENTS`, and `storage`
             // is the ring storage pointer created from the rendezvous-owned
             // tap buffer.
             core::ptr::read_volatile(self.storage.add(index))
@@ -121,7 +121,7 @@ pub(crate) struct TapRing<'a> {
 }
 
 impl<'a> TapRing<'a> {
-    pub(crate) fn from_storage(storage: &'a mut [TapEvent; RING_EVENTS]) -> Self {
+    pub(crate) fn from_storage(storage: &'a mut [TapEvent; TAP_EVENTS]) -> Self {
         Self {
             ring: RingBuffer::from_ptr(storage.as_mut_ptr()),
         }

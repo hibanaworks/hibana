@@ -125,7 +125,7 @@ where
             self.terminal_clear_public_decode_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
-        if self.public_active_op != PublicActiveOp::Decode {
+        if self.public_active_op != PublicActiveOp::BranchRecv {
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
             self.poison_for_recv_error(&err);
@@ -156,14 +156,14 @@ where
             Poll::Ready(result) => match result {
                 Ok(payload) => {
                     self.clear_session_waiter();
-                    self.finish_public_op(PublicActiveOp::Decode);
+                    self.finish_public_op(PublicActiveOp::BranchRecv);
                     self.public_decode_state = super::decode::DecodeState::empty();
                     Poll::Ready(Ok(payload))
                 }
                 Err(err) => {
                     decode_state.discard_terminal();
                     self.clear_session_waiter();
-                    self.finish_public_op(PublicActiveOp::Decode);
+                    self.finish_public_op(PublicActiveOp::BranchRecv);
                     self.public_decode_state = super::decode::DecodeState::empty();
                     self.poison_for_recv_error(&err);
                     Poll::Ready(Err(err))
@@ -178,11 +178,20 @@ where
         cx: &mut core::task::Context<'_>,
         payload: Option<lane_port::RawSendPayload>,
     ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
+        let active_op = self.public_active_op;
+        let branch_send = active_op == PublicActiveOp::BranchSend;
         if let Some(kind) = self.session_fault() {
-            self.reset_public_send_state();
+            if branch_send {
+                self.terminal_clear_public_send_state();
+                if let Some(branch) = self.public_route_branch.take() {
+                    branch.discard_terminal();
+                }
+            } else {
+                self.reset_public_send_state();
+            }
             return Poll::Ready(Err(SendError::SessionFault(kind)));
         }
-        if self.public_active_op != PublicActiveOp::Send {
+        if active_op != PublicActiveOp::Send && active_op != PublicActiveOp::BranchSend {
             self.public_op_busy_fault();
             let err = SendError::PhaseInvariant;
             self.poison_for_send_error(&err);
@@ -201,11 +210,26 @@ where
             }
             Poll::Ready(result) => {
                 self.clear_session_waiter();
-                self.finish_public_op(PublicActiveOp::Send);
+                if branch_send {
+                    self.finish_public_op(PublicActiveOp::BranchSend);
+                } else {
+                    self.finish_public_op(PublicActiveOp::Send);
+                }
                 self.public_send_state = SendState::Done;
                 match result {
-                    Ok(outcome) => Poll::Ready(Ok(outcome)),
+                    Ok(outcome) => {
+                        if branch_send {
+                            let branch = crate::invariant_some(self.public_route_branch.take());
+                            if branch.staged_payload.is_some() {
+                                crate::invariant();
+                            }
+                        }
+                        Poll::Ready(Ok(outcome))
+                    }
                     Err(err) => {
+                        if branch_send && let Some(branch) = self.public_route_branch.take() {
+                            branch.discard_terminal();
+                        }
                         self.poison_for_send_error(&err);
                         Poll::Ready(Err(err))
                     }

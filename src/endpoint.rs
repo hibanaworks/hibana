@@ -2,16 +2,17 @@
 //!
 //! An [`Endpoint`] is the app-facing affine executor for one projected role. It
 //! is created by [`crate::runtime::SessionKit`] and then advanced with the
-//! four localside operations: [`Endpoint::send`], [`Endpoint::recv`],
-//! [`Endpoint::offer`], and [`RouteBranch::decode`].
+//! localside operations: [`Endpoint::send`], [`Endpoint::recv`],
+//! [`Endpoint::offer`], [`RouteBranch::send`], and [`RouteBranch::recv`].
 //!
 //! `offer` is a non-consuming route preview.
-//! Committed progress happens when a send, receive, or route decode succeeds.
+//! Committed progress happens when a send, receive, or route branch first-step
+//! operation succeeds.
 //! Committed endpoint failures return [`EndpointError`] as diagnostic evidence
 //! and poison the current session generation; they do not authorize hidden
 //! alternate progress.
-//! Successful sends, receives, and route decodes consume progress. Dropped
-//! send/route previews restore their resident endpoint state.
+//! Successful sends, receives, and route branch first-step operations consume
+//! progress. Dropped send/route previews restore their resident endpoint state.
 //!
 //! # Unsafe Owner Contract
 //!

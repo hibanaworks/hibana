@@ -1,0 +1,5 @@
+error[E0599]: no method named `decode` found for struct `RouteBranch<'e, 'r, ROLE>` in the current scope
+ --> tests/ui/route-branch-decode-removed.rs:4:20
+  |
+4 |     let _ = branch.decode::<g::Msg<7, ()>>();
+  |                    ^^^^^^ method not found in `RouteBranch<'_, '_, 0>`

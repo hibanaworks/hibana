@@ -90,9 +90,9 @@ fn route_arm_future_phase_blocks_post_route_send() {
                 assert_eq!(branch.label(), ROUTE_FIRST);
                 assert_eq!(
                     branch
-                        .decode::<Msg<ROUTE_FIRST, u8>>()
+                        .recv::<Msg<ROUTE_FIRST, u8>>()
                         .await
-                        .expect("decode first route step"),
+                        .expect("recv first route step"),
                     10
                 );
                 local

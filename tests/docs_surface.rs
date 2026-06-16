@@ -79,8 +79,9 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Validation",
         "cargo add hibana",
         "The default feature set is empty.",
-        "send() / recv() / offer() / RouteBranch::decode()",
-        "`recv()`, or `RouteBranch::decode()` succeeds",
+        "send() / recv() / offer() / RouteBranch::send() / RouteBranch::recv()",
+        "branch.send::<g::Msg<40, ()>>(&()).await?",
+        "route branch first-step operation succeeds",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
         "are implementing a protocol crate, use `hibana::runtime`",
         "install explicit route resolvers when needed",
@@ -115,7 +116,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "authority by itself",
         "local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_state(",
         "&LOCAL_ROUTE_STATE,",
-        "`offer()` and `RouteBranch::decode()`",
+        "`offer()` and `RouteBranch::recv()`",
         "require `ReceivedFrame::framed(...)`",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
@@ -243,6 +244,7 @@ fn docs_do_not_regrow_forbidden_attach_api() {
             "from_resources(\n//!     &mut tap_buf,\n//!     &mut slab",
             "CounterClock",
             "RING_EVENTS",
+            "TAP_EVENTS",
             "tap_buf",
         ] {
             assert!(
@@ -322,26 +324,26 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
         "README must not describe decode failure as a restashable preview"
     );
     assert!(
-        endpoint.contains("A decode failure is terminal for the current generation"),
-        "crate docs must document terminal decode failure semantics"
+        endpoint.contains("A committed receive fault poisons the session generation"),
+        "crate docs must document terminal receive failure semantics"
     );
     assert!(
-        endpoint.contains("when a send, receive, or route decode succeeds")
-            && endpoint.contains("Successful sends, receives, and route decodes consume")
-            && endpoint.contains("/// progress. Dropped send/route previews")
-            && !endpoint.contains("when a send or route decode succeeds")
-            && !endpoint.contains("Successful sends and route decodes consume progress"),
-        "endpoint docs must include direct recv() as a committed progress operation"
+        endpoint.contains("route branch first-step\n//! operation succeeds")
+            && endpoint.contains("route branch first-step operations consume")
+            && endpoint.contains("//! progress. Dropped send/route previews")
+            && !endpoint.contains("when a send or route recv succeeds")
+            && !endpoint.contains("Successful sends and route recvs consume progress"),
+        "endpoint docs must include branch first-step operations as committed progress"
     );
     assert!(
-        readme.contains("Endpoint progress happens when `send()`,\n`recv()`, or `RouteBranch::decode()` succeeds")
+        readme.contains("`recv()`, or a route branch first-step operation succeeds")
             && !readme.contains("Endpoint progress happens when a send or\ndecode succeeds"),
-        "README progress contract must include recv(), not only send/decode"
+        "README progress contract must include route branch first-step operations"
     );
     assert!(
-        lib.contains("successful sends, receives, and route decodes")
+        lib.contains("route branch first-step operations")
             && !lib.contains("successful `send()` and `decode()` consume"),
-        "crate root docs must include direct recv() as a committed progress operation"
+        "crate root docs must include branch first-step operations as committed progress"
     );
     assert!(
         !readme.contains("type BorrowedBytes = &'static [u8];"),
