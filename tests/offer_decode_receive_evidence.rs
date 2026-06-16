@@ -379,11 +379,12 @@ fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
                 .role(&role1)
                 .enter()
                 .expect("attach route worker");
-            let _late_role = rv
+            let late_role = rv
                 .session(sid)
                 .role(&role2)
                 .enter()
                 .expect("attach late role and grow lease table");
+            core::hint::black_box(&late_role);
 
             futures::executor::block_on(async {
                 send_left(&mut controller, 8888).await;
@@ -401,6 +402,7 @@ fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
                 assert_eq!(worker.recv::<Msg<73, u32>>().await.expect("recv tail"), 99);
                 assert!(transport.queue_is_empty());
             });
+            drop(late_role);
         });
     });
 }

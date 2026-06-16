@@ -74,11 +74,13 @@ fn max_rv_is_caller_owned_local_rendezvous_budget() {
                 let rv = cluster
                     .rendezvous(Config::from_resources(chunk), transport.clone())
                     .expect("MAX_RV=32 must register more than the Pico default");
-                let _endpoint = rv
+                let endpoint = rv
                     .session(SessionId::new(700 + idx as u32))
                     .role(&role0)
                     .enter()
                     .expect("wide rendezvous budget must still attach endpoints");
+                core::hint::black_box(&endpoint);
+                drop(endpoint);
             }
         });
     });
