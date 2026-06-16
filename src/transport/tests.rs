@@ -134,10 +134,24 @@ unsafe fn flag_waker(flag: &Cell<bool>) -> Waker {
 }
 
 #[test]
-fn frame_header_preserves_full_wire_domain() {
-    let header = FrameHeader::from_raw(u64::MAX);
+fn frame_header_preserves_full_wire_domain_as_bytes() {
+    let header = FrameHeader::from_bytes([u8::MAX; 8]);
 
-    assert_eq!(header.raw(), u64::MAX);
+    assert_eq!(header.bytes(), [u8::MAX; 8]);
+}
+
+#[test]
+fn received_frame_framed_bytes_roundtrip() {
+    let bytes = [0, 0, 0, 7, 2, 3, 4, 5];
+    let payload = [8, 13];
+    let frame = ReceivedFrame::framed(FrameHeader::from_bytes(bytes), Payload::new(&payload));
+    let header = frame
+        .evidence()
+        .frame_header()
+        .expect("framed receive carries header evidence");
+
+    assert_eq!(header.bytes(), bytes);
+    assert_eq!(frame.payload().as_bytes(), payload.as_slice());
 }
 
 #[test]

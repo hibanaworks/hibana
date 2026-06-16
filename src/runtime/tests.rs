@@ -264,13 +264,17 @@ const fn large_choreography_source_role(target_role: u8) -> u8 {
 #[inline(always)]
 fn large_choreography_header(frame: &FrameOwned, target_role: u8) -> FrameHeader {
     let session = SessionId::new(0x6000);
-    FrameHeader::from_raw(
-        ((session.raw() as u64) << 32)
-            | ((frame.lane() as u64) << 24)
-            | ((frame.source_role() as u64) << 16)
-            | ((target_role as u64) << 8)
-            | (FrameLabel::new(frame.frame_label()).raw() as u64),
-    )
+    let session = session.raw().to_be_bytes();
+    FrameHeader::from_bytes([
+        session[0],
+        session[1],
+        session[2],
+        session[3],
+        frame.lane(),
+        frame.source_role(),
+        target_role,
+        FrameLabel::new(frame.frame_label()).raw(),
+    ])
 }
 
 impl Transport for LargeChoreographyTransport {

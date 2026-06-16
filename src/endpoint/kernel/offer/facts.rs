@@ -29,7 +29,7 @@ where
                 scope_id,
                 offer_lanes,
                 profile.frame_hint_ingestion(),
-                frame_label_scratch.view(),
+                &frame_label_scratch.view(),
             );
         }
         let evidence = self.offer_ingress_evidence(selection, entry, profile, offer_lanes);

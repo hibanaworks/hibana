@@ -336,7 +336,7 @@ where
         scope_id: ScopeId,
         lane: u8,
         frame_label: u8,
-        frame_label_meta: ScopeFrameLabelView<'_>,
+        frame_label_meta: &ScopeFrameLabelView<'_>,
     ) {
         let exact_passive_arm = self
             .cursor

@@ -219,5 +219,6 @@ tests/semantic_surface	tests/semantic_surface/source_residue.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_commit.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_errors.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_hygiene.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_pico_hygiene.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_route_arm_lane.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_support.rs

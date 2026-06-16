@@ -32,6 +32,25 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
+def extract_rust_function(source: str, name: str) -> str:
+    match = re.search(rf"\bfn\s+{re.escape(name)}\s*\(", source)
+    if not match:
+        return ""
+    open_idx = source.find("{", match.end())
+    if open_idx < 0:
+        return ""
+    depth = 0
+    for idx in range(open_idx, len(source)):
+        char = source[idx]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[match.start() : idx + 1]
+    return ""
+
+
 core = read("src/endpoint/kernel/core.rs")
 runtime_types = read("src/endpoint/kernel/core/runtime_types.rs")
 public_ops = read("src/endpoint/kernel/public_ops.rs")
@@ -104,12 +123,9 @@ if poll_send_state and "kernel_send(self, state, payload, cx)" not in poll_send_
 
 recv = read("src/endpoint/kernel/recv.rs")
 decode = read("src/endpoint/kernel/decode.rs") + "\n" + read_tree("src/endpoint/kernel/decode")
-poll_public_recv = re.search(
-    r"pub\(in crate::endpoint\)\s+fn\s+poll_public_recv[\s\S]*?\n    \}\n\n    #\[inline\]\n    pub\(in crate::endpoint\)\s+fn\s+poll_public_decode",
-    public_runtime,
-)
+poll_public_recv = extract_rust_function(public_runtime, "poll_public_recv")
 if not poll_public_recv or not all(
-    required in poll_public_recv.group(0)
+    required in poll_public_recv
     for required in [
         "kernel_recv(",
         "logical_label",

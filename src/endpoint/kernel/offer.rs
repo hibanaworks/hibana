@@ -84,7 +84,7 @@ where
         lane_idx: usize,
         scope_id: ScopeId,
         frame_hint_ingestion: FrameHintIngestion,
-        frame_label_meta: ScopeFrameLabelView<'_>,
+        frame_label_meta: &ScopeFrameLabelView<'_>,
     ) {
         match frame_hint_ingestion {
             FrameHintIngestion::Dynamic => {
@@ -124,7 +124,7 @@ where
         scope_id: ScopeId,
         offer_lanes: crate::global::role_program::LaneSetView,
         frame_hint_ingestion: FrameHintIngestion,
-        frame_label_meta: ScopeFrameLabelView<'_>,
+        frame_label_meta: &ScopeFrameLabelView<'_>,
     ) {
         self.ingest_scope_evidence_for_offer_impl(
             scope_id,
@@ -139,7 +139,7 @@ where
         scope_id: ScopeId,
         offer_lanes: crate::global::role_program::LaneSetView,
         frame_hint_ingestion: FrameHintIngestion,
-        frame_label_meta: ScopeFrameLabelView<'_>,
+        frame_label_meta: &ScopeFrameLabelView<'_>,
     ) {
         if offer_lanes.is_empty() {
             return;
@@ -491,7 +491,7 @@ where
                     scope_id,
                     self.offer_lane_set_for_scope(scope_id),
                     frame_hint_ingestion,
-                    frame_label_scratch.view(),
+                    &frame_label_scratch.view(),
                 );
                 if self.scope_evidence_conflicted(scope_id) {
                     stage.discard_terminal();

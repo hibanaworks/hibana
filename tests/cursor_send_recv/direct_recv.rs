@@ -154,13 +154,17 @@ fn malformed_header(
     target_role: u8,
     frame_label: u8,
 ) -> hibana::runtime::transport::FrameHeader {
-    hibana::runtime::transport::FrameHeader::from_raw(
-        ((session_id.raw() as u64) << 32)
-            | ((lane as u64) << 24)
-            | ((source_role as u64) << 16)
-            | ((target_role as u64) << 8)
-            | u64::from(frame_label),
-    )
+    let session = session_id.raw().to_be_bytes();
+    hibana::runtime::transport::FrameHeader::from_bytes([
+        session[0],
+        session[1],
+        session[2],
+        session[3],
+        lane,
+        source_role,
+        target_role,
+        frame_label,
+    ])
 }
 
 fn assert_malformed_direct_recv_fails_closed(

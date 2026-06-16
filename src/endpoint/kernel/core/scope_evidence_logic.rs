@@ -342,7 +342,7 @@ where
     pub(in crate::endpoint::kernel) fn take_frame_hint_for_lane(
         &mut self,
         lane_idx: usize,
-        frame_label_meta: ScopeFrameLabelView<'_>,
+        frame_label_meta: &ScopeFrameLabelView<'_>,
     ) -> Option<u8> {
         let (taken, captured_change_generation) = {
             let port = self.port_for_lane(lane_idx);
@@ -385,7 +385,7 @@ where
     pub(in crate::endpoint::kernel) fn pending_scope_frame_hint_on_lane(
         &mut self,
         lane_idx: usize,
-        frame_label_meta: ScopeFrameLabelView<'_>,
+        frame_label_meta: &ScopeFrameLabelView<'_>,
     ) -> bool {
         let (pending, captured_change_generation) = {
             let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {

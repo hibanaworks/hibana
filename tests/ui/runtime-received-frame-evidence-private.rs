@@ -5,7 +5,7 @@ use hibana::runtime::{
 
 fn main() {
     let payload = [];
-    let header = FrameHeader::from_raw(0x0000_0001_0000_0107);
+    let header = FrameHeader::from_bytes([0, 0, 0, 1, 0, 0, 1, 7]);
     let frame = ReceivedFrame::framed(header, Payload::new(&payload));
     let _ = frame.evidence();
 }

@@ -121,7 +121,7 @@ where
                 out.exclude_controller_arm_frame_label_from_evidence(1, label);
             }
         }
-        if reentry_meta.route_reentry_scope() {
+        if reentry_meta.route_reentry() {
             if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
                 out.record_arm_frame_label(0, label);
             }

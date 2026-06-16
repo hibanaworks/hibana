@@ -121,6 +121,7 @@ if [[ ! -f "${THUMB_RLIB}" ]]; then
   echo "final-form thumb measurement artifact missing: ${THUMB_RLIB}" >&2
   exit 1
 fi
+TOOLCHAIN="${TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_header_codegen.sh"
 TOOLCHAIN="${TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_label_mask_codegen.sh"
 THUMB_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
   | awk '

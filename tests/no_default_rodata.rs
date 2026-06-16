@@ -55,9 +55,9 @@ fn panic(_: &PanicInfo<'_>) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    let header = FrameHeader::from_raw(7);
+    let header = FrameHeader::from_bytes([0, 0, 0, 0, 0, 0, 0, 7]);
     let err = ResolverError::reject();
-    let _ = header.raw() ^ (err.operation().as_bytes().len() as u64);
+    let _ = header.bytes()[7] ^ (err.operation().as_bytes().len() as u8);
     loop {}
 }
 "#,

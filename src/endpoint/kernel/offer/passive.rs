@@ -225,7 +225,7 @@ where
                     scope_id,
                     frame_lane,
                     frame_label,
-                    frame_label_meta,
+                    &frame_label_meta,
                 );
                 return Ok(FrameHintResolution::resolved());
             }
@@ -238,7 +238,7 @@ where
             scope_id,
             offer_lanes,
             profile.frame_hint_ingestion(),
-            frame_label_scratch.view(),
+            &frame_label_scratch.view(),
         );
         if self.scope_evidence_conflicted(scope_id) {
             return Err(RecvError::PhaseInvariant);

@@ -107,16 +107,16 @@ impl core::fmt::Debug for TransportError {
 /// progress is committed.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FrameHeader(u64);
+pub struct FrameHeader([u8; 8]);
 
 impl FrameHeader {
     #[inline]
-    pub const fn from_raw(raw: u64) -> Self {
-        Self(raw)
+    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
+        Self(bytes)
     }
 
     #[inline]
-    pub const fn raw(self) -> u64 {
+    pub const fn bytes(self) -> [u8; 8] {
         self.0
     }
 
@@ -128,38 +128,44 @@ impl FrameHeader {
         target_role: u8,
         label: FrameLabel,
     ) -> Self {
-        Self(pack_frame_header(
-            session.raw(),
+        let session = session.raw().to_be_bytes();
+        Self([
+            session[0],
+            session[1],
+            session[2],
+            session[3],
             carrier,
             source_role,
             target_role,
             label.raw(),
-        ))
+        ])
     }
 
     #[inline]
     pub(crate) const fn session(self) -> SessionId {
-        SessionId::new((self.raw() >> 32) as u32)
+        SessionId::new(u32::from_be_bytes([
+            self.0[0], self.0[1], self.0[2], self.0[3],
+        ]))
     }
 
     #[inline]
     pub(crate) const fn lane(self) -> u8 {
-        ((self.raw() >> 24) & 0xff) as u8
+        self.0[4]
     }
 
     #[inline]
     pub(crate) const fn source_role(self) -> u8 {
-        (self.raw() >> 16) as u8
+        self.0[5]
     }
 
     #[inline]
     pub(crate) const fn target_role(self) -> u8 {
-        (self.raw() >> 8) as u8
+        self.0[6]
     }
 
     #[inline]
     pub(crate) const fn label(self) -> FrameLabel {
-        FrameLabel::new(self.raw() as u8)
+        FrameLabel::new(self.0[7])
     }
 }
 
@@ -249,21 +255,6 @@ impl<'f> ReceivedFrame<'f> {
     pub const fn payload(self) -> Payload<'f> {
         self.payload
     }
-}
-
-#[inline(always)]
-const fn pack_frame_header(
-    session_raw: u32,
-    lane_wire: u8,
-    source_role: u8,
-    target_role: u8,
-    label: u8,
-) -> u64 {
-    ((session_raw as u64) << 32)
-        | ((lane_wire as u64) << 24)
-        | ((source_role as u64) << 16)
-        | ((target_role as u64) << 8)
-        | (label as u64)
 }
 
 /// Descriptor-derived fact for opening one transport port.

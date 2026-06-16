@@ -197,12 +197,14 @@ fn public_header_surface_minimal() {
     }
     let frame_header_impl = &frame_header_source[..impl_end.expect("FrameHeader impl close")];
     assert!(
-        frame_header_impl.contains("pub const fn from_raw(raw: u64) -> Self")
-            && frame_header_impl.contains("pub const fn raw(self) -> u64"),
-        "FrameHeader public surface must expose raw evidence roundtrip"
+        frame_header_impl.contains("pub const fn from_bytes(bytes: [u8; 8]) -> Self")
+            && frame_header_impl.contains("pub const fn bytes(self) -> [u8; 8]"),
+        "FrameHeader public surface must expose byte evidence roundtrip"
     );
     for forbidden in [
         "pub const fn new(",
+        "pub const fn from_raw(",
+        "pub const fn raw(",
         "pub const fn session(",
         "pub const fn lane(",
         "pub const fn source_role(",
@@ -217,6 +219,11 @@ fn public_header_surface_minimal() {
     assert!(
         !read(".github/allowlists/runtime-public-api.txt").contains("FrameHeader::new"),
         "public allowlist must not preserve FrameHeader::new"
+    );
+    assert!(
+        !read(".github/allowlists/runtime-public-api.txt").contains("FrameHeader::from_raw")
+            && !read(".github/allowlists/runtime-public-api.txt").contains("FrameHeader::raw"),
+        "public allowlist must not teach FrameHeader u64 raw access"
     );
 }
 

@@ -1,6 +1,6 @@
 use hibana::runtime::transport::FrameHeader;
 
 fn main() {
-    let header = FrameHeader::from_raw(0x0000_0001_0000_0107);
+    let header = FrameHeader::from_bytes([0, 0, 0, 1, 0, 0, 1, 7]);
     let _ = header.peer_role();
 }

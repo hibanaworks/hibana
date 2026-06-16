@@ -23,13 +23,17 @@ pub(crate) const fn frame_header_from_parts(
     target_role: u8,
     label: FrameLabel,
 ) -> FrameHeader {
-    FrameHeader::from_raw(
-        ((session.raw() as u64) << 32)
-            | ((lane as u64) << 24)
-            | ((source_role as u64) << 16)
-            | ((target_role as u64) << 8)
-            | (label.raw() as u64),
-    )
+    let session = session.raw().to_be_bytes();
+    FrameHeader::from_bytes([
+        session[0],
+        session[1],
+        session[2],
+        session[3],
+        lane,
+        source_role,
+        target_role,
+        label.raw(),
+    ])
 }
 
 unsafe fn init_option_array<T, const N: usize>(dst: *mut Option<T>) {

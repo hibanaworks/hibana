@@ -645,10 +645,11 @@ The canonical receive-side observation is the `ReceivedFrame` returned by
 together; there is no separate receive-observation hook.
 `ReceivedFrame::deterministic(...)` is valid only for a single deterministic
 receive; route, offer, and decode demux require
-`ReceivedFrame::framed(FrameHeader::from_raw(raw_header), payload)`, where the
-transport supplies one carrier-owned `u64` observation and Hibana performs the
-session/lane/role/label comparison internally before any endpoint progress can
-consume the payload. Route/session/progress authority remains in Hibana.
+`ReceivedFrame::framed(FrameHeader::from_bytes(header_bytes), payload)`, where
+the transport supplies one carrier-owned eight-byte observation and Hibana
+performs the session/lane/role/label comparison internally before any endpoint
+progress can consume the payload. Route/session/progress authority remains in
+Hibana.
 
 ### Ingress Demux
 

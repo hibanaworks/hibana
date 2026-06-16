@@ -792,6 +792,9 @@ check_absent "\\bStepNonEmpty\\b" \
 check_absent "(?i)\\b(quic|h3|hq|qpack|alpn)\\b|http/3" \
   "protocol-specific vocabulary in hibana/src" \
   src
+check_absent "FrameHeader\\(u64\\)|from_raw\\(raw:[[:space:]]*u64\\)|raw\\(self\\)[[:space:]]*->[[:space:]]*u64|pack_frame_header|raw_header|carrier-owned \`u64\`" \
+  "u64 FrameHeader public/raw header surface detected" \
+  src/transport.rs README.md .github/allowlists/runtime-public-api.txt
 check_absent "\\bu64\\b|1u64|\\[u64;|word[0-9]|>>[[:space:]]*6|<<[[:space:]]*6|\\*[[:space:]]*64|/[[:space:]]*64" \
   "wide integer FrameLabelMask helper detected" \
   src/transport/labels.rs
