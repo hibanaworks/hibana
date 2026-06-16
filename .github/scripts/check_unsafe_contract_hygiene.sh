@@ -121,6 +121,38 @@ if generic:
     for item in generic:
         print(item, file=__import__("sys").stderr)
     raise SystemExit(1)
+
+registry_ops = Path("src/session/lease/core/registry_ops.rs")
+registry = registry_ops.read_text()
+init_call = registry.find("RendezvousEntry::init_from_parts(")
+if init_call == -1:
+    print("unsafe contract hygiene violation: registry entry initialization disappeared", file=__import__("sys").stderr)
+    raise SystemExit(1)
+window = " ".join(registry[max(0, init_call - 700) : init_call].replace("*", " ").split())
+required_terms = [
+    "SAFETY:",
+    "rendezvous",
+    "Rendezvous::init_in_slab_auto",
+    "non-null",
+    "slab-pinned",
+    "entry_ptr",
+    "persistent sidecar",
+    "RendezvousEntry",
+    "size/align",
+    "not published",
+    "self.head",
+    "initialized list head",
+    "published to `self.head` only",
+]
+missing_terms = [term for term in required_terms if term not in window]
+if missing_terms:
+    print(
+        "unsafe contract hygiene violation: registry entry initialization must carry the concrete entry_ptr/rendezvous/self.head/publish SAFETY contract",
+        file=__import__("sys").stderr,
+    )
+    for term in missing_terms:
+        print(f"{registry_ops}: missing registry SAFETY fact: {term}", file=__import__("sys").stderr)
+    raise SystemExit(1)
 PY
 
 if [[ "${runtime_rs}" == *"pub unsafe fn init_in_place"* ]]; then

@@ -52,6 +52,12 @@ where
                 }
             }
         };
+        /* SAFETY: `rendezvous` is the non-null, slab-pinned pointer returned by
+         * `Rendezvous::init_in_slab_auto`; `entry_ptr` was allocated from the same
+         * rendezvous persistent sidecar with `RendezvousEntry` size/align and is
+         * not published in the registry; `self.head` is the existing initialized
+         * list head, and the entry is published to `self.head` only after initialization.
+         */
         unsafe {
             RendezvousEntry::init_from_parts(
                 entry_ptr,

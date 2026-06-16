@@ -189,9 +189,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let size_gate_pos = run_final_gate
         .find("bash ./.github/scripts/check_final_form_measurements.sh")
         .expect("final gate must include stack/SRAM/flash measurements");
+    let unsafe_gate_pos = run_final_gate
+        .find("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
+        .expect("final gate must include unsafe contract hygiene");
     let performance_gate_pos = run_final_gate
         .find("bash ./.github/scripts/check_runtime_performance_hygiene.sh")
         .expect("final gate must include runtime performance hygiene");
+    assert!(
+        unsafe_gate_pos < size_gate_pos,
+        "unsafe contract hygiene must run before stack/SRAM/flash measurements"
+    );
     assert!(
         size_gate_pos < performance_gate_pos,
         "size/stack/SRAM/flash measurements must run before performance hygiene"
