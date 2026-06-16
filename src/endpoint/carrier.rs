@@ -85,10 +85,6 @@ pub(crate) struct DecodePollRequest<'a, 'cx> {
     pub(crate) logical_label: u8,
     pub(crate) validate:
         for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
-    pub(crate) zero_payload:
-        for<'payload> fn(
-            &'payload mut [u8],
-        ) -> Result<Payload<'payload>, crate::transport::wire::CodecError>,
     pub(crate) cx: &'a mut Context<'cx>,
     pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
 }

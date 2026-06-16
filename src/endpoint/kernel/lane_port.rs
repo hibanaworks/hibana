@@ -30,6 +30,7 @@ pub(super) struct FrameExpectation {
 #[derive(Clone, Copy)]
 pub(crate) struct RawSendPayload {
     ptr: Option<NonNull<()>>,
+    encode: unsafe fn(*const (), &mut [u8]) -> Result<usize, crate::transport::wire::CodecError>,
 }
 
 pub(crate) struct PendingRecv {
@@ -92,6 +93,7 @@ impl RawSendPayload {
     pub(crate) fn from_typed<P: WireEncode>(payload: &P) -> Self {
         Self {
             ptr: Some(NonNull::from(payload).cast()),
+            encode: crate::transport::wire::erased_encoder::<P>(),
         }
     }
 
@@ -99,28 +101,22 @@ impl RawSendPayload {
     pub(crate) fn take(&mut self) -> Option<Self> {
         let payload = Self {
             ptr: Some(self.ptr?),
+            encode: self.encode,
         };
         self.ptr = None;
         Some(payload)
     }
 
     #[inline(always)]
-    pub(crate) fn encode_into(
-        self,
-        encode: unsafe fn(
-            *const (),
-            &mut [u8],
-        ) -> Result<usize, crate::transport::wire::CodecError>,
-        scratch: &mut [u8],
-    ) -> Result<usize, SendError> {
+    pub(crate) fn encode_into(self, scratch: &mut [u8]) -> Result<usize, SendError> {
         let ptr = self
             .ptr
             .ok_or(SendError::PhaseInvariant)?
             .as_ptr()
             .cast_const();
-        // SAFETY: the send runtime descriptor supplies the encoder matching
-        // the projected message payload type that created this pointer.
-        unsafe { encode(ptr, scratch) }.map_err(SendError::Codec)
+        // SAFETY: `from_typed` stores the encoder matching the erased payload
+        // pointer, and `take` preserves that pair exactly once.
+        unsafe { (self.encode)(ptr, scratch) }.map_err(SendError::Codec)
     }
 }
 

@@ -15,7 +15,6 @@ mod message;
 /// Program combinators and route builders.
 pub(crate) mod program;
 pub use message::Message;
-pub(crate) use message::MessageRuntime;
 /// Role-local program projection and metadata.
 pub(crate) mod role_program;
 pub(crate) use role_program::RoleProgramView;

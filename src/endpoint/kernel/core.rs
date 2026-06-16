@@ -226,7 +226,7 @@ pub(crate) fn kernel_decode<'r>(
             state.disarm_restore();
             Poll::Ready(Ok(unsafe {
                 // SAFETY: committed decode payloads are staged in endpoint-resident
-                // transport/ingress storage or local zero scratch.
+                // transport/ingress storage or the static empty local payload.
                 lane_port::endpoint_resident_payload(payload)
             }))
         }

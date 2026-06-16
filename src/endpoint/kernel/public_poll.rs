@@ -127,10 +127,6 @@ where
         &mut self,
         logical_label: u8,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        zero_payload: for<'a> fn(
-            &'a mut [u8],
-        )
-            -> Result<Payload<'a>, crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
         if let Some(kind) = self.session_fault() {
@@ -158,7 +154,6 @@ where
             logical_label,
             crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
             validate,
-            zero_payload,
         );
         match kernel_decode(self, descriptor, &mut decode_state, cx) {
             Poll::Pending => {

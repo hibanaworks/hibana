@@ -330,10 +330,6 @@ use hibana::runtime::wire::{CodecError, Payload, WireEncode, WirePayload};
 struct FourBytes([u8; 4]);
 
 impl WireEncode for FourBytes {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(4)
-    }
-
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         if out.len() < 4 {
             return Err(CodecError::Truncated);
@@ -357,14 +353,6 @@ impl WirePayload for FourBytes {
     fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_> {
         let bytes = input.as_bytes();
         FourBytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-    }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        if scratch.len() < 4 {
-            return Err(CodecError::Truncated);
-        }
-        scratch[..4].fill(0);
-        Ok(Payload::new(&scratch[..4]))
     }
 }
 ```

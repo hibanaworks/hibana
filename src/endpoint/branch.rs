@@ -3,6 +3,7 @@ use super::{
     futures::{DecodeFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
 };
 use crate::diag::Callsite;
+use crate::transport::wire::WirePayload;
 use core::{
     future::Future,
     pin::Pin,
@@ -36,9 +37,11 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     #[track_caller]
     pub fn decode<M>(
         self,
-    ) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> + use<'e, 'r, M, ROLE>
+    ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>>
+    + use<'e, 'r, M, ROLE>
     where
         M: crate::g::Message,
+        M::Payload: WirePayload,
     {
         DecodeFuture::<'e, 'r, ROLE, M>::new(self, Callsite::caller())
     }

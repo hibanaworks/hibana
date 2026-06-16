@@ -1,11 +1,11 @@
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
-  --> tests/ui/decode-borrow-endpoint-alias.rs:48:22
+  --> tests/ui/decode-borrow-endpoint-alias.rs:36:22
    |
-45 |     let branch = futures::executor::block_on(endpoint.offer()).expect("test setup");
+33 |     let branch = futures::executor::block_on(endpoint.offer()).expect("test setup");
    |                                              -------- first mutable borrow occurs here
 ...
-48 |     let next_offer = endpoint.offer();
+36 |     let next_offer = endpoint.offer();
    |                      ^^^^^^^^ second mutable borrow occurs here
-49 |     core::hint::black_box(&next_offer);
-50 |     core::hint::black_box(&payload);
+37 |     core::hint::black_box(&next_offer);
+38 |     core::hint::black_box(&payload);
    |                           -------- first borrow later used here

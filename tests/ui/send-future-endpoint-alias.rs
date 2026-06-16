@@ -4,10 +4,6 @@ use hibana::{Endpoint, g};
 struct TestPayload(u8);
 
 impl WireEncode for TestPayload {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(1)
-    }
-
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         if out.is_empty() {
             return Err(CodecError::Truncated);
@@ -33,16 +29,6 @@ impl WirePayload for TestPayload {
     fn decode_validated_payload<'a>(input: hibana::runtime::wire::Payload<'a>) -> Self {
         let input = input.as_bytes();
         Self(input[0])
-    }
-
-    fn zero_payload<'a>(
-        scratch: &'a mut [u8],
-    ) -> Result<hibana::runtime::wire::Payload<'a>, CodecError> {
-        if scratch.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        scratch[0] = 0;
-        Ok(hibana::runtime::wire::Payload::new(&scratch[..1]))
     }
 }
 

@@ -208,7 +208,6 @@ fn direct_send_capacity_emits_transport_fault_tap() {
             let rv = cluster
                 .rendezvous(Config::from_resources(slab), CapacitySendTransport(()))
                 .expect("register rendezvous");
-            let mut tap = rv.tap();
 
             let sid = SessionId::new(74);
             let mut origin_endpoint = rv
@@ -228,8 +227,9 @@ fn direct_send_capacity_emits_transport_fault_tap() {
                 rendered.contains("Capacity") || rendered.contains("Transport(C)"),
                 "send error must preserve capacity transport cause: {rendered}"
             );
+            let mut tap = rv.tap();
             tap.find(|event| event.id() == hibana::runtime::tap::TRANSPORT_FAULT)
-                .expect("capacity send must emit transport fault evidence")
+                .expect("new tap port after failure must read retained transport fault evidence")
         });
         assert_eq!(
             fault.evidence().reason(),

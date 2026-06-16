@@ -48,24 +48,8 @@ where
         Ok(Some(meta))
     }
 
-    fn non_wire_branch_payload(
-        &mut self,
-        lane_idx: u8,
-        desc: DecodeRuntimeDesc,
-    ) -> RecvResult<Payload<'r>> {
-        let scratch_ptr = {
-            let port = self.port_for_lane(lane_idx as usize);
-            lane_port::scratch_ptr(port)
-        };
-        let payload = {
-            let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
-            desc.zero_payload(scratch).map_err(RecvError::Codec)?
-        };
-        Ok(unsafe {
-            // SAFETY: non-wire branch payloads borrow from the lane scratch owned
-            // by this endpoint for the whole endpoint lifetime.
-            lane_port::endpoint_resident_payload(payload)
-        })
+    fn non_wire_branch_payload() -> Payload<'r> {
+        Payload::new(&[])
     }
 
     fn finish_route_branch_decode(
@@ -86,7 +70,7 @@ where
         }
         match branch_meta.kind {
             BranchKind::LocalAction | BranchKind::TerminalArm => {
-                let payload = self.non_wire_branch_payload(branch_meta.lane_wire, desc)?;
+                let payload = Self::non_wire_branch_payload();
                 desc.validate_payload(payload).map_err(RecvError::Codec)?;
                 let branch_view = BranchPreviewView::from_materialized(branch);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;

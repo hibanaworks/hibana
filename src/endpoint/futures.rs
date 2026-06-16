@@ -3,8 +3,7 @@ use super::{
 };
 use crate::diag::Callsite;
 use crate::endpoint::kernel::RecvPayloadMode;
-use crate::global::MessageRuntime;
-use crate::transport::wire::{CodecError, Payload};
+use crate::transport::wire::{CodecError, Payload, WirePayload};
 use core::{
     future::Future,
     pin::Pin,
@@ -121,7 +120,6 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
         &mut self,
         logical_label: u8,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-        zero_payload: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         if self.progress == DecodeFutureProgress::Finished {
@@ -135,7 +133,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
             }
         }
         let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_decode(logical_label, validate, zero_payload, cx) {
+        match endpoint.poll_decode(logical_label, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.finish();
@@ -210,11 +208,13 @@ where
 impl<'e, 'r, const ROLE: u8, M> RecvFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
+    M::Payload: WirePayload,
 {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: Callsite) -> Self {
-        let payload_mode =
-            RecvPayloadMode::from_allows_zero_length(<M as MessageRuntime>::ALLOWS_ZERO_LENGTH);
+        let payload_mode = RecvPayloadMode::from_allows_zero_length(
+            <M::Payload as WirePayload>::ALLOWS_ZERO_LENGTH,
+        );
         Self {
             raw: RawRecvFuture::new(endpoint, payload_mode),
             location,
@@ -226,21 +226,21 @@ where
 impl<'e, 'r, const ROLE: u8, M> Future for DecodeFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
+    M::Payload: WirePayload,
 {
-    type Output = EndpointResult<M::Decoded<'e>>;
+    type Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
-            <M as MessageRuntime>::validate_payload,
-            <M as MessageRuntime>::zero_payload,
+            <M::Payload as WirePayload>::validate_payload,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded = <M as MessageRuntime>::decode_validated_payload(payload);
+                let decoded = <M::Payload as WirePayload>::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
@@ -255,20 +255,21 @@ where
 impl<'e, 'r, const ROLE: u8, M> Future for RecvFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
+    M::Payload: WirePayload,
 {
-    type Output = EndpointResult<M::Decoded<'e>>;
+    type Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
-            <M as MessageRuntime>::validate_payload,
+            <M::Payload as WirePayload>::validate_payload,
             cx,
         ) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 let payload: Payload<'e> = /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */ unsafe { payload.into_payload() };
-                let decoded = <M as MessageRuntime>::decode_validated_payload(payload);
+                let decoded = <M::Payload as WirePayload>::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(

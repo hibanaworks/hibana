@@ -11,7 +11,7 @@ use super::{
     SendResult, carrier, flow, futures::OfferFuture, kernel,
 };
 use crate::diag::Callsite;
-use crate::transport::wire::{CodecError, Payload};
+use crate::transport::wire::{CodecError, Payload, WirePayload};
 use core::task::{Context, Poll};
 
 impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
@@ -170,7 +170,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         &mut self,
         logical_label: u8,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-        zero_payload: for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
@@ -181,7 +180,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 handle: self.handle,
                 logical_label,
                 validate,
-                zero_payload,
                 cx,
                 out: out.as_mut_ptr(),
             });
@@ -258,9 +256,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[track_caller]
     pub fn recv<'e, M>(
         &'e mut self,
-    ) -> impl core::future::Future<Output = EndpointResult<M::Decoded<'e>>> + 'e
+    ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + 'e
     where
         M: crate::g::Message + 'e,
+        M::Payload: WirePayload,
     {
         RecvFuture::<'e, 'r, ROLE, M>::new(self, Callsite::caller())
     }

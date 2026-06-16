@@ -13,6 +13,7 @@ use hibana::{
     runtime::{
         Config, SessionKit, SessionKitStorage,
         ids::SessionId,
+        resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -25,10 +26,6 @@ struct InstallPayload {
 }
 
 impl WireEncode for InstallPayload {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(4)
-    }
-
     fn encode_into(&self, buf: &mut [u8]) -> Result<usize, CodecError> {
         if buf.len() < 4 {
             return Err(CodecError::Truncated);
@@ -57,18 +54,11 @@ impl WirePayload for InstallPayload {
         data.copy_from_slice(&input[..4]);
         Self { data }
     }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        if scratch.len() < 4 {
-            return Err(CodecError::Truncated);
-        }
-        scratch[..4].fill(0);
-        Ok(Payload::new(&scratch[..4]))
-    }
 }
 
 type TestKit = SessionKit<'static, TestTransport>;
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
+const LOCAL_ROUTE_RESOLVER: u16 = 41;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -112,12 +102,98 @@ fn run_local_action_flow(
     assert!(transport_queue_is_empty(transport));
 }
 
+fn local_left() -> Result<DecisionResolution, ResolverError> {
+    Ok(DecisionResolution::Arm(DecisionArm::Left))
+}
+
+fn local_route_program<const PAYLOAD_LABEL: u8, P>() -> RoleProgram<0> {
+    let route = g::route(
+        g::send::<0, 0, Msg<PAYLOAD_LABEL, P>>(),
+        g::send::<0, 0, Msg<8, ()>>(),
+    )
+    .resolve::<LOCAL_ROUTE_RESOLVER>();
+    project(&route)
+}
+
+fn run_local_route_decode_empty_payload(
+    cluster: &'static TestKit,
+    slab: &'static mut [u8],
+    transport: &TestTransport,
+) {
+    let actor_program = local_route_program::<9, ()>();
+    let rv = cluster
+        .rendezvous(Config::from_resources(slab), transport.clone())
+        .expect("register rendezvous");
+    let role = rv.role(&actor_program);
+    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_fn(local_left))
+        .expect("install resolver");
+    let mut endpoint = rv
+        .session(SessionId::new(43))
+        .role(&actor_program)
+        .enter()
+        .expect("attach actor endpoint");
+    let branch = futures::executor::block_on(endpoint.offer()).expect("offer local route");
+    assert_eq!(branch.label(), 9);
+    let () = futures::executor::block_on(branch.decode::<Msg<9, ()>>())
+        .expect("empty local branch payload commits");
+    assert!(transport_queue_is_empty(transport));
+}
+
+fn run_local_route_decode_non_empty_payload_fails_closed(
+    cluster: &'static TestKit,
+    slab: &'static mut [u8],
+    transport: &TestTransport,
+) {
+    let actor_program = local_route_program::<10, u8>();
+    let rv = cluster
+        .rendezvous(Config::from_resources(slab), transport.clone())
+        .expect("register rendezvous");
+    let role = rv.role(&actor_program);
+    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_fn(local_left))
+        .expect("install resolver");
+    let mut endpoint = rv
+        .session(SessionId::new(44))
+        .role(&actor_program)
+        .enter()
+        .expect("attach actor endpoint");
+    let branch = futures::executor::block_on(endpoint.offer()).expect("offer local route");
+    assert_eq!(branch.label(), 10);
+    let error = futures::executor::block_on(branch.decode::<Msg<10, u8>>())
+        .expect_err("non-empty local branch payload must fail closed");
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("Truncated") || rendered.contains("Codec"),
+        "non-empty local branch payload must fail through payload validation: {rendered}"
+    );
+    assert!(transport_queue_is_empty(transport));
+}
+
 #[test]
 fn local_action_flow_executes() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             run_local_action_flow(cluster, slab, &transport);
+        });
+    });
+}
+
+#[test]
+fn local_route_decode_accepts_only_empty_payload() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            run_local_route_decode_empty_payload(cluster, slab, &transport);
+        });
+    });
+}
+
+#[test]
+fn local_route_decode_rejects_non_empty_payload() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            run_local_route_decode_non_empty_payload_fails_closed(cluster, slab, &transport);
         });
     });
 }

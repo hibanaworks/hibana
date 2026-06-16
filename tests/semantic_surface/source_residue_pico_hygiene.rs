@@ -197,7 +197,14 @@ fn tap_event_is_opaque_sixteen_byte_record() {
         "pub arg1:",
         "arg2",
         "with_arg2",
-        "encoded_len(&self) -> Option<usize> {\n        Some(20)",
+        "pub const fn zero(",
+        "pub const fn with_arg0",
+        "pub const fn with_arg1",
+        "pub const fn with_causal_key",
+        "pub const fn make_causal_key",
+        "impl WireEncode for TapEvent",
+        "impl WirePayload for TapEvent",
+        "encoded_len(",
         "require_exact_len(input.as_bytes().len(), 20)",
     ] {
         assert!(

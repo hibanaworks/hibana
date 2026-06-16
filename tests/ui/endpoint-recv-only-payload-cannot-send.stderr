@@ -1,0 +1,16 @@
+error[E0599]: the method `send` exists for struct `Flow<'_, '_, 0, Msg<36, RecvOnly>>`, but its trait bounds were not satisfied
+  --> tests/ui/endpoint-recv-only-payload-cannot-send.rs:31:23
+   |
+ 6 | struct RecvOnly;
+   | --------------- doesn't satisfy `RecvOnly: WireEncode`
+...
+31 |     let future = flow.send(&payload);
+   |                       ^^^^ method cannot be called on `Flow<'_, '_, 0, Msg<36, RecvOnly>>` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `RecvOnly: WireEncode`
+note: the trait `WireEncode` must be implemented
+  --> src/transport/wire.rs
+   |
+   | pub trait WireEncode {
+   | ^^^^^^^^^^^^^^^^^^^^

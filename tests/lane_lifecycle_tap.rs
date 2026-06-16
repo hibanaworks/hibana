@@ -12,7 +12,7 @@ use common::TestTransport;
 use hibana::{
     g::{self, Msg},
     runtime::program::{RoleProgram, project},
-    runtime::{Config, SessionKitStorage, ids::SessionId},
+    runtime::{Config, SessionKitStorage, ids::SessionId, tap},
 };
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
@@ -24,9 +24,6 @@ std::thread_local! {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
-
-const LANE_ACQUIRE_ID: u16 = 0x0210;
-const LANE_RELEASE_ID: u16 = 0x0211;
 
 fn controller_program() -> RoleProgram<0> {
     let program = g::send::<0, 1, Msg<1, ()>>();
@@ -68,12 +65,12 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                 let mut has_expected_acquire = false;
                 let mut has_expected_release = false;
                 for event in &mut tap {
-                    if event.id() == LANE_ACQUIRE_ID {
+                    if event.id() == tap::LANE_ACQUIRE {
                         acquire_count += 1;
                         let (event_sid, event_lane) = decode_sid_lane(event.arg1());
                         has_expected_acquire |=
                             event.arg0() == 1u32 && event_sid == sid.raw() && event_lane == 0;
-                    } else if event.id() == LANE_RELEASE_ID {
+                    } else if event.id() == tap::LANE_RELEASE {
                         release_count += 1;
                         let (event_sid, event_lane) = decode_sid_lane(event.arg1());
                         has_expected_release |=

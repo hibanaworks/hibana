@@ -31,9 +31,6 @@ pub(crate) fn require_exact_len(actual: usize, expected: usize) -> Result<(), Co
 
 /// Send-side payload encoding contract.
 pub trait WireEncode {
-    /// Optional hint describing the encoded length if it is statically known.
-    fn encoded_len(&self) -> Option<usize>;
-
     /// Encode into `out`, returning the number of bytes written.
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 }
@@ -57,10 +54,9 @@ unsafe fn encode_erased<P: WireEncode>(
 
 /// Receive-side payload decoding contract.
 ///
-/// `Payload` remains the send-side owner that `flow().send()` accepts by
-/// reference. `Decoded<'a>` describes what `recv()` / `decode()` yield when the
+/// `Decoded<'a>` describes what `recv()` / `decode()` yield when the
 /// wire bytes are borrowed for the duration of the endpoint borrow.
-pub trait WirePayload: WireEncode {
+pub trait WirePayload {
     /// Compile-time fact used by the descriptor kernel when a transport returns an
     /// empty payload without ingress evidence.
     const ALLOWS_ZERO_LENGTH: bool = false;
@@ -88,17 +84,9 @@ pub trait WirePayload: WireEncode {
         Self::validate_payload(input)?;
         Ok(Self::decode_validated_payload(input))
     }
-
-    /// Provide the canonical zero payload used for non-wire local route
-    /// materialization.
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError>;
 }
 
 impl WireEncode for () {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(0)
-    }
-
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         Ok(out[..0].len())
     }
@@ -118,17 +106,9 @@ impl WirePayload for () {
             crate::invariant();
         }
     }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        Ok(Payload::new(&scratch[..0]))
-    }
 }
 
 impl WireEncode for bool {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(1)
-    }
-
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         if out.is_empty() {
             return Err(CodecError::Truncated);
@@ -153,23 +133,11 @@ impl WirePayload for bool {
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         input.as_bytes()[0] != 0
     }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        if scratch.is_empty() {
-            return Err(CodecError::Truncated);
-        }
-        scratch[0] = 0;
-        Ok(Payload::new(&scratch[..1]))
-    }
 }
 
 macro_rules! impl_wire_for_int {
     ($ty:ty, $len:expr) => {
         impl WireEncode for $ty {
-            fn encoded_len(&self) -> Option<usize> {
-                Some($len)
-            }
-
             fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
                 if out.len() < $len {
                     return Err(CodecError::Truncated);
@@ -192,14 +160,6 @@ macro_rules! impl_wire_for_int {
                 buf.copy_from_slice(&bytes[..$len]);
                 <$ty>::from_be_bytes(buf)
             }
-
-            fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-                if scratch.len() < $len {
-                    return Err(CodecError::Truncated);
-                }
-                scratch[..$len].fill(0);
-                Ok(Payload::new(&scratch[..$len]))
-            }
         }
     };
 }
@@ -216,10 +176,6 @@ impl_wire_for_int!(u128, 16);
 impl_wire_for_int!(i128, 16);
 
 impl WireEncode for &[u8] {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(self.len())
-    }
-
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         if out.len() < self.len() {
             return Err(CodecError::Truncated);
@@ -242,17 +198,9 @@ impl WirePayload for &[u8] {
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         input.as_bytes()
     }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        Ok(Payload::new(&scratch[..0]))
-    }
 }
 
 impl<const N: usize> WireEncode for [u8; N] {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(N)
-    }
-
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         if out.len() < N {
             return Err(CodecError::Truncated);
@@ -276,14 +224,6 @@ impl<const N: usize> WirePayload for [u8; N] {
         let mut buf = [0u8; N];
         buf.copy_from_slice(&bytes[..N]);
         buf
-    }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        if scratch.len() < N {
-            return Err(CodecError::Truncated);
-        }
-        scratch[..N].fill(0);
-        Ok(Payload::new(&scratch[..N]))
     }
 }
 
@@ -336,36 +276,6 @@ mod tests {
         assert_eq!(
             <&[u8] as WirePayload>::decode_payload(Payload::new(&bytes)),
             Ok(&bytes[..])
-        );
-    }
-
-    #[test]
-    fn zero_payloads_are_canonical_for_builtin_fixed_types() {
-        let mut scratch = [0xFF; 8];
-
-        assert_eq!(
-            <() as WirePayload>::zero_payload(&mut scratch)
-                .expect("unit zero payload")
-                .as_bytes(),
-            &[] as &[u8]
-        );
-        assert_eq!(
-            <u32 as WirePayload>::zero_payload(&mut scratch)
-                .expect("u32 zero payload")
-                .as_bytes(),
-            &[0, 0, 0, 0]
-        );
-        assert_eq!(
-            <[u8; 3] as WirePayload>::zero_payload(&mut scratch)
-                .expect("array zero payload")
-                .as_bytes(),
-            &[0, 0, 0]
-        );
-        assert_eq!(
-            <bool as WirePayload>::zero_payload(&mut scratch)
-                .expect("bool zero payload")
-                .as_bytes(),
-            &[0]
         );
     }
 }

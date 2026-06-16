@@ -402,6 +402,85 @@ fn runtime_surface_hides_tap_storage_resource() {
 }
 
 #[test]
+fn message_and_wire_codec_boundaries_stay_separated() {
+    let message = read("src/global/message.rs");
+    let g = read("src/g.rs");
+    let wire = read("src/transport/wire.rs");
+    let endpoint = [
+        read("src/endpoint/flow.rs"),
+        read("src/endpoint/ops.rs"),
+        read("src/endpoint/branch.rs"),
+    ]
+    .join("\n");
+
+    assert!(
+        message.contains("pub trait Message: seal::Sealed")
+            && message.contains("const LOGICAL_LABEL: u8;")
+            && message.contains("type Payload;")
+            && message.contains(
+                "impl<const LOGICAL_LABEL: u8, P> Message for crate::g::Msg<LOGICAL_LABEL, P>"
+            )
+            && g.contains(
+                "pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);"
+            ),
+        "Message must stay a sealed choreography descriptor with only label and payload"
+    );
+    for forbidden in "type Decoded|MessageRuntime|ENCODE_PAYLOAD|P: crate::transport::wire::WirePayload|WirePayload>::zero_payload|WirePayload>::decode_validated_payload".split('|') {
+        assert!(
+            !message.contains(forbidden),
+            "Message/g::Msg must not regain codec obligations: {forbidden}"
+        );
+    }
+    for forbidden in "fn encoded_len|zero_payload|pub trait WirePayload: WireEncode".split('|') {
+        assert!(
+            !wire.contains(forbidden),
+            "wire public traits must not regain redundant encode/decode obligations: {forbidden}"
+        );
+    }
+    assert!(
+        endpoint.contains("M::Payload: WireEncode")
+            && endpoint.contains("M::Payload: WirePayload")
+            && endpoint.contains("<M::Payload as WirePayload>::Decoded<'e>")
+            && !endpoint.contains("M::Decoded<'e>")
+            && !endpoint.contains("MessageRuntime"),
+        "endpoint operations must own codec bounds and decoded return types"
+    );
+}
+
+#[test]
+fn tap_surface_has_one_public_entry_and_internal_event_construction() {
+    let fluent = read("src/runtime/fluent.rs");
+    let event = read("src/observe/event.rs");
+    let runtime_buckets = read("src/runtime/buckets.rs");
+
+    let session_impl = fluent
+        .split("impl<'kit, 'cfg, T> SessionRendezvousKit")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<'kit, 'cfg, 'prog").next())
+        .expect("SessionRendezvousKit impl must exist");
+    assert!(
+        fluent.contains("impl<'kit, 'cfg, T> RendezvousKit")
+            && fluent.contains("pub fn tap(&self) -> crate::runtime::tap::TapPort<'_>")
+            && !session_impl.contains("pub fn tap(&self)"),
+        "tap must be entered through rendezvous-wide rv.tap(), not SessionRendezvousKit::tap()"
+    );
+    for forbidden in "pub const fn new(|pub const fn zero(|pub const fn with_arg0|pub const fn with_arg1|pub const fn with_causal_key|pub const fn make_causal_key|impl WireEncode for TapEvent|impl WirePayload for TapEvent".split('|') {
+        assert!(
+            !event.contains(forbidden),
+            "TapEvent generation must stay internal while public readers stay immutable: {forbidden}"
+        );
+    }
+    for required in
+        "LANE_ACQUIRE|LANE_RELEASE|ROUTE_ARM_SELECTION|RESOLVER_AUDIT|TRANSPORT_FAULT".split('|')
+    {
+        assert!(
+            runtime_buckets.contains(required),
+            "runtime::tap must expose canonical event identifiers: {required}"
+        );
+    }
+}
+
+#[test]
 fn runtime_resolver_surface_is_decision_input_owner() {
     let runtime_src = runtime_source();
     let resolver_src = read("src/session/cluster/core/dynamic_resolvers.rs");

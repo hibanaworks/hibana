@@ -1,0 +1,59 @@
+error[E0277]: the trait bound `SendOnly: WirePayload` is not satisfied
+  --> tests/ui/endpoint-send-only-payload-cannot-recv.rs:15:34
+   |
+15 |     let future = endpoint.recv::<g::Msg<35, SendOnly>>();
+   |                                  ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `WirePayload` is not implemented for `SendOnly`
+  --> tests/ui/endpoint-send-only-payload-cannot-recv.rs:6:1
+   |
+ 6 | struct SendOnly;
+   | ^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `WirePayload`:
+             &[u8]
+             ()
+             [u8; N]
+             bool
+             i128
+             i16
+             i32
+             i64
+           and $N others
+note: required by a bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::recv`
+  --> src/endpoint/ops.rs
+   |
+   |     pub fn recv<'e, M>(
+   |            ---- required by a bound in this associated function
+...
+   |         M::Payload: WirePayload,
+   |                     ^^^^^^^^^^^ required by this bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::recv`
+
+error[E0277]: the trait bound `SendOnly: WirePayload` is not satisfied
+  --> tests/ui/endpoint-send-only-payload-cannot-recv.rs:16:5
+   |
+16 |     core::mem::drop(future);
+   |     ^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `WirePayload` is not implemented for `SendOnly`
+  --> tests/ui/endpoint-send-only-payload-cannot-recv.rs:6:1
+   |
+ 6 | struct SendOnly;
+   | ^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `WirePayload`:
+             &[u8]
+             ()
+             [u8; N]
+             bool
+             i128
+             i16
+             i32
+             i64
+           and $N others
+note: required by a bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::recv`
+  --> src/endpoint/ops.rs
+   |
+   |     pub fn recv<'e, M>(
+   |            ---- required by a bound in this associated function
+...
+   |         M::Payload: WirePayload,
+   |                     ^^^^^^^^^^^ required by this bound in `hibana::endpoint::ops::<impl Endpoint<'r, ROLE>>::recv`

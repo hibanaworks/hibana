@@ -12,7 +12,7 @@ pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> SessionRendezvo
 pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T> {
 pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T> {
 pub fn enter( self, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
-pub fn set_resolver<const RESOLVER: u16>( self, resolver: crate::runtime::resolver::ResolverRef<'cfg>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
+pub fn set_resolver<const RESOLVER: u16>( &self, resolver: crate::runtime::resolver::ResolverRef<'cfg>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
 pub mod program {
 pub use crate::global::program::Projectable;
 pub use crate::global::role_program::{RoleProgram, project};
@@ -21,7 +21,7 @@ pub use crate::session::types::SessionId;
 pub use crate::runtime_core::config::Config;
 pub mod tap {
 pub use crate::observe::core::{Evidence, TapEvent, TapPort};
-pub use crate::observe::ids::{ TRANSPORT_FAULT, TRANSPORT_FAULT_CAPACITY, TRANSPORT_FAULT_DEADLINE, TRANSPORT_FAULT_FAILED, TRANSPORT_FAULT_OFFLINE, TRANSPORT_FRAME, TRANSPORT_MISMATCH, TRANSPORT_MISMATCH_LABEL, TRANSPORT_MISMATCH_LANE, TRANSPORT_MISMATCH_PEER_ROLE, TRANSPORT_MISMATCH_SESSION, TRANSPORT_MISMATCH_SOURCE_ROLE, };
+pub use crate::observe::ids::{ ENDPOINT_RECV, ENDPOINT_SEND, ENDPOINT_SESSION, LANE_ACQUIRE, LANE_RELEASE, RESOLVER_AUDIT, ROUTE_ARM_SELECTION, TRANSPORT_FAULT, TRANSPORT_FAULT_CAPACITY, TRANSPORT_FAULT_DEADLINE, TRANSPORT_FAULT_FAILED, TRANSPORT_FAULT_OFFLINE, TRANSPORT_FRAME, TRANSPORT_MISMATCH, TRANSPORT_MISMATCH_LABEL, TRANSPORT_MISMATCH_LANE, TRANSPORT_MISMATCH_PEER_ROLE, TRANSPORT_MISMATCH_SESSION, TRANSPORT_MISMATCH_SOURCE_ROLE, };
 pub mod resolver {
 pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };
 pub mod wire {

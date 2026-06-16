@@ -1,9 +1,6 @@
 //! Canonical 16-byte tap event and semantic Evidence decode.
 
-use crate::{
-    observe::ids,
-    transport::wire::{CodecError, Payload, WireEncode, WirePayload, require_exact_len},
-};
+use crate::observe::ids;
 
 /// Opaque 16-byte tap record with a compact causal key for evidence correlation.
 ///
@@ -109,7 +106,7 @@ impl TapEvent {
     }
 
     #[inline]
-    pub const fn with_arg0(mut self, arg0: u32) -> Self {
+    pub(crate) const fn with_arg0(mut self, arg0: u32) -> Self {
         self.bytes[8] = (arg0 >> 24) as u8;
         self.bytes[9] = (arg0 >> 16) as u8;
         self.bytes[10] = (arg0 >> 8) as u8;
@@ -118,7 +115,7 @@ impl TapEvent {
     }
 
     #[inline]
-    pub const fn with_arg1(mut self, arg1: u32) -> Self {
+    pub(crate) const fn with_arg1(mut self, arg1: u32) -> Self {
         self.bytes[12] = (arg1 >> 24) as u8;
         self.bytes[13] = (arg1 >> 16) as u8;
         self.bytes[14] = (arg1 >> 8) as u8;
@@ -127,7 +124,7 @@ impl TapEvent {
     }
 
     #[inline]
-    pub const fn with_causal_key(mut self, causal_key: u16) -> Self {
+    pub(crate) const fn with_causal_key(mut self, causal_key: u16) -> Self {
         self.bytes[6] = (causal_key >> 8) as u8;
         self.bytes[7] = causal_key as u8;
         self
@@ -147,13 +144,13 @@ impl TapEvent {
 
     /// Construct causal key from role and sequence.
     #[inline]
-    pub const fn make_causal_key(role: u8, seq: u8) -> u16 {
+    pub(crate) const fn make_causal_key(role: u8, seq: u8) -> u16 {
         ((role as u16) << 8) | (seq as u16)
     }
 
     /// Create a zeroed event (for array initialization).
     #[inline]
-    pub const fn zero() -> Self {
+    pub(crate) const fn zero() -> Self {
         Self { bytes: [0; 16] }
     }
 
@@ -195,50 +192,10 @@ impl TapEvent {
     }
 }
 
-impl WireEncode for TapEvent {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(16)
-    }
-
-    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
-        if out.len() < 16 {
-            return Err(CodecError::Truncated);
-        }
-        out[..16].copy_from_slice(&self.bytes);
-        Ok(16)
-    }
-}
-
-impl WirePayload for TapEvent {
-    type Decoded<'a> = Self;
-
-    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        require_exact_len(input.as_bytes().len(), 16)
-    }
-
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
-        let bytes = input.as_bytes();
-        let mut event_bytes = [0; 16];
-        event_bytes.copy_from_slice(bytes);
-        Self { bytes: event_bytes }
-    }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        if scratch.len() < 16 {
-            return Err(CodecError::Truncated);
-        }
-        scratch[..16].fill(0);
-        Ok(Payload::new(&scratch[..16]))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::TapEvent;
-    use crate::{
-        observe::ids,
-        transport::wire::{WireEncode, WirePayload},
-    };
+    use crate::observe::ids;
 
     #[test]
     fn transport_mismatch_evidence_carries_expected_lane_and_reason() {
@@ -300,23 +257,17 @@ mod tests {
     }
 
     #[test]
-    fn tap_event_wire_round_trip_is_exactly_sixteen_bytes() {
+    fn tap_event_record_bytes_are_exactly_sixteen_bytes() {
         let event = super::super::events::raw_event(0x0102_0304, ids::TRANSPORT_FRAME)
             .with_causal_key(0x0506)
             .with_arg0(0x0708_090a)
             .with_arg1(0x0b0c_0d0e);
-        let mut out = [0; 17];
-        assert_eq!(event.encode_into(&mut out).unwrap(), 16);
         assert_eq!(
-            &out[..16],
-            &[
+            event.bytes,
+            [
                 0x01, 0x02, 0x03, 0x04, 0x02, 0x06, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
                 0x0d, 0x0e,
             ]
-        );
-        assert_eq!(
-            TapEvent::decode_validated_payload(crate::transport::wire::Payload::new(&out[..16])),
-            event
         );
     }
 }

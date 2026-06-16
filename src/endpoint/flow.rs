@@ -15,7 +15,6 @@ use crate::{
     diag::Callsite,
     endpoint::{EndpointError, EndpointOp, EndpointResult, SendResult, kernel},
     g::Message,
-    global::MessageRuntime,
     transport::{FrameLabel, wire::WireEncode},
 };
 
@@ -48,11 +47,7 @@ pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRunti
 where
     M: Message,
 {
-    kernel::SendRuntimeDesc::new(
-        <M as Message>::LOGICAL_LABEL,
-        frame_label,
-        <M as MessageRuntime>::ENCODE_PAYLOAD,
-    )
+    kernel::SendRuntimeDesc::new(<M as Message>::LOGICAL_LABEL, frame_label)
 }
 
 impl<'e, 'r, const ROLE: u8, M> Flow<'e, 'r, ROLE, M>

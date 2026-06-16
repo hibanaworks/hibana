@@ -173,13 +173,12 @@ where
     #[inline(never)]
     fn stage_send_payload(
         &mut self,
-        descriptor: SendRuntimeDesc,
         payload: Option<lane_port::RawSendPayload>,
         scratch: &mut [u8],
     ) -> SendResult<StagedSendPayload> {
         let data = payload.ok_or(SendError::PhaseInvariant)?;
         Ok(StagedSendPayload {
-            encoded_len: descriptor.encode_payload(data, scratch)?,
+            encoded_len: data.encode_into(scratch)?,
         })
     }
 
@@ -232,7 +231,6 @@ where
     #[inline(never)]
     fn begin_send_transport(
         &mut self,
-        descriptor: SendRuntimeDesc,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
@@ -243,7 +241,7 @@ where
         };
         let staged_send = {
             let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
-            self.stage_send_payload(descriptor, payload, scratch)?
+            self.stage_send_payload(payload, scratch)?
         };
         let commit_plan = self.build_send_commit_plan(preview_cursor_index, meta)?;
         let encoded_len = staged_send.encoded_len;
@@ -292,8 +290,7 @@ where
         if let Err(err) = self.validate_send_payload(meta, descriptor) {
             return SendInitOutcome::Ready(Err(err));
         }
-        let step = match self.begin_send_transport(descriptor, preview_cursor_index, meta, payload)
-        {
+        let step = match self.begin_send_transport(preview_cursor_index, meta, payload) {
             Ok(step) => step,
             Err(err) => return SendInitOutcome::Ready(Err(err)),
         };

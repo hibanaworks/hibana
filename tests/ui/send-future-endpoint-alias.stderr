@@ -1,11 +1,11 @@
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
-  --> tests/ui/send-future-endpoint-alias.rs:54:22
+  --> tests/ui/send-future-endpoint-alias.rs:40:22
    |
-50 |     let flow = endpoint
+36 |     let flow = endpoint
    |                -------- first mutable borrow occurs here
 ...
-54 |     let flow_again = endpoint
+40 |     let flow_again = endpoint
    |                      ^^^^^^^^ second mutable borrow occurs here
 ...
-58 |     core::hint::black_box(send);
+44 |     core::hint::black_box(send);
    |                           ---- first borrow later used here

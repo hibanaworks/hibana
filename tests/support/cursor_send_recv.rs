@@ -28,10 +28,6 @@ pub(crate) use hibana::{
 pub(crate) struct FramePayload(pub(crate) [u8; 4]);
 
 impl WireEncode for FramePayload {
-    fn encoded_len(&self) -> Option<usize> {
-        Some(self.0.len())
-    }
-
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         if out.len() < self.0.len() {
             return Err(CodecError::Truncated);
@@ -54,14 +50,6 @@ impl WirePayload for FramePayload {
 
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
         input
-    }
-
-    fn zero_payload<'a>(scratch: &'a mut [u8]) -> Result<Payload<'a>, CodecError> {
-        if scratch.len() < 4 {
-            return Err(CodecError::Truncated);
-        }
-        scratch[..4].fill(0);
-        Ok(Payload::new(&scratch[..4]))
     }
 }
 

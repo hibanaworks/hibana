@@ -64,12 +64,13 @@ pub(crate) enum BranchKind {
     /// Normal wire recv: payload comes from transport/ingress.
     WireRecv,
     /// Endpoint-local action that does not go on wire.
-    /// Decode from zero buffer; route commit uses meta fields directly.
+    /// Decode validates Hibana's canonical empty payload; route commit uses
+    /// meta fields directly.
     LocalAction,
     /// Arm starts with Send operation (passive observer scenario).
     /// The driver should continue on the same borrowed endpoint with `flow().send()`.
     ArmSendHint,
     /// Terminal arm without a resident receive/send event.
-    /// Decode succeeds with zero buffer; cursor advances to scope end.
+    /// Decode validates Hibana's canonical empty payload and advances to scope end.
     TerminalArm,
 }

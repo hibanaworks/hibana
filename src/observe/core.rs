@@ -62,10 +62,12 @@ impl<'a> RingBuffer<'a> {
     }
 
     fn port(&self) -> RingPort<'_> {
+        let head = self.head.get();
+        let cursor = head.saturating_sub(RING_BUFFER_SIZE);
         RingPort {
             head: &self.head,
             storage: self.storage.cast_const(),
-            cursor: self.head.get(),
+            cursor,
             _marker: PhantomData,
         }
     }

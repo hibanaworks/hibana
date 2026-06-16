@@ -1,7 +1,7 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Payload, Port, SendError, SendMeta,
-    SendPreview, SendResult, StateIndex, Transport, lane_port,
+    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Payload, Port, SendMeta, SendPreview,
+    SendResult, StateIndex, Transport, lane_port,
 };
 
 pub(crate) struct StagedSendPayload {
@@ -80,50 +80,19 @@ impl RecvPayloadMode {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct MsgFlags(u8);
-
-impl MsgFlags {
-    const ALLOWS_ZERO_LENGTH: u8 = 1 << 0;
-
-    #[inline(always)]
-    pub(crate) const fn new(payload_mode: RecvPayloadMode) -> Self {
-        let mut bits = 0u8;
-        if payload_mode.allows_zero_length() {
-            bits |= Self::ALLOWS_ZERO_LENGTH;
-        }
-        Self(bits)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn payload_mode(self) -> RecvPayloadMode {
-        if self.0 & Self::ALLOWS_ZERO_LENGTH != 0 {
-            RecvPayloadMode::AllowsZeroLength
-        } else {
-            RecvPayloadMode::RequiresPayload
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct MsgCore {
     logical_label: crate::transport::LogicalLabel,
     frame_label: crate::transport::FrameLabel,
-    flags: MsgFlags,
 }
 
 impl MsgCore {
     #[inline]
-    pub(crate) const fn new(
-        logical_label: u8,
-        frame_label: crate::transport::FrameLabel,
-        payload_mode: RecvPayloadMode,
-    ) -> Self {
+    pub(crate) const fn new(logical_label: u8, frame_label: crate::transport::FrameLabel) -> Self {
         Self {
             logical_label: crate::transport::LogicalLabel::new(logical_label),
             frame_label,
-            flags: MsgFlags::new(payload_mode),
         }
     }
 
@@ -136,17 +105,13 @@ impl MsgCore {
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.frame_label
     }
-
-    #[inline]
-    pub(crate) const fn payload_mode(self) -> RecvPayloadMode {
-        self.flags.payload_mode()
-    }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct RecvRuntimeDesc {
     pub(crate) core: MsgCore,
+    payload_mode: RecvPayloadMode,
 }
 
 impl RecvRuntimeDesc {
@@ -157,7 +122,8 @@ impl RecvRuntimeDesc {
         payload_mode: RecvPayloadMode,
     ) -> Self {
         Self {
-            core: MsgCore::new(logical_label, frame_label, payload_mode),
+            core: MsgCore::new(logical_label, frame_label),
+            payload_mode,
         }
     }
 
@@ -168,7 +134,7 @@ impl RecvRuntimeDesc {
 
     #[inline]
     pub(crate) const fn payload_mode(self) -> RecvPayloadMode {
-        self.core.payload_mode()
+        self.payload_mode
     }
 }
 
@@ -177,8 +143,6 @@ impl RecvRuntimeDesc {
 pub(crate) struct DecodeRuntimeDesc {
     pub(crate) core: MsgCore,
     validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-    zero_payload:
-        for<'a> fn(&'a mut [u8]) -> Result<Payload<'a>, crate::transport::wire::CodecError>,
 }
 
 impl DecodeRuntimeDesc {
@@ -187,15 +151,10 @@ impl DecodeRuntimeDesc {
         logical_label: u8,
         frame_label: crate::transport::FrameLabel,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-        zero_payload: for<'a> fn(
-            &'a mut [u8],
-        )
-            -> Result<Payload<'a>, crate::transport::wire::CodecError>,
     ) -> Self {
         Self {
-            core: MsgCore::new(logical_label, frame_label, RecvPayloadMode::RequiresPayload),
+            core: MsgCore::new(logical_label, frame_label),
             validate,
-            zero_payload,
         }
     }
 
@@ -216,37 +175,19 @@ impl DecodeRuntimeDesc {
     ) -> Result<(), crate::transport::wire::CodecError> {
         (self.validate)(payload)
     }
-
-    #[inline]
-    pub(crate) fn zero_payload<'a>(
-        self,
-        scratch: &'a mut [u8],
-    ) -> Result<Payload<'a>, crate::transport::wire::CodecError> {
-        (self.zero_payload)(scratch)
-    }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct SendRuntimeDesc {
     pub(crate) core: MsgCore,
-    encode_payload:
-        unsafe fn(*const (), &mut [u8]) -> Result<usize, crate::transport::wire::CodecError>,
 }
 
 impl SendRuntimeDesc {
     #[inline]
-    pub(crate) const fn new(
-        logical_label: u8,
-        frame_label: crate::transport::FrameLabel,
-        encode_payload: unsafe fn(
-            *const (),
-            &mut [u8],
-        ) -> Result<usize, crate::transport::wire::CodecError>,
-    ) -> Self {
+    pub(crate) const fn new(logical_label: u8, frame_label: crate::transport::FrameLabel) -> Self {
         Self {
-            core: MsgCore::new(logical_label, frame_label, RecvPayloadMode::RequiresPayload),
-            encode_payload,
+            core: MsgCore::new(logical_label, frame_label),
         }
     }
 
@@ -258,15 +199,6 @@ impl SendRuntimeDesc {
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
-    }
-
-    #[inline]
-    pub(crate) fn encode_payload(
-        self,
-        payload: lane_port::RawSendPayload,
-        scratch: &mut [u8],
-    ) -> Result<usize, SendError> {
-        payload.encode_into(self.encode_payload, scratch)
     }
 }
 

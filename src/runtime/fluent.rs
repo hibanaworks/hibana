@@ -37,11 +37,6 @@ where
     T: crate::transport::Transport + 'cfg,
 {
     #[inline]
-    pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
-        self.base.tap_port()
-    }
-
-    #[inline]
     pub fn role<'prog, const ROLE: u8>(
         &self,
         program: &'prog crate::runtime::program::RoleProgram<ROLE>,
@@ -80,7 +75,7 @@ where
     /// resolver site.
     #[track_caller]
     pub fn set_resolver<const RESOLVER: u16>(
-        self,
+        &self,
         resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), crate::runtime::resolver::ResolverError> {
         self.base
