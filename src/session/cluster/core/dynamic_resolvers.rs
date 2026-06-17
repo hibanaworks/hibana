@@ -201,12 +201,13 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
         }
     }
 
-    /// Evaluate this typed resolver without erasing its resolver id.
+    /// Decide through this typed resolver without erasing its resolver id.
     ///
-    /// This is for typed resolver owners. It does not commit route/session progress.
-    /// It does not expose the erased storage handle.
+    /// This is for typed resolver owners and resolver combinators. It does not
+    /// commit route/session progress. It does not expose the erased storage
+    /// handle.
     #[inline]
-    pub fn evaluate(self) -> Result<DecisionArm, ResolverError> {
+    pub fn decide(self) -> Result<DecisionArm, ResolverError> {
         self.inner.resolve_decision()
     }
 

@@ -1,8 +1,8 @@
-error[E0599]: no associated function or constant named `decision_fn` found for struct `ResolverRef<'cfg, RESOLVER_ID>` in the current scope
- --> tests/ui/resolver-decision-fn-removed.rs:4:31
+error[E0599]: no function or associated item named `decision_fn` found for struct `ResolverRef<'cfg, RESOLVER_ID>` in the current scope
+ --> tests/ui-rustc-1-95/resolver-decision-fn-removed.rs:4:31
   |
 4 |     let _ = ResolverRef::<7>::decision_fn(|| Err(ResolverError::reject()));
-  |                               ^^^^^^^^^^^ associated function or constant not found in `ResolverRef<'_, 7>`
+  |                               ^^^^^^^^^^^ function or associated item not found in `ResolverRef<'_, 7>`
   |
 note: if you're trying to build a new `ResolverRef<'_, 7>`, consider using `ResolverRef::<'cfg, RESOLVER_ID>::decision_state` which returns `ResolverRef<'_, _>`
  --> src/session/cluster/core/dynamic_resolvers.rs

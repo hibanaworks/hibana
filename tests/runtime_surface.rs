@@ -142,7 +142,7 @@ fn external_resolver_decision(
     if resolver.loaded {
         Ok(DecisionArm::Right)
     } else {
-        resolver.local_resolver.evaluate()
+        resolver.local_resolver.decide()
     }
 }
 
@@ -157,7 +157,7 @@ fn resolver_state_can_host_external_resolver_owner() {
     };
     let resolver =
         ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_state(&unloaded, external_resolver_decision);
-    assert_eq!(resolver.evaluate(), Ok(DecisionArm::Left));
+    assert_eq!(resolver.decide(), Ok(DecisionArm::Left));
 
     let loaded = ExternalResolver {
         loaded: true,
@@ -165,7 +165,7 @@ fn resolver_state_can_host_external_resolver_owner() {
     };
     let resolver =
         ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_state(&loaded, external_resolver_decision);
-    assert_eq!(resolver.evaluate(), Ok(DecisionArm::Right));
+    assert_eq!(resolver.decide(), Ok(DecisionArm::Right));
 }
 
 #[test]

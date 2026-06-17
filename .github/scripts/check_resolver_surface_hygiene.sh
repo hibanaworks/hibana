@@ -23,7 +23,7 @@ check_absent "ResolverCtx|HostSlots|pub\\(crate\\) enum Action|AbortInfo|run_res
 check_absent "emit_endpoint_resolver_audit|endpoint_resolver_args|ResolverSlot::Endpoint(Rx|Tx)|hash_tap_event|emit_resolver_audit_replay|EndpointRxAuditPlan" \
   "endpoint resolver replay audit residue" \
   src README.md
-check_absent "RouteResolverDecision|route_resolver_decision_from_action|Defer""Source::Epf" "EPF route authority forbidden path" \
+check_absent "RouteResolverDecision|route_resolver_decision_from_action|\\bDefer\\b|\\bDeferred\\b|Source::Epf" "EPF route authority forbidden path" \
   src/endpoint/kernel/authority.rs src/endpoint/kernel/core.rs
 
 check_absent "#!?\\[[^]]*allow[[:space:]]*\\([^]]*dead[_]code" \

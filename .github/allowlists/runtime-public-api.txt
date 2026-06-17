@@ -26,11 +26,13 @@ pub struct SessionId(u32);
 SessionId::new pub const fn new(id: u32) -> Self {
 SessionId::raw pub const fn raw(self) -> u32 {
 pub enum DecisionArm {
+DecisionArm::Left variant Left
+DecisionArm::Right variant Right
 pub struct ResolverError {
 ResolverError::reject pub fn reject() -> Self {
 pub struct ResolverRef<'cfg, const RESOLVER_ID: u16> {
 ResolverRef::decision_state pub fn decision_state<S: 'cfg>( state: &'cfg S, resolver: fn(&S) -> Result<DecisionArm, ResolverError>, ) -> Self {
-ResolverRef::evaluate pub fn evaluate(self) -> Result<DecisionArm, ResolverError> {
+ResolverRef::decide pub fn decide(self) -> Result<DecisionArm, ResolverError> {
 pub struct AttachError {
 pub struct TapPort<'a> {
 pub struct TapEvent {
@@ -69,6 +71,10 @@ Outgoing::target_role pub const fn target_role(&self) -> u8 {
 Outgoing::lane pub const fn lane(&self) -> u8 {
 Outgoing::payload pub const fn payload(&self) -> Payload<'f> {
 pub enum TransportError {
+TransportError::Offline variant Offline
+TransportError::Deadline variant Deadline
+TransportError::Capacity variant Capacity
+TransportError::Failed variant Failed
 pub struct FrameHeader([u8; 8]);
 FrameHeader::from_bytes pub const fn from_bytes(bytes: [u8; 8]) -> Self {
 FrameHeader::bytes pub const fn bytes(self) -> [u8; 8] {
@@ -91,6 +97,8 @@ Transport::requeue fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Tr
 pub struct FrameLabel(u8);
 FrameLabel::raw pub const fn raw(self) -> u8 {
 pub enum CodecError {
+CodecError::Truncated variant Truncated
+CodecError::Malformed variant Malformed
 pub trait WireEncode {
 WireEncode::encode_into fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 pub trait WirePayload {

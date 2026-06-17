@@ -618,12 +618,13 @@ fn runtime_resolver_surface_is_decision_input_owner() {
     }
     assert!(
         resolver_src.contains("pub struct ResolverRef<'cfg, const RESOLVER_ID: u16")
-            && resolver_src.contains("pub fn evaluate(self) -> Result<DecisionArm, ResolverError>")
-            && resolver_src.contains("This is for typed resolver owners")
-            && resolver_src.contains("not commit route/session progress")
+            && resolver_src.contains("pub fn decide(self) -> Result<DecisionArm, ResolverError>")
+            && resolver_src.contains("This is for typed resolver owners and resolver combinators")
+            && resolver_src.contains("commit route/session progress")
             && !resolver_src.contains("pub fn resolve_decision")
+            && !resolver_src.contains("pub fn evaluate")
             && !resolver_src.contains("erase_resolver_id"),
-        "ResolverRef must carry resolver id and expose only the typed resolver-combinator evaluate seam without a public erasure shortcut"
+        "ResolverRef must carry resolver id and expose only the typed resolver-combinator decide seam without a public erasure shortcut"
     );
     for forbidden in [
         "ResolverContext",
@@ -660,20 +661,15 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
     let runtime_src = runtime_source();
     let readme_src = read("README.md");
     let decision_resolver_src = read("src/endpoint/kernel/core/decision_resolver/impls.rs");
-    let collapsed_resolution = concat!("Dynamic", "Resolution");
-    let generic_stateless_ctor = concat!("ResolverRef::", "from_fn");
-    let generic_state_ctor = concat!("ResolverRef::", "from_state");
-    let removed_stateless_ctor = concat!("ResolverRef::", "decision_fn");
-
     for src in [&cluster_src, &runtime_src, &readme_src] {
         assert!(
-            !src.contains(collapsed_resolution),
+            !src.contains("DynamicResolution"),
             "dynamic resolver surface must use DecisionArm directly, not a generic DynamicResolution alias"
         );
         assert!(
-            !src.contains(generic_stateless_ctor)
-                && !src.contains(generic_state_ctor)
-                && !src.contains(removed_stateless_ctor),
+            !src.contains("ResolverRef::from_fn")
+                && !src.contains("ResolverRef::from_state")
+                && !src.contains("ResolverRef::decision_fn"),
             "resolver constructor surface must stay on decision_state only"
         );
     }
@@ -697,19 +693,14 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
         "pub fn roll_fn",
         "pub fn roll_state",
         "pub fn decision_fn",
+        "pub fn evaluate",
         "dispatch_decision_fn",
         "stateless:",
         "pub enum DecisionResolution",
         "DecisionResolution::Defer",
         "DecisionResolution::Arm",
-        concat!(
-            "pub fn decision_fn(resolver: fn(ResolverContext) -> DecisionResolution",
-            "Outcome)"
-        ),
-        concat!(
-            "resolver: fn(&S, ResolverContext) -> DecisionResolution",
-            "Outcome,"
-        ),
+        "pub fn decision_fn(resolver: fn(ResolverContext) -> DecisionResolutionOutcome)",
+        "resolver: fn(&S, ResolverContext) -> DecisionResolutionOutcome,",
         "pub struct ResolverContext",
     ] {
         assert!(
@@ -759,7 +750,9 @@ fn core_resolver_audit_has_no_in_crate_resolver_owner() {
     for forbidden in [
         "RouteResolverDecision",
         "route_resolver_decision_from_action",
-        concat!("Defer", "Source::Epf"),
+        "Defer",
+        "Deferred",
+        "Source::Epf",
     ] {
         assert!(
             !authority.contains(forbidden),

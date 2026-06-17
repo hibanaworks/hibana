@@ -4,6 +4,7 @@
 
 use super::core::TapEvent;
 use super::ids;
+use crate::global::const_dsl::ScopeId;
 
 // ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
@@ -31,8 +32,10 @@ pub(crate) const fn route_arm_selection_with_causal(
     ts: u32,
     causal: u16,
     sid: u32,
-    arg1: u32,
+    scope_id: ScopeId,
+    arm: u8,
 ) -> TapEvent {
+    let arg1 = ((route_site(scope_id) as u32) << 16) | (arm as u32);
     TapEvent::new(ts, ids::ROUTE_ARM_SELECTION, causal, sid, arg1)
 }
 
@@ -40,10 +43,52 @@ pub(crate) const fn route_arm_selection_with_causal(
 
 // ────────────── Resolver audit (0x0400-0x041F) ──────────────
 
+#[inline(always)]
+pub(crate) const fn resolver_audit(
+    ts: u32,
+    lane: u8,
+    sid: u32,
+    scope_id: ScopeId,
+    resolver_id: u16,
+    result: u8,
+) -> TapEvent {
+    let causal = TapEvent::make_causal_key(lane, result);
+    let arg1 = ((route_site(scope_id) as u32) << 16) | (resolver_id as u32);
+    TapEvent::new(ts, ids::RESOLVER_AUDIT, causal, sid, arg1)
+}
+
+#[inline(always)]
+const fn route_site(scope_id: ScopeId) -> u16 {
+    scope_id.local_ordinal()
+}
+
 // ────────────── Raw builder for fixed event encoders ──────────────
 
 /// Raw TapEvent builder for callers that already own the event identifier.
 #[inline(always)]
 pub(crate) const fn raw_event(ts: u32, id: u16) -> TapEvent {
     TapEvent::new(ts, id, 0, 0, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn route_site_evidence_uses_scope_local_ordinal() {
+        let first = route_arm_selection_with_causal(1, 2, 3, ScopeId::route(0), 1);
+        let second = route_arm_selection_with_causal(1, 2, 3, ScopeId::route(1), 1);
+        assert_eq!(first.arg1() >> 16, 0);
+        assert_eq!(second.arg1() >> 16, 1);
+        assert_eq!(first.arg1() & 0xffff, 1);
+        assert_eq!(second.arg1() & 0xffff, 1);
+
+        let first_audit = resolver_audit(1, 7, 3, ScopeId::route(0), 77, 0);
+        let second_audit = resolver_audit(1, 7, 3, ScopeId::route(1), 77, 0);
+        assert_eq!(first_audit.arg1() >> 16, 0);
+        assert_eq!(second_audit.arg1() >> 16, 1);
+        assert_eq!(first_audit.arg1() & 0xffff, 77);
+        assert_eq!(second_audit.arg1() & 0xffff, 77);
+        assert_eq!(first_audit.causal_key(), second_audit.causal_key());
+    }
 }

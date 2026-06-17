@@ -73,7 +73,17 @@ where
                     self.offer_lane_for_scope(scope_id),
                 );
             }
-            Some(RouteArmToken::Resolver(_)) => {
+            Some(RouteArmToken::Resolver(arm)) => {
+                self.record_route_arm_selection_for_lane(
+                    lane_wire as usize,
+                    scope_id,
+                    selected_arm,
+                );
+                self.emit_route_arm_selection(
+                    scope_id,
+                    RouteArmToken::from_resolver(arm),
+                    lane_wire,
+                );
                 if self.arm_has_recv(scope_id, selected_arm) {
                     self.consume_scope_ready_arm(scope_id, selected_arm);
                 }
@@ -210,7 +220,7 @@ where
             return Err(SendError::PhaseInvariant);
         }
 
-        self.evaluate_dynamic_resolver(&meta, descriptor.logical_label())?;
+        self.decide_dynamic_resolver(&meta, descriptor.logical_label())?;
 
         Ok(())
     }

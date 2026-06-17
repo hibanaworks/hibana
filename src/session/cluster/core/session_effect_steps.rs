@@ -37,7 +37,6 @@ where
         self.with_resident_program_ref(rv_id, program, |compiled| {
             let mut matched_sites = 0usize;
             let mut missing_sites = 0usize;
-            let mut decision_scope = None;
             for site in compiled.dynamic_resolver_sites_for(RESOLVER) {
                 matched_sites += 1;
                 let site_scope = site.scope();
@@ -45,16 +44,6 @@ where
                     return Err(ClusterError::ResolverReject {
                         resolver_id: RESOLVER,
                     });
-                }
-                match decision_scope {
-                    None => decision_scope = Some(site_scope),
-                    Some(scope) => {
-                        if scope != site_scope {
-                            return Err(ClusterError::ResolverReject {
-                                resolver_id: RESOLVER,
-                            });
-                        }
-                    }
                 }
                 let key = DynamicResolverKey::new(rv_id, site.eff_index());
                 if self.dynamic_resolver(key).is_none() {

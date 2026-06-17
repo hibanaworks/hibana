@@ -100,7 +100,7 @@ fn transport_surface_has_no_custom_error_axis() {
 }
 
 #[test]
-fn public_surface_scanner_covers_trait_associated_items() {
+fn public_surface_scanner_covers_trait_associated_items_and_type_shape() {
     let g_allowlist = read(".github/allowlists/g-public-api.txt");
     let runtime_allowlist = read(".github/allowlists/runtime-public-api.txt");
     let scanner = read(".github/scripts/check_public_api_allowlists.py");
@@ -133,6 +133,21 @@ fn public_surface_scanner_covers_trait_associated_items() {
             "runtime public allowlist scanner must cover trait associated item: {required}"
         );
     }
+    for required in [
+        "DecisionArm::Left variant Left",
+        "DecisionArm::Right variant Right",
+        "TransportError::Offline variant Offline",
+        "TransportError::Deadline variant Deadline",
+        "TransportError::Capacity variant Capacity",
+        "TransportError::Failed variant Failed",
+        "CodecError::Truncated variant Truncated",
+        "CodecError::Malformed variant Malformed",
+    ] {
+        assert!(
+            runtime_allowlist.contains(required),
+            "runtime public allowlist scanner must cover enum variant item: {required}"
+        );
+    }
     for forbidden in [
         "Message::Decoded",
         "WireEncode::encoded_len",
@@ -148,10 +163,42 @@ fn public_surface_scanner_covers_trait_associated_items() {
         scanner.contains("trait_owner_at")
             && scanner.contains("is_trait_item_start")
             && scanner.contains("trait_item_name")
+            && scanner.contains("collect_public_enum_shape")
+            && scanner.contains("collect_public_struct_shape")
+            && scanner.contains("parse_tuple_fields")
+            && scanner.contains("parse_named_fields")
             && scanner.contains("src/global/message.rs")
+            && scanner.contains("src/observe/event.rs")
+            && scanner.contains("src/session/types.rs")
             && scanner.contains("src/transport/wire.rs"),
-        "stable source scanner must include public trait associated items and their owner files"
+        "stable source scanner must include public trait items, enum variants, public fields, and re-export owner files"
     );
+}
+
+#[test]
+fn route_site_tap_evidence_uses_local_ordinal_site() {
+    let events = read("src/observe/events.rs");
+    let select = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
+    let resolver = read("src/endpoint/kernel/core/decision_resolver/impls.rs");
+
+    assert!(
+        events.contains("const fn route_site(scope_id: ScopeId) -> u16")
+            && events.contains("scope_id.local_ordinal()")
+            && events.contains("((route_site(scope_id) as u32) << 16) | (arm as u32)")
+            && events.contains("((route_site(scope_id) as u32) << 16) | (resolver_id as u32)")
+            && events.contains("TapEvent::make_causal_key(lane, result)"),
+        "tap event owner must pack route-site evidence from ScopeId::local_ordinal"
+    );
+    for forbidden in [
+        "scope_id.raw() as u32",
+        "((resolver_id as u32) << 16) | result",
+        "ids::RESOLVER_AUDIT",
+    ] {
+        assert!(
+            !select.contains(forbidden) && !resolver.contains(forbidden),
+            "route-site tap evidence must not regain old packing: {forbidden}"
+        );
+    }
 }
 
 #[test]

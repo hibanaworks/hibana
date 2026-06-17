@@ -438,8 +438,13 @@ where
         let port = self.port_for_lane(lane as usize);
         let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
         let arg0 = self.sid.raw();
-        let arg1 = ((scope_id.raw() as u32) << 16) | (token.arm().as_u8() as u32);
-        let event = events::route_arm_selection_with_causal(port.now32(), causal, arg0, arg1);
+        let event = events::route_arm_selection_with_causal(
+            port.now32(),
+            causal,
+            arg0,
+            scope_id,
+            token.arm().as_u8(),
+        );
         emit(port.tap(), event);
     }
 
@@ -504,11 +509,16 @@ where
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let resolution = match cluster.resolve_dynamic_resolver(rv_id, eff_index, resolver_id) {
             Ok(resolution) => {
-                self.emit_dynamic_resolver_success_audit(offer_lane, resolver_id, resolution);
+                self.emit_dynamic_resolver_success_audit(
+                    offer_lane,
+                    scope_id,
+                    resolver_id,
+                    resolution,
+                );
                 resolution
             }
             Err(ClusterError::ResolverReject { resolver_id }) => {
-                self.emit_dynamic_resolver_reject_audit(offer_lane, resolver_id);
+                self.emit_dynamic_resolver_reject_audit(offer_lane, scope_id, resolver_id);
                 return Ok(RouteResolveStep::Reject(resolver_id));
             }
             Err(

@@ -478,7 +478,7 @@ fn external_decision(
     if owner.loaded {
         Ok(DecisionArm::Right)
     } else {
-        owner.local_resolver.evaluate()
+        owner.local_resolver.decide()
     }
 }
 

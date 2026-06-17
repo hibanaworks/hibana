@@ -1,0 +1,5 @@
+error[E0599]: no method named `evaluate` found for struct `ResolverRef<'cfg, RESOLVER_ID>` in the current scope
+  --> tests/ui/resolver-evaluate-removed.rs:11:22
+   |
+11 |     let _ = resolver.evaluate();
+   |                      ^^^^^^^^ method not found in `ResolverRef<'_, 7>`

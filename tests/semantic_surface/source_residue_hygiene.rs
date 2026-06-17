@@ -121,7 +121,6 @@ fn resolver_audit_emit_stays_infallible() {
                 .next()
         })
         .expect("decision resolver audit emit helper must stay local");
-
     assert!(
         !audit_fn.contains("SendResult") && !audit_fn.contains("Ok(())"),
         "resolver audit emit must not return Result when it has no error source"
@@ -129,12 +128,13 @@ fn resolver_audit_emit_stays_infallible() {
     assert!(
         source.contains("emit_dynamic_resolver_success_audit")
             && source.contains("emit_dynamic_resolver_reject_audit")
-            && source.contains("ids::RESOLVER_AUDIT")
-            && source.contains("((resolver_id as u32) << 16) | result"),
+            && source.contains("events::resolver_audit(")
+            && source.contains("scope_id")
+            && !source.contains("ids::RESOLVER_AUDIT")
+            && !source.contains("((resolver_id as u32) << 16) | result"),
         "dynamic resolver audit must be the only local resolver authority evidence path"
     );
 }
-
 #[test]
 fn endpoint_hot_paths_do_not_emit_resolver_audit_replay() {
     let endpoint_hot_path = [

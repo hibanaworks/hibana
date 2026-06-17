@@ -86,11 +86,11 @@ pub const LANE_RELEASE: u16 = 0x0211;
 
 // ───────────── Route decision (0x0220-0x022F) ─────────────
 
-/// Route arm selection resolved via dynamic resolver.
+/// Route arm selection resolved by route authority.
 ///
 /// - `arg0`: Session identifier (u32)
-/// - `arg1`: scope_id<<16 | arm (u32)
-/// - `causal`: lane marker with authority token encoded in the sequence field
+/// - `arg1`: route_site<<16 | arm (u32)
+/// - `causal_key`: lane marker with authority token encoded in the sequence field
 ///   (1 = ack, 2 = resolver, 3 = poll)
 pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 
@@ -98,9 +98,10 @@ pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 ///
 /// Endpoint facts use `ENDPOINT_*`, transport facts use `TRANSPORT_*`, lane
 /// lifecycle facts use `LANE_*`, and dynamic route authority decisions use this
-/// event. It is emitted once per dynamic resolver evaluation.
+/// event. It is emitted once per dynamic resolver decision.
 ///
 /// - `arg0`: full [`SessionId`](crate::runtime::ids::SessionId) raw value
-/// - `arg1`: resolver_id<<16 | result
-/// - result: Left = 0, Right = 1, Reject = 0xff
+/// - `arg1`: route_site<<16 | resolver_id
+/// - `causal_key`: lane<<8 | result
+/// - `result`: Left = 0, Right = 1, Reject = 0xff
 pub const RESOLVER_AUDIT: u16 = 0x0407;

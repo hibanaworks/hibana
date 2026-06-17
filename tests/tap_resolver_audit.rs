@@ -66,6 +66,30 @@ fn local_route_program() -> RoleProgram<0> {
     )
 }
 
+fn two_site_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let first = g::route(
+        g::send::<0, 1, Msg<11, u32>>(),
+        g::send::<0, 1, Msg<12, u32>>(),
+    )
+    .resolve::<ROUTE_RESOLVER>();
+    let second = g::route(
+        g::send::<0, 1, Msg<13, u32>>(),
+        g::send::<0, 1, Msg<14, u32>>(),
+    )
+    .resolve::<ROUTE_RESOLVER>();
+    project(&g::par(first, second))
+}
+
+fn nested_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let inner = g::route(
+        g::send::<0, 1, Msg<42, u32>>(),
+        g::send::<0, 1, Msg<43, u32>>(),
+    );
+    let outer_left = g::seq(g::send::<0, 1, Msg<41, u32>>(), inner);
+    let outer_right = g::send::<0, 1, Msg<44, u32>>();
+    project(&g::route(outer_left, outer_right))
+}
+
 fn choose_left(_: &()) -> Result<DecisionArm, ResolverError> {
     Ok(DecisionArm::Left)
 }
@@ -74,12 +98,16 @@ fn reject(_: &()) -> Result<DecisionArm, ResolverError> {
     Err(ResolverError::reject())
 }
 
-fn resolver_result(event: tap::TapEvent) -> u32 {
-    event.arg1() & 0xffff
+fn resolver_result(event: tap::TapEvent) -> u16 {
+    event.causal_key() & 0x00ff
+}
+
+fn resolver_route_site(event: tap::TapEvent) -> u32 {
+    event.arg1() >> 16
 }
 
 fn resolver_id(event: tap::TapEvent) -> u32 {
-    event.arg1() >> 16
+    event.arg1() & 0xffff
 }
 
 #[test]
@@ -187,6 +215,128 @@ fn dynamic_resolver_success_emits_one_reversible_audit() {
         assert_eq!(audits[0].arg0(), sid.raw());
         assert_eq!(resolver_id(audits[0]), ROUTE_RESOLVER as u32);
         assert_eq!(resolver_result(audits[0]), 0, "Left must encode as 0");
+    });
+}
+
+#[test]
+fn reused_resolver_id_keeps_route_site_in_audit() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let sid = SessionId::new(0x0004_0003);
+        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let origin_program = two_site_route_program::<0>();
+            let target_program = two_site_route_program::<1>();
+            rv.set_resolver(
+                &origin_program,
+                ResolverRef::<ROUTE_RESOLVER>::decision_state(&ROUTE_STATE, choose_left),
+            )
+            .expect("install origin resolver for both route sites");
+            rv.set_resolver(
+                &target_program,
+                ResolverRef::<ROUTE_RESOLVER>::decision_state(&ROUTE_STATE, choose_left),
+            )
+            .expect("install target resolver for both route sites");
+            let mut origin = rv.enter(sid, &origin_program).expect("attach origin");
+            let mut target = rv.enter(sid, &target_program).expect("attach target");
+
+            futures::executor::block_on(origin.send::<Msg<11, u32>>(&11))
+                .expect("send first route");
+            let first = futures::executor::block_on(target.offer()).expect("first route");
+            assert_eq!(
+                futures::executor::block_on(first.recv::<Msg<11, u32>>())
+                    .expect("first route commit"),
+                11
+            );
+            futures::executor::block_on(origin.send::<Msg<13, u32>>(&13))
+                .expect("send second route");
+
+            rv.tap().collect::<Vec<_>>()
+        });
+
+        let selections = events
+            .iter()
+            .copied()
+            .filter(|event| event.id() == tap::ROUTE_ARM_SELECTION)
+            .collect::<Vec<_>>();
+        let audits = events
+            .iter()
+            .copied()
+            .filter(|event| event.id() == tap::RESOLVER_AUDIT)
+            .collect::<Vec<_>>();
+        assert!(
+            audits.len() >= 2,
+            "both route sites must emit resolver audit: {audits:?}"
+        );
+
+        assert!(
+            selections
+                .iter()
+                .all(|event| resolver_id(*event) != ROUTE_RESOLVER as u32),
+            "route selection arg1 must not pack resolver id in the low word: {selections:?}"
+        );
+        let mut audit_sites = audits
+            .iter()
+            .filter(|event| resolver_id(**event) == ROUTE_RESOLVER as u32)
+            .map(|event| resolver_route_site(*event))
+            .collect::<Vec<_>>();
+        audit_sites.sort_unstable();
+        audit_sites.dedup();
+        assert!(
+            audit_sites.len() >= 2,
+            "resolver audit must carry distinct route sites: {audit_sites:?}"
+        );
+    });
+}
+
+#[test]
+fn nested_route_runtime_emits_distinct_route_selection_sites() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let sid = SessionId::new(0x0004_0004);
+        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let origin_program = nested_route_program::<0>();
+            let target_program = nested_route_program::<1>();
+            let mut origin = rv.enter(sid, &origin_program).expect("attach origin");
+            let mut target = rv.enter(sid, &target_program).expect("attach target");
+
+            futures::executor::block_on(origin.send::<Msg<41, u32>>(&41))
+                .expect("send outer route");
+            let outer = futures::executor::block_on(target.offer()).expect("offer outer route");
+            assert_eq!(
+                futures::executor::block_on(outer.recv::<Msg<41, u32>>())
+                    .expect("outer route recv"),
+                41
+            );
+            futures::executor::block_on(origin.send::<Msg<42, u32>>(&42))
+                .expect("send inner route");
+            let inner = futures::executor::block_on(target.offer()).expect("offer inner route");
+            assert_eq!(
+                futures::executor::block_on(inner.recv::<Msg<42, u32>>())
+                    .expect("inner route recv"),
+                42
+            );
+
+            rv.tap().collect::<Vec<_>>()
+        });
+
+        let mut selection_sites = events
+            .iter()
+            .copied()
+            .filter(|event| event.id() == tap::ROUTE_ARM_SELECTION)
+            .map(|event| event.arg1() >> 16)
+            .collect::<Vec<_>>();
+        selection_sites.sort_unstable();
+        selection_sites.dedup();
+        assert!(
+            selection_sites.len() >= 2,
+            "nested route runtime must emit distinct route selection sites: {events:?}"
+        );
     });
 }
 

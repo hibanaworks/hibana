@@ -213,6 +213,181 @@ def public_member_name(statement: str) -> str:
     return "item"
 
 
+def public_type_name(statement: str, prefix: str) -> str:
+    rest = statement[len(prefix) :]
+    return (
+        rest.split("=", 1)[0]
+        .split(":", 1)[0]
+        .split("(", 1)[0]
+        .split("{", 1)[0]
+        .split()[0]
+        .split("<", 1)[0]
+    )
+
+
+def remove_line_comment(line: str) -> str:
+    in_string = False
+    escape = False
+    index = 0
+    while index < len(line):
+        ch = line[index]
+        nxt = line[index + 1] if index + 1 < len(line) else ""
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "/" and nxt == "/":
+            return line[:index]
+        index += 1
+    return line
+
+
+def block_text(lines: list[str], start: int) -> str | None:
+    depth = 0
+    opened = False
+    pieces: list[str] = []
+    for line in lines[start:]:
+        pieces.append(remove_line_comment(line))
+        delta, has_open = brace_delta(line)
+        if has_open:
+            opened = True
+        depth += delta
+        if opened and depth <= 0:
+            text = "\n".join(pieces)
+            open_index = text.find("{")
+            close_index = text.rfind("}")
+            if open_index >= 0 and close_index > open_index:
+                return text[open_index + 1 : close_index]
+            return ""
+    return None
+
+
+def split_top_level(text: str, delimiter: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    paren = brace = bracket = angle = 0
+    for index, ch in enumerate(text):
+        if ch == "(":
+            paren += 1
+        elif ch == ")" and paren > 0:
+            paren -= 1
+        elif ch == "{":
+            brace += 1
+        elif ch == "}" and brace > 0:
+            brace -= 1
+        elif ch == "[":
+            bracket += 1
+        elif ch == "]" and bracket > 0:
+            bracket -= 1
+        elif ch == "<":
+            angle += 1
+        elif ch == ">" and angle > 0:
+            angle -= 1
+        elif (
+            ch == delimiter
+            and paren == 0
+            and brace == 0
+            and bracket == 0
+            and angle == 0
+        ):
+            parts.append(text[start:index])
+            start = index + 1
+    tail = text[start:]
+    if tail.strip():
+        parts.append(tail)
+    return parts
+
+
+def trim_attributes(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#[") or stripped.startswith("///"):
+            continue
+        lines.append(stripped)
+    return compact(" ".join(lines))
+
+
+def parse_named_fields(text: str) -> list[tuple[str, str]]:
+    fields: list[tuple[str, str]] = []
+    for segment in split_top_level(text, ","):
+        field = trim_attributes(segment)
+        if ":" not in field:
+            continue
+        name, ty = field.split(":", 1)
+        name = name.strip()
+        visibility = ""
+        if name.startswith("pub "):
+            visibility = "pub "
+            name = name[len("pub ") :].strip()
+        fields.append((name, compact(f"{visibility}{name}: {ty.strip()}")))
+    return fields
+
+
+def parse_tuple_fields(text: str) -> list[str]:
+    fields: list[str] = []
+    for segment in split_top_level(text, ","):
+        field = trim_attributes(segment)
+        if field:
+            fields.append(field)
+    return fields
+
+
+def collect_public_struct_shape(statement: str, lines: list[str], start: int) -> list[str]:
+    name = public_type_name(statement, "pub struct ")
+    items: list[str] = []
+    if "(" in statement and ")" in statement and statement.rstrip().endswith(";"):
+        fields = statement.split("(", 1)[1].rsplit(")", 1)[0]
+        for field_index, field in enumerate(parse_tuple_fields(fields)):
+            if field.startswith("pub "):
+                items.append(f"{name}::{field_index} pub field {field_index}: {field[4:]}")
+        return items
+    body = block_text(lines, start)
+    if body is None:
+        return items
+    for field, rendered in parse_named_fields(body):
+        if rendered.startswith("pub "):
+            items.append(f"{name}::{field} pub field {rendered[4:]}")
+    return items
+
+
+def collect_public_enum_shape(statement: str, lines: list[str], start: int) -> list[str]:
+    name = public_type_name(statement, "pub enum ")
+    body = block_text(lines, start)
+    if body is None:
+        return []
+    items: list[str] = []
+    for segment in split_top_level(body, ","):
+        variant = trim_attributes(segment)
+        if not variant:
+            continue
+        variant_name = (
+            variant.split("(", 1)[0]
+            .split("{", 1)[0]
+            .split("=", 1)[0]
+            .split()[0]
+        )
+        if not variant_name:
+            continue
+        items.append(f"{name}::{variant_name} variant {variant_name}")
+        if "(" in variant and ")" in variant:
+            fields = variant.split("(", 1)[1].rsplit(")", 1)[0]
+            for field_index, field in enumerate(parse_tuple_fields(fields)):
+                items.append(
+                    f"{name}::{variant_name}::{field_index} field {field_index}: {field}"
+                )
+        if "{" in variant and "}" in variant:
+            fields = variant.split("{", 1)[1].rsplit("}", 1)[0]
+            for field, rendered in parse_named_fields(fields):
+                items.append(f"{name}::{variant_name}.{field} field {rendered}")
+    return items
+
+
 def trait_owner(line: str) -> str | None:
     stripped = line.strip()
     if not stripped.startswith("pub trait "):
@@ -274,6 +449,7 @@ def collect_surface(surface: Surface) -> list[str]:
                 items.append(f"{trait}::{trait_item_name(statement)} {statement}")
                 continue
             if is_public_start(stripped) and not should_ignore(stripped, surface):
+                start_index = index
                 statement, index = collect_statement(lines, index)
                 if statement.startswith(("pub const fn ", "pub fn ", "pub const ")):
                     in_impl, owner = method_owner_at(lines, index - 1, public_names)
@@ -283,6 +459,10 @@ def collect_surface(surface: Surface) -> list[str]:
                             items.append(f"{owner}::{name} {statement}")
                         continue
                 items.append(statement)
+                if statement.startswith("pub struct "):
+                    items.extend(collect_public_struct_shape(statement, lines, start_index))
+                elif statement.startswith("pub enum "):
+                    items.extend(collect_public_enum_shape(statement, lines, start_index))
                 continue
             index += 1
     return items
