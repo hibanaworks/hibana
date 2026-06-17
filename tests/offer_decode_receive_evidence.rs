@@ -9,7 +9,7 @@ use core::future::Future;
 use core::task::{Context, Poll};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use common::{TestTransport, TestTransportError};
+use common::TestTransport;
 use futures::FutureExt;
 use hibana::g::Message;
 use hibana::g::{self, Msg};
@@ -18,7 +18,7 @@ use hibana::runtime::{
     SessionKitStorage,
     ids::SessionId,
     resolver::{DecisionArm, DecisionResolution, ResolverRef},
-    transport::{ReceivedFrame, Transport},
+    transport::{ReceivedFrame, Transport, TransportError},
 };
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
@@ -55,7 +55,6 @@ impl DeterministicRecvTransport {
 }
 
 impl Transport for DeterministicRecvTransport {
-    type Error = TestTransportError;
     type Tx<'a>
         = <TestTransport as Transport>::Tx<'a>
     where
@@ -77,7 +76,7 @@ impl Transport for DeterministicRecvTransport {
         tx: &'a mut Self::Tx<'a>,
         outgoing: hibana::runtime::transport::Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -92,7 +91,7 @@ impl Transport for DeterministicRecvTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         match self.0.poll_recv(rx, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(frame)) => {
@@ -102,7 +101,7 @@ impl Transport for DeterministicRecvTransport {
         }
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         self.0.requeue(rx)
     }
 }
@@ -134,7 +133,6 @@ impl LabelRewriteTransport {
 }
 
 impl Transport for LabelRewriteTransport {
-    type Error = TestTransportError;
     type Tx<'a>
         = <TestTransport as Transport>::Tx<'a>
     where
@@ -168,7 +166,7 @@ impl Transport for LabelRewriteTransport {
         tx: &'a mut Self::Tx<'a>,
         outgoing: hibana::runtime::transport::Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -183,7 +181,7 @@ impl Transport for LabelRewriteTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         match self.inner.poll_recv(&mut rx.inner, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(frame)) => {
@@ -200,7 +198,7 @@ impl Transport for LabelRewriteTransport {
         }
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         self.inner.requeue(&mut rx.inner)
     }
 }

@@ -1,21 +1,15 @@
 use core::task::{Context, Poll};
-
-use hibana::runtime::{
-    SessionKitStorage,
-    transport::{Outgoing, PortOpen, ReceivedFrame, Transport, TransportError},
+use hibana::runtime::transport::{
+    Outgoing, PortOpen, ReceivedFrame, Transport, TransportError,
 };
 
-struct Carrier(());
+struct Carrier;
+struct CarrierError;
 
 impl Transport for Carrier {
-    type Tx<'a>
-        = ()
-    where
-        Self: 'a;
-    type Rx<'a>
-        = ()
-    where
-        Self: 'a;
+    type Error = CarrierError;
+    type Tx<'a> = () where Self: 'a;
+    type Rx<'a> = () where Self: 'a;
 
     fn open<'a>(&'a self, _port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
         ((), ())
@@ -40,14 +34,12 @@ impl Transport for Carrier {
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
-        loop {}
+        Poll::Pending
     }
 
     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         Ok(())
     }
 }
-
-type _BadStorage = SessionKitStorage<'static, Carrier, 32>;
 
 fn main() {}

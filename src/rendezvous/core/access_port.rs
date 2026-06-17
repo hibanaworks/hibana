@@ -59,7 +59,7 @@ where
                     self.now32(),
                     self.id.raw() as u32,
                     sid.raw(),
-                    lane.raw() as u16,
+                    lane.as_wire() as u16,
                 ),
             );
 

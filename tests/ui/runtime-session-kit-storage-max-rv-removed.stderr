@@ -1,7 +1,7 @@
 error[E0107]: struct takes 1 generic argument but 2 generic arguments were supplied
-  --> tests/ui/runtime-session-kit-storage-max-rv-removed.rs:52:20
+  --> tests/ui/runtime-session-kit-storage-max-rv-removed.rs:51:20
    |
-52 | type _BadStorage = SessionKitStorage<'static, Carrier, 32>;
+51 | type _BadStorage = SessionKitStorage<'static, Carrier, 32>;
    |                    ^^^^^^^^^^^^^^^^^                 ---- help: remove the unnecessary generic argument
    |                    |
    |                    expected 1 generic argument

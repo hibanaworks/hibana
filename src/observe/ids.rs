@@ -65,8 +65,8 @@ pub const TRANSPORT_FAULT_FAILED: u8 = 4;
 /// Session/lane association acquired when the resident association count moves
 /// from zero to one.
 ///
-/// - `arg0`: Rendezvous identifier (u32)
-/// - `arg1`: Packed session/lane (u32)
+/// - `arg0`: Full session identifier (u32)
+/// - `arg1`: Rendezvous identifier in the high 16 bits, lane in the low 16 bits
 ///
 /// # Observable Properties
 /// - Every LANE_ACQUIRE must eventually have a matching LANE_RELEASE
@@ -76,8 +76,8 @@ pub const LANE_ACQUIRE: u16 = 0x0210;
 /// Session/lane association released when the resident association count moves
 /// from one to zero.
 ///
-/// - `arg0`: Rendezvous identifier (u32)
-/// - `arg1`: Packed session/lane (u32)
+/// - `arg0`: Full session identifier (u32)
+/// - `arg1`: Rendezvous identifier in the high 16 bits, lane in the low 16 bits
 ///
 /// # Observable Properties
 /// - Must follow LANE_ACQUIRE for the same lane

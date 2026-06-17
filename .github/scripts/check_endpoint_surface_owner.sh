@@ -41,26 +41,24 @@ elif [[ -z "${ROUTE_TOKEN_BLOCK}" ]]; then
   FAILED=1
 else
   ROUTE_TOKEN_VARIANTS="$(
-    {
-      printf '%s\n' "${ROUTE_TOKEN_BLOCK}" \
-        | rg -n "^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\\([^)]*\\))?,?[[:space:]]*$" \
-        | awk -F: '
-            {
-              value=$2
-              sub(/^[[:space:]]+/, "", value)
-              sub(/\(.*/, "", value)
-              sub(/[[:space:]]*,?[[:space:]]*$/, "", value)
-              print value
-            }
-          '
-    } || true
+    printf '%s\n' "${ROUTE_TOKEN_BLOCK}" \
+      | awk '
+          /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?,?[[:space:]]*$/ {
+            value=$0
+            sub(/^[[:space:]]+/, "", value)
+            sub(/\(.*/, "", value)
+            sub(/[[:space:]]*,?[[:space:]]*$/, "", value)
+            print value
+          }
+        '
   )"
   if [[ -z "${ROUTE_TOKEN_VARIANTS}" ]]; then
     echo "RouteArmToken variants not found" >&2
     FAILED=1
   else
     BAD_ROUTE_TOKEN_VARIANTS="$(
-      printf '%s\n' "${ROUTE_TOKEN_VARIANTS}" | rg -n -v "^(Ack|Resolver|Poll)$" || true
+      printf '%s\n' "${ROUTE_TOKEN_VARIANTS}" \
+        | awk '$0 !~ /^(Ack|Resolver|Poll)$/ { print NR ":" $0 }'
     )"
     if [[ -n "${BAD_ROUTE_TOKEN_VARIANTS}" ]]; then
       echo "${BAD_ROUTE_TOKEN_VARIANTS}" >&2

@@ -10,11 +10,11 @@ mod tls_ref_support;
 
 use core::task::{Context, Poll};
 
-use common::{TestTransportError, TestTx};
+use common::TestTx;
 use cursor_harness::*;
 use frame_payload::FramePayload;
 use hibana::runtime::{
-    transport::{ReceivedFrame, Transport},
+    transport::{ReceivedFrame, Transport, TransportError},
     wire::Payload,
 };
 

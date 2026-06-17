@@ -4,10 +4,10 @@ use core::{
 };
 use std::rc::Rc;
 
-use crate::common::{TestTransport, TestTransportError, TestTx};
+use crate::common::{TestTransport, TestTx};
 use hibana::runtime::{
     SessionKitStorage,
-    transport::{Outgoing, ReceivedFrame, Transport},
+    transport::{Outgoing, ReceivedFrame, Transport, TransportError},
 };
 
 #[derive(Clone)]
@@ -34,7 +34,6 @@ impl PendingCancelTransport {
 }
 
 impl Transport for PendingCancelTransport {
-    type Error = TestTransportError;
     type Tx<'a>
         = TestTx
     where
@@ -56,7 +55,7 @@ impl Transport for PendingCancelTransport {
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -79,11 +78,11 @@ impl Transport for PendingCancelTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.inner.poll_recv(rx, context)
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         self.inner.requeue(rx)
     }
 }

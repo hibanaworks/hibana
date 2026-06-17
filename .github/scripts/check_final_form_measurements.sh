@@ -480,9 +480,25 @@ PY
 
 protocol_artifact_aeabi_metrics() {
   local bin="$1"
+  local symbols
   local matches
-  matches="$("${LLVM_NM}" "${bin}" 2>/dev/null \
-    | rg -n "__aeabi_(lmul|lcmp|ulcmp|ldivmod|uldivmod|llsl|llsr|lasr)\\b" || true)"
+  set +e
+  symbols="$("${LLVM_NM}" "${bin}")"
+  status=$?
+  set -e
+  if [[ "${status}" -ne 0 ]]; then
+    echo "final-form protocol artifact symbol scan failed" >&2
+    exit 1
+  fi
+  set +e
+  matches="$(printf '%s\n' "${symbols}" \
+    | rg -n "__aeabi_(lmul|lcmp|ulcmp|ldivmod|uldivmod|llsl|llsr|lasr)\\b")"
+  status=$?
+  set -e
+  if [[ "${status}" -gt 1 ]]; then
+    echo "final-form protocol artifact aeabi scan failed" >&2
+    exit 1
+  fi
   if [[ -n "${matches}" ]]; then
     printf '%s\n' "${matches}" >&2
     echo "final-form protocol artifact regained aeabi u64 helper calls" >&2

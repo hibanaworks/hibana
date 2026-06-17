@@ -278,7 +278,6 @@ fn large_choreography_header(frame: &FrameOwned, target_role: u8) -> FrameHeader
 }
 
 impl Transport for LargeChoreographyTransport {
-    type Error = TransportError;
     type Tx<'a>
         = ()
     where
@@ -307,7 +306,7 @@ impl Transport for LargeChoreographyTransport {
         _tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         _cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<(), Self::Error>>
+    ) -> core::task::Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -326,7 +325,7 @@ impl Transport for LargeChoreographyTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         _: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> core::task::Poll<Result<ReceivedFrame<'a>, TransportError>> {
         let frame = self.with_state(|state| {
             let idx = rx.role as usize;
             if rx.current {
@@ -357,7 +356,7 @@ impl Transport for LargeChoreographyTransport {
 
     fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         if rx.current {
             self.with_state(|state| {
                 let idx = rx.role as usize;

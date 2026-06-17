@@ -1,9 +1,8 @@
 use core::task::{Context, Poll};
-use hibana::runtime::transport::{
-    Outgoing, PortOpen, ReceivedFrame, Transport, TransportError,
-};
+use hibana::runtime::transport::{Outgoing, PortOpen, ReceivedFrame, Transport};
 
-struct Carrier(());
+struct Carrier;
+struct CarrierError;
 
 impl Transport for Carrier {
     type Tx<'a> = () where Self: 'a;
@@ -16,14 +15,13 @@ impl Transport for Carrier {
     fn poll_send<'a, 'f>(
         &self,
         _tx: &'a mut Self::Tx<'a>,
-        outgoing: Outgoing<'f>,
+        _outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), TransportError>>
+    ) -> Poll<Result<(), CarrierError>>
     where
         'a: 'f,
     {
-        let _ = outgoing.peer();
-        Poll::Ready(Ok(()))
+        Poll::Ready(Err(CarrierError))
     }
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
@@ -32,12 +30,12 @@ impl Transport for Carrier {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
-        loop {}
+    ) -> Poll<Result<ReceivedFrame<'a>, CarrierError>> {
+        Poll::Ready(Err(CarrierError))
     }
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
-        Ok(())
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), CarrierError> {
+        Err(CarrierError)
     }
 }
 

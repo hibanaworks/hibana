@@ -32,7 +32,9 @@ SNAPSHOT_DIR="${WORK_ROOT}/snapshots"
 mkdir -p "${SNAPSHOT_DIR}"
 
 cleanup() {
-  git -C "${ROOT_DIR}" worktree remove "${CURRENT_WORKTREE}" --force >/dev/null 2>&1 || true
+  if ! git -C "${ROOT_DIR}" worktree remove "${CURRENT_WORKTREE}" --force >/dev/null 2>&1; then
+    :
+  fi
   rm -rf "${WORK_ROOT}"
 }
 trap cleanup EXIT

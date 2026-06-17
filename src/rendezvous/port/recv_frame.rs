@@ -441,7 +441,7 @@ impl<'r> ReceivedFrameCore<'r> {
             // SAFETY: the frame receipt was issued by this exact port/Rx handle
             // and `assert_matches_port` above proved the port identity,
             // receipt-state pointer, and outstanding receipt state before requeueing.
-            transport.requeue(&mut *rx_ptr).map_err(Into::into)
+            transport.requeue(&mut *rx_ptr)
         };
         match result {
             Ok(()) => {

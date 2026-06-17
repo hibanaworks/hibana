@@ -39,32 +39,56 @@ do
   fi
 done
 
-if rg -n 'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_role_image_ref_|stream_compiled_role_descriptor_rows|requeue_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' src/global/compiled src/global/typestate src/global/role_program.rs src/global/role_program >/dev/null; then
+check_absent \
+  'with_lowering_lease|RoleLoweringScratchLayout|from_storage|try_init_role_image_ref_|stream_compiled_role_descriptor_rows|requeue_compiled_role_descriptor_stream|RoleTypestateInitStorage|init_value_from_.*_for_role|stream_value_from_.*_for_role' \
+  "transient descriptor streaming path detected" \
+  src/global/compiled src/global/typestate src/global/role_program.rs src/global/role_program
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: transient descriptor streaming path detected" >&2
   exit 1
 fi
 
-if rg -n 'write_clone_to|init_lowering: unsafe fn|source\.init_lowering|MaybeUninit::<CompiledProgramImage>' src/global/compiled src/global/role_program.rs src/global/role_program >/dev/null; then
+check_absent \
+  'write_clone_to|init_lowering: unsafe fn|source\.init_lowering|MaybeUninit::<CompiledProgramImage>' \
+  "resident program image clone path detected" \
+  src/global/compiled src/global/role_program.rs src/global/role_program
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: resident program image must be borrowed from the typed projection source, not cloned into attach storage" >&2
   exit 1
 fi
 
-if rg -n 'eff_list\.as_slice\(\)' src/global/compiled >/dev/null; then
+check_absent \
+  'eff_list\.as_slice\(\)' \
+  "flat EffList descriptor query detected" \
+  src/global/compiled
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: descriptor query code must not use flat EffList slices" >&2
   exit 1
 fi
 
-if rg -n 'view\.as_slice\(\)|CompiledProgramView::as_slice|fn as_slice\(&self\) -> .*\[EffStruct\]' src/global/compiled src/global/typestate >/dev/null; then
+check_absent \
+  'view\.as_slice\(\)|CompiledProgramView::as_slice|fn as_slice\(&self\) -> .*\[EffStruct\]' \
+  "flat lowering slice query detected" \
+  src/global/compiled src/global/typestate
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: resident descriptor query code must stream through segment views, not flat lowering slices" >&2
   exit 1
 fi
 
-if rg -n 'pub const fn as_slice\(&self\)' src/global/const_dsl.rs >/dev/null; then
+check_absent \
+  'pub const fn as_slice\(&self\)' \
+  "public EffList flat view detected" \
+  src/global/const_dsl.rs
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: EffList flat view must not be public canonical API" >&2
   exit 1
 fi
 
-if rg -n 'impl (core::ops::Deref|AsRef<\[EffStruct\]>) for EffList' src/global/const_dsl.rs >/dev/null; then
+check_absent \
+  'impl (core::ops::Deref|AsRef<\[EffStruct\]>) for EffList' \
+  "flat EffList trait view detected" \
+  src/global/const_dsl.rs
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: EffList must not expose flat slice traits as canonical path" >&2
   exit 1
 fi
@@ -80,7 +104,16 @@ for required in \
 do
   path="${required%%:*}"
   pattern="${required#*:}"
-  if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
+  if [[ ! -e "${path}" ]]; then
+    echo "descriptor streaming hygiene violation: resident descriptor query path owner missing -> ${path}" >&2
+    exit 1
+  fi
+  if [[ -d "${path}" ]]; then
+    if ! grep -R -Fq "${pattern}" "${path}"; then
+      echo "descriptor streaming hygiene violation: resident descriptor query path missing -> ${required}" >&2
+      exit 1
+    fi
+  elif ! grep -Fq "${pattern}" "${path}"; then
     echo "descriptor streaming hygiene violation: resident descriptor query path missing -> ${required}" >&2
     exit 1
   fi
@@ -91,7 +124,11 @@ if [[ -e src/global/compiled/images/image/role_descriptor_ref/tests/route_scope.
   exit 1
 fi
 
-if rg -n 'fn resident_node\(|fn resident_eff_for_step\(|program_image\(\)\.view\(\)' src/global/compiled/images/image/role_descriptor_ref.rs >/dev/null; then
+check_absent \
+  'fn resident_node\(|fn resident_eff_for_step\(|program_image\(\)\.view\(\)' \
+  "RoleDescriptorRef lowering scratch rebuild path detected" \
+  src/global/compiled/images/image/role_descriptor_ref.rs
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: RoleDescriptorRef must not rebuild nodes from lowering scratch" >&2
   exit 1
 fi

@@ -1,0 +1,41 @@
+error[E0053]: method `poll_send` has an incompatible type for trait
+  --> tests/ui/runtime-transport-custom-error-return-removed.rs:20:10
+   |
+20 |     ) -> Poll<Result<(), CarrierError>>
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `TransportError`, found `CarrierError`
+   |
+   = note: expected signature `fn(&Carrier, &'a mut (), Outgoing<'f>, &mut Context<'_>) -> Poll<Result<(), TransportError>>`
+              found signature `fn(&Carrier, &'a mut (), Outgoing<'f>, &mut Context<'_>) -> Poll<Result<(), CarrierError>>`
+help: change the output type to match the trait
+   |
+20 -     ) -> Poll<Result<(), CarrierError>>
+20 +     ) -> Poll<Result<(), TransportError>>
+   |
+
+error[E0053]: method `poll_recv` has an incompatible type for trait
+  --> tests/ui/runtime-transport-custom-error-return-removed.rs:33:10
+   |
+33 |     ) -> Poll<Result<ReceivedFrame<'a>, CarrierError>> {
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `TransportError`, found `CarrierError`
+   |
+   = note: expected signature `fn(&'a Carrier, &'a mut (), &mut Context<'_>) -> Poll<Result<ReceivedFrame<'a>, TransportError>>`
+              found signature `fn(&Carrier, &mut (), &mut Context<'_>) -> Poll<Result<ReceivedFrame<'_>, CarrierError>>`
+help: change the output type to match the trait
+   |
+33 -     ) -> Poll<Result<ReceivedFrame<'a>, CarrierError>> {
+33 +     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+   |
+
+error[E0053]: method `requeue` has an incompatible type for trait
+  --> tests/ui/runtime-transport-custom-error-return-removed.rs:37:54
+   |
+37 |     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), CarrierError> {
+   |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^ expected `TransportError`, found `CarrierError`
+   |
+   = note: expected signature `fn(&Carrier, &mut ()) -> Result<(), TransportError>`
+              found signature `fn(&Carrier, &mut ()) -> Result<(), CarrierError>`
+help: change the output type to match the trait
+   |
+37 -     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), CarrierError> {
+37 +     fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+   |

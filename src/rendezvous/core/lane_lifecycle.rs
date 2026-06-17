@@ -160,7 +160,7 @@ where
                 self.now32(),
                 self.id.raw() as u32,
                 sid.raw(),
-                lane.raw() as u16,
+                lane.as_wire() as u16,
             ),
         );
     }
@@ -175,7 +175,6 @@ mod tests {
     struct LayoutTransport;
 
     impl Transport for LayoutTransport {
-        type Error = TransportError;
         type Tx<'a>
             = ()
         where
@@ -194,7 +193,7 @@ mod tests {
             _tx: &'a mut Self::Tx<'a>,
             _outgoing: Outgoing<'_>,
             _cx: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<(), Self::Error>>
+        ) -> core::task::Poll<Result<(), TransportError>>
         where
             'a: 'f,
         {
@@ -207,11 +206,11 @@ mod tests {
             &'a self,
             _rx: &'a mut Self::Rx<'a>,
             _cx: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+        ) -> core::task::Poll<Result<ReceivedFrame<'a>, TransportError>> {
             core::task::Poll::Ready(Err(TransportError::Failed))
         }
 
-        fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+        fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
             Err(TransportError::Failed)
         }
     }

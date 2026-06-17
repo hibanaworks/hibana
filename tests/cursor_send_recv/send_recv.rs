@@ -3,8 +3,20 @@ use super::*;
 #[derive(Clone, Copy)]
 struct CapacitySendTransport(());
 
+#[derive(Clone, Copy)]
+enum CarrierSendFault {
+    QueueFull,
+}
+
+impl CarrierSendFault {
+    fn transport_error(self) -> TransportError {
+        match self {
+            Self::QueueFull => TransportError::Capacity,
+        }
+    }
+}
+
 impl Transport for CapacitySendTransport {
-    type Error = hibana::runtime::transport::TransportError;
     type Tx<'a>
         = ()
     where
@@ -26,24 +38,24 @@ impl Transport for CapacitySendTransport {
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: hibana::runtime::transport::Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
-        Poll::Ready(Err(hibana::runtime::transport::TransportError::Capacity))
+        Poll::Ready(Err(CarrierSendFault::QueueFull.transport_error()))
     }
 
     fn poll_recv<'a>(
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Pending
     }
 
     fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         Ok(())
     }
 }

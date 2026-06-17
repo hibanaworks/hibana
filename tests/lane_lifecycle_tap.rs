@@ -28,10 +28,10 @@ fn controller_program() -> RoleProgram<0> {
     project(&program)
 }
 
-fn decode_sid_lane(packed: u32) -> (u32, u16) {
-    let sid = packed >> 16;
+fn decode_rv_lane(packed: u32) -> (u32, u16) {
+    let rv = packed >> 16;
     let lane = (packed & 0xFFFF) as u16;
-    (sid, lane)
+    (rv, lane)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,12 +47,12 @@ fn collect_lane_events(mut port: impl Iterator<Item = tap::TapEvent>) -> Vec<Lan
     let mut events = Vec::new();
     for event in &mut port {
         if event.id() == tap::LANE_ACQUIRE || event.id() == tap::LANE_RELEASE {
-            let (sid, lane) = decode_sid_lane(event.arg1());
+            let (rv, lane) = decode_rv_lane(event.arg1());
             events.push(LaneEvent {
                 ts: event.ts(),
                 id: event.id(),
-                rv: event.arg0(),
-                sid,
+                rv,
+                sid: event.arg0(),
                 lane,
             });
         }
@@ -91,14 +91,14 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                 for event in &mut tap {
                     if event.id() == tap::LANE_ACQUIRE {
                         acquire_count += 1;
-                        let (event_sid, event_lane) = decode_sid_lane(event.arg1());
+                        let (event_rv, event_lane) = decode_rv_lane(event.arg1());
                         has_expected_acquire |=
-                            event.arg0() == 1u32 && event_sid == sid.raw() && event_lane == 0;
+                            event.arg0() == sid.raw() && event_rv == 1u32 && event_lane == 0;
                     } else if event.id() == tap::LANE_RELEASE {
                         release_count += 1;
-                        let (event_sid, event_lane) = decode_sid_lane(event.arg1());
+                        let (event_rv, event_lane) = decode_rv_lane(event.arg1());
                         has_expected_release |=
-                            event.arg0() == 1u32 && event_sid == sid.raw() && event_lane == 0;
+                            event.arg0() == sid.raw() && event_rv == 1u32 && event_lane == 0;
                     }
                 }
                 (
@@ -113,6 +113,67 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
         assert!(has_expected_release, "expected lane release event");
         assert_eq!(acquire_count, 1, "expected exactly one acquire event");
         assert_eq!(release_count, 1, "expected exactly one release event");
+    });
+}
+
+#[test]
+fn lane_lifecycle_keeps_full_session_id_in_evidence() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let slab = unsafe { &mut *slab_ptr };
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let controller_program = controller_program();
+
+            for sid_raw in [0x0001_0007u32, 0x0002_0007u32] {
+                let endpoint = rv
+                    .session(SessionId::new(sid_raw))
+                    .role(&controller_program)
+                    .enter()
+                    .expect("attach cursor");
+                drop(endpoint);
+            }
+
+            collect_lane_events(rv.tap())
+        });
+
+        assert_eq!(
+            events,
+            vec![
+                LaneEvent {
+                    ts: 0,
+                    id: tap::LANE_ACQUIRE,
+                    rv: 1,
+                    sid: 0x0001_0007,
+                    lane: 0,
+                },
+                LaneEvent {
+                    ts: 1,
+                    id: tap::LANE_RELEASE,
+                    rv: 1,
+                    sid: 0x0001_0007,
+                    lane: 0,
+                },
+                LaneEvent {
+                    ts: 2,
+                    id: tap::LANE_ACQUIRE,
+                    rv: 1,
+                    sid: 0x0002_0007,
+                    lane: 0,
+                },
+                LaneEvent {
+                    ts: 3,
+                    id: tap::LANE_RELEASE,
+                    rv: 1,
+                    sid: 0x0002_0007,
+                    lane: 0,
+                },
+            ],
+            "lane lifecycle evidence must retain all SessionId bits"
+        );
     });
 }
 
@@ -219,7 +280,8 @@ fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
                 .expect("register rendezvous");
             let controller_program = controller_program();
 
-            for sid_raw in 200..235 {
+            let base_sid = 0x0001_0200u32;
+            for sid_raw in base_sid..(base_sid + 35) {
                 let endpoint = rv
                     .session(SessionId::new(sid_raw))
                     .role(&controller_program)
@@ -238,6 +300,12 @@ fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
         );
         assert_eq!(events.first().map(|event| event.ts), Some(38));
         assert_eq!(events.last().map(|event| event.ts), Some(69));
+        assert_eq!(events.first().map(|event| event.sid), Some(0x0001_0213));
+        assert_eq!(events.last().map(|event| event.sid), Some(0x0001_0222));
+        assert!(
+            events.iter().all(|event| event.rv == 1 && event.lane == 0),
+            "retained lifecycle evidence must preserve rendezvous and lane"
+        );
         assert_eq!(
             events
                 .iter()

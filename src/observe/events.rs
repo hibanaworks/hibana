@@ -9,23 +9,18 @@ use super::ids;
 
 // ────────────── Lane lifecycle (0x0210-0x021F) ──────────────
 
-#[inline(always)]
-const fn pack_session_lane(sid: u32, lane: u16) -> u32 {
-    (sid << 16) | (lane as u32)
-}
-
 /// Session/lane association count moved 0->1.
 #[inline(always)]
 pub(crate) const fn lane_acquire(ts: u32, rv_id: u32, sid: u32, lane: u16) -> TapEvent {
-    let sid_lane = pack_session_lane(sid, lane);
-    TapEvent::new(ts, ids::LANE_ACQUIRE, 0, rv_id, sid_lane)
+    let rv_lane = (rv_id << 16) | (lane as u32);
+    TapEvent::new(ts, ids::LANE_ACQUIRE, 0, sid, rv_lane)
 }
 
 /// Session/lane association count moved 1->0.
 #[inline(always)]
 pub(crate) const fn lane_release(ts: u32, rv_id: u32, sid: u32, lane: u16) -> TapEvent {
-    let sid_lane = pack_session_lane(sid, lane);
-    TapEvent::new(ts, ids::LANE_RELEASE, 0, rv_id, sid_lane)
+    let rv_lane = (rv_id << 16) | (lane as u32);
+    TapEvent::new(ts, ids::LANE_RELEASE, 0, sid, rv_lane)
 }
 
 // ────────────── Route decision (0x0220-0x022F) ──────────────

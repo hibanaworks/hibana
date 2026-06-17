@@ -39,7 +39,14 @@ do
 done
 
 while IFS= read -r unsafe_file; do
-  count="$(rg -o 'unsafe\s*\{' "${unsafe_file}" 2>/dev/null || true)"
+  set +e
+  count="$(rg -o 'unsafe\s*\{' "${unsafe_file}")"
+  status=$?
+  set -e
+  if [[ "${status}" -gt 1 ]]; then
+    echo "unsafe block search failed: ${unsafe_file}" >&2
+    exit 1
+  fi
   count="$(printf '%s\n' "${count}" | sed '/^$/d' | wc -l | tr -d ' ')"
   if (( count >= 20 )) && ! grep -q "# Unsafe Owner Contract" "${unsafe_file}"; then
     echo "unsafe-heavy file missing module-level unsafe owner contract: ${unsafe_file}" >&2

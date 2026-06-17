@@ -13,7 +13,6 @@ struct FailingTx;
 struct FailingRx;
 
 impl Transport for FailingTransport {
-    type Error = TransportError;
     type Tx<'a> = FailingTx;
     type Rx<'a> = FailingRx;
 
@@ -26,7 +25,7 @@ impl Transport for FailingTransport {
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -39,11 +38,11 @@ impl Transport for FailingTransport {
         &'a self,
         _rx: &'a mut Self::Rx<'a>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         Poll::Ready(Err(TransportError::Failed))
     }
 
-    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         Err(TransportError::Failed)
     }
 }

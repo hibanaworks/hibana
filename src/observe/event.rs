@@ -12,7 +12,7 @@ use crate::observe::ids;
 ///   - Low 8 bits: sequence number within the route-table generation
 /// - `arg0`, `arg1`: Context-dependent diagnostic words.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TapEvent {
     bytes: [u8; 16],
 }
@@ -38,6 +38,20 @@ impl Evidence {
     #[inline]
     pub const fn input(self) -> [u32; 4] {
         self.input
+    }
+}
+
+impl core::fmt::Debug for TapEvent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let event = *self;
+        f.debug_struct("TapEvent")
+            .field("ts", &event.ts())
+            .field("id", &event.id())
+            .field("causal_key", &event.causal_key())
+            .field("arg0", &event.arg0())
+            .field("arg1", &event.arg1())
+            .field("evidence", &event.evidence())
+            .finish()
     }
 }
 
@@ -185,6 +199,7 @@ impl TapEvent {
 mod tests {
     use super::TapEvent;
     use crate::observe::ids;
+    use std::format;
 
     #[test]
     fn transport_mismatch_evidence_carries_expected_lane_and_reason() {
@@ -258,5 +273,35 @@ mod tests {
                 0x0d, 0x0e,
             ]
         );
+    }
+
+    #[test]
+    fn tap_event_debug_uses_semantic_fields_only() {
+        let event = super::super::events::raw_event(0x0102_0304, ids::TRANSPORT_FRAME)
+            .with_causal_key(0x0506)
+            .with_arg0(0x0708_090a)
+            .with_arg1(0x0b0c_0d0e);
+        let rendered = format!("{event:?}");
+
+        for field in [
+            "TapEvent",
+            "ts",
+            "id",
+            "causal_key",
+            "arg0",
+            "arg1",
+            "evidence",
+        ] {
+            assert!(
+                rendered.contains(field),
+                "TapEvent Debug must expose semantic field {field}: {rendered}"
+            );
+        }
+        for forbidden in ["bytes", "[u8", "[1, 2, 3, 4", "0x01020304"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "TapEvent Debug must not expose raw record storage {forbidden}: {rendered}"
+            );
+        }
     }
 }

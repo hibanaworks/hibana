@@ -298,7 +298,6 @@ impl PortOpen {
 /// in transport-owned handles instead of leaking transport future types into
 /// higher layers.
 pub trait Transport {
-    type Error: Into<TransportError>;
     type Tx<'a>: 'a
     where
         Self: 'a;
@@ -324,7 +323,7 @@ pub trait Transport {
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f;
 
@@ -351,7 +350,7 @@ pub trait Transport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>>;
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>>;
 
     /// Requeue the most recent frame obtained from [`poll_recv`](Transport::poll_recv).
     ///
@@ -360,7 +359,7 @@ pub trait Transport {
     /// endpoint restore contract: higher layers call this only after a
     /// descriptor-checked operation consumed transport state that it ultimately
     /// could not commit.
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error>;
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError>;
 }
 
 /// Observability helpers for logical frame inspection.

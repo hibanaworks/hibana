@@ -286,8 +286,7 @@ where
         // enters a receive poll only when no frame receipt is unresolved and
         // serializes in-flight polls by port identity.
         transport.poll_recv(&mut *rx_ptr, cx)
-    }
-    .map_err(Into::into);
+    };
     match poll {
         Poll::Pending => Poll::Pending,
         Poll::Ready(Err(err)) => {
@@ -364,8 +363,7 @@ where
         // is armed, and `Port` owns the lane-local Tx handle until the poll
         // completes or is explicitly cancelled.
         transport.poll_send(&mut *tx_ptr, outgoing, cx)
-    }
-    .map_err(Into::into);
+    };
     if poll.is_ready() {
         pending.clear();
     }

@@ -453,7 +453,7 @@ impl TestTransport {
         }
     }
 
-    pub(crate) fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TestTransportError>> {
+    pub(crate) fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TransportError>> {
         let role = tx.pending_role.take().expect("queued role");
         let frame = tx.pending_frame.take().expect("queued frame");
         let waiters = self
@@ -472,7 +472,7 @@ impl TestTransport {
         &self,
         rx: &'a mut TestRx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, TestTransportError>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         if rx.current.is_some() {
             rx.current = None;
         }
@@ -539,21 +539,7 @@ impl Drop for TestTransport {
     }
 }
 
-#[derive(Debug)]
-pub enum TestTransportError {
-    Empty,
-}
-
-impl From<TestTransportError> for TransportError {
-    fn from(err: TestTransportError) -> Self {
-        match err {
-            TestTransportError::Empty => TransportError::Failed,
-        }
-    }
-}
-
 impl Transport for TestTransport {
-    type Error = TestTransportError;
     type Tx<'a>
         = TestTx
     where
@@ -595,7 +581,7 @@ impl Transport for TestTransport {
         tx: &'a mut Self::Tx<'a>,
         outgoing: hibana::runtime::transport::Outgoing<'f>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -613,7 +599,7 @@ impl Transport for TestTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.poll_recv_current(rx, cx)
     }
 
@@ -621,7 +607,7 @@ impl Transport for TestTransport {
         self.cancel_send_staged(tx);
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         if let Some(mut frame) = rx.current.take() {
             frame.hint_drained = false;
             rx.current_hint_drained.set(false);

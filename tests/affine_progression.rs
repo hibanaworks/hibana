@@ -10,7 +10,7 @@ use core::{
     task::{Context, Poll},
 };
 
-use common::{TestRx, TestTransport, TestTransportError, TestTx};
+use common::{TestRx, TestTransport, TestTx};
 use futures::task::noop_waker_ref;
 use hibana::{
     g,
@@ -19,7 +19,7 @@ use hibana::{
     runtime::{
         SessionKitStorage,
         ids::SessionId,
-        transport::{Outgoing, ReceivedFrame, Transport},
+        transport::{Outgoing, ReceivedFrame, Transport, TransportError},
     },
 };
 use runtime_support::with_runtime_workspace;
@@ -67,7 +67,6 @@ struct PendingSendTransport {
 }
 
 impl Transport for PendingSendTransport {
-    type Error = TestTransportError;
     type Tx<'a>
         = TestTx
     where
@@ -89,7 +88,7 @@ impl Transport for PendingSendTransport {
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         _cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -116,11 +115,11 @@ impl Transport for PendingSendTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         self.inner.poll_recv_current(rx, cx)
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         self.inner.requeue(rx)
     }
 }

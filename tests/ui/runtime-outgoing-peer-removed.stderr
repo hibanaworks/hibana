@@ -1,5 +1,5 @@
 error[E0599]: no method named `peer` found for struct `Outgoing<'f>` in the current scope
-  --> tests/ui/runtime-outgoing-peer-removed.rs:26:26
+  --> tests/ui/runtime-outgoing-peer-removed.rs:25:26
    |
-26 |         let _ = outgoing.peer();
+25 |         let _ = outgoing.peer();
    |                          ^^^^ method not found in `Outgoing<'f>`

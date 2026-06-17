@@ -16,7 +16,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use cursor_harness::*;
 use frame_payload::FramePayload;
-use hibana::runtime::transport::{ReceivedFrame, Transport};
+use hibana::runtime::transport::{ReceivedFrame, Transport, TransportError};
 
 #[path = "cursor_send_recv/send_recv.rs"]
 mod send_recv;

@@ -12,7 +12,6 @@ struct DeadlineRx {
 }
 
 impl Transport for DeadlineRecvTransport {
-    type Error = hibana::runtime::transport::TransportError;
     type Tx<'a>
         = ()
     where
@@ -41,7 +40,7 @@ impl Transport for DeadlineRecvTransport {
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: hibana::runtime::transport::Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -52,7 +51,7 @@ impl Transport for DeadlineRecvTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         core::hint::black_box(context.waker());
         core::hint::black_box((rx.session_id.raw(), rx.lane, rx.role));
         Poll::Ready(Err(self.error))
@@ -62,7 +61,7 @@ impl Transport for DeadlineRecvTransport {
         core::hint::black_box(tx);
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         core::hint::black_box(rx);
         Ok(())
     }
@@ -80,7 +79,6 @@ struct MalformedRx {
 }
 
 impl Transport for MalformedRecvTransport {
-    type Error = TestTransportError;
     type Tx<'a>
         = ()
     where
@@ -103,7 +101,7 @@ impl Transport for MalformedRecvTransport {
         _tx: &'a mut Self::Tx<'a>,
         _outgoing: hibana::runtime::transport::Outgoing<'f>,
         _context: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -114,7 +112,7 @@ impl Transport for MalformedRecvTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         context: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         core::hint::black_box(context.waker());
         if rx.delivered {
             return Poll::Pending;
@@ -130,7 +128,7 @@ impl Transport for MalformedRecvTransport {
         core::hint::black_box(tx);
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         core::hint::black_box(rx);
         Ok(())
     }

@@ -89,9 +89,55 @@ fn production_sources_do_not_reintroduce_transport_fragmentation_axis() {
 }
 
 #[test]
+fn transport_surface_has_no_custom_error_axis() {
+    let transport = read("src/transport.rs");
+    let trait_body = transport
+        .split("pub trait Transport")
+        .nth(1)
+        .expect("Transport trait must exist")
+        .split("/// Observability helpers")
+        .next()
+        .expect("Transport trait must precede trace module");
+    for forbidden in ["type Error", "Self::Error", "Into<TransportError>"] {
+        assert!(
+            !trait_body.contains(forbidden),
+            "Transport trait must return compact TransportError directly: {forbidden}"
+        );
+    }
+
+    let transport_boundary = [
+        read("src/transport.rs"),
+        read("src/endpoint/kernel/lane_port.rs"),
+        read("src/rendezvous/port/recv_frame.rs"),
+    ]
+    .join("\n");
+    for forbidden in ["Into<TransportError>", "map_err(Into::into)"] {
+        assert!(
+            !transport_boundary.contains(forbidden),
+            "transport boundary must not keep custom-error erasure residue: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn tap_reader_surface_stays_minimal() {
     let event = read("src/observe/event.rs");
     let allowlist = read(".github/allowlists/runtime-public-api.txt");
+    let tap_event_attrs = event
+        .split("pub struct TapEvent")
+        .next()
+        .expect("TapEvent declaration must exist")
+        .rsplit("#[derive")
+        .next()
+        .expect("TapEvent derive attributes must be visible");
+    assert!(
+        !tap_event_attrs.contains("Debug"),
+        "TapEvent must not derive raw storage Debug"
+    );
+    assert!(
+        event.contains("impl core::fmt::Debug for TapEvent"),
+        "TapEvent Debug must stay semantic instead of exposing raw bytes"
+    );
     for required in [
         "TapEvent::ts",
         "TapEvent::id",

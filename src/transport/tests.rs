@@ -54,7 +54,6 @@ impl WakerAwareTransport {
 }
 
 impl Transport for WakerAwareTransport {
-    type Error = TransportError;
     type Tx<'a>
         = ()
     where
@@ -74,7 +73,7 @@ impl Transport for WakerAwareTransport {
         tx: &'a mut Self::Tx<'a>,
         outgoing: Outgoing<'f>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<(), Self::Error>>
+    ) -> Poll<Result<(), TransportError>>
     where
         'a: 'f,
     {
@@ -86,7 +85,7 @@ impl Transport for WakerAwareTransport {
         &'a self,
         rx: &'a mut Self::Rx<'a>,
         cx: &mut Context<'_>,
-    ) -> Poll<Result<ReceivedFrame<'a>, Self::Error>> {
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
         static PAYLOAD: [u8; 0] = [];
         core::hint::black_box(rx);
         self.state.store_waker(cx.waker());
@@ -101,7 +100,7 @@ impl Transport for WakerAwareTransport {
         core::hint::black_box(tx);
     }
 
-    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), Self::Error> {
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
         core::hint::black_box(rx);
         self.state.set_ready();
         Ok(())
