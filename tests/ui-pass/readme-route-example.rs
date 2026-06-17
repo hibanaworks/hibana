@@ -3,7 +3,7 @@ use hibana::runtime::program::{RoleProgram, project};
 
 async fn endpoint_offer_recv_example(
     endpoint: &mut hibana::Endpoint<'_, 1>,
-) -> hibana::EndpointResult<()> {
+) -> core::result::Result<(), hibana::EndpointError> {
     let branch = endpoint.offer().await?;
     match branch.label() {
         31 => {

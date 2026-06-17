@@ -1,12 +1,12 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     ActiveEntrySet, Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
-    CursorEndpoint, DeferReason, FrontierDeferOutcome, FrontierObservationDomain,
-    FrontierObservationKey, FrontierVisitSet, IngressEvidenceState, LaneSetView, ObservedEntrySet,
-    OfferEntryObservedState, OfferEntryPosition, OfferEvidenceOutcome, OfferLaneEntrySlotMasks,
-    OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult,
-    ResolverDeferProgress, RouteArmToken, ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId,
-    Transport, frontier_observation_key_view_from_storage,
+    CursorEndpoint, FrontierDeferOutcome, FrontierObservationDomain, FrontierObservationKey,
+    FrontierVisitSet, IngressEvidenceState, LaneSetView, ObservedEntrySet, OfferEntryObservedState,
+    OfferEntryPosition, OfferEvidenceOutcome, OfferLaneEntrySlotMasks, OfferProgressState,
+    OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult, RouteArmToken,
+    ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId, Transport,
+    frontier_observation_key_view_from_storage,
     frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
     lane_port, state_index_to_usize,
 };
@@ -15,10 +15,7 @@ use crate::global::typestate::PackedEventConflict;
 pub(super) struct FrontierDeferRequest {
     pub(super) scope_id: ScopeId,
     pub(super) current_parallel: Option<ScopeId>,
-    pub(super) reason: DeferReason,
-    pub(super) offer_lane: u8,
     pub(super) ingress: IngressEvidenceState,
-    pub(super) selected_arm: Option<u8>,
 }
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -391,35 +388,11 @@ where
         let FrontierDeferRequest {
             scope_id,
             current_parallel,
-            reason,
-            offer_lane,
             ingress,
-            selected_arm,
         } = request;
         let fingerprint = self.evidence_fingerprint(scope_id, ingress);
         let evidence = progress.on_defer(fingerprint);
-        let defer_progress = if matches!(evidence, OfferEvidenceOutcome::Pending) {
-            ResolverDeferProgress::Pending
-        } else {
-            ResolverDeferProgress::Settled
-        };
-        let is_controller = self.cursor.is_route_controller(scope_id);
-        let frontier = CursorEndpoint::<ROLE, T>::frontier_kind_for_cursor(
-            &self.cursor,
-            scope_id,
-            is_controller,
-        );
-        let hint = self.peek_scope_frame_hint(scope_id);
-        self.emit_resolver_defer_event(super::super::core::ResolverDeferAudit {
-            reason,
-            scope_id,
-            frontier,
-            selected_arm,
-            hint,
-            ingress,
-            progress: defer_progress,
-            lane: offer_lane,
-        });
+        let is_pending = matches!(evidence, OfferEvidenceOutcome::Pending);
         visited.record(scope_id);
         let current_entry_idx = self.cursor.index();
         let current_is_controller = self.cursor.is_route_controller(scope_id);
@@ -444,7 +417,7 @@ where
             }
             ControlFlow::<()>::Continue(())
         });
-        if defer_progress.is_pending() {
+        if is_pending {
             let Some(candidate) = snapshot.select_yield_candidate(*visited) else {
                 return FrontierDeferOutcome::Pending;
             };

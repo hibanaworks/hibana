@@ -43,7 +43,6 @@ SURFACES: dict[str, Surface] = {
             "src/runtime.rs",
             "src/runtime/buckets.rs",
             "src/runtime/session_kit.rs",
-            "src/runtime/fluent.rs",
             "src/session/types.rs",
             "src/session/cluster/core/dynamic_resolvers.rs",
             "src/session/cluster/error.rs",

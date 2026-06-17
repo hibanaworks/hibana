@@ -95,15 +95,9 @@ fn with_visible_reentry_workspace(
                 .expect("register rendezvous");
             let sid = SessionId::new(sid);
             let mut controller = rv
-                .session(sid)
-                .role(&controller_program)
-                .enter()
+                .enter(sid, &controller_program)
                 .expect("attach controller");
-            let mut worker = rv
-                .session(sid)
-                .role(&worker_program)
-                .enter()
-                .expect("attach worker");
+            let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
             run(&mut controller, &mut worker);
         });
     });

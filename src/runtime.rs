@@ -10,8 +10,7 @@
 //!   -> runtime::program::project(&program)
 //!   -> SessionKitStorage::uninit().init()
 //!   -> kit.rendezvous(&mut slab, transport)
-//!   -> registered rendezvous .session(...).role(...)
-//!   -> role witness `.enter()`
+//!   -> registered rendezvous `.enter(sid, &role_program)`
 //!   -> Endpoint
 //! ```
 //!
@@ -44,12 +43,9 @@
 pub use crate::session::cluster::error::AttachError;
 
 mod buckets;
-mod fluent;
 mod session_kit;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
 pub use buckets::*;
-pub use session_kit::{
-    RendezvousKit, RoleKit, SessionKit, SessionKitStorage, SessionRendezvousKit, SessionRoleKit,
-};
+pub use session_kit::{RendezvousKit, SessionKit, SessionKitStorage};

@@ -81,16 +81,8 @@ fn cursor_send_and_recv_roundtrip() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(1);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let () = futures::executor::block_on(origin_endpoint.send::<Msg<1, u32>>(&42))
                 .expect("send succeeds");
@@ -120,19 +112,13 @@ fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
 
             let sid = SessionId::new(8);
             let mut endpoint0 = rv
-                .session(sid)
-                .role(&role0)
-                .enter()
+                .enter(sid, &role0)
                 .expect("attach role0 before lease table growth");
             let mut endpoint1 = rv
-                .session(sid)
-                .role(&role1)
-                .enter()
+                .enter(sid, &role1)
                 .expect("attach role1 and grow lease table");
             let mut endpoint2 = rv
-                .session(sid)
-                .role(&role2)
-                .enter()
+                .enter(sid, &role2)
                 .expect("attach role2 and grow lease table again");
 
             futures::executor::block_on(
@@ -169,11 +155,11 @@ fn live_endpoint_send_survives_failed_later_attach_rollback() {
                     .rendezvous(&mut slab[..slab_bytes], transport.clone())
                     .expect("register constrained rendezvous");
                 let sid = SessionId::new(10);
-                let Ok(mut endpoint0) = rv.session(sid).role(&role0).enter() else {
+                let Ok(mut endpoint0) = rv.enter(sid, &role0) else {
                     return;
                 };
 
-                if rv.session(sid).role(&role1).enter().is_ok() {
+                if rv.enter(sid, &role1).is_ok() {
                     return;
                 }
 
@@ -205,11 +191,7 @@ fn direct_send_capacity_emits_transport_fault_tap() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(74);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
             let error = futures::executor::block_on(
                 origin_endpoint.send::<Msg<3, FramePayload>>(&FramePayload(*b"full")),
             )
@@ -248,16 +230,8 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(41);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             futures::executor::block_on(origin_endpoint.send::<Msg<41, u32>>(&11))
                 .expect("first send succeeds");
@@ -309,16 +283,8 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(42);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let first = 11u32;
             let mut send_future = Box::pin(origin_endpoint.send::<Msg<42, u32>>(&first));
@@ -370,16 +336,8 @@ fn send_preview_error_reports_debug_boundary() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(11);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
             let err = futures::executor::block_on(origin_endpoint.send::<Msg<2, u32>>(&22))

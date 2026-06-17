@@ -30,23 +30,6 @@ impl DecisionArm {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DecisionResolution {
-    Arm(DecisionArm),
-    /// No arm is currently justified.
-    ///
-    /// Passive offer resolution keeps waiting for new evidence. Active
-    /// controller sends cannot park after choosing to send a frame, so they
-    /// fail the attempt with `ResolverReject`.
-    Defer,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DynamicResolverResolution {
-    DecisionArm { arm: u8 },
-    Defer,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResolverOp {
     Reject,
     ResolveDecision,
@@ -122,7 +105,7 @@ impl From<ClusterError> for ResolverError {
 #[derive(Clone, Copy)]
 struct DecisionResolverStatePayload<S> {
     state: *const S,
-    pub(crate) resolver: fn(&S) -> Result<DecisionResolution, ResolverError>,
+    pub(crate) resolver: fn(&S) -> Result<DecisionArm, ResolverError>,
 }
 
 #[derive(Clone, Copy)]
@@ -173,13 +156,13 @@ impl DecisionResolverStorage {
 #[derive(Clone, Copy)]
 pub(crate) struct ErasedResolverRef<'cfg> {
     storage: DecisionResolverStorage,
-    dispatch: unsafe fn(DecisionResolverStorage) -> Result<DecisionResolution, ResolverError>,
+    dispatch: unsafe fn(DecisionResolverStorage) -> Result<DecisionArm, ResolverError>,
     _marker: PhantomData<&'cfg ()>,
 }
 
 impl<'cfg> ErasedResolverRef<'cfg> {
     #[inline]
-    pub(crate) fn resolve_decision(self) -> Result<DecisionResolution, ResolverError> {
+    pub(crate) fn resolve_decision(self) -> Result<DecisionArm, ResolverError> {
         /* SAFETY: resolver storage is registered in the cluster table and borrowed only through the resolver slot owner. */
         unsafe {
             (self.dispatch)(self.storage)
@@ -203,7 +186,7 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
     #[inline]
     pub fn decision_state<S: 'cfg>(
         state: &'cfg S,
-        resolver: fn(&S) -> Result<DecisionResolution, ResolverError>,
+        resolver: fn(&S) -> Result<DecisionArm, ResolverError>,
     ) -> Self {
         let payload = DecisionResolverStatePayload {
             state: core::ptr::from_ref(state),
@@ -223,7 +206,7 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
     /// This is for typed resolver owners. It does not commit route/session progress.
     /// It does not expose the erased storage handle.
     #[inline]
-    pub fn evaluate(self) -> Result<DecisionResolution, ResolverError> {
+    pub fn evaluate(self) -> Result<DecisionArm, ResolverError> {
         self.inner.resolve_decision()
     }
 
@@ -235,7 +218,7 @@ impl<'cfg, const RESOLVER_ID: u16> ResolverRef<'cfg, RESOLVER_ID> {
 
 unsafe fn dispatch_decision_state<S>(
     storage: DecisionResolverStorage,
-) -> Result<DecisionResolution, ResolverError> {
+) -> Result<DecisionArm, ResolverError> {
     let payload = unsafe { storage.restore::<S>() };
     let state = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*payload.state };
     (payload.resolver)(state)

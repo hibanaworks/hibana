@@ -1,9 +1,9 @@
 use super::super::super::{
-    Arm, CachedRecvMeta, CachedRouteArm, ClusterError, CommitDelta, CursorEndpoint,
-    DynamicResolverResolution, EffIndex, EventSemanticKind, OfferScopeSelection, RecvError,
-    RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm, RouteArmToken, RouteResolveStep,
-    RouteResolver, ScopeArmMaterializationMeta, ScopeId, SendMeta, TapEvent, Transport,
-    checked_state_index, controller_arm_label, controller_arm_semantic_kind, emit, events,
+    Arm, CachedRecvMeta, CachedRouteArm, ClusterError, CommitDelta, CursorEndpoint, EffIndex,
+    EventSemanticKind, OfferScopeSelection, RecvError, RecvMeta, RecvResult, RendezvousId,
+    ResolvedRouteArm, RouteArmToken, RouteResolveStep, RouteResolver, ScopeArmMaterializationMeta,
+    ScopeId, SendMeta, TapEvent, Transport, checked_state_index, controller_arm_label,
+    controller_arm_semantic_kind, emit, events,
     prepare_route_site_materialization_rows_from_resident_route_commit_range,
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
@@ -516,11 +516,7 @@ where
                 | ClusterError::DynamicResolverInvariant { .. },
             ) => return Err(RecvError::PhaseInvariant),
         };
-        let arm = match resolution {
-            DynamicResolverResolution::DecisionArm { arm } => arm,
-            DynamicResolverResolution::Defer => return Ok(RouteResolveStep::Deferred),
-        };
-        let arm = Arm::new(arm).ok_or(RecvError::PhaseInvariant)?;
+        let arm = Arm::new(resolution.index()).ok_or(RecvError::PhaseInvariant)?;
         self.record_route_arm_selection_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);
         self.record_scope_ack(scope_id, RouteArmToken::from_resolver(arm));
         self.emit_route_arm_selection(scope_id, RouteArmToken::from_resolver(arm), offer_lane);

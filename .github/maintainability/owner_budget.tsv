@@ -16,10 +16,10 @@ src/endpoint/kernel/offer/materialization.rs	250	1	recursive
 src/endpoint/kernel/offer/passive.rs	410	1	recursive
 src/endpoint/kernel/offer/profile.rs	240	1	recursive
 src/endpoint/kernel/offer/profile/planning.rs	170	1	recursive
-src/endpoint/kernel/offer/resolve.rs	603	1	recursive
+src/endpoint/kernel/offer/resolve.rs	520	1	recursive
 src/endpoint/kernel/offer/resolve_materialization.rs	238	1	recursive
 src/endpoint/kernel/offer/resolve_types.rs	120	1	recursive
-src/endpoint/kernel/offer/select.rs	814	1	recursive
+src/endpoint/kernel/offer/select.rs	760	1	recursive
 src/endpoint/kernel/offer/select_alignment.rs	220	1	recursive
 src/endpoint/kernel/offer/select_alignment/candidates.rs	220	1	recursive
 src/endpoint/kernel/offer/select_alignment/model/entry.rs	120	1	recursive
@@ -50,7 +50,7 @@ src/endpoint/kernel/core/public_types.rs	210	1	recursive
 src/endpoint/kernel/core/decision_resolver.rs	50	1	recursive
 src/endpoint/kernel/core/decision_resolver/impls.rs	160	1	recursive
 src/endpoint/kernel/core/decision_resolver/impls/select.rs	650	1	recursive
-src/endpoint/kernel/core/route_preview.rs	360	1	recursive
+src/endpoint/kernel/core/route_preview.rs	260	1	recursive
 src/endpoint/kernel/core/send_preview.rs	160	1	recursive
 src/endpoint/kernel/core/runtime_types.rs	480	1	recursive
 src/endpoint/kernel/core/send_ops.rs	500	1	recursive
@@ -70,7 +70,7 @@ src/session/cluster/core/cluster_storage.rs	120	1	recursive
 src/session/cluster/core/dynamic_resolvers.rs	380	1	recursive
 src/session/cluster/core/endpoint_attach.rs	460	1	recursive
 src/session/cluster/core/session_cluster_ops.rs	520	1	recursive
-src/session/cluster/core/session_effect_steps.rs	300	1	recursive
+src/session/cluster/core/session_effect_steps.rs	240	1	recursive
 src/session/cluster/effects.rs	140	1	recursive
 src/session/cluster/error/debug.rs	120	1	recursive
 src/session/cluster/error.rs	191	1	recursive

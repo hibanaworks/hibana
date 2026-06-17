@@ -76,11 +76,7 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
                 let sid = SessionId::new(7);
                 let controller_program = controller_program();
                 {
-                    let endpoint = rv
-                        .session(sid)
-                        .role(&controller_program)
-                        .enter()
-                        .expect("attach cursor");
+                    let endpoint = rv.enter(sid, &controller_program).expect("attach cursor");
                     core::hint::black_box(&endpoint);
                 }
 
@@ -130,9 +126,7 @@ fn lane_lifecycle_keeps_full_session_id_in_evidence() {
 
             for sid_raw in [0x0001_0007u32, 0x0002_0007u32] {
                 let endpoint = rv
-                    .session(SessionId::new(sid_raw))
-                    .role(&controller_program)
-                    .enter()
+                    .enter(SessionId::new(sid_raw), &controller_program)
                     .expect("attach cursor");
                 drop(endpoint);
             }
@@ -192,14 +186,10 @@ fn shared_sid_lane_emits_one_association_pair() {
             let sid = SessionId::new(11);
             let controller_program = controller_program();
             let endpoint_a = rv
-                .session(sid)
-                .role(&controller_program)
-                .enter()
+                .enter(sid, &controller_program)
                 .expect("attach first cursor");
             let endpoint_b = rv
-                .session(sid)
-                .role(&controller_program)
-                .enter()
+                .enter(sid, &controller_program)
                 .expect("attach second cursor");
 
             drop(endpoint_a);
@@ -248,9 +238,7 @@ fn new_tap_port_reads_all_runtime_events_before_wrap() {
 
             for sid_raw in 100..110 {
                 let endpoint = rv
-                    .session(SessionId::new(sid_raw))
-                    .role(&controller_program)
-                    .enter()
+                    .enter(SessionId::new(sid_raw), &controller_program)
                     .expect("attach cursor");
                 drop(endpoint);
             }
@@ -283,9 +271,7 @@ fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
             let base_sid = 0x0001_0200u32;
             for sid_raw in base_sid..(base_sid + 35) {
                 let endpoint = rv
-                    .session(SessionId::new(sid_raw))
-                    .role(&controller_program)
-                    .enter()
+                    .enter(SessionId::new(sid_raw), &controller_program)
                     .expect("attach cursor");
                 drop(endpoint);
             }

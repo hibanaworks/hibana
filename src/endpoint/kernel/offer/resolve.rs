@@ -4,7 +4,7 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
+    CursorEndpoint, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
     FrontierVisitSet, IngressEvidenceState, OfferAuthorityPath, OfferResolveState, RecvError,
     RecvResult, ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
     RouteResolveStep, Transport,
@@ -259,45 +259,18 @@ where
     fn controller_resolver_authority(
         &mut self,
         state: &mut OfferResolveState<'r>,
-        frontier_visited: &mut FrontierVisitSet,
+        _frontier_visited: &mut FrontierVisitSet,
     ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         let scope_id = selection.scope_id;
-        loop {
-            let resolver_step = match self.prepare_route_arm_selection_from_resolver(scope_id) {
-                Ok(step) => step,
-                Err(err) => return Poll::Ready(Err(err)),
-            };
-            match resolver_step {
-                RouteResolveStep::Resolved(resolver_arm) => {
-                    return Poll::Ready(Ok(RouteResolveOutcome::Token(
-                        RouteArmToken::from_resolver(resolver_arm),
-                    )));
-                }
-                RouteResolveStep::Reject(resolver_id) => {
-                    return Poll::Ready(Err(RecvError::ResolverReject { resolver_id }));
-                }
-                RouteResolveStep::Deferred => {
-                    match self.on_frontier_defer(
-                        &mut state.progress,
-                        FrontierDeferRequest {
-                            scope_id,
-                            current_parallel: selection.frontier_parallel_root,
-                            reason: DeferReason::ResolverDeferred,
-                            offer_lane: selection.offer_lane,
-                            ingress: state.ingress.evidence_state(),
-                            selected_arm: None,
-                        },
-                        frontier_visited,
-                    ) {
-                        FrontierDeferOutcome::Continue => continue,
-                        FrontierDeferOutcome::Yielded => {
-                            return Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier));
-                        }
-                        FrontierDeferOutcome::Pending => return Poll::Pending,
-                    }
-                }
+        match self.prepare_route_arm_selection_from_resolver(scope_id) {
+            Ok(RouteResolveStep::Resolved(resolver_arm)) => Poll::Ready(Ok(
+                RouteResolveOutcome::Token(RouteArmToken::from_resolver(resolver_arm)),
+            )),
+            Ok(RouteResolveStep::Reject(resolver_id)) => {
+                Poll::Ready(Err(RecvError::ResolverReject { resolver_id }))
             }
+            Err(err) => Poll::Ready(Err(err)),
         }
     }
 
@@ -347,9 +320,9 @@ where
     fn passive_dynamic_resolver_authority(
         &mut self,
         state: &mut OfferResolveState<'r>,
-        pending_recv: &mut super::lane_port::PendingRecv,
-        frontier_visited: &mut FrontierVisitSet,
-        cx: &mut core::task::Context<'_>,
+        _pending_recv: &mut super::lane_port::PendingRecv,
+        _frontier_visited: &mut FrontierVisitSet,
+        _cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
         let scope_id = selection.scope_id;
@@ -364,32 +337,6 @@ where
             RouteResolveStep::Reject(resolver_id) => {
                 Poll::Ready(Err(RecvError::ResolverReject { resolver_id }))
             }
-            RouteResolveStep::Deferred => match self.on_frontier_defer(
-                &mut state.progress,
-                FrontierDeferRequest {
-                    scope_id,
-                    current_parallel: selection.frontier_parallel_root,
-                    reason: DeferReason::ResolverDeferred,
-                    offer_lane: selection.offer_lane,
-                    ingress: state.ingress.evidence_state(),
-                    selected_arm: None,
-                },
-                frontier_visited,
-            ) {
-                FrontierDeferOutcome::Continue => {
-                    Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier))
-                }
-                FrontierDeferOutcome::Yielded => {
-                    state.pending.arm_yield_restart();
-                    self.poll_resolve_pending_as(
-                        state,
-                        pending_recv,
-                        cx,
-                        RouteResolveOutcome::RestartFrontier,
-                    )
-                }
-                FrontierDeferOutcome::Pending => Poll::Pending,
-            },
         }
     }
 
@@ -442,10 +389,7 @@ where
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
                 current_parallel: selection.frontier_parallel_root,
-                reason: DeferReason::EvidenceAbsent,
-                offer_lane: selection.offer_lane,
                 ingress,
-                selected_arm: None,
             },
             frontier_visited,
         ) {

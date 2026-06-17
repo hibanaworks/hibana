@@ -1,6 +1,4 @@
-use super::{
-    Endpoint, EndpointError, EndpointOp, EndpointResult, RecvResult, RouteBranch, carrier,
-};
+use super::{Endpoint, EndpointError, EndpointOp, RecvResult, RouteBranch, carrier};
 use crate::transport::wire::{CodecError, Payload, WirePayload};
 use core::{
     future::Future,
@@ -144,9 +142,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
 impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     #[inline]
     fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
-        /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
-        let lease =
-            RecvFutureLease::from_public_lease(unsafe { endpoint.init_public_recv_state() });
+        let lease = RecvFutureLease::from_public_lease(endpoint.init_public_recv_state());
         Self {
             endpoint: core::ptr::from_mut(endpoint),
             lease,
@@ -216,7 +212,7 @@ where
     M: crate::g::Message,
     M::Payload: WirePayload,
 {
-    type Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>;
+    type Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };
@@ -241,7 +237,7 @@ where
     M: crate::g::Message,
     M::Payload: WirePayload,
 {
-    type Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>;
+    type Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };

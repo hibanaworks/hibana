@@ -13,7 +13,6 @@ pub mod tap {
     pub use crate::observe::core::{Evidence, TapEvent, TapPort};
     pub use crate::observe::ids::{
         ENDPOINT_RECV, ENDPOINT_SEND, ENDPOINT_SESSION, LANE_ACQUIRE, LANE_RELEASE, RESOLVER_AUDIT,
-        RESOLVER_AUDIT_DEFER, RESOLVER_REPLAY_EVENT, RESOLVER_REPLAY_EVENT_EXT,
         ROUTE_ARM_SELECTION, TRANSPORT_FAULT, TRANSPORT_FAULT_CAPACITY, TRANSPORT_FAULT_DEADLINE,
         TRANSPORT_FAULT_FAILED, TRANSPORT_FAULT_OFFLINE, TRANSPORT_FRAME, TRANSPORT_MISMATCH,
         TRANSPORT_MISMATCH_LABEL, TRANSPORT_MISMATCH_LANE, TRANSPORT_MISMATCH_PEER_ROLE,
@@ -23,9 +22,7 @@ pub mod tap {
 
 /// Resolver and decision-input surface for explicit route resolution.
 pub mod resolver {
-    pub use crate::session::cluster::core::{
-        DecisionArm, DecisionResolution, ResolverError, ResolverRef,
-    };
+    pub use crate::session::cluster::core::{DecisionArm, ResolverError, ResolverRef};
 }
 
 /// Wire payload codec surface.

@@ -17,7 +17,7 @@ use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{
     SessionKitStorage,
     ids::SessionId,
-    resolver::{DecisionArm, DecisionResolution, ResolverRef},
+    resolver::{DecisionArm, ResolverRef},
     transport::{ReceivedFrame, Transport, TransportError},
 };
 use runtime_support::with_runtime_workspace;
@@ -246,8 +246,10 @@ fn route_with_late_role2<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&program)
 }
 
-fn choose_left(_: &()) -> Result<DecisionResolution, hibana::runtime::resolver::ResolverError> {
-    Ok(DecisionResolution::Arm(DecisionArm::Left))
+fn choose_left(
+    _: &(),
+) -> Result<hibana::runtime::resolver::DecisionArm, hibana::runtime::resolver::ResolverError> {
+    Ok(DecisionArm::Left)
 }
 
 fn with_route_workspace(
@@ -267,15 +269,9 @@ fn with_route_workspace(
             let controller_program = controller_program();
             let worker_program = worker_program();
             let mut controller = rv
-                .session(sid)
-                .role(&controller_program)
-                .enter()
+                .enter(sid, &controller_program)
                 .expect("attach controller");
-            let mut worker = rv
-                .session(sid)
-                .role(&worker_program)
-                .enter()
-                .expect("attach worker");
+            let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
             run(&mut controller, &mut worker, &transport);
         });
     });
@@ -298,15 +294,9 @@ fn with_deterministic_route_workspace(
             let controller_program = controller_program();
             let worker_program = worker_program();
             let mut controller = rv
-                .session(sid)
-                .role(&controller_program)
-                .enter()
+                .enter(sid, &controller_program)
                 .expect("attach controller");
-            let mut worker = rv
-                .session(sid)
-                .role(&worker_program)
-                .enter()
-                .expect("attach worker");
+            let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
             run(&mut controller, &mut worker, &transport);
         });
     });
@@ -361,20 +351,10 @@ fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
             let role0 = route_with_late_role2::<0>();
             let role1 = route_with_late_role2::<1>();
             let role2 = route_with_late_role2::<2>();
-            let mut controller = rv
-                .session(sid)
-                .role(&role0)
-                .enter()
-                .expect("attach route controller");
-            let mut worker = rv
-                .session(sid)
-                .role(&role1)
-                .enter()
-                .expect("attach route worker");
+            let mut controller = rv.enter(sid, &role0).expect("attach route controller");
+            let mut worker = rv.enter(sid, &role1).expect("attach route worker");
             let late_role = rv
-                .session(sid)
-                .role(&role2)
-                .enter()
+                .enter(sid, &role2)
                 .expect("attach late role and grow lease table");
             core::hint::black_box(&late_role);
 
@@ -561,32 +541,26 @@ fn offer_materialized_label_mismatch_fails_closed() {
             let sid = SessionId::new(903);
             let controller_program = resolved_controller_program();
             let worker_program = resolved_worker_program();
-            rv.role(&controller_program)
-                .set_resolver(
-                    ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_state(
-                        &MATERIALIZED_MISMATCH_STATE,
-                        choose_left,
-                    ),
-                )
-                .expect("install controller resolver");
-            rv.role(&worker_program)
-                .set_resolver(
-                    ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_state(
-                        &MATERIALIZED_MISMATCH_STATE,
-                        choose_left,
-                    ),
-                )
-                .expect("install worker resolver");
+            rv.set_resolver(
+                &controller_program,
+                ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_state(
+                    &MATERIALIZED_MISMATCH_STATE,
+                    choose_left,
+                ),
+            )
+            .expect("install controller resolver");
+            rv.set_resolver(
+                &worker_program,
+                ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_state(
+                    &MATERIALIZED_MISMATCH_STATE,
+                    choose_left,
+                ),
+            )
+            .expect("install worker resolver");
             let mut controller = rv
-                .session(sid)
-                .role(&controller_program)
-                .enter()
+                .enter(sid, &controller_program)
                 .expect("attach controller");
-            let mut worker = rv
-                .session(sid)
-                .role(&worker_program)
-                .enter()
-                .expect("attach worker");
+            let mut worker = rv.enter(sid, &worker_program).expect("attach worker");
 
             futures::executor::block_on(send_left(&mut controller, 1234));
             let error = match worker

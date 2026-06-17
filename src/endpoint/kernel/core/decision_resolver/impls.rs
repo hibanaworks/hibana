@@ -1,8 +1,8 @@
 mod select;
 
 use super::super::{
-    CursorEndpoint, DynamicResolverResolution, EventSemanticKind, ResolverSlot, SendError,
-    SendMeta, SendResult, Transport, events, ids,
+    CursorEndpoint, EventSemanticKind, ResolverSlot, SendError, SendMeta, SendResult, Transport,
+    events, ids,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -68,12 +68,10 @@ where
             .resolve_dynamic_resolver(self.rendezvous_id(), meta.eff_index, resolver_id)
             .map_err(Self::send_error_from_cluster)?;
 
-        match resolution {
-            DynamicResolverResolution::DecisionArm { arm } if arm == arm_index => Ok(()),
-            DynamicResolverResolution::DecisionArm { .. } => {
-                Err(SendError::ResolverReject { resolver_id })
-            }
-            DynamicResolverResolution::Defer => Err(SendError::ResolverReject { resolver_id }),
+        if resolution.index() == arm_index {
+            Ok(())
+        } else {
+            Err(SendError::ResolverReject { resolver_id })
         }
     }
 

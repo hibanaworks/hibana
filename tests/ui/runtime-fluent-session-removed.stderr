@@ -1,0 +1,5 @@
+error[E0599]: no method named `session` found for reference `&RendezvousKit<'_, '_, T>` in the current scope
+ --> tests/ui/runtime-fluent-session-removed.rs:6:16
+  |
+6 |     let _ = rv.session(sid);
+  |                ^^^^^^^ method not found in `&RendezvousKit<'_, '_, T>`

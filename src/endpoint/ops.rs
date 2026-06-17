@@ -7,7 +7,7 @@
 // cache raw kernel pointers or publish progress without the carrier operation.
 
 use super::{
-    Endpoint, EndpointResult, RecvFuture, RecvResult, RouteBranch, SendResult, carrier,
+    Endpoint, EndpointError, RecvFuture, RecvResult, RouteBranch, SendResult, carrier,
     futures::OfferFuture, kernel, send,
 };
 use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
@@ -29,13 +29,67 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 
     #[inline]
     fn ops(&self) -> &carrier::EndpointOps<'r> {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
+        /* SAFETY: `Endpoint::from_handle` stores a non-null `KernelEndpointHeader`
+        pointer installed by the rendezvous carrier; the header remains pinned for
+        `'r`, and this shared read exposes only the immutable ops table. */
         unsafe { self.ptr.as_ref().ops() }
     }
 
     #[inline]
     fn erased_ptr(&self) -> core::ptr::NonNull<()> {
         self.ptr.cast()
+    }
+
+    #[inline]
+    fn call_handle_op(
+        &mut self,
+        op: unsafe fn(core::ptr::NonNull<()>, carrier::PackedEndpointHandle),
+    ) {
+        unsafe {
+            /* SAFETY: `self.ptr` is this endpoint's rendezvous-installed
+            `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
+            the same generation, and `&mut self` excludes a second public
+            endpoint operation while the callback mutates resident state. */
+            op(self.erased_ptr(), self.handle);
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    fn call_lease_op(
+        &mut self,
+        op: unsafe fn(
+            core::ptr::NonNull<()>,
+            carrier::PackedEndpointHandle,
+        ) -> kernel::PublicOpLease,
+    ) -> kernel::PublicOpLease {
+        unsafe {
+            /* SAFETY: `self.ptr` is this endpoint's rendezvous-installed
+            `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
+            the same generation, and `&mut self` excludes a second public
+            endpoint operation while the callback mutates resident state. */
+            op(self.erased_ptr(), self.handle)
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    fn call_send_init_op(
+        &mut self,
+        op: unsafe fn(
+            core::ptr::NonNull<()>,
+            carrier::PackedEndpointHandle,
+            *const kernel::SendInit,
+        ) -> kernel::PublicOpLease,
+        init: &kernel::SendInit,
+    ) -> kernel::PublicOpLease {
+        unsafe {
+            /* SAFETY: `self.ptr` is this endpoint's rendezvous-installed
+            `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
+            the same generation, and `init` is a caller-owned initialized
+            `SendInit` slot read only during this carrier callback. */
+            op(self.erased_ptr(), self.handle, core::ptr::from_ref(init))
+        }
     }
 
     #[inline]
@@ -47,82 +101,60 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    pub(super) unsafe fn drop_kernel_endpoint(&mut self) {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().drop_endpoint)(self.erased_ptr(), self.handle);
-        }
+    pub(super) fn drop_kernel_endpoint(&mut self) {
+        self.call_handle_op(self.ops().drop_endpoint);
     }
 
     #[inline]
-    pub(super) unsafe fn reset_public_offer_state(&mut self) {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().reset_public_offer_state)(self.erased_ptr(), self.handle);
-        }
+    pub(super) fn reset_public_offer_state(&mut self) {
+        self.call_handle_op(self.ops().reset_public_offer_state);
     }
 
     #[inline]
     #[must_use]
-    pub(super) unsafe fn init_public_offer_state(&mut self) -> kernel::PublicOpLease {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe { (self.ops().init_public_offer_state)(self.erased_ptr(), self.handle) }
+    pub(super) fn init_public_offer_state(&mut self) -> kernel::PublicOpLease {
+        self.call_lease_op(self.ops().init_public_offer_state)
     }
 
     #[inline]
-    pub(super) unsafe fn restore_public_route_branch(&mut self) {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().restore_public_route_branch)(self.erased_ptr(), self.handle);
-        }
+    pub(super) fn restore_public_route_branch(&mut self) {
+        self.call_handle_op(self.ops().restore_public_route_branch);
     }
 
     #[inline]
     #[must_use]
-    pub(super) unsafe fn init_public_send_state(
+    pub(super) fn init_public_send_state(
         &mut self,
         init: &kernel::SendInit,
     ) -> kernel::PublicOpLease {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe { (self.ops().init_public_send_state)(self.erased_ptr(), self.handle, init) }
+        self.call_send_init_op(self.ops().init_public_send_state, init)
     }
 
     #[inline]
-    pub(super) unsafe fn reset_public_send_state(&mut self) {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().reset_public_send_state)(self.erased_ptr(), self.handle);
-        }
+    pub(super) fn reset_public_send_state(&mut self) {
+        self.call_handle_op(self.ops().reset_public_send_state);
     }
 
     #[inline]
     #[must_use]
-    pub(super) unsafe fn init_public_recv_state(&mut self) -> kernel::PublicOpLease {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe { (self.ops().init_public_recv_state)(self.erased_ptr(), self.handle) }
+    pub(super) fn init_public_recv_state(&mut self) -> kernel::PublicOpLease {
+        self.call_lease_op(self.ops().init_public_recv_state)
     }
 
     #[inline]
-    pub(super) unsafe fn reset_public_recv_state(&mut self) {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().reset_public_recv_state)(self.erased_ptr(), self.handle);
-        }
+    pub(super) fn reset_public_recv_state(&mut self) {
+        self.call_handle_op(self.ops().reset_public_recv_state);
     }
 
     #[inline]
     #[must_use]
-    pub(super) unsafe fn begin_public_decode_state(&mut self) -> kernel::PublicOpLease {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe { (self.ops().begin_public_decode_state)(self.erased_ptr(), self.handle) }
+    pub(super) fn begin_public_decode_state(&mut self) -> kernel::PublicOpLease {
+        self.call_lease_op(self.ops().begin_public_decode_state)
     }
 
     #[inline]
-    pub(super) unsafe fn reset_public_decode_state(&mut self) {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        unsafe {
-            (self.ops().reset_public_decode_state)(self.erased_ptr(), self.handle);
-        }
+    pub(super) fn reset_public_decode_state(&mut self) {
+        self.call_handle_op(self.ops().reset_public_decode_state);
     }
     #[inline]
     pub(super) fn preview_send(
@@ -130,7 +162,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         logical_label: u8,
         out: *mut kernel::SendPreview,
     ) -> SendResult<()> {
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
+        /* SAFETY: `self.ptr` identifies this endpoint's carrier header and
+        `self.handle` names the same generation; `out` is the caller-owned
+        `SendPreview` slot that `preview_send` writes before returning `Ok`. */
         unsafe { (self.ops().preview_send)(self.erased_ptr(), self.handle, logical_label, out) }
     }
 
@@ -142,7 +176,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
+        /* SAFETY: `self.ptr` identifies this endpoint's carrier header,
+        `self.handle` names the same generation, and the local `out` slot is
+        written by `poll_recv` before `assume_init` reads it. */
         unsafe {
             (self.ops().poll_recv)(carrier::RecvPollRequest {
                 ptr: self.erased_ptr(),
@@ -159,7 +195,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     pub(super) fn poll_offer(&mut self, cx: &mut Context<'_>) -> Poll<RecvResult<u8>> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<u8>>>::uninit();
-        /* SAFETY: the owner tracks the initialized prefix and this slot is inside that initialized range. */
+        /* SAFETY: the carrier callback receives this endpoint's header pointer and handle plus a local `MaybeUninit` out slot; the callback writes the poll result before returning and the slot is not read on any other path. */
         unsafe {
             (self.ops().poll_offer)(self.erased_ptr(), self.handle, cx, out.as_mut_ptr());
             out.assume_init()
@@ -174,7 +210,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
+        /* SAFETY: `self.ptr` identifies this endpoint's carrier header,
+        `self.handle` names the same generation, and the local `out` slot is
+        written by `poll_decode` before `assume_init` reads it. */
         unsafe {
             (self.ops().poll_decode)(carrier::DecodePollRequest {
                 ptr: self.erased_ptr(),
@@ -196,7 +234,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ) -> Poll<SendResult<kernel::SendCommitOutcome<'r>>> {
         let mut out =
             core::mem::MaybeUninit::<Poll<SendResult<kernel::SendCommitOutcome<'r>>>>::uninit();
-        /* SAFETY: the owner tracks the initialized prefix and this slot is inside that initialized range. */
+        /* SAFETY: the carrier callback receives this endpoint's header pointer and handle plus a local `MaybeUninit` out slot; the callback writes the poll result before returning and the slot is not read on any other path. */
         unsafe {
             (self.ops().poll_send)(
                 self.erased_ptr(),
@@ -219,7 +257,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: &'a M::Payload,
-    ) -> impl core::future::Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, M, ROLE>
+    ) -> impl core::future::Future<Output = core::result::Result<(), EndpointError>>
+    + 'a
+    + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
         M::Payload: WireEncode + 'a,
@@ -232,12 +272,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         if let Err(error) = self.preview_send(logical_label, preview.as_mut_ptr()) {
             return send::SendFuture::ready_error(error);
         }
-        let preview = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { preview.assume_init() };
+        let preview = /* SAFETY: `preview_send` returned `Ok`, so the carrier callback wrote one `SendPreview` into this local `MaybeUninit` slot before return. */ unsafe { preview.assume_init() };
         let desc =
             send::send_runtime_desc::<M>(crate::transport::FrameLabel::new(preview.frame_label()));
         let init = kernel::SendInit::new(desc, preview);
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
-        match unsafe { self.init_public_send_state(&init) } {
+        match self.init_public_send_state(&init) {
             kernel::PublicOpLease::Held => {}
             kernel::PublicOpLease::Rejected => {
                 return send::SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
@@ -256,7 +295,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// before the error is returned.
     pub fn recv<'e, M>(
         &'e mut self,
-    ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + 'e
+    ) -> impl core::future::Future<
+        Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>,
+    > + 'e
     where
         M: crate::g::Message + 'e,
         M::Payload: WirePayload,
@@ -275,7 +316,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// evidence only.
     pub fn offer<'e>(
         &'e mut self,
-    ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
+    ) -> impl core::future::Future<
+        Output = core::result::Result<RouteBranch<'e, 'r, ROLE>, EndpointError>,
+    > + 'e {
         OfferFuture::new(self)
     }
 }

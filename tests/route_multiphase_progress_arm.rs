@@ -43,7 +43,7 @@ fn multiphase_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
 
 async fn assert_send_blocked<F>(future: F)
 where
-    F: core::future::Future<Output = hibana::EndpointResult<()>>,
+    F: core::future::Future<Output = core::result::Result<(), hibana::EndpointError>>,
 {
     let err = future
         .await
@@ -67,16 +67,8 @@ fn route_arm_future_phase_blocks_post_route_send() {
             let local_program = multiphase_route_program::<LOCAL_ROLE>();
             let worker_program = multiphase_route_program::<WORKER_ROLE>();
 
-            let mut local = rv
-                .session(sid)
-                .role(&local_program)
-                .enter()
-                .expect("attach local role");
-            let mut worker = rv
-                .session(sid)
-                .role(&worker_program)
-                .enter()
-                .expect("attach worker role");
+            let mut local = rv.enter(sid, &local_program).expect("attach local role");
+            let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
 
             futures::executor::block_on(async {
                 local

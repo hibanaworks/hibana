@@ -161,8 +161,7 @@ fn root_visible_surface_stays_minimal() {
         "hibana root must expose runtime surface"
     );
     assert!(
-        lib_rs
-            .contains("pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};")
+        lib_rs.contains("pub use endpoint::{Endpoint, EndpointError, RouteBranch};")
             && !lib_rs.contains(concat!("Fl", "ow")),
         "hibana root must expose endpoint core API"
     );

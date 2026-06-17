@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use hibana::g;
 use hibana::runtime::SessionKit;
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
+use hibana::runtime::resolver::{DecisionArm, ResolverError, ResolverRef};
 use hibana::{Endpoint, RouteBranch};
 use static_assertions::assert_not_impl_any;
 
@@ -62,7 +62,6 @@ fn runtime_public_surface_source() -> String {
     let mut source = read("src/runtime.rs");
     source.push_str(&read("src/runtime/buckets.rs"));
     source.push_str(&read("src/runtime/session_kit.rs"));
-    source.push_str(&read("src/runtime/fluent.rs"));
     source
 }
 
@@ -129,9 +128,9 @@ struct ExternalResolver<'a> {
     local_resolver: ResolverRef<'a, EXTERNAL_RESOLVER_ID>,
 }
 
-fn local_resolver_decision(resolver: &LocalResolver) -> Result<DecisionResolution, ResolverError> {
+fn local_resolver_decision(resolver: &LocalResolver) -> Result<DecisionArm, ResolverError> {
     if resolver.available {
-        Ok(DecisionResolution::Arm(DecisionArm::Left))
+        Ok(DecisionArm::Left)
     } else {
         Err(ResolverError::reject())
     }
@@ -139,9 +138,9 @@ fn local_resolver_decision(resolver: &LocalResolver) -> Result<DecisionResolutio
 
 fn external_resolver_decision(
     resolver: &ExternalResolver<'_>,
-) -> Result<DecisionResolution, ResolverError> {
+) -> Result<DecisionArm, ResolverError> {
     if resolver.loaded {
-        Ok(DecisionResolution::Arm(DecisionArm::Right))
+        Ok(DecisionArm::Right)
     } else {
         resolver.local_resolver.evaluate()
     }
@@ -158,10 +157,7 @@ fn resolver_state_can_host_external_resolver_owner() {
     };
     let resolver =
         ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_state(&unloaded, external_resolver_decision);
-    assert_eq!(
-        resolver.evaluate(),
-        Ok(DecisionResolution::Arm(DecisionArm::Left))
-    );
+    assert_eq!(resolver.evaluate(), Ok(DecisionArm::Left));
 
     let loaded = ExternalResolver {
         loaded: true,
@@ -169,10 +165,7 @@ fn resolver_state_can_host_external_resolver_owner() {
     };
     let resolver =
         ResolverRef::<EXTERNAL_RESOLVER_ID>::decision_state(&loaded, external_resolver_decision);
-    assert_eq!(
-        resolver.evaluate(),
-        Ok(DecisionResolution::Arm(DecisionArm::Right))
-    );
+    assert_eq!(resolver.evaluate(), Ok(DecisionArm::Right));
 }
 
 #[test]
@@ -385,8 +378,9 @@ fn runtime_root_exposes_only_core_buckets() {
     assert!(
         runtime_rs.contains("Result<RendezvousKit<'_, 'cfg, T>, AttachError>")
             && runtime_rs.contains("pub fn rendezvous(")
-            && runtime_rs.contains("pub struct SessionRendezvousKit")
-            && runtime_rs.contains("pub struct SessionRoleKit")
+            && runtime_rs.contains("pub struct RendezvousKit")
+            && runtime_rs.contains("pub fn enter<const ROLE: u8>")
+            && runtime_rs.contains("pub fn set_resolver<const ROLE: u8, const RESOLVER: u16>")
             && !runtime_rs.contains("pub fn add_rendezvous(")
             && !runtime_rs.contains("pub fn add_rendezvous( &self")
             && !runtime_rs.contains("crate::runtime::ids::RendezvousId")
@@ -395,15 +389,12 @@ fn runtime_root_exposes_only_core_buckets() {
             && !runtime_rs.contains("pub struct SessionKit<'cfg, T, const MAX_RV")
             && !runtime_rs.contains("pub struct SessionKitStorage<'cfg, T, const MAX_RV")
             && !runtime_rs.contains("RendezvousKit<'_, 'cfg, T, false")
-            && !runtime_rs.contains("RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, false"),
-        "SessionKit must expose named rendezvous witnesses without caller-selected capacity, raw RendezvousId attach authority, or bool typestate"
+            && !runtime_rs.contains("RoleKit<'kit, 'cfg, 'prog, const ROLE: u8"),
+        "SessionKit must expose direct rendezvous operations without caller-selected capacity, raw RendezvousId attach authority, fluent witnesses, or bool typestate"
     );
 
     for required in [
         "RendezvousKit",
-        "RoleKit",
-        "SessionRendezvousKit",
-        "SessionRoleKit",
         "SessionKitStorage",
         "pub mod ids {",
         "pub mod tap {",
@@ -542,8 +533,8 @@ fn runtime_allowlist_tracks_core_boundary() {
         "pub struct SessionKit<'cfg, T>",
         "pub struct SessionKitStorage<'cfg, T>",
         "pub struct RendezvousKit<'kit, 'cfg, T>",
-        "pub struct SessionRendezvousKit<'kit, 'cfg, T>",
-        "pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T>",
+        "RendezvousKit::enter",
+        "RendezvousKit::set_resolver",
         "Result<RendezvousKit<'_, 'cfg, T>, AttachError>",
         "Projectable",
         "WirePayload",
@@ -594,6 +585,8 @@ fn runtime_allowlist_tracks_core_boundary() {
         "SessionKitStorage::<T, N>",
         "caller-owned local rendezvous budget",
         "RendezvousKit<'_, 'cfg, T, false",
+        "SessionRendezvousKit",
+        "SessionRoleKit",
         "RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T, false",
         "pub use crate::observe::core::TapEvent;",
     ] {

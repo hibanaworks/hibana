@@ -207,16 +207,8 @@ fn run_attached_sample(
             .rendezvous(slab, transport.clone())
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
-        let mut controller = rv
-            .session(sid)
-            .role(controller_program)
-            .enter()
-            .expect("enter controller");
-        let mut worker = rv
-            .session(sid)
-            .role(worker_program)
-            .enter()
-            .expect("enter worker");
+        let mut controller = rv.enter(sid, controller_program).expect("enter controller");
+        let mut worker = rv.enter(sid, worker_program).expect("enter worker");
 
         run(&mut controller, &mut worker);
         assert!(
@@ -277,15 +269,9 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
             .expect("register rendezvous");
         let sid = SessionId::new(0x6300);
         let mut controller = rv
-            .session(sid)
-            .role(&controller_program)
-            .enter()
+            .enter(sid, &controller_program)
             .expect("enter >256 controller");
-        let mut worker = rv
-            .session(sid)
-            .role(&worker_program)
-            .enter()
-            .expect("enter >256 worker");
+        let mut worker = rv.enter(sid, &worker_program).expect("enter >256 worker");
 
         over_256_label_pairs!(drive_over_256_ping_pong, controller, worker);
 
@@ -307,14 +293,10 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .expect("register rendezvous");
 
         let mut controller = rv
-            .session(SessionId::new(0x6100))
-            .role(&high_lane_controller_program())
-            .enter()
+            .enter(SessionId::new(0x6100), &high_lane_controller_program())
             .expect("enter controller-left");
         let mut worker = rv
-            .session(SessionId::new(0x6100))
-            .role(&high_lane_worker_program())
-            .enter()
+            .enter(SessionId::new(0x6100), &high_lane_worker_program())
             .expect("enter worker-left");
         localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut controller, 7);
         assert_eq!(
@@ -332,14 +314,10 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         drop(controller);
 
         let mut controller = rv
-            .session(SessionId::new(0x6101))
-            .role(&high_lane_controller_program())
-            .enter()
+            .enter(SessionId::new(0x6101), &high_lane_controller_program())
             .expect("enter controller-right");
         let mut worker = rv
-            .session(SessionId::new(0x6101))
-            .role(&high_lane_worker_program())
-            .enter()
+            .enter(SessionId::new(0x6101), &high_lane_worker_program())
             .expect("enter worker-right");
         localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut controller, 9);
         assert_eq!(
@@ -372,9 +350,10 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
             .expect("register deep-scope rendezvous");
 
         let controller = rv
-            .session(SessionId::new(0x6210))
-            .role(&deep_active_scope_controller_program())
-            .enter()
+            .enter(
+                SessionId::new(0x6210),
+                &deep_active_scope_controller_program(),
+            )
             .expect("enter role with >128 active nested scopes");
         core::hint::black_box(&controller);
     });
@@ -391,14 +370,10 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
             .expect("register rendezvous with the full wire lane domain");
 
         let mut controller = rv
-            .session(SessionId::new(0x6200))
-            .role(&edge_lane_controller_program())
-            .enter()
+            .enter(SessionId::new(0x6200), &edge_lane_controller_program())
             .expect("enter lane-255 controller");
         let mut worker = rv
-            .session(SessionId::new(0x6200))
-            .role(&edge_lane_worker_program())
-            .enter()
+            .enter(SessionId::new(0x6200), &edge_lane_worker_program())
             .expect("enter lane-255 worker");
 
         localside::controller_send_u8::<{ EDGE_LANE_LABEL }>(&mut controller, 11);

@@ -88,9 +88,7 @@ fn nested_branch_commit_stack() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        rv.session(sid)
-                            .role(&controller_program)
-                            .enter()
+                        rv.enter(sid, &controller_program)
                             .expect("attach controller"),
                     );
                 },
@@ -100,10 +98,7 @@ fn nested_branch_commit_stack() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                rv.session(sid)
-                                    .role(&worker_program)
-                                    .enter()
-                                    .expect("attach worker"),
+                                rv.enter(sid, &worker_program).expect("attach worker"),
                             );
                         },
                         |worker| {
@@ -178,9 +173,7 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        rv.session(sid)
-                            .role(&controller_program)
-                            .enter()
+                        rv.enter(sid, &controller_program)
                             .expect("attach controller"),
                     );
                 },
@@ -191,10 +184,7 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                rv.session(sid)
-                                    .role(&worker_program)
-                                    .enter()
-                                    .expect("attach worker"),
+                                rv.enter(sid, &worker_program).expect("attach worker"),
                             );
                         },
                         |worker| {
@@ -251,9 +241,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                 |ptr| unsafe {
                     write_value(
                         ptr,
-                        rv.session(sid)
-                            .role(&controller_program)
-                            .enter()
+                        rv.enter(sid, &controller_program)
                             .expect("attach controller"),
                     );
                 },
@@ -263,10 +251,7 @@ fn localside_offer_decode_sizes_stay_compact() {
                         |ptr| unsafe {
                             write_value(
                                 ptr,
-                                rv.session(sid)
-                                    .role(&worker_program)
-                                    .enter()
-                                    .expect("attach worker"),
+                                rv.enter(sid, &worker_program).expect("attach worker"),
                             );
                         },
                         |worker| {

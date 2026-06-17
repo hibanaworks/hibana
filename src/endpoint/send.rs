@@ -12,7 +12,7 @@ use core::{
 };
 
 use crate::{
-    endpoint::{EndpointError, EndpointOp, EndpointResult, SendError, SendResult, kernel},
+    endpoint::{EndpointError, EndpointOp, SendError, SendResult, kernel},
     g::Message,
     transport::{FrameLabel, wire::WireEncode},
 };
@@ -103,7 +103,7 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
 }
 
 impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
-    type Output = EndpointResult<()>;
+    type Output = core::result::Result<(), EndpointError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = /* SAFETY: SendFuture has no self-referential fields; its raw endpoint future owns the resident operation state separately. */ unsafe { self.get_unchecked_mut() };

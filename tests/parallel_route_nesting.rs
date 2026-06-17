@@ -145,7 +145,7 @@ fn assert_join_blocked(rendered: &str) {
 
 async fn assert_send_rejected<F>(future: F, context: &str)
 where
-    F: core::future::Future<Output = hibana::EndpointResult<()>>,
+    F: core::future::Future<Output = core::result::Result<(), hibana::EndpointError>>,
 {
     let err = future.await.expect_err(context);
     assert_join_blocked(&format!("{err:?}"));
@@ -162,19 +162,13 @@ fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
             let sid = SessionId::new(98);
 
             let mut local = rv
-                .session(sid)
-                .role(&route_right_parallel_dead_program::<LOCAL_ROLE>())
-                .enter()
+                .enter(sid, &route_right_parallel_dead_program::<LOCAL_ROLE>())
                 .expect("attach local role");
             let mut worker = rv
-                .session(sid)
-                .role(&route_right_parallel_dead_program::<WORKER_ROLE>())
-                .enter()
+                .enter(sid, &route_right_parallel_dead_program::<WORKER_ROLE>())
                 .expect("attach worker role");
             let mut observer = rv
-                .session(sid)
-                .role(&route_right_parallel_dead_program::<OBSERVER_ROLE>())
-                .enter()
+                .enter(sid, &route_right_parallel_dead_program::<OBSERVER_ROLE>())
                 .expect("attach observer role");
 
             futures::executor::block_on(async {
@@ -231,19 +225,22 @@ fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
             let sid = SessionId::new(99);
 
             let mut local = rv
-                .session(sid)
-                .role(&parallel_route_right_parallel_dead_program::<LOCAL_ROLE>())
-                .enter()
+                .enter(
+                    sid,
+                    &parallel_route_right_parallel_dead_program::<LOCAL_ROLE>(),
+                )
                 .expect("attach local role");
             let mut worker = rv
-                .session(sid)
-                .role(&parallel_route_right_parallel_dead_program::<WORKER_ROLE>())
-                .enter()
+                .enter(
+                    sid,
+                    &parallel_route_right_parallel_dead_program::<WORKER_ROLE>(),
+                )
                 .expect("attach worker role");
             let mut observer = rv
-                .session(sid)
-                .role(&parallel_route_right_parallel_dead_program::<OBSERVER_ROLE>())
-                .enter()
+                .enter(
+                    sid,
+                    &parallel_route_right_parallel_dead_program::<OBSERVER_ROLE>(),
+                )
                 .expect("attach observer role");
 
             futures::executor::block_on(async {
@@ -316,19 +313,22 @@ fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
             let sid = SessionId::new(100);
 
             let mut local = rv
-                .session(sid)
-                .role(&outer_left_kills_nested_right_route_program::<LOCAL_ROLE>())
-                .enter()
+                .enter(
+                    sid,
+                    &outer_left_kills_nested_right_route_program::<LOCAL_ROLE>(),
+                )
                 .expect("attach local role");
             let mut worker = rv
-                .session(sid)
-                .role(&outer_left_kills_nested_right_route_program::<WORKER_ROLE>())
-                .enter()
+                .enter(
+                    sid,
+                    &outer_left_kills_nested_right_route_program::<WORKER_ROLE>(),
+                )
                 .expect("attach worker role");
             let mut observer = rv
-                .session(sid)
-                .role(&outer_left_kills_nested_right_route_program::<OBSERVER_ROLE>())
-                .enter()
+                .enter(
+                    sid,
+                    &outer_left_kills_nested_right_route_program::<OBSERVER_ROLE>(),
+                )
                 .expect("attach observer role");
 
             futures::executor::block_on(async {
@@ -390,24 +390,16 @@ fn route_selected_left_keeps_entire_nested_parallel_path_live() {
             let sid = SessionId::new(97);
 
             let mut local = rv
-                .session(sid)
-                .role(&route_left_nested_parallel_program::<LOCAL_ROLE>())
-                .enter()
+                .enter(sid, &route_left_nested_parallel_program::<LOCAL_ROLE>())
                 .expect("attach local role");
             let mut worker = rv
-                .session(sid)
-                .role(&route_left_nested_parallel_program::<WORKER_ROLE>())
-                .enter()
+                .enter(sid, &route_left_nested_parallel_program::<WORKER_ROLE>())
                 .expect("attach worker role");
             let mut side = rv
-                .session(sid)
-                .role(&route_left_nested_parallel_program::<SIDE_ROLE>())
-                .enter()
+                .enter(sid, &route_left_nested_parallel_program::<SIDE_ROLE>())
                 .expect("attach side role");
             let mut observer = rv
-                .session(sid)
-                .role(&route_left_nested_parallel_program::<OBSERVER_ROLE>())
-                .enter()
+                .enter(sid, &route_left_nested_parallel_program::<OBSERVER_ROLE>())
                 .expect("attach observer role");
 
             futures::executor::block_on(async {
@@ -498,24 +490,16 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
             let sid = SessionId::new(92);
 
             let mut local = rv
-                .session(sid)
-                .role(&program::<LOCAL_ROLE>())
-                .enter()
+                .enter(sid, &program::<LOCAL_ROLE>())
                 .expect("attach local role");
             let mut worker = rv
-                .session(sid)
-                .role(&program::<WORKER_ROLE>())
-                .enter()
+                .enter(sid, &program::<WORKER_ROLE>())
                 .expect("attach worker role");
             let mut side = rv
-                .session(sid)
-                .role(&program::<SIDE_ROLE>())
-                .enter()
+                .enter(sid, &program::<SIDE_ROLE>())
                 .expect("attach side role");
             let mut observer = rv
-                .session(sid)
-                .role(&program::<OBSERVER_ROLE>())
-                .enter()
+                .enter(sid, &program::<OBSERVER_ROLE>())
                 .expect("attach observer role");
 
             futures::executor::block_on(async {
@@ -592,24 +576,16 @@ fn nested_parallel_join_requires_every_dependency_before_post() {
             let sid = SessionId::new(95);
 
             let mut local = rv
-                .session(sid)
-                .role(&nested_parallel_join_program::<LOCAL_ROLE>())
-                .enter()
+                .enter(sid, &nested_parallel_join_program::<LOCAL_ROLE>())
                 .expect("attach local role");
             let mut worker = rv
-                .session(sid)
-                .role(&nested_parallel_join_program::<WORKER_ROLE>())
-                .enter()
+                .enter(sid, &nested_parallel_join_program::<WORKER_ROLE>())
                 .expect("attach worker role");
             let mut side = rv
-                .session(sid)
-                .role(&nested_parallel_join_program::<SIDE_ROLE>())
-                .enter()
+                .enter(sid, &nested_parallel_join_program::<SIDE_ROLE>())
                 .expect("attach side role");
             let mut observer = rv
-                .session(sid)
-                .role(&nested_parallel_join_program::<OBSERVER_ROLE>())
-                .enter()
+                .enter(sid, &nested_parallel_join_program::<OBSERVER_ROLE>())
                 .expect("attach observer role");
 
             futures::executor::block_on(async {

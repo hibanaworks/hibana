@@ -13,7 +13,7 @@ use hibana::{
         SessionKitStorage,
         ids::SessionId,
         program::{RoleProgram, project},
-        resolver::{DecisionResolution, ResolverError, ResolverRef},
+        resolver::{DecisionArm, ResolverError, ResolverRef},
     },
 };
 use runtime_support::with_runtime_workspace;
@@ -65,8 +65,8 @@ fn assert_compact_debug(rendered: &str) {
 
 static UNIT_RESOLVER_STATE: () = ();
 
-fn defer_from_unit(_: &()) -> Result<DecisionResolution, ResolverError> {
-    Ok(DecisionResolution::Defer)
+fn reject_from_unit(_: &()) -> Result<DecisionArm, ResolverError> {
+    Err(ResolverError::reject())
 }
 
 fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
@@ -95,9 +95,7 @@ fn runtime_registers_multiple_rendezvous_from_resident_resources() {
                     .rendezvous(chunk, transport.clone())
                     .expect("runtime registry must grow from each resident rendezvous resource");
                 let endpoint = rv
-                    .session(SessionId::new(700 + idx as u32))
-                    .role(&role0)
-                    .enter()
+                    .enter(SessionId::new(700 + idx as u32), &role0)
                     .expect("wide rendezvous budget must still attach endpoints");
                 core::hint::black_box(&endpoint);
                 drop(endpoint);
@@ -114,16 +112,8 @@ fn endpoint_errors_keep_debug_boundaries() {
             let (origin_program, target_program) = project_pair::<11>();
             let rv = cluster.rendezvous(slab, transport.clone()).expect("rv");
             let sid = SessionId::new(411);
-            let mut origin = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin");
-            let mut target = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target");
+            let mut origin = rv.enter(sid, &origin_program).expect("origin");
+            let mut target = rv.enter(sid, &target_program).expect("target");
 
             let send_error = futures::executor::block_on(origin.send::<Msg<12, u32>>(&1234))
                 .expect_err("wrong send label must fail");
@@ -161,17 +151,16 @@ fn attach_and_resolver_errors_keep_debug_boundaries() {
                 .rendezvous(&mut slab[..2048], TestTransport::new())
                 .expect("rv");
             let sid = SessionId::new(441);
-            let constrained_role = rv.session(sid).role(&origin_program);
-            let enter_result = constrained_role.enter();
+            let enter_result = rv.enter(sid, &origin_program);
             let enter_error = match enter_result {
                 Ok(_) => panic!("resource-constrained role enter must fail"),
                 Err(error) => error,
             };
             assert_attach_debug_boundary(enter_error, "enter");
 
-            let resolver_role = rv.role(&origin_program);
-            let resolver = ResolverRef::<77>::decision_state(&UNIT_RESOLVER_STATE, defer_from_unit);
-            let set_resolver_result = resolver_role.set_resolver(resolver);
+            let resolver =
+                ResolverRef::<77>::decision_state(&UNIT_RESOLVER_STATE, reject_from_unit);
+            let set_resolver_result = rv.set_resolver(&origin_program, resolver);
             let set_resolver_error = match set_resolver_result {
                 Ok(_) => panic!("resolver without projected site must fail"),
                 Err(error) => error,

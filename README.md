@@ -33,8 +33,7 @@ hibana::g choreography
   -> runtime::program::project(&program)
   -> runtime::SessionKitStorage::uninit().init()
   -> kit.rendezvous(&mut slab, transport)
-  -> registered rendezvous .session(...).role(...)
-  -> role witness .enter()
+  -> registered rendezvous.enter(..., ...)
   -> Endpoint
   -> send() / recv() / offer() / RouteBranch::send() / RouteBranch::recv()
 ```
@@ -43,7 +42,7 @@ There are only two public surfaces:
 
 | Surface | Used by | Main names |
 | --- | --- | --- |
-| Application surface | application code | `hibana::g`, `Endpoint`, `RouteBranch`, `EndpointResult`, `EndpointError` |
+| Application surface | application code | `hibana::g`, `Endpoint`, `RouteBranch`, `EndpointError` |
 | Runtime surface | protocol and runtime crates | `hibana::runtime`, `hibana::runtime::program` |
 
 If you are writing an application, stay on `hibana::g` and `Endpoint`. If you
@@ -145,7 +144,6 @@ Application authors only need these names:
 - `hibana::g::{Msg, Program, send, seq, route, par}`
 - `Endpoint`
 - `RouteBranch`
-- `EndpointResult<T>`
 - `EndpointError`
 
 Protocol crates use the same surface. Runtime resolver and transport authority
@@ -245,8 +243,8 @@ an independent route decision.
 
 ### Failure And Cancellation
 
-Endpoint operations return `EndpointResult<T>`, so application code should use
-ordinary `?`:
+Endpoint operations return `core::result::Result<T, EndpointError>`, so
+application code should use ordinary `?`:
 
 ```rust,ignore
 endpoint.send::<g::Msg<1, u32>>(&7).await?;
@@ -428,7 +426,7 @@ let outer = g::seq(prefix, inner).roll();
 ```rust,ignore
 use hibana::g;
 use hibana::runtime::program::{project, RoleProgram};
-use hibana::runtime::resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
+use hibana::runtime::resolver::{DecisionArm, ResolverError, ResolverRef};
 
 const ROUTE_RESOLVER: u16 = 7;
 
@@ -436,28 +434,27 @@ struct RouteState {
     accept: bool,
 }
 
-fn route_decision(state: &RouteState) -> Result<DecisionResolution, ResolverError> {
+fn route_decision(state: &RouteState) -> Result<DecisionArm, ResolverError> {
     let arm = if state.accept {
         DecisionArm::Left
     } else {
         DecisionArm::Right
     };
-    Ok(DecisionResolution::Arm(arm))
+    Ok(arm)
 }
 
 let routed = g::route(accept_body, reject_body).resolve::<ROUTE_RESOLVER>();
 let role0: RoleProgram<0> = project(&routed);
 let state = RouteState { accept: true };
 
-rv.role(&role0)
-    .set_resolver(ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;
+rv.set_resolver(&role0, ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;
 ```
 
 External resolver state uses the same explicit registration path. Route
 decisions come from the typed resolver registered for the route site. The
 external owner stays outside Hibana, owns its input state, and installs a typed
 `ResolverRef` for the route decision site. When that owner has a decision, it
-returns `DecisionResolution` for that resolver id; otherwise it delegates to
+returns `DecisionArm` for that resolver id; otherwise it delegates to
 another user-registered `ResolverRef`. That local resolver is still explicit
 route authority; it does not transfer authority to external state. Hibana never
 treats external telemetry, payload bytes, or transport readiness as route
@@ -471,15 +468,15 @@ struct ExternalResolverOwner {
 
 static LOCAL_ROUTE_STATE: () = ();
 
-fn local_decision(_: &()) -> Result<DecisionResolution, ResolverError> {
-    Ok(DecisionResolution::Arm(DecisionArm::Left))
+fn local_decision(_: &()) -> Result<DecisionArm, ResolverError> {
+    Ok(DecisionArm::Left)
 }
 
 fn external_decision(
     owner: &ExternalResolverOwner,
-) -> Result<DecisionResolution, ResolverError> {
+) -> Result<DecisionArm, ResolverError> {
     if owner.loaded {
-        Ok(DecisionResolution::Arm(DecisionArm::Right))
+        Ok(DecisionArm::Right)
     } else {
         owner.local_resolver.evaluate()
     }
@@ -495,8 +492,7 @@ let owner = ExternalResolverOwner {
     ),
 };
 
-rv.role(&role0)
-    .set_resolver(ResolverRef::<ROUTE_RESOLVER>::decision_state(
+rv.set_resolver(&role0, ResolverRef::<ROUTE_RESOLVER>::decision_state(
         &owner,
         external_decision,
     ))?;
@@ -564,7 +560,7 @@ let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 let kit = kit_storage.init();
 
 let rv = kit.rendezvous(&mut slab, transport)?;
-let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;
+let endpoint = rv.enter(SessionId::new(1), &client)?;
 ```
 
 `SessionKitStorage::init()` is the only public construction path. It writes the
@@ -590,7 +586,7 @@ Useful runtime owners:
 - `runtime::SessionKit`
 - `runtime::ids::SessionId`
 - `runtime::transport::Transport`
-- `runtime::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
+- `runtime::resolver::{ResolverError, ResolverRef, DecisionArm}`
 - `runtime::wire::{Payload, WireEncode, WirePayload}`
 - `runtime::tap::{TapEvent, TapPort}`
 

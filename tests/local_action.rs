@@ -13,7 +13,7 @@ use hibana::{
     runtime::{
         SessionKit, SessionKitStorage,
         ids::SessionId,
-        resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef},
+        resolver::{DecisionArm, ResolverError, ResolverRef},
         wire::{CodecError, Payload, WireEncode, WirePayload},
     },
 };
@@ -89,17 +89,15 @@ fn run_local_action_flow(
     };
 
     let mut endpoint = rv
-        .session(sid)
-        .role(&actor_program)
-        .enter()
+        .enter(sid, &actor_program)
         .expect("attach actor endpoint");
     let () = futures::executor::block_on(endpoint.send::<Msg<7, InstallPayload>>(&payload))
         .expect("local action succeeded");
     assert!(transport_queue_is_empty(transport));
 }
 
-fn local_left(_: &()) -> Result<DecisionResolution, ResolverError> {
-    Ok(DecisionResolution::Arm(DecisionArm::Left))
+fn local_left(_: &()) -> Result<DecisionArm, ResolverError> {
+    Ok(DecisionArm::Left)
 }
 
 fn local_route_program<const PAYLOAD_LABEL: u8, P>() -> RoleProgram<0> {
@@ -120,16 +118,13 @@ fn run_local_route_decode_empty_payload(
     let rv = cluster
         .rendezvous(slab, transport.clone())
         .expect("register rendezvous");
-    let role = rv.role(&actor_program);
-    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(
-        &LOCAL_ROUTE_STATE,
-        local_left,
-    ))
+    rv.set_resolver(
+        &actor_program,
+        ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(&LOCAL_ROUTE_STATE, local_left),
+    )
     .expect("install resolver");
     let mut endpoint = rv
-        .session(SessionId::new(43))
-        .role(&actor_program)
-        .enter()
+        .enter(SessionId::new(43), &actor_program)
         .expect("attach actor endpoint");
     let branch = futures::executor::block_on(endpoint.offer()).expect("offer local route");
     assert_eq!(branch.label(), 9);
@@ -147,16 +142,13 @@ fn run_local_route_decode_non_empty_payload_fails_closed(
     let rv = cluster
         .rendezvous(slab, transport.clone())
         .expect("register rendezvous");
-    let role = rv.role(&actor_program);
-    role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(
-        &LOCAL_ROUTE_STATE,
-        local_left,
-    ))
+    rv.set_resolver(
+        &actor_program,
+        ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(&LOCAL_ROUTE_STATE, local_left),
+    )
     .expect("install resolver");
     let mut endpoint = rv
-        .session(SessionId::new(44))
-        .role(&actor_program)
-        .enter()
+        .enter(SessionId::new(44), &actor_program)
         .expect("attach actor endpoint");
     let branch = futures::executor::block_on(endpoint.offer()).expect("offer local route");
     assert_eq!(branch.label(), 10);

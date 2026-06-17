@@ -38,16 +38,8 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(202);
-            let origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let mut recv_future = std::pin::pin!(target_endpoint.recv::<Msg<2, FramePayload>>());
             let wake_count = Cell::new(0);

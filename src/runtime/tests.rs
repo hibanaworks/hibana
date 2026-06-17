@@ -490,15 +490,9 @@ fn run_attached_shape(
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
         let mut controller = rv
-            .session(sid)
-            .role(&controller_program_image)
-            .enter()
+            .enter(sid, &controller_program_image)
             .expect("enter controller");
-        let mut worker = rv
-            .session(sid)
-            .role(&worker_program_image)
-            .enter()
-            .expect("enter worker");
+        let mut worker = rv.enter(sid, &worker_program_image).expect("enter worker");
         let attach_peak_stack_bytes = metric_add(
             metric_sub(measure_peak_stack_bytes(bounds), initial_peak_stack_bytes),
             STACK_CANARY_HEADROOM_BYTES,

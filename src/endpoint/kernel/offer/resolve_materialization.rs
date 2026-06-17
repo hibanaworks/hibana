@@ -4,7 +4,7 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    CursorEndpoint, DeferReason, FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet,
+    CursorEndpoint, FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet,
     OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
     Transport,
 };
@@ -138,10 +138,7 @@ where
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
                 current_parallel: selection.frontier_parallel_root,
-                reason: DeferReason::EvidenceAbsent,
-                offer_lane: selection.offer_lane,
                 ingress: state.ingress.evidence_state(),
-                selected_arm: Some(route_token.arm().as_u8()),
             },
             frontier_visited,
         ) {

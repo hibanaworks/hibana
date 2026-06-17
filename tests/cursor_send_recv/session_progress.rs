@@ -19,16 +19,8 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(31);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             futures::executor::block_on(origin_endpoint.send::<Msg<31, u32>>(&31))
                 .expect("lane 0 first send");

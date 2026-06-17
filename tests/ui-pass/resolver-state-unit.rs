@@ -1,9 +1,9 @@
-use hibana::runtime::resolver::{DecisionResolution, ResolverError, ResolverRef};
+use hibana::runtime::resolver::{DecisionArm, ResolverError, ResolverRef};
 
 static UNIT: () = ();
 
-fn choose(_: &()) -> Result<DecisionResolution, ResolverError> {
-    Ok(DecisionResolution::Defer)
+fn choose(_: &()) -> Result<DecisionArm, ResolverError> {
+    Ok(DecisionArm::Left)
 }
 
 fn main() {

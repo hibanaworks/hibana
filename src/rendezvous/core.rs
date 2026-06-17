@@ -307,7 +307,7 @@ mod storage_runtime_budget;
 ///
 /// This type is crate-private lane ownership machinery. Public API users obtain
 /// endpoints via the
-/// `SessionKit::rendezvous(...).session(...).role(...).enter(...)` witness chain.
+/// `SessionKit::rendezvous(...).enter(sid, &role_program)` path.
 ///
 /// # Cluster Ownership Model
 ///

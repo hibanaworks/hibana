@@ -98,11 +98,15 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "send preview must not overwrite a forgotten active operation and must route branch send through the selected-arm token"
     );
     assert!(
-        endpoint_ops.contains("match unsafe { self.init_public_send_state(&init) }")
+        endpoint_ops.contains("fn call_handle_op(")
+            && endpoint_ops.contains("fn call_lease_op(")
+            && endpoint_ops.contains("fn call_send_init_op(")
+            && !endpoint_ops.contains("pub(super) unsafe fn init_public_send_state")
+            && endpoint_ops.contains("match self.init_public_send_state(&init)")
             && endpoint_ops.contains("kernel::PublicOpLease::Held => {}")
             && endpoint_ops.contains("kernel::PublicOpLease::Rejected =>")
             && endpoint_ops.contains("crate::endpoint::SendError::PhaseInvariant"),
-        "send must return a ready error future when send active-lease initialization fails after preview"
+        "send must return a ready error future when send active-lease initialization fails after preview, with carrier unsafe concentrated in private helpers"
     );
     assert!(
         send.contains("impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture")
@@ -117,7 +121,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && !runtime_types.contains("RecvPayloadMode")
             && !futures.contains("RecvPayloadMode")
             && !futures.contains("payload_mode")
-            && branch.contains("let lease = unsafe { endpoint.init_public_offer_state() };")
+            && branch.contains("let lease = endpoint.init_public_offer_state();")
             && branch.contains("lease: OfferFutureLease::from_public_lease(lease)")
             && branch.contains("OfferFutureLease::Rejected =>")
             && branch.contains("self.lease = OfferFutureLease::Completed;")

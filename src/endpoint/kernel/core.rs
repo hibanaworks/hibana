@@ -5,7 +5,7 @@
 
 use core::{ops::ControlFlow, task::Poll};
 
-use super::authority::{Arm, DeferReason, RouteArmToken, RouteResolveStep};
+use super::authority::{Arm, RouteArmToken, RouteResolveStep};
 use super::evidence::{
     ScopeEvidence, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeFrameLabelView,
     ScopeReentryMeta,
@@ -37,7 +37,7 @@ use crate::{
     resolver_audit::{self, ResolverSlot},
     session::{
         brand::Owner,
-        cluster::{core::DynamicResolverResolution, error::ClusterError},
+        cluster::error::ClusterError,
         types::{Lane, RendezvousId, SessionId},
     },
     transport::{
@@ -357,9 +357,7 @@ pub(crate) use super::decision_state::{
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
 pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
 pub(crate) use public_types::*;
-pub(in crate::endpoint::kernel) use route_preview::{
-    IngressEvidenceState, ResolverDeferAudit, ResolverDeferProgress,
-};
+pub(in crate::endpoint::kernel) use route_preview::IngressEvidenceState;
 pub(crate) use runtime_types::*;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>

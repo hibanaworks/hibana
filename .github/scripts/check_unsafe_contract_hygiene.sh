@@ -101,6 +101,9 @@ generic_phrases = [
     "addressed slot",
     "pointer field or table slot",
     "second mutable handle to the same slot",
+    "this owner validates the concrete pointer identity and initialized storage before raw access.",
+    "the owner tracks the initialized prefix and this slot is inside that initialized range.",
+    "the table owner tracks the initialized prefix and checks this slot before reading initialized storage.",
 ]
 for path in Path("src").rglob("*.rs"):
     text_path = str(path)

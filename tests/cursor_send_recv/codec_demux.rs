@@ -13,16 +13,8 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(12);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             futures::executor::block_on(origin_endpoint.send::<Msg<1, u32>>(&42))
                 .expect("send succeeds");
@@ -71,16 +63,8 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(200);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let () =
                 futures::executor::block_on(origin_endpoint.send::<Msg<200, u32>>(&0xC8C8_C8C8))

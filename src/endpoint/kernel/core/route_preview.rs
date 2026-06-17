@@ -1,24 +1,7 @@
 use super::{
-    Arm, CursorEndpoint, DeferReason, FrontierKind, Lane, RecvError, RecvResult, ResolverSlot,
-    ScopeId, TapEvent, TapFrameMeta, Transport, emit, events, ids, resolver_audit,
-    state_index_to_usize,
+    Arm, CursorEndpoint, Lane, RecvError, RecvResult, ResolverSlot, ScopeId, TapEvent,
+    TapFrameMeta, Transport, emit, events, ids, resolver_audit, state_index_to_usize,
 };
-
-const AUDIT_ABSENT_SCOPE_SLOT: u16 = u16::MAX;
-const AUDIT_ABSENT_ARM: u8 = u8::MAX;
-const AUDIT_HINT_PRESENT: u32 = 1 << 2;
-
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct ResolverDeferAudit {
-    pub(in crate::endpoint::kernel) reason: DeferReason,
-    pub(in crate::endpoint::kernel) scope_id: ScopeId,
-    pub(in crate::endpoint::kernel) frontier: FrontierKind,
-    pub(in crate::endpoint::kernel) selected_arm: Option<u8>,
-    pub(in crate::endpoint::kernel) hint: Option<u8>,
-    pub(in crate::endpoint::kernel) ingress: IngressEvidenceState,
-    pub(in crate::endpoint::kernel) progress: ResolverDeferProgress,
-    pub(in crate::endpoint::kernel) lane: u8,
-}
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,50 +14,6 @@ impl IngressEvidenceState {
     #[inline]
     pub(in crate::endpoint::kernel) const fn is_ready(self) -> bool {
         matches!(self, Self::Ready)
-    }
-
-    #[inline]
-    const fn audit_bit(self) -> u32 {
-        self.is_ready() as u32
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::endpoint::kernel) enum ResolverDeferProgress {
-    Settled = 0,
-    Pending = 1,
-}
-
-impl ResolverDeferProgress {
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn is_pending(self) -> bool {
-        matches!(self, Self::Pending)
-    }
-
-    #[inline]
-    const fn audit_bit(self) -> u32 {
-        matches!(self, Self::Pending) as u32
-    }
-}
-
-#[inline]
-fn audit_scope_slot(slot: Option<usize>) -> u32 {
-    match slot {
-        Some(slot) => match u16::try_from(slot) {
-            Ok(slot) if slot != AUDIT_ABSENT_SCOPE_SLOT => u32::from(slot),
-            _ => crate::invariant(),
-        },
-        None => u32::from(AUDIT_ABSENT_SCOPE_SLOT),
-    }
-}
-
-#[inline]
-fn audit_arm(arm: Option<u8>) -> u32 {
-    match arm {
-        Some(arm) if arm != AUDIT_ABSENT_ARM => u32::from(arm),
-        Some(_) => crate::invariant(),
-        None => u32::from(AUDIT_ABSENT_ARM),
     }
 }
 
@@ -171,32 +110,6 @@ where
         emit(port.tap(), event);
     }
 
-    #[inline]
-    pub(in crate::endpoint::kernel) fn emit_resolver_defer_event(&self, audit: ResolverDeferAudit) {
-        const RESOLVER_DEFER_AUDIT_TAG: u32 = 0x80;
-        let scope_slot = audit_scope_slot(self.scope_slot_for_route(audit.scope_id));
-        let arm = audit_arm(audit.selected_arm);
-        let hint_present = if audit.hint.is_some() {
-            AUDIT_HINT_PRESENT
-        } else {
-            0
-        };
-        let progress = audit.progress.audit_bit();
-        let arg0 = (RESOLVER_DEFER_AUDIT_TAG << 24) | (scope_slot << 8) | progress;
-        let arg1 = (arm << 24)
-            | ((audit.reason as u32) << 16)
-            | ((audit.frontier.as_audit_tag() as u32) << 12)
-            | hint_present
-            | (audit.ingress.audit_bit() << 1)
-            | progress;
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_AUDIT_DEFER,
-            arg0,
-            arg1,
-            Lane::new(audit.lane as u32),
-        );
-    }
-
     pub(crate) fn emit_endpoint_event(&self, id: u16, meta: TapFrameMeta, lane: u8) {
         let port = self.port_for_lane(lane as usize);
         let packed =
@@ -234,18 +147,6 @@ where
             ids::RESOLVER_AUDIT,
             event_hash,
             (u32::from(slot_id) << 16) | u32::from(event.id()),
-            lane,
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_EVENT,
-            event.ts(),
-            event.id() as u32,
-            lane,
-        );
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_REPLAY_EVENT_EXT,
-            event.arg1(),
-            event.causal_key() as u32,
             lane,
         );
     }

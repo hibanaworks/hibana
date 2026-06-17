@@ -1,0 +1,5 @@
+error[E0432]: unresolved import `hibana::runtime::resolver::DecisionResolution`
+ --> tests/ui/resolver-decision-resolution-removed.rs:1:33
+  |
+1 | use hibana::runtime::resolver::{DecisionResolution, ResolverError, ResolverRef};
+  |                                 ^^^^^^^^^^^^^^^^^^ no `DecisionResolution` in `runtime::buckets::resolver`

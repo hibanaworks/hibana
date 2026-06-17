@@ -1,6 +1,6 @@
 use super::{
-    ClusterError, DecisionResolution, DynamicResolverEntry, DynamicResolverKey,
-    DynamicResolverResolution, EffIndex, RendezvousId, ResolverRef, SessionCluster,
+    ClusterError, DecisionArm, DynamicResolverEntry, DynamicResolverKey, EffIndex, RendezvousId,
+    ResolverRef, SessionCluster,
 };
 impl<'cfg, T> SessionCluster<'cfg, T>
 where
@@ -115,7 +115,7 @@ where
         rv_id: RendezvousId,
         eff_index: EffIndex,
         resolver_id: u16,
-    ) -> Result<DynamicResolverResolution, ClusterError> {
+    ) -> Result<DecisionArm, ClusterError> {
         let key = DynamicResolverKey::new(rv_id, eff_index);
         let Some(entry) = self.dynamic_resolver(key) else {
             return Err(ClusterError::DynamicResolverInvariant { resolver_id });
@@ -124,18 +124,13 @@ where
             return Err(ClusterError::DynamicResolverInvariant { resolver_id });
         }
 
-        let resolution = entry
+        let arm = entry
             .resolver_ref
             .resolve_decision()
             .map_err(|_| ClusterError::ResolverReject { resolver_id })?;
         if entry.scope.to_scope_id().is_none() {
             return Err(ClusterError::ResolverReject { resolver_id });
         }
-        match resolution {
-            DecisionResolution::Arm(arm) => {
-                Ok(DynamicResolverResolution::DecisionArm { arm: arm.index() })
-            }
-            DecisionResolution::Defer => Ok(DynamicResolverResolution::Defer),
-        }
+        Ok(arm)
     }
 }

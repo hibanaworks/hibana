@@ -114,9 +114,6 @@ impl From<RecvError> for EndpointErrorKind {
     }
 }
 
-/// Canonical endpoint result returned by public endpoint operations.
-pub type EndpointResult<T> = core::result::Result<T, EndpointError>;
-
 /// Errors surfaced inside the endpoint send kernel.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SendError {

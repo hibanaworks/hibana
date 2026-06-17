@@ -73,14 +73,7 @@ impl RouteArmToken {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RouteResolveStep {
     Resolved(Arm),
-    Deferred,
     Reject(u16),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum DeferReason {
-    ResolverDeferred = 1,
-    EvidenceAbsent = 2,
 }
 
 #[cfg(test)]

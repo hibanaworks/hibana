@@ -99,23 +99,3 @@ pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 /// - `arg0`: triggering event hash
 /// - `arg1`: resolver slot tag in high half, triggering event id in low half
 pub const RESOLVER_AUDIT: u16 = 0x0407;
-
-/// Resolver replay event tuple.
-///
-/// - `arg0`: triggering event timestamp
-/// - `arg1`: triggering event id (u16 promoted to u32)
-pub const RESOLVER_REPLAY_EVENT: u16 = 0x0408;
-
-/// Resolver replay event extension tuple.
-///
-/// - `arg0`: triggering event arg1
-/// - `arg1`: triggering event causal key (u16 promoted to u32)
-pub const RESOLVER_REPLAY_EVENT_EXT: u16 = 0x0409;
-
-/// Resolver progress/defer audit tuple.
-///
-/// - `arg0`: `defer_source<<24 | scope_slot<<8 | pending_flag`
-///   (`defer_source` is not a route-arm token tap sequence)
-/// - `arg1`: `selected_arm<<24 | defer_reason<<16 | frontier<<12 | hint_present<<2 | ingress_ready<<1 | pending_flag`
-///   (`scope_slot=0xFFFF` means non-route frontier, `selected_arm=0xFF` means no selected arm)
-pub const RESOLVER_AUDIT_DEFER: u16 = 0x040A;

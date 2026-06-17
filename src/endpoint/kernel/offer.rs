@@ -24,7 +24,7 @@ use core::{
     task::{Poll, ready},
 };
 
-use super::authority::{Arm, DeferReason, RouteArmToken, RouteResolveStep};
+use super::authority::{Arm, RouteArmToken, RouteResolveStep};
 use super::core::{CursorEndpoint, MaterializedRouteBranch};
 use super::evidence::{ScopeFrameLabelScratch, ScopeFrameLabelView};
 use super::frontier::{
@@ -67,7 +67,7 @@ pub(in crate::endpoint::kernel) use self::state::OfferState;
 use self::state::{
     OfferCollectState, OfferExecution, OfferExecutionKind, OfferResolveState, OfferStagedIngress,
 };
-pub(in crate::endpoint::kernel) use super::core::{IngressEvidenceState, ResolverDeferProgress};
+pub(in crate::endpoint::kernel) use super::core::IngressEvidenceState;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(in crate::endpoint::kernel) enum FrameHintIngestion {

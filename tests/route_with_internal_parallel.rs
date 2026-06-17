@@ -86,24 +86,16 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
             let sid = SessionId::new(91);
 
             let mut controller = rv
-                .session(sid)
-                .role(&controller_program)
-                .enter()
+                .enter(sid, &controller_program)
                 .expect("attach controller");
             let mut local = rv
-                .session(sid)
-                .role(&program::<LOCAL_ROLE>())
-                .enter()
+                .enter(sid, &program::<LOCAL_ROLE>())
                 .expect("attach local role");
             let mut human = rv
-                .session(sid)
-                .role(&program::<HUMAN_ROLE>())
-                .enter()
+                .enter(sid, &program::<HUMAN_ROLE>())
                 .expect("attach human role");
             let mut sensor = rv
-                .session(sid)
-                .role(&program::<PICO2W_SENSOR_ROLE>())
-                .enter()
+                .enter(sid, &program::<PICO2W_SENSOR_ROLE>())
                 .expect("attach sensor role");
 
             futures::executor::block_on(async {

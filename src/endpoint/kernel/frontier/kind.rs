@@ -9,16 +9,6 @@ pub(crate) enum FrontierKind {
 
 impl FrontierKind {
     #[inline]
-    pub(crate) const fn as_audit_tag(self) -> u8 {
-        match self {
-            Self::Route => 1,
-            Self::Reentry => 2,
-            Self::Parallel => 3,
-            Self::PassiveObserver => 4,
-        }
-    }
-
-    #[inline]
     pub(crate) const fn bit(self) -> u8 {
         match self {
             Self::Route => 1 << 0,

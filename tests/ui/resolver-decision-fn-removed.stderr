@@ -1,7 +1,7 @@
 error[E0599]: no function or associated item named `decision_fn` found for struct `ResolverRef<'cfg, RESOLVER_ID>` in the current scope
  --> tests/ui/resolver-decision-fn-removed.rs:4:31
   |
-4 |     let _ = ResolverRef::<7>::decision_fn(|| Ok(DecisionResolution::Defer));
+4 |     let _ = ResolverRef::<7>::decision_fn(|| Err(ResolverError::reject()));
   |                               ^^^^^^^^^^^ function or associated item not found in `ResolverRef<'_, 7>`
   |
 note: if you're trying to build a new `ResolverRef<'_, 7>`, consider using `ResolverRef::<'cfg, RESOLVER_ID>::decision_state` which returns `ResolverRef<'_, _>`
@@ -9,6 +9,6 @@ note: if you're trying to build a new `ResolverRef<'_, 7>`, consider using `Reso
   |
   | /     pub fn decision_state<S: 'cfg>(
   | |         state: &'cfg S,
-  | |         resolver: fn(&S) -> Result<DecisionResolution, ResolverError>,
+  | |         resolver: fn(&S) -> Result<DecisionArm, ResolverError>,
   | |     ) -> Self {
   | |_____________^

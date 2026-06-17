@@ -13,7 +13,7 @@ use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{
     SessionKitStorage,
     ids::SessionId,
-    resolver::{DecisionArm, DecisionResolution, ResolverRef},
+    resolver::{DecisionArm, ResolverRef},
 };
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
@@ -45,8 +45,10 @@ fn branch_send_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::route(left, right).resolve::<BRANCH_SEND_RESOLVER>())
 }
 
-fn choose_left(_: &()) -> Result<DecisionResolution, hibana::runtime::resolver::ResolverError> {
-    Ok(DecisionResolution::Arm(DecisionArm::Left))
+fn choose_left(
+    _: &(),
+) -> Result<hibana::runtime::resolver::DecisionArm, hibana::runtime::resolver::ResolverError> {
+    Ok(DecisionArm::Left)
 }
 
 fn with_branch_send_workspace(
@@ -66,35 +68,33 @@ fn with_branch_send_workspace(
             let role0 = branch_send_program::<0>();
             let role1 = branch_send_program::<1>();
             let role2 = branch_send_program::<2>();
-            rv.role(&role0)
-                .set_resolver(ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
+            rv.set_resolver(
+                &role0,
+                ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
                     &BRANCH_SEND_STATE,
                     choose_left,
-                ))
-                .expect("install sender resolver");
-            rv.role(&role1)
-                .set_resolver(ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
+                ),
+            )
+            .expect("install sender resolver");
+            rv.set_resolver(
+                &role1,
+                ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
                     &BRANCH_SEND_STATE,
                     choose_left,
-                ))
-                .expect("install receiver resolver");
-            rv.role(&role2)
-                .set_resolver(ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
+                ),
+            )
+            .expect("install receiver resolver");
+            rv.set_resolver(
+                &role2,
+                ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
                     &BRANCH_SEND_STATE,
                     choose_left,
-                ))
-                .expect("install controller resolver");
-            let mut sender = rv.session(sid).role(&role0).enter().expect("attach sender");
-            let mut receiver = rv
-                .session(sid)
-                .role(&role1)
-                .enter()
-                .expect("attach receiver");
-            let mut controller = rv
-                .session(sid)
-                .role(&role2)
-                .enter()
-                .expect("attach controller");
+                ),
+            )
+            .expect("install controller resolver");
+            let mut sender = rv.enter(sid, &role0).expect("attach sender");
+            let mut receiver = rv.enter(sid, &role1).expect("attach receiver");
+            let mut controller = rv.enter(sid, &role2).expect("attach controller");
             run(&mut sender, &mut receiver, &mut controller);
         });
     });

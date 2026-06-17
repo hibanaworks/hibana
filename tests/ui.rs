@@ -82,6 +82,9 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/runtime-transport-custom-error-return-removed.rs");
     t.compile_fail("tests/ui/runtime-outgoing-peer-removed.rs");
     t.compile_fail("tests/ui/runtime-session-kit-storage-max-rv-removed.rs");
+    t.compile_fail("tests/ui/runtime-fluent-session-removed.rs");
+    t.compile_fail("tests/ui/runtime-fluent-role-removed.rs");
+    t.compile_fail("tests/ui/runtime-fluent-witness-types-removed.rs");
     t.compile_fail("tests/ui/public_step_name_import.rs");
     t.compile_fail("tests/ui/public_compile_link_boundary.rs");
     t.compile_fail("tests/ui/public_fragment_boundary.rs");
@@ -91,10 +94,12 @@ fn g_compile_fails() {
     t.compile_fail("tests/ui/recv-borrow-endpoint-alias.rs");
     t.compile_fail("tests/ui/route-branch-double-recv.rs");
     t.compile_fail("tests/ui/send-future-endpoint-alias.rs");
+    t.compile_fail("tests/ui/endpoint-result-removed.rs");
     t.compile_fail("tests/ui/endpoint-send-only-payload-cannot-recv.rs");
     t.compile_fail("tests/ui/endpoint-recv-only-payload-cannot-send.rs");
     t.compile_fail("tests/ui/endpoint-error-operation-removed.rs");
     t.compile_fail("tests/ui/attach-error-operation-removed.rs");
     t.compile_fail("tests/ui/resolver-error-operation-removed.rs");
     t.compile_fail("tests/ui/resolver-decision-fn-removed.rs");
+    t.compile_fail("tests/ui/resolver-decision-resolution-removed.rs");
 }

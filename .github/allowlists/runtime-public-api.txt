@@ -6,9 +6,9 @@ pub mod ids {
 pub use crate::session::types::SessionId;
 pub mod tap {
 pub use crate::observe::core::{Evidence, TapEvent, TapPort};
-pub use crate::observe::ids::{ ENDPOINT_RECV, ENDPOINT_SEND, ENDPOINT_SESSION, LANE_ACQUIRE, LANE_RELEASE, RESOLVER_AUDIT, RESOLVER_AUDIT_DEFER, RESOLVER_REPLAY_EVENT, RESOLVER_REPLAY_EVENT_EXT, ROUTE_ARM_SELECTION, TRANSPORT_FAULT, TRANSPORT_FAULT_CAPACITY, TRANSPORT_FAULT_DEADLINE, TRANSPORT_FAULT_FAILED, TRANSPORT_FAULT_OFFLINE, TRANSPORT_FRAME, TRANSPORT_MISMATCH, TRANSPORT_MISMATCH_LABEL, TRANSPORT_MISMATCH_LANE, TRANSPORT_MISMATCH_PEER_ROLE, TRANSPORT_MISMATCH_SESSION, TRANSPORT_MISMATCH_SOURCE_ROLE, };
+pub use crate::observe::ids::{ ENDPOINT_RECV, ENDPOINT_SEND, ENDPOINT_SESSION, LANE_ACQUIRE, LANE_RELEASE, RESOLVER_AUDIT, ROUTE_ARM_SELECTION, TRANSPORT_FAULT, TRANSPORT_FAULT_CAPACITY, TRANSPORT_FAULT_DEADLINE, TRANSPORT_FAULT_FAILED, TRANSPORT_FAULT_OFFLINE, TRANSPORT_FRAME, TRANSPORT_MISMATCH, TRANSPORT_MISMATCH_LABEL, TRANSPORT_MISMATCH_LANE, TRANSPORT_MISMATCH_PEER_ROLE, TRANSPORT_MISMATCH_SESSION, TRANSPORT_MISMATCH_SOURCE_ROLE, };
 pub mod resolver {
-pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };
+pub use crate::session::cluster::core::{DecisionArm, ResolverError, ResolverRef};
 pub mod wire {
 pub use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 pub mod transport {
@@ -16,28 +16,21 @@ pub use crate::transport::{ FrameHeader, FrameLabel, Outgoing, PortOpen, Receive
 pub struct SessionKit<'cfg, T> where T: crate::transport::Transport + 'cfg, {
 pub struct SessionKitStorage<'cfg, T> where T: crate::transport::Transport + 'cfg, {
 pub struct RendezvousKit<'kit, 'cfg, T> where T: crate::transport::Transport + 'cfg, {
-pub struct SessionRendezvousKit<'kit, 'cfg, T> where T: crate::transport::Transport + 'cfg, {
-pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> where T: crate::transport::Transport + 'cfg, {
-pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T> where T: crate::transport::Transport + 'cfg, {
 SessionKitStorage::uninit pub const fn uninit() -> Self {
 SessionKitStorage::init pub fn init(&mut self) -> &SessionKit<'cfg, T> {
-SessionKit::rendezvous pub fn rendezvous( &self, slab: &'cfg mut [u8], transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {
-RendezvousKit::session pub fn session( &self, sid: crate::runtime::ids::SessionId, ) -> SessionRendezvousKit<'kit, 'cfg, T> {
 RendezvousKit::tap pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
-RendezvousKit::role pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> RoleKit<'kit, 'cfg, 'prog, ROLE, T> {
-SessionRendezvousKit::role pub fn role<'prog, const ROLE: u8>( &self, program: &'prog crate::runtime::program::RoleProgram<ROLE>, ) -> SessionRoleKit<'kit, 'cfg, 'prog, ROLE, T> {
-SessionRoleKit::enter pub fn enter(self) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
-RoleKit::set_resolver pub fn set_resolver<const RESOLVER: u16>( &self, resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
+RendezvousKit::enter pub fn enter<const ROLE: u8>( &self, sid: crate::runtime::ids::SessionId, program: &crate::runtime::program::RoleProgram<ROLE>, ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> where 'cfg: 'kit, {
+RendezvousKit::set_resolver pub fn set_resolver<const ROLE: u8, const RESOLVER: u16>( &self, program: &crate::runtime::program::RoleProgram<ROLE>, resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>, ) -> Result<(), crate::runtime::resolver::ResolverError> {
+SessionKit::rendezvous pub fn rendezvous( &self, slab: &'cfg mut [u8], transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {
 pub struct SessionId(u32);
 SessionId::new pub const fn new(id: u32) -> Self {
 SessionId::raw pub const fn raw(self) -> u32 {
 pub enum DecisionArm {
-pub enum DecisionResolution {
 pub struct ResolverError {
 ResolverError::reject pub fn reject() -> Self {
 pub struct ResolverRef<'cfg, const RESOLVER_ID: u16> {
-ResolverRef::decision_state pub fn decision_state<S: 'cfg>( state: &'cfg S, resolver: fn(&S) -> Result<DecisionResolution, ResolverError>, ) -> Self {
-ResolverRef::evaluate pub fn evaluate(self) -> Result<DecisionResolution, ResolverError> {
+ResolverRef::decision_state pub fn decision_state<S: 'cfg>( state: &'cfg S, resolver: fn(&S) -> Result<DecisionArm, ResolverError>, ) -> Self {
+ResolverRef::evaluate pub fn evaluate(self) -> Result<DecisionArm, ResolverError> {
 pub struct AttachError {
 pub struct TapPort<'a> {
 pub struct TapEvent {
@@ -70,9 +63,6 @@ pub const LANE_ACQUIRE: u16 = 0x0210;
 pub const LANE_RELEASE: u16 = 0x0211;
 pub const ROUTE_ARM_SELECTION: u16 = 0x0221;
 pub const RESOLVER_AUDIT: u16 = 0x0407;
-pub const RESOLVER_REPLAY_EVENT: u16 = 0x0408;
-pub const RESOLVER_REPLAY_EVENT_EXT: u16 = 0x0409;
-pub const RESOLVER_AUDIT_DEFER: u16 = 0x040A;
 pub struct Outgoing<'f> {
 Outgoing::frame_label pub const fn frame_label(&self) -> FrameLabel {
 Outgoing::target_role pub const fn target_role(&self) -> u8 {

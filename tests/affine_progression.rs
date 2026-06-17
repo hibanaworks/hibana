@@ -137,15 +137,9 @@ fn drop_unpolled_send_future_keeps_endpoint_on_same_send_step() {
             let sid = SessionId::new(401);
 
             let mut controller = rv
-                .session(sid)
-                .role(&controller_send_program)
-                .enter()
+                .enter(sid, &controller_send_program)
                 .expect("attach controller");
-            let mut worker = rv
-                .session(sid)
-                .role(&worker_send_program)
-                .enter()
-                .expect("attach worker");
+            let mut worker = rv.enter(sid, &worker_send_program).expect("attach worker");
 
             futures::executor::block_on(async {
                 let dropped_payload = 66u32;
@@ -188,15 +182,9 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                 let sid = SessionId::new(402);
 
                 let mut controller = rv
-                    .session(sid)
-                    .role(&controller_send_program)
-                    .enter()
+                    .enter(sid, &controller_send_program)
                     .expect("attach controller");
-                let mut worker = rv
-                    .session(sid)
-                    .role(&worker_send_program)
-                    .enter()
-                    .expect("attach worker");
+                let mut worker = rv.enter(sid, &worker_send_program).expect("attach worker");
 
                 let waker = noop_waker_ref();
                 let mut cx = Context::from_waker(waker);
@@ -246,15 +234,9 @@ fn forgotten_started_send_future_leaves_send_fail_closed() {
                 let sid = SessionId::new(403);
 
                 let mut controller = rv
-                    .session(sid)
-                    .role(&controller_send_program)
-                    .enter()
+                    .enter(sid, &controller_send_program)
                     .expect("attach controller");
-                let worker = rv
-                    .session(sid)
-                    .role(&worker_send_program)
-                    .enter()
-                    .expect("attach worker");
+                let worker = rv.enter(sid, &worker_send_program).expect("attach worker");
                 core::hint::black_box(&worker);
 
                 let waker = noop_waker_ref();

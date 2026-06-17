@@ -14,16 +14,8 @@ fn send_session_fault_cancels_pending_transport_state_once() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(203);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let payload = FramePayload(*b"hiba");
             {

@@ -16,16 +16,8 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
                 .expect("register rendezvous");
 
             let sid = SessionId::new(253);
-            let mut origin_endpoint = rv
-                .session(sid)
-                .role(&origin_program)
-                .enter()
-                .expect("origin endpoint");
-            let target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut origin_endpoint = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
             core::hint::black_box(&target_endpoint);
 
             let payload = 53u32;

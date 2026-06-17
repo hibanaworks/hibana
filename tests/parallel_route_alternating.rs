@@ -68,15 +68,9 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
             let sid = SessionId::new(96);
             let local_program = alternating_route_parallel_program::<LOCAL_ROLE>();
 
-            let mut local = rv
-                .session(sid)
-                .role(&local_program)
-                .enter()
-                .expect("attach local role");
+            let mut local = rv.enter(sid, &local_program).expect("attach local role");
             let mut worker = rv
-                .session(sid)
-                .role(&alternating_route_parallel_program::<WORKER_ROLE>())
-                .enter()
+                .enter(sid, &alternating_route_parallel_program::<WORKER_ROLE>())
                 .expect("attach worker role");
 
             futures::executor::block_on(async {

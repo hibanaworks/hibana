@@ -122,7 +122,10 @@ mod lane_slots {
                     256,
                 );
             }
-            let mut array = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { array.assume_init() };
+            let mut array =
+                /* SAFETY: `LaneSlotArray::init_from_parts` returned after writing
+                both fields and every `Option<u16>` slot in `storage`. */
+                unsafe { array.assume_init() };
 
             assert_eq!(array.len(), 256);
             *array.get_mut(255).expect("lane 255 slot") = Some(7);

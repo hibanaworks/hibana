@@ -83,10 +83,7 @@
 //! let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 //! let kit = kit_storage.init();
 //! let rv = kit.rendezvous(&mut slab, transport)?;
-//! let endpoint = rv
-//!     .session(sid)
-//!     .role(&role0)
-//!     .enter()?;
+//! let endpoint = rv.enter(sid, &role0)?;
 //! ```
 //!
 //! Runtime capacities are derived from Hibana's wire/domain limits and
@@ -206,4 +203,4 @@ mod rendezvous;
 // ============================================================================
 
 // Endpoint facade
-pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};
+pub use endpoint::{Endpoint, EndpointError, RouteBranch};

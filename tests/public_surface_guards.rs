@@ -532,7 +532,7 @@ fn message_and_wire_codec_boundaries_stay_separated() {
 
 #[test]
 fn tap_surface_has_one_public_entry_and_internal_event_construction() {
-    let fluent = read("src/runtime/fluent.rs");
+    let session_kit = read("src/runtime/session_kit.rs");
     let event = read("src/observe/event.rs");
     let tap_impl = [
         read("src/observe/core.rs"),
@@ -544,16 +544,13 @@ fn tap_surface_has_one_public_entry_and_internal_event_construction() {
     .join("\n");
     let runtime_buckets = read("src/runtime/buckets.rs");
 
-    let session_impl = fluent
-        .split("impl<'kit, 'cfg, T> SessionRendezvousKit")
-        .nth(1)
-        .and_then(|tail| tail.split("impl<'kit, 'cfg, 'prog").next())
-        .expect("SessionRendezvousKit impl must exist");
     assert!(
-        fluent.contains("impl<'kit, 'cfg, T> RendezvousKit")
-            && fluent.contains("pub fn tap(&self) -> crate::runtime::tap::TapPort<'_>")
-            && !session_impl.contains("pub fn tap(&self)"),
-        "tap must be entered through rendezvous-wide rv.tap(), not SessionRendezvousKit::tap()"
+        session_kit.contains("impl<'kit, 'cfg, T> RendezvousKit")
+            && session_kit.contains("pub fn tap(&self) -> crate::runtime::tap::TapPort<'_>")
+            && !session_kit.contains("SessionRendezvousKit")
+            && !session_kit.contains("SessionRoleKit")
+            && !session_kit.contains("RoleKit"),
+        "tap must be entered through rendezvous-wide rv.tap() without fluent session/role witnesses"
     );
     for forbidden in "pub const fn new(|pub const fn zero(|pub const fn with_arg0|pub const fn with_arg1|pub const fn with_causal_key|pub const fn make_causal_key|pub const fn causal_role|pub const fn causal_seq|pub const fn input_word|impl WireEncode for TapEvent|impl WirePayload for TapEvent".split('|') {
         assert!(
@@ -575,8 +572,8 @@ fn tap_surface_has_one_public_entry_and_internal_event_construction() {
             "runtime allowlist scanner must cover re-export owner item: {required}"
         );
     }
-    for required in "LANE_ACQUIRE|LANE_RELEASE|ROUTE_ARM_SELECTION|RESOLVER_AUDIT|RESOLVER_REPLAY_EVENT|RESOLVER_REPLAY_EVENT_EXT|RESOLVER_AUDIT_DEFER|TRANSPORT_FAULT"
-        .split('|')
+    for required in
+        "LANE_ACQUIRE|LANE_RELEASE|ROUTE_ARM_SELECTION|RESOLVER_AUDIT|TRANSPORT_FAULT".split('|')
     {
         assert!(
             runtime_buckets.contains(required),
@@ -621,8 +618,7 @@ fn runtime_resolver_surface_is_decision_input_owner() {
     }
     assert!(
         resolver_src.contains("pub struct ResolverRef<'cfg, const RESOLVER_ID: u16")
-            && resolver_src
-                .contains("pub fn evaluate(self) -> Result<DecisionResolution, ResolverError>")
+            && resolver_src.contains("pub fn evaluate(self) -> Result<DecisionArm, ResolverError>")
             && resolver_src.contains("This is for typed resolver owners")
             && resolver_src.contains("not commit route/session progress")
             && !resolver_src.contains("pub fn resolve_decision")
@@ -672,7 +668,7 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
     for src in [&cluster_src, &runtime_src, &readme_src] {
         assert!(
             !src.contains(collapsed_resolution),
-            "dynamic resolver surface must use the named DecisionResolution API, not a generic DynamicResolution alias"
+            "dynamic resolver surface must use DecisionArm directly, not a generic DynamicResolution alias"
         );
         assert!(
             !src.contains(generic_stateless_ctor)
@@ -682,7 +678,11 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
         );
     }
 
-    for required in ["pub enum DecisionResolution", "pub fn decision_state"] {
+    for required in [
+        "pub enum DecisionArm",
+        "pub fn decision_state",
+        "Result<DecisionArm, ResolverError>",
+    ] {
         assert!(
             cluster_src.contains(required),
             "dynamic resolver public SPI must keep the route decision item: {required}"
@@ -699,6 +699,9 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
         "pub fn decision_fn",
         "dispatch_decision_fn",
         "stateless:",
+        "pub enum DecisionResolution",
+        "DecisionResolution::Defer",
+        "DecisionResolution::Arm",
         concat!(
             "pub fn decision_fn(resolver: fn(ResolverContext) -> DecisionResolution",
             "Outcome)"

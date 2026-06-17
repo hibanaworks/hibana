@@ -49,7 +49,7 @@ mod session_effect_steps;
 
 pub(crate) use cluster_storage::*;
 pub(crate) use dynamic_resolvers::*;
-pub use dynamic_resolvers::{DecisionArm, DecisionResolution, ResolverError, ResolverRef};
+pub use dynamic_resolvers::{DecisionArm, ResolverError, ResolverRef};
 pub(crate) use session_cluster_ops::*;
 
 impl<'cfg, T> Drop for SessionCluster<'cfg, T>

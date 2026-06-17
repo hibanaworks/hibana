@@ -1,5 +1,5 @@
 use super::{
-    CursorEndpoint, DeferReason, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
+    CursorEndpoint, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
     FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
     OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
     ResolvePendingState, ResolveTokenOutcome, RouteArmToken, ScopeFrameLabelScratch, Transport,
@@ -137,7 +137,6 @@ where
         } = input;
         let scope_id = selection.scope_id;
         let frontier_parallel_root = selection.frontier_parallel_root;
-        let offer_lane = selection.offer_lane;
         let mut wire_turn = PassiveWireTurn::Unpolled;
         loop {
             frame_hint.record(self.refresh_passive_scope_evidence(
@@ -185,10 +184,7 @@ where
                 FrontierDeferRequest {
                     scope_id,
                     current_parallel: frontier_parallel_root,
-                    reason: DeferReason::EvidenceAbsent,
-                    offer_lane,
                     ingress: state.evidence_state(),
-                    selected_arm: None,
                 },
                 state.frontier_visited,
             ) {

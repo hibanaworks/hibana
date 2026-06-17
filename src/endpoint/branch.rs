@@ -1,5 +1,5 @@
 use super::{
-    Endpoint, EndpointError, EndpointOp, EndpointResult, RecvResult, RouteBranch,
+    Endpoint, EndpointError, EndpointOp, RecvResult, RouteBranch,
     futures::{DecodeFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
     send::SendFuture,
 };
@@ -36,8 +36,9 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     #[inline]
     pub fn recv<M>(
         self,
-    ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>>
-    + use<'e, 'r, M, ROLE>
+    ) -> impl core::future::Future<
+        Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>,
+    > + use<'e, 'r, M, ROLE>
     where
         M: crate::g::Message,
         M::Payload: WirePayload,
@@ -54,7 +55,9 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     pub fn send<'a, M>(
         self,
         payload: &'a M::Payload,
-    ) -> impl core::future::Future<Output = EndpointResult<()>> + 'a + use<'a, 'e, 'r, M, ROLE>
+    ) -> impl core::future::Future<Output = core::result::Result<(), EndpointError>>
+    + 'a
+    + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
         M::Payload: WireEncode + 'a,
@@ -78,9 +81,10 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
             crate::transport::FrameLabel::new(preview.frame_label()),
         );
         let init = crate::endpoint::kernel::SendInit::new(desc, preview);
-        match /* SAFETY: the consumed branch owns the in-flight kernel borrow until the returned future completes or drops. */ unsafe {
+        let lease = /* SAFETY: the consumed branch owns the in-flight kernel borrow until the returned future completes or drops. */ unsafe {
             (&mut *endpoint).init_public_send_state(&init)
-        } {
+        };
+        match lease {
             crate::endpoint::kernel::PublicOpLease::Held => {}
             crate::endpoint::kernel::PublicOpLease::Rejected => {
                 return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
@@ -92,10 +96,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
 
 impl<'r, const ROLE: u8> Drop for Endpoint<'r, ROLE> {
     fn drop(&mut self) {
-        /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
-        unsafe {
-            self.drop_kernel_endpoint();
-        }
+        self.drop_kernel_endpoint();
     }
 }
 
@@ -112,8 +113,7 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
         let endpoint_ptr = core::ptr::from_mut(endpoint);
-        /* SAFETY: the endpoint future owns the in-flight kernel borrow until Ready or Drop resolves the operation. */
-        let lease = unsafe { endpoint.init_public_offer_state() };
+        let lease = endpoint.init_public_offer_state();
         Self {
             endpoint: endpoint_ptr,
             lease: OfferFutureLease::from_public_lease(lease),
@@ -155,7 +155,7 @@ impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
 }
 
 impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
-    type Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>;
+    type Output = core::result::Result<RouteBranch<'e, 'r, ROLE>, EndpointError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();

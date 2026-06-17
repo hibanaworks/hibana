@@ -102,14 +102,19 @@ mod tests {
 
     fn counting_waker(count: &Cell<usize>) -> Waker {
         let data = core::ptr::from_ref(count).cast::<()>();
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
+        /* SAFETY: `data` is the address of `count`, and every waker built in
+        these tests is dropped before that stack `Cell<usize>` goes out of
+        scope; the vtable casts the same pointer back to `Cell<usize>`. */
         unsafe { Waker::from_raw(RawWaker::new(data, &COUNT_WAKER_VTABLE)) }
     }
 
     #[test]
     fn explicit_empty_slot_ignores_poisoned_storage_bytes() {
         let layout = std::alloc::Layout::new::<WaiterSlot>();
-        let ptr = /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */ unsafe { std::alloc::alloc(layout).cast::<WaiterSlot>() };
+        let ptr =
+            /* SAFETY: `layout` is exactly `WaiterSlot`; null is checked before
+            the allocation is written or deallocated with the same layout. */
+            unsafe { std::alloc::alloc(layout).cast::<WaiterSlot>() };
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
@@ -153,14 +158,19 @@ mod tests {
     #[test]
     fn init_owned_transfers_waker_without_dropping_it() {
         let layout = std::alloc::Layout::new::<WaiterSlot>();
-        let ptr = /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */ unsafe { std::alloc::alloc(layout).cast::<WaiterSlot>() };
+        let ptr =
+            /* SAFETY: `layout` is exactly `WaiterSlot`; null is checked before
+            `init_owned` writes the allocation or the same layout deallocates it. */
+            unsafe { std::alloc::alloc(layout).cast::<WaiterSlot>() };
         if ptr.is_null() {
             std::alloc::handle_alloc_error(layout);
         }
 
         let count = Cell::new(0);
         let waker = counting_waker(&count);
-        /* SAFETY: this owner validates the concrete pointer identity and initialized storage before raw access. */
+        /* SAFETY: `ptr` is the unique `WaiterSlot` allocation from this test;
+        `init_owned` initializes it once, and this block wakes, drops, and
+        deallocates it exactly once with the matching layout. */
         unsafe {
             WaiterSlot::init_owned(ptr, waker);
             (*ptr).wake();

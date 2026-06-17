@@ -41,15 +41,26 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     .join("\n");
 
     for required in [
-        "pub type EndpointResult<T> = core::result::Result<T, EndpointError>;",
-        "pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};",
-        "pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
+        "pub use endpoint::{Endpoint, EndpointError, RouteBranch};",
+        "pub use crate::session::cluster::core::{DecisionArm, ResolverError, ResolverRef};",
         "pub use crate::session::cluster::error::AttachError;",
         "pub fn rendezvous( &self, slab: &'cfg mut [u8], transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {",
     ] {
         assert!(
             public_allowlists.contains(required),
             "failure evidence surface missing required domain item: {required}"
+        );
+    }
+    for forbidden in [
+        "pub type EndpointResult<T>",
+        "DecisionResolution",
+        "SessionRendezvousKit",
+        "SessionRoleKit",
+        "RoleKit",
+    ] {
+        assert!(
+            !public_allowlists.contains(forbidden),
+            "public allowlists must not keep removed surface item: {forbidden}"
         );
     }
     assert!(
@@ -110,7 +121,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     assert!(
         resolver.contains("pub fn reject() -> Self")
             && runtime.contains("pub fn rendezvous(")
-            && runtime.contains("pub fn enter(")
+            && runtime.contains("pub fn enter<const ROLE: u8>")
             && runtime.contains("pub fn set_resolver")
             && !resolver.contains(concat!("Call", "site"))
             && !runtime.contains(concat!("Call", "site")),

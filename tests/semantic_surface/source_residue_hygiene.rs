@@ -274,7 +274,7 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
             "fn ",
             "base",
             "line",
-            "_left_resolver() -> Result<DecisionResolution, ResolverError>"
+            "_left_resolver() -> Result<DecisionArm, ResolverError>"
         )),
         "resolver tests must model the fallible resolver contract, not a constant-Ok helper"
     );

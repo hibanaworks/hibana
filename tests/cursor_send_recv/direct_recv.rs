@@ -179,11 +179,7 @@ fn assert_malformed_direct_recv_fails_closed(
                 .expect("register rendezvous");
             let mut tap = rv.tap();
 
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let error = futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
                 .expect_err("descriptor mismatch must fail closed");
@@ -231,14 +227,10 @@ fn cursor_recv_can_return_borrowed_frame_views() {
 
             let sid = SessionId::new(2);
             let mut origin_endpoint = rv
-                .session(sid)
-                .role(&borrowed_origin_program)
-                .enter()
+                .enter(sid, &borrowed_origin_program)
                 .expect("origin endpoint");
             let mut target_endpoint = rv
-                .session(sid)
-                .role(&borrowed_target_program)
-                .enter()
+                .enter(sid, &borrowed_target_program)
                 .expect("target endpoint");
 
             let () = futures::executor::block_on(
@@ -276,11 +268,7 @@ fn zero_length_transport_frame_recv_unit_commits() {
             let rv = cluster
                 .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let () = futures::executor::block_on(target_endpoint.recv::<Msg<30, ()>>())
                 .expect("unit payload accepts canonical empty frame");
@@ -311,11 +299,7 @@ fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
             let rv = cluster
                 .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let error = futures::executor::block_on(target_endpoint.recv::<Msg<31, u8>>())
                 .expect_err("u8 payload must reject canonical empty frame");
@@ -349,11 +333,7 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
             let mut tap = rv.tap();
 
             let sid = SessionId::new(73);
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
             let error = futures::executor::block_on(target_endpoint.recv::<Msg<1, FramePayload>>())
                 .expect_err("deadline recv must surface transport error");
             let rendered = format!("{error:?}");
@@ -456,11 +436,7 @@ fn mismatch_tap_is_emitted_before_terminal_error() {
                 )
                 .expect("register rendezvous");
             let mut tap = rv.tap();
-            let mut target_endpoint = rv
-                .session(sid)
-                .role(&target_program)
-                .enter()
-                .expect("target endpoint");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
 
             let mut recv = core::pin::pin!(target_endpoint.recv::<Msg<1, FramePayload>>());
             let waker = futures::task::noop_waker_ref();

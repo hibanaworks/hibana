@@ -84,34 +84,6 @@ where
     pub(super) base: RendezvousBase<'kit, 'cfg, T>,
 }
 
-/// Session-bound rendezvous witness.
-pub struct SessionRendezvousKit<'kit, 'cfg, T>
-where
-    T: crate::transport::Transport + 'cfg,
-{
-    pub(super) base: RendezvousBase<'kit, 'cfg, T>,
-    pub(super) sid: crate::runtime::ids::SessionId,
-}
-
-/// Projected role witness before a session id is selected.
-pub struct RoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T>
-where
-    T: crate::transport::Transport + 'cfg,
-{
-    pub(super) base: RendezvousBase<'kit, 'cfg, T>,
-    pub(super) program: &'prog crate::runtime::program::RoleProgram<ROLE>,
-}
-
-/// Session-bound projected role witness.
-pub struct SessionRoleKit<'kit, 'cfg, 'prog, const ROLE: u8, T>
-where
-    T: crate::transport::Transport + 'cfg,
-{
-    pub(super) base: RendezvousBase<'kit, 'cfg, T>,
-    pub(super) sid: crate::runtime::ids::SessionId,
-    pub(super) program: &'prog crate::runtime::program::RoleProgram<ROLE>,
-}
-
 impl<'cfg, T> SessionKitStorage<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -156,6 +128,44 @@ where
                 core::ptr::drop_in_place(self.storage.as_mut_ptr());
             }
         }
+    }
+}
+
+impl<'kit, 'cfg, T> RendezvousKit<'kit, 'cfg, T>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    #[inline]
+    pub fn tap(&self) -> crate::runtime::tap::TapPort<'_> {
+        self.base.tap_port()
+    }
+
+    /// Attach this projected role program as an endpoint for `sid`.
+    #[inline]
+    pub fn enter<const ROLE: u8>(
+        &self,
+        sid: crate::runtime::ids::SessionId,
+        program: &crate::runtime::program::RoleProgram<ROLE>,
+    ) -> Result<crate::Endpoint<'kit, ROLE>, AttachError>
+    where
+        'cfg: 'kit,
+    {
+        self.base.kit.enter_attached(self.base.rv, sid, program)
+    }
+
+    /// Install a resolver for an explicit route resolution site on this role.
+    ///
+    /// Dynamic resolution exists only where projection produced a matching
+    /// resolver site.
+    #[inline]
+    pub fn set_resolver<const ROLE: u8, const RESOLVER: u16>(
+        &self,
+        program: &crate::runtime::program::RoleProgram<ROLE>,
+        resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>,
+    ) -> Result<(), crate::runtime::resolver::ResolverError> {
+        self.base
+            .kit
+            .set_role_resolver::<RESOLVER, ROLE>(self.base.rv, program, resolver)
     }
 }
 
