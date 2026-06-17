@@ -70,7 +70,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-hibana = { path = "../..", default-features = false, features = ["std"] }
+hibana = { path = "../..", default-features = false }
 EOF
 
 cat >"${MEASURE_DIR}/src/main.rs" <<'EOF'
@@ -189,12 +189,12 @@ else
 fi
 
 echo "== final-form future/layout sizes =="
-run_final_form_test -p hibana endpoint_surface_size_gates_hold --lib --features std
-run_final_form_test -p hibana recv_future_state_caches_completion --lib --features std
-run_final_form_test -p hibana message_type_variation_does_not_change_future_layout --lib --features std
-run_final_form_test -p hibana send_future_and_runtime_descriptor_size_gates_hold --lib --features std
+run_final_form_test -p hibana endpoint_surface_size_gates_hold --lib
+run_final_form_test -p hibana recv_future_state_caches_completion --lib
+run_final_form_test -p hibana message_type_variation_does_not_change_future_layout --lib
+run_final_form_test -p hibana send_future_and_runtime_descriptor_size_gates_hold --lib
 FUTURE_LAYOUT_OUTPUT="$(
-  cargo +"${TOOLCHAIN}" test -p hibana final_form_future_layout_measurement_report --lib --features std -- --nocapture
+  cargo +"${TOOLCHAIN}" test -p hibana final_form_future_layout_measurement_report --lib -- --nocapture
 )"
 printf '%s\n' "${FUTURE_LAYOUT_OUTPUT}"
 FUTURE_LAYOUT_OUTPUT="${FUTURE_LAYOUT_OUTPUT}" python3 - <<'PY'
@@ -246,7 +246,6 @@ PROTOCOL_MATRIX_OUTPUT="$(
     -p hibana \
     global::role_program::tests::protocol_matrix::projected_protocol_matrix_reports_compact_resident_images \
     --lib \
-    --features std \
     -- \
     --exact \
     --nocapture
@@ -678,7 +677,6 @@ STACK_HIGH_WATER_OUTPUT="$(
     -p hibana \
     large_choreography_runtime_peak_metrics \
     --lib \
-    --features std \
     --release \
     -- \
     --ignored \

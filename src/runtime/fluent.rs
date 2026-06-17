@@ -56,7 +56,6 @@ where
 {
     /// Attach this projected role program as an endpoint.
     #[inline]
-    #[track_caller]
     pub fn enter(self) -> Result<crate::Endpoint<'kit, ROLE>, AttachError> {
         self.base
             .kit
@@ -73,7 +72,6 @@ where
     ///
     /// Dynamic resolution exists only where projection produced a matching
     /// resolver site.
-    #[track_caller]
     pub fn set_resolver<const RESOLVER: u16>(
         &self,
         resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>,

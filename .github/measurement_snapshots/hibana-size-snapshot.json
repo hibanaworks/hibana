@@ -12,7 +12,7 @@
   },
   "runtime_measurement": {
     "profile": "release",
-    "features": "std",
+    "features": "default-empty",
     "test_filter": "large_choreography_runtime_peak_metrics",
     "test_args": "--ignored --nocapture --test-threads=1"
   },

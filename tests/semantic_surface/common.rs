@@ -99,6 +99,36 @@ pub(crate) fn read_all_rs_tree(path: &str) -> String {
     read_rs_tree_filtered(path, true)
 }
 
+pub(crate) fn read_tree(path: &str) -> String {
+    fn collect_files(dir: &Path, parts: &mut Vec<PathBuf>) {
+        let entries =
+            fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
+                .path();
+            if path.is_dir() {
+                collect_files(&path, parts);
+            } else {
+                parts.push(path);
+            }
+        }
+    }
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let mut parts = Vec::new();
+    collect_files(&root, &mut parts);
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {err}", part.display())),
+        );
+    }
+    source
+}
+
 pub(crate) fn cluster_core_source() -> String {
     let mut source = read("src/session/cluster/core.rs");
     source.push_str(&read_production_rs_tree("src/session/cluster/core"));

@@ -1,7 +1,7 @@
 use core::ptr;
 use hibana::runtime::{
     ids::SessionId,
-    transport::{FrameHeader, FrameLabel, ReceivedFrame, Transport, TransportError},
+    transport::{FrameHeader, ReceivedFrame, Transport, TransportError},
     wire::Payload,
 };
 use std::cell::UnsafeCell;
@@ -21,7 +21,7 @@ pub(crate) const fn frame_header_from_parts(
     lane: u8,
     source_role: u8,
     target_role: u8,
-    label: FrameLabel,
+    label: u8,
 ) -> FrameHeader {
     let session = session.raw().to_be_bytes();
     FrameHeader::from_bytes([
@@ -32,7 +32,7 @@ pub(crate) const fn frame_header_from_parts(
         lane,
         source_role,
         target_role,
-        label.raw(),
+        label,
     ])
 }
 
@@ -498,7 +498,7 @@ impl TestTransport {
             frame.lane,
             frame.source_role,
             rx.role,
-            FrameLabel::new(frame.frame_label),
+            frame.frame_label,
         );
         let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
         Poll::Ready(Ok(ReceivedFrame::framed(header, Payload::new(bytes))))

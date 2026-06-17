@@ -299,7 +299,7 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
     for forbidden in [
         "TapEvent::default",
         "Evidence::default",
-        "FrameFlags::default",
+        concat!("Frame", "Flags::default"),
         "FrameLabelMask::default",
         "TapFrameMeta::default",
         "LaneStorageLeaseSet::default",
@@ -505,31 +505,29 @@ fn resolver_registration_has_only_stateful_entry() {
 }
 
 #[test]
-fn production_callsite_location_storage_is_std_cfg_only() {
+fn production_has_no_source_location_diagnostic_plumbing() {
     let production = read_production_rs_tree("src");
-    let diag = read("src/diag.rs");
-    let without_diag = production.replace(&diag, "");
 
     assert!(
-        diag.contains("pub(crate) struct Callsite")
-            && diag.contains("#[cfg(feature = \"std\")]")
-            && diag.contains("#[cfg(not(feature = \"std\"))]")
-            && diag.contains("use core::panic::Location;")
-            && diag.contains("location: &'static Location<'static>")
-            && diag.contains("Location::caller()"),
-        "diag::Callsite must keep Location behind the std cfg and provide a no_std compact shape"
+        !repo_file_exists("src/diag.rs") && !read("src/lib.rs").contains("mod diag;"),
+        "source-location diagnostic module must not return"
     );
     for forbidden in [
+        concat!("Call", "site"),
         "core::panic::Location",
         "panic::Location",
         "Location::caller()",
         "&'static Location<'static>",
         "ErrorLocation",
         "ResolverErrorLocation",
+        "_location",
+        "fn file(",
+        "fn line(",
+        "fn column(",
     ] {
         assert!(
-            !without_diag.contains(forbidden),
-            "production source must not duplicate callsite Location storage outside diag::Callsite: {forbidden}"
+            !production.contains(forbidden),
+            "production source must not retain source-location diagnostic storage: {forbidden}"
         );
     }
 }
@@ -719,7 +717,7 @@ fn package_artifact_ships_repo_tests_without_publish_warning_filter() {
     assert!(
         package_gate.contains("run_package_clean \"cargo package --no-verify\"")
             && package_gate.contains("shipped repository tests must include their module tree")
-            && package_gate.contains("package representative test build --features std")
+            && package_gate.contains("package representative test build")
             && package_gate.contains("--test semantic_surface --no-run")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
         "package artifact gate must reject package warnings and compile a representative packaged repository target"

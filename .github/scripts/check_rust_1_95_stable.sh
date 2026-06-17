@@ -17,13 +17,13 @@ TOOLCHAIN=1.95.0 ./.github/scripts/ensure_rust_toolchain.sh thumbv6m-none-eabi
 
 cargo +1.95.0 check --no-default-features --lib -p hibana
 cargo +1.95.0 check --target thumbv6m-none-eabi --no-default-features --lib -p hibana
-cargo +1.95.0 test -p hibana --lib --features std
+cargo +1.95.0 test -p hibana --lib
 while IFS= read -r test_file; do
   test_name="$(basename "${test_file}" .rs)"
   if [[ "${test_name}" == "ui" ]]; then
     continue
   fi
-  cargo +1.95.0 test -p hibana --test "${test_name}" --features std
+  cargo +1.95.0 test -p hibana --test "${test_name}"
 done < <(find tests -maxdepth 1 -name '*.rs' | sort)
 
 echo "Rust 1.95 stable check passed"

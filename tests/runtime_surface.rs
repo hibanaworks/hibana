@@ -245,7 +245,7 @@ fn single_slab_config_is_runtime_resource_authority() {
         ) && !allowlist.contains(
             "pub unsafe fn init_in_place( storage: &'cfg mut core::mem::MaybeUninit<Self>, clock:"
         ),
-        "resident init_in_place must not accept a clock; Config owns the single runtime slab authority"
+        "resident init_in_place must not accept a clock; rendezvous owns the single runtime slab authority"
     );
     assert!(
         !cluster_rs.contains("clock: &'cfg C") && !cluster_rs.contains("self.clock.now32()"),
@@ -253,14 +253,16 @@ fn single_slab_config_is_runtime_resource_authority() {
     );
     assert!(
         readme.contains("let kit = kit_storage.init();")
-            && readme.contains("let config = Config::from_resources(&mut slab);")
+            && readme.contains("let rv = kit.rendezvous(&mut slab, transport)?;")
             && crate_docs.contains("let kit = kit_storage.init();")
-            && crate_docs.contains("let config = runtime::Config::from_resources(&mut slab);")
+            && crate_docs.contains("let rv = kit.rendezvous(&mut slab, transport)?;")
             && !readme.contains("CounterClock")
             && !readme.contains("tap_buf")
+            && !readme.contains("Config::from_resources")
+            && !crate_docs.contains("runtime::Config")
             && !crate_docs.contains("CounterClock")
             && !crate_docs.contains("tap_buf"),
-        "public docs must teach unified storage-owned SessionKit construction and single-slab Config authority"
+        "public docs must teach unified storage-owned SessionKit construction and direct single-slab rendezvous authority"
     );
 }
 
@@ -403,7 +405,6 @@ fn runtime_root_exposes_only_core_buckets() {
         "SessionRendezvousKit",
         "SessionRoleKit",
         "SessionKitStorage",
-        "pub use crate::runtime_core::config::Config;",
         "pub mod ids {",
         "pub mod tap {",
         "pub use crate::observe::core::{Evidence, TapEvent, TapPort};",
@@ -422,7 +423,11 @@ fn runtime_root_exposes_only_core_buckets() {
     }
     assert!(
         !runtime_rs.contains(concat!("Runtime", "Storage")),
-        "runtime resources must be owned by Config without a public storage envelope"
+        "runtime resources must be owned by rendezvous without a public storage envelope"
+    );
+    assert!(
+        !runtime_rs.contains("pub use crate::runtime_core::") || !runtime_rs.contains("Config"),
+        "runtime surface must not re-export a public Config wrapper"
     );
     let runtime_public = runtime_public_surface_source();
     for forbidden in ["Clock", "CounterClock", "RING_EVENTS", "TAP_EVENTS"] {
@@ -637,10 +642,10 @@ fn crate_package_artifact_is_a_first_class_gate() {
         "^src/.*/tests/",
         "run_package_clean \"cargo package --list\"",
         "run_package_clean \"cargo package --no-verify\"",
-        "package lib check --features std",
-        "package lib test build --features std",
+        "package lib check",
+        "package lib test build",
         "shipped repository tests must include their module tree",
-        "package representative test build --features std",
+        "package representative test build",
         "--test semantic_surface --no-run",
         "package lib check --no-default-features",
         "package lib test build --no-default-features",

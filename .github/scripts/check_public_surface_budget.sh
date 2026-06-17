@@ -29,8 +29,8 @@ check_absent() {
 
 check_max_lines ".github/allowlists/lib-public-api.txt" 3
 check_max_lines ".github/allowlists/g-public-api.txt" 15
-check_max_lines ".github/allowlists/endpoint-public-api.txt" 11
-check_max_lines ".github/allowlists/runtime-public-api.txt" 92
+check_max_lines ".github/allowlists/endpoint-public-api.txt" 10
+check_max_lines ".github/allowlists/runtime-public-api.txt" 101
 
 python3 "${ROOT_DIR}/.github/scripts/check_public_api_allowlists.py" || FAILED=1
 

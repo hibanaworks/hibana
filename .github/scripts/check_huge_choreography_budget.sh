@@ -24,8 +24,6 @@ commands = [
         "--test",
         "huge_choreography_compile",
         "--no-run",
-        "--features",
-        "std",
     ],
     [
         "cargo",
@@ -36,8 +34,6 @@ commands = [
         "--test",
         "huge_choreography_runtime",
         "--no-run",
-        "--features",
-        "std",
     ],
 ]
 

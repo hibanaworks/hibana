@@ -9,7 +9,7 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
@@ -155,10 +155,9 @@ where
 fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(98);
 
@@ -225,10 +224,9 @@ fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
 fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(99);
 
@@ -311,10 +309,9 @@ fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
 fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(100);
 
@@ -386,10 +383,9 @@ fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
 fn route_selected_left_keeps_entire_nested_parallel_path_live() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(97);
 
@@ -495,10 +491,9 @@ fn route_selected_left_keeps_entire_nested_parallel_path_live() {
 fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(92);
 
@@ -590,10 +585,9 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
 fn nested_parallel_join_requires_every_dependency_before_post() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(95);
 

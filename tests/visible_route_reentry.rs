@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
@@ -11,7 +9,7 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::g::{self, Message, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
@@ -91,10 +89,9 @@ fn with_visible_reentry_workspace(
 ) {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(sid);
             let mut controller = rv

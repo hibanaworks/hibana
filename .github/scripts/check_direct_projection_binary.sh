@@ -11,7 +11,6 @@ bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test runtime_surface \
-  --features std \
   runtime_facade_projects_before_enter \
   -- \
   --exact \
@@ -21,7 +20,6 @@ TEST_BINARY="$(
   cargo +"${TOOLCHAIN}" test \
     --manifest-path "${MANIFEST_PATH}" \
     --test runtime_surface \
-    --features std \
     --no-run \
     --message-format=json |
     awk -F'"' '
@@ -45,7 +43,6 @@ timeout 30s "${TEST_BINARY}" runtime_facade_projects_before_enter --exact --noca
 cargo +"${TOOLCHAIN}" test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
-  --features std \
   dynamic_resolver_surface_uses_one_decision_resolver \
   -- \
   --exact \

@@ -106,9 +106,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     );
     assert!(
         send.contains("impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture")
-            && send.contains(
-                "pub(crate) fn ready_error(error: SendError, location: Callsite) -> Self"
-            )
+            && send.contains("pub(crate) fn ready_error(error: SendError) -> Self")
             && endpoint_ops.contains("pub fn send<'a, 'e, M>(")
             && !endpoint_ops.contains(concat!("pub fn ", "fl", "ow"))
             && !send.contains(concat!("struct ", "Fl", "ow"))

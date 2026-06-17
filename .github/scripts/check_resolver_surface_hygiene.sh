@@ -32,8 +32,8 @@ if [[ -d examples ]]; then
   allow_paths+=(examples)
 fi
 
-if rg -n "#!?\\[allow\\(dead_code\\)\\]" "${allow_paths[@]}"; then
-  echo "forbidden #[allow(dead_code)] detected" >&2
+if rg -n "#!?\\[[^]]*allow[[:space:]]*\\([^]]*dead[_]code" "${allow_paths[@]}"; then
+  echo "forbidden dead_code allow detected" >&2
   FAILED=1
 fi
 

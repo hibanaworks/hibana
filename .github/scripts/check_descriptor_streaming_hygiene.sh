@@ -4,12 +4,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-if rg -n 'allow\(dead_code\)|cfg_attr\([^)]*allow\(dead_code\)' src tests runtime 2>/dev/null; then
-  echo "descriptor streaming hygiene violation: dead_code allow is forbidden" >&2
+FAILED=0
+source ./.github/scripts/lib/hygiene_common.sh
+
+DEAD_CODE_ALLOW='allow[[:space:]]*\([^]]*dead[_]code'
+DEAD_CODE_SPLIT_ALLOW='allow[[:space:]]*\([^]]*dead[[:space:]]*["'\'']?[[:space:]]*[_][[:space:]]*["'\'']?[[:space:]]*code'
+check_absent "${DEAD_CODE_ALLOW}|cfg_attr[^\n]*${DEAD_CODE_ALLOW}|${DEAD_CODE_SPLIT_ALLOW}" \
+  "dead_code allow is forbidden" \
+  src tests .github
+
+if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 
-if rg -n 'Box<|alloc::|std::boxed' src/global/compiled --glob '!**/*tests.rs'; then
+check_absent 'Box<|alloc::|std::boxed' \
+  "heap-backed descriptor storage in core init path" \
+  src/global/compiled
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: heap-backed descriptor storage in core init path" >&2
   exit 1
 fi

@@ -82,14 +82,6 @@ pub enum TransportError {
 
 impl core::fmt::Debug for TransportError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        #[cfg(feature = "std")]
-        let name = match self {
-            Self::Offline => "Offline",
-            Self::Deadline => "Deadline",
-            Self::Capacity => "Capacity",
-            Self::Failed => "Failed",
-        };
-        #[cfg(not(feature = "std"))]
         let name = match self {
             Self::Offline => "O",
             Self::Deadline => "D",

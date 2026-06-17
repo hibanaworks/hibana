@@ -20,10 +20,11 @@ bash ./.github/scripts/check_no_underscore_discards.sh
 bash ./.github/scripts/check_rust_1_95_stable.sh
 bash ./.github/scripts/check_no_nightly_features.sh
 bash ./.github/scripts/check_no_generic_const_exprs.sh
+bash ./.github/scripts/check_hygiene_roots_fail_closed.sh
 bash ./.github/scripts/check_no_custom_target_json.sh
 bash ./.github/scripts/check_no_std_build.sh
 bash ./.github/scripts/check_warning_free.sh
-cargo +"${TOOLCHAIN}" doc -p hibana --no-deps --document-private-items --features std
+cargo +"${TOOLCHAIN}" doc -p hibana --no-deps --document-private-items
 bash ./.github/scripts/check_hibana_public_api.sh --surface-only
 bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_unsafe_contract_hygiene.sh

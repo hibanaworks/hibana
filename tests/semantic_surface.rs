@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 #[path = "semantic_surface/common.rs"]
 mod common;
 #[path = "semantic_surface/descriptor_measurement.rs"]
@@ -22,5 +20,7 @@ mod source_residue_hygiene;
 mod source_residue_pico_hygiene;
 #[path = "semantic_surface/source_residue_route_arm_lane.rs"]
 mod source_residue_route_arm_lane;
+#[path = "semantic_surface/source_residue_runtime_surface.rs"]
+mod source_residue_runtime_surface;
 #[path = "semantic_surface/source_residue_support.rs"]
 mod source_residue_support;

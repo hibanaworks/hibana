@@ -1,4 +1,3 @@
-#![cfg(feature = "std")]
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
@@ -16,7 +15,7 @@ use hibana::g::Message;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{
-    Config, SessionKitStorage,
+    SessionKitStorage,
     ids::SessionId,
     resolver::{DecisionArm, DecisionResolution, ResolverRef},
     transport::{ReceivedFrame, Transport},
@@ -193,7 +192,7 @@ impl Transport for LabelRewriteTransport {
                     rx.lane,
                     0,
                     rx.local_role,
-                    hibana::runtime::transport::FrameLabel::new(self.frame_label),
+                    self.frame_label,
                 );
                 Poll::Ready(Ok(ReceivedFrame::framed(header, frame.payload())))
             }
@@ -263,9 +262,8 @@ fn with_route_workspace(
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let rv = cluster
-                .rendezvous(config, transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let sid = SessionId::new(901);
             let controller_program = controller_program();
@@ -295,9 +293,8 @@ fn with_deterministic_route_workspace(
     with_runtime_workspace(|slab| {
         let transport = DeterministicRecvTransport::new();
         with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let rv = cluster
-                .rendezvous(config, transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let sid = SessionId::new(902);
             let controller_program = controller_program();
@@ -360,7 +357,7 @@ fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let sid = SessionId::new(913);
             let role0 = route_with_late_role2::<0>();
@@ -559,9 +556,8 @@ fn offer_materialized_label_mismatch_fails_closed() {
     with_runtime_workspace(|slab| {
         let transport = LabelRewriteTransport::new(1);
         with_resident_tls_ref(&LABEL_REWRITE_SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let rv = cluster
-                .rendezvous(config, transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let mut tap = rv.tap();
             let sid = SessionId::new(903);

@@ -9,7 +9,7 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
@@ -59,10 +59,9 @@ where
 fn route_arm_future_phase_blocks_post_route_send() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(93);
             let local_program = multiphase_route_program::<LOCAL_ROLE>();

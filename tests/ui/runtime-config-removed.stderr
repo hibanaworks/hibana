@@ -1,0 +1,5 @@
+error[E0433]: cannot find `Config` in `runtime`
+ --> tests/ui/runtime-config-removed.rs:3:30
+  |
+3 |     let _ = hibana::runtime::Config::from_resources(&mut slab);
+  |                              ^^^^^^ could not find `Config` in `runtime`

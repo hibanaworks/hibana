@@ -4,7 +4,7 @@
 //! and the runtime surface at [`crate::runtime`]. This module houses the kernel
 //! types that power the runtime facade; it is not a third public face.
 
-/// Runtime configuration types.
-pub(crate) mod config;
 /// Runtime constants.
 pub(crate) mod consts;
+/// Runtime resource substrate.
+pub(crate) mod resources;

@@ -9,4 +9,4 @@ source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_disable_repo_tests_cfg
 
-cargo +"${TOOLCHAIN}" test --test ui --features std "$@"
+cargo +"${TOOLCHAIN}" test --test ui "$@"

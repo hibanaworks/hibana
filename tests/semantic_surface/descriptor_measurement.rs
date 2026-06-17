@@ -22,7 +22,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     let resolver = cluster_core_source();
     let attach = read("src/session/cluster/error.rs");
     let runtime = runtime_source();
-    let runtime_config = read("src/runtime_core/config.rs");
+    let runtime_resources = read("src/runtime_core/resources.rs");
     let transport = transport_source();
     let rendezvous_assoc = read("src/rendezvous/association.rs");
     let endpoint_core = endpoint_kernel_core_source();
@@ -45,7 +45,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         "pub use endpoint::{Endpoint, EndpointError, EndpointResult, RouteBranch};",
         "pub use crate::session::cluster::core::{ DecisionArm, DecisionResolution, ResolverError, ResolverRef, };",
         "pub use crate::session::cluster::error::AttachError;",
-        "pub fn rendezvous( &self, config: crate::runtime::Config<'cfg>, transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {",
+        "pub fn rendezvous( &self, slab: &'cfg mut [u8], transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {",
     ] {
         assert!(
             public_allowlists.contains(required),
@@ -96,23 +96,25 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     }
 
     assert!(
-        endpoint.contains("#[track_caller]\n    pub fn send")
-            && endpoint.contains("#[track_caller]\n    pub fn recv")
-            && endpoint.contains("#[track_caller]\n    pub fn offer")
-            && endpoint.contains("#[track_caller]\n    pub fn send<'a, M>")
-            && endpoint.contains("#[track_caller]\n    pub fn recv<M>"),
-        "endpoint operations must keep a single public call boundary for Debug operation diagnostics"
+        endpoint.contains("pub fn send<'a, 'e, M>")
+            && endpoint.contains("pub fn recv<'e, M>")
+            && endpoint.contains("pub fn offer<'e>")
+            && !endpoint.contains(concat!("Call", "site"))
+            && !endpoint.contains("#[track_caller]"),
+        "endpoint operations must not carry source-location diagnostic plumbing"
     );
     assert!(
         !endpoint.contains(concat!("pub fn ", "fl", "ow")),
         "endpoint operations must not regain the removed send-preview boundary"
     );
     assert!(
-        resolver.contains("#[track_caller]\n    pub fn reject")
-            && runtime.contains("#[track_caller]\n    pub fn rendezvous")
-            && runtime.contains("#[track_caller]\n    pub fn enter")
-            && runtime.contains("#[track_caller]\n    pub fn set_resolver"),
-        "resolver and attach boundaries must keep one public call boundary"
+        resolver.contains("pub fn reject() -> Self")
+            && runtime.contains("pub fn rendezvous(")
+            && runtime.contains("pub fn enter(")
+            && runtime.contains("pub fn set_resolver")
+            && !resolver.contains(concat!("Call", "site"))
+            && !runtime.contains(concat!("Call", "site")),
+        "resolver and attach boundaries must keep operation/kind diagnostics without source-location plumbing"
     );
     for (name, source) in [
         ("EndpointError", endpoint.as_str()),
@@ -133,11 +135,11 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         }
     }
     assert!(
-        !runtime_config.contains("OperationalDeadline")
+        !runtime_resources.contains("OperationalDeadline")
             && !rendezvous_assoc.contains("DeadlineExceeded")
             && !transport.contains("fn operational_deadline_ticks(&self)")
-            && !runtime_config.contains("operational_deadline_ticks")
-            && !runtime_config.contains("with_operational_deadline_ticks")
+            && !runtime_resources.contains("operational_deadline_ticks")
+            && !runtime_resources.contains("with_operational_deadline_ticks")
             && endpoint.contains("SessionFault(crate::rendezvous::SessionFaultKind)")
             && rendezvous_assoc.contains("pub(super) fn poison_session"),
         "failure evidence must not keep hidden deadline fuses or public timeout APIs"
@@ -157,15 +159,16 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         "offer regression coverage must not preserve forbidden binding/inbox restore structures"
     );
     assert!(
-        !runtime_config.contains("struct OfferProgressResolver")
-            && runtime_config.contains("pub fn from_resources(")
-            && !runtime_config.contains("pub fn new(")
-            && runtime_config.contains("pub(crate) fn initial_lane_range()")
-            && !runtime_config.contains("derived_endpoint_slots")
-            && !runtime_config.contains("lane_range: Range")
-            && !runtime_config.contains("endpoint_slots: usize")
-            && !runtime_config.contains("max_defer")
-            && !runtime_config.contains("force_poll")
+        !runtime_resources.contains("struct OfferProgressResolver")
+            && runtime_resources.contains("pub(crate) fn new(")
+            && !runtime_resources.contains("pub fn new(")
+            && !runtime_resources.contains("pub fn from_resources(")
+            && runtime_resources.contains("pub(crate) fn initial_lane_range()")
+            && !runtime_resources.contains("derived_endpoint_slots")
+            && !runtime_resources.contains("lane_range: Range")
+            && !runtime_resources.contains("endpoint_slots: usize")
+            && !runtime_resources.contains("max_defer")
+            && !runtime_resources.contains("force_poll")
             && !resolver.contains("retry_hint")
             && !offer_frontier.contains("retry_hint")
             && !offer_frontier.contains("force_poll")
@@ -173,7 +176,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             && frontier_runtime.contains("enum OfferEvidenceOutcome")
             && frontier_runtime.contains("enum FrontierDeferOutcome")
             && frontier_runtime.contains("Pending,"),
-        "runtime config and offer progress must derive runtime shape and expose only Evidence/Pending/Fault, not offer-time guesses"
+        "runtime resources and offer progress must derive runtime shape and expose only Evidence/Pending/Fault, not offer-time guesses"
     );
     assert!(
         rendezvous_assoc.contains("EndpointDropped")

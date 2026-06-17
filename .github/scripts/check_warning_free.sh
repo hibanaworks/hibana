@@ -39,5 +39,5 @@ run_warning_free "cargo +${TOOLCHAIN} check --all-targets -p hibana" \
   cargo +"${TOOLCHAIN}" check --all-targets -p hibana
 run_warning_free "cargo +${TOOLCHAIN} check --no-default-features --lib -p hibana" \
   cargo +"${TOOLCHAIN}" check --no-default-features --lib -p hibana
-run_warning_free "cargo +${TOOLCHAIN} test -p hibana --features std" \
-  cargo +"${TOOLCHAIN}" test -p hibana --features std
+run_warning_free "cargo +${TOOLCHAIN} test -p hibana" \
+  cargo +"${TOOLCHAIN}" test -p hibana

@@ -154,10 +154,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             tx,
             rx,
         } = init;
-        #[cfg(all(not(test), not(feature = "std")))]
-        {
-            let _ = tap;
-        }
         Self {
             transport,
             tx: UnsafeCell::new(tx),

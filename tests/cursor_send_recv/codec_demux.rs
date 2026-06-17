@@ -9,7 +9,7 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(12);
@@ -67,7 +67,7 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(200);
@@ -88,7 +88,7 @@ fn cursor_send_and_recv_high_logical_label_roundtrip() {
             let payload = futures::executor::block_on(target_endpoint.recv::<Msg<200, u32>>())
                 .expect("recv succeeds");
             assert_eq!(payload, 0xC8C8_C8C8);
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }

@@ -39,15 +39,6 @@ impl Evidence {
     pub const fn input(self) -> [u32; 4] {
         self.input
     }
-
-    #[inline]
-    pub const fn input_word(self, index: usize) -> Option<u32> {
-        if index < self.input.len() {
-            Some(self.input[index])
-        } else {
-            None
-        }
-    }
 }
 
 impl TapEvent {
@@ -130,15 +121,13 @@ impl TapEvent {
         self
     }
 
-    /// Extract role/lane from causal key (high 8 bits).
     #[inline]
-    pub const fn causal_role(self) -> u8 {
+    const fn causal_role(self) -> u8 {
         (self.causal_key() >> 8) as u8
     }
 
-    /// Extract sequence number from causal key (low 8 bits).
     #[inline]
-    pub const fn causal_seq(self) -> u8 {
+    const fn causal_seq(self) -> u8 {
         (self.causal_key() & 0xFF) as u8
     }
 

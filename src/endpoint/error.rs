@@ -1,7 +1,4 @@
-use crate::{
-    diag::Callsite,
-    transport::{TransportError, wire::CodecError},
-};
+use crate::transport::{TransportError, wire::CodecError};
 use core::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,7 +18,6 @@ pub(crate) enum EndpointOp {
 #[derive(Clone, Copy)]
 pub struct EndpointError {
     op: EndpointOp,
-    _location: Callsite,
     kind: EndpointErrorKind,
 }
 
@@ -29,26 +25,18 @@ impl fmt::Debug for EndpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("EndpointError");
         debug.field("operation", &self.op_name());
-        #[cfg(feature = "std")]
-        {
-            debug
-                .field("file", &self._location.file())
-                .field("line", &self._location.line())
-                .field("column", &self._location.column());
-        }
         debug.field("kind", &self.kind).finish()
     }
 }
 
 impl EndpointError {
     #[inline]
-    pub(super) fn new<E>(op: EndpointOp, location: Callsite, error: E) -> Self
+    pub(super) fn new<E>(op: EndpointOp, error: E) -> Self
     where
         EndpointErrorKind: From<E>,
     {
         Self {
             op,
-            _location: location,
             kind: EndpointErrorKind::from(error),
         }
     }

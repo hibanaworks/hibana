@@ -204,7 +204,6 @@ PY
         -p hibana \
         large_choreography_runtime_peak_metrics \
         --lib \
-        --features std \
         --release \
         -- \
         --ignored \

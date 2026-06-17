@@ -1,4 +1,3 @@
-#![cfg(feature = "std")]
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
@@ -12,7 +11,7 @@ use hibana::g::Message;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
 use hibana::runtime::{
-    Config, SessionKitStorage,
+    SessionKitStorage,
     ids::SessionId,
     resolver::{DecisionArm, DecisionResolution, ResolverRef},
 };
@@ -60,9 +59,8 @@ fn with_branch_send_workspace(
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(904);
             let role0 = branch_send_program::<0>();

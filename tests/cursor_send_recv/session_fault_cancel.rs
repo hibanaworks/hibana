@@ -10,7 +10,7 @@ fn send_session_fault_cancels_pending_transport_state_once() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(203);

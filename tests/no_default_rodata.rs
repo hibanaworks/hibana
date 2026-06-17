@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 use std::{env, fs, path::Path, path::PathBuf, process::Command};
 
 fn command_path(name: &str) -> Option<String> {
@@ -119,7 +117,6 @@ fn no_default_no_source_path_rodata() {
     let rendered = String::from_utf8_lossy(&output.stdout);
     for forbidden in [
         manifest_dir.join("src").display().to_string(),
-        "src/diag.rs".to_owned(),
         "src/endpoint/error.rs".to_owned(),
         "src/session/cluster/error.rs".to_owned(),
         "src/session/cluster/core/dynamic_resolvers.rs".to_owned(),

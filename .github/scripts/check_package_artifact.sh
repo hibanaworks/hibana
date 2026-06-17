@@ -215,15 +215,15 @@ CRATE_FILE="$(ls -t target/package/hibana-*.crate | head -n 1)"
 tar -xf "${CRATE_FILE}" -C "${TMP_DIR}"
 PKG_DIR="$(find "${TMP_DIR}" -maxdepth 1 -type d -name 'hibana-*' | head -n 1)"
 
-run_package_clean "package lib check --features std" \
+run_package_clean "package lib check" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --features std --lib
-run_package_clean "package lib test build --features std" \
+    cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --lib
+run_package_clean "package lib test build" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --features std --lib --no-run
-run_package_clean "package representative test build --features std" \
+    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --lib --no-run
+run_package_clean "package representative test build" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --features std --test semantic_surface --no-run
+    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test semantic_surface --no-run
 run_package_clean "package lib check --no-default-features" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib

@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 #[path = "support/large_choreography/fanout_program.rs"]
 mod fanout_program;
 #[path = "support/large_choreography/huge_program.rs"]

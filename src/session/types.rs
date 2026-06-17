@@ -56,7 +56,7 @@ impl SessionId {
 /// Rendezvous identifier (newtype for type safety).
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RendezvousId(NonZeroU16);
+pub(crate) struct RendezvousId(NonZeroU16);
 
 impl RendezvousId {
     /// Create a new rendezvous identifier inside the registered-runtime owner.

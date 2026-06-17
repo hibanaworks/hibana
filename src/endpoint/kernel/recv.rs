@@ -17,7 +17,7 @@ use crate::{
     transport::{
         Transport,
         trace::TapFrameMeta,
-        wire::{CodecError, FrameFlags, Payload},
+        wire::{CodecError, Payload},
     },
 };
 
@@ -249,18 +249,11 @@ where
             Self::endpoint_resolver_args(
                 crate::session::types::Lane::new(meta.lane as u32),
                 meta.label,
-                FrameFlags::empty(),
             ),
             crate::session::types::Lane::new(meta.lane as u32),
         );
 
-        let logical_meta = TapFrameMeta::new(
-            desc.sid_raw,
-            desc.lane_wire,
-            ROLE,
-            meta.label,
-            FrameFlags::empty(),
-        );
+        let logical_meta = TapFrameMeta::new(desc.sid_raw, desc.lane_wire, ROLE, meta.label);
         let event_id = if meta.origin.is_session() {
             ids::ENDPOINT_SESSION
         } else {

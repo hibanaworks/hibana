@@ -30,7 +30,7 @@ pub struct FrameLabel(u8);
 
 impl FrameLabel {
     #[inline]
-    pub const fn new(raw: u8) -> Self {
+    pub(crate) const fn new(raw: u8) -> Self {
         Self(raw)
     }
 

@@ -5,7 +5,6 @@
 //! evidence so protocol runtimes can propagate attach errors with `?` without
 //! adding an extra context type at every call site.
 
-use crate::diag::Callsite;
 use core::fmt;
 
 mod debug;
@@ -25,7 +24,6 @@ pub(crate) enum AttachOp {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct AttachError {
     op: AttachOp,
-    _location: Callsite,
     kind: AttachErrorKind,
 }
 
@@ -39,42 +37,30 @@ impl fmt::Debug for AttachError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("AttachError");
         debug.field("operation", &self.op_name());
-        #[cfg(feature = "std")]
-        {
-            debug
-                .field("file", &self._location.file())
-                .field("line", &self._location.line())
-                .field("column", &self._location.column());
-        }
         debug.field("kind", &self.kind).finish()
     }
 }
 
 impl AttachError {
     #[inline]
-    #[track_caller]
     pub(crate) fn cluster(error: ClusterError) -> Self {
         Self {
             op: AttachOp::Attach,
-            _location: Callsite::caller(),
             kind: AttachErrorKind::Cluster(error),
         }
     }
 
     #[inline]
-    #[track_caller]
     pub(crate) fn rendezvous(error: crate::rendezvous::error::RendezvousError) -> Self {
         Self {
             op: AttachOp::Attach,
-            _location: Callsite::caller(),
             kind: AttachErrorKind::Rendezvous(error),
         }
     }
 
     #[inline]
-    pub(crate) const fn with_operation(mut self, op: AttachOp, location: Callsite) -> Self {
+    pub(crate) const fn with_operation(mut self, op: AttachOp) -> Self {
         self.op = op;
-        self._location = location;
         self
     }
 
@@ -98,7 +84,6 @@ impl AttachError {
 
 impl From<ClusterError> for AttachError {
     #[inline]
-    #[track_caller]
     fn from(err: ClusterError) -> Self {
         Self::cluster(err)
     }
@@ -106,7 +91,6 @@ impl From<ClusterError> for AttachError {
 
 impl From<crate::rendezvous::error::RendezvousError> for AttachError {
     #[inline]
-    #[track_caller]
     fn from(err: crate::rendezvous::error::RendezvousError) -> Self {
         Self::rendezvous(err)
     }
@@ -168,15 +152,10 @@ impl ClusterError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for ClusterError {}
-
-// Tests use `format!` which requires `alloc`/`std`. Gate them behind `std` so
-// that rust-analyzer in a no_std configuration doesn't flag errors, while CI runs them
-// under `--all-features` (which enables `std`).
-#[cfg(all(test, feature = "std"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::format;
 
     #[test]
     fn test_error_display() {

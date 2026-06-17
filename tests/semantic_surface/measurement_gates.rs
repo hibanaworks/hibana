@@ -219,7 +219,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     for forbidden in [
         "CounterClock",
         "Clock +",
-        "Config<'cfg, C",
+        "RuntimeResources<'cfg, C",
         "CursorEndpoint<'r, ROLE, T, C",
         "Rendezvous<'rv, 'cfg, T, C",
         "Port<'lease, T, C",

@@ -205,14 +205,29 @@ fn public_header_surface_minimal() {
             "FrameHeader must not expose public field packing or unpacking: {forbidden}"
         );
     }
+    let runtime_allowlist = read(".github/allowlists/runtime-public-api.txt");
     assert!(
-        !read(".github/allowlists/runtime-public-api.txt").contains("FrameHeader::new"),
+        !runtime_allowlist.contains("FrameHeader::new"),
         "public allowlist must not preserve FrameHeader::new"
     );
     assert!(
-        !read(".github/allowlists/runtime-public-api.txt").contains("FrameHeader::from_raw")
-            && !read(".github/allowlists/runtime-public-api.txt").contains("FrameHeader::raw"),
+        !runtime_allowlist.contains("FrameHeader::from_raw")
+            && !runtime_allowlist.contains("FrameHeader::raw"),
         "public allowlist must not teach FrameHeader u64 raw access"
+    );
+    let frame_label_source = read("src/transport/labels.rs");
+    let frame_label_impl = frame_label_source
+        .split("impl FrameLabel")
+        .nth(1)
+        .expect("FrameLabel impl must exist");
+    assert!(
+        frame_label_impl.contains("pub(crate) const fn new(raw: u8) -> Self")
+            && frame_label_impl.contains("pub const fn raw(self) -> u8"),
+        "FrameLabel must be a runtime-issued witness with public raw read only"
+    );
+    assert!(
+        !runtime_allowlist.contains("FrameLabel::new"),
+        "public allowlist must not preserve arbitrary FrameLabel construction"
     );
 }
 
@@ -416,6 +431,43 @@ fn runtime_surface_hides_tap_storage_resource() {
 }
 
 #[test]
+fn runtime_entry_uses_direct_slab_without_public_config_wrapper() {
+    let runtime = runtime_source();
+    let runtime_buckets = read("src/runtime/buckets.rs");
+    let session_kit = read("src/runtime/session_kit.rs");
+    let runtime_allowlist = read(".github/allowlists/runtime-public-api.txt");
+    let readme = read("README.md");
+    let crate_docs = read("src/lib.rs");
+
+    assert!(
+        session_kit.contains("pub fn rendezvous(")
+            && session_kit.contains("slab: &'cfg mut [u8],")
+            && session_kit.contains("transport: T,")
+            && runtime_allowlist.contains(
+                "SessionKit::rendezvous pub fn rendezvous( &self, slab: &'cfg mut [u8], transport: T, ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {"
+            ),
+        "SessionKit::rendezvous must expose only direct slab + transport"
+    );
+    for forbidden in [
+        "pub struct Config",
+        "pub use crate::runtime_core::config::Config;",
+        "Config::from_resources",
+        "runtime::Config",
+        "from_resources(",
+    ] {
+        assert!(
+            !runtime.contains(forbidden)
+                && !runtime_buckets.contains(forbidden)
+                && !session_kit.contains(forbidden)
+                && !runtime_allowlist.contains(forbidden)
+                && !readme.contains(forbidden)
+                && !crate_docs.contains(forbidden),
+            "public runtime surface must not retain Config wrapper residue: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn message_and_wire_codec_boundaries_stay_separated() {
     let message = read("src/global/message.rs");
     let g = read("src/g.rs");
@@ -503,10 +555,24 @@ fn tap_surface_has_one_public_entry_and_internal_event_construction() {
             && !session_impl.contains("pub fn tap(&self)"),
         "tap must be entered through rendezvous-wide rv.tap(), not SessionRendezvousKit::tap()"
     );
-    for forbidden in "pub const fn new(|pub const fn zero(|pub const fn with_arg0|pub const fn with_arg1|pub const fn with_causal_key|pub const fn make_causal_key|impl WireEncode for TapEvent|impl WirePayload for TapEvent".split('|') {
+    for forbidden in "pub const fn new(|pub const fn zero(|pub const fn with_arg0|pub const fn with_arg1|pub const fn with_causal_key|pub const fn make_causal_key|pub const fn causal_role|pub const fn causal_seq|pub const fn input_word|impl WireEncode for TapEvent|impl WirePayload for TapEvent".split('|') {
         assert!(
             !event.contains(forbidden),
             "TapEvent generation must stay internal while public readers stay immutable: {forbidden}"
+        );
+    }
+    let runtime_allowlist = read(".github/allowlists/runtime-public-api.txt");
+    for required in [
+        "pub struct SessionId(u32);",
+        "SessionId::new pub const fn new(id: u32) -> Self",
+        "pub struct TapEvent",
+        "pub struct Evidence",
+        "TapEvent::evidence pub const fn evidence(self) -> Evidence",
+        "Evidence::input pub const fn input(self) -> [u32; 4]",
+    ] {
+        assert!(
+            runtime_allowlist.contains(required),
+            "runtime allowlist scanner must cover re-export owner item: {required}"
         );
     }
     for required in "LANE_ACQUIRE|LANE_RELEASE|ROUTE_ARM_SELECTION|RESOLVER_AUDIT|RESOLVER_REPLAY_EVENT|RESOLVER_REPLAY_EVENT_EXT|RESOLVER_AUDIT_DEFER|TRANSPORT_FAULT"

@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
@@ -19,7 +17,7 @@ use hibana::{
     g::Msg,
     runtime::program::{RoleProgram, project},
     runtime::{
-        Config, SessionKitStorage,
+        SessionKitStorage,
         ids::SessionId,
         transport::{Outgoing, ReceivedFrame, Transport},
     },
@@ -135,7 +133,7 @@ fn drop_unpolled_send_future_keeps_endpoint_on_same_send_step() {
             let controller_send_program: RoleProgram<0> = project(&send_protocol);
             let worker_send_program: RoleProgram<1> = project(&send_protocol);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), TestTransport::new())
+                .rendezvous(slab, TestTransport::new())
                 .expect("register rendezvous");
             let sid = SessionId::new(401);
 
@@ -186,7 +184,7 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                     state,
                 };
                 let rv = cluster
-                    .rendezvous(Config::from_resources(slab), transport)
+                    .rendezvous(slab, transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(402);
 
@@ -244,7 +242,7 @@ fn forgotten_started_send_future_leaves_send_fail_closed() {
                     state,
                 };
                 let rv = cluster
-                    .rendezvous(Config::from_resources(slab), transport)
+                    .rendezvous(slab, transport)
                     .expect("register rendezvous");
                 let sid = SessionId::new(403);
 

@@ -65,7 +65,7 @@ fn cursor_send_and_recv_roundtrip() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(1);
@@ -85,7 +85,7 @@ fn cursor_send_and_recv_roundtrip() {
             let payload = futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>())
                 .expect("recv succeeds");
             assert_eq!(payload, 42u32);
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }
@@ -103,7 +103,7 @@ fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
             let role1: RoleProgram<1> = project(&program);
             let role2: RoleProgram<2> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(8);
@@ -138,7 +138,7 @@ fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
             let payload = futures::executor::block_on(endpoint0.recv::<Msg<9, FramePayload>>())
                 .expect("role0 recv survives endpoint lease root relocation");
             assert_eq!(payload.as_bytes(), b"r2-0");
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }
@@ -154,10 +154,7 @@ fn live_endpoint_send_survives_failed_later_attach_rollback() {
                 let role0: RoleProgram<0> = project(&program);
                 let role1: RoleProgram<1> = project(&program);
                 let rv = cluster
-                    .rendezvous(
-                        Config::from_resources(&mut slab[..slab_bytes]),
-                        transport.clone(),
-                    )
+                    .rendezvous(&mut slab[..slab_bytes], transport.clone())
                     .expect("register constrained rendezvous");
                 let sid = SessionId::new(10);
                 let Ok(mut endpoint0) = rv.session(sid).role(&role0).enter() else {
@@ -192,7 +189,7 @@ fn direct_send_capacity_emits_transport_fault_tap() {
             let program = g::send::<0, 1, Msg<3, FramePayload>>();
             let origin_program: RoleProgram<0> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), CapacitySendTransport(()))
+                .rendezvous(slab, CapacitySendTransport(()))
                 .expect("register rendezvous");
 
             let sid = SessionId::new(74);
@@ -235,7 +232,7 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(41);
@@ -279,7 +276,7 @@ fn completed_recv_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 second, 22,
                 "completed recv future repoll must not consume the next descriptor"
             );
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }
@@ -296,7 +293,7 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(42);
@@ -343,7 +340,7 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
                 second_recv, 22,
                 "completed send future repoll must not consume the next descriptor"
             );
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }
@@ -357,7 +354,7 @@ fn send_preview_error_reports_debug_boundary() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(11);
@@ -398,7 +395,7 @@ fn send_preview_error_reports_debug_boundary() {
                     || rendered.contains("SessionFault"),
                 "offer at a deterministic send step must fail as a progress invariant: {rendered}"
             );
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }

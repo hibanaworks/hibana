@@ -15,7 +15,7 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(31);
@@ -52,7 +52,7 @@ fn sequential_noncontiguous_lane_steps_progress_in_order() {
                     .expect("lane 0 final recv"),
                 33
             );
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }

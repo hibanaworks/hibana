@@ -9,7 +9,7 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
@@ -78,10 +78,9 @@ fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
 fn selected_route_arm_materializes_lanes_inside_parallel_body() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let controller_program = program::<CONTROLLER_ROLE>();
             let sid = SessionId::new(91);

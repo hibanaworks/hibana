@@ -36,13 +36,13 @@ run_stable_gate "surface hygiene" \
 
 if [[ "${RUN_SURFACE_TESTS}" -eq 1 ]]; then
   run_stable_gate "root surface" \
-    cargo +"${TOOLCHAIN}" test -p hibana --test root_surface --features std
+    cargo +"${TOOLCHAIN}" test -p hibana --test root_surface
   run_stable_gate "runtime surface" \
-    cargo +"${TOOLCHAIN}" test -p hibana --test runtime_surface --features std
+    cargo +"${TOOLCHAIN}" test -p hibana --test runtime_surface
   run_stable_gate "public surface guards" \
-    cargo +"${TOOLCHAIN}" test -p hibana --test public_surface_guards --features std
+    cargo +"${TOOLCHAIN}" test -p hibana --test public_surface_guards
   run_stable_gate "docs surface" \
-    cargo +"${TOOLCHAIN}" test -p hibana --test docs_surface --features std
+    cargo +"${TOOLCHAIN}" test -p hibana --test docs_surface
 fi
 
 echo "stable public API check passed"

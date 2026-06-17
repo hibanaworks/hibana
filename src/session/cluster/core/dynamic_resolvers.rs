@@ -1,5 +1,4 @@
 use super::{ClusterError, EffIndex, PhantomData, RendezvousId, fmt};
-use crate::diag::Callsite;
 // # Unsafe Owner Contract
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
@@ -68,7 +67,6 @@ enum ResolverErrorKind {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ResolverError {
     pub(crate) op: ResolverOp,
-    _location: Callsite,
     kind: ResolverErrorKind,
 }
 
@@ -76,34 +74,23 @@ impl fmt::Debug for ResolverError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("ResolverError");
         debug.field("operation", &self.op_name());
-        #[cfg(feature = "std")]
-        {
-            debug
-                .field("file", &self._location.file())
-                .field("line", &self._location.line())
-                .field("column", &self._location.column());
-        }
         debug.field("kind", &self.kind).finish()
     }
 }
 
 impl ResolverError {
     #[inline]
-    #[track_caller]
     pub fn reject() -> Self {
         Self {
             op: ResolverOp::Reject,
-            _location: Callsite::caller(),
             kind: ResolverErrorKind::Reject,
         }
     }
 
     #[inline]
-    #[track_caller]
     pub(crate) fn cluster(error: ClusterError) -> Self {
         Self {
             op: ResolverOp::SetResolver,
-            _location: Callsite::caller(),
             kind: ResolverErrorKind::Cluster(error),
         }
     }
@@ -111,13 +98,6 @@ impl ResolverError {
     #[inline]
     pub(crate) const fn with_operation(mut self, op: ResolverOp) -> Self {
         self.op = op;
-        self
-    }
-
-    #[inline]
-    pub(crate) const fn with_operation_at(mut self, op: ResolverOp, location: Callsite) -> Self {
-        self.op = op;
-        self._location = location;
         self
     }
 
@@ -133,7 +113,6 @@ impl ResolverError {
 
 impl From<ClusterError> for ResolverError {
     #[inline]
-    #[track_caller]
     fn from(error: ClusterError) -> Self {
         Self::cluster(error)
     }

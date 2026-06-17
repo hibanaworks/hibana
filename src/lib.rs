@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(private_bounds)]
 #![deny(private_interfaces)]
@@ -80,18 +80,17 @@
 //! let role0: RoleProgram<0> = project(&program);
 //!
 //! let mut slab = [0u8; 4096];
-//! let config = runtime::Config::from_resources(&mut slab);
 //! let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 //! let kit = kit_storage.init();
-//! let rv = kit.rendezvous(config, transport)?;
+//! let rv = kit.rendezvous(&mut slab, transport)?;
 //! let endpoint = rv
 //!     .session(sid)
 //!     .role(&role0)
 //!     .enter()?;
 //! ```
 //!
-//! `Config` carries the runtime slab only. Runtime capacities are derived from
-//! Hibana's wire/domain limits and projected descriptors, not chosen by callers.
+//! Runtime capacities are derived from Hibana's wire/domain limits and
+//! projected descriptors, not chosen by callers.
 //! Hidden timeout fuses are not protocol API or attach config.
 //! Protocol-invisible carrier watchdogs live inside the transport implementation:
 //! terminal I/O waits are reported as [`runtime::transport::TransportError`]
@@ -130,26 +129,19 @@
 //! - `EndpointError` fails closed, carries compact endpoint operation evidence,
 //!   and never authorizes hidden progress.
 //!
-//! ## Features
-//!
-//! The default feature set is empty. The optional `std` feature enables host
-//! diagnostics and tests; it does not switch the core localside path to heap
-//! ownership or change runtime semantics.
-
 #[cfg(test)]
 extern crate self as hibana;
 
 #[cfg(test)]
 extern crate std;
 
-#[cfg(all(test, hibana_repo_tests, feature = "std"))]
+#[cfg(all(test, hibana_repo_tests))]
 mod test_support;
 
 // ============================================================================
 // Public modules (application-facing)
 // ============================================================================
 
-mod diag;
 pub mod g;
 /// Global-to-Local projection (MPST theory layer)
 mod global;

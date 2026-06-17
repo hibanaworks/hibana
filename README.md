@@ -31,9 +31,8 @@ The complete path is:
 ```text
 hibana::g choreography
   -> runtime::program::project(&program)
-  -> runtime::Config::from_resources(...)
   -> runtime::SessionKitStorage::uninit().init()
-  -> kit.rendezvous(...)
+  -> kit.rendezvous(&mut slab, transport)
   -> registered rendezvous .session(...).role(...)
   -> role witness .enter()
   -> Endpoint
@@ -66,15 +65,7 @@ Or write the dependency explicitly:
 hibana = "0.8.0"
 ```
 
-The default feature set is empty. Hibana is `#![no_std]` and no-alloc-oriented
-by default.
-
-Enable `std` only for host-side tests, diagnostics, and documentation builds:
-
-```toml
-[dependencies]
-hibana = { version = "0.8.0", features = ["std"] }
-```
+Hibana is `#![no_std]` and no-alloc-oriented.
 
 ## What Hibana Is
 
@@ -566,15 +557,13 @@ The canonical runtime path is borrowed and caller-provided:
 ```rust,ignore
 use hibana::runtime;
 use hibana::runtime::ids::SessionId;
-use hibana::runtime::Config;
 
 let mut slab = [0u8; 64 * 1024];
 
 let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 let kit = kit_storage.init();
 
-let config = Config::from_resources(&mut slab);
-let rv = kit.rendezvous(config, transport)?;
+let rv = kit.rendezvous(&mut slab, transport)?;
 let endpoint = rv.session(SessionId::new(1)).role(&client).enter()?;
 ```
 
@@ -583,8 +572,8 @@ kit in place into caller-owned storage, returns the stable borrow used
 by endpoint attach, and drops the initialized kit exactly once. The raw unsafe
 initializer and `MaybeUninit` protocol are not part of the public surface.
 
-`Config::from_resources` borrows the caller-owned runtime slab. A fresh
-rendezvous carves its runtime prefix from that slab and starts with no
+`SessionKit::rendezvous` borrows the caller-owned runtime slab directly. A
+fresh rendezvous carves its runtime prefix from that slab and starts with no
 materialized lane storage and no endpoint lease table. Role attach reads the
 projected descriptor, grows exactly the lane tables and endpoint lease entries it
 needs, and preserves existing session state if a later projected role needs a
@@ -599,7 +588,6 @@ Useful runtime owners:
 
 - `runtime::program::{project, RoleProgram}`
 - `runtime::SessionKit`
-- `runtime::Config`
 - `runtime::ids::SessionId`
 - `runtime::transport::Transport`
 - `runtime::resolver::{ResolverError, ResolverRef, DecisionArm, DecisionResolution}`
@@ -673,7 +661,6 @@ proof work.
 Core guarantees:
 
 - Rust 2024 and stable Rust `1.95`;
-- default features are empty;
 - runtime code is `no_std` and no-alloc-oriented;
 - descriptor storage is caller-provided, borrowed, static, or slab-backed;
 - route shape, duplicate labels, malformed choreography paths, and lane ownership
@@ -707,12 +694,12 @@ For a published crate consumer, the useful checks are ordinary Cargo commands:
 
 ```bash
 cargo +1.95.0 check --no-default-features --lib -p hibana
-cargo +1.95.0 check --features std --lib -p hibana
+cargo +1.95.0 check --lib -p hibana
 cargo +1.95.0 doc -p hibana --no-deps --no-default-features
 ```
 
 The full test suite is repository-only; it depends on source-tree test support that
-are intentionally excluded from the production crate package.
+is intentionally excluded from the production crate package.
 
 For a repository checkout, maintainers should run the repository gate suite
 before release:

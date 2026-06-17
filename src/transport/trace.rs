@@ -5,11 +5,9 @@
 //! transports to carry those fields on the wire. Transports remain payload-only;
 //! metadata is assembled at the Endpoint layer and emitted directly to Tap.
 
-use super::wire::FrameFlags;
-
 /// Tap-only metadata assembled by the Endpoint layer for observability.
 ///
-/// This keeps typestate-derived label/flag selections together for Tap events.
+/// This keeps typestate-derived label selections together for Tap events.
 /// Never passed to Transport; emitted directly via `emit_endpoint_event`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TapFrameMeta {
@@ -17,18 +15,16 @@ pub(crate) struct TapFrameMeta {
     pub(crate) lane: u8,
     pub(crate) role: u8,
     pub(crate) label: u8,
-    pub(crate) flags: FrameFlags,
 }
 
 impl TapFrameMeta {
     #[inline(always)]
-    pub(crate) const fn new(sid: u32, lane: u8, role: u8, label: u8, flags: FrameFlags) -> Self {
+    pub(crate) const fn new(sid: u32, lane: u8, role: u8, label: u8) -> Self {
         Self {
             sid,
             lane,
             role,
             label,
-            flags,
         }
     }
 }

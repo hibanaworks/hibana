@@ -14,7 +14,7 @@ fn intrusive_rendezvous_registry_replaces_fixed_array_map() {
     assert!(
         lease_core.contains("head: Option<NonNull<RendezvousEntry<'cfg, T>>>")
             && lease_core.contains("next: Option<NonNull<RendezvousEntry<'cfg, T>>>")
-            && registry_ops.contains("Rendezvous::init_in_slab_auto(id, config, transport)")
+            && registry_ops.contains("Rendezvous::init_in_slab_auto(id, resources, transport)")
             && registry_ops.contains("allocate_external_persistent_sidecar_bytes")
             && registry_ops.contains("RendezvousEntry::init_from_parts("),
         "rendezvous registry must stay intrusive and slab-resident"

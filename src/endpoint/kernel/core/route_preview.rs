@@ -1,6 +1,6 @@
 use super::{
-    Arm, CursorEndpoint, DeferReason, FrameFlags, FrontierKind, Lane, RecvError, RecvResult,
-    ResolverSlot, ScopeId, TapEvent, TapFrameMeta, Transport, emit, events, ids, resolver_audit,
+    Arm, CursorEndpoint, DeferReason, FrontierKind, Lane, RecvError, RecvResult, ResolverSlot,
+    ScopeId, TapEvent, TapFrameMeta, Transport, emit, events, ids, resolver_audit,
     state_index_to_usize,
 };
 
@@ -156,11 +156,8 @@ where
     }
 
     #[inline]
-    pub(crate) fn endpoint_resolver_args(lane: Lane, label: u8, flags: FrameFlags) -> u32 {
-        ((ROLE as u32) << 24)
-            | ((lane.as_wire() as u32) << 16)
-            | ((label as u32) << 8)
-            | flags.bits() as u32
+    pub(crate) fn endpoint_resolver_args(lane: Lane, label: u8) -> u32 {
+        ((ROLE as u32) << 24) | ((lane.as_wire() as u32) << 16) | ((label as u32) << 8)
     }
 
     #[inline]
@@ -202,10 +199,8 @@ where
 
     pub(crate) fn emit_endpoint_event(&self, id: u16, meta: TapFrameMeta, lane: u8) {
         let port = self.port_for_lane(lane as usize);
-        let packed = ((ROLE as u32) << 24)
-            | ((meta.lane as u32) << 16)
-            | ((meta.label as u32) << 8)
-            | meta.flags.bits() as u32;
+        let packed =
+            ((ROLE as u32) << 24) | ((meta.lane as u32) << 16) | ((meta.label as u32) << 8);
         let event = events::raw_event(port.now32(), id)
             .with_arg0(meta.sid)
             .with_arg1(packed);

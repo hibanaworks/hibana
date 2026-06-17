@@ -8,9 +8,8 @@
 //! ```text
 //! g choreography
 //!   -> runtime::program::project(&program)
-//!   -> runtime::Config
 //!   -> SessionKitStorage::uninit().init()
-//!   -> kit.rendezvous(...)
+//!   -> kit.rendezvous(&mut slab, transport)
 //!   -> registered rendezvous .session(...).role(...)
 //!   -> role witness `.enter()`
 //!   -> Endpoint
@@ -20,8 +19,6 @@
 //!
 //! - [`runtime::program`](crate::runtime::program) for projection and
 //!   role-local witnesses;
-//! - [`runtime::Config`](crate::runtime::Config) for the caller-provided runtime
-//!   slab;
 //! - [`runtime::wire`](crate::runtime::wire) for payload codecs;
 //! - [`runtime::transport`](crate::runtime::transport) and
 //!   [`runtime::transport::Transport`] for I/O readiness and ingress
@@ -49,7 +46,7 @@ pub use crate::session::cluster::error::AttachError;
 mod buckets;
 mod fluent;
 mod session_kit;
-#[cfg(all(test, hibana_repo_tests, feature = "std"))]
+#[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
 pub use buckets::*;

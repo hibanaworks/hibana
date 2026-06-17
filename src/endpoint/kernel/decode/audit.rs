@@ -1,9 +1,6 @@
 use super::{BranchPreviewView, CursorEndpoint, EndpointRxAuditPlan};
 use crate::{
-    observe::ids,
-    resolver_audit::ResolverSlot,
-    session::types::Lane,
-    transport::{Transport, wire::FrameFlags},
+    observe::ids, resolver_audit::ResolverSlot, session::types::Lane, transport::Transport,
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -26,7 +23,7 @@ where
             ResolverSlot::EndpointRx,
             ids::ENDPOINT_RECV,
             self.sid.raw(),
-            Self::endpoint_resolver_args(lane, plan.label, FrameFlags::empty()),
+            Self::endpoint_resolver_args(lane, plan.label),
             lane,
         );
     }

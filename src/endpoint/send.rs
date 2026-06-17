@@ -12,7 +12,6 @@ use core::{
 };
 
 use crate::{
-    diag::Callsite,
     endpoint::{EndpointError, EndpointOp, EndpointResult, SendError, SendResult, kernel},
     g::Message,
     transport::{FrameLabel, wire::WireEncode},
@@ -27,7 +26,6 @@ struct RawSendFuture<'a, 'e, 'r, const ROLE: u8> {
 
 pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
     raw: RawSendFuture<'a, 'e, 'r, ROLE>,
-    location: Callsite,
 }
 
 #[inline]
@@ -43,19 +41,16 @@ impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
     pub(crate) fn pending(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         payload: &'a impl WireEncode,
-        location: Callsite,
     ) -> Self {
         Self {
             raw: RawSendFuture::pending(endpoint, kernel::RawSendPayload::from_typed(payload)),
-            location,
         }
     }
 
     #[inline]
-    pub(crate) fn ready_error(error: SendError, location: Callsite) -> Self {
+    pub(crate) fn ready_error(error: SendError) -> Self {
         Self {
             raw: RawSendFuture::ready_error(error),
-            location,
         }
     }
 }
@@ -115,11 +110,7 @@ impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
         match this.raw.poll_raw(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
-                EndpointOp::Send,
-                this.location,
-                err,
-            ))),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Send, err))),
         }
     }
 }

@@ -344,10 +344,10 @@ fn public_api_gate_tracks_g_and_runtime_surfaces() {
         "export TOOLCHAIN=\"${TOOLCHAIN:-1.95.0}\"",
         "check_public_surface_budget.sh",
         "check_surface_hygiene.sh",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test root_surface --features std",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test runtime_surface --features std",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test public_surface_guards --features std",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test docs_surface --features std",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test root_surface",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test runtime_surface",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test public_surface_guards",
+        "cargo +\"${TOOLCHAIN}\" test -p hibana --test docs_surface",
         "stable public API check passed",
     ] {
         assert!(

@@ -95,7 +95,7 @@ fn g_project_does_not_enumerate_role_projection_constructors() {
 fn production_sources_do_not_reintroduce_static_hygiene_residue() {
     let production = read_production_rs_tree("src");
     for forbidden in [
-        concat!("#[", "allow(dead_code)]"),
+        concat!("#[", "allow(", "dead", "_", "code", ")]"),
         "legacy",
         "heuristic",
         "fallback",
@@ -650,7 +650,7 @@ fn evidence_file_budget_under_300() {
 #[test]
 fn source_residue_forbidden_literals_are_not_raw_script_hits() {
     let semantic_tests = read_all_rs_tree("tests/semantic_surface");
-    let forbidden_attr = concat!("#[", "allow(dead_code)]");
+    let forbidden_attr = concat!("#[", "allow(", "dead", "_", "code", ")]");
     assert!(
         !semantic_tests.contains(forbidden_attr),
         "semantic tests must split forbidden dead-code attribute literals"

@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 mod common;
 #[path = "support/placement.rs"]
 mod placement_support;
@@ -20,7 +18,7 @@ use ::core::{
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use placement_support::write_value;
 use runtime_support::with_runtime_workspace;
 use tls_mut_support::with_tls_mut;
@@ -76,10 +74,9 @@ fn worker_program() -> RoleProgram<1> {
 fn nested_branch_commit_stack() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rv");
 
             let sid = SessionId::new(77);
@@ -169,9 +166,8 @@ fn nested_branch_commit_stack() {
 fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
-            let rv = cluster.rendezvous(config, transport).expect("register rv");
+            let rv = cluster.rendezvous(slab, transport).expect("register rv");
 
             let sid = SessionId::new(79);
             let controller_program = controller_program();
@@ -243,9 +239,8 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
 fn localside_offer_decode_sizes_stay_compact() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
-            let rv = cluster.rendezvous(config, transport).expect("register rv");
+            let rv = cluster.rendezvous(slab, transport).expect("register rv");
 
             let sid = SessionId::new(78);
             let controller_program = controller_program();

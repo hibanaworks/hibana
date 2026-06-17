@@ -1,8 +1,8 @@
 use super::{
-    CursorEndpoint, CursorInvariantError, FrameFlags, Lane, Payload, PendingSendIo, Poll,
-    ResolverSlot, RouteArmToken, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError,
-    SendInitOutcome, SendMeta, SendProgressCommitPlan, SendResult, SendRuntimeDesc,
-    SendTransportStep, StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
+    CursorEndpoint, CursorInvariantError, Lane, Payload, PendingSendIo, Poll, ResolverSlot,
+    RouteArmToken, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome,
+    SendMeta, SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep,
+    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use crate::global::typestate::state_index_to_usize;
@@ -221,7 +221,7 @@ where
             ResolverSlot::EndpointTx,
             ids::ENDPOINT_SEND,
             self.sid.raw(),
-            Self::endpoint_resolver_args(lane, meta.label, FrameFlags::empty()),
+            Self::endpoint_resolver_args(lane, meta.label),
             lane,
         );
 
@@ -342,13 +342,7 @@ where
         let event = crate::invariant_some(delta.event());
         let lane = event.lane();
         let lane_wire = self.port_for_lane(lane as usize).lane().as_wire();
-        let logical_meta = TapFrameMeta::new(
-            self.sid.raw(),
-            lane_wire,
-            ROLE,
-            event.event_label(),
-            FrameFlags::empty(),
-        );
+        let logical_meta = TapFrameMeta::new(self.sid.raw(), lane_wire, ROLE, event.event_label());
         let event_id = event.event_id(ids::ENDPOINT_SEND, ids::ENDPOINT_SESSION);
         self.emit_endpoint_event(event_id, logical_meta, lane);
     }

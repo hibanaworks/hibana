@@ -386,13 +386,13 @@ where
     /// rendezvous internals directly.
     pub(crate) fn register_rendezvous(
         &self,
-        config: crate::runtime_core::config::Config<'cfg>,
+        resources: crate::runtime_core::resources::RuntimeResources<'cfg>,
         transport: T,
     ) -> Result<RendezvousId, ClusterError> {
         self.with_storage_mut(|core| {
             match core
                 .locals
-                .register_local_from_config_auto(config, transport)
+                .register_local_from_resources_auto(resources, transport)
             {
                 Ok(id) => Ok(id),
                 Err(

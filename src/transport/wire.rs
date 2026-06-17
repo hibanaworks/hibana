@@ -9,7 +9,7 @@
 //! Protocol-specific transports map descriptor decisions onto their native frame
 //! formats; Hibana metadata is not placed on the application wire by this layer.
 
-use core::{fmt, ops};
+use core::fmt;
 
 /// Errors surfaced by wire encode/decode helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,124 +267,6 @@ mod tests {
             <&[u8] as WirePayload>::decode_payload(Payload::new(&bytes)),
             Ok(&bytes[..])
         );
-    }
-}
-
-/// Wire-level flags for frames (no external crates).
-///
-/// Only transport fragmentation metadata remains here; endpoint-internal events
-/// stay outside the frame flag domain so the data plane observes a uniform
-/// payload model.
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-#[repr(transparent)]
-pub(crate) struct FrameFlags(u8);
-
-impl FrameFlags {
-    /// Closed bit domain for frame metadata constructed by Hibana.
-    pub(crate) const ALLOWED: u8 = 0x10 /*FRAG*/ | 0x20 /*IDX*/ | 0x40 /*TOT*/;
-
-    pub(crate) const EMPTY: Self = Self(0x00);
-    pub(crate) const FRAG: Self = Self(0x10);
-    pub(crate) const IDX: Self = Self(0x20);
-    pub(crate) const TOT: Self = Self(0x40);
-
-    #[inline]
-    pub(crate) const fn empty() -> Self {
-        Self::EMPTY
-    }
-
-    #[inline]
-    pub(crate) const fn bits(self) -> u8 {
-        self.0
-    }
-
-    /// True if *all* bits in `other` are set in `self`.
-    #[inline]
-    pub(crate) const fn contains(self, other: Self) -> bool {
-        (self.0 & other.0) == other.0
-    }
-}
-
-// ---- bit-ops (mask within ALLOWED) ----
-impl ops::BitOr for FrameFlags {
-    type Output = Self;
-
-    #[inline]
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self((self.0 | rhs.0) & Self::ALLOWED)
-    }
-}
-
-impl ops::BitOrAssign for FrameFlags {
-    #[inline]
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 = (self.0 | rhs.0) & Self::ALLOWED;
-    }
-}
-
-impl ops::BitAnd for FrameFlags {
-    type Output = Self;
-
-    #[inline]
-    fn bitand(self, rhs: Self) -> Self::Output {
-        Self(self.0 & rhs.0)
-    }
-}
-
-impl ops::BitAndAssign for FrameFlags {
-    #[inline]
-    fn bitand_assign(&mut self, rhs: Self) {
-        self.0 &= rhs.0;
-    }
-}
-
-impl ops::BitXor for FrameFlags {
-    type Output = Self;
-
-    #[inline]
-    fn bitxor(self, rhs: Self) -> Self::Output {
-        Self((self.0 ^ rhs.0) & Self::ALLOWED)
-    }
-}
-
-impl ops::BitXorAssign for FrameFlags {
-    #[inline]
-    fn bitxor_assign(&mut self, rhs: Self) {
-        self.0 = (self.0 ^ rhs.0) & Self::ALLOWED;
-    }
-}
-
-impl ops::Not for FrameFlags {
-    type Output = Self;
-
-    #[inline]
-    fn not(self) -> Self::Output {
-        Self(Self::ALLOWED & !self.0)
-    }
-}
-
-impl fmt::Debug for FrameFlags {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut first = true;
-        write!(f, "FrameFlags{{")?;
-        macro_rules! push {
-            ($flag:ident) => {
-                if self.contains(FrameFlags::$flag) {
-                    if !first {
-                        write!(f, "|")?;
-                    }
-                    first = false;
-                    write!(f, stringify!($flag))?;
-                }
-            };
-        }
-        push!(FRAG);
-        push!(IDX);
-        push!(TOT);
-        if first {
-            write!(f, "EMPTY")?;
-        }
-        write!(f, "}}")
     }
 }
 

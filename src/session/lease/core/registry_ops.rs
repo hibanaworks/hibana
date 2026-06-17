@@ -27,16 +27,16 @@ where
         None
     }
 
-    pub(crate) fn register_local_from_config_auto(
+    pub(crate) fn register_local_from_resources_auto(
         &mut self,
-        config: crate::runtime_core::config::Config<'cfg>,
+        resources: crate::runtime_core::resources::RuntimeResources<'cfg>,
         transport: T,
     ) -> Result<RendezvousId, RegisterRendezvousError> {
         let id = self
             .next_available_rendezvous_id()
             .ok_or(RegisterRendezvousError::CapacityExceeded)?;
-        let rendezvous = /* SAFETY: the returned pointer is backed by the config slab for 'cfg. */ unsafe {
-            Rendezvous::init_in_slab_auto(id, config, transport)
+        let rendezvous = /* SAFETY: the returned pointer is backed by the caller slab for 'cfg. */ unsafe {
+            Rendezvous::init_in_slab_auto(id, resources, transport)
                 .ok_or(RegisterRendezvousError::StorageExhausted)?
         };
         let entry_ptr = /* SAFETY: rendezvous has just been initialized and is not linked into the table yet. */ unsafe {

@@ -11,7 +11,7 @@ use hibana::{
     g::{self, Msg},
     runtime::program::{RoleProgram, project},
     runtime::{
-        Config, SessionKit, SessionKitStorage,
+        SessionKit, SessionKitStorage,
         ids::SessionId,
         resolver::{DecisionArm, DecisionResolution, ResolverError, ResolverRef},
         wire::{CodecError, Payload, WireEncode, WirePayload},
@@ -79,7 +79,7 @@ fn run_local_action_flow(
     let program = g::send::<0, 0, Msg<7, InstallPayload>>();
     let actor_program: RoleProgram<0> = project(&program);
     let rv = cluster
-        .rendezvous(Config::from_resources(slab), transport.clone())
+        .rendezvous(slab, transport.clone())
         .expect("register rendezvous");
 
     let sid = SessionId::new(42);
@@ -118,7 +118,7 @@ fn run_local_route_decode_empty_payload(
 ) {
     let actor_program = local_route_program::<9, ()>();
     let rv = cluster
-        .rendezvous(Config::from_resources(slab), transport.clone())
+        .rendezvous(slab, transport.clone())
         .expect("register rendezvous");
     let role = rv.role(&actor_program);
     role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(
@@ -145,7 +145,7 @@ fn run_local_route_decode_non_empty_payload_fails_closed(
 ) {
     let actor_program = local_route_program::<10, u8>();
     let rv = cluster
-        .rendezvous(Config::from_resources(slab), transport.clone())
+        .rendezvous(slab, transport.clone())
         .expect("register rendezvous");
     let role = rv.role(&actor_program);
     role.set_resolver(ResolverRef::<LOCAL_ROUTE_RESOLVER>::decision_state(

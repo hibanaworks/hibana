@@ -25,7 +25,6 @@ run_subsystem_budget_test() {
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
-  --features std \
   endpoint::tests::endpoint_surface_size_gates_hold \
   -- \
   --exact \
@@ -34,7 +33,6 @@ run_subsystem_budget_test \
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
-  --features std \
   endpoint::tests::send_future_and_runtime_descriptor_size_gates_hold \
   -- \
   --exact \
@@ -43,7 +41,6 @@ run_subsystem_budget_test \
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
-  --features std \
   endpoint::kernel::evidence::tests::scope_frame_label_meta_size_budget \
   -- \
   --exact \
@@ -52,7 +49,6 @@ run_subsystem_budget_test \
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --lib \
-  --features std \
   global::role_program::tests::protocol_matrix::projected_protocol_matrix_reports_compact_resident_images \
   -- \
   --exact \
@@ -62,7 +58,6 @@ run_subsystem_budget_test \
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
-  --features std \
   core_resolver_audit_has_no_in_crate_resolver_owner \
   -- \
   --exact \
@@ -71,7 +66,6 @@ run_subsystem_budget_test \
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
-  --features std \
   dynamic_resolver_surface_uses_one_decision_resolver \
   -- \
   --exact \
@@ -80,7 +74,6 @@ run_subsystem_budget_test \
 run_subsystem_budget_test \
   --manifest-path "${MANIFEST_PATH}" \
   --test public_surface_guards \
-  --features std \
   transport_context_owner_stays_forbidden \
   -- \
   --exact \

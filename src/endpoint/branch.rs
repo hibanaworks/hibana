@@ -3,7 +3,6 @@ use super::{
     futures::{DecodeFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
     send::SendFuture,
 };
-use crate::diag::Callsite;
 use crate::transport::wire::{WireEncode, WirePayload};
 use core::{
     future::Future,
@@ -35,7 +34,6 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     /// descriptor mismatches are reported as invariant failures, not as route
     /// choices. A decode failure is terminal for the current generation.
     #[inline]
-    #[track_caller]
     pub fn recv<M>(
         self,
     ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>>
@@ -44,7 +42,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         M: crate::g::Message,
         M::Payload: WirePayload,
     {
-        DecodeFuture::<'e, 'r, ROLE, M>::new(self, Callsite::caller())
+        DecodeFuture::<'e, 'r, ROLE, M>::new(self)
     }
 
     /// Send the first payload of a selected route arm.
@@ -53,7 +51,6 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     /// a send. Dropping the returned future before completion restores the
     /// branch preview so the route can be offered again.
     #[inline]
-    #[track_caller]
     pub fn send<'a, M>(
         self,
         payload: &'a M::Payload,
@@ -66,14 +63,13 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     {
         let branch = core::mem::ManuallyDrop::new(self);
         let endpoint = branch.endpoint;
-        let location = Callsite::caller();
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
         let mut preview = core::mem::MaybeUninit::<crate::endpoint::kernel::SendPreview>::uninit();
         if let Err(error) =
             /* SAFETY: consuming the branch transfers its unique endpoint borrow into the returned future or a terminal ready error. */
             unsafe { (&mut *endpoint).preview_send(logical_label, preview.as_mut_ptr()) }
         {
-            return SendFuture::ready_error(error, location);
+            return SendFuture::ready_error(error);
         }
         let preview = /* SAFETY: preview_send returned Ok and initialized the out slot. */ unsafe {
             preview.assume_init()
@@ -87,10 +83,10 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         } {
             crate::endpoint::kernel::PublicOpLease::Held => {}
             crate::endpoint::kernel::PublicOpLease::Rejected => {
-                return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant, location);
+                return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
             }
         }
-        SendFuture::pending(endpoint, payload, location)
+        SendFuture::pending(endpoint, payload)
     }
 }
 
@@ -151,10 +147,9 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> OfferFuture<'e, 'r, ROLE> {
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: Callsite) -> Self {
+    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
         Self {
             raw: RawOfferFuture::new(endpoint),
-            location,
         }
     }
 }
@@ -166,11 +161,7 @@ impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
         let this = self.get_mut();
         match this.raw.poll_raw(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
-                EndpointOp::Offer,
-                this.location,
-                err,
-            ))),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Offer, err))),
             Poll::Ready(Ok(label)) => {
                 Poll::Ready(Ok(RouteBranch::from_parts(this.raw.endpoint, label)))
             }

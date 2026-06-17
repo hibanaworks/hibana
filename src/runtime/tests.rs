@@ -1,6 +1,6 @@
 extern crate self as hibana;
 
-use std::{cell::UnsafeCell, thread::LocalKey};
+use std::{cell::UnsafeCell, println, thread::LocalKey};
 
 use crate::test_support::large_choreography::{
     fanout_program, huge_program, linear_program, localside,
@@ -9,9 +9,9 @@ use crate::{
     Endpoint,
     observe::core::TapEvent,
     runtime::{
-        Config, SessionKitStorage,
+        SessionKitStorage,
         ids::SessionId,
-        transport::{FrameHeader, FrameLabel, Outgoing, ReceivedFrame, Transport, TransportError},
+        transport::{FrameHeader, Outgoing, ReceivedFrame, Transport, TransportError},
         wire::Payload,
     },
     runtime_core::consts::TAP_EVENTS,
@@ -273,7 +273,7 @@ fn large_choreography_header(frame: &FrameOwned, target_role: u8) -> FrameHeader
         frame.lane(),
         frame.source_role(),
         target_role,
-        FrameLabel::new(frame.frame_label()).raw(),
+        frame.frame_label(),
     ])
 }
 
@@ -487,7 +487,7 @@ fn run_attached_shape(
         let mut kit_storage = LargeChoreographyKit::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(Config::from_resources(slab), transport)
+            .rendezvous(slab, transport)
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
         let mut controller = rv

@@ -1,8 +1,5 @@
 use super::AttachError;
-use crate::{
-    diag::Callsite,
-    session::cluster::error::{ClusterError, ResourceScope},
-};
+use crate::session::cluster::error::{ClusterError, ResourceScope};
 
 /// Protocol-neutral session kit facade for protocol implementors.
 ///
@@ -177,25 +174,22 @@ where
     }
 
     #[inline]
-    /// Obtain one registered rendezvous witness from caller-provided config and transport.
+    /// Obtain one registered rendezvous witness from caller-provided slab and transport.
     ///
-    /// The config borrows the single runtime slab. Runtime capacity is carved
-    /// or derived by Hibana; the transport owns only I/O state.
-    #[track_caller]
+    /// Runtime capacity is carved or derived by Hibana; the transport owns only
+    /// I/O state.
     pub fn rendezvous(
         &self,
-        config: crate::runtime::Config<'cfg>,
+        slab: &'cfg mut [u8],
         transport: T,
     ) -> Result<RendezvousKit<'_, 'cfg, T>, AttachError> {
-        let location = Callsite::caller();
+        let resources = crate::runtime_core::resources::RuntimeResources::new(slab);
         let rv = self
             .inner
-            .register_rendezvous(config, transport)
+            .register_rendezvous(resources, transport)
             .map_err(|error| {
-                AttachError::cluster(error).with_operation(
-                    crate::session::cluster::error::AttachOp::Rendezvous,
-                    location,
-                )
+                AttachError::cluster(error)
+                    .with_operation(crate::session::cluster::error::AttachOp::Rendezvous)
             })?;
         Ok(RendezvousKit {
             base: RendezvousBase { kit: self, rv },
@@ -203,7 +197,6 @@ where
     }
 
     #[inline(never)]
-    #[track_caller]
     pub(super) fn enter_attached<'r, const ROLE: u8>(
         &'r self,
         rv: crate::session::types::RendezvousId,
@@ -213,10 +206,8 @@ where
     where
         'cfg: 'r,
     {
-        let location = Callsite::caller();
-        Self::enter_endpoint(self, rv, sid, program).map_err(|error| {
-            error.with_operation(crate::session::cluster::error::AttachOp::Enter, location)
-        })
+        Self::enter_endpoint(self, rv, sid, program)
+            .map_err(|error| error.with_operation(crate::session::cluster::error::AttachOp::Enter))
     }
 
     #[inline(never)]
@@ -241,21 +232,17 @@ where
     }
 
     #[inline]
-    #[track_caller]
     pub(super) fn set_role_resolver<const RESOLVER: u16, const ROLE: u8>(
         &self,
         rv: crate::session::types::RendezvousId,
         program: &crate::runtime::program::RoleProgram<ROLE>,
         resolver: crate::runtime::resolver::ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), crate::runtime::resolver::ResolverError> {
-        let location = Callsite::caller();
         self.inner
             .set_resolver::<RESOLVER, ROLE>(rv, program, resolver)
             .map_err(|error| {
-                crate::runtime::resolver::ResolverError::cluster(error).with_operation_at(
-                    crate::session::cluster::core::ResolverOp::SetResolver,
-                    location,
-                )
+                crate::runtime::resolver::ResolverError::cluster(error)
+                    .with_operation(crate::session::cluster::core::ResolverOp::SetResolver)
             })
     }
 }

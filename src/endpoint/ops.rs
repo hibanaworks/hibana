@@ -10,7 +10,6 @@ use super::{
     Endpoint, EndpointResult, RecvFuture, RecvResult, RouteBranch, SendResult, carrier,
     futures::OfferFuture, kernel, send,
 };
-use crate::diag::Callsite;
 use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 use core::task::{Context, Poll};
 
@@ -217,7 +216,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// future. Dropping the future before completion leaves the endpoint on the
     /// same typestate step. A preview mismatch is reported as a send failure
     /// and must not be treated as permission to choose another branch.
-    #[track_caller]
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: &'a M::Payload,
@@ -228,12 +226,11 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         'e: 'a,
         'r: 'a,
     {
-        let location = Callsite::caller();
         let endpoint = core::ptr::from_mut(self);
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
         let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
         if let Err(error) = self.preview_send(logical_label, preview.as_mut_ptr()) {
-            return send::SendFuture::ready_error(error, location);
+            return send::SendFuture::ready_error(error);
         }
         let preview = /* SAFETY: the table owner tracks the initialized prefix and checks this slot before reading initialized storage. */ unsafe { preview.assume_init() };
         let desc =
@@ -243,13 +240,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         match unsafe { self.init_public_send_state(&init) } {
             kernel::PublicOpLease::Held => {}
             kernel::PublicOpLease::Rejected => {
-                return send::SendFuture::ready_error(
-                    crate::endpoint::SendError::PhaseInvariant,
-                    location,
-                );
+                return send::SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
             }
         }
-        send::SendFuture::pending(endpoint, payload, location)
+        send::SendFuture::pending(endpoint, payload)
     }
 
     #[inline]
@@ -260,7 +254,6 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// trailing bytes, while borrowed payloads may return views tied to the
     /// endpoint borrow. A committed receive fault poisons the session generation
     /// before the error is returned.
-    #[track_caller]
     pub fn recv<'e, M>(
         &'e mut self,
     ) -> impl core::future::Future<Output = EndpointResult<<M::Payload as WirePayload>::Decoded<'e>>> + 'e
@@ -268,7 +261,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         M: crate::g::Message + 'e,
         M::Payload: WirePayload,
     {
-        RecvFuture::<'e, 'r, ROLE, M>::new(self, Callsite::caller())
+        RecvFuture::<'e, 'r, ROLE, M>::new(self)
     }
 
     #[inline]
@@ -280,10 +273,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// Dynamic branches must be selected by an explicit resolver decision at a
     /// projected route point; transport hints and payload labels are demux
     /// evidence only.
-    #[track_caller]
     pub fn offer<'e>(
         &'e mut self,
     ) -> impl core::future::Future<Output = EndpointResult<RouteBranch<'e, 'r, ROLE>>> + 'e {
-        OfferFuture::new(self, Callsite::caller())
+        OfferFuture::new(self)
     }
 }

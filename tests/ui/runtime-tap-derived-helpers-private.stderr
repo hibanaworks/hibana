@@ -1,0 +1,33 @@
+error[E0624]: method `causal_role` is private
+ --> tests/ui/runtime-tap-derived-helpers-private.rs:4:19
+  |
+4 |     let _ = event.causal_role();
+  |                   ^^^^^^^^^^^ private method
+  |
+ ::: src/observe/event.rs
+  |
+  |     const fn causal_role(self) -> u8 {
+  |     -------------------------------- private method defined here
+
+error[E0624]: method `causal_seq` is private
+ --> tests/ui/runtime-tap-derived-helpers-private.rs:5:19
+  |
+5 |     let _ = event.causal_seq();
+  |                   ^^^^^^^^^^ private method
+  |
+ ::: src/observe/event.rs
+  |
+  |     const fn causal_seq(self) -> u8 {
+  |     ------------------------------- private method defined here
+
+error[E0599]: no method named `input_word` found for struct `Evidence` in the current scope
+ --> tests/ui/runtime-tap-derived-helpers-private.rs:6:22
+  |
+6 |     let _ = evidence.input_word(0);
+  |                      ^^^^^^^^^^
+  |
+help: there is a method `input` with a similar name, but with different arguments
+ --> src/observe/event.rs
+  |
+  |     pub const fn input(self) -> [u32; 4] {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

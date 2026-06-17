@@ -9,19 +9,19 @@
 /// Endpoint send operation observed at the tap boundary.
 ///
 /// - `arg0`: Session identifier (u32)
-/// - `arg1`: Packed role/lane/label/flags (u32)
+/// - `arg1`: Packed role/lane/label/zero (u32)
 pub const ENDPOINT_SEND: u16 = 0x0202;
 
 /// Endpoint receive operation observed at the tap boundary.
 ///
 /// - `arg0`: Session identifier (u32)
-/// - `arg1`: Packed role/lane/label/flags (u32)
+/// - `arg1`: Packed role/lane/label/zero (u32)
 pub const ENDPOINT_RECV: u16 = 0x0203;
 
 /// Endpoint event whose committed choreography row is session-originated.
 ///
 /// - `arg0`: Session identifier (u32)
-/// - `arg1`: Packed role/lane/label/flags (u32)
+/// - `arg1`: Packed role/lane/label/zero (u32)
 pub const ENDPOINT_SESSION: u16 = 0x0204;
 
 /// Transport frame observed but not delivered because its header did not match

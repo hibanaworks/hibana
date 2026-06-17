@@ -177,10 +177,7 @@ fn assert_malformed_direct_recv_fails_closed(
             let program = g::send::<0, 1, Msg<1, FramePayload>>();
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(
-                    Config::from_resources(slab),
-                    MalformedRecvTransport { header },
-                )
+                .rendezvous(slab, MalformedRecvTransport { header })
                 .expect("register rendezvous");
             let mut tap = rv.tap();
 
@@ -231,7 +228,7 @@ fn cursor_recv_can_return_borrowed_frame_views() {
             let borrowed_origin_program: RoleProgram<0> = project(&borrowed_program);
             let borrowed_target_program: RoleProgram<1> = project(&borrowed_program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
 
             let sid = SessionId::new(2);
@@ -254,7 +251,7 @@ fn cursor_recv_can_return_borrowed_frame_views() {
                 futures::executor::block_on(target_endpoint.recv::<Msg<2, FramePayload>>())
                     .expect("recv succeeds");
             assert_eq!(payload.as_bytes(), b"hiba");
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }
@@ -279,7 +276,7 @@ fn zero_length_transport_frame_recv_unit_commits() {
                 Poll::Ready(Ok(()))
             ));
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let mut target_endpoint = rv
                 .session(sid)
@@ -289,7 +286,7 @@ fn zero_length_transport_frame_recv_unit_commits() {
 
             let () = futures::executor::block_on(target_endpoint.recv::<Msg<30, ()>>())
                 .expect("unit payload accepts canonical empty frame");
-            assert!(transport_queue_is_empty(&transport));
+            assert!(transport.queue_is_empty());
         });
     });
 }
@@ -314,7 +311,7 @@ fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
                 Poll::Ready(Ok(()))
             ));
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let mut target_endpoint = rv
                 .session(sid)
@@ -345,7 +342,7 @@ fn direct_recv_deadline_emits_transport_fault_tap() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::from_resources(slab),
+                    slab,
                     DeadlineRecvTransport {
                         error: hibana::runtime::transport::TransportError::Deadline,
                     },
@@ -454,7 +451,7 @@ fn mismatch_tap_is_emitted_before_terminal_error() {
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
                 .rendezvous(
-                    Config::from_resources(slab),
+                    slab,
                     MalformedRecvTransport {
                         header: malformed_header(sid, 0, 0, 1, 9),
                     },

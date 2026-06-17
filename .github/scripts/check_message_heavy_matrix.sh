@@ -48,7 +48,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-hibana = { path = "${ROOT_DIR}", default-features = false, features = ["std"] }
+hibana = { path = "${ROOT_DIR}", default-features = false }
 EOF
 
   python3 - "${count}" "${crate_dir}/src/main.rs" <<'PY'

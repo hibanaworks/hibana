@@ -1,4 +1,3 @@
-#![cfg(feature = "std")]
 #![recursion_limit = "512"]
 
 mod common;
@@ -20,7 +19,7 @@ use hibana::{
     Endpoint, g,
     g::Msg,
     runtime::program::{RoleProgram, project},
-    runtime::{Config, SessionKitStorage, ids::SessionId},
+    runtime::{SessionKitStorage, ids::SessionId},
 };
 
 type HugeKitStorage<'a> = SessionKitStorage<'a, TestTransport>;
@@ -205,7 +204,7 @@ fn run_attached_sample(
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(Config::from_resources(slab), transport.clone())
+            .rendezvous(slab, transport.clone())
             .expect("register rendezvous");
         let sid = SessionId::new(0x6000);
         let mut controller = rv
@@ -274,7 +273,7 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(Config::from_resources(slab), transport.clone())
+            .rendezvous(slab, transport.clone())
             .expect("register rendezvous");
         let sid = SessionId::new(0x6300);
         let mut controller = rv
@@ -304,7 +303,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(Config::from_resources(slab), transport.clone())
+            .rendezvous(slab, transport.clone())
             .expect("register rendezvous");
 
         let mut controller = rv
@@ -369,7 +368,7 @@ fn active_scope_depth_above_128_enters_public_sessionkit_path() {
         let mut kit_storage = DeepScopeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(Config::from_resources(slab), transport.clone())
+            .rendezvous(slab, transport.clone())
             .expect("register deep-scope rendezvous");
 
         let controller = rv
@@ -388,7 +387,7 @@ fn lane_255_runs_to_completion_on_public_sessionkit_path() {
         let mut kit_storage = HugeKitStorage::uninit();
         let kit = kit_storage.init();
         let rv = kit
-            .rendezvous(Config::from_resources(slab), transport.clone())
+            .rendezvous(slab, transport.clone())
             .expect("register rendezvous with the full wire lane domain");
 
         let mut controller = rv

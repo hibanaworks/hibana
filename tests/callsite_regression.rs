@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
@@ -12,7 +10,7 @@ use common::TestTransport;
 use hibana::{
     g::{self, Msg},
     runtime::{
-        Config, SessionKitStorage,
+        SessionKitStorage,
         ids::SessionId,
         program::{RoleProgram, project},
         resolver::{DecisionResolution, ResolverError, ResolverRef},
@@ -30,24 +28,39 @@ std::thread_local! {
 }
 
 fn assert_endpoint_debug_boundary(error: hibana::EndpointError, operation: &str) {
+    let rendered = format!("{error:?}");
     assert!(
-        format!("{error:?}").contains(&format!("operation: \"{operation}\"")),
+        rendered.contains(&format!("operation: \"{operation}\"")),
         "EndpointError Debug must include operation {operation}: {error:?}"
     );
+    assert_compact_debug(&rendered);
 }
 
 fn assert_attach_debug_boundary(error: hibana::runtime::AttachError, operation: &str) {
+    let rendered = format!("{error:?}");
     assert!(
-        format!("{error:?}").contains(&format!("operation: \"{operation}\"")),
+        rendered.contains(&format!("operation: \"{operation}\"")),
         "AttachError Debug must include operation {operation}: {error:?}"
     );
+    assert_compact_debug(&rendered);
 }
 
 fn assert_resolver_debug_boundary(error: ResolverError, operation: &str) {
+    let rendered = format!("{error:?}");
     assert!(
-        format!("{error:?}").contains(&format!("operation: \"{operation}\"")),
+        rendered.contains(&format!("operation: \"{operation}\"")),
         "ResolverError Debug must include operation {operation}: {error:?}"
     );
+    assert_compact_debug(&rendered);
+}
+
+fn assert_compact_debug(rendered: &str) {
+    for forbidden in ["file", "line", "column"] {
+        assert!(
+            !rendered.contains(forbidden),
+            "public error Debug must not carry source location {forbidden}: {rendered}"
+        );
+    }
 }
 
 static UNIT_RESOLVER_STATE: () = ();
@@ -79,7 +92,7 @@ fn runtime_registers_multiple_rendezvous_from_resident_resources() {
                 .enumerate()
             {
                 let rv = cluster
-                    .rendezvous(Config::from_resources(chunk), transport.clone())
+                    .rendezvous(chunk, transport.clone())
                     .expect("runtime registry must grow from each resident rendezvous resource");
                 let endpoint = rv
                     .session(SessionId::new(700 + idx as u32))
@@ -99,8 +112,7 @@ fn endpoint_errors_keep_debug_boundaries() {
         let transport = TestTransport::new();
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
             let (origin_program, target_program) = project_pair::<11>();
-            let config = Config::from_resources(slab);
-            let rv = cluster.rendezvous(config, transport.clone()).expect("rv");
+            let rv = cluster.rendezvous(slab, transport.clone()).expect("rv");
             let sid = SessionId::new(411);
             let mut origin = rv
                 .session(sid)
@@ -133,8 +145,7 @@ fn endpoint_errors_keep_debug_boundaries() {
 fn attach_and_resolver_errors_keep_debug_boundaries() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
-            let config = Config::from_resources(&mut slab[..1]);
-            let rendezvous_result = cluster.rendezvous(config, TestTransport::new());
+            let rendezvous_result = cluster.rendezvous(&mut slab[..1], TestTransport::new());
             let rendezvous_error = match rendezvous_result {
                 Ok(_) => panic!("resource-constrained rendezvous slab must fail"),
                 Err(error) => error,
@@ -146,9 +157,8 @@ fn attach_and_resolver_errors_keep_debug_boundaries() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&TEST_SLOT, |cluster| {
             let (origin_program, _target_program) = project_pair::<42>();
-            let config = Config::from_resources(&mut slab[..2048]);
             let rv = cluster
-                .rendezvous(config, TestTransport::new())
+                .rendezvous(&mut slab[..2048], TestTransport::new())
                 .expect("rv");
             let sid = SessionId::new(441);
             let constrained_role = rv.session(sid).role(&origin_program);

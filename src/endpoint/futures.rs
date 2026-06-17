@@ -1,7 +1,6 @@
 use super::{
     Endpoint, EndpointError, EndpointOp, EndpointResult, RecvResult, RouteBranch, carrier,
 };
-use crate::diag::Callsite;
 use crate::transport::wire::{CodecError, Payload, WirePayload};
 use core::{
     future::Future,
@@ -17,7 +16,6 @@ pub(crate) struct RawOfferFuture<'e, 'r, const ROLE: u8> {
 
 pub(crate) struct OfferFuture<'e, 'r, const ROLE: u8> {
     pub(super) raw: RawOfferFuture<'e, 'r, ROLE>,
-    pub(super) location: Callsite,
 }
 
 pub(crate) struct RawDecodeFuture<'e, 'r, const ROLE: u8> {
@@ -38,7 +36,6 @@ where
     M: crate::g::Message,
 {
     raw: RawDecodeFuture<'e, 'r, ROLE>,
-    location: Callsite,
     _msg: core::marker::PhantomData<M>,
 }
 
@@ -89,7 +86,6 @@ where
     M: crate::g::Message,
 {
     raw: RawRecvFuture<'e, 'r, ROLE>,
-    location: Callsite,
     _msg: core::marker::PhantomData<M>,
 }
 
@@ -193,10 +189,9 @@ where
     M: crate::g::Message,
 {
     #[inline]
-    pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>, location: Callsite) -> Self {
+    pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         Self {
             raw: RawDecodeFuture::new(branch),
-            location,
             _msg: core::marker::PhantomData,
         }
     }
@@ -208,10 +203,9 @@ where
     M::Payload: WirePayload,
 {
     #[inline]
-    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>, location: Callsite) -> Self {
+    pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
         Self {
             raw: RawRecvFuture::new(endpoint),
-            location,
             _msg: core::marker::PhantomData,
         }
     }
@@ -237,11 +231,7 @@ where
                 let decoded = <M::Payload as WirePayload>::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
-                EndpointOp::Recv,
-                this.location,
-                err,
-            ))),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Recv, err))),
         }
     }
 }
@@ -266,11 +256,7 @@ where
                 let decoded = <M::Payload as WirePayload>::decode_validated_payload(payload);
                 Poll::Ready(Ok(decoded))
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(
-                EndpointOp::Recv,
-                this.location,
-                err,
-            ))),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(EndpointError::new(EndpointOp::Recv, err))),
         }
     }
 }

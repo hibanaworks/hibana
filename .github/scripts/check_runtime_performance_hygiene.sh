@@ -109,54 +109,54 @@ reject_source \
 
 echo "== runtime performance operation-count tests =="
 run_runtime_test \
-  -p hibana \
-  --test offer_decode_receive_evidence \
-  offer_requires_framed_receive_evidence_for_branch_demux \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test offer_decode_receive_evidence \
-  offer_decode_transport_consumes_frame_once \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test offer_decode_receive_evidence \
-  forgotten_route_branch_leaves_endpoint_fail_closed \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test offer_decode_receive_evidence \
-  forgotten_route_recv_future_leaves_endpoint_fail_closed \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test parallel_route_nesting \
-  route_inside_parallel_lane_cannot_release_join_before_sibling_lane \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test parallel_route_alternating \
-  alternating_route_parallel_join_uses_only_selected_arms \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test parallel_route_nesting \
-  unselected_route_arm_parallel_events_are_dead_and_not_join_obligations \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test parallel_route_nesting \
-  unselected_route_arm_parallel_events_do_not_block_parallel_join \
-  --features std
-run_runtime_test \
-  -p hibana \
-  --test parallel_route_nesting \
-  outer_left_selection_kills_nested_right_route_and_parallel_body \
-  --features std
-run_runtime_test \
-  -p hibana \
-  global::role_program::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
-  --lib \
-  --features std
+	  -p hibana \
+	  --test offer_decode_receive_evidence \
+	  offer_requires_framed_receive_evidence_for_branch_demux \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test offer_decode_receive_evidence \
+	  offer_decode_transport_consumes_frame_once \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test offer_decode_receive_evidence \
+	  forgotten_route_branch_leaves_endpoint_fail_closed \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test offer_decode_receive_evidence \
+	  forgotten_route_recv_future_leaves_endpoint_fail_closed \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test parallel_route_nesting \
+	  route_inside_parallel_lane_cannot_release_join_before_sibling_lane \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test parallel_route_alternating \
+	  alternating_route_parallel_join_uses_only_selected_arms \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test parallel_route_nesting \
+	  unselected_route_arm_parallel_events_are_dead_and_not_join_obligations \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test parallel_route_nesting \
+	  unselected_route_arm_parallel_events_do_not_block_parallel_join \
+
+	run_runtime_test \
+	  -p hibana \
+	  --test parallel_route_nesting \
+	  outer_left_selection_kills_nested_right_route_and_parallel_body \
+
+	run_runtime_test \
+	  -p hibana \
+	  global::role_program::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
+	  --lib \
+
 
 echo "runtime performance hygiene check passed"

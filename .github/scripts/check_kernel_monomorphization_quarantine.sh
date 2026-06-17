@@ -182,7 +182,7 @@ cleanup_symbol_proof() {
 }
 trap cleanup_symbol_proof EXIT
 
-CARGO_TARGET_DIR="${SYMBOL_TARGET_DIR}" cargo +"${TOOLCHAIN}" build -p hibana --features std --lib >/dev/null
+CARGO_TARGET_DIR="${SYMBOL_TARGET_DIR}" cargo +"${TOOLCHAIN}" build -p hibana --lib >/dev/null
 shopt -s nullglob
 HIBANA_RLIBS=("${SYMBOL_TARGET_DIR}"/debug/deps/libhibana-*.rlib)
 shopt -u nullglob

@@ -8,8 +8,6 @@ pub mod ids {
     pub use crate::session::types::SessionId;
 }
 
-pub use crate::runtime_core::config::Config;
-
 /// Read-only tap observation surface.
 pub mod tap {
     pub use crate::observe::core::{Evidence, TapEvent, TapPort};

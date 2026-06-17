@@ -1,7 +1,7 @@
 use super::{
-    AssocTable, Cell, Config, EndpointLeaseId, FREE_REGION_CAPACITY, FreeRegion, Lane, LaneRelease,
-    PhantomData, Rendezvous, RendezvousId, RouteTable, SessionId, Sidecar, TapRing, Transport,
-    Waker, emit, events,
+    AssocTable, Cell, EndpointLeaseId, FREE_REGION_CAPACITY, FreeRegion, Lane, LaneRelease,
+    PhantomData, Rendezvous, RendezvousId, RouteTable, RuntimeResources, SessionId, Sidecar,
+    TapRing, Transport, Waker, emit, events,
 };
 use crate::{observe::core::TapEvent, runtime_core::consts::TAP_EVENTS};
 
@@ -70,11 +70,11 @@ where
     /// The returned pointer is valid for as long as the borrowed slab storage lives.
     pub(crate) unsafe fn init_in_slab_auto(
         rv_id: RendezvousId,
-        config: Config<'cfg>,
+        resources: RuntimeResources<'cfg>,
         transport: T,
     ) -> Option<*mut Self> {
-        let Config { slab } = config;
-        let lane_range = Config::initial_lane_range();
+        let RuntimeResources { slab } = resources;
+        let lane_range = RuntimeResources::initial_lane_range();
         let (dst, tap_storage, runtime_slab) = /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */ unsafe { Self::carve_resident_storage(slab) }?;
         let image_frontier = 0u32;
         /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */

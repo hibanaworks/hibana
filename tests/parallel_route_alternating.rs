@@ -9,7 +9,7 @@ use core::cell::UnsafeCell;
 use common::TestTransport;
 use hibana::g::{self, Msg};
 use hibana::runtime::program::{RoleProgram, project};
-use hibana::runtime::{Config, SessionKitStorage, ids::SessionId};
+use hibana::runtime::{SessionKitStorage, ids::SessionId};
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
@@ -61,10 +61,9 @@ fn assert_join_blocked(rendered: &str) {
 fn alternating_route_parallel_join_uses_only_selected_arms() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            let config = Config::from_resources(slab);
             let transport = TestTransport::new();
             let rv = cluster
-                .rendezvous(config, transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let sid = SessionId::new(96);
             let local_program = alternating_route_parallel_program::<LOCAL_ROLE>();

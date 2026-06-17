@@ -26,7 +26,7 @@ use crate::{
         core::{TapRing, emit},
         events,
     },
-    runtime_core::config::Config,
+    runtime_core::resources::RuntimeResources,
     session::{
         brand::{self, Guard},
         cluster::error::ResourceScope,

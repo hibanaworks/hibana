@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 mod common;
 #[path = "support/runtime.rs"]
 mod runtime_support;
@@ -12,7 +10,7 @@ use common::TestTransport;
 use hibana::{
     g::{self, Msg},
     runtime::program::{RoleProgram, project},
-    runtime::{Config, SessionKitStorage, ids::SessionId, tap},
+    runtime::{SessionKitStorage, ids::SessionId, tap},
 };
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
@@ -71,7 +69,7 @@ fn lane_lifecycle_emits_acquire_and_release_taps() {
             with_resident_tls_ref(&SESSION_SLOT, |cluster| {
                 let slab = unsafe { &mut *slab_ptr };
                 let rv = cluster
-                    .rendezvous(Config::from_resources(slab), transport.clone())
+                    .rendezvous(slab, transport.clone())
                     .expect("register rendezvous");
                 let mut tap = rv.tap();
 
@@ -126,7 +124,7 @@ fn shared_sid_lane_emits_one_association_pair() {
         let (mid_events, final_events) = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let slab = unsafe { &mut *slab_ptr };
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let mut tap_port = rv.tap();
 
@@ -183,7 +181,7 @@ fn new_tap_port_reads_all_runtime_events_before_wrap() {
         let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let slab = unsafe { &mut *slab_ptr };
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let controller_program = controller_program();
 
@@ -217,7 +215,7 @@ fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
         let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let slab = unsafe { &mut *slab_ptr };
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport.clone())
+                .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let controller_program = controller_program();
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    runtime_core::config::Config,
+    runtime_core::resources::RuntimeResources,
     session::types::RendezvousId,
     transport::{Outgoing, PortOpen, ReceivedFrame, TransportError},
 };
@@ -49,11 +49,14 @@ impl Transport for FailingTransport {
 }
 
 fn init_test_rendezvous(slab: &mut [u8]) -> &mut Rendezvous<'_, '_, FailingTransport> {
-    let config = Config::from_resources(slab);
     let rv_ptr = unsafe {
         // SAFETY: the test owns the whole slab for the duration of the rendezvous.
-        Rendezvous::init_in_slab_auto(RendezvousId::new(1), config, FailingTransport)
-            .expect("rendezvous")
+        Rendezvous::init_in_slab_auto(
+            RendezvousId::new(1),
+            RuntimeResources::new(slab),
+            FailingTransport,
+        )
+        .expect("rendezvous")
     };
     // SAFETY: init_in_slab_auto returned a unique resident pointer backed by slab.
     unsafe { &mut *rv_ptr }

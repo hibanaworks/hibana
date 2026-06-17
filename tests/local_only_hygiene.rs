@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 

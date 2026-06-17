@@ -1,11 +1,10 @@
-use hibana::runtime::{Clock, Config, CounterClock, RING_EVENTS, RuntimeStorage, TapEvent};
+use hibana::runtime::{Clock, CounterClock, RING_EVENTS, RuntimeStorage};
 
 fn main() {
-    let mut tap_buf = [TapEvent::zero(); RING_EVENTS];
     let mut slab = [0u8; 64];
     let clock = CounterClock::zero();
-    let storage = RuntimeStorage::from_buffers(&mut tap_buf, &mut slab);
-    let _: Config<'_> = storage.into();
-    let _: Config<'_> = Config::from_resources((&mut tap_buf, &mut slab), clock);
+    let _ = RING_EVENTS;
+    let _ = RuntimeStorage::from_buffers(&mut slab);
     fn _needs_clock<C: Clock>(_clock: C) {}
+    _needs_clock(clock);
 }

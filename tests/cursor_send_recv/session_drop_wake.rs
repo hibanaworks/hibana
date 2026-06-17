@@ -34,7 +34,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
             let origin_program: RoleProgram<0> = project(&program);
             let target_program: RoleProgram<1> = project(&program);
             let rv = cluster
-                .rendezvous(Config::from_resources(slab), transport)
+                .rendezvous(slab, transport)
                 .expect("register rendezvous");
 
             let sid = SessionId::new(202);

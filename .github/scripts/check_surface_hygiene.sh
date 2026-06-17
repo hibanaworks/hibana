@@ -20,6 +20,17 @@ RECOVERY_WORD='res''cue'
 GUESS_WORD='heur''istic'
 UNIVERSE_WORD='uni''verse'
 RECONFIG_TOKEN='fe''nce'
+STD_FEATURE_CFG='cfg\(feature = "'"std"'"\)'
+STD_NOT_FEATURE_CFG='cfg\(not\(feature = "'"std"'"\)\)'
+STD_FEATURE_DEP='features = \["'"std"'"\]'
+STD_FEATURE_FLAG='--features '"std"
+STD_FEATURE_WORDING='std fea''ture|optional `'"std"'`|host diagn''ostics'
+FRAME_FLAGS_TOKEN='Frame''Flags'
+FRAME_FRAGMENT_TOKENS='\b(FR''AG|ID''X|TO''T)\b'
+TAP_FLAGS_PATTERN='Tap''Frame''Meta[^\n]*flags'
+ENDPOINT_RESOLVER_FLAGS_PATTERN='endpoint_resolver_args\([^\n]*,[^\n]*,[^\n]*\)'
+DEAD_CODE_ALLOW_PATTERN='allow[[:space:]]*\([^]]*dead[_]code'
+DEAD_CODE_SPLIT_ALLOW_PATTERN='allow[[:space:]]*\([^]]*dead[[:space:]]*["'\'']?[[:space:]]*[_][[:space:]]*["'\'']?[[:space:]]*code'
 
 FORBIDDEN_ROLE_TOKEN_PATTERN='g::''Role<'
 FORBIDDEN_ROLE_TOKEN_MATCHES="$(
@@ -65,9 +76,20 @@ check_absent \
   src README.md
 
 check_absent \
+  "${STD_FEATURE_CFG}|${STD_NOT_FEATURE_CFG}|${STD_FEATURE_DEP}|${STD_FEATURE_FLAG}|${STD_FEATURE_WORDING}" \
+  "host cfg diagnostic residue" \
+  src README.md .github
+
+check_absent \
+  "${FRAME_FLAGS_TOKEN}|${FRAME_FRAGMENT_TOKENS}|${TAP_FLAGS_PATTERN}|${ENDPOINT_RESOLVER_FLAGS_PATTERN}" \
+  "transport fragmentation vocabulary residue" \
+  src README.md
+
+check_absent \
   "FrameLabel::new\\([[:digit:]]+\\)" \
   "README must not teach user-chosen numeric frame labels" \
   README.md
+SOURCE_DOC_PATHS=(src); [[ -e examples ]] && SOURCE_DOC_PATHS+=(examples)
 
 PURE_SYNONYM_ALIASES="$(
   rg -n "^(pub\\(crate\\)[[:space:]]+)?type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+;" \
@@ -245,7 +267,7 @@ fi
 
 EXAMPLE_FORBIDDEN_SURFACE="$(
   if [[ -e examples ]]; then
-    rg -n "#\\[doc\\(hidden\\)\\]|#\\[allow\\(dead_code\\)\\]|\\b${ALT_WORD}\\b" examples || true
+    rg -n "#\\[doc\\(hidden\\)\\]|${DEAD_CODE_ALLOW_PATTERN}|${DEAD_CODE_SPLIT_ALLOW_PATTERN}|\\b${ALT_WORD}\\b" examples || true
   fi
 )"
 if [[ -n "${EXAMPLE_FORBIDDEN_SURFACE}" ]]; then
@@ -396,7 +418,7 @@ check_absent \
 check_absent \
   "RouteDispatchEntry[[:space:]]*\\{[[:space:]]*label|entry\\.label|existing\\.label" \
   "FIRST-recv dispatch entries must store frame_label, not ambiguous label" \
-  src/global/typestate/registry.rs src/global/typestate/emit_scope.rs
+  src/global/typestate/cursor src/global/typestate/facts.rs
 
 check_absent \
   "label not found in dispatch table|label remains to probe" \
@@ -441,7 +463,7 @@ check_absent \
 check_absent \
   "pri""or_atom\\.label|atom\\.label[[:space:]]*==[[:space:]]*label|label[[:space:]]*=[[:space:]]*current\\.label" \
   "FrameLabel allocation must be edge-unique, not logical-label deduplicated" \
-  src/global/typestate/emit_walk.rs
+  src/global/typestate
 
 DEFAULT_WORD='Def''ault'
 TRANSPORT_METRICS_EMPTY_DEFAULTS="$(
@@ -533,21 +555,25 @@ fi
 
 check_absent_multiline "^[[:space:]]*use[[:space:]][^;]*\\bas[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[^;]*;" \
   "source import alias forbidden path" \
-  src examples
+  "${SOURCE_DOC_PATHS[@]}"
 check_absent "\\sas _([,;)|]|$)" \
   "underscore inferred cast forbidden path" \
-  src examples
+  "${SOURCE_DOC_PATHS[@]}"
 check_absent "as \\*const _|as \\*mut _" \
   "underscore pointer cast forbidden path" \
-  src examples
-check_absent "^[[:space:]]*const[[:space:]]+(INDEX|VALUE|LABEL):[[:space:]]+u8[[:space:]]*=[[:space:]]+(IDX|LABEL);" \
+  "${SOURCE_DOC_PATHS[@]}"
+INDEX_TOKEN='IN''DEX'
+VALUE_TOKEN='VA''LUE'
+LABEL_TOKEN='LA''BEL'
+IDX_TOKEN='ID''X'
+check_absent "^[[:space:]]*const[[:space:]]+(${INDEX_TOKEN}|${VALUE_TOKEN}|${LABEL_TOKEN}):[[:space:]]+u8[[:space:]]*=[[:space:]]+(${IDX_TOKEN}|${LABEL_TOKEN});" \
   "self-shadowing associated const forbidden path" \
   src tests
 check_absent "type[[:space:]]+Controller[[:space:]]*=[[:space:]]*Controller;" \
   "route semantic self-shadowing associated type forbidden path" \
   src/global.rs
 STALE_VAR_ALLOW='un''used_variables'
-check_absent "#\\[allow\\(clippy::empty_loop\\)\\]|#\\[allow\\(${STALE_VAR_ALLOW}\\)\\]|#\\[allow\\(clippy::let_unit_value\\)\\]" \
+check_absent "#\\[allow\\(clippy::empty_loop\\)\\]|#\\[allow\\(${STALE_VAR_ALLOW}\\)\\]|#\\[allow\\(clippy::let_unit_value\\)\\]|${DEAD_CODE_ALLOW_PATTERN}|${DEAD_CODE_SPLIT_ALLOW_PATTERN}" \
   "forbidden allow attribute" \
   src tests
 check_absent "route_inferred|par_inferred" \
@@ -573,7 +599,7 @@ check_absent "LeaseObserve|from_resident_tap|commit_event: Option<TapEvent>|requ
   src/session/lease/core.rs
 check_absent "#\\[doc\\(hidden\\)\\]" \
   "doc-hidden forbidden path" \
-  src examples
+  "${SOURCE_DOC_PATHS[@]}"
 check_absent "LocalSteps = steps::StepNil" \
   "RoleProgram StepNil default projection forbidden path" \
   src/global/role_program.rs
@@ -594,7 +620,7 @@ check_absent "\\b(${FOR_TEST_WORD}|${FOR_TEST_SUFFIX})\\b|test-only|Test-only|\\
 check_absent "(?i)\\b(${MODE_WORD}(ibility|ible)?|${OLD_WORD}|${RECOVERY_WORD}|${GUESS_WORD}|${ALT_WORD}|state machine|infer(red|ence|s|ring)?|absorb mismatch|absorption)\\b" \
   "runtime-intelligence vocabulary residue in public docs or core source" \
   src README.md
-check_absent "#\\[allow\\(dead_code\\)\\]|DiscardedAndPending|keeps_waiting|absorbed" \
+check_absent "${DEAD_CODE_ALLOW_PATTERN}|${DEAD_CODE_SPLIT_ALLOW_PATTERN}|DiscardedAndPending|keeps_waiting|absorbed" \
   "static hygiene residue in production source" \
   src
 check_absent_multiline "wake_by_ref\\(\\);[[:space:]]*\\n[[:space:]]*return Poll::Pending" \
@@ -719,7 +745,7 @@ check_absent "\\bTransportSnapshotParts\\b|from_parts\\(parts:" \
   src/transport.rs
 check_absent "\\bConfigParts\\b|config\\.into_parts\\(\\)" \
   "runtime config decomposition bag detected" \
-  src/runtime/config.rs src/rendezvous/core.rs
+  src/runtime_core src/rendezvous/core.rs
 check_absent "\\bRegisteredTokenParts\\b|RawRegisteredCapToken::from_parts|take_registered_parts" \
   "registered token transfer bag detected" \
   src/session/brand.rs src/endpoint
@@ -742,7 +768,7 @@ check_absent "\\b(StatelessRouteResolverFn|RouteResolverStatePayload[[:space:]]*
   src/session/cluster/core.rs
 check_absent "type[[:space:]]+SessionLaneHandle[[:space:]]*=" \
   "session-lane handle tuple alias residue in production source" \
-  "${DELETED_SESSION_CAP_DIR}/atomic_codecs.rs"
+  src/session
 check_absent "RawEmittedCapToken::from_bytes" \
   "test-only emitted-token constructor residue in production source" \
   src/endpoint
@@ -867,7 +893,6 @@ check_absent \
   "(g::advanced::steps|runtime::program::steps)" \
   "public step names detected in docs/examples" \
   README.md
-
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
