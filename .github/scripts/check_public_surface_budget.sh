@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+source ./.github/scripts/lib/hygiene_common.sh
+
 FAILED=0
 
 check_max_lines() {
@@ -13,16 +15,6 @@ check_max_lines() {
   count="$(wc -l < "${path}" | tr -d ' ')"
   if (( count > max )); then
     echo "public surface budget violation: ${path} has ${count} lines, budget is ${max}" >&2
-    FAILED=1
-  fi
-}
-
-check_absent() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  if rg -n -U "${pattern}" "$@"; then
-    echo "public surface budget violation: ${label}" >&2
     FAILED=1
   fi
 }
@@ -40,7 +32,7 @@ ALT_WORD='fall''back'
 RECOVERY_WORD='res''cue'
 GUESS_WORD='heur''istic'
 
-check_absent \
+check_absent_multiline \
   "g::advanced|binding::advanced|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner|DynamicResolution|IncomingClassification|from_fn|from_state|${ALT_WORD}|${OLD_WORD}|${MODE_WORD}|${GUESS_WORD}|${RECOVERY_WORD}|state machine|TransportSnapshotParts|ConfigParts|RegisteredTokenParts|ProjectionMessageSpec|ProjectionTypeFingerprint|TransportOpsError|has_fin" \
   "forbidden final-form names in public API allowlists" \
   .github/allowlists

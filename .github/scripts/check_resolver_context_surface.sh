@@ -4,17 +4,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+source ./.github/scripts/lib/hygiene_common.sh
+
 FAILED=0
 
-if rg -n "\\bResolverContext\\b" src/session/cluster/core.rs src/session/cluster/core src/runtime README.md; then
-  echo "boundary violation: ResolverContext must not be a public resolver argument" >&2
-  FAILED=1
-fi
+check_absent "\\bResolverContext\\b" \
+  "ResolverContext must not be a public resolver argument" \
+  src/session/cluster/core.rs src/session/cluster/core src/runtime README.md
 
-if rg -n "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(scope_id|scope_kind|scope_region)[[:space:]]*\\(" src/endpoint/kernel/core.rs src/endpoint/kernel/core; then
-  echo "boundary violation: RouteBranch must not expose scope coordinate helpers" >&2
-  FAILED=1
-fi
+check_absent "^[[:space:]]*pub(\\([^)]*\\))?[[:space:]]+(const[[:space:]]+)?fn[[:space:]]+(scope_id|scope_kind|scope_region)[[:space:]]*\\(" \
+  "RouteBranch must not expose scope coordinate helpers" \
+  src/endpoint/kernel/core.rs src/endpoint/kernel/core
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

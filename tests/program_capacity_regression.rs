@@ -1,3 +1,5 @@
+// This capacity regression intentionally pushes const evaluation to prove the
+// public projection budget does not collapse to a segment-marker shortcut.
 #![allow(long_running_const_eval)]
 
 use hibana::g::{self, Msg};

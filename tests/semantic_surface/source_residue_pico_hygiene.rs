@@ -139,6 +139,60 @@ fn production_sources_do_not_reintroduce_static_hygiene_residue() {
 }
 
 #[test]
+fn long_running_const_eval_allow_stays_capacity_regression_only() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let token = concat!("allow(", "long_running_const_eval", ")");
+    let allowed = root.join("tests/program_capacity_regression.rs");
+    let mut offenders = Vec::new();
+
+    fn collect_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for entry in
+            fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()))
+        {
+            let path = entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
+                .path();
+            if path.is_dir() {
+                collect_files(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    for dir in ["src", "tests", ".github"] {
+        collect_files(&root.join(dir), &mut files);
+    }
+    files.sort();
+
+    for path in files {
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
+        if !text.contains(token) {
+            continue;
+        }
+        if path != allowed {
+            offenders.push(path.display().to_string());
+            continue;
+        }
+        assert!(
+            text.lines()
+                .take_while(|line| !line.contains(token))
+                .any(|line| line
+                    .contains("capacity regression intentionally pushes const evaluation")),
+            "long_running_const_eval allow must carry the capacity-regression reason comment"
+        );
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "long_running_const_eval allow must stay limited to tests/program_capacity_regression.rs: {}",
+        offenders.join(", ")
+    );
+}
+
+#[test]
 fn frame_header_has_no_u64_storage() {
     let transport = read("src/transport.rs");
     let header_impl = frame_header_impl(&transport);

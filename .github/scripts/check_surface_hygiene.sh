@@ -699,17 +699,17 @@ RESOLVER_BLOCK="$(
 if [[ -z "${RESOLVER_BLOCK}" ]]; then
   echo "runtime resolver block not found" >&2
   FAILED=1
-elif printf '%s\n' "${RESOLVER_BLOCK}" | rg -n "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" >/dev/null; then
-  echo "boundary deny pattern detected: runtime resolver advanced extra bucket" >&2
-  FAILED=1
 else
+  check_pipe_absent \
+    "pub[[:space:]]+mod[[:space:]]+advanced[[:space:]]*\\{" \
+    "runtime resolver advanced extra bucket" \
+    "${RESOLVER_BLOCK}"
   for required in \
     "ResolverRef"
   do
-    if ! printf '%s\n' "${RESOLVER_BLOCK}" | rg -n -F "${required}" >/dev/null; then
-      echo "runtime resolver resolver surface missing: ${required}" >&2
-      FAILED=1
-    fi
+    check_pipe_required "${required}" \
+      "runtime resolver resolver surface missing: ${required}" \
+      "${RESOLVER_BLOCK}"
   done
   for forbidden in \
     "ResolverContext" \
@@ -720,10 +720,10 @@ else
     "ResolverSlot" \
     "pub mod replay {"
   do
-    if printf '%s\n' "${RESOLVER_BLOCK}" | rg -n -F "${forbidden}" >/dev/null; then
-      echo "boundary deny pattern detected: runtime resolver root replay metadata leak: ${forbidden}" >&2
-      FAILED=1
-    fi
+    check_pipe_absent "${forbidden}" \
+      "runtime resolver root replay metadata leak: ${forbidden}" \
+      "${RESOLVER_BLOCK}" \
+      -F
   done
 fi
 
@@ -738,10 +738,9 @@ for forbidden in \
   "pub mod replay {" \
   "advanced::resolver"
 do
-  if rg -n -F "${forbidden}" src/runtime/buckets.rs >/dev/null; then
-    echo "boundary deny pattern detected: runtime resolver replay internals leak: ${forbidden}" >&2
-    FAILED=1
-  fi
+  check_absent_literal "${forbidden}" \
+    "runtime resolver replay internals leak: ${forbidden}" \
+    src/runtime/buckets.rs
 done
 check_absent "TransportEventMeta|pub[[:space:]]+(kind|packet_number|payload_len|retransmissions|pn_space|cid_tag):|pub[[:space:]]+(primary|extension):|pub[[:space:]]+const[[:space:]]+fn[[:space:]]+(new_with_metadata|with_pn_space|with_cid_tag|payload_len|retry_count|domain|carrier_tag)\\b" \
   "transport observation detail must stay protocol-neutral and non-extension" \

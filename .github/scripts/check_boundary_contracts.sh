@@ -2,6 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
+
+source ./.github/scripts/lib/hygiene_common.sh
+
+FAILED=0
 
 LOCAL_ONLY=0
 case "${1:-}" in
@@ -16,9 +21,11 @@ case "${1:-}" in
     ;;
 esac
 
-if rg -n "MAX_COMPILED_PROGRAMS|MAX_COMPILED_ROLES|compiled_programs|compiled_roles|CompiledCacheLease|ProgramCacheEntry|RoleCacheEntry|acquire_compiled_cache|with_pinned_compiled_program|with_pinned_compiled_role|release_compiled_cache_lease" \
-  "${ROOT_DIR}/src/session/cluster/core.rs" "${ROOT_DIR}/src/endpoint/kernel/core.rs"; then
-  echo "boundary deny pattern detected: runtime compiled cache owner" >&2
+check_absent \
+  "MAX_COMPILED_PROGRAMS|MAX_COMPILED_ROLES|compiled_programs|compiled_roles|CompiledCacheLease|ProgramCacheEntry|RoleCacheEntry|acquire_compiled_cache|with_pinned_compiled_program|with_pinned_compiled_role|release_compiled_cache_lease" \
+  "runtime compiled cache owner" \
+  src/session/cluster/core.rs src/endpoint/kernel/core.rs
+if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 

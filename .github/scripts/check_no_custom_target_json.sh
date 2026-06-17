@@ -17,14 +17,10 @@ json_paths="$(
 )"
 json_matches=""
 if [[ -n "${json_paths}" ]]; then
-  set +e
-  json_matches="$(printf '%s\n' "${json_paths}" | rg -n '(^|/)targets?/|thumb|riscv|aarch|x86|custom|target')"
-  status=$?
-  set -e
-  if [[ "${status}" -gt 1 ]]; then
-    echo "custom target JSON search failed" >&2
-    FAILED=1
-  fi
+  capture_pipe_rg json_matches \
+    "custom target JSON specs" \
+    "${json_paths}" \
+    -n '(^|/)targets?/|thumb|riscv|aarch|x86|custom|target'
 fi
 if [[ -n "${json_matches}" ]]; then
   echo "${json_matches}" >&2
@@ -32,32 +28,13 @@ if [[ -n "${json_matches}" ]]; then
   FAILED=1
 fi
 
-roots=()
-required_roots="$(existing_roots .github Cargo.toml Cargo.lock)" || {
-  echo "custom target deny root mismatch" >&2
-  exit 1
-}
-while IFS= read -r root; do
-  [[ -n "${root}" ]] && roots+=("${root}")
-done <<< "${required_roots}"
-optional_root_list="$(optional_roots .cargo)"
-while IFS= read -r root; do
-  [[ -n "${root}" ]] && roots+=("${root}")
-done <<< "${optional_root_list}"
-
-target_matches=""
-capture_rg target_matches \
-  "custom target or bootstrap path" \
-  -n \
-  --glob '!.github/scripts/check_no_custom_target_json.sh' \
-  --glob '!.github/scripts/check_no_nightly_features.sh' \
+check_absent \
   'custom target|target-json|build-std|RUSTC_BOOTSTRAP' \
-  "${roots[@]}"
-if [[ -n "${target_matches}" ]]; then
-  echo "${target_matches}" >&2
-  echo "custom target or bootstrap path is forbidden" >&2
-  FAILED=1
-fi
+  "custom target or bootstrap path is forbidden" \
+  .github Cargo.toml Cargo.lock \
+  --optional .cargo \
+  --glob '!.github/scripts/check_no_custom_target_json.sh' \
+  --glob '!.github/scripts/check_no_nightly_features.sh'
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

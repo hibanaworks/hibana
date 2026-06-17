@@ -4,27 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+source ./.github/scripts/lib/hygiene_common.sh
+
 FAILED=0
-
-check_required() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  if ! rg -n -F "${pattern}" "$@" >/dev/null; then
-    echo "raw future hygiene violation: ${label}" >&2
-    FAILED=1
-  fi
-}
-
-check_absent() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  if rg -n -U "${pattern}" "$@"; then
-    echo "raw future hygiene violation: ${label}" >&2
-    FAILED=1
-  fi
-}
 
 ENDPOINT_RAW_FILES=(src/endpoint/futures.rs src/endpoint/branch.rs)
 
@@ -43,28 +25,28 @@ check_required "fn poll_raw(" "send raw future must own poll_raw" src/endpoint/s
 check_required "payload: &'a M::Payload" "endpoint send must accept only the projected payload reference" src/endpoint/ops.rs
 check_required "kernel::RawSendPayload::from_typed(payload)" "send must own a present typed payload without public absence" src/endpoint/send.rs
 check_required "endpoint.poll_send(cx, self.payload.take())" "send payload borrow must be passed from the future, not staged in endpoint state" src/endpoint/send.rs
-check_absent "set_public_send_payload" "send payload borrow must not be staged in endpoint resident state" src/endpoint src/endpoint/kernel
-check_absent \
+check_absent_multiline "set_public_send_payload" "send payload borrow must not be staged in endpoint resident state" src/endpoint src/endpoint/kernel
+check_absent_multiline \
   "ErasedSendInput|mod[[:space:]]+sealed|Into<Option<&'a M::Payload>>|\\.send\\(None\\)" \
   "Endpoint::send must not retain optional payload or private-bound argument wrappers" \
   src/endpoint/send.rs src/endpoint/ops.rs
 
-check_absent \
+check_absent_multiline \
   "struct[[:space:]]+SendFuture[^{;]*<[^>{;]*(M|A)[^>{;]*>" \
   "SendFuture must not be parameterized by message or send-argument type" \
   src/endpoint/send.rs
 
-check_absent \
+check_absent_multiline \
   "pub[[:space:]]+(struct|trait)[[:space:]]+(SendValue|ErasedSendInput)\\b" \
   "send argument resolver must not become a public concept" \
   src/endpoint/send.rs
 
-check_absent \
+check_absent_multiline \
   "pub[[:space:]]+(trait|struct|enum)[[:space:]]+(Fl""ow|Fl""owSendArg|SendOutcomeKind|CapFl""ow|Fl""owInner)\\b" \
   "removed send-preview internals must not become public concepts" \
   src/endpoint src/lib.rs src/g.rs src/runtime.rs
 
-check_absent \
+check_absent_multiline \
   "impl<'[^']*,[[:space:]]*'[^']*,[[:space:]]*const ROLE: u8,[^>]*(M|A)[^>]*>[[:space:]]+Future[[:space:]]+for[[:space:]]+SendFuture" \
   "send future poll body must stay message-independent" \
   src/endpoint/send.rs

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+source "${ROOT_DIR}/.github/scripts/lib/hygiene_common.sh"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
@@ -12,25 +13,7 @@ bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 # Size is primary. This gate only blocks structural hot-path regressions after
 # check_final_form_measurements.sh has proven stack/SRAM/flash do not grow.
 
-require_source() {
-  local file="$1"
-  local pattern="$2"
-  local message="$3"
-  if ! rg -q --multiline "${pattern}" "${file}"; then
-    echo "runtime performance hygiene violation: ${message}" >&2
-    exit 1
-  fi
-}
-
-reject_source() {
-  local file="$1"
-  local pattern="$2"
-  local message="$3"
-  if rg -q --multiline "${pattern}" "${file}"; then
-    echo "runtime performance hygiene violation: ${message}" >&2
-    exit 1
-  fi
-}
+FAILED=0
 
 run_runtime_test() {
   local output
@@ -47,25 +30,25 @@ run_runtime_test() {
   rm -f "${output}"
 }
 
-require_source \
-  "src/global/role_program/lane_set.rs" \
+check_required_multiline \
   "fn next_set_from\\([^)]*\\)[[:space:]\n]*->[^{]+\\{[[:space:]\n\\S]*trailing_zeros\\(\\)" \
-  "LaneSetView::next_set_from must advance over empty lane runs with bit operations"
+  "LaneSetView::next_set_from must advance over empty lane runs with bit operations" \
+  "src/global/role_program/lane_set.rs"
 
-require_source \
-  "src/global/role_program/image_impl/ref_access.rs" \
+check_required_multiline \
   "pub\\(crate\\) const fn route_scope_arm_lane_set_by_slot[[:space:]\n\\S]*route_scope_arm_lane_set_by_slot\\(" \
-  "route-scope arm lane lookup must delegate to resident lane rows"
+  "route-scope arm lane lookup must delegate to resident lane rows" \
+  "src/global/role_program/image_impl/ref_access.rs"
 
-require_source \
-  "src/global/role_program/image_impl/ref_access.rs" \
+check_required_multiline \
   "pub\\(crate\\) const fn route_scope_offer_lane_set_by_slot[[:space:]\n\\S]*route_scope_offer_lane_set_by_slot\\(" \
-  "route-scope offer lane lookup must delegate to resident lane rows"
+  "route-scope offer lane lookup must delegate to resident lane rows" \
+  "src/global/role_program/image_impl/ref_access.rs"
 
-reject_source \
-  "src/global/compiled/images/image/role_descriptor_ref.rs" \
+check_absent_multiline \
   "pub\\(crate\\) fn phase_lane_set" \
-  "resident phase lane-set accessor must not be detected as a runtime frontier surface"
+  "resident phase lane-set accessor must not be detected as a runtime frontier surface" \
+  "src/global/compiled/images/image/role_descriptor_ref.rs"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -102,10 +85,14 @@ for name, section in sections.items():
             )
 PY
 
-reject_source \
-  "src/endpoint/kernel/decision_state.rs" \
+check_absent_multiline \
   "route_scope_lane_words" \
-  "endpoint arena must not contain route-scope lane-word caches"
+  "endpoint arena must not contain route-scope lane-word caches" \
+  "src/endpoint/kernel/decision_state.rs"
+
+if [[ "${FAILED}" -ne 0 ]]; then
+  exit 1
+fi
 
 echo "== runtime performance operation-count tests =="
 run_runtime_test \

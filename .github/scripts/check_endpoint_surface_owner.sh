@@ -19,9 +19,10 @@ POLL_READY_BLOCK="$(
 if [[ -z "${POLL_READY_BLOCK}" ]]; then
   echo "poll_arm_from_ready_mask block not found" >&2
   FAILED=1
-elif printf '%s\n' "${POLL_READY_BLOCK}" | rg -n "\\bscope_ready_arm_mask\\(" >/dev/null; then
-  echo "poll_arm_from_ready_mask must not read demux/materialization-ready mask" >&2
-  FAILED=1
+else
+  check_pipe_absent "\\bscope_ready_arm_mask\\(" \
+    "poll_arm_from_ready_mask must not read demux/materialization-ready mask" \
+    "${POLL_READY_BLOCK}"
 fi
 
 ROUTE_TOKEN_BLOCK="$(
@@ -33,10 +34,10 @@ ROUTE_TOKEN_BLOCK="$(
     }
   ' src/endpoint/kernel/authority.rs
 )"
-if rg -n "RouteAuthoritySource" src/endpoint/kernel/authority.rs >/dev/null; then
-  echo "RouteAuthoritySource enum must stay forbidden" >&2
-  FAILED=1
-elif [[ -z "${ROUTE_TOKEN_BLOCK}" ]]; then
+check_absent "RouteAuthoritySource" \
+  "RouteAuthoritySource enum must stay forbidden" \
+  src/endpoint/kernel/authority.rs
+if [[ -z "${ROUTE_TOKEN_BLOCK}" ]]; then
   echo "RouteArmToken enum block not found" >&2
   FAILED=1
 else
@@ -112,10 +113,9 @@ for forbidden in \
   "fn poll_public_decode(" \
   "fn poll_public_send("
 do
-  if rg -n -F "${forbidden}" src/endpoint/kernel/core.rs >/dev/null; then
-    echo "core.rs reabsorbed public endpoint operation lifecycle: ${forbidden}" >&2
-    FAILED=1
-  fi
+  check_absent_literal "${forbidden}" \
+    "core.rs reabsorbed public endpoint operation lifecycle: ${forbidden}" \
+    src/endpoint/kernel/core.rs
 done
 
 check_absent "payload_view\\(" \
@@ -149,16 +149,14 @@ for forbidden in \
   "fn sync_lane_offer_state(" \
   "fn refresh_lane_offer_state("
 do
-  if rg -n -F "${forbidden}" src/endpoint/kernel/core.rs >/dev/null; then
-    echo "core.rs reabsorbed split endpoint logic owners: ${forbidden}" >&2
-    FAILED=1
-  fi
+  check_absent_literal "${forbidden}" \
+    "core.rs reabsorbed split endpoint logic owners: ${forbidden}" \
+    src/endpoint/kernel/core.rs
 done
 
-if ! rg -n "mod evidence_store;|mod frontier_state;|mod route_state;" src/endpoint/kernel/mod.rs >/dev/null; then
-  echo "kernel mod split owner deletion" >&2
-  FAILED=1
-fi
+check_required_regex "mod evidence_store;|mod frontier_state;|mod route_state;" \
+  "kernel mod split owner deletion" \
+  src/endpoint/kernel/mod.rs
 
 for required in \
   "src/endpoint/kernel/evidence_store.rs:pub\\(super\\) struct ScopeEvidenceTable" \
@@ -167,10 +165,9 @@ for required in \
 do
   path="${required%%:*}"
   pattern="${required#*:}"
-  if ! rg -n "${pattern}" "${path}" >/dev/null; then
-    echo "split endpoint owner modules missing: ${required}" >&2
-    FAILED=1
-  fi
+  check_required_regex "${pattern}" \
+    "split endpoint owner modules missing: ${required}" \
+    "${path}"
 done
 
 for required in \
@@ -185,17 +182,14 @@ for required in \
 do
   path="${required%%:*}"
   pattern="${required#*:}"
-  if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
-    echo "split endpoint logic owner missing: ${required}" >&2
-    FAILED=1
-  fi
+  check_required "${pattern}" \
+    "split endpoint logic owner missing: ${required}" \
+    "${path}"
 done
-if rg -n "fn record_scope_ack\\(|fn on_frontier_defer\\(|fn frontier_observation_key\\(" \
+check_absent \
+  "fn record_scope_ack\\(|fn on_frontier_defer\\(|fn frontier_observation_key\\(" \
+  "split endpoint logic owner violation: selection/frontier helper implementations must stay in offer owner shards, not the root offer facade" \
   src/endpoint/kernel/offer.rs
-then
-  echo "split endpoint logic owner violation: selection/frontier helper implementations must stay in offer owner shards, not the root offer facade" >&2
-  FAILED=1
-fi
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

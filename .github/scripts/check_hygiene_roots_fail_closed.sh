@@ -58,7 +58,35 @@ if [[ "${FAILED}" -eq 0 ]]; then
 fi
 
 FAILED=0
-naked_rg_suppression='rg .*2>/dev/''null|2>/dev/''null.*rg|rg .*[|][|][[:space:]]*true'
+check_required "fixture_violation" \
+  "missing required file fixture" \
+  "${tmp}/missing-file.rs"
+if [[ "${FAILED}" -eq 0 ]]; then
+  echo "hygiene root self-test violation: missing required file was treated as success" >&2
+  exit 1
+fi
+
+representative_script="${tmp}/representative-migrated.sh"
+cat >"${representative_script}" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+root_dir="$1"
+fixture="$2"
+cd "${root_dir}"
+source ./.github/scripts/lib/hygiene_common.sh
+FAILED=0
+check_absent "[" "representative migrated invalid regex" "${fixture}"
+if [[ "${FAILED}" -ne 0 ]]; then
+  exit 1
+fi
+SH
+if bash "${representative_script}" "${ROOT_DIR}" "${tmp}/violation.rs"; then
+  echo "hygiene root self-test violation: representative migrated script accepted rg exit 2" >&2
+  exit 1
+fi
+
+FAILED=0
+naked_rg_suppression='r''g .*2>/dev/''null|2>/dev/''null.*r''g|r''g .*[|][|][[:space:]]*tr''ue'
 capture_rg NAKED_RG_SUPPRESSION_MATCHES \
   "naked rg suppression in hygiene scripts" \
   -n "${naked_rg_suppression}" .github/scripts
@@ -78,6 +106,48 @@ if [[ -n "${BARE_TRUE_SUPPRESSION_MATCHES}" ]]; then
 fi
 if [[ "${FAILED}" -ne 0 ]]; then
   echo "hygiene root self-test violation: suppression scan failed" >&2
+  exit 1
+fi
+
+migrated_deny_scripts=(
+  .github/scripts/check_boundary_contracts.sh
+  .github/scripts/check_endpoint_surface_owner.sh
+  .github/scripts/check_exact_layout_hygiene.sh
+  .github/scripts/check_hygiene_roots_fail_closed.sh
+  .github/scripts/check_lowering_hygiene.sh
+  .github/scripts/check_mgmt_boundary.sh
+  .github/scripts/check_no_custom_target_json.sh
+  .github/scripts/check_no_nightly_features.sh
+  .github/scripts/check_no_underscore_discards.sh
+  .github/scripts/check_plane_boundaries.sh
+  .github/scripts/check_public_surface_budget.sh
+  .github/scripts/check_raw_future_hygiene.sh
+  .github/scripts/check_resolver_context_surface.sh
+  .github/scripts/check_resolver_surface_hygiene.sh
+  .github/scripts/check_route_frontier_owner.sh
+  .github/scripts/check_runtime_performance_hygiene.sh
+  .github/scripts/check_segmented_lowering_hygiene.sh
+  .github/scripts/check_summary_authority_hygiene.sh
+  .github/scripts/check_surface_hygiene.sh
+  .github/scripts/check_surface_test_alias_hygiene.sh
+  .github/scripts/check_unsafe_contract_hygiene.sh
+)
+bare_rg_branch='(^|[;&|({[:space:]])(elif|if)[[:space:]]+![[:space:]]*rg\b|(^|[;&|({[:space:]])(elif|if)[[:space:]]+rg\b'
+bare_rg_pipe='[|][[:space:]]*rg\b'
+bare_rg_redirect='rg[[:space:]][^\n]*(>/dev/''null|2>/dev/''null)'
+bare_rg_quiet='rg[[:space:]][^\n]*-q\b'
+bare_rg_true='[|][|][[:space:]]*true'
+capture_rg BARE_RG_MATCHES \
+  "bare rg execution in migrated deny scripts" \
+  -n "${bare_rg_branch}|${bare_rg_pipe}|${bare_rg_redirect}|${bare_rg_quiet}|${bare_rg_true}" \
+  "${migrated_deny_scripts[@]}"
+if [[ -n "${BARE_RG_MATCHES}" ]]; then
+  echo "${BARE_RG_MATCHES}" >&2
+  echo "hygiene root self-test violation: migrated deny scripts must use hygiene_common.sh for rg execution" >&2
+  exit 1
+fi
+if [[ "${FAILED}" -ne 0 ]]; then
+  echo "hygiene root self-test violation: migrated deny script source scan failed" >&2
   exit 1
 fi
 

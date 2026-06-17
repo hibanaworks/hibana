@@ -4,17 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-FAILED=0
+source ./.github/scripts/lib/hygiene_common.sh
 
-check_absent() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  if rg -n "${pattern}" "$@"; then
-    echo "forbidden token detected: ${label}" >&2
-    FAILED=1
-  fi
-}
+FAILED=0
 
 check_absent "ResolverSnapshotProvider" "ResolverSnapshotProvider" src README.md
 check_absent "EpfInputProvider" "EpfInputProvider" src README.md
@@ -27,15 +19,9 @@ check_absent "ResolverCtx|HostSlots|pub\\(crate\\) enum Action|AbortInfo|run_res
 check_absent "RouteResolverDecision|route_resolver_decision_from_action|Defer""Source::Epf" "EPF route authority forbidden path" \
   src/endpoint/kernel/authority.rs src/endpoint/kernel/core.rs
 
-allow_paths=(src tests)
-if [[ -d examples ]]; then
-  allow_paths+=(examples)
-fi
-
-if rg -n "#!?\\[[^]]*allow[[:space:]]*\\([^]]*dead[_]code" "${allow_paths[@]}"; then
-  echo "forbidden dead_code allow detected" >&2
-  FAILED=1
-fi
+check_absent "#!?\\[[^]]*allow[[:space:]]*\\([^]]*dead[_]code" \
+  "forbidden dead_code allow detected" \
+  src tests --optional examples
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

@@ -4,42 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+source ./.github/scripts/lib/hygiene_common.sh
+
 FAILED=0
-
-check_absent() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  if rg -n -U "${pattern}" "$@"; then
-    echo "summary authority hygiene violation: ${label}" >&2
-    FAILED=1
-  fi
-}
-
-check_absent_outside() {
-  local pattern="$1"
-  local label="$2"
-  shift 2
-  local globs=("-g" "!**/tests.rs" "-g" "!**/*_tests.rs" "-g" "!**/test_support/**")
-  local exclude
-  for exclude in "$@"; do
-    globs+=("-g" "!${exclude}")
-  done
-  if rg -n -U "${pattern}" src "${globs[@]}"; then
-    echo "summary authority hygiene violation: ${label}" >&2
-    FAILED=1
-  fi
-}
-
-check_required() {
-  local pattern="$1"
-  local label="$2"
-  local path="$3"
-  if ! rg -n -F "${pattern}" "${path}" >/dev/null; then
-    echo "summary authority hygiene violation: ${label}" >&2
-    FAILED=1
-  fi
-}
 
 for forbidden_path in \
   src/global/typestate/emit.rs \
@@ -56,13 +23,13 @@ do
   fi
 done
 
-check_absent_outside \
+check_absent_outside_tests \
   "CompiledProgramImage::scan_const\\(" \
   "raw summary scans outside Program compile layer" \
   "src/g.rs" \
   "src/global/program/source.rs"
 
-check_absent_outside \
+check_absent_outside_tests \
   "SOURCE\\.eff_list\\(" \
   "raw EffList lowering source outside Program compile layer" \
   "src/g.rs" \
@@ -107,7 +74,7 @@ check_required \
 ROLE_IMAGE_SOURCE_PATTERN='Role''Image''Source'
 ROLE_DEBUG_FACTS_PATTERN='Role''Debug''Facts'
 ROLE_DEBUG_FOOTPRINT_PATTERN='Role''Debug''Footprint'
-check_absent \
+check_absent_multiline \
   "\\b${ROLE_IMAGE_SOURCE_PATTERN}\\b|\\b${ROLE_DEBUG_FACTS_PATTERN}\\b|\\b${ROLE_DEBUG_FOOTPRINT_PATTERN}\\b|compiled_program_image\\(|program_image\\(|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
   "test/debug-only role source metadata, lowering-image backpointer, or measurement helper detected" \
   src/g src/global/role_program src/global/compiled/images/image/role_descriptor_ref.rs
@@ -117,12 +84,12 @@ check_required \
   "Program image bytes must construct a compact compiled program reference before attach" \
   src/global/compiled/images/image/blob_storage.rs
 
-check_absent \
+check_absent_multiline \
   "write_clone_to|MaybeUninit::<CompiledProgramImage>|: &'static CompiledProgramImage|pub\\(crate\\) const fn summary\\(&self\\)" \
   "resident compiled program images must not be cloned or exposed through RoleProgram as secondary handles" \
   src/global/role_program.rs src/global/role_program
 
-check_absent \
+check_absent_multiline \
   "write_clone_to|MaybeUninit::<CompiledProgramImage>" \
   "compiled descriptor owners must borrow resident images, not clone them into attach storage" \
   src/global/compiled

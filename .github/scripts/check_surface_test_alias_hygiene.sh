@@ -8,27 +8,24 @@ FAILED=0
 
 source ./.github/scripts/lib/hygiene_common.sh
 
-check_test_absent_multiline() {
-  local pattern="$1"
-  local label="$2"
-  if rg -n -U "${pattern}" tests; then
-    echo "boundary deny pattern detected: ${label}" >&2
-    FAILED=1
-  fi
-}
-
-check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+;" \
-  "test support pure synonym type alias"
-check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Role<" \
-  "test support pure role alias"
-check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Msg<" \
-  "test support pure message alias"
-check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Program<" \
-  "test support pure program type alias"
-check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*RoleProgram<" \
-  "test support pure role-program alias"
-check_test_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*Endpoint<" \
-  "test support pure endpoint alias"
+check_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[A-Za-z0-9_]+;" \
+  "test support pure synonym type alias" \
+  tests
+check_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Role<" \
+  "test support pure role alias" \
+  tests
+check_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Msg<" \
+  "test support pure message alias" \
+  tests
+check_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*(g::)?Program<" \
+  "test support pure program type alias" \
+  tests
+check_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*RoleProgram<" \
+  "test support pure role-program alias" \
+  tests
+check_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*Endpoint<" \
+  "test support pure endpoint alias" \
+  tests
 
 LEFT_REMOVED_STEP='Left''Con''trol''Step'
 RIGHT_REMOVED_STEP='Right''Con''trol''Step'

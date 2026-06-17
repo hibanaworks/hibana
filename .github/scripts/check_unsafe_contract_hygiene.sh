@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+source ./.github/scripts/lib/hygiene_common.sh
+
+FAILED=0
+
 runtime_rs="$(cat src/runtime.rs src/runtime/session_kit.rs)"
 port_rs="$(
   cat src/rendezvous/port.rs
@@ -228,15 +232,17 @@ if [[ "${port_rs}" == *"pub(crate) fn consume_receipt"* ]]; then
   exit 1
 fi
 
-if rg -n "debug_assert_.*different lane|debug_assert_.*different endpoint port|debug_assert_.*different Rx handle" \
-  src/rendezvous/port.rs src/endpoint/kernel/lane_port.rs >/dev/null; then
-  echo "transport frame requeue identity checks must fail fast in release builds, not debug_assert only" >&2
-  exit 1
-fi
+check_absent \
+  "debug_assert_.*different lane|debug_assert_.*different endpoint port|debug_assert_.*different Rx handle" \
+  "transport frame requeue identity checks must fail fast in release builds, not debug_assert only" \
+  src/rendezvous/port.rs src/endpoint/kernel/lane_port.rs
 
-if rg -n "port_key: u(8|16|32|64|size)|port_identity|\\.addr\\(\\)" \
-  src/rendezvous/port.rs src/endpoint/kernel/lane_port.rs >/dev/null; then
-  echo "transport frame receipt must not use lossy integer-compressed or exposed Rx identities" >&2
+check_absent \
+  "port_key: u(8|16|32|64|size)|port_identity|\\.addr\\(\\)" \
+  "transport frame receipt must not use lossy integer-compressed or exposed Rx identities" \
+  src/rendezvous/port.rs src/endpoint/kernel/lane_port.rs
+
+if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 
