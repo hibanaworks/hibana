@@ -13,3 +13,6 @@ pub struct Route<Left, Right>(PhantomData<(Left, Right)>);
 pub struct Par<Left, Right>(PhantomData<(Left, Right)>);
 pub struct Resolve<Inner, const RESOLVER_ID: u16>(PhantomData<Inner>);
 pub struct Roll<Inner>(PhantomData<Inner>);
+pub trait Message: seal::Sealed {
+Message::LOGICAL_LABEL const LOGICAL_LABEL: u8;
+Message::Payload type Payload;

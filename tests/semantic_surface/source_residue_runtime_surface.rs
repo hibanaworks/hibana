@@ -120,6 +120,61 @@ fn transport_surface_has_no_custom_error_axis() {
 }
 
 #[test]
+fn public_surface_scanner_covers_trait_associated_items() {
+    let g_allowlist = read(".github/allowlists/g-public-api.txt");
+    let runtime_allowlist = read(".github/allowlists/runtime-public-api.txt");
+    let scanner = read(".github/scripts/check_public_api_allowlists.py");
+
+    for required in [
+        "Message::LOGICAL_LABEL const LOGICAL_LABEL: u8;",
+        "Message::Payload type Payload;",
+    ] {
+        assert!(
+            g_allowlist.contains(required),
+            "g public allowlist scanner must cover Message associated item: {required}"
+        );
+    }
+    for required in [
+        "Transport::Tx type Tx<'a>: 'a where Self: 'a;",
+        "Transport::Rx type Rx<'a>: 'a where Self: 'a;",
+        "Transport::open fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);",
+        "Transport::poll_send fn poll_send<'a, 'f>( &self, tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>, cx: &mut Context<'_>, ) -> Poll<Result<(), TransportError>> where 'a: 'f;",
+        "Transport::cancel_send fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);",
+        "Transport::poll_recv fn poll_recv<'a>( &'a self, rx: &'a mut Self::Rx<'a>, cx: &mut Context<'_>, ) -> Poll<Result<ReceivedFrame<'a>, TransportError>>;",
+        "Transport::requeue fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError>;",
+        "WireEncode::encode_into fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;",
+        "WirePayload::Decoded type Decoded<'a>;",
+        "WirePayload::validate_payload fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;",
+        "WirePayload::decode_validated_payload fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;",
+        "WirePayload::decode_payload fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {",
+    ] {
+        assert!(
+            runtime_allowlist.contains(required),
+            "runtime public allowlist scanner must cover trait associated item: {required}"
+        );
+    }
+    for forbidden in [
+        "Message::Decoded",
+        "WireEncode::encoded_len",
+        "Transport::poll_flush",
+        "WirePayload::zero_payload",
+    ] {
+        assert!(
+            !g_allowlist.contains(forbidden) && !runtime_allowlist.contains(forbidden),
+            "public allowlists must fail closed for removed trait item: {forbidden}"
+        );
+    }
+    assert!(
+        scanner.contains("trait_owner_at")
+            && scanner.contains("is_trait_item_start")
+            && scanner.contains("trait_item_name")
+            && scanner.contains("src/global/message.rs")
+            && scanner.contains("src/transport/wire.rs"),
+        "stable source scanner must include public trait associated items and their owner files"
+    );
+}
+
+#[test]
 fn tap_reader_surface_stays_minimal() {
     let event = read("src/observe/event.rs");
     let allowlist = read(".github/allowlists/runtime-public-api.txt");

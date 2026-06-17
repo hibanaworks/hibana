@@ -520,7 +520,6 @@ where
         to: TO,
         label: <M as Message>::LOGICAL_LABEL,
         origin: eff::EventOrigin::User,
-        resource: None,
         lane: LANE,
     };
     EffList::new().push(EffStruct::atom(atom))

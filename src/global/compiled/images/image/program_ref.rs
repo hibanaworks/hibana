@@ -76,11 +76,6 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    const fn decode_resource(raw: u8) -> Option<u8> {
-        if raw == u8::MAX { None } else { Some(raw) }
-    }
-
-    #[inline(always)]
     pub(super) const fn compact_scope_from_bits(raw: u32) -> CompactScopeId {
         match CompactScopeId::decode_raw(raw) {
             Some(scope) => scope,
@@ -103,8 +98,7 @@ impl CompiledProgramRef {
                     to: self.byte_at(offset + 3),
                     label: self.byte_at(offset + 4),
                     origin: EventOrigin::from_packed_bits(self.byte_at(offset + 5)),
-                    resource: Self::decode_resource(self.byte_at(offset + 6)),
-                    lane: self.byte_at(offset + 7),
+                    lane: self.byte_at(offset + 6),
                 });
             }
             row += 1;

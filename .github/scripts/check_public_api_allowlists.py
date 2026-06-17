@@ -25,7 +25,8 @@ SURFACES: dict[str, Surface] = {
     ),
     "g": Surface(
         ".github/allowlists/g-public-api.txt",
-        ("src/g.rs",),
+        ("src/g.rs", "src/global/message.rs"),
+        ("pub trait Sealed",),
     ),
     "endpoint": Surface(
         ".github/allowlists/endpoint-public-api.txt",
@@ -116,7 +117,13 @@ def public_type_names(lines: list[str]) -> set[str]:
         for prefix in ("pub struct ", "pub enum ", "pub trait ", "pub type "):
             if stripped.startswith(prefix):
                 rest = stripped[len(prefix) :]
-                name = rest.split("=", 1)[0].split("(", 1)[0].split("{", 1)[0].split()[0]
+                name = (
+                    rest.split("=", 1)[0]
+                    .split(":", 1)[0]
+                    .split("(", 1)[0]
+                    .split("{", 1)[0]
+                    .split()[0]
+                )
                 names.add(name.split("<", 1)[0])
                 break
     return names
@@ -203,7 +210,50 @@ def public_member_name(statement: str) -> str:
             rest = statement[len(prefix) :]
             return rest.split("(", 1)[0].split("<", 1)[0].split(":", 1)[0].split("=", 1)[
                 0
-            ].strip()
+            ].split(";", 1)[0].strip()
+    return "item"
+
+
+def trait_owner(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped.startswith("pub trait "):
+        return None
+    rest = stripped[len("pub trait ") :]
+    name = rest.split(":", 1)[0].split("{", 1)[0].split()[0]
+    return name.split("<", 1)[0] or None
+
+
+def trait_owner_at(lines: list[str], index: int, public_names: set[str]) -> str | None:
+    depth = 0
+    pending: str | None = None
+    trait_stack: list[tuple[int, str | None]] = []
+    for line in lines[:index]:
+        parsed_owner = trait_owner(line)
+        if parsed_owner is not None:
+            pending = parsed_owner if parsed_owner in public_names else ""
+        delta, has_open = brace_delta(line)
+        depth += delta
+        if pending is not None and has_open:
+            trait_stack.append((depth, pending or None))
+            pending = None
+        while trait_stack and depth < trait_stack[-1][0]:
+            trait_stack.pop()
+    if trait_stack:
+        return trait_stack[-1][1]
+    return None
+
+
+def is_trait_item_start(line: str) -> bool:
+    return line.startswith(("type ", "const ", "fn "))
+
+
+def trait_item_name(statement: str) -> str:
+    for prefix in ("type ", "const ", "fn "):
+        if statement.startswith(prefix):
+            rest = statement[len(prefix) :]
+            return rest.split("(", 1)[0].split("<", 1)[0].split(":", 1)[0].split("=", 1)[
+                0
+            ].split(";", 1)[0].strip()
     return "item"
 
 
@@ -219,6 +269,11 @@ def collect_surface(surface: Surface) -> list[str]:
         index = 0
         while index < len(lines):
             stripped = lines[index].strip()
+            trait = trait_owner_at(lines, index, public_names)
+            if trait is not None and is_trait_item_start(stripped):
+                statement, index = collect_statement(lines, index)
+                items.append(f"{trait}::{trait_item_name(statement)} {statement}")
+                continue
             if is_public_start(stripped) and not should_ignore(stripped, surface):
                 statement, index = collect_statement(lines, index)
                 if statement.startswith(("pub const fn ", "pub fn ", "pub const ")):

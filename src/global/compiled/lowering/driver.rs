@@ -6,10 +6,7 @@ use crate::{
     global::const_dsl::{EffList, RouteResolver, ScopeEvent, ScopeMarker, SegmentSummary},
 };
 
-use super::super::images::program::{
-    CompiledProgramCounts, MAX_COMPILED_PROGRAM_RESOURCES, MAX_COMPILED_PROGRAM_SCOPES,
-    MAX_COMPILED_PROGRAM_TAP_EVENTS,
-};
+use super::super::images::program::{CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES};
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(64);
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
@@ -93,7 +90,6 @@ impl ProgramAtomRow {
             to: 0,
             label: 0,
             origin: EventOrigin::User,
-            resource: None,
             lane: 0,
         },
     };

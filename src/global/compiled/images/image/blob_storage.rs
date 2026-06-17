@@ -117,14 +117,6 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn encode_resource(resource: Option<u8>) -> u8 {
-        match resource {
-            Some(tag) => tag,
-            None => u8::MAX,
-        }
-    }
-
-    #[inline(always)]
     const fn write_atom(
         &mut self,
         column: ProgramColumnRange,
@@ -141,8 +133,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         self.write_u8(out + 3, atom.to);
         self.write_u8(out + 4, atom.label);
         self.write_u8(out + 5, atom.origin.packed_bits());
-        self.write_u8(out + 6, Self::encode_resource(atom.resource));
-        self.write_u8(out + 7, atom.lane);
+        self.write_u8(out + 6, atom.lane);
     }
 
     #[inline(always)]

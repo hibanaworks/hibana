@@ -276,6 +276,50 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
 }
 
 #[test]
+fn descriptor_projection_has_no_resource_or_tap_count_axes() {
+    let descriptor_sources = [
+        read("src/eff.rs"),
+        read_production_rs_tree("src/global"),
+        read("src/global/role_program/tests.rs"),
+    ]
+    .join("\n");
+
+    for forbidden in [
+        concat!("resource", ": Option"),
+        concat!("resource", ": None"),
+        concat!(".", "resource"),
+        concat!("encode", "_resource"),
+        concat!("decode", "_resource"),
+        concat!("MAX_COMPILED_PROGRAM_", "RESOURCES"),
+        concat!("compiled_program_counts", ".resources"),
+    ] {
+        assert!(
+            !descriptor_sources.contains(forbidden),
+            "descriptor/projection source must not retain dead resource axis: {forbidden}"
+        );
+    }
+
+    assert!(
+        read("src/global/compiled/images/image/columns.rs")
+            .contains("pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 7;"),
+        "compiled program atom image stride must stay at the resource-free 7-byte layout"
+    );
+
+    for forbidden in [
+        concat!("tap", "_events"),
+        concat!("MAX_COMPILED_PROGRAM_", "TAP_EVENTS"),
+        concat!("compiled_program_counts", ".tap_events"),
+        concat!("over", "_tap", "_event"),
+        concat!("tap", "_event"),
+    ] {
+        assert!(
+            !descriptor_sources.contains(forbidden),
+            "descriptor/projection source must not retain tap-count vocabulary: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn projectable_bound_and_lane_domain_stay_embedded_exact() {
     let program = read("src/global/program.rs");
     let projection = read("src/global/program/projection.rs");
@@ -390,11 +434,11 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_lane_image.contains("[PackedRouteArmRow; MAX_ROUTE_ARM_LANE_ROWS]")
             && !role_lane_image.contains("[PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS]")
             && !role_lane_image.contains("[PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS]")
-            && role_lane_scratch.contains("local_step_events: [PackedLocalEventRow; MAX_LOCAL_STEP_LANES]")
+            && role_lane_scratch
+                .contains("local_step_events: [PackedLocalEventRow; MAX_LOCAL_STEP_LANES]")
             && role_lane_scratch.contains("local_step_lanes: [u8; MAX_LOCAL_STEP_LANES]")
-            && role_lane_scratch.contains(
-                "resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS]"
-            )
+            && role_lane_scratch
+                .contains("resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS]")
             && role_lane_scratch.contains("lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES]")
             && !role_program.contains("phase_rows: [PackedLaneRange; MAX_RESIDENT_ROW_LANE_ROWS]")
             && !role_program.contains("active_words: [LaneWord; LANE_SET_VIEW_WORDS]")
@@ -407,14 +451,12 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_program.contains("local_lane_view")
             && !role_program
                 .contains("phase_step_rows: [PackedPhaseLaneStep; MAX_PHASE_LANE_STEP_ROWS]")
-            && role_program.contains("MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES")
-            && role_program.contains(
-                "MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NODES / 2"
-            )
-            && role_program.contains("MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2")
-            && !role_program.contains(
-                "MAX_LOCAL_STEP_LANES: usize =\n    crate::global::compiled::images::MAX_COMPILED_PROGRAM_TAP_EVENTS"
-            )
+            && role_program
+                .contains("MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES")
+            && role_program
+                .contains("MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NODES / 2")
+            && role_program
+                .contains("MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2")
             && !role_program.contains("route_arm_lane_entries: [u8; MAX_ROUTE_ARM_LANE_ENTRIES]")
             && role_program.contains("resident_row_len: u16")
             && !role_program.contains("phase_steps: [LaneSteps; LANE_DOMAIN_SIZE]")
@@ -434,12 +476,10 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_image.contains(concat!("[DENSE", "_LANE", "_NONE; LANE_DOMAIN_SIZE]"))
             && role_image.contains("self.image().active_lane_set()")
             && !role_image.contains(".phase_lane_set(idx)")
-            && !read("src/endpoint/kernel/decision_state.rs")
-                .contains("route_scope_lane_words")
+            && !read("src/endpoint/kernel/decision_state.rs").contains("route_scope_lane_words")
             && !read("src/endpoint/kernel/endpoint_init.rs")
                 .contains("set_route_scope_arm_lane_set")
-            && endpoint_kernel_core_source()
-                .contains(".route_scope_offer_lane_set(scope_id)")
+            && endpoint_kernel_core_source().contains(".route_scope_offer_lane_set(scope_id)")
             && endpoint_kernel_core_source()
                 .contains("self.cursor.route_scope_arm_lane_set(scope_id, arm)")
             && !role_image

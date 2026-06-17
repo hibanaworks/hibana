@@ -235,8 +235,6 @@ impl CompiledProgramImage {
             },
             program: ProgramImageData {
                 compiled_program_counts: CompiledProgramCounts {
-                    tap_events: 0,
-                    resources: 0,
                     dynamic_resolver_sites: 0,
                     route_resolvers: 0,
                 },

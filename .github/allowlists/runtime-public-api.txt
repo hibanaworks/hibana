@@ -91,11 +91,23 @@ PortOpen::local_role pub const fn local_role(self) -> u8 {
 PortOpen::session_id pub const fn session_id(self) -> crate::session::types::SessionId {
 PortOpen::lane pub const fn lane(self) -> u8 {
 pub trait Transport {
+Transport::Tx type Tx<'a>: 'a where Self: 'a;
+Transport::Rx type Rx<'a>: 'a where Self: 'a;
+Transport::open fn open<'a>(&'a self, port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>);
+Transport::poll_send fn poll_send<'a, 'f>( &self, tx: &'a mut Self::Tx<'a>, outgoing: Outgoing<'f>, cx: &mut Context<'_>, ) -> Poll<Result<(), TransportError>> where 'a: 'f;
+Transport::cancel_send fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);
+Transport::poll_recv fn poll_recv<'a>( &'a self, rx: &'a mut Self::Rx<'a>, cx: &mut Context<'_>, ) -> Poll<Result<ReceivedFrame<'a>, TransportError>>;
+Transport::requeue fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError>;
 pub struct FrameLabel(u8);
 FrameLabel::raw pub const fn raw(self) -> u8 {
 pub enum CodecError {
 pub trait WireEncode {
+WireEncode::encode_into fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 pub trait WirePayload {
+WirePayload::Decoded type Decoded<'a>;
+WirePayload::validate_payload fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;
+WirePayload::decode_validated_payload fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;
+WirePayload::decode_payload fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
 pub struct Payload<'a> {
 Payload::new pub const fn new(data: &'a [u8]) -> Self {
 Payload::as_bytes pub fn as_bytes(&self) -> &'a [u8] {

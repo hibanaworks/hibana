@@ -523,7 +523,6 @@ impl EventCursor {
                     peer: ROLE,
                     label: local.label,
                     frame_label: local.frame_label,
-                    resource: local.resource,
                     semantic: local.semantic,
                     origin: local.origin,
                     next: local.next,

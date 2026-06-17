@@ -166,7 +166,6 @@ impl PackedLocalEventRow {
             eff_index,
             label: atom.label,
             frame_label: self.frame_label,
-            resource: atom.resource,
             origin: atom.origin,
             resolver,
             lane: atom.lane,

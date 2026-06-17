@@ -1,6 +1,6 @@
 use crate::global::compiled::lowering::CompiledProgramImage;
 
-pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 8;
+pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 7;
 pub(crate) const PROGRAM_IMAGE_RESOLVER_STRIDE: usize = 8;
 pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 10;
 pub(crate) const PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE: u8 = u8::MAX;

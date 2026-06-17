@@ -11,7 +11,7 @@ use crate::global::typestate::LocalConflict;
 mod final_form_protocol_matrix;
 mod protocol_matrix;
 
-const TAP_EVENT_STRESS_ROW_BUDGET: usize = 512;
+const LOCAL_STEP_STRESS_ROW_BUDGET: usize = 512;
 const _: () = assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
 
 const fn test_atom(label: u8, lane: u8) -> EffStruct {
@@ -20,25 +20,24 @@ const fn test_atom(label: u8, lane: u8) -> EffStruct {
         to: 1,
         label,
         origin: EventOrigin::User,
-        resource: None,
         lane,
     })
 }
 
-const fn over_tap_event_atom_program() -> EffList {
+const fn over_local_step_capacity_atom_program() -> EffList {
     let mut list = EffList::new();
     let mut idx = 0usize;
-    while idx <= TAP_EVENT_STRESS_ROW_BUDGET {
+    while idx <= LOCAL_STEP_STRESS_ROW_BUDGET {
         list = list.push(test_atom(idx as u8, (idx % LANE_DOMAIN_SIZE) as u8));
         idx += 1;
     }
     list
 }
 
-static OVER_TAP_EVENT_ATOMS: EffList = over_tap_event_atom_program();
+static OVER_LOCAL_STEP_CAPACITY_ATOMS: EffList = over_local_step_capacity_atom_program();
 
-static OVER_TAP_EVENT_IMAGE: CompiledProgramImage =
-    CompiledProgramImage::scan_const(&OVER_TAP_EVENT_ATOMS);
+static OVER_LOCAL_STEP_CAPACITY_IMAGE: CompiledProgramImage =
+    CompiledProgramImage::scan_const(&OVER_LOCAL_STEP_CAPACITY_ATOMS);
 
 fn with_role_descriptor<const ROLE: u8, R>(
     program: &RoleProgram<ROLE>,
@@ -233,9 +232,10 @@ fn minimal_send_descriptor_has_exact_resident_footprint() {
 }
 
 #[test]
-fn resident_local_step_capacity_is_not_tied_to_tap_events() {
-    assert!(OVER_TAP_EVENT_ATOMS.len() > TAP_EVENT_STRESS_ROW_BUDGET);
-    let lanes = RoleLaneScratch::from_program::<0>(&OVER_TAP_EVENT_IMAGE, LANE_DOMAIN_SIZE);
+fn resident_local_step_capacity_uses_effect_node_budget() {
+    assert!(OVER_LOCAL_STEP_CAPACITY_ATOMS.len() > LOCAL_STEP_STRESS_ROW_BUDGET);
+    let lanes =
+        RoleLaneScratch::from_program::<0>(&OVER_LOCAL_STEP_CAPACITY_IMAGE, LANE_DOMAIN_SIZE);
 
     fn row_range(lanes: &RoleLaneScratch, idx: usize) -> Option<(usize, usize)> {
         if idx >= lanes.resident_row_len as usize {
@@ -288,7 +288,7 @@ fn resident_local_step_capacity_is_not_tied_to_tap_events() {
         total_steps += lane_steps(&lanes, 0, lane_idx);
         lane_idx += 1;
     }
-    assert_eq!(total_steps, OVER_TAP_EVENT_ATOMS.len());
+    assert_eq!(total_steps, OVER_LOCAL_STEP_CAPACITY_ATOMS.len());
     assert_eq!(lane_step_at(&lanes, 0, 0, 0), Some(0));
     assert_eq!(lane_step_at(&lanes, 0, 0, 1), Some(LANE_DOMAIN_SIZE as u16));
 }

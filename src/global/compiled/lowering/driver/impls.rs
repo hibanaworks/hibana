@@ -1,8 +1,7 @@
 use super::{
-    CompiledProgramView, EffAtom, MAX_COMPILED_IMAGE_NODES, MAX_COMPILED_PROGRAM_RESOURCES,
-    MAX_COMPILED_PROGRAM_SCOPES, MAX_COMPILED_PROGRAM_TAP_EVENTS, MAX_SEGMENT_EFFS,
-    ProgramImageData, ProgramImageValidationData, ProgramLoweringFacts, ProgramRoleImageData,
-    RoleCompiledCounts, RouteResolver, ScopeMarker,
+    CompiledProgramView, EffAtom, MAX_COMPILED_IMAGE_NODES, MAX_COMPILED_PROGRAM_SCOPES,
+    MAX_SEGMENT_EFFS, ProgramImageData, ProgramImageValidationData, ProgramLoweringFacts,
+    ProgramRoleImageData, RoleCompiledCounts, RouteResolver, ScopeMarker,
 };
 
 impl<'a> CompiledProgramView<'a> {
@@ -94,12 +93,6 @@ impl ProgramImageValidationData {
 impl ProgramImageData {
     #[inline(always)]
     const fn validate_projection_program(&self, scope_marker_len: usize) {
-        if self.compiled_program_counts.resources > MAX_COMPILED_PROGRAM_RESOURCES {
-            panic!("CompiledProgram: MAX_RESOURCES exceeded");
-        }
-        if self.compiled_program_counts.tap_events > MAX_COMPILED_PROGRAM_TAP_EVENTS {
-            panic!("CompiledProgram: MAX_TAP_EVENTS exceeded");
-        }
         if self.compiled_program_counts.dynamic_resolver_sites > MAX_COMPILED_IMAGE_NODES {
             panic!("CompiledProgram: MAX_DYNAMIC_RESOLVER_SITES exceeded");
         }

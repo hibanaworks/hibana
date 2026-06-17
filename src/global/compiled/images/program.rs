@@ -68,14 +68,10 @@ impl EventSemanticKind {
     }
 }
 
-pub(crate) const MAX_COMPILED_PROGRAM_TAP_EVENTS: usize = 512;
-pub(crate) const MAX_COMPILED_PROGRAM_RESOURCES: usize = 128;
 pub(crate) const MAX_COMPILED_PROGRAM_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledProgramCounts {
-    pub(crate) tap_events: usize,
-    pub(crate) resources: usize,
     pub(crate) dynamic_resolver_sites: usize,
     pub(crate) route_resolvers: usize,
 }
@@ -87,15 +83,11 @@ mod tests {
     use super::{CompiledProgramCounts, EventSemanticKind};
     #[test]
     fn compiled_program_counts_remain_plain_derived_counts() {
-        assert_eq!(size_of::<CompiledProgramCounts>(), 4 * size_of::<usize>());
+        assert_eq!(size_of::<CompiledProgramCounts>(), 2 * size_of::<usize>());
         let max = CompiledProgramCounts {
-            tap_events: super::MAX_COMPILED_PROGRAM_TAP_EVENTS,
-            resources: super::MAX_COMPILED_PROGRAM_RESOURCES,
             dynamic_resolver_sites: crate::eff::meta::MAX_EFF_NODES,
             route_resolvers: crate::eff::meta::MAX_EFF_NODES,
         };
-        assert!(max.tap_events > 0);
-        assert!(max.resources > 0);
         assert!(max.dynamic_resolver_sites > 0);
         assert!(max.route_resolvers > 0);
     }
