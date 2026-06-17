@@ -27,10 +27,10 @@ check_absent_multiline "^type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*E
   "test support pure endpoint alias" \
   tests
 
-LEFT_REMOVED_STEP='Left''Con''trol''Step'
-RIGHT_REMOVED_STEP='Right''Con''trol''Step'
-ARM0_REMOVED_STEP='Arm0''Con''trol''Step'
-ARM1_REMOVED_STEP='Arm1''Con''trol''Step'
+LEFT_REMOVED_STEP='LeftControlStep'
+RIGHT_REMOVED_STEP='RightControlStep'
+ARM0_REMOVED_STEP='Arm0ControlStep'
+ARM1_REMOVED_STEP='Arm1ControlStep'
 
 check_absent "^type[[:space:]]+(${LEFT_REMOVED_STEP}|LeftDataStep|LeftArmSteps|${RIGHT_REMOVED_STEP}|RightDataStep|RightArmSteps|RouteSteps|TailSteps|ProtocolSteps)[[:space:]]*=" \
   "offer-decode-binding step/composition alias forbidden path" \
@@ -41,9 +41,9 @@ check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Tail|Route)[A-Za-z0-9_]*
 check_absent "^type[[:space:]]+(${ARM0_REMOVED_STEP}|Arm0DataStep|Arm0SameStep|Arm0Tail|Arm0Steps|${ARM1_REMOVED_STEP}|Arm1DataStep|Arm1SameStep|Arm1ExtraStep|Arm1InnerTail|Arm1Tail|Arm1Steps|Steps)[[:space:]]*=" \
   "ui route-unprojectable alias forbidden path" \
   tests/ui/g-route-unprojectable.rs
-ROUTE_RIGHT_KIND='RouteRight''Kind'
-ROUTE_ARM_KIND='RouteArm''Kind'
-ARM_KIND='Arm''Kind'
+ROUTE_RIGHT_KIND='RouteRightKind'
+ROUTE_ARM_KIND='RouteArmKind'
+ARM_KIND='ArmKind'
 check_absent "struct ${ROUTE_RIGHT_KIND};|struct ${ROUTE_ARM_KIND}<const LABEL: u8>;|struct ${ARM_KIND}<const LABEL: u8>;|impl ResourceKind for ${ROUTE_RIGHT_KIND}|impl<const LABEL: u8> ResourceKind for ${ROUTE_ARM_KIND}<LABEL>|impl<const LABEL: u8> ResourceKind for ${ARM_KIND}<LABEL>" \
   "manual route resource-kind boilerplate" \
   tests/nested_route_runtime.rs \

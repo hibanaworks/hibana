@@ -91,14 +91,14 @@ fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
         "node_matches_route_commit_arm",
         "SEND_ROUTE_WAS_SELECTED",
         "clear_other_lanes",
-        concat!("Syn", "thetic", "BranchCommitDelta"),
-        concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"),
-        concat!("Empty", "BranchCommitDelta"),
-        concat!("Prepared", "Empty", "BranchCommitDelta"),
-        concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
-        concat!("apply_", "empty", "_branch_commit_delta"),
-        concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
-        concat!("prepare_", "empty", "_branch_commit_delta"),
+        "SyntheticBranchCommitDelta",
+        "PreparedSyntheticBranchCommitDelta",
+        "EmptyBranchCommitDelta",
+        "PreparedEmptyBranchCommitDelta",
+        "apply_synthetic_branch_commit_delta",
+        "apply_empty_branch_commit_delta",
+        "prepare_synthetic_branch_commit_delta",
+        "prepare_empty_branch_commit_delta",
         "selected_branch_event_row_matches_commit",
         "CurrentResidentLaneStep",
         "current_resident_lane_step",
@@ -109,17 +109,17 @@ fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
         "step_for_eff_index",
         "scope_lane_first_eff",
         "passive_authority_from_frame_hint",
-        concat!("PassiveRoute", "Authority::StaticPoll"),
+        "PassiveRouteAuthority::StaticPoll",
         "passive_arm_jump",
         "passive_dispatch_arm_from_exact_frame_label",
         "static_passive_dispatch_arm_from_exact_frame_label",
         "static_passive_descendant_dispatch_arm_from_exact_frame_label",
         "scope_frame_label_to_arm",
         "scope_evidence_frame_label_to_arm",
-        concat!("_semantics: &", "Con", "trol", "SemanticsTable"),
+        "_semantics: &ControlSemanticsTable",
         "current_recv_is_scope_local",
-        concat!("Con", "trol", "SemanticsTable"),
-        concat!("CONTROL", "_SEMANTICS_TABLE"),
+        "ControlSemanticsTable",
+        "CONTROL_SEMANTICS_TABLE",
         "fn route_frame_label",
         "fn route_lane",
         "recover_scope_evidence_conflict",
@@ -130,9 +130,9 @@ fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
         "frame_hint_conflicted",
         "scope_ack_conflicted",
         "fn ack_conflicted",
-        concat!("SelfSend", "Controller"),
+        "SelfSendController",
         "self_send_controller",
-        concat!("Offer", "ControllerArmEntry"),
+        "OfferControllerArmEntry",
         "PhaseCursor",
         "PhaseCursorState",
         "phase_cursor",
@@ -203,7 +203,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
         .nth(1)
         .and_then(|tail| tail.split("    #[inline]").next())
         .expect("event route-chain preflight must stay factored");
-    let forbidden_from_chain_for_lane = ["from_conflict", "_chain_for_lane"].concat();
+    let forbidden_from_chain_for_lane = "from_conflict_chain_for_lane";
 
     assert!(
         commit_delta.contains("pub(crate) struct PreparedCommitDelta")
@@ -217,7 +217,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
-            && !prepared_commit_delta_row.contains(&["roll_row: ", "Roll", "Commit", "Row"].concat())
+            && !prepared_commit_delta_row.contains("roll_row: RollCommitRow")
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
             && !runtime_types.contains("struct SendRouteEvidencePlan")
@@ -232,7 +232,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && decision_state.contains("conflict: PackedEventConflict")
             && decision_state.contains("range_lane_len: u32")
             && decision_state.contains("from_resident_range_for_lane")
-            && !decision_state.contains(&forbidden_from_chain_for_lane)
+            && !decision_state.contains(forbidden_from_chain_for_lane)
             && !decision_state.contains("route_commit_chain_row_at")
             && !runtime_types.contains("from_inline_with_parent_route_evidence")
             && !runtime_types.contains("fn from_inline(")
@@ -250,7 +250,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && !decision_state.contains("fn from_slice_for_lane(")
             && endpoint_init.contains("role_descriptor.max_route_stack_depth().max(1)")
             && !endpoint_init.contains(
-                &["route_scope_count().", "saturating", "_add(1)"].concat(),
+                "route_scope_count().saturating_add(1)",
             )
             && runtime_types.contains("fn route_rows(rows: RouteOnlyCommitRowsRef")
             && !runtime_types.contains("fn route_rows(rows: SelectedRouteCommitRowsRef")
@@ -414,10 +414,10 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             "clear_conflicting_route_state",
             "ScopeSettlement",
             "CommitApplyOutcome",
-            concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
-            concat!("apply_", "empty", "_branch_commit_delta"),
-            concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
-            concat!("prepare_", "empty", "_branch_commit_delta"),
+            "apply_synthetic_branch_commit_delta",
+            "apply_empty_branch_commit_delta",
+            "prepare_synthetic_branch_commit_delta",
+            "prepare_empty_branch_commit_delta",
         ] {
             assert!(
                 !body.contains(forbidden),
@@ -505,8 +505,8 @@ fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
             && with_builder.contains("self.prepare_branch_recv_publish_plan(plan)")
             && branch_recv_builder.contains("RecvResult<BranchRecvCommitPlan<'r>>")
             && !branch_recv_builder.contains("fn publish_branch_recv_commit_plan(")
-            && !branch_recv.contains(concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"))
-            && !branch_recv.contains(concat!("Prepared", "Empty", "BranchCommitDelta")),
+            && !branch_recv.contains("PreparedSyntheticBranchCommitDelta")
+            && !branch_recv.contains("PreparedEmptyBranchCommitDelta"),
         "branch-recv planning may carry CommitDelta only inside the commit builder and must return PreparedBranchRecvPublishPlan across the endpoint boundary"
     );
     for forbidden in ["route_ancestor_arm", "scope_parent("] {

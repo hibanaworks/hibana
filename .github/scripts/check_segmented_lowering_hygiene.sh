@@ -77,7 +77,7 @@ check_required_regex 'segment_summaries:\s*\[SegmentSummary;\s*MAX_SEGMENTS\]' \
 check_required_regex 'struct ProgramImageSegmentData' \
   "segmented lowering hygiene violation: CompiledProgramImage must use segment-local lowering rows" \
   src/global/compiled/lowering/driver.rs
-check_absent 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|poli''cies:\s*\[RouteResolver;\s*MAX_COMPILED_IMAGE_NODES\]' \
+check_absent 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|policies:\s*\[RouteResolver;\s*MAX_COMPILED_IMAGE_NODES\]' \
   "segmented lowering hygiene violation: flat lowering validation rows detected" \
   src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver
 check_required_regex 'segment_at\(|node_at\(|resolver_at_local' \

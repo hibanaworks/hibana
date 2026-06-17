@@ -196,7 +196,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Passing `None`",
         "rv.session(SessionId::new(1))\n    .role(&role0)\n    .set_resolver",
         "rv.role(&role0)",
-        concat!("`Cap", "Delegate`: `input[0] = (dst_rv << 16) | dst_lane`"),
+        "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
         "runtime::SessionKit::enter(...)",
         "runtime::resolver::replay::ResolverAttrs",
         "runtime::advanced::resolver::replay::ResolverAttrs",
@@ -213,7 +213,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
 
     assert_absent(
         &readme,
-        &["project::", "<"].concat(),
+        "project::<",
         "README must not leak other-crate or internal-only wording",
     );
 
@@ -236,7 +236,7 @@ fn docs_do_not_regrow_forbidden_attach_api() {
     ] {
         let source = read(path);
         for forbidden in [
-            concat!("SessionKit::", "new"),
+            "SessionKit::new",
             "SessionKit::enter",
             "kit.enter::<",
             "enter(rv, sid",
@@ -355,7 +355,7 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
 #[test]
 fn projection_constructor_stays_on_canonical_call_shape() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let forbidden = ["project::", "<"].concat();
+    let forbidden = "project::<";
     let mut files = vec![
         root.join("README.md"),
         root.join("src/lib.rs"),
@@ -367,10 +367,17 @@ fn projection_constructor_stays_on_canonical_call_shape() {
 
     let mut offenders = Vec::new();
     for file in files {
+        if file
+            .strip_prefix(&root)
+            .map(|relative| relative == Path::new("tests/docs_surface.rs"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let src = fs::read_to_string(&file)
             .unwrap_or_else(|err| panic!("read {} failed: {}", file.display(), err));
         for (line_idx, line) in src.lines().enumerate() {
-            if line.contains(&forbidden) {
+            if line.contains(forbidden) {
                 let rel = file.strip_prefix(&root).unwrap_or(file.as_path()).display();
                 offenders.push(format!("{}:{}:{}", rel, line_idx + 1, line.trim()));
             }

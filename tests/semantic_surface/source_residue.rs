@@ -22,8 +22,8 @@ fn runtime_types_source() -> String {
 
 #[test]
 fn public_repository_tests_name_registered_rendezvous_witnesses() {
-    let tests = read_all_rs_tree("tests");
-    let forbidden = concat!("rv", "_id");
+    let tests = read_all_rs_tree_except("tests", &["tests/semantic_surface/source_residue.rs"]);
+    let forbidden = "rv_id";
 
     assert!(
         !tests.contains(forbidden),
@@ -410,17 +410,17 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
         "cursor_at_active_route_offer_entry",
         "advance_scope_by_id_in_place",
         "lane_pending_step_belongs_to_scope",
-        concat!("con", "trol", "_parent_scope"),
+        "control_parent_scope",
         "SEND_ROUTE_WAS_SELECTED",
         "clear_other_lanes",
-        concat!("Syn", "thetic", "BranchCommitDelta"),
-        concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"),
-        concat!("Empty", "BranchCommitDelta"),
-        concat!("Prepared", "Empty", "BranchCommitDelta"),
-        concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
-        concat!("apply_", "empty", "_branch_commit_delta"),
-        concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
-        concat!("prepare_", "empty", "_branch_commit_delta"),
+        "SyntheticBranchCommitDelta",
+        "PreparedSyntheticBranchCommitDelta",
+        "EmptyBranchCommitDelta",
+        "PreparedEmptyBranchCommitDelta",
+        "apply_synthetic_branch_commit_delta",
+        "apply_empty_branch_commit_delta",
+        "prepare_synthetic_branch_commit_delta",
+        "prepare_empty_branch_commit_delta",
         "selected_branch_event_row_matches_commit",
         "CurrentResidentLaneStep",
         "current_resident_lane_step",
@@ -431,17 +431,17 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
         "step_for_eff_index",
         "scope_lane_first_eff",
         "passive_authority_from_frame_hint",
-        concat!("PassiveRoute", "Authority::StaticPoll"),
+        "PassiveRouteAuthority::StaticPoll",
         "passive_arm_jump",
         "passive_dispatch_arm_from_exact_frame_label",
         "static_passive_dispatch_arm_from_exact_frame_label",
         "static_passive_descendant_dispatch_arm_from_exact_frame_label",
         "scope_frame_label_to_arm",
         "scope_evidence_frame_label_to_arm",
-        concat!("_semantics: &", "Con", "trol", "SemanticsTable"),
+        "_semantics: &ControlSemanticsTable",
         "current_recv_is_scope_local",
-        concat!("Con", "trol", "SemanticsTable"),
-        concat!("CONTROL", "_SEMANTICS_TABLE"),
+        "ControlSemanticsTable",
+        "CONTROL_SEMANTICS_TABLE",
         "fn route_frame_label",
         "fn route_lane",
         "recover_scope_evidence_conflict",
@@ -452,9 +452,9 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
         "frame_hint_conflicted",
         "scope_ack_conflicted",
         "fn ack_conflicted",
-        concat!("SelfSend", "Controller"),
+        "SelfSendController",
         "self_send_controller",
-        concat!("Offer", "ControllerArmEntry"),
+        "OfferControllerArmEntry",
         "PhaseCursor",
         "PhaseCursorState",
         "phase_cursor",
@@ -485,9 +485,9 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let runtime_types = runtime_types_source();
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
-    let forbidden_from_chain = ["from_conflict", "_chain"].concat();
-    let forbidden_chain_len = ["conflict", "_chain_len("].concat();
-    let forbidden_chain_row = ["conflict", "_chain_row_at("].concat();
+    let forbidden_from_chain = "from_conflict_chain";
+    let forbidden_chain_len = "conflict_chain_len(";
+    let forbidden_chain_row = "conflict_chain_row_at(";
 
     assert!(
         !cursor_scope_route.contains("pub(crate) fn route_scope_for_selected_child_arm")
@@ -507,7 +507,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
                 "prepare_event_selected_route_commit_rows_from_resident_route_commit_range"
             )
             && !route_commit_helpers.contains("enum ExplicitRouteCommitChain")
-            && !route_commit_helpers.contains(&forbidden_from_chain)
+            && !route_commit_helpers.contains(forbidden_from_chain)
             && route_commit_helpers.contains(
                 "prepare_route_site_materialization_rows_from_resident_route_commit_range"
             )
@@ -518,8 +518,8 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
                 .contains("prepare_selected_route_commit_rows_from_route_scope_chain")
             && route_commit_helpers.contains(".route_commit_range_for_conflict(")
             && route_commit_helpers.contains(".route_commit_row_at(range, idx)")
-            && !route_commit_helpers.contains(&forbidden_chain_len)
-            && !route_commit_helpers.contains(&forbidden_chain_row)
+            && !route_commit_helpers.contains(forbidden_chain_len)
+            && !route_commit_helpers.contains(forbidden_chain_row)
             && !route_preview.contains("fn record_prepared_route_selection")
             && !route_preview.contains("fn apply_selected_route_commit_row")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
@@ -623,7 +623,7 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
     let runtime_types = runtime_types_source();
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
-    let forbidden_from_chain_for_lane = ["from_conflict", "_chain_for_lane"].concat();
+    let forbidden_from_chain_for_lane = "from_conflict_chain_for_lane";
     let prepared_commit_delta_row = commit_delta
         .split("pub(crate) struct PreparedCommitDelta")
         .nth(1)
@@ -639,7 +639,7 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
             && decision_state.contains("conflict: PackedEventConflict")
             && decision_state.contains("range_lane_len: u32")
             && decision_state.contains("from_resident_range_for_lane")
-            && !decision_state.contains(&forbidden_from_chain_for_lane)
+            && !decision_state.contains(forbidden_from_chain_for_lane)
             && !decision_state.contains("route_commit_chain_row_at")
             && !commit_delta.contains("MAX_ROUTE_COMMIT_ROWS")
             && commit_delta.contains(
@@ -648,7 +648,7 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
-            && !prepared_commit_delta_row.contains(&["roll_row: ", "Roll", "Commit", "Row"].concat())
+            && !prepared_commit_delta_row.contains("roll_row: RollCommitRow")
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
             && !runtime_types.contains("pub(crate) struct PreparedCommitDelta")
@@ -696,10 +696,10 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
             "maybe_advance_phase",
             "ScopeSettlement",
             "CommitApplyOutcome",
-            concat!("apply_", "syn", "thetic", "_branch_commit_delta"),
-            concat!("apply_", "empty", "_branch_commit_delta"),
-            concat!("prepare_", "syn", "thetic", "_branch_commit_delta"),
-            concat!("prepare_", "empty", "_branch_commit_delta"),
+            "apply_synthetic_branch_commit_delta",
+            "apply_empty_branch_commit_delta",
+            "prepare_synthetic_branch_commit_delta",
+            "prepare_empty_branch_commit_delta",
         ] {
             assert!(
                 !source.contains(forbidden),

@@ -264,10 +264,20 @@ fn docs_and_tests_do_not_teach_session_kit_new() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut files = vec![root.join("README.md"), root.join("src/lib.rs")];
     collect_source_files(&root.join("tests"), &mut files);
-    let forbidden = concat!("SessionKit::", "new");
+    let forbidden = "SessionKit::new";
 
     let mut offenders = Vec::new();
     for file in files {
+        if file
+            .strip_prefix(&root)
+            .map(|relative| {
+                relative == Path::new("tests/runtime_surface.rs")
+                    || relative == Path::new("tests/docs_surface.rs")
+            })
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let source = fs::read_to_string(&file)
             .unwrap_or_else(|err| panic!("read {} failed: {err}", file.display()));
         if source.contains(forbidden) {
@@ -413,7 +423,7 @@ fn runtime_root_exposes_only_core_buckets() {
         );
     }
     assert!(
-        !runtime_rs.contains(concat!("Runtime", "Storage")),
+        !runtime_rs.contains("RuntimeStorage"),
         "runtime resources must be owned by rendezvous without a public storage envelope"
     );
     assert!(

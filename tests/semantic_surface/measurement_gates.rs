@@ -10,7 +10,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let run_final_gate = read(".github/scripts/run_final_form_gates.sh");
     let thumb_header_gate = read(".github/scripts/check_thumbv6m_frame_header_codegen.sh");
     let thumb_mask_gate = read(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
-    let final_gate_with_helpers = format!("{final_gate}\n{thumb_header_gate}\n{thumb_mask_gate}");
+    let final_gate_with_helpers =
+        format!("{final_gate}\n{thumb_header_gate}\n{thumb_mask_gate}\n{run_final_gate}");
     let snapshot = read(".github/measurement_snapshots/hibana-size-snapshot.json");
     let workflow = read(".github/workflows/quality-gates.yml");
     let endpoint_kernel = read("src/endpoint/kernel/core.rs")
@@ -25,12 +26,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs",
         "rustup target add --toolchain \"${TOOLCHAIN}\" thumbv6m-none-eabi",
         "--target thumbv6m-none-eabi",
-        concat!(
-            "thumb section name=.rodata bytes=%d target=thumbv6m-none-eabi ",
-            "no_",
-            "default",
-            "_features=1"
-        ),
+        "thumb section name=.rodata bytes=%d target=thumbv6m-none-eabi no_default_features=1",
         "values[\"flash_total\"] =",
         "thumb_values[\"flash_total\"] =",
         "bash \"${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_label_mask_codegen.sh\"",
@@ -48,6 +44,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "pico_total_sram_bytes",
         "actual_max_stack = max(metrics[\"peak_stack_bytes\"] for metrics in seen.values())",
         "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
+        "bash ./.github/scripts/check_no_split_guard_literals.sh",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
     ] {
@@ -150,13 +147,13 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=0",
         "\"${CI:-false}\" != \"true\"",
         "CI/override",
-        concat!("BASE", "_REF=\"HEAD^\""),
-        concat!("BASE", "_WORKTREE"),
-        concat!("PUBLISHED", "_CRATES_IO"),
-        concat!("HIBANA_SIZE_", "BA", "SE_REF"),
-        concat!("hibana::", "inte", "gration"),
+        "BASE_REF=\"HEAD^\"",
+        "BASE_WORKTREE",
+        "PUBLISHED_CRATES_IO",
+        "HIBANA_SIZE_BASE_REF",
+        "hibana::integration",
         "metrics[\"localside_peak_stack_bytes\"] = metrics.get(\"peak_stack_bytes\", 0)",
-        concat!("published", " ", "base", "line"),
+        "published baseline",
     ] {
         assert!(
             !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),

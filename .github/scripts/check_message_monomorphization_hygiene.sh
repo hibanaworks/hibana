@@ -114,7 +114,7 @@ for forbidden in [
 ]:
     if forbidden in endpoint:
         fail(f"endpoint futures must not own codec zero-length authority: {forbidden}")
-for forbidden in ["Raw" "Recv" "Flags", "Raw" "Offer" "Lease"]:
+for forbidden in ["RawRecvFlags", "RawOfferLease"]:
     if forbidden in endpoint:
         fail(f"endpoint futures must not regrow bitflag lease state: {forbidden}")
 

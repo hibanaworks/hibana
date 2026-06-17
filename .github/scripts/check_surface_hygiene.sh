@@ -13,34 +13,31 @@ fi
 
 source ./.github/scripts/lib/hygiene_common.sh
 
-OLD_WORD='leg''acy'
-MODE_WORD='comp''at'
-ALT_WORD='fall''back'
-RECOVERY_WORD='res''cue'
-GUESS_WORD='heur''istic'
-UNIVERSE_WORD='uni''verse'
-RECONFIG_TOKEN='fe''nce'
+OLD_WORD='legacy'
+MODE_WORD='compat'
+ALT_WORD='fallback'
+RECOVERY_WORD='rescue'
+GUESS_WORD='heuristic'
+UNIVERSE_WORD='universe'
+RECONFIG_TOKEN='fence'
 STD_FEATURE_CFG='cfg\(feature = "'"std"'"\)'
 STD_NOT_FEATURE_CFG='cfg\(not\(feature = "'"std"'"\)\)'
 STD_FEATURE_DEP='features = \["'"std"'"\]'
 STD_FEATURE_FLAG='--features '"std"
-STD_FEATURE_WORDING='std fea''ture|optional `'"std"'`|host diagn''ostics'
-FRAME_FLAGS_TOKEN='Frame''Flags'
-FRAME_FRAGMENT_TOKENS='\b(FR''AG|ID''X|TO''T)\b'
-TAP_FLAGS_PATTERN='Tap''Frame''Meta[^\n]*flags'
+STD_FEATURE_WORDING='std feature|optional `'"std"'`|host diagnostics'
+FRAME_FLAGS_TOKEN='FrameFlags'
+FRAME_FRAGMENT_TOKENS='\b(FRAG|IDX|TOT)\b'
+TAP_FLAGS_PATTERN='TapFrameMeta[^\n]*flags'
 ENDPOINT_RESOLVER_REPLAY_PATTERN='endpoint_resolver_args|emit_endpoint_resolver_audit|ResolverSlot::Endpoint(Rx|Tx)|hash_tap_event|emit_resolver_audit_replay|EndpointRxAuditPlan'
 DEAD_CODE_ALLOW_PATTERN='allow[[:space:]]*\([^]]*dead[_]code'
 DEAD_CODE_SPLIT_ALLOW_PATTERN='allow[[:space:]]*\([^]]*dead[[:space:]]*["'\'']?[[:space:]]*[_][[:space:]]*["'\'']?[[:space:]]*code'
 
-FORBIDDEN_ROLE_TOKEN_PATTERN='g::''Role<'
-capture_rg FORBIDDEN_ROLE_TOKEN_MATCHES \
+FORBIDDEN_ROLE_TOKEN_PATTERN='g::Role<'
+check_absent "${FORBIDDEN_ROLE_TOKEN_PATTERN}" \
   "forbidden g role token API residue" \
-  -n "${FORBIDDEN_ROLE_TOKEN_PATTERN}" src tests README.md .github/scripts
-if [[ -n "${FORBIDDEN_ROLE_TOKEN_MATCHES}" ]]; then
-  echo "${FORBIDDEN_ROLE_TOKEN_MATCHES}" >&2
-  echo "boundary deny pattern detected: forbidden g role token API residue" >&2
-  FAILED=1
-fi
+  src tests README.md .github/scripts \
+  --glob '!tests/semantic_surface/source_residue_support.rs' \
+  --glob '!.github/scripts/check_surface_hygiene.sh'
 
 check_absent \
   "mod[[:space:]]+sync;|crate::sync" \
@@ -71,14 +68,15 @@ check_absent \
   src tests README.md
 
 check_absent \
-  "custom demux and channel adap""ters|decode adap""ters only|large[[:space:]]+tem""porar(y)" \
+  "custom demux and channel adapters|decode adapters only|large[[:space:]]+temporar(y)" \
   "renamed transport wording residue" \
   src README.md
 
 check_absent \
   "${STD_FEATURE_CFG}|${STD_NOT_FEATURE_CFG}|${STD_FEATURE_DEP}|${STD_FEATURE_FLAG}|${STD_FEATURE_WORDING}" \
   "host cfg diagnostic residue" \
-  src README.md .github
+  src README.md .github \
+  --glob '!.github/scripts/check_surface_hygiene.sh'
 
 check_absent \
   "${FRAME_FLAGS_TOKEN}|${FRAME_FRAGMENT_TOKENS}|${TAP_FLAGS_PATTERN}|${ENDPOINT_RESOLVER_REPLAY_PATTERN}" \
@@ -462,16 +460,16 @@ check_absent \
   src/endpoint tests
 
 check_absent \
-  "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_""payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_""payload|RecvRuntimeDesc::new\\([^,]+,[^,]+,[^,]+\\)" \
+  "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_payload|RecvRuntimeDesc::new\\([^,]+,[^,]+,[^,]+\\)" \
   "deterministic recv must carry descriptor evidence into complete runtime descriptor" \
   src/endpoint src/endpoint/kernel
 
 check_absent \
-  "pri""or_atom\\.label|atom\\.label[[:space:]]*==[[:space:]]*label|label[[:space:]]*=[[:space:]]*current\\.label" \
+  "prior_atom\\.label|atom\\.label[[:space:]]*==[[:space:]]*label|label[[:space:]]*=[[:space:]]*current\\.label" \
   "FrameLabel allocation must be edge-unique, not logical-label deduplicated" \
   src/global/typestate
 
-DEFAULT_WORD='Def''ault'
+DEFAULT_WORD='Default'
 capture_rg TRANSPORT_METRICS_EMPTY_DEFAULTS \
   "transport metrics trait default forbidden path" \
   -n -U "pub[[:space:]]+trait[[:space:]]+TransportMetrics:[[:space:]]+${DEFAULT_WORD}|fn[[:space:]]+(latency_us|queue_depth|pacing_interval_us|congestion_marks|retransmissions|pto_count|srtt_us|latest_ack_pn|congestion_window|in_flight_bytes|algorithm)\\(&self\\)[[:space:]]*->[[:space:]]*Option<[^>]+>[[:space:]]*\\{[[:space:]]*None[[:space:]]*\\}" \
@@ -487,8 +485,8 @@ if [[ -e src/transport/context.rs ]]; then
   echo "boundary deny pattern detected: forbidden transport context owner detected" >&2
   FAILED=1
 fi
-DELETED_SESSION_CAP_DIR="src/session/""cap"
-DELETED_SESSION_CAP_RS="src/session/""cap.rs"
+DELETED_SESSION_CAP_DIR="src/session/cap"
+DELETED_SESSION_CAP_RS="src/session/cap.rs"
 if [[ -e "${DELETED_SESSION_CAP_DIR}" || -e "${DELETED_SESSION_CAP_RS}" ]]; then
   echo "${DELETED_SESSION_CAP_DIR}" >&2
   echo "${DELETED_SESSION_CAP_RS}" >&2
@@ -568,20 +566,21 @@ check_absent "\\sas _([,;)|]|$)" \
 check_absent "as \\*const _|as \\*mut _" \
   "underscore pointer cast forbidden path" \
   "${SOURCE_DOC_PATHS[@]}"
-INDEX_TOKEN='IN''DEX'
-VALUE_TOKEN='VA''LUE'
-LABEL_TOKEN='LA''BEL'
-IDX_TOKEN='ID''X'
+INDEX_TOKEN='INDEX'
+VALUE_TOKEN='VALUE'
+LABEL_TOKEN='LABEL'
+IDX_TOKEN='IDX'
 check_absent "^[[:space:]]*const[[:space:]]+(${INDEX_TOKEN}|${VALUE_TOKEN}|${LABEL_TOKEN}):[[:space:]]+u8[[:space:]]*=[[:space:]]+(${IDX_TOKEN}|${LABEL_TOKEN});" \
   "self-shadowing associated const forbidden path" \
   src tests
 check_absent "type[[:space:]]+Controller[[:space:]]*=[[:space:]]*Controller;" \
   "route semantic self-shadowing associated type forbidden path" \
   src/global.rs
-STALE_VAR_ALLOW='un''used_variables'
+STALE_VAR_ALLOW='unused_variables'
 check_absent "#\\[allow\\(clippy::empty_loop\\)\\]|#\\[allow\\(${STALE_VAR_ALLOW}\\)\\]|#\\[allow\\(clippy::let_unit_value\\)\\]|${DEAD_CODE_ALLOW_PATTERN}|${DEAD_CODE_SPLIT_ALLOW_PATTERN}" \
   "forbidden allow attribute" \
-  src tests
+  src tests \
+  --glob '!tests/semantic_surface/source_residue_pico_hygiene.rs'
 check_absent "route_inferred|par_inferred" \
   "forbidden inferred binary builder vocabulary" \
   src/global.rs \
@@ -589,7 +588,7 @@ check_absent "route_inferred|par_inferred" \
 check_absent "^type[[:space:]]+[A-Za-z0-9_]*Msg[A-Za-z0-9_]*[[:space:]]*=" \
   "global const-dsl message alias forbidden path" \
   src/global/const_dsl.rs
-REMOVED_RESOURCE='Con''trol''Resource'
+REMOVED_RESOURCE='ControlResource'
 check_absent "^type[[:space:]]+${REMOVED_RESOURCE}<" \
   "endpoint forbidden descriptor shorthand alias forbidden path" \
   src/endpoint/kernel/core.rs \
@@ -618,8 +617,8 @@ check_absent "(^|[^A-Za-z0-9_])([Qq][Uu][Ii][Cc]|[Hh]3|[Hh][Qq])([^A-Za-z0-9_]|$
 check_absent "${ALT_WORD}_|\\b${ALT_WORD}\\b" \
   "alternate-path residue vocabulary in production source" \
   src
-FOR_TEST_WORD='for_''test'
-FOR_TEST_SUFFIX='_for_''test'
+FOR_TEST_WORD='for_test'
+FOR_TEST_SUFFIX='_for_test'
 check_absent "\\b(${FOR_TEST_WORD}|${FOR_TEST_SUFFIX})\\b|test-only|Test-only|\\b${MODE_WORD}(ibility)?\\b|\\b${OLD_WORD}\\b|\\b${RECOVERY_WORD}\\b|\\b${GUESS_WORD}\\b" \
   "test-only or forbidden-surface residue in production source" \
   src
@@ -777,13 +776,13 @@ check_absent "type[[:space:]]+SessionLaneHandle[[:space:]]*=" \
 check_absent "RawEmittedCapToken::from_bytes" \
   "test-only emitted-token constructor residue in production source" \
   src/endpoint
-payload_validator="Payload""Validator"
-zero_payload_provider_alias="Syn""thetic""Payload""Provider"
-stage_send_payload_fn="Stage""Send""Payload""Fn"
-encode_handle_fn="Encode""Con""trol""Handle""Fn"
-port_storage="Port""Storage"
-guard_storage="Guard""Storage"
-stored_forbidden_alias="Stored""Mi""nt"
+payload_validator="PayloadValidator"
+zero_payload_provider_alias="SyntheticPayloadProvider"
+stage_send_payload_fn="StageSendPayloadFn"
+encode_handle_fn="EncodeControlHandleFn"
+port_storage="PortStorage"
+guard_storage="GuardStorage"
+stored_forbidden_alias="StoredMint"
 check_absent "\\b(${payload_validator}|${zero_payload_provider_alias}|${stage_send_payload_fn}|${encode_handle_fn}|${port_storage}|${guard_storage}|${stored_forbidden_alias})\\b" \
   "private descriptor/helper alias residue in production source" \
   src/endpoint

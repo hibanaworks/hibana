@@ -95,7 +95,7 @@ fn g_project_does_not_enumerate_role_projection_constructors() {
 fn production_sources_do_not_reintroduce_static_hygiene_residue() {
     let production = read_production_rs_tree("src");
     for forbidden in [
-        concat!("#[", "allow(", "dead", "_", "code", ")]"),
+        "#[allow(dead_code)]",
         "legacy",
         "heuristic",
         "fallback",
@@ -141,7 +141,7 @@ fn production_sources_do_not_reintroduce_static_hygiene_residue() {
 #[test]
 fn long_running_const_eval_allow_stays_capacity_regression_only() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let token = concat!("allow(", "long_running_const_eval", ")");
+    let token = "allow(long_running_const_eval)";
     let allowed = root.join("tests/program_capacity_regression.rs");
     let mut offenders = Vec::new();
 
@@ -167,6 +167,16 @@ fn long_running_const_eval_allow_stays_capacity_regression_only() {
     files.sort();
 
     for path in files {
+        if path
+            .strip_prefix(&root)
+            .map(|relative| {
+                relative
+                    == std::path::Path::new("tests/semantic_surface/source_residue_pico_hygiene.rs")
+            })
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let text = fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
         if !text.contains(token) {
@@ -702,17 +712,18 @@ fn evidence_file_budget_under_300() {
 }
 
 #[test]
-fn source_residue_forbidden_literals_are_not_raw_script_hits() {
-    let semantic_tests = read_all_rs_tree("tests/semantic_surface");
-    let forbidden_attr = concat!("#[", "allow(", "dead", "_", "code", ")]");
+fn source_residue_forbidden_literals_are_checked_without_split_hiding() {
+    run_script(".github/scripts/check_no_split_guard_literals.sh");
+    let resolver_gate = read(".github/scripts/check_resolver_surface_hygiene.sh");
     assert!(
-        !semantic_tests.contains(forbidden_attr),
-        "semantic tests must split forbidden dead-code attribute literals"
+        resolver_gate.contains("--glob")
+            && resolver_gate.contains("!tests/semantic_surface/source_residue_pico_hygiene.rs"),
+        "resolver hygiene must use an explicit guard-file scope instead of split forbidden literals"
     );
 }
 
 #[test]
-fn resolver_surface_hygiene_allows_split_test_literal_only() {
+fn resolver_surface_hygiene_uses_explicit_guard_scope() {
     run_script(".github/scripts/check_resolver_surface_hygiene.sh");
 }
 

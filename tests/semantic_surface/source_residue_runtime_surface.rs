@@ -4,15 +4,18 @@ use super::common::*;
 fn production_and_gates_do_not_reintroduce_std_feature_branches() {
     let production = read_production_rs_tree("src");
     let readme = read("README.md");
-    let gates = read_tree(".github/scripts");
+    let gates = read_tree_except(
+        ".github/scripts",
+        &[".github/scripts/check_surface_hygiene.sh"],
+    );
     let combined = [production.as_str(), readme.as_str(), gates.as_str()].join("\n");
     for forbidden in [
-        concat!("cfg(feature = \"", "std", "\")"),
-        concat!("cfg(not(feature = \"", "std", "\"))"),
-        concat!("features = [\"", "std", "\"]"),
-        concat!("--features ", "std"),
-        concat!("std ", "feature"),
-        concat!("host ", "diagnostics"),
+        "cfg(feature = \"std\")",
+        "cfg(not(feature = \"std\"))",
+        "features = [\"std\"]",
+        "--features std",
+        "std feature",
+        "host diagnostics",
     ] {
         assert!(
             !combined.contains(forbidden),
@@ -24,24 +27,25 @@ fn production_and_gates_do_not_reintroduce_std_feature_branches() {
             && !read("src/lib.rs").contains("cfg_attr(not(feature"),
         "crate root must be unconditionally no_std"
     );
+    let surface_hygiene = read(".github/scripts/check_surface_hygiene.sh");
+    assert!(
+        surface_hygiene.contains("std feature")
+            && surface_hygiene.contains("!.github/scripts/check_surface_hygiene.sh"),
+        "surface hygiene must check host cfg wording with explicit self scope"
+    );
 }
 
 #[test]
 fn production_sources_do_not_reintroduce_transport_fragmentation_axis() {
     let production = read_production_rs_tree("src");
-    for forbidden in [
-        concat!("Frame", "Flags"),
-        "flags: Frame",
-        concat!("Frame", "Flags::"),
-        concat!("Frame", "Flags {"),
-    ] {
+    for forbidden in ["FrameFlags", "flags: Frame", "FrameFlags::", "FrameFlags {"] {
         assert!(
             !production.contains(forbidden),
             "transport fragmentation vocabulary must not return to production source: {forbidden}"
         );
     }
     for line in production.lines() {
-        for forbidden in [concat!("FR", "AG"), concat!("ID", "X"), concat!("TO", "T")] {
+        for forbidden in ["FRAG", "IDX", "TOT"] {
             assert!(
                 !line
                     .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')

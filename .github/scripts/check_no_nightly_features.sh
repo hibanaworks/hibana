@@ -13,6 +13,7 @@ check_absent \
   src tests Cargo.toml Cargo.lock .github \
   --glob '!.github/scripts/check_no_nightly_features.sh' \
   --glob '!.github/scripts/check_no_custom_target_json.sh' \
+  --glob '!.github/scripts/check_hygiene_roots_fail_closed.sh' \
   --optional .cargo examples
 
 json_paths="$(find . \

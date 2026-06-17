@@ -34,12 +34,12 @@ check_absent '^[[:space:]]*where[[:space:]]*\{' \
   "empty where clause detected" \
   src
 
-OLD_WORD='leg''acy'
-MODE_WORD='comp''at'
-ALT_WORD='fall''back'
-RECOVERY_WORD='res''cue'
-GUESS_WORD='heur''istic'
-LAYER_WORD='sh''im'
+OLD_WORD='legacy'
+MODE_WORD='compat'
+ALT_WORD='fallback'
+RECOVERY_WORD='rescue'
+GUESS_WORD='heuristic'
+LAYER_WORD='shim'
 DISALLOWED_OLD_VOCAB_PATTERN="\\b(_${OLD_WORD}|_${MODE_WORD}|_${ALT_WORD}|_${RECOVERY_WORD}|_${GUESS_WORD}|_${LAYER_WORD}|${OLD_WORD}_|${MODE_WORD}_|${ALT_WORD}_|${RECOVERY_WORD}_|${GUESS_WORD}_|${LAYER_WORD}_)\\b"
 check_absent "${DISALLOWED_OLD_VOCAB_PATTERN}" \
   "forbidden old vocabulary detected" \

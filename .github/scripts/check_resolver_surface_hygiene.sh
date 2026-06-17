@@ -28,7 +28,7 @@ check_absent "RouteResolverDecision|route_resolver_decision_from_action|\\bDefer
 
 check_absent "#!?\\[[^]]*allow[[:space:]]*\\([^]]*dead[_]code" \
   "forbidden dead_code allow detected" \
-  src tests --optional examples
+  src tests --glob '!tests/semantic_surface/source_residue_pico_hygiene.rs' --optional examples
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

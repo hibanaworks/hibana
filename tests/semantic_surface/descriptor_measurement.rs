@@ -110,12 +110,12 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         endpoint.contains("pub fn send<'a, 'e, M>")
             && endpoint.contains("pub fn recv<'e, M>")
             && endpoint.contains("pub fn offer<'e>")
-            && !endpoint.contains(concat!("Call", "site"))
+            && !endpoint.contains("Callsite")
             && !endpoint.contains("#[track_caller]"),
         "endpoint operations must not carry source-location diagnostic plumbing"
     );
     assert!(
-        !endpoint.contains(concat!("pub fn ", "fl", "ow")),
+        !endpoint.contains("pub fn flow"),
         "endpoint operations must not regain the removed send-preview boundary"
     );
     assert!(
@@ -123,8 +123,8 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             && runtime.contains("pub fn rendezvous(")
             && runtime.contains("pub fn enter<const ROLE: u8>")
             && runtime.contains("pub fn set_resolver")
-            && !resolver.contains(concat!("Call", "site"))
-            && !runtime.contains(concat!("Call", "site")),
+            && !resolver.contains("Callsite")
+            && !runtime.contains("Callsite"),
         "resolver and attach boundaries must keep operation/kind diagnostics without source-location plumbing"
     );
     for (name, source) in [
@@ -271,7 +271,7 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
     );
 
     for forbidden in [
-        concat!("struct PreparedSend", "Con", "trol"),
+        "struct PreparedSendControl",
         "stage_payload:",
         "fn stage_data_send_payload",
         "fn stage_registered_send_payload",
@@ -296,13 +296,13 @@ fn descriptor_projection_has_no_resource_or_tap_count_axes() {
     .join("\n");
 
     for forbidden in [
-        concat!("resource", ": Option"),
-        concat!("resource", ": None"),
-        concat!(".", "resource"),
-        concat!("encode", "_resource"),
-        concat!("decode", "_resource"),
-        concat!("MAX_COMPILED_PROGRAM_", "RESOURCES"),
-        concat!("compiled_program_counts", ".resources"),
+        "resource: Option",
+        "resource: None",
+        ".resource",
+        "encode_resource",
+        "decode_resource",
+        "MAX_COMPILED_PROGRAM_RESOURCES",
+        "compiled_program_counts.resources",
     ] {
         assert!(
             !descriptor_sources.contains(forbidden),
@@ -317,11 +317,11 @@ fn descriptor_projection_has_no_resource_or_tap_count_axes() {
     );
 
     for forbidden in [
-        concat!("tap", "_events"),
-        concat!("MAX_COMPILED_PROGRAM_", "TAP_EVENTS"),
-        concat!("compiled_program_counts", ".tap_events"),
-        concat!("over", "_tap", "_event"),
-        concat!("tap", "_event"),
+        "tap_events",
+        "MAX_COMPILED_PROGRAM_TAP_EVENTS",
+        "compiled_program_counts.tap_events",
+        "over_tap_event",
+        "tap_event",
     ] {
         assert!(
             !descriptor_sources.contains(forbidden),
@@ -479,12 +479,9 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
                 .and_then(|tail| tail.split("}").next())
                 .unwrap_or("")
                 .contains("LaneSetView")
-            && !role_image.contains(concat!(
-                "[DENSE",
-                "_LANE",
-                "_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]"
-            ))
-            && !role_image.contains(concat!("[DENSE", "_LANE", "_NONE; LANE_DOMAIN_SIZE]"))
+            && !role_image
+                .contains("[DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]")
+            && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
             && role_image.contains("self.image().active_lane_set()")
             && !role_image.contains(".phase_lane_set(idx)")
             && !read("src/endpoint/kernel/decision_state.rs").contains("route_scope_lane_words")
@@ -536,7 +533,7 @@ fn resident_descriptor_metadata_stays_columnar() {
         segment.contains("atom_mask: u128")
             && !segment.contains("nodes: [EffStruct; MAX_SEGMENT_EFFS]")
             && !segment.contains("steps: [ProgramStepRow; MAX_SEGMENT_EFFS]")
-            && !segment.contains(&["poli", "cies: [RouteResolver; MAX_SEGMENT_EFFS]"].concat())
+            && !segment.contains("policies: [RouteResolver; MAX_SEGMENT_EFFS]")
             && segment.contains("atom_row_start: u16")
             && segment.contains("atom_row_len: u16")
             && segment.contains("resolver_row_start: u16")

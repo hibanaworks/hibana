@@ -10,7 +10,7 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/hibana-hygiene-roots.XXXXXX")"
 trap 'rm -rf "${tmp}"' EXIT
 
 printf 'pub fn fixture_violation() {}\n' >"${tmp}/violation.rs"
-printf 'RUSTC_''BOOTSTRAP=1\n' >"${tmp}/Cargo.toml"
+printf 'RUSTC_BOOTSTRAP=1\n' >"${tmp}/Cargo.toml"
 
 FAILED=0
 check_absent "fixture_violation" \
@@ -22,7 +22,7 @@ if [[ "${FAILED}" -eq 0 ]]; then
 fi
 
 FAILED=0
-check_absent "RUSTC_""BOOTSTRAP" \
+check_absent "RUSTC_BOOTSTRAP" \
   "optional root fixture" \
   "${tmp}/Cargo.toml" --optional "${tmp}/.cargo"
 if [[ "${FAILED}" -eq 0 ]]; then
@@ -86,15 +86,11 @@ if bash "${representative_script}" "${ROOT_DIR}" "${tmp}/violation.rs"; then
 fi
 
 FAILED=0
-naked_rg_suppression='r''g .*2>/dev/''null|2>/dev/''null.*r''g|r''g .*[|][|][[:space:]]*tr''ue'
-capture_rg NAKED_RG_SUPPRESSION_MATCHES \
+naked_rg_suppression='rg .*2>/dev/null|2>/dev/null.*rg|rg .*[|][|][[:space:]]*true'
+check_absent "${naked_rg_suppression}" \
   "naked rg suppression in hygiene scripts" \
-  -n "${naked_rg_suppression}" .github/scripts
-if [[ -n "${NAKED_RG_SUPPRESSION_MATCHES}" ]]; then
-  echo "${NAKED_RG_SUPPRESSION_MATCHES}" >&2
-  echo "hygiene root self-test violation: naked rg suppression detected" >&2
-  exit 1
-fi
+  .github/scripts \
+  --glob '!.github/scripts/check_hygiene_roots_fail_closed.sh'
 bare_true_suppression='[|][|][[:space:]]*true'
 capture_rg BARE_TRUE_SUPPRESSION_MATCHES \
   "bare true suppression in hygiene scripts" \
@@ -113,7 +109,6 @@ migrated_deny_scripts=(
   .github/scripts/check_boundary_contracts.sh
   .github/scripts/check_endpoint_surface_owner.sh
   .github/scripts/check_exact_layout_hygiene.sh
-  .github/scripts/check_hygiene_roots_fail_closed.sh
   .github/scripts/check_lowering_hygiene.sh
   .github/scripts/check_mgmt_boundary.sh
   .github/scripts/check_no_custom_target_json.sh
@@ -134,7 +129,7 @@ migrated_deny_scripts=(
 )
 bare_rg_branch='(^|[;&|({[:space:]])(elif|if)[[:space:]]+![[:space:]]*rg\b|(^|[;&|({[:space:]])(elif|if)[[:space:]]+rg\b'
 bare_rg_pipe='[|][[:space:]]*rg\b'
-bare_rg_redirect='rg[[:space:]][^\n]*(>/dev/''null|2>/dev/''null)'
+bare_rg_redirect='rg[[:space:]][^\n]*(>/dev/null|2>/dev/null)'
 bare_rg_quiet='rg[[:space:]][^\n]*-q\b'
 bare_rg_true='[|][|][[:space:]]*true'
 capture_rg BARE_RG_MATCHES \

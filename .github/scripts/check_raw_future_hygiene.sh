@@ -42,7 +42,7 @@ check_absent_multiline \
   src/endpoint/send.rs
 
 check_absent_multiline \
-  "pub[[:space:]]+(trait|struct|enum)[[:space:]]+(Fl""ow|Fl""owSendArg|SendOutcomeKind|CapFl""ow|Fl""owInner)\\b" \
+  "pub[[:space:]]+(trait|struct|enum)[[:space:]]+(Flow|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner)\\b" \
   "removed send-preview internals must not become public concepts" \
   src/endpoint src/lib.rs src/g.rs src/runtime.rs
 

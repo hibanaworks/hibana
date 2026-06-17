@@ -147,7 +147,7 @@ if re.search(
 if "MsgRuntimeDesc" in core + runtime_types + endpoint + send:
     fail("MsgRuntimeDesc hid operation-specific descriptor meaning")
 
-if re.search(r"send_descriptor_.*" "un" "used", send):
+if re.search(r"send_descriptor_.*unused", send):
     fail("send runtime descriptors must not carry inert validate/zero_payload callbacks")
 
 for path, source in [

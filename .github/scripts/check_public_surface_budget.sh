@@ -26,11 +26,11 @@ check_max_lines ".github/allowlists/runtime-public-api.txt" 113
 
 python3 "${ROOT_DIR}/.github/scripts/check_public_api_allowlists.py" || FAILED=1
 
-OLD_WORD='leg''acy'
-MODE_WORD='comp''at'
-ALT_WORD='fall''back'
-RECOVERY_WORD='res''cue'
-GUESS_WORD='heur''istic'
+OLD_WORD='legacy'
+MODE_WORD='compat'
+ALT_WORD='fallback'
+RECOVERY_WORD='rescue'
+GUESS_WORD='heuristic'
 
 check_absent_multiline \
   "g::advanced|binding::advanced|FlowSendArg|SendOutcomeKind|CapFlow|FlowInner|DynamicResolution|IncomingClassification|from_fn|from_state|${ALT_WORD}|${OLD_WORD}|${MODE_WORD}|${GUESS_WORD}|${RECOVERY_WORD}|state machine|TransportSnapshotParts|ConfigParts|RegisteredTokenParts|ProjectionMessageSpec|ProjectionTypeFingerprint|TransportOpsError|has_fin" \

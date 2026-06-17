@@ -92,9 +92,9 @@ check_required \
   "RoleImageRef must expose the resident role footprint" \
   src/global/role_program/image_impl/ref_access.rs
 
-ROLE_DEBUG_FACTS_PATTERN='Role''Debug''Facts'
-ROLE_DEBUG_FOOTPRINT_PATTERN='Role''Debug''Footprint'
-ROLE_IMAGE_SOURCE_PATTERN='Role''Image''Source'
+ROLE_DEBUG_FACTS_PATTERN='RoleDebugFacts'
+ROLE_DEBUG_FOOTPRINT_PATTERN='RoleDebugFootprint'
+ROLE_IMAGE_SOURCE_PATTERN='RoleImageSource'
 check_absent_multiline \
   "\\b${ROLE_DEBUG_FACTS_PATTERN}\\b|\\b${ROLE_DEBUG_FOOTPRINT_PATTERN}\\b|\\b${ROLE_IMAGE_SOURCE_PATTERN}\\b|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
   "role resident source must not retain debug/test-only fact, source, or measurement helpers" \
@@ -105,7 +105,7 @@ check_absent_multiline \
   "brand owner witness source must not retain endpoint-identity test supports or raw debug accessors" \
   src/session/brand.rs --glob '!src/endpoint/kernel/test_support/**'
 
-DELETED_SESSION_CAP_DIR="src/session/""cap"
+DELETED_SESSION_CAP_DIR="src/session/cap"
 if [[ -e "${DELETED_SESSION_CAP_DIR}" ]]; then
   echo "${DELETED_SESSION_CAP_DIR}" >&2
   echo "exact-layout hygiene violation: forbidden session token codec owner detected" >&2

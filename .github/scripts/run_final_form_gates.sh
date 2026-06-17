@@ -16,6 +16,7 @@ bash ./.github/scripts/check_text_integrity.sh
 bash ./.github/scripts/check_source_file_budget.sh
 bash ./.github/scripts/check_maintainability_budgets.sh
 bash ./.github/scripts/check_surface_test_alias_hygiene.sh
+bash ./.github/scripts/check_no_split_guard_literals.sh
 bash ./.github/scripts/check_no_underscore_discards.sh
 bash ./.github/scripts/check_rust_1_95_stable.sh
 bash ./.github/scripts/check_no_nightly_features.sh

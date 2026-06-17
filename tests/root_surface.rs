@@ -129,7 +129,7 @@ fn root_visible_surface_stays_minimal() {
     assert!(
         g_ws.contains("pub struct Program<Steps>")
             && g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload>")
-            && !g_ws.contains(&["pub mod ", "con", "trol"].concat())
+            && !g_ws.contains("pub mod control")
             && !g_ws.contains("pub struct Msg<const LOGICAL_LABEL: u8, Payload, Control")
             && g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M>")
             && !g_ws.contains("pub struct Send<const FROM: u8, const TO: u8, M, const LANE")
@@ -162,7 +162,7 @@ fn root_visible_surface_stays_minimal() {
     );
     assert!(
         lib_rs.contains("pub use endpoint::{Endpoint, EndpointError, RouteBranch};")
-            && !lib_rs.contains(concat!("Fl", "ow")),
+            && !lib_rs.contains("Flow"),
         "hibana root must expose endpoint core API"
     );
 
@@ -173,7 +173,7 @@ fn root_visible_surface_stays_minimal() {
         ("role_program.rs", role_program_rs.as_str()),
     ] {
         assert!(
-            !source.contains(&["#[", "allow(", "private_bounds", ")]"].concat())
+            !source.contains("#[allow(private_bounds)]")
                 && !source.contains("#[expect(\n        private_bounds")
                 && !source.contains("#[expect(private_bounds"),
             "{owner} must not rely on private_bounds lint allowance in the public surface"
@@ -245,21 +245,21 @@ fn root_visible_surface_stays_minimal() {
     }
 
     for forbidden in [
-        concat!("AllowsEndpoint", "Mi", "nt"),
-        concat!("Mi", "nt", "ConfigMarker"),
-        concat!("Mi", "nt", "Config"),
-        &["#[", "allow(", "private_bounds", ")]"].concat(),
+        "AllowsEndpointMint",
+        "MintConfigMarker",
+        "MintConfig",
+        "#[allow(private_bounds)]",
         "#[expect(private_bounds)]",
-        concat!("Fl", "ow", "Send", "Arg"),
-        concat!("Send", "Outcome", "Kind"),
-        concat!("pub struct ", "Send", "Value"),
+        "FlowSendArg",
+        "SendOutcomeKind",
+        "pub struct SendValue",
         "trait SendArg",
         "trait SendOutcome",
         "HibanaSend",
-        concat!("Cap", "Fl", "ow"),
-        concat!("Fl", "ow", "Inner"),
+        "CapFlow",
+        "FlowInner",
         "CapRegisteredToken",
-        concat!("Cap", "Fl", "ow", "Token"),
+        "CapFlowToken",
         "CapFrameToken",
     ] {
         assert!(
@@ -270,7 +270,7 @@ fn root_visible_surface_stays_minimal() {
 
     for forbidden in [
         "CapRegisteredToken",
-        concat!("Cap", "Fl", "ow", "Token"),
+        "CapFlowToken",
         "CapFrameToken",
         "pub(crate) mod handle;",
     ] {
@@ -284,21 +284,21 @@ fn root_visible_surface_stays_minimal() {
     }
 
     for forbidden in [
-        concat!("Canonical", "Control"),
-        concat!("External", "Control"),
-        concat!("Control", "Handling"),
-        concat!("Control", "Message", "Kind"),
-        concat!("Control", "Message"),
-        concat!("Loop", "Break", "Steps,"),
+        "CanonicalControl",
+        "ExternalControl",
+        "ControlHandling",
+        "ControlMessageKind",
+        "ControlMessage",
+        "LoopBreakSteps,",
         "RouteResolver,",
         "const_dsl::{\n            ControlScopeKind, DynamicMeta,",
         "LocalProgram,",
-        concat!("No", "Control,"),
+        "NoControl,",
         "project_chain",
         "project, project_ref,",
         "project,\n        with_resolver,",
         "typestate::{JumpReason, LocalAction, EventCursor}",
-        concat!("Passive", "ArmNavigation"),
+        "PassiveArmNavigation",
         "pub mod steps {",
     ] {
         assert!(
@@ -319,7 +319,7 @@ fn root_visible_surface_stays_minimal() {
     );
 
     for forbidden in [
-        &["pub mod ", "con", "trol", " {"].concat(),
+        "pub mod control {",
         "pub mod metadata {",
         "pub mod loops {",
         "pub mod typestate {",

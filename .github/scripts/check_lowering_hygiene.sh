@@ -24,7 +24,7 @@ check_absent_multiline \
   src
 
 check_absent_multiline \
-  "\\.poli""cies\\(" \
+  "\\.policies\\(" \
   "direct EffList resolver-marker scan" \
   src
 
@@ -58,7 +58,7 @@ check_absent_multiline \
   "EventCursor::from_machine detected" \
   src
 
-PROGRAM_STAMP_PATTERN='Program''Stamp'
+PROGRAM_STAMP_PATTERN='ProgramStamp'
 check_absent_multiline \
   "\\b${PROGRAM_STAMP_PATTERN}\\b" \
   "production program stamp/debug identity metadata detected" \
@@ -133,11 +133,11 @@ check_absent_multiline \
   src/global/compiled/images/program.rs
 
 check_absent_multiline \
-  "^(fn|const fn|unsafe fn|pub\\([^)]*\\)[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+const[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(compiled_program_push_dynamic_resolver_site|compiled_program_push_resource|compiled_program_route_scope_end|compiled_program_insert_route_resolver|compiled_program_emit_route_resolvers|compiled_program_emit_atom_into_slices|compiled_program_emit_atom|control""_scope_mask_bit)\\(" \
+  "^(fn|const fn|unsafe fn|pub\\([^)]*\\)[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+const[[:space:]]+fn|pub\\([^)]*\\)[[:space:]]+unsafe[[:space:]]+fn)[[:space:]]+(compiled_program_push_dynamic_resolver_site|compiled_program_push_resource|compiled_program_route_scope_end|compiled_program_insert_route_resolver|compiled_program_emit_route_resolvers|compiled_program_emit_atom_into_slices|compiled_program_emit_atom|control_scope_mask_bit)\\(" \
   "compiled-program lowering helpers leaked back into frozen image owner" \
   src/global/compiled/images/program.rs
 
-DELETED_COMPILED_ROLE_OWNER="src/global/compiled/images/""role.rs"
+DELETED_COMPILED_ROLE_OWNER="src/global/compiled/images/role.rs"
 if [[ -e "${DELETED_COMPILED_ROLE_OWNER}" ]]; then
   echo "${DELETED_COMPILED_ROLE_OWNER}" >&2
   echo "lowering hygiene violation: forbidden compiled-role owner detected" >&2

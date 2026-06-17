@@ -55,7 +55,7 @@ fn role_projection_does_not_hide_exact_count_dispatch() {
 fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
     let production = read_production_rs_tree("src");
     for forbidden in [
-        concat!("for_", "test"),
+        "for_test",
         "CpCommand",
         "PendingEffect",
         "EffectRunner",
@@ -66,10 +66,10 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
         "DelegationLeaseSpec",
         "struct EffectEnvelope {",
         "enum EffectEnvelopeSource",
-        concat!("control", "_op_is_idempotent"),
-        concat!("control", "_op_requires_gen_bump"),
-        concat!("control", "_op_is_terminal"),
-        concat!("control", "_op_modifies_history"),
+        "control_op_is_idempotent",
+        "control_op_requires_gen_bump",
+        "control_op_is_terminal",
+        "control_op_modifies_history",
         "emit_resolver_event_with_arg2",
         "run_effect_step",
         "after_local_effect",
@@ -180,7 +180,7 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
         "PackedLoopScopeRow",
         "ROLE_IMAGE_LOOP_SCOPE_STRIDE",
         "loop_scope_row",
-        concat!("Loop", "Body", "Mis", "sing"),
+        "LoopBodyMissing",
         ") -> RecvResult<DecodeReentryCursorPlan>",
         "pub(super) fn begin(&mut self) -> RecvResult<SelectedRouteCommitRows>",
         ") -> RecvResult<OfferFrontierFacts>",
@@ -194,12 +194,12 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
         "Err(()) => Ok(MaterializedTransport::DiscardedAndPending)",
         "CurrentOfferEntry::from_meta",
         "CurrentOfferAuthority::from_meta",
-        concat!("Raw", "Offer", "Lease::new("),
-        concat!("Raw", "Recv", "Flags::new("),
-        concat!("struct Raw", "Offer", "Lease"),
-        concat!("struct Raw", "Recv", "Flags"),
-        concat!("Raw", "Offer", "Lease::from_held_lease"),
-        concat!("Raw", "Recv", "Flags::from_held_lease"),
+        "RawOfferLease::new(",
+        "RawRecvFlags::new(",
+        "struct RawOfferLease",
+        "struct RawRecvFlags",
+        "RawOfferLease::from_held_lease",
+        "RawRecvFlags::from_held_lease",
         "fn mark_completed(&mut self)",
         "fn must_restore_on_drop(self) -> bool",
         "relocatable_resident_lane_step_at_index(step, lane as usize)\n            .ok()",
@@ -271,9 +271,9 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
         "has_ack: bool",
         "EvidenceFingerprint::new(",
         "ack_is_progress_evidence(",
-        concat!("lin", "ger"),
-        concat!("Lin", "ger"),
-        concat!("LIN", "GER"),
+        "linger",
+        "Linger",
+        "LINGER",
         "Option<bool>",
         "Result<Option<bool>",
         "RecvResult<Option<bool>",
@@ -283,7 +283,7 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
         "is_reentry: bool",
         "route_offer_entry_matches_current",
         "is_reentry_route_from_cursor",
-        concat!("Route", "Reentry"),
+        "RouteReentry",
         "ReentryMark::Plain",
         "ReentryMark::Reentry",
         "is_internal",
@@ -307,12 +307,7 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
 
     let tests = read("tests/runtime_surface.rs");
     assert!(
-        !tests.contains(concat!(
-            "fn ",
-            "base",
-            "line",
-            "_left_resolver() -> Result<DecisionArm, ResolverError>"
-        )),
+        !tests.contains("fn baseline_left_resolver() -> Result<DecisionArm, ResolverError>"),
         "resolver tests must model the fallible resolver contract, not a constant-Ok helper"
     );
 }
@@ -320,7 +315,7 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
 #[test]
 fn production_sources_do_not_reintroduce_implicit_initializers() {
     let production = read_production_rs_tree("src");
-    let trait_name = concat!("De", "fault");
+    let trait_name = "Default";
     for line in production.lines() {
         let trimmed = line.trim_start();
         assert!(
@@ -328,7 +323,7 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
             "production source must use explicit empty/new/zero constructors, not derive({trait_name}): {line}"
         );
         assert!(
-            !(trimmed.starts_with("impl") && trimmed.contains(concat!("De", "fault for"))),
+            !(trimmed.starts_with("impl") && trimmed.contains("Default for")),
             "production source must not add {trait_name} impls as implicit initializer surface: {line}"
         );
     }
@@ -336,7 +331,7 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
     for forbidden in [
         "TapEvent::default",
         "Evidence::default",
-        concat!("Frame", "Flags::default"),
+        "FrameFlags::default",
         "FrameLabelMask::default",
         "TapFrameMeta::default",
         "LaneStorageLeaseSet::default",
@@ -362,13 +357,13 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
 fn production_sources_keep_absence_codes_named_by_meaning() {
     let production = read_production_rs_tree("src");
     for forbidden in [
-        concat!("PROGRAM_IMAGE_", "NO", "_ROUTE_CONTROLLER"),
-        concat!("EventSemanticKind::", "O", "ther"),
-        concat!("EVENT_CURSOR_", "NO", "_STATE"),
-        concat!("NO", "_SELECTED_ARM"),
-        concat!("NO", "_ACTIVE_LANE"),
-        concat!("RouteTable::", "NO", "_FRAME"),
-        concat!("Self::", "NO", "_FRAME"),
+        "PROGRAM_IMAGE_NO_ROUTE_CONTROLLER",
+        "EventSemanticKind::Other",
+        "EVENT_CURSOR_NO_STATE",
+        "NO_SELECTED_ARM",
+        "NO_ACTIVE_LANE",
+        "RouteTable::NO_FRAME",
+        "Self::NO_FRAME",
         "clamped to the",
         "u16::MAX, 0",
         "fn invalidate(&mut self)",
@@ -427,17 +422,14 @@ fn wire_codec_errors_do_not_carry_static_text() {
     let matrix_gate = read(".github/scripts/check_message_heavy_matrix.sh");
 
     for forbidden in [
-        concat!("Invalid(&'", "static str)"),
-        concat!("CodecError::", "Invalid"),
-        concat!("CodecError::", "Invalid("),
+        "Invalid(&'static str)",
+        "CodecError::Invalid",
+        "CodecError::Invalid(",
         "\n    Invalid,\n",
-        concat!("ERR_", "PAYLOAD_LEN"),
-        concat!("ERR_", "ZERO_PAYLOAD"),
-        concat!("ERR_", "BOOLEAN_PAYLOAD"),
-        concat!(
-            "require_exact_len(input.as_bytes().len(), 20, ",
-            "\"payload length\")"
-        ),
+        "ERR_PAYLOAD_LEN",
+        "ERR_ZERO_PAYLOAD",
+        "ERR_BOOLEAN_PAYLOAD",
+        "require_exact_len(input.as_bytes().len(), 20, \"payload length\")",
     ] {
         assert!(
             !production.contains(forbidden)
@@ -550,7 +542,7 @@ fn production_has_no_source_location_diagnostic_plumbing() {
         "source-location diagnostic module must not return"
     );
     for forbidden in [
-        concat!("Call", "site"),
+        "Callsite",
         "core::panic::Location",
         "panic::Location",
         "Location::caller()",
@@ -709,7 +701,7 @@ fn tap_ring_storage_shape_is_a_single_type_sized_ring() {
 #[test]
 fn source_tree_does_not_retain_impossible_test_only_helpers() {
     let source = read_all_rs_tree("src");
-    let forbidden_route_ack_dispatch = concat!("dispatch_", "topo", "logy", "_ack_with_handle");
+    let forbidden_route_ack_dispatch = "dispatch_topology_ack_with_handle";
     for forbidden in [
         "CpCommand",
         "PendingEffect",
@@ -721,8 +713,8 @@ fn source_tree_does_not_retain_impossible_test_only_helpers() {
         "run_effect_step",
         "after_local_effect",
         forbidden_route_ack_dispatch,
-        concat!("syn", "thetic", "_for_", "test"),
-        concat!("transport_", "for_", "test"),
+        "synthetic_for_test",
+        "transport_for_test",
         "add_rendezvous_auto",
         "NonNull::dangling",
         "receipt: None",

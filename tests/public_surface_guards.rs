@@ -334,13 +334,13 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_resolver_lifecycle_internal_only(
     let owner_src = read("src/session/brand.rs");
 
     for forbidden in [
-        concat!("src/session/", "cap.rs"),
-        concat!("src/session/", "cap"),
-        concat!("src/session/", "cap/atomic_codecs.rs"),
-        concat!("src/session/", "cap/resource_kinds.rs"),
-        concat!("src/session/", "cap", "/mi", "nt/header.rs"),
-        concat!("src/session/", "cap", "/mi", "nt/token.rs"),
-        concat!("src/session/", "cap", "/mi", "nt/error.rs"),
+        "src/session/cap.rs",
+        "src/session/cap",
+        "src/session/cap/atomic_codecs.rs",
+        "src/session/cap/resource_kinds.rs",
+        "src/session/cap/mint/header.rs",
+        "src/session/cap/mint/token.rs",
+        "src/session/cap/mint/error.rs",
     ] {
         assert!(
             !repo_path(forbidden).exists(),
@@ -362,12 +362,12 @@ fn core_resource_kind_catalogue_keeps_mgmt_and_resolver_lifecycle_internal_only(
             "core must not remain the public owner of mgmt/resolver lifecycle kinds: {forbidden}"
         );
     }
-    let forbidden_control_token = ["Control", "Token"].concat();
-    let forbidden_cap_header = ["Cap", "Header"].concat();
+    let forbidden_control_token = "ControlToken";
+    let forbidden_cap_header = "CapHeader";
     assert!(
-        !owner_src.contains(&forbidden_control_token)
-            && !owner_src.contains(&forbidden_cap_header)
-            && !runtime_source().contains(&forbidden_cap_header),
+        !owner_src.contains(forbidden_control_token)
+            && !owner_src.contains(forbidden_cap_header)
+            && !runtime_source().contains(forbidden_cap_header),
         "brand owner witness must not retain raw token/header session substrate"
     );
     for forbidden in [
@@ -418,7 +418,7 @@ fn runtime_surface_hides_tap_storage_resource() {
 
     for forbidden in [
         "TapBatch",
-        concat!("Raw", "Event"),
+        "RawEvent",
         "for_each_since",
         "install_ring",
         "push(",
@@ -510,10 +510,10 @@ fn message_and_wire_codec_boundaries_stay_separated() {
         );
     }
     for forbidden in [
-        concat!("ALLOWS", "_ZERO_LENGTH"),
+        "ALLOWS_ZERO_LENGTH",
         "RecvPayloadMode",
         "RecvPayloadSource",
-        concat!("Zero", "Length"),
+        "ZeroLength",
     ] {
         assert!(
             !wire.contains(forbidden) && !recv_kernel.contains(forbidden),
@@ -583,8 +583,8 @@ fn tap_surface_has_one_public_entry_and_internal_event_construction() {
     for forbidden in [
         "RING_BUFFER_SIZE",
         "USER_EVENT_RANGE_END",
-        concat!("lane", "_open", "_tap", "_event", "_id"),
-        concat!("raw_event(", "self.now32(), 0x0100"),
+        "lane_open_tap_event_id",
+        "raw_event(self.now32(), 0x0100",
     ] {
         assert!(
             !tap_impl.contains(forbidden),

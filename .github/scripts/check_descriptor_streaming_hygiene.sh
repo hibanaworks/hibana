@@ -11,7 +11,8 @@ DEAD_CODE_ALLOW='allow[[:space:]]*\([^]]*dead[_]code'
 DEAD_CODE_SPLIT_ALLOW='allow[[:space:]]*\([^]]*dead[[:space:]]*["'\'']?[[:space:]]*[_][[:space:]]*["'\'']?[[:space:]]*code'
 check_absent "${DEAD_CODE_ALLOW}|cfg_attr[^\n]*${DEAD_CODE_ALLOW}|${DEAD_CODE_SPLIT_ALLOW}" \
   "dead_code allow is forbidden" \
-  src tests .github
+  src tests .github \
+  --glob '!tests/semantic_surface/source_residue_pico_hygiene.rs'
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

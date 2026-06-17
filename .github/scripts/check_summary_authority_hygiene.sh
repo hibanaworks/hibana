@@ -71,9 +71,9 @@ check_required \
   "Program resident image must be compacted through private bucket storage" \
   src/g/role_projection.rs
 
-ROLE_IMAGE_SOURCE_PATTERN='Role''Image''Source'
-ROLE_DEBUG_FACTS_PATTERN='Role''Debug''Facts'
-ROLE_DEBUG_FOOTPRINT_PATTERN='Role''Debug''Footprint'
+ROLE_IMAGE_SOURCE_PATTERN='RoleImageSource'
+ROLE_DEBUG_FACTS_PATTERN='RoleDebugFacts'
+ROLE_DEBUG_FOOTPRINT_PATTERN='RoleDebugFootprint'
 check_absent_multiline \
   "\\b${ROLE_IMAGE_SOURCE_PATTERN}\\b|\\b${ROLE_DEBUG_FACTS_PATTERN}\\b|\\b${ROLE_DEBUG_FOOTPRINT_PATTERN}\\b|compiled_program_image\\(|program_image\\(|compact_blob_len\\(|largest_section_bytes\\(|write_lane_indices\\(" \
   "test/debug-only role source metadata, lowering-image backpointer, or measurement helper detected" \

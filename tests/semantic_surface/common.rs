@@ -99,7 +99,46 @@ pub(crate) fn read_all_rs_tree(path: &str) -> String {
     read_rs_tree_filtered(path, true)
 }
 
-pub(crate) fn read_tree(path: &str) -> String {
+pub(crate) fn read_all_rs_tree_except(path: &str, excluded: &[&str]) -> String {
+    fn collect_rs_files(dir: &Path, parts: &mut Vec<PathBuf>) {
+        let entries =
+            fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
+                .path();
+            if path.is_dir() {
+                collect_rs_files(&path, parts);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                parts.push(path);
+            }
+        }
+    }
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.join(path);
+    let mut parts = Vec::new();
+    collect_rs_files(&root, &mut parts);
+    parts.sort();
+    let mut source = String::new();
+    for part in parts {
+        let relative = part
+            .strip_prefix(&manifest)
+            .expect("test path must stay under manifest dir")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if excluded.iter().any(|candidate| *candidate == relative) {
+            continue;
+        }
+        source.push_str(
+            &fs::read_to_string(&part)
+                .unwrap_or_else(|err| panic!("read {} failed: {err}", part.display())),
+        );
+    }
+    source
+}
+
+pub(crate) fn read_tree_except(path: &str, excluded: &[&str]) -> String {
     fn collect_files(dir: &Path, parts: &mut Vec<PathBuf>) {
         let entries =
             fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()));
@@ -115,12 +154,21 @@ pub(crate) fn read_tree(path: &str) -> String {
         }
     }
 
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.join(path);
     let mut parts = Vec::new();
     collect_files(&root, &mut parts);
     parts.sort();
     let mut source = String::new();
     for part in parts {
+        let relative = part
+            .strip_prefix(&manifest)
+            .expect("test path must stay under manifest dir")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if excluded.iter().any(|candidate| *candidate == relative) {
+            continue;
+        }
         source.push_str(
             &fs::read_to_string(&part)
                 .unwrap_or_else(|err| panic!("read {} failed: {err}", part.display())),

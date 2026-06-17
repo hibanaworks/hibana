@@ -41,17 +41,13 @@ fn repo_test_support_modules_are_not_orphaned() {
 
 #[test]
 fn public_surface_and_gates_do_not_retain_forbidden_role_token_api() {
-    let forbidden_role_token = concat!("g::", "Role<");
+    let forbidden_role_token = "g::Role<";
     for (name, source) in [
         ("production source", read_production_rs_tree("src")),
         ("README", read("README.md")),
         (
             "size snapshot gate",
             read(".github/scripts/check_size_snapshot_regression.sh"),
-        ),
-        (
-            "surface hygiene gate",
-            read(".github/scripts/check_surface_hygiene.sh"),
         ),
         (
             "final form measurement gate",
@@ -63,4 +59,10 @@ fn public_surface_and_gates_do_not_retain_forbidden_role_token_api() {
             "{name} must not retain forbidden public role-token API residue"
         );
     }
+    let surface_hygiene_gate = read(".github/scripts/check_surface_hygiene.sh");
+    assert!(
+        surface_hygiene_gate.contains(forbidden_role_token)
+            && surface_hygiene_gate.contains("!tests/semantic_surface/source_residue_support.rs"),
+        "surface hygiene gate must check forbidden role-token residue with explicit guard-file scope"
+    );
 }
