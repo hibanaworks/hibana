@@ -18,7 +18,9 @@ pub(super) struct LeasedState<T> {
 impl<T> LeasedState<T> {
     #[inline(always)]
     pub(super) unsafe fn init_from_ptr(dst: *mut Self, ptr: *mut T) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: endpoint arena initialization writes this unpublished
+        `LeasedState` cell with the arena section pointer that will back the
+        state for the endpoint lifetime. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
         }
@@ -33,7 +35,9 @@ impl<T> Deref for LeasedState<T> {
         if self.ptr.is_null() {
             crate::invariant();
         }
-        /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
+        /* SAFETY: `LeasedState` stores an endpoint-arena state pointer written
+        during initialization; shared deref is tied to `&self` and only reads
+        the pinned state section. */
         unsafe { &*self.ptr }
     }
 }
@@ -44,7 +48,9 @@ impl<T> DerefMut for LeasedState<T> {
         if self.ptr.is_null() {
             crate::invariant();
         }
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+        /* SAFETY: `&mut self` is the endpoint state's mutation token, so the
+        returned reference is the only mutable borrow of the pinned state
+        section for this operation. */
         unsafe { &mut *self.ptr }
     }
 }

@@ -39,7 +39,9 @@ where
             return GlobalFrontierObservedState::EMPTY;
         }
         let (scratch_ptr, layout, _) = self.global_frontier_scratch_parts();
-        /* SAFETY: frontier observation storage is carved from the endpoint scratch layout at checked aligned offsets. */
+        /* SAFETY: frontier observation storage is carved from the endpoint
+        scratch layout at checked aligned offsets, and this path copies the
+        initialized shared state without mutating scratch. */
         unsafe { *frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout) }
     }
 
@@ -49,7 +51,9 @@ where
     ) -> &mut GlobalFrontierObservedState {
         self.init_global_frontier_scratch_if_needed();
         let (scratch_ptr, layout, _) = self.global_frontier_scratch_parts();
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+        /* SAFETY: the endpoint owns the frontier scratch section for this
+        operation. Initialization above has written the global observed state,
+        and `&mut self` is the mutation token for that scratch cell. */
         unsafe { &mut *frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout) }
     }
 
@@ -75,7 +79,9 @@ where
             frontier_entry_capacity,
         );
         cached_key.clear();
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: global frontier scratch is still marked uninitialized. The
+        observed-state cell is written after the active-entry and cached-key
+        scratch buffers are cleared, before the state flag is set. */
         unsafe {
             frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout)
                 .write(GlobalFrontierObservedState::EMPTY);

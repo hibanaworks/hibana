@@ -158,7 +158,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     assert!(
         read("tests/cursor_send_recv/session_drop_wake.rs")
             .contains("dropping_live_endpoint_poison_wakes_waiting_peer")
-            && read("tests/offer_decode_receive_evidence.rs")
+            && read("tests/offer_branch_recv_evidence.rs")
                 .contains("forgotten_route_recv_future_leaves_endpoint_fail_closed"),
         "session fault cleanup must be behavior-covered instead of pinned to private cleanup helper names"
     );

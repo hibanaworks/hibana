@@ -77,13 +77,17 @@ impl ProgramImageValidationData {
         CompiledProgramView {
             segments: &self.segments,
             len: self.len,
-            atom_rows: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
+            atom_rows: /* SAFETY: `ProgramImageValidationData` stores the atom
+            row pointer and row count produced by lowering the same compiled
+            image. */ unsafe {
                 core::slice::from_raw_parts(self.atom_rows.as_ptr(), self.atom_row_len)
             },
-            scope_markers: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
+            scope_markers: /* SAFETY: scope-marker pointer and count are paired
+            fields in this validation data and are read only for validation. */ unsafe {
                 core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
             },
-            resolver_rows: /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe {
+            resolver_rows: /* SAFETY: resolver-row pointer and count are paired
+            fields in this validation data and are read only for validation. */ unsafe {
                 core::slice::from_raw_parts(self.resolver_rows.as_ptr(), self.resolver_row_len)
             },
         }

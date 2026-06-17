@@ -28,7 +28,7 @@ STD_FEATURE_WORDING='std fea''ture|optional `'"std"'`|host diagn''ostics'
 FRAME_FLAGS_TOKEN='Frame''Flags'
 FRAME_FRAGMENT_TOKENS='\b(FR''AG|ID''X|TO''T)\b'
 TAP_FLAGS_PATTERN='Tap''Frame''Meta[^\n]*flags'
-ENDPOINT_RESOLVER_FLAGS_PATTERN='endpoint_resolver_args\([^\n]*,[^\n]*,[^\n]*\)'
+ENDPOINT_RESOLVER_REPLAY_PATTERN='endpoint_resolver_args|emit_endpoint_resolver_audit|ResolverSlot::Endpoint(Rx|Tx)|hash_tap_event|emit_resolver_audit_replay|EndpointRxAuditPlan'
 DEAD_CODE_ALLOW_PATTERN='allow[[:space:]]*\([^]]*dead[_]code'
 DEAD_CODE_SPLIT_ALLOW_PATTERN='allow[[:space:]]*\([^]]*dead[[:space:]]*["'\'']?[[:space:]]*[_][[:space:]]*["'\'']?[[:space:]]*code'
 
@@ -52,7 +52,7 @@ check_absent \
   "localside wrapper-future or endpoint-stashed preview residue detected" \
   src/endpoint.rs \
   src/endpoint/kernel/recv.rs \
-  src/endpoint/kernel/decode.rs \
+  src/endpoint/kernel/branch_recv.rs \
   src/endpoint/kernel/offer.rs
 
 check_absent \
@@ -81,7 +81,7 @@ check_absent \
   src README.md .github
 
 check_absent \
-  "${FRAME_FLAGS_TOKEN}|${FRAME_FRAGMENT_TOKENS}|${TAP_FLAGS_PATTERN}|${ENDPOINT_RESOLVER_FLAGS_PATTERN}" \
+  "${FRAME_FLAGS_TOKEN}|${FRAME_FRAGMENT_TOKENS}|${TAP_FLAGS_PATTERN}|${ENDPOINT_RESOLVER_REPLAY_PATTERN}" \
   "transport fragmentation vocabulary residue" \
   src README.md
 

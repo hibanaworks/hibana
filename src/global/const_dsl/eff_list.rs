@@ -502,7 +502,9 @@ impl EffList {
     }
 
     pub(crate) const fn scope_markers(&self) -> &[ScopeMarker] {
-        /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+        /* SAFETY: `EffList` owns initialized scope-marker rows from the compiled const
+        descriptor image, and `scope_marker_len` is the row count carried with
+        that pointer for a shared read-only slice. */
         unsafe { core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len) }
     }
 }

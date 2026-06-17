@@ -226,7 +226,7 @@ fn forgotten_started_offer_future_leaves_endpoint_fail_closed() {
 }
 
 #[test]
-fn localside_offer_decode_sizes_stay_compact() {
+fn localside_branch_recv_sizes_stay_compact() {
     with_runtime_workspace(|slab| {
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let transport = TestTransport::new();

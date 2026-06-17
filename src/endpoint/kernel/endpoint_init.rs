@@ -34,7 +34,9 @@ use super::layout::LeasedState;
 
 #[inline(always)]
 unsafe fn section_ptr<T>(base: *mut u8, section: EndpointArenaSection) -> *mut T {
-    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+    /* SAFETY: `CursorEndpointStorageLayout` produced `section` for the endpoint
+    arena passed by the rendezvous lease. The section offset/alignment/size were
+    checked when the arena layout was built. */
     unsafe { base.add(section.offset()).cast::<T>() }
 }
 
@@ -77,7 +79,10 @@ where
         public_slot_ownership,
         session,
     } = init;
-    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+    /* SAFETY: `init_empty_from_compiled` passes the unpublished
+    `CursorEndpoint` header field set and the endpoint arena base. This block
+    initializes public state, lane slots, and session context before returning
+    the endpoint to the rendezvous lease. */
     unsafe {
         super::lane_slots::LaneSlotArray::init_from_parts(
             ::core::ptr::addr_of_mut!((*dst).ports),
@@ -111,8 +116,8 @@ where
         ::core::ptr::addr_of_mut!((*dst).public_offer_state).write(super::offer::OfferState::new());
         ::core::ptr::addr_of_mut!((*dst).public_route_branch).write(None);
         ::core::ptr::addr_of_mut!((*dst).public_recv_state).write(super::recv::RecvState::new());
-        ::core::ptr::addr_of_mut!((*dst).public_decode_state)
-            .write(super::decode::DecodeState::empty());
+        ::core::ptr::addr_of_mut!((*dst).public_branch_recv_state)
+            .write(super::branch_recv::BranchRecvState::empty());
         ::core::ptr::addr_of_mut!((*dst).public_send_state).write(super::core::SendState::Done);
         ::core::ptr::addr_of_mut!((*dst).session).write(session);
     }
@@ -127,7 +132,10 @@ unsafe fn init_endpoint_cursor<'r, const ROLE: u8, T>(
 ) where
     T: Transport + 'r,
 {
-    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+    /* SAFETY: `dst.cursor` is still unpublished, and all cursor backing
+    columns come from the endpoint arena sections selected by the compiled role
+    descriptor. `EventCursor::init_from_compiled` initializes the cursor before
+    endpoint publication. */
     unsafe {
         EventCursor::init_from_compiled(
             ::core::ptr::addr_of_mut!((*dst).cursor),
@@ -158,7 +166,9 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T>(
 ) where
     T: Transport + 'r,
 {
-    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
+    /* SAFETY: route-state initialization owns the unpublished endpoint route
+    fields. Every pointer passed to `RouteState::init_empty` is a section of the
+    endpoint arena, and active-lane density is filled before route state reads it. */
     unsafe {
         let active_lane_dense_by_lane = section_ptr::<DenseLaneOrdinal>(
             arena_storage,
@@ -252,7 +262,9 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
 ) where
     T: Transport + 'r,
 {
-    /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+    /* SAFETY: frontier initialization owns the unpublished endpoint frontier
+    field. The root rows, active slots, observation slots, and offer-entry slots
+    are disjoint arena sections selected by the compiled endpoint layout. */
     unsafe {
         let frontier_state =
             section_ptr::<FrontierState>(arena_storage, arena_layout.frontier_state());
@@ -342,7 +354,9 @@ pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T>(
     let storage_layout =
         super::cursor_endpoint_storage_layout::<ROLE, T>(&arena_layout, lane_slot_count);
     let storage_base = dst.cast::<u8>();
-    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
+    /* SAFETY: the rendezvous lease passes the unpublished endpoint allocation.
+    Header, cursor, route, and frontier owners initialize disjoint fields and
+    arena sections before the endpoint is made reachable. */
     unsafe {
         init_endpoint_header(EndpointHeaderInit {
             dst,
@@ -372,7 +386,9 @@ pub(crate) unsafe fn write_port_slot<'r, const ROLE: u8, T>(
 ) where
     T: Transport + 'r,
 {
-    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+    /* SAFETY: endpoint attachment owns `dst` while installing lane resources.
+    `logical_lane` indexes the initialized port-slot array, and the write occurs
+    before a public endpoint borrow can access that lane. */
     unsafe {
         (&mut *dst).ports[logical_lane] = Some(port);
     }
@@ -385,7 +401,9 @@ pub(crate) unsafe fn write_guard_slot<'r, const ROLE: u8, T>(
 ) where
     T: Transport + 'r,
 {
-    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+    /* SAFETY: endpoint attachment owns `dst` while installing lane resources.
+    `logical_lane` indexes the initialized guard-slot array, and this consumes
+    the guard into that one slot. */
     unsafe {
         (&mut *dst).guards[logical_lane] = Some(guard);
     }
@@ -395,7 +413,9 @@ pub(crate) unsafe fn finish_init<'r, const ROLE: u8, T>(dst: *mut CursorEndpoint
 where
     T: Transport + 'r,
 {
-    /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+    /* SAFETY: endpoint initialization still owns `dst`; lane offer state is
+    synchronized after all lane slots and route/frontier sections have been
+    initialized and before endpoint publication. */
     unsafe {
         (&mut *dst).sync_lane_offer_state();
     }

@@ -1,34 +1,5 @@
 use super::common::*;
 
-fn call_args(source: &str, name: &str) -> Vec<String> {
-    let pattern = format!("{name}(");
-    let mut out = Vec::new();
-    let mut cursor = 0;
-    while let Some(found) = source[cursor..].find(&pattern) {
-        let args_start = cursor + found + pattern.len();
-        let mut depth = 0usize;
-        let mut args_end = None;
-        for (offset, ch) in source[args_start..].char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' if depth == 0 => {
-                    args_end = Some(args_start + offset);
-                    break;
-                }
-                ')' => depth -= 1,
-                _ => {}
-            }
-        }
-        if let Some(end) = args_end {
-            out.push(source[args_start..end].to_owned());
-            cursor = end + 1;
-        } else {
-            break;
-        }
-    }
-    out
-}
-
 #[test]
 fn production_and_gates_do_not_reintroduce_std_feature_branches() {
     let production = read_production_rs_tree("src");
@@ -79,11 +50,20 @@ fn production_sources_do_not_reintroduce_transport_fragmentation_axis() {
             );
         }
     }
-    for args in call_args(&production, "endpoint_resolver_args") {
-        let arg_count = args.split(',').filter(|arg| !arg.trim().is_empty()).count();
+    for forbidden in [
+        "endpoint_resolver_args",
+        "emit_endpoint_resolver_audit",
+        "ResolverSlot::EndpointRx",
+        "ResolverSlot::EndpointTx",
+        "hash_tap_event",
+        "emit_resolver_audit_replay",
+        "EndpointRxAuditPlan",
+        "publish_endpoint_rx_audit",
+        "build_endpoint_rx_audit_plan",
+    ] {
         assert!(
-            arg_count <= 2,
-            "endpoint resolver audit args must not accept a flags axis: {args}"
+            !production.contains(forbidden),
+            "endpoint resolver replay audit vocabulary must not return: {forbidden}"
         );
     }
 }

@@ -1,18 +1,18 @@
 use crate::endpoint::{
-    Endpoint, RouteBranch, futures::DecodeFuture, futures::OfferFuture, futures::OfferFutureLease,
-    futures::RawOfferFuture, futures::RawRecvFuture, futures::RecvFuture, futures::RecvFutureLease,
-    kernel, send,
+    Endpoint, RouteBranch, futures::BranchRecvFuture, futures::OfferFuture,
+    futures::OfferFutureLease, futures::RawOfferFuture, futures::RawRecvFuture,
+    futures::RecvFuture, futures::RecvFutureLease, kernel, send,
 };
 use core::mem::size_of;
 
 type RecvFut = RecvFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
-type DecodeFut = DecodeFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
+type DecodeFut = BranchRecvFuture<'static, 'static, 0, crate::g::Msg<7, ()>>;
 type RecvFutU8 = RecvFuture<'static, 'static, 0, crate::g::Msg<8, u8>>;
 type RecvFutU64 = RecvFuture<'static, 'static, 0, crate::g::Msg<9, u64>>;
 type RecvFutBytes = RecvFuture<'static, 'static, 0, crate::g::Msg<10, [u8; 32]>>;
-type DecodeFutU8 = DecodeFuture<'static, 'static, 0, crate::g::Msg<11, u8>>;
-type DecodeFutU64 = DecodeFuture<'static, 'static, 0, crate::g::Msg<12, u64>>;
-type DecodeFutBytes = DecodeFuture<'static, 'static, 0, crate::g::Msg<13, [u8; 32]>>;
+type DecodeFutU8 = BranchRecvFuture<'static, 'static, 0, crate::g::Msg<11, u8>>;
+type DecodeFutU64 = BranchRecvFuture<'static, 'static, 0, crate::g::Msg<12, u64>>;
+type DecodeFutBytes = BranchRecvFuture<'static, 'static, 0, crate::g::Msg<13, [u8; 32]>>;
 type SendFut = send::SendFuture<'static, 'static, 'static, 0>;
 type RawOfferFut = RawOfferFuture<'static, 'static, 0>;
 type RawRecvFut = RawRecvFuture<'static, 'static, 0>;
@@ -56,7 +56,7 @@ fn endpoint_surface_size_gates_hold() {
     );
     assert!(
         size_of::<DecodeFut>() <= 3 * WORD,
-        "DecodeFuture must stay within the 3-word budget"
+        "BranchRecvFuture must stay within the 3-word budget"
     );
 }
 
@@ -95,8 +95,8 @@ fn send_future_and_runtime_descriptor_size_gates_hold() {
         "RecvRuntimeDesc must stay smaller than a pointer-sized descriptor",
     );
     assert!(
-        size_of::<kernel::DecodeRuntimeDesc>() <= 3 * WORD,
-        "DecodeRuntimeDesc must be core plus decode metadata only",
+        size_of::<kernel::BranchRecvRuntimeDesc>() <= 3 * WORD,
+        "BranchRecvRuntimeDesc must be core plus decode metadata only",
     );
     assert!(
         size_of::<kernel::SendRuntimeDesc>() <= 6 * WORD,
@@ -107,7 +107,7 @@ fn send_future_and_runtime_descriptor_size_gates_hold() {
 #[test]
 fn final_form_future_layout_measurement_report() {
     std::println!(
-        "future-layout Endpoint={} RouteBranch={} OfferFuture={} RecvFuture={} DecodeFuture={} SendFuture={} RawOfferFuture={} RawRecvFuture={} OfferFutureLease={} RecvFutureLease={} RecvFutureU8={} RecvFutureU64={} RecvFutureBytes={} DecodeFutureU8={} DecodeFutureU64={} DecodeFutureBytes={}",
+        "future-layout Endpoint={} RouteBranch={} OfferFuture={} RecvFuture={} BranchRecvFuture={} SendFuture={} RawOfferFuture={} RawRecvFuture={} OfferFutureLease={} RecvFutureLease={} RecvFutureU8={} RecvFutureU64={} RecvFutureBytes={} BranchRecvFutureU8={} BranchRecvFutureU64={} BranchRecvFutureBytes={}",
         size_of::<Endpoint<'static, 0>>(),
         size_of::<RouteBranch<'static, 'static, 0>>(),
         size_of::<OfferFuture<'static, 'static, 0>>(),

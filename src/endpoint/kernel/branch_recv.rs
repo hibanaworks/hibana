@@ -1,18 +1,17 @@
-//! Decode-path helpers for `RouteBranch`.
+//! Branch-recv path helpers for `RouteBranch::recv`.
 
-mod audit;
 mod finish;
 mod state;
 
 use core::task::Poll;
 
-pub(crate) use state::{DecodeRestore, DecodeState};
+pub(crate) use state::{BranchRecvRestore, BranchRecvState};
 
 use super::decision_state::RouteState;
 use super::{
     core::{
-        BranchPreviewView, CommitDelta, CursorEndpoint, DecodeRuntimeDesc, MaterializedRouteBranch,
-        PreparedCommitDelta,
+        BranchPreviewView, BranchRecvRuntimeDesc, CommitDelta, CursorEndpoint,
+        MaterializedRouteBranch, PreparedCommitDelta,
         prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
         scope_slot_for_route_from_cursor,
     },
@@ -23,41 +22,58 @@ use super::{
 use crate::{
     endpoint::{RecvError, RecvResult},
     global::typestate::{EventCursor, RecvMeta, StateIndex, state_index_to_usize},
+    observe::ids,
     transport::{Transport, wire::Payload},
 };
 
 #[derive(Clone, Copy)]
-struct EndpointRxAuditPlan {
+struct EndpointRxEventPlan {
     lane: u8,
     label: u8,
+    event_id: u16,
+}
+
+impl EndpointRxEventPlan {
+    #[inline]
+    const fn from_branch(branch: BranchPreviewView) -> Self {
+        Self {
+            lane: branch.branch_meta.lane_wire,
+            label: branch.label,
+            event_id: if branch.branch_meta.origin.is_session() {
+                ids::ENDPOINT_SESSION
+            } else {
+                ids::ENDPOINT_RECV
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
-enum DecodeProgressPlan {
+enum BranchRecvProgressPlan {
     Wire { delta: CommitDelta },
     NonWire { delta: CommitDelta },
 }
 
-struct DecodeCommitPlan<'r> {
+struct BranchRecvCommitPlan<'r> {
     branch: BranchCommitPlan,
-    audit: EndpointRxAuditPlan,
-    progress: DecodeProgressPlan,
+    event: EndpointRxEventPlan,
+    progress: BranchRecvProgressPlan,
     committed_payload: Payload<'r>,
 }
 
-enum PreparedDecodeProgressPlan {
+enum PreparedBranchRecvProgressPlan {
     Wire { delta: PreparedCommitDelta },
     NonWire { delta: PreparedCommitDelta },
 }
 
-struct PreparedDecodePublishPlan<'r> {
+struct PreparedBranchRecvPublishPlan<'r> {
     branch: BranchCommitPlan,
-    audit: EndpointRxAuditPlan,
-    progress: PreparedDecodeProgressPlan,
+    event: EndpointRxEventPlan,
+    progress: PreparedBranchRecvProgressPlan,
     committed_payload: Payload<'r>,
 }
 
-struct DecodeCommitBuilder<'build, 'r, const ROLE: u8, T>
+struct BranchRecvCommitBuilder<'build, 'r, const ROLE: u8, T>
 where
     T: Transport + 'r,
 {
@@ -68,6 +84,6 @@ where
 }
 
 #[inline]
-pub(super) fn decode_phase_invariant() -> RecvError {
+pub(super) fn branch_recv_phase_invariant() -> RecvError {
     RecvError::PhaseInvariant
 }

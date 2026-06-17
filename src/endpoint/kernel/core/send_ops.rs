@@ -1,8 +1,8 @@
 use super::{
-    CursorEndpoint, CursorInvariantError, Lane, Payload, PendingSendIo, Poll, ResolverSlot,
-    RouteArmToken, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome,
-    SendMeta, SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep,
-    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
+    CursorEndpoint, CursorInvariantError, Payload, PendingSendIo, Poll, RouteArmToken,
+    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome, SendMeta,
+    SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep, StagedSendPayload,
+    StateIndex, TapFrameMeta, Transport, ids, lane_port,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
 use crate::global::typestate::state_index_to_usize;
@@ -212,19 +212,6 @@ where
 
         self.evaluate_dynamic_resolver(&meta, descriptor.logical_label())?;
 
-        let lane = Lane::new(meta.lane as u32);
-        // EndpointTx resolver audit is an attempt-side replay tuple for the
-        // resolver input that authorized this send attempt. The observable
-        // ENDPOINT_SEND / ENDPOINT_SESSION event is emitted only from the
-        // post-transport commit path.
-        self.emit_endpoint_resolver_audit(
-            ResolverSlot::EndpointTx,
-            ids::ENDPOINT_SEND,
-            self.sid.raw(),
-            Self::endpoint_resolver_args(lane, meta.label),
-            lane,
-        );
-
         Ok(())
     }
 
@@ -240,7 +227,9 @@ where
             lane_port::scratch_ptr(port)
         };
         let staged_send = {
-            let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
+            let scratch = /* SAFETY: `scratch_ptr` comes from the selected
+            lane port's send scratch. This send operation owns the mutable
+            endpoint borrow while staging the payload into that scratch buffer. */ unsafe { &mut *scratch_ptr };
             self.stage_send_payload(payload, scratch)?
         };
         let commit_plan = self.build_send_commit_plan(preview_cursor_index, meta)?;
@@ -253,7 +242,10 @@ where
         let port = self.port_for_lane(meta.lane as usize);
         let lane = port.lane();
         let payload_view = {
-            let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*scratch_ptr };
+            let scratch = /* SAFETY: the send payload was staged into this same
+            lane scratch above, and `encoded_len` is the length returned by the
+            encoder for that buffer. */
+                unsafe { &*scratch_ptr };
             Payload::new(&scratch[..encoded_len])
         };
         let outgoing = crate::transport::Outgoing {

@@ -46,7 +46,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         op: unsafe fn(core::ptr::NonNull<()>, carrier::PackedEndpointHandle),
     ) {
         unsafe {
-            /* SAFETY: `self.ptr` is this endpoint's rendezvous-installed
+            /* SAFETY: handle-only carrier calls use this endpoint's rendezvous-installed
             `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
             the same generation, and `&mut self` excludes a second public
             endpoint operation while the callback mutates resident state. */
@@ -64,7 +64,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         ) -> kernel::PublicOpLease,
     ) -> kernel::PublicOpLease {
         unsafe {
-            /* SAFETY: `self.ptr` is this endpoint's rendezvous-installed
+            /* SAFETY: lease-producing carrier calls use this endpoint's
+            rendezvous-installed
             `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
             the same generation, and `&mut self` excludes a second public
             endpoint operation while the callback mutates resident state. */
@@ -84,7 +85,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         init: &kernel::SendInit,
     ) -> kernel::PublicOpLease {
         unsafe {
-            /* SAFETY: `self.ptr` is this endpoint's rendezvous-installed
+            /* SAFETY: send-init carrier calls use this endpoint's
+            rendezvous-installed
             `KernelEndpointHeader`, `self.handle` is the packed carrier lease for
             the same generation, and `init` is a caller-owned initialized
             `SendInit` slot read only during this carrier callback. */
@@ -148,13 +150,13 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
 
     #[inline]
     #[must_use]
-    pub(super) fn begin_public_decode_state(&mut self) -> kernel::PublicOpLease {
-        self.call_lease_op(self.ops().begin_public_decode_state)
+    pub(super) fn begin_public_branch_recv_state(&mut self) -> kernel::PublicOpLease {
+        self.call_lease_op(self.ops().begin_public_branch_recv_state)
     }
 
     #[inline]
-    pub(super) fn reset_public_decode_state(&mut self) {
-        self.call_handle_op(self.ops().reset_public_decode_state);
+    pub(super) fn reset_public_branch_recv_state(&mut self) {
+        self.call_handle_op(self.ops().reset_public_branch_recv_state);
     }
     #[inline]
     pub(super) fn preview_send(
@@ -203,7 +205,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    pub(super) fn poll_decode(
+    pub(super) fn poll_branch_recv(
         &mut self,
         logical_label: u8,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
@@ -212,9 +214,9 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         let mut out = core::mem::MaybeUninit::<Poll<RecvResult<carrier::RawPayload>>>::uninit();
         /* SAFETY: `self.ptr` identifies this endpoint's carrier header,
         `self.handle` names the same generation, and the local `out` slot is
-        written by `poll_decode` before `assume_init` reads it. */
+        written by `poll_branch_recv` before `assume_init` reads it. */
         unsafe {
-            (self.ops().poll_decode)(carrier::DecodePollRequest {
+            (self.ops().poll_branch_recv)(carrier::BranchRecvPollRequest {
                 ptr: self.erased_ptr(),
                 handle: self.handle,
                 logical_label,

@@ -224,7 +224,7 @@ impl RouteCommitRowSetBuilder {
         if cap > u16::MAX as usize {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: endpoint route initialization passes an unpublished `RouteCommitRowSetBuilder`; checked capacity is written before any builder borrow. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).max_len).write(cap as u16);
         }
@@ -388,7 +388,7 @@ impl RouteArmStackView {
         if depth > u8::MAX as usize {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `RouteState::init_empty` passes an unpublished `RouteArmStackView`; route-arm column, dense map, lane counts, and depth are installed before exposure. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
             core::ptr::addr_of_mut!((*dst).lane_dense_by_lane).write(lane_dense_by_lane);
@@ -399,7 +399,7 @@ impl RouteArmStackView {
         let total = crate::invariant_some(active_lane_count.checked_mul(depth));
         let mut idx = 0usize;
         while idx < total {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < active_lane_count * depth` selects one unpublished route-arm stack cell; every cell is initialized to EMPTY before publication. */
             unsafe {
                 ptr.add(idx).write(RouteArmState::EMPTY);
             }
@@ -412,7 +412,7 @@ impl RouteArmStackView {
         if lane_idx >= self.lane_slot_count {
             return None;
         }
-        let dense = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_dense_by_lane.add(lane_idx) };
+        let dense = /* SAFETY: `lane_idx < lane_slot_count` bounds this view's dense-lane map; this read only observes the compiled lane-to-dense projection. */ unsafe { *self.lane_dense_by_lane.add(lane_idx) };
         if dense == DENSE_LANE_ABSENT || dense.get() >= self.active_lane_count {
             None
         } else {
@@ -434,7 +434,7 @@ impl RouteArmStackView {
         if arm_idx >= depth {
             return RouteArmState::EMPTY;
         }
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `dense < active_lane_count` and `arm_idx < depth` bound an initialized route-arm cell; shared access copies resident state. */
         unsafe { *self.ptr.add(dense * depth + arm_idx) }
     }
 
@@ -447,7 +447,7 @@ impl RouteArmStackView {
         if arm_idx >= depth {
             return false;
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `dense < active_lane_count` and `arm_idx < depth` bound a route-arm stack cell; `&mut self` owns this mutation. */
         unsafe {
             self.ptr.add(dense * depth + arm_idx).write(state);
         }
@@ -474,7 +474,7 @@ impl LaneOfferStateView {
         if len >= DENSE_LANE_ABSENT.get() {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `RouteState::init_empty` passes an unpublished `LaneOfferStateView`; offer-state column and dense map are installed before lookup. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
             core::ptr::addr_of_mut!((*dst).lane_dense_by_lane).write(lane_dense_by_lane);
@@ -483,7 +483,7 @@ impl LaneOfferStateView {
         }
         let mut idx = 0usize;
         while idx < len {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < len` selects one unpublished lane-offer slot; every active dense lane starts EMPTY before publication. */
             unsafe {
                 ptr.add(idx).write(LaneOfferState::EMPTY);
             }
@@ -496,7 +496,7 @@ impl LaneOfferStateView {
         if lane_idx >= self.lane_slot_count {
             return None;
         }
-        let dense = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_dense_by_lane.add(lane_idx) };
+        let dense = /* SAFETY: `lane_idx < lane_slot_count` bounds this lane-offer dense map; this read only translates to a dense offer-state slot. */ unsafe { *self.lane_dense_by_lane.add(lane_idx) };
         if dense == DENSE_LANE_ABSENT || dense.get() >= self.len {
             None
         } else {
@@ -512,7 +512,7 @@ impl LaneOfferStateView {
         if dense >= self.len {
             return LaneOfferState::EMPTY;
         }
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `dense < len` bounds the initialized lane-offer column; shared access copies the resident offer state. */
         unsafe { *self.ptr.add(dense) }
     }
 
@@ -523,7 +523,7 @@ impl LaneOfferStateView {
             return None;
         }
         Some(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `dense < len` bounds the initialized lane-offer column, and `&mut self` owns this lane mutation. */
             unsafe { &mut *self.ptr.add(dense) },
         )
     }
@@ -581,7 +581,7 @@ impl RouteState {
         storage: RouteStateStorage,
         capacity: RouteStateCapacity,
     ) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: endpoint route initialization passes an unpublished `RouteState`; sub-owners receive disjoint arena columns before exposure. */
         unsafe {
             RouteArmStackView::init(
                 core::ptr::addr_of_mut!((*dst).lane_route_arms),
@@ -644,7 +644,7 @@ impl RouteState {
     pub(super) fn lane_route_arm_len(&self, lane_idx: usize) -> usize {
         match self.lane_offer_states.lane_dense_ordinal(lane_idx) {
             Some(dense) => {
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                /* SAFETY: dense lane comes from this route state's lane-offer view and indexes initialized `lane_route_arm_lens`. */
                 unsafe { *self.lane_route_arm_lens.add(dense) as usize }
             }
             None => 0,
@@ -659,7 +659,7 @@ impl RouteState {
         if input.scope_slot > u16::MAX as usize {
             return None;
         }
-        let len = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
+        let len = /* SAFETY: `dense` was resolved by this route state's lane-offer view and indexes initialized route-arm lengths. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
         let mut idx = 0usize;
         while idx < len {
             let current = self.lane_route_arms.get(input.lane_idx, idx);
@@ -697,7 +697,7 @@ impl RouteState {
         if scope_slot >= self.scope_selected_arm_count {
             return None;
         }
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*self.scope_selected_arms.add(scope_slot) };
+        let slot = /* SAFETY: selected-route preflight bounds `scope_slot` inside selected-arm column; it only reads resident arm/ref. */ unsafe { &*self.scope_selected_arms.add(scope_slot) };
         self.preflight_selected_route_with_effective_slot(SelectedRoutePreflight {
             lane_idx,
             scope,
@@ -728,8 +728,8 @@ impl RouteState {
             crate::invariant();
         }
         let arm = row.selected_arm();
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
-        let len = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
+        let slot = /* SAFETY: prepared route selection bounds `scope_slot` inside selected-arm column, and `&mut self` owns this commit mutation. */ unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
+        let len = /* SAFETY: `dense` came from the lane-offer view and indexes initialized route-arm length for this commit. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
         let mut pos = 0usize;
         while pos < len {
             let current = self.lane_route_arms.get(lane_idx, pos);
@@ -765,7 +765,7 @@ impl RouteState {
         if len >= u8::MAX as usize {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `dense` indexes this lane's route-arm length column, and `len + 1` is bounded by route depth and `u8::MAX`. */
         unsafe {
             self.lane_route_arm_lens.add(dense).write((len as u8) + 1);
         }
@@ -779,7 +779,7 @@ impl RouteState {
         if scope_slot >= self.scope_selected_arm_count {
             return None;
         }
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.scope_selected_arms.add(scope_slot) };
+        let slot = /* SAFETY: selected-arm lookup bounds `scope_slot` inside selected-arm column; this read copies arm/ref state. */ unsafe { *self.scope_selected_arms.add(scope_slot) };
         if slot.refs == 0 || slot.arm == SELECTED_ARM_NONE {
             None
         } else {
@@ -816,7 +816,7 @@ impl RouteState {
         let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
             crate::invariant();
         };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `dense` came from the lane-offer view and indexes initialized reentry-count column; `&mut self` owns the mutation. */
         unsafe {
             let count = &mut *self.lane_reentry_counts.add(dense);
             if *count == u8::MAX {

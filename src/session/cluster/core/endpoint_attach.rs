@@ -53,7 +53,9 @@ where
                     .map_err(AttachError::from)
             })?;
             let access = lease.into_port_guard();
-            /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
+            /* SAFETY: secondary-lane attach owns the endpoint slot before
+            publication. `logical_idx` selects initialized port/guard columns,
+            and the lane lease has validated the physical lane for this session. */
             unsafe {
                 crate::endpoint::kernel::endpoint_init::write_port_slot(
                     dst,
@@ -104,11 +106,15 @@ where
                 .map_err(AttachError::from)
         })?;
         let session_access = session_lease.into_port_guard();
-        let owner: crate::session::brand::Owner<'r> = /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */ unsafe {
+        let owner: crate::session::brand::Owner<'r> = /* SAFETY: the port guard
+        owns the validated session brand for this attach operation; narrowing it
+        to `'r` matches the endpoint lease lifetime that will hold the port. */ unsafe {
             core::mem::transmute(crate::session::brand::Owner::<'cfg>::new(session_access.brand))
         };
         let session: crate::endpoint::session::SessionCtx<'r, T> =
-            /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
+            /* SAFETY: endpoint attach owns the public endpoint slot for `'r`;
+            the session context stores the validated lane and a cluster pointer
+            that remains pinned for the session kit lifetime. */
             unsafe {
                 core::mem::transmute(crate::endpoint::session::SessionCtx::<'cfg, T>::new(
                     session_wire_lane,
@@ -116,7 +122,9 @@ where
                 ))
             };
 
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+        /* SAFETY: the endpoint lease returned `dst` and `arena_storage` for a
+        live slot/generation. `init_empty_from_compiled` initializes the whole
+        endpoint image before the public handle can be returned. */
         unsafe {
             crate::endpoint::kernel::endpoint_init::init_empty_from_compiled(
                 crate::endpoint::kernel::endpoint_init::CompiledEndpointInit {
@@ -157,7 +165,9 @@ where
             });
 
         if let Err(err) = init_result {
-            /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
+            /* SAFETY: endpoint initialization failed before publication, so
+            attach still owns `dst` and drops the partially initialized endpoint
+            image exactly once. */
             unsafe {
                 core::ptr::drop_in_place(dst);
             }
@@ -165,14 +175,18 @@ where
         }
 
         if let Err(err) = self.bind_session_role(sid, ROLE, rv_id) {
-            /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
+            /* SAFETY: role binding failed after endpoint image initialization
+            but before handle return. Attach still owns `dst` and tears down the
+            resident endpoint once. */
             unsafe {
                 core::ptr::drop_in_place(dst);
             }
             return Err(AttachError::cluster(err));
         }
 
-        /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
+        /* SAFETY: endpoint attach owns `dst` until this finalization call.
+        Finish synchronizes initialized lane state before the public endpoint
+        handle can be returned. */
         unsafe {
             crate::endpoint::kernel::endpoint_init::finish_init(dst);
         }
@@ -219,7 +233,9 @@ where
     {
         match self.ensure_role_image_slice(rv_id, program) {
             Ok(role_image) =>
-            /* SAFETY: endpoint attach owns the resident slot being projected and checks lane/generation identity before raw access. */
+            /* SAFETY: allocation preview leases the target rendezvous through
+            session storage only long enough to compute endpoint storage
+            requirements and reserve a live endpoint slot. */
             unsafe {
                 self.with_storage_mut(|core| {
                     core.locals

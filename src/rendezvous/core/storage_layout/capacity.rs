@@ -161,7 +161,9 @@ where
             }
             let alloc_start_u32 = crate::invariant_ok(u32::try_from(alloc_start));
             return Some((
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                /* SAFETY: `alloc_start..alloc_end` was carved from a recorded
+                free region inside this rendezvous slab and split before the
+                pointer is returned. */
                 unsafe { slab_ptr.add(alloc_start) },
                 alloc_start_u32,
             ));
@@ -176,7 +178,9 @@ where
         align: usize,
     ) -> Option<(*mut u8, u32)> {
         if let Some(region) =
-            /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
+            /* SAFETY: the rendezvous free-region table owns the resident slab
+            fragments; allocation checks requested size/alignment before
+            returning a sidecar range. */
             unsafe { self.allocate_from_free_regions(bytes, align) }
         {
             return Some(region);
@@ -195,7 +199,9 @@ where
         let start_u32 = crate::invariant_ok(u32::try_from(start));
         self.set_image_frontier(end_u32);
         Some((
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `start..end` is below `endpoint_storage_floor` and the
+            image frontier was advanced before returning this persistent
+            sidecar pointer. */
             unsafe { slab_ptr.add(start) },
             start_u32,
         ))
@@ -399,7 +405,9 @@ where
             .ok_or(ResourceScope::RouteTable)?;
         let source_route = self.route_storage;
         if self.routes.route_slots() == 0 {
-            /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
+            /* SAFETY: route storage is currently unbound. The fresh sidecar
+            lease has route-table size/alignment, and binding initializes all
+            frame/lane/waiter columns before publication. */
             unsafe {
                 self.routes.bind_from_storage_with_layout(
                     lease.ptr(),
@@ -412,7 +420,9 @@ where
             return Ok(());
         }
 
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
+        /* SAFETY: the fresh route-table sidecar is unpublished replacement
+        storage. Migration copies initialized frame/lane/waiter state before
+        the old route sidecar is released. */
         unsafe {
             self.routes.migrate_from_storage(
                 lease.ptr(),
@@ -434,7 +444,9 @@ where
             return Err(error);
         }
         self.routes.clear_current_waiters();
-        /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */
+        /* SAFETY: migration succeeded and the old sidecar has been released.
+        Rebinding publishes the replacement route-table columns for the same
+        rendezvous lane range. */
         unsafe {
             self.routes.rebind_from_storage(
                 lease.ptr(),

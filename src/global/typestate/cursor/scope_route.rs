@@ -115,7 +115,7 @@ impl EventCursor {
         Some(region.end())
     }
 
-    pub(crate) fn visit_decode_reentry_route_rows(
+    pub(crate) fn visit_branch_recv_reentry_route_rows(
         &self,
         meta_scope: ScopeId,
         branch_scope: ScopeId,
@@ -227,7 +227,7 @@ impl EventCursor {
         None
     }
 
-    pub(crate) fn decode_reentry_cursor_step(
+    pub(crate) fn branch_recv_reentry_cursor_step(
         &self,
         meta: RecvMeta,
         next_index: StateIndex,

@@ -221,7 +221,7 @@ budgets = {
     "RouteBranch": 2 * word,
     "OfferFuture": 3 * word,
     "RecvFuture": 3 * word,
-    "DecodeFuture": 3 * word,
+    "BranchRecvFuture": 3 * word,
     "SendFuture": 5 * word,
     "RawOfferFuture": 2 * word,
     "RawRecvFuture": 2 * word,
@@ -234,7 +234,7 @@ for name, budget in budgets.items():
         sys.exit(1)
 if not (
     values.get("RecvFuture") == values.get("RecvFutureU8") == values.get("RecvFutureU64") == values.get("RecvFutureBytes")
-    and values.get("DecodeFuture") == values.get("DecodeFutureU8") == values.get("DecodeFutureU64") == values.get("DecodeFutureBytes")
+    and values.get("BranchRecvFuture") == values.get("BranchRecvFutureU8") == values.get("BranchRecvFutureU64") == values.get("BranchRecvFutureBytes")
 ):
     print("final-form measurement violation: future size depends on message payload type", file=sys.stderr)
     sys.exit(1)

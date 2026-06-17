@@ -13,7 +13,6 @@ use crate::{
     endpoint::{RecvError, RecvResult},
     global::typestate::{CursorInvariantError, StateIndex, state_index_to_usize},
     observe::ids,
-    resolver_audit::ResolverSlot,
     transport::{
         Transport,
         trace::TapFrameMeta,
@@ -241,17 +240,6 @@ where
             delta,
         } = plan;
         let meta = desc.meta;
-
-        self.emit_endpoint_resolver_audit(
-            ResolverSlot::EndpointRx,
-            ids::ENDPOINT_RECV,
-            desc.sid_raw,
-            Self::endpoint_resolver_args(
-                crate::session::types::Lane::new(meta.lane as u32),
-                meta.label,
-            ),
-            crate::session::types::Lane::new(meta.lane as u32),
-        );
 
         let logical_meta = TapFrameMeta::new(desc.sid_raw, desc.lane_wire, ROLE, meta.label);
         let event_id = if meta.origin.is_session() {

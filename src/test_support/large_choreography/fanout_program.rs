@@ -274,11 +274,11 @@ fn run_routes_block_1(
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
     route_localside::controller_send_u32::<81>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<81>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<81>(worker), 0);
     localside::worker_send_u8::<97>(worker, 97);
     assert_eq!(localside::controller_recv_u8::<97>(controller), 97);
     route_localside::controller_send_u32::<84>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<84>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<84>(worker), 0);
     localside::worker_send_u8::<98>(worker, 98);
     assert_eq!(localside::controller_recv_u8::<98>(controller), 98);
 }
@@ -288,11 +288,11 @@ fn run_routes_block_2(
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
     route_localside::controller_send_u32::<85>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<85>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<85>(worker), 0);
     localside::worker_send_u8::<99>(worker, 99);
     assert_eq!(localside::controller_recv_u8::<99>(controller), 99);
     route_localside::controller_send_u32::<88>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<88>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<88>(worker), 0);
     localside::worker_send_u8::<100>(worker, 100);
     assert_eq!(localside::controller_recv_u8::<100>(controller), 100);
 }
@@ -302,11 +302,11 @@ fn run_routes_block_3(
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
     route_localside::controller_send_u32::<89>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<89>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<89>(worker), 0);
     localside::worker_send_u8::<101>(worker, 101);
     assert_eq!(localside::controller_recv_u8::<101>(controller), 101);
     route_localside::controller_send_u32::<92>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<92>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<92>(worker), 0);
     localside::worker_send_u8::<102>(worker, 102);
     assert_eq!(localside::controller_recv_u8::<102>(controller), 102);
 }
@@ -316,11 +316,11 @@ fn run_routes_block_4(
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
     route_localside::controller_send_u32::<93>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<93>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<93>(worker), 0);
     localside::worker_send_u8::<103>(worker, 103);
     assert_eq!(localside::controller_recv_u8::<103>(controller), 103);
     route_localside::controller_send_u32::<96>(controller, 0);
-    assert_eq!(route_localside::worker_offer_decode_u32::<96>(worker), 0);
+    assert_eq!(route_localside::worker_offer_recv_u32::<96>(worker), 0);
     localside::worker_send_u8::<104>(worker, 104);
     assert_eq!(localside::controller_recv_u8::<104>(controller), 104);
 }

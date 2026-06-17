@@ -34,7 +34,9 @@ where
     T: crate::transport::Transport,
 {
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+        /* SAFETY: session cluster initialization passes an unpublished
+        `SessionStorage` cell. The rendezvous registry and active lease counter
+        are both initialized before the cluster can expose storage access. */
         unsafe {
             crate::session::lease::core::RendezvousTable::init_empty(core::ptr::addr_of_mut!(
                 (*dst).locals

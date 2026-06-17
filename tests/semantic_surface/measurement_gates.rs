@@ -205,15 +205,15 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     );
     for required in [
         "pub(crate) fn kernel_recv",
-        "pub(crate) fn kernel_decode",
+        "pub(crate) fn kernel_branch_recv",
         "pub(crate) fn kernel_send",
-        "kernel_(recv|decode|send)",
+        "kernel_(recv|branch_recv|send)",
         "symbol count is ${count}, expected 1",
         "kernel symbol proof passed",
     ] {
         assert!(
             kernel_monomorphization_gate.contains(required),
-            "kernel monomorphization gate must prove single send/recv/decode symbols: {required}"
+            "kernel monomorphization gate must prove single send/recv/branch-recv symbols: {required}"
         );
     }
     for forbidden in [
@@ -226,7 +226,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     ] {
         assert!(
             !endpoint_kernel.contains(forbidden),
-            "kernel send/recv/decode paths must not regain a clock monomorphization axis: {forbidden}"
+            "kernel send/recv/branch-recv paths must not regain a clock monomorphization axis: {forbidden}"
         );
     }
 
@@ -255,7 +255,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "endpoint arena must not contain route-scope lane-word caches",
         "cargo test filter matched no tests",
         "offer_requires_framed_receive_evidence_for_branch_demux",
-        "offer_decode_transport_consumes_frame_once",
+        "branch_recv_transport_consumes_frame_once",
         "forgotten_route_branch_leaves_endpoint_fail_closed",
         "forgotten_route_recv_future_leaves_endpoint_fail_closed",
         "route_inside_parallel_lane_cannot_release_join_before_sibling_lane",

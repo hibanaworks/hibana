@@ -7,7 +7,9 @@ pub(crate) fn frontier_snapshot_from_scratch(
     current_frontier: FrontierKind,
 ) -> FrontierSnapshot {
     let candidate_capacity = scratch.candidates_mut().len();
-    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
+    /* SAFETY: `scratch` is the endpoint frontier scratch borrow for the active
+    operation. Its candidate slice remains live for the returned snapshot, and
+    the snapshot initializes at most `candidate_capacity` cells. */
     unsafe {
         FrontierSnapshot::from_parts(
             current_scope,
@@ -43,7 +45,9 @@ impl FrontierSnapshot {
     ) -> Self {
         let mut idx = 0usize;
         while idx < candidate_capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < candidate_capacity` bounds the scratch candidate
+            buffer owned by this snapshot; every slot is reset before
+            `candidate_len` exposes any candidate. */
             unsafe {
                 candidates.add(idx).write(FrontierCandidate::EMPTY);
             }
@@ -65,7 +69,8 @@ impl FrontierSnapshot {
         if self.candidate_len >= self.candidate_capacity {
             return false;
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `candidate_len < candidate_capacity` bounds the next
+        snapshot candidate slot; the length is increased only after the write. */
         unsafe {
             self.candidates.add(self.candidate_len).write(candidate);
         }
@@ -78,7 +83,9 @@ impl FrontierSnapshot {
         if idx >= self.candidate_len {
             crate::invariant();
         }
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `idx < candidate_len` bounds the initialized prefix of the
+        snapshot's scratch candidate buffer; this copies one candidate without
+        mutating the scratch slice. */
         unsafe { *self.candidates.add(idx) }
     }
 
@@ -137,7 +144,9 @@ impl FrontierVisitSet {
     pub(crate) unsafe fn from_parts(slots: *mut ScopeId, capacity: usize) -> Self {
         let mut idx = 0usize;
         while idx < capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < capacity` bounds the scratch visited-scope
+            buffer. All cells are reset before `len` exposes the initialized
+            prefix. */
             unsafe {
                 slots.add(idx).write(ScopeId::none());
             }
@@ -155,7 +164,8 @@ impl FrontierVisitSet {
         let mut idx = 0usize;
         while idx < self.len {
             if
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `idx < len` bounds the initialized prefix of the
+            visited-scope scratch buffer; this shared read copies one scope id. */
             unsafe { *self.slots.add(idx) } == scope {
                 return true;
             }
@@ -169,7 +179,8 @@ impl FrontierVisitSet {
         if scope.is_none() || self.contains(scope) || self.len >= self.capacity {
             return;
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `len < capacity` bounds the next visited-scope slot; the
+        initialized prefix grows only after this write. */
         unsafe {
             self.slots.add(self.len).write(scope);
         }
@@ -182,7 +193,9 @@ pub(crate) fn frontier_visit_set_from_scratch(
     scratch: &mut FrontierScratchView,
 ) -> FrontierVisitSet {
     let capacity = scratch.visited_scopes_mut().len();
-    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
+    /* SAFETY: `scratch` is the endpoint frontier scratch borrow for the active
+    operation. The visited-scope slice remains live for the returned set and is
+    reset by `from_parts`. */
     unsafe { FrontierVisitSet::from_parts(scratch.visited_scopes_mut().as_mut_ptr(), capacity) }
 }
 

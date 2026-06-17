@@ -10,8 +10,9 @@ where
         out: *mut crate::endpoint::kernel::SendPreview,
     ) -> crate::endpoint::SendResult<()> {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: preview-send owns the carrier endpoint slot selected by
+            // `handle` for this call and writes only the caller-provided
+            // `SendPreview` out slot before returning.
             Self::with_public_endpoint_mut::<'_, ROLE, _>(
                 ptr,
                 handle,
@@ -38,8 +39,9 @@ where
             &*init
         };
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: send-state initialization owns the carrier endpoint slot
+            // selected by `handle`; `init` is read during this call and not
+            // stored through the raw pointer.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,
@@ -54,8 +56,8 @@ where
         handle: PackedEndpointHandle,
     ) {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: send-state reset owns the carrier endpoint slot selected
+            // by `handle` and clears only the resident public send state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
                 kernel.reset_public_send_state();
             });
@@ -70,8 +72,9 @@ where
         out: *mut (),
     ) {
         let poll = unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: send polling owns the carrier endpoint slot selected by
+            // `handle`; the payload option is consumed inside this single poll
+            // and the result is written to `out` after the callback returns.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,

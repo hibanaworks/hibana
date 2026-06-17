@@ -46,7 +46,9 @@ where
     T: crate::transport::Transport + 'cfg,
 {
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+        /* SAFETY: `SessionKitStorage::init` passes an unpublished
+        `SessionCluster` cell. Session storage and the local-only marker are
+        written before the cluster reference is returned. */
         unsafe {
             SessionStorage::<T>::init_empty(core::ptr::addr_of_mut!((*dst).storage).cast());
             core::ptr::addr_of_mut!((*dst)._local_only).write(crate::local::LocalOnly::new());
@@ -129,7 +131,9 @@ where
     where
         'cfg: 'r,
     {
-        let core = /* SAFETY: the pointer comes from pinned owner storage; this attach phase checks the rendezvous active marker before mutating endpoint lease storage. */ unsafe { &mut *self.storage_ptr() };
+        let core = /* SAFETY: `SessionCluster` owns the pinned
+        `SessionStorage` cell. This attach allocation takes the cluster storage
+        mutation path before leasing the target rendezvous entry. */ unsafe { &mut *self.storage_ptr() };
         let rv = core
             .locals
             .get_mut_checked(&rv_id)
@@ -138,8 +142,9 @@ where
             return Err(ClusterError::resource_exhausted(resource));
         }
         let (slot, generation, offset, _len) =
-            (/* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
-            unsafe {
+            (/* SAFETY: the leased rendezvous owns endpoint lease allocation.
+            `required_bytes/align` and `resident_budget` are checked before a
+            live endpoint slot and storage offset are returned. */unsafe {
                 rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
             })
             .map_err(ClusterError::resource_exhausted)?;
@@ -166,7 +171,8 @@ where
         Ok((
             slot,
             generation,
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `offset..offset+required_bytes` was checked against the
+            rendezvous slab length and the endpoint lease was confirmed live. */
             unsafe { slab_ptr.add(offset) }
                 .cast::<crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>>(),
         ))
@@ -186,7 +192,9 @@ where
             return None;
         }
         Some(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: endpoint lease lookup returned `offset,len` for the
+            requested live slot/generation, and the computed range is inside
+            the rendezvous slab. */
             unsafe { slab_ptr.add(offset).cast() },
         )
     }
@@ -264,7 +272,9 @@ where
         P: crate::global::RoleProgramView<ROLE>,
     {
         let compiled = program.role_image_ref().program;
-        let core = /* SAFETY: the pointer comes from pinned owner storage; this attach validation only observes a rendezvous entry after the active-marker check. */ unsafe { &mut *self.storage_ptr() };
+        let core = /* SAFETY: the cluster owns the pinned session storage; this
+        validation borrows it mutably only long enough to check the rendezvous
+        lease state for `rv_id`. */ unsafe { &mut *self.storage_ptr() };
         core.locals
             .get_mut_checked(&rv_id)
             .map_err(Self::map_rendezvous_access_error)
@@ -282,7 +292,9 @@ where
         P: crate::global::RoleProgramView<ROLE>,
     {
         let compiled = program.role_image_ref();
-        let core = /* SAFETY: the pointer comes from pinned owner storage; this attach validation only observes a rendezvous entry after the active-marker check. */ unsafe { &mut *self.storage_ptr() };
+        let core = /* SAFETY: the cluster owns the pinned session storage; this
+        role-image validation mutably borrows it only to reject missing or
+        already leased rendezvous entries. */ unsafe { &mut *self.storage_ptr() };
         core.locals
             .get_mut_checked(&rv_id)
             .map_err(Self::map_rendezvous_access_error)

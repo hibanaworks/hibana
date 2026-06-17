@@ -50,7 +50,9 @@ where
     fn drop(&mut self) {
         let lane = self.lane;
         if !self.rendezvous.is_null() {
-            /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
+            /* SAFETY: `LaneGuard` stores the rendezvous pointer that issued the
+            lane lease. Drop only needs a shared rendezvous borrow to release
+            the counted lane handle and emit the release evidence. */
             unsafe {
                 let rv = &*self.rendezvous.cast::<Rendezvous<'static, 'static, T>>();
                 match rv.release_lane(lane) {

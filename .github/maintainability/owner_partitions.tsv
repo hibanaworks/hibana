@@ -20,7 +20,6 @@ src	src/lib.rs
 src	src/local.rs
 src	src/observe
 src	src/observe.rs
-src	src/resolver_audit.rs
 src	src/rendezvous
 src	src/rendezvous.rs
 src	src/test_support
@@ -46,8 +45,8 @@ src/endpoint	src/endpoint/public_types.rs
 src/endpoint/kernel	src/endpoint/kernel/session.rs
 src/endpoint/kernel	src/endpoint/kernel/core
 src/endpoint/kernel	src/endpoint/kernel/core.rs
-src/endpoint/kernel	src/endpoint/kernel/decode
-src/endpoint/kernel	src/endpoint/kernel/decode.rs
+src/endpoint/kernel	src/endpoint/kernel/branch_recv
+src/endpoint/kernel	src/endpoint/kernel/branch_recv.rs
 src/endpoint/kernel	src/endpoint/kernel/endpoint_init.rs
 src/endpoint/kernel	src/endpoint/kernel/mod.rs
 src/endpoint/kernel	src/endpoint/kernel/public_ops.rs
@@ -182,12 +181,13 @@ tests	tests/docs_surface.rs
 tests	tests/huge_choreography_compile.rs
 tests	tests/huge_choreography_runtime.rs
 tests	tests/runtime_surface.rs
+tests	tests/tap_resolver_audit.rs
 tests	tests/lane_lifecycle_tap.rs
 tests	tests/local_action.rs
 tests	tests/local_only_hygiene.rs
 tests	tests/nested_route_runtime.rs
 tests	tests/no_default_rodata.rs
-tests	tests/offer_decode_receive_evidence.rs
+tests	tests/offer_branch_recv_evidence.rs
 tests	tests/parallel_route_nesting.rs
 tests	tests/parallel_route_alternating.rs
 tests	tests/program_capacity_regression.rs

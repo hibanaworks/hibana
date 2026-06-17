@@ -385,7 +385,9 @@ where
             // mutably while the shared reference is live.
             let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T> = lease.with_rendezvous(core::ptr::from_mut);
             let rv: &'lease Rendezvous<'cfg, 'cfg, T> =
-                /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*rv_ptr };
+                /* SAFETY: the active `RendezvousLease` owns the pinned entry
+                for `'lease`; this shared borrow is used only while the lease is
+                not mutably accessed. */ unsafe { &*rv_ptr };
             let active_leases = *crate::invariant_some(self.active_leases.as_ref());
             rv.open_port_guard(
                 self.sid,

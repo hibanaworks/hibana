@@ -18,7 +18,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         read("tests/cursor_send_recv/session_forget_recv.rs"),
         read("tests/cursor_send_recv/session_fault_cancel.rs"),
         read("tests/cursor_send_recv/session_drop_wake.rs"),
-        read("tests/offer_decode_receive_evidence.rs"),
+        read("tests/offer_branch_recv_evidence.rs"),
         read("tests/route_branch_send.rs"),
         read("tests/nested_route_runtime.rs"),
         read("tests/affine_progression.rs"),
@@ -70,7 +70,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("super::core::PublicOpLease::Rejected => return lease")
             && public_runtime.contains("if self.public_active_op != PublicActiveOp::Offer")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
-            && public_runtime.contains("fn begin_public_decode_state(&mut self) -> super::core::PublicOpLease")
+            && public_runtime.contains("fn begin_public_branch_recv_state(\n        &mut self,\n    ) -> super::core::PublicOpLease")
             && public_runtime.contains("PublicActiveOp::BranchRecv")
             && public_runtime.contains("PublicActiveOp::BranchSend")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Send)")
@@ -85,7 +85,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchRecv)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchSend)")
             && public_runtime.contains("if self.public_route_branch.is_some() {\n            self.clear_session_waiter();\n            self.public_op_busy_fault();")
-            && public_runtime.contains("let Some(branch) = decode_state.branch() else {\n            self.clear_session_waiter();\n            self.public_decode_state = super::decode::DecodeState::empty();\n            self.public_op_busy_fault();"),
+            && public_runtime.contains("let Some(branch) = branch_recv_state.branch() else {\n            self.clear_session_waiter();\n            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();\n            self.public_op_busy_fault();"),
         "endpoint API calls must start only from Idle, checked completion must poison on wrong active-op order, and terminal sweep must use an explicit lenient clear path"
     );
     assert!(
@@ -130,14 +130,14 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && futures.contains("self.lease = RecvFutureLease::Completed;")
             && futures.contains("lease: crate::endpoint::kernel::PublicOpLease")
             && futures.contains("self.lease == RecvFutureLease::RestoreOnDrop")
-            && futures.contains("progress: DecodeFutureProgress")
-            && futures.contains("DecodeFutureProgress::Pending")
-            && futures.contains("DecodeFutureProgress::Finished")
+            && futures.contains("progress: BranchRecvFutureProgress")
+            && futures.contains("BranchRecvFutureProgress::Pending")
+            && futures.contains("BranchRecvFutureProgress::Finished")
             && futures.contains(
-                "(crate::endpoint::kernel::PublicOpLease::Held, DecodeFutureProgress::Pending)"
+                "(crate::endpoint::kernel::PublicOpLease::Held, BranchRecvFutureProgress::Pending)"
             )
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture")
-            && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture"),
+            && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawBranchRecvFuture"),
         "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"
     );
     for required in [

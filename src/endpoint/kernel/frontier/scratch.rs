@@ -245,11 +245,30 @@ pub(crate) struct FrontierScratchView {
 
 #[inline]
 fn frontier_scratch_storage_ptr(scratch_ptr: *mut [u8], layout: FrontierScratchLayout) -> *mut u8 {
-    let scratch = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *scratch_ptr };
+    let scratch = /* SAFETY: endpoint frontier owns `scratch_ptr` for the
+    current affine operation. The backing slice remains resident for this poll,
+    and this helper only derives the arena base after checking the layout byte
+    budget. */
+        unsafe { &mut *scratch_ptr };
     if scratch.len() < layout.total_bytes() {
         crate::invariant();
     }
     scratch.as_mut_ptr()
+}
+
+#[inline]
+fn frontier_section_ptr<T>(storage: *mut u8, section: FrontierScratchSection) -> *mut T {
+    if section.align != mem::align_of::<T>() {
+        crate::invariant();
+    }
+    if section.count != 0 && section.bytes / section.count != mem::size_of::<T>() {
+        crate::invariant();
+    }
+    /* SAFETY: `FrontierScratchLayout` produced this section from the same arena
+    base and `frontier_scratch_storage_ptr` checked that the arena has
+    `layout.total_bytes()`. The section records the type alignment and byte
+    length used for this typed column. */
+    unsafe { storage.add(section.offset()).cast::<T>() }
 }
 
 #[inline]
@@ -258,12 +277,7 @@ pub(crate) fn frontier_global_observed_state_ptr_from_storage(
     layout: FrontierScratchLayout,
 ) -> *mut GlobalFrontierObservedState {
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
-    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-    unsafe {
-        storage
-            .add(layout.global_observed_state().offset())
-            .cast::<GlobalFrontierObservedState>()
-    }
+    frontier_section_ptr(storage, layout.global_observed_state())
 }
 
 #[inline]
@@ -274,19 +288,9 @@ pub(crate) fn frontier_observation_key_view_from_storage(
 ) -> FrontierObservationKey {
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
     FrontierObservationKey::from_parts(
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.observation_key_slots().offset())
-                .cast::<FrontierObservationSlot>()
-        },
+        frontier_section_ptr(storage, layout.observation_key_slots()),
         frontier_entry_capacity,
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.observation_key_offer_lanes().offset())
-                .cast::<LaneWord>()
-        },
+        frontier_section_ptr(storage, layout.observation_key_offer_lanes()),
         layout.observation_key_offer_lanes().count(),
     )
 }
@@ -299,19 +303,9 @@ pub(crate) fn frontier_cached_observation_key_view_from_storage(
 ) -> FrontierObservationKey {
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
     FrontierObservationKey::from_parts(
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.cached_observation_key_slots().offset())
-                .cast::<FrontierObservationSlot>()
-        },
+        frontier_section_ptr(storage, layout.cached_observation_key_slots()),
         frontier_entry_capacity,
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.cached_observation_key_offer_lanes().offset())
-                .cast::<LaneWord>()
-        },
+        frontier_section_ptr(storage, layout.cached_observation_key_offer_lanes()),
         layout.cached_observation_key_offer_lanes().count(),
     )
 }
@@ -324,19 +318,9 @@ pub(crate) fn frontier_working_observation_key_view_from_storage(
 ) -> FrontierObservationKey {
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
     FrontierObservationKey::from_parts(
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.working_observation_key_slots().offset())
-                .cast::<FrontierObservationSlot>()
-        },
+        frontier_section_ptr(storage, layout.working_observation_key_slots()),
         frontier_entry_capacity,
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.working_observation_key_offer_lanes().offset())
-                .cast::<LaneWord>()
-        },
+        frontier_section_ptr(storage, layout.working_observation_key_offer_lanes()),
         layout.working_observation_key_offer_lanes().count(),
     )
 }
@@ -350,12 +334,7 @@ pub(crate) fn frontier_global_active_entries_view_from_storage(
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
     ActiveEntrySet {
         slots: EntryBuffer::from_parts(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                storage
-                    .add(layout.global_active_entry_slots().offset())
-                    .cast::<ActiveEntrySlot>()
-            },
+            frontier_section_ptr(storage, layout.global_active_entry_slots()),
             frontier_entry_capacity,
         ),
     }
@@ -369,12 +348,7 @@ pub(crate) fn frontier_observed_entries_view_from_storage(
 ) -> ObservedEntrySet {
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
     ObservedEntrySet::from_parts(
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.observed_entry_slots().offset())
-                .cast::<FrontierObservationSlot>()
-        },
+        frontier_section_ptr(storage, layout.observed_entry_slots()),
         frontier_entry_capacity,
     )
 }
@@ -386,12 +360,7 @@ pub(crate) fn frontier_offer_lane_entry_slot_masks_view_from_storage(
 ) -> OfferLaneEntrySlotMasks {
     let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
     let mut masks = OfferLaneEntrySlotMasks::from_parts(
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            storage
-                .add(layout.offer_lane_entry_slot_masks().offset())
-                .cast::<u8>()
-        },
+        frontier_section_ptr(storage, layout.offer_lane_entry_slot_masks()),
         layout.offer_lane_entry_slot_masks().count(),
     );
     masks.clear();
@@ -406,30 +375,26 @@ impl FrontierScratchView {
         frontier_entry_capacity: usize,
     ) -> Self {
         Self {
-            candidates: /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe {
-                storage
-                    .add(layout.candidates().offset())
-                    .cast::<FrontierCandidate>()
-            },
+            candidates: frontier_section_ptr(storage, layout.candidates()),
             frontier_entry_capacity: frontier_entry_capacity as u8,
-            visited_scopes: /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe {
-                storage
-                    .add(layout.visited_scopes().offset())
-                    .cast::<ScopeId>()
-            },
-            root_scopes: /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(layout.root_scopes().offset()).cast::<ScopeId>() },
+            visited_scopes: frontier_section_ptr(storage, layout.visited_scopes()),
+            root_scopes: frontier_section_ptr(storage, layout.root_scopes()),
         }
     }
 
     #[inline]
     pub(crate) fn candidates_mut(&mut self) -> &mut [FrontierCandidate] {
-        /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+        /* SAFETY: `candidates` points at the `FrontierCandidate` section of the
+        scratch arena, and `frontier_entry_capacity` is the count used to build
+        that section; this mutable slice is scoped to `&mut self`. */
         unsafe { slice::from_raw_parts_mut(self.candidates, self.frontier_entry_capacity as usize) }
     }
 
     #[inline]
     pub(crate) fn visited_scopes_mut(&mut self) -> &mut [ScopeId] {
-        /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+        /* SAFETY: `visited_scopes` is the initialized `ScopeId` scratch column
+        paired with this frontier view; `&mut self` keeps this slice as the only
+        live mutable borrow for the shared entry capacity. */
         unsafe {
             slice::from_raw_parts_mut(self.visited_scopes, self.frontier_entry_capacity as usize)
         }
@@ -437,7 +402,8 @@ impl FrontierScratchView {
 
     #[inline]
     pub(crate) fn root_scopes_mut(&mut self) -> &mut [ScopeId] {
-        /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+        /* SAFETY: `root_scopes` is the root-scope scratch column carved by
+        `FrontierScratchLayout` for the same `frontier_entry_capacity`. */
         unsafe {
             slice::from_raw_parts_mut(self.root_scopes, self.frontier_entry_capacity as usize)
         }

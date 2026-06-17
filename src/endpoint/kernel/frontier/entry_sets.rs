@@ -21,7 +21,9 @@ impl<T> EntryBuffer<T> {
         if capacity > u8::MAX as usize {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: the repo-test owner passes an unpublished `EntryBuffer`
+        cell; the pointer and checked u8 capacity are written before the buffer
+        is assumed initialized. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
             core::ptr::addr_of_mut!((*dst).capacity).write(capacity as u8);
@@ -49,7 +51,9 @@ impl<T> EntryBuffer<T> {
         if self.ptr.is_null() {
             &[]
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `EntryBuffer` stores a pointer and u8 capacity created by
+            the frontier owner for one initialized entry slice; shared slicing
+            is tied to `&self`. */
             unsafe { slice::from_raw_parts(self.ptr, self.capacity()) }
         }
     }
@@ -59,7 +63,9 @@ impl<T> EntryBuffer<T> {
         if self.ptr.is_null() {
             &mut []
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `&mut self` is the entry-buffer mutation token, and the
+            stored pointer/capacity describe one initialized frontier entry
+            slice owned by this buffer. */
             unsafe { slice::from_raw_parts_mut(self.ptr, self.capacity()) }
         }
     }
@@ -150,13 +156,16 @@ impl ActiveEntrySet {
         slots: *mut ActiveEntrySlot,
         capacity: usize,
     ) {
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+        /* SAFETY: the repo-test owner passes an unpublished `ActiveEntrySet`
+        cell and backing active-entry slots. `EntryBuffer` records the backing
+        slice before slots are initialized below. */
         unsafe {
             EntryBuffer::init_from_parts(core::ptr::addr_of_mut!((*dst).slots), slots, capacity);
         }
         let mut idx = 0usize;
         while idx < capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < capacity` selects one active-entry backing slot
+            owned by this test set; every slot starts EMPTY before use. */
             unsafe {
                 slots.add(idx).write(ActiveEntrySlot::EMPTY);
             }

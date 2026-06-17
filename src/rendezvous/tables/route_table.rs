@@ -137,18 +137,134 @@ impl RouteTable {
 
     #[inline]
     fn frame_ref(&self, idx: usize) -> &RouteFrame {
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        if idx >= self.route_slots {
+            crate::invariant();
+        }
+        /* SAFETY: `RouteTable` owns the initialized `frames` column; `idx` is
+        inside `route_slots`, and callers only hold table-local borrows while
+        walking or mutating one route-frame list. */
         unsafe { &*self.frames_ptr().add(idx) }
     }
 
     #[inline]
-    fn frame_ptr_at(&self, idx: usize) -> *mut RouteFrame {
+    fn frame_ptr_checked(&self, idx: usize) -> *mut RouteFrame {
+        if idx >= self.route_slots {
+            crate::invariant();
+        }
         self.frames_ptr().wrapping_add(idx)
     }
 
     #[inline]
+    fn with_frame_mut<R>(&self, idx: usize, f: impl FnOnce(&mut RouteFrame) -> R) -> R {
+        /* SAFETY: `frame_ptr_checked` bounds `idx` inside the initialized
+        route-frame column; the mutable frame reference is scoped to this owner
+        callback and cannot escape the route-table method. */
+        unsafe { f(&mut *self.frame_ptr_checked(idx)) }
+    }
+
+    #[inline]
+    fn record_frame_entry(&self, idx: usize, role_slots: usize, role_from: u8, arm: u8) -> u16 {
+        /* SAFETY: `idx` is a route frame owned by this table. The entry field
+        is initialized with the frame, and this method performs the single
+        mutation for a route decision before waking lane waiters. */
+        let entry = unsafe { &mut (*self.frame_ptr_checked(idx)).entry };
+        let mut generation = entry.generation.wrapping_add(1);
+        if generation == 0 {
+            generation = 1;
+        }
+        entry.generation = generation;
+        entry.arm = arm;
+        entry.seen_mask = 0;
+        if (role_from as usize) < role_slots {
+            entry.seen_mask |= Self::seen_bit(role_from as usize);
+        }
+        generation
+    }
+
+    #[inline]
+    fn mark_unseen_role(&self, idx: usize, role_bit: u16) -> Option<u8> {
+        /* SAFETY: `idx` is inside the table-owned initialized frame column.
+        The mutable entry borrow is local to this method and records exactly one
+        role observation for this route generation. */
+        let entry = unsafe { &mut (*self.frame_ptr_checked(idx)).entry };
+        if entry.generation == 0 || (entry.seen_mask & role_bit) != 0 {
+            return None;
+        }
+        entry.seen_mask |= role_bit;
+        Some(entry.arm)
+    }
+
+    #[inline]
+    fn lane_head(&self, lane_idx: usize) -> u16 {
+        if lane_idx >= self.lane_slots() {
+            crate::invariant();
+        }
+        /* SAFETY: `lane_idx` is inside the initialized lane-head column owned
+        by this `RouteTable`; this is a shared read of one of `lane_slots`
+        entries. */
+        unsafe { *self.lane_heads_ptr().add(lane_idx) }
+    }
+
+    #[inline]
+    fn set_lane_head(&self, lane_idx: usize, head: u16) {
+        if lane_idx >= self.lane_slots() {
+            crate::invariant();
+        }
+        /* SAFETY: this table owns the lane-head column and this mutation is the
+        single route-list head update for `lane_idx`. */
+        unsafe {
+            *self.lane_heads_ptr().add(lane_idx) = head;
+        }
+    }
+
+    #[inline]
+    fn pending_hint(&self, lane_idx: usize) -> FrameLabelMask {
+        if lane_idx >= self.lane_slots() {
+            crate::invariant();
+        }
+        /* SAFETY: `pending_frame_hint_masks` is initialized with one slot per
+        lane during route-table binding or migration. */
+        unsafe { *self.pending_frame_hint_masks_ptr().add(lane_idx) }
+    }
+
+    #[inline]
+    fn set_pending_hint(&self, lane_idx: usize, value: FrameLabelMask) {
+        if lane_idx >= self.lane_slots() {
+            crate::invariant();
+        }
+        /* SAFETY: `RouteTable` owns the pending-hint column; `lane_idx` was
+        checked against the initialized lane slot count, and this mutation is
+        the only live write to that lane's hint slot. */
+        unsafe {
+            *self.pending_frame_hint_masks_ptr().add(lane_idx) = value;
+        }
+    }
+
+    #[inline]
+    fn waiter_ptr_checked(&self, lane_idx: usize, role_idx: usize) -> *mut WaiterSlot {
+        if lane_idx >= self.lane_slots() || role_idx >= MAX_TRACKED_ROLES {
+            crate::invariant();
+        }
+        let slot_idx = lane_idx * MAX_TRACKED_ROLES + role_idx;
+        self.waiters_ptr().wrapping_add(slot_idx)
+    }
+
+    #[inline]
+    fn with_waiter_mut<R>(
+        &self,
+        lane_idx: usize,
+        role_idx: usize,
+        f: impl FnOnce(&mut WaiterSlot) -> R,
+    ) -> R {
+        /* SAFETY: `waiter_ptr_checked` bounds lane/role inside the initialized
+        waiter column. The mutable slot reference is local to this route-table
+        callback and never aliases another live waiter borrow. */
+        unsafe { f(&mut *self.waiter_ptr_checked(lane_idx, role_idx)) }
+    }
+
+    #[inline]
     fn slot_for_scope(&self, lane_idx: usize, coord: ScopeCoord) -> Option<usize> {
-        let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
+        let mut current = self.lane_head(lane_idx);
         while current != Self::FRAME_LIST_END {
             let idx = current as usize;
             if self.frame_ref(idx).scope == coord.canonical {
@@ -167,15 +283,9 @@ impl RouteTable {
             return None;
         }
         let idx = self.pop_free_slot()?;
-        let head = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            *self.frame_ptr_at(idx) = RouteFrame::assign(coord, head);
-        }
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            *self.lane_heads_ptr().add(lane_idx) = idx as u16;
-        }
+        let head = self.lane_head(lane_idx);
+        self.with_frame_mut(idx, |frame| *frame = RouteFrame::assign(coord, head));
+        self.set_lane_head(lane_idx, idx as u16);
         Some(idx)
     }
 
@@ -189,21 +299,15 @@ impl RouteTable {
             return;
         }
         let mut prev = Self::FRAME_LIST_END;
-        let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
+        let mut current = self.lane_head(lane_idx);
         while current != Self::FRAME_LIST_END {
             let current_idx = current as usize;
             let next = self.frame_ref(current_idx).next;
             if current_idx == slot_idx {
                 if prev == Self::FRAME_LIST_END {
-                    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                    unsafe {
-                        *self.lane_heads_ptr().add(lane_idx) = next;
-                    }
+                    self.set_lane_head(lane_idx, next);
                 } else {
-                    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                    unsafe {
-                        (*self.frame_ptr_at(prev as usize)).next = next;
-                    }
+                    self.with_frame_mut(prev as usize, |frame| frame.next = next);
                 }
                 self.push_free_slot(slot_idx);
                 return;
@@ -223,7 +327,10 @@ impl RouteTable {
 
     #[inline]
     fn bump_change_generation(&self) {
-        let generation = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.change_generation.get() };
+        /* SAFETY: `change_generation` is an initialized `UnsafeCell<u16>`
+        owned by this table; route-table mutation methods update it after their
+        own slot/list changes and do not expose the mutable reference. */
+        let generation = unsafe { &mut *self.change_generation.get() };
         let next = generation.wrapping_add(1);
         *generation = if next == 0 { 1 } else { next };
     }
@@ -250,28 +357,13 @@ impl RouteTable {
                 crate::invariant();
             }
         };
-        /* SAFETY: the slot index comes from owned table allocation and this operation owns the mutation. */
-        let entry = unsafe { &mut (*self.frame_ptr_at(slot_idx)).entry };
-        let mut generation = entry.generation.wrapping_add(1);
-        if generation == 0 {
-            generation = 1;
-        }
-        entry.generation = generation;
-        entry.arm = arm;
-        entry.seen_mask = 0;
         let role_slots = Self::role_slot_count(role_count);
-        if (role_from as usize) < role_slots {
-            entry.seen_mask |= Self::seen_bit(role_from as usize);
-        }
+        let generation = self.record_frame_entry(slot_idx, role_slots, role_from, arm);
         self.bump_change_generation();
 
-        let waiters = self.waiters_ptr();
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                (*waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx)).wake();
-            }
+            self.with_waiter_mut(lane_idx, role_idx, |waiter| waiter.wake());
             role_idx += 1;
         }
         generation
@@ -295,20 +387,15 @@ impl RouteTable {
             Some(idx) => idx,
             None => return Poll::Pending,
         };
-        /* SAFETY: the slot index comes from owned table allocation and this operation owns the mutation. */
-        let entry = unsafe { &mut (*self.frame_ptr_at(slot_idx)).entry };
         let role_bit = Self::seen_bit(role as usize);
-        if entry.generation != 0 && (entry.seen_mask & role_bit) == 0 {
-            entry.seen_mask |= role_bit;
-            let arm = entry.arm;
+        let arm = self.mark_unseen_role(slot_idx, role_bit);
+        if let Some(arm) = arm {
             self.reclaim_completed_route_slot(lane_idx, slot_idx, role_count);
             self.bump_change_generation();
             return Poll::Ready(arm);
         }
 
-        let waiters = self.waiters_ptr();
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *waiters.add(lane_idx * MAX_TRACKED_ROLES + role as usize) };
-        slot.set(cx.waker());
+        self.with_waiter_mut(lane_idx, role as usize, |waiter| waiter.set(cx.waker()));
         Poll::Pending
     }
 
@@ -326,17 +413,9 @@ impl RouteTable {
         let coord = ScopeCoord::from_scope(scope)?;
         let lane_idx = self.lane_slot(lane);
         let slot_idx = Self::slot_for_scope(self, lane_idx, coord)?;
-        /* SAFETY: the slot index comes from owned table allocation and this operation owns the mutation. */
-        let entry = unsafe { &mut (*self.frame_ptr_at(slot_idx)).entry };
-        if entry.generation == 0 {
-            return None;
-        }
         let role_bit = Self::seen_bit(role as usize);
-        if (entry.seen_mask & role_bit) != 0 {
-            return None;
-        }
-        entry.seen_mask |= role_bit;
-        let arm = entry.arm;
+        let arm = self.mark_unseen_role(slot_idx, role_bit);
+        let arm = arm?;
         self.reclaim_completed_route_slot(lane_idx, slot_idx, role_count);
         self.bump_change_generation();
         Some(arm)
@@ -391,8 +470,7 @@ impl RouteTable {
             return FrameLabelMask::EMPTY;
         }
         let lane_idx = self.lane_slot(lane);
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe { *self.pending_frame_hint_masks_ptr().add(lane_idx) }
+        self.pending_hint(lane_idx)
     }
 
     pub(crate) fn update_pending_frame_hint_mask_for_lane(
@@ -405,10 +483,7 @@ impl RouteTable {
             return;
         }
         let lane_idx = self.lane_slot(lane);
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            *self.pending_frame_hint_masks_ptr().add(lane_idx) = after;
-        }
+        self.set_pending_hint(lane_idx, after);
         self.bump_change_generation();
     }
 
@@ -421,8 +496,7 @@ impl RouteTable {
             return false;
         }
         let lane_idx = self.lane_slot(lane);
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe { *self.pending_frame_hint_masks_ptr().add(lane_idx) }.intersects(frame_label_mask)
+        self.pending_hint(lane_idx).intersects(frame_label_mask)
     }
 
     pub(crate) fn reset_lane(&self, lane: Lane) {
@@ -430,29 +504,18 @@ impl RouteTable {
             return;
         }
         let lane_idx = self.lane_slot(lane);
-        let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            *self.lane_heads_ptr().add(lane_idx) = Self::FRAME_LIST_END;
-        }
+        let mut current = self.lane_head(lane_idx);
+        self.set_lane_head(lane_idx, Self::FRAME_LIST_END);
         while current != Self::FRAME_LIST_END {
             let idx = current as usize;
             let next = self.frame_ref(idx).next;
             self.push_free_slot(idx);
             current = next;
         }
-        let pending_frame_hint_masks = self.pending_frame_hint_masks_ptr();
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            *pending_frame_hint_masks.add(lane_idx) = FrameLabelMask::EMPTY;
-        }
-        let waiters = self.waiters_ptr();
+        self.set_pending_hint(lane_idx, FrameLabelMask::EMPTY);
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                (*waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx)).clear();
-            }
+            self.with_waiter_mut(lane_idx, role_idx, |waiter| waiter.clear());
             role_idx += 1;
         }
         self.bump_change_generation();
@@ -463,13 +526,9 @@ impl RouteTable {
             return;
         }
         let lane_idx = self.lane_slot(lane);
-        let waiters = self.waiters_ptr();
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe {
-                (*waiters.add(lane_idx * MAX_TRACKED_ROLES + role_idx)).wake();
-            }
+            self.with_waiter_mut(lane_idx, role_idx, |waiter| waiter.wake());
             role_idx += 1;
         }
     }

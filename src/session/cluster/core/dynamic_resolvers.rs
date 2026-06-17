@@ -220,7 +220,11 @@ unsafe fn dispatch_decision_state<S>(
     storage: DecisionResolverStorage,
 ) -> Result<DecisionArm, ResolverError> {
     let payload = unsafe { storage.restore::<S>() };
-    let state = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*payload.state };
+    let state = /* SAFETY: `ResolverRef::decision_state` stored `state` with
+    the matching `dispatch_decision_state::<S>` trampoline. The cluster
+    resolver table only copies this erased pair after resolver-id validation,
+    and evaluation creates one shared borrow for the callback duration. */
+        unsafe { &*payload.state };
     (payload.resolver)(state)
 }
 

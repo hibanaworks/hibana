@@ -286,10 +286,7 @@ fn controller_route_roundtrip_ack<const PAYLOAD: u8>(
     worker: &mut localside::WorkerEndpoint<'_>,
 ) {
     route_localside::controller_send_u32::<PAYLOAD>(controller, 0);
-    assert_eq!(
-        route_localside::worker_offer_decode_u32::<PAYLOAD>(worker),
-        0
-    );
+    assert_eq!(route_localside::worker_offer_recv_u32::<PAYLOAD>(worker), 0);
 }
 
 #[inline(never)]

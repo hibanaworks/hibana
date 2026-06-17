@@ -34,7 +34,7 @@ ARM1_REMOVED_STEP='Arm1''Con''trol''Step'
 
 check_absent "^type[[:space:]]+(${LEFT_REMOVED_STEP}|LeftDataStep|LeftArmSteps|${RIGHT_REMOVED_STEP}|RightDataStep|RightArmSteps|RouteSteps|TailSteps|ProtocolSteps)[[:space:]]*=" \
   "offer-decode-binding step/composition alias forbidden path" \
-  tests/offer_decode_receive_evidence.rs
+  tests/offer_branch_recv_evidence.rs
 check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Tail|Route)[A-Za-z0-9_]*[[:space:]]*=" \
   "nested-route-runtime step/composition alias forbidden path" \
   tests/nested_route_runtime.rs
@@ -47,7 +47,7 @@ ARM_KIND='Arm''Kind'
 check_absent "struct ${ROUTE_RIGHT_KIND};|struct ${ROUTE_ARM_KIND}<const LABEL: u8>;|struct ${ARM_KIND}<const LABEL: u8>;|impl ResourceKind for ${ROUTE_RIGHT_KIND}|impl<const LABEL: u8> ResourceKind for ${ROUTE_ARM_KIND}<LABEL>|impl<const LABEL: u8> ResourceKind for ${ARM_KIND}<LABEL>" \
   "manual route resource-kind boilerplate" \
   tests/nested_route_runtime.rs \
-  tests/offer_decode_receive_evidence.rs \
+  tests/offer_branch_recv_evidence.rs \
   tests/ui-pass/g-route-merged.rs \
   tests/ui-pass/g-route-static-basic.rs \
   tests/ui-pass/g-route-static-prefix-local.rs \

@@ -32,9 +32,9 @@ src/endpoint/kernel/offer/commit_types.rs	120	1	recursive
 src/endpoint/kernel/offer/frontier_types.rs	420	1	recursive
 src/endpoint/kernel/core/offer_refresh.rs	300	1	recursive
 src/endpoint/kernel/core/scope_evidence_logic.rs	600	1	recursive
-src/endpoint/kernel/decode.rs	150	1	recursive
-src/endpoint/kernel/decode/finish.rs	500	1	recursive
-src/endpoint/kernel/decode/finish/commit_builder.rs	220	1	recursive
+src/endpoint/kernel/branch_recv.rs	150	1	recursive
+src/endpoint/kernel/branch_recv/finish.rs	500	1	recursive
+src/endpoint/kernel/branch_recv/finish/commit_builder.rs	220	1	recursive
 src/endpoint/kernel/frontier/entry_sets.rs	900	1	recursive
 src/endpoint/kernel/frontier/offer_entries.rs	801	1	recursive
 src/endpoint/kernel/frontier/scratch.rs	620	1	recursive

@@ -32,21 +32,22 @@ fn public_repository_tests_name_registered_rendezvous_witnesses() {
 }
 
 #[test]
-fn decode_failure_completion_is_terminal_without_branch_restore() {
+fn branch_recv_failure_completion_is_terminal_without_branch_restore() {
     let endpoint = endpoint_facade_source();
-    let decode = read("src/endpoint/kernel/decode.rs");
+    let branch_recv = read("src/endpoint/kernel/branch_recv.rs");
 
     assert!(
-        !endpoint.contains("core::hint::black_box") && !decode.contains("core::hint::black_box"),
-        "decode terminal cleanup must not rely on black_box to hide branch ownership"
+        !endpoint.contains("core::hint::black_box")
+            && !branch_recv.contains("core::hint::black_box"),
+        "branch-recv terminal cleanup must not rely on black_box to hide branch ownership"
     );
     assert!(
-        !endpoint.contains("unsafe fn begin_public_decode_state(&mut self) -> RecvResult<()>"),
-        "begin_public_decode_state must not expose a dead Result"
+        !endpoint.contains("unsafe fn begin_public_branch_recv_state(&mut self) -> RecvResult<()>"),
+        "begin_public_branch_recv_state must not expose a dead Result"
     );
 
     assert!(
-        read("tests/offer_decode_receive_evidence.rs")
+        read("tests/offer_branch_recv_evidence.rs")
             .contains("completed route branch recv future must fail fast on post-Ready poll"),
         "route branch recv terminal paths must be guarded by behavior coverage, not private cleanup helper names"
     );
@@ -480,7 +481,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let route_commit_helpers = read("src/endpoint/kernel/core/route_commit_helpers.rs");
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let offer_commit = read("src/endpoint/kernel/offer/commit.rs");
-    let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
+    let branch_recv_finish = read("src/endpoint/kernel/branch_recv/finish.rs");
     let runtime_types = runtime_types_source();
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
@@ -606,17 +607,17 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     }
     for forbidden in ["route_ancestor_arm", "scope_parent("] {
         assert!(
-            !decode_finish.contains(forbidden),
-            "decode publish/preflight must not re-grow endpoint-side route ancestry walk: {forbidden}"
+            !branch_recv_finish.contains(forbidden),
+            "branch-recv publish/preflight must not re-grow endpoint-side route ancestry walk: {forbidden}"
         );
     }
 }
 
 #[test]
-fn send_recv_decode_publish_paths_are_commit_delta_apply_only() {
+fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let recv = read("src/endpoint/kernel/recv.rs");
-    let finish = read("src/endpoint/kernel/decode/finish.rs");
+    let finish = read("src/endpoint/kernel/branch_recv/finish.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let runtime_types = runtime_types_source();

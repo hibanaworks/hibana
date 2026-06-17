@@ -31,10 +31,9 @@ where
             return Err(ResourceScope::EndpointLease);
         }
         let mut has_empty_slot = false;
-        let endpoint_leases = self.endpoint_leases_ptr();
         let mut slot_idx = 0usize;
         while slot_idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(slot_idx) };
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(slot_idx));
             if !slot.is_live() {
                 has_empty_slot = true;
                 break;
@@ -52,8 +51,7 @@ where
         let slab_end = slab_base
             .checked_add(slab_len)
             .ok_or(ResourceScope::EndpointLease)?;
-        let endpoint_leases = self.endpoint_leases_ptr();
-        let lease_base = endpoint_leases as usize;
+        let lease_base = self.endpoint_leases_ptr() as usize;
         let lease_bytes = usize::from(self.endpoint_lease_capacity)
             .checked_mul(core::mem::size_of::<EndpointLeaseSlot>())
             .ok_or(ResourceScope::EndpointLease)?;
@@ -72,7 +70,7 @@ where
             let mut best_offset = 0usize;
             let mut idx = 0usize;
             while idx < usize::from(self.endpoint_lease_capacity) {
-                let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
+                let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
                 let offset = slot.offset as usize;
                 if slot.is_live() && offset < candidate_end && offset >= best_offset {
                     best_offset = offset;
@@ -83,7 +81,7 @@ where
 
             let gap_start = match best_idx {
                 Some(idx) => {
-                    let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
+                    let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
                     slot.offset as usize + slot.len as usize
                 }
                 None => floor,
@@ -108,7 +106,9 @@ where
                     let lease_offset = crate::invariant_ok(u32::try_from(offset));
                     let mut insert_idx = 0usize;
                     while insert_idx < usize::from(self.endpoint_lease_capacity) {
-                        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *endpoint_leases.add(insert_idx) };
+                        let slot = crate::invariant_some(
+                            self.endpoint_lease_slot_by_index_mut(insert_idx),
+                        );
                         if !slot.is_live() {
                             let generation = Self::next_endpoint_lease_generation(slot);
                             let lease_id =
@@ -131,7 +131,8 @@ where
             let Some(idx) = best_idx else {
                 break;
             };
-            candidate_end = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { (*endpoint_leases.add(idx)).offset as usize };
+            candidate_end =
+                crate::invariant_some(self.endpoint_lease_slot_by_index(idx)).offset as usize;
         }
         Err(ResourceScope::EndpointLease)
     }
@@ -146,8 +147,7 @@ where
         if idx >= usize::from(self.endpoint_lease_capacity) {
             return Ok(());
         }
-        let endpoint_leases = self.endpoint_leases_ptr();
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *endpoint_leases.add(idx) };
+        let slot = *crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
         if !slot.is_live() || slot.generation != generation {
             return Ok(());
         }
@@ -156,7 +156,8 @@ where
             let mut live_idx = 0usize;
             while live_idx < usize::from(self.endpoint_lease_capacity) {
                 if live_idx != idx {
-                    let live_slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(live_idx) };
+                    let live_slot =
+                        crate::invariant_some(self.endpoint_lease_slot_by_index(live_idx));
                     if live_slot.is_live() {
                         required_route_frames = core::cmp::max(
                             required_route_frames,
@@ -176,13 +177,10 @@ where
             }
         }
         let generation = slot.generation;
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe {
-            *endpoint_leases.add(idx) = EndpointLeaseSlot {
-                generation,
-                ..EndpointLeaseSlot::EMPTY
-            };
-        }
+        *crate::invariant_some(self.endpoint_lease_slot_by_index_mut(idx)) = EndpointLeaseSlot {
+            generation,
+            ..EndpointLeaseSlot::EMPTY
+        };
         self.recompute_frontier_workspace_bytes();
         Ok(())
     }

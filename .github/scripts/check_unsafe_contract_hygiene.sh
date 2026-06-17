@@ -25,6 +25,51 @@ route_table_rs="$(
 frontier_state_rs="$(cat src/endpoint/kernel/frontier_state.rs)"
 eff_rs="$(cat src/eff.rs)"
 
+count_unsafe_blocks() {
+  local roots=("$@")
+  local matches
+  set +e
+  matches="$(rg -n 'unsafe\s*\{' "${roots[@]}" \
+    -g '*.rs' \
+    -g '!src/**/tests.rs' \
+    -g '!src/**/*_tests.rs' \
+    -g '!src/endpoint/kernel/test_support/**')"
+  local status=$?
+  set -e
+  if [[ "${status}" -gt 1 ]]; then
+    echo "unsafe block count failed for: ${roots[*]}" >&2
+    exit 1
+  fi
+  if [[ -z "${matches}" ]]; then
+    echo 0
+  else
+    printf '%s\n' "${matches}" | wc -l | tr -d ' '
+  fi
+}
+
+assert_unsafe_limit() {
+  local label="$1"
+  local limit="$2"
+  shift 2
+  local count
+  count="$(count_unsafe_blocks "$@")"
+  if (( count > limit )); then
+    echo "unsafe block count increased for ${label}: ${count} > ${limit}" >&2
+    exit 1
+  fi
+}
+
+assert_unsafe_limit "production" 377 src
+assert_unsafe_limit "route table owner" 54 \
+  src/rendezvous/tables/route_table.rs src/rendezvous/tables/route_table/storage.rs
+assert_unsafe_limit "frontier scratch owner" 6 src/endpoint/kernel/frontier/scratch.rs
+assert_unsafe_limit "endpoint lease owner" 4 \
+  src/rendezvous/core/endpoint_leases.rs \
+  src/rendezvous/core/storage_layout.rs \
+  src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs
+assert_unsafe_limit "resolver erased storage owner" 5 src/session/cluster/core/dynamic_resolvers.rs
+assert_unsafe_limit "SessionKit init owner" 4 src/runtime/session_kit.rs
+
 for unsafe_owner in \
   src/rendezvous/tables.rs \
   src/session/cluster/core.rs \
@@ -70,6 +115,11 @@ from pathlib import Path
 missing = []
 generic = []
 generic_phrases = [
+    "initialization owns exclusive writable storage",
+    "offset was checked against the backing allocation",
+    "caller supplies exclusive uninitialized storage",
+    "pointer comes from pinned owner storage",
+    "pointer and length are carved from one backing slice",
     "SAFETY-FIELDS:",
     "SAFETY: the surrounding function establishes the pointer, lifetime, and aliasing preconditions for this raw access.",
     "surrounding owner validates",
@@ -105,6 +155,7 @@ generic_phrases = [
     "the owner tracks the initialized prefix and this slot is inside that initialized range.",
     "the table owner tracks the initialized prefix and checks this slot before reading initialized storage.",
 ]
+comments = []
 for path in Path("src").rglob("*.rs"):
     text_path = str(path)
     if (
@@ -116,6 +167,15 @@ for path in Path("src").rglob("*.rs"):
         continue
     lines = path.read_text().splitlines()
     for idx, line in enumerate(lines):
+        if "SAFETY:" in line:
+            text = line.strip()
+            if text.startswith("/*"):
+                text = text[2:].strip()
+            if text.startswith("//"):
+                text = text[2:].strip()
+            if text.endswith("*/"):
+                text = text[:-2].strip()
+            comments.append((text, text_path, idx + 1))
         if "unsafe {" not in line:
             continue
         window = "\n".join(lines[max(0, idx - 6) : min(len(lines), idx + 4)])
@@ -133,6 +193,193 @@ if missing:
 if generic:
     print("unsafe contract hygiene violation: SAFETY comments must name owner/lifetime/aliasing facts instead of the generic comment", file=__import__("sys").stderr)
     for item in generic:
+        print(item, file=__import__("sys").stderr)
+    raise SystemExit(1)
+
+from collections import Counter
+duplicate_failures = []
+for text, count in Counter(text for text, _, _ in comments).items():
+    if count >= 3:
+        sites = ", ".join(f"{path}:{line}" for item, path, line in comments if item == text)
+        duplicate_failures.append(
+            f"SAFETY comment duplicated {count} times: {text} [{sites}]"
+        )
+if duplicate_failures:
+    print(
+        "unsafe contract hygiene violation: duplicate SAFETY comments must be factored or made owner-specific",
+        file=__import__("sys").stderr,
+    )
+    for item in duplicate_failures:
+        print(item, file=__import__("sys").stderr)
+    raise SystemExit(1)
+
+category_terms = {
+    "owner": [
+        "owner", "owns", "owned", "rendezvous", "routetable", "route-table",
+        "frontier", "resolver", "sessionkit", "session", "table", "arena",
+        "column", "storage", "payload", "free-list", "replacement",
+        "destination", "source", "scratch", "callback", "endpoint",
+        "carrier", "lane", "cursor", "slab", "bucket", "assoc", "waiter",
+        "entry", "slot", "view", "buffer", "port", "receipt", "efflist",
+        "descriptor", "image", "program",
+    ],
+    "init": [
+        "init", "initialized", "registered", "written", "staged", "bound",
+        "binding", "publishing", "published", "stored", "installed",
+        "matching", "empty", "free-list", "state", "frame", "column",
+        "section", "slot", "storage", "arena", "exposed", "succeeds",
+        "returned", "returning", "computed", "produced", "created", "reset",
+        "cleared", "clearing", "starts", "zeroed", "armed", "live", "ready",
+        "valid", "validated", "paired", "derived", "issued", "selected",
+        "removed", "removing", "compaction", "fragments",
+    ],
+    "alias": [
+        "borrow", "exclusive", "shared", "mutable", "single", "token",
+        "not expose", "only live", "only creates", "same", "matching",
+        "fresh", "local", "not linked", "copy", "copies", "sole", "one",
+        "duration", "reference", "live", "serializes", "transition",
+        "mutation", "mutating", "returned", "tied", "drop", "exactly once",
+        "belongs", "therefore", "until", "before", "during", "source",
+        "destination", "replacement", "current", "callback", "scoped",
+        "remains", "consumed", "owns", "owned", "&mut", "read-only",
+        "read only", "reads", "read", "writes", "write", "call", "view",
+        "slice", "lease", "pointer", "identity", "one-shot", "interior",
+        "paired", "span", "segment", "pool", "clearing", "compaction",
+        "passed", "returns", "without aliasing", "without creating a borrow",
+    ],
+    "bounds": [
+        "idx", "index", "count", "capacity", "slot", "range", "inside",
+        "bounded", "layout", "total_bytes", "route_slots", "lane_slots",
+        "entries", "entry", "bytes", "align", "size", "offset", "u16",
+        "len", "ptr", "self.storage", "matching", "typed", "assert",
+        "asserted", "trampoline", "resolver-id", "validation", "pointer",
+        "slice", "u8", "row", "word", "cell", "section", "arena",
+        "segment", "span", "start", "end", "field", "fields", "identity",
+        "fragments",
+    ],
+}
+category_failures = []
+for path in Path("src").rglob("*.rs"):
+    text_path = str(path)
+    if (
+        "/test_support/" in text_path
+        or "/tests/" in text_path
+        or text_path.endswith("/tests.rs")
+        or text_path.endswith("_tests.rs")
+    ):
+        continue
+    lines = path.read_text().splitlines()
+    for idx, line in enumerate(lines):
+        if "unsafe {" not in line:
+            continue
+        window = "\n".join(lines[max(0, idx - 6) : min(len(lines), idx + 4)]).lower()
+        missing_terms = [
+            name
+            for name, terms in category_terms.items()
+            if not any(term in window for term in terms)
+        ]
+        if missing_terms:
+            category_failures.append(
+                f"{text_path}:{idx + 1}: unsafe block missing concrete SAFETY terms: {', '.join(missing_terms)}"
+            )
+if category_failures:
+    print(
+        "unsafe contract hygiene violation: production unsafe blocks must name owner/init/alias/bounds facts",
+        file=__import__("sys").stderr,
+    )
+    for item in category_failures:
+        print(item, file=__import__("sys").stderr)
+    raise SystemExit(1)
+
+focus_paths = [
+    Path("src/rendezvous/tables/route_table.rs"),
+    Path("src/rendezvous/tables/route_table/storage.rs"),
+    Path("src/rendezvous/core/endpoint_leases.rs"),
+    Path("src/rendezvous/core/storage_layout.rs"),
+    Path("src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs"),
+    Path("src/endpoint/kernel/frontier/scratch.rs"),
+    Path("src/session/cluster/core/dynamic_resolvers.rs"),
+    Path("src/runtime/session_kit.rs"),
+]
+focused_deny = [
+    "initialization owns exclusive writable storage",
+    "offset was checked against the backing allocation",
+    "caller supplies exclusive uninitialized storage",
+    "pointer comes from pinned owner storage",
+    "pointer and length are carved from one backing slice",
+]
+focused_comments = []
+focused_failures = []
+for path in focus_paths:
+    lines = path.read_text().splitlines()
+    for idx, line in enumerate(lines):
+        if "unsafe {" not in line:
+            continue
+        window = "\n".join(lines[max(0, idx - 6) : min(len(lines), idx + 4)])
+        for phrase in focused_deny:
+            if phrase in window:
+                focused_failures.append(f"{path}:{idx + 1}: focused owner keeps generic SAFETY phrase: {phrase}")
+        lower = window.lower()
+        categories = {
+            "owner": [
+                "owner", "owns", "owned", "rendezvous", "routetable", "route-table",
+                "frontier", "resolver", "sessionkit", "table", "arena", "column",
+                "storage", "payload", "free-list", "replacement", "destination",
+                "source", "scratch", "callback",
+            ],
+            "init": [
+                "init", "initialized", "registered", "written", "staged", "bound",
+                "binding", "publishing", "published", "stored", "installed",
+                "matching", "empty", "free-list", "state", "frame", "column",
+                "section", "slot", "storage", "arena", "exposed", "succeeds",
+            ],
+            "alias": [
+                "borrow", "exclusive", "shared", "mutable", "single", "token",
+                "not expose", "only live", "only creates", "same", "matching",
+                "fresh", "local", "not linked", "copy", "copies", "sole", "one",
+                "duration", "reference", "live", "serializes", "transition",
+                "mutation", "mutating", "returned", "tied", "drop", "exactly once",
+                "belongs", "therefore", "until", "before", "during", "source",
+                "destination", "replacement", "current", "callback", "scoped",
+                "remains",
+            ],
+            "bounds": [
+                "idx", "index", "count", "capacity", "slot", "range", "inside",
+                "bounded", "layout", "total_bytes", "route_slots", "lane_slots",
+                "entries", "entry", "bytes", "align", "size", "offset", "u16",
+                "len", "ptr", "self.storage", "matching", "typed", "assert",
+                "asserted", "trampoline", "resolver-id", "validation",
+            ],
+        }
+        missing_keys = [
+            name
+            for name, terms in categories.items()
+            if not any(term in lower for term in terms)
+        ]
+        if missing_keys:
+            focused_failures.append(
+                f"{path}:{idx + 1}: focused unsafe block missing concrete SAFETY terms: {', '.join(missing_keys)}"
+            )
+    for idx, line in enumerate(lines, 1):
+        if "SAFETY:" not in line:
+            continue
+        text = line.strip()
+        if text.startswith("/*"):
+            text = text[2:].strip()
+        if text.startswith("//"):
+            text = text[2:].strip()
+        if text.endswith("*/"):
+            text = text[:-2].strip()
+        focused_comments.append((text, path, idx))
+from collections import Counter
+counts = Counter(text for text, _, _ in focused_comments)
+for text, count in counts.items():
+    if count >= 3:
+        sites = ", ".join(f"{path}:{idx}" for item, path, idx in focused_comments if item == text)
+        focused_failures.append(f"focused SAFETY comment duplicated {count} times: {text} [{sites}]")
+if focused_failures:
+    print("unsafe contract hygiene violation: focused owner-local unsafe boundary regressed", file=__import__("sys").stderr)
+    for item in focused_failures:
         print(item, file=__import__("sys").stderr)
     raise SystemExit(1)
 
@@ -263,7 +510,7 @@ done
 for required in \
   'SAFETY: the caller provides exclusive, writable storage for one' \
   'SAFETY: `bind_storage` owns the route-frame backing slice' \
-  'SAFETY: `lane_heads` points at `lane_slots` u16 entries' \
+  'SAFETY: `bind_storage` has exclusive publication of the' \
   'SAFETY: `free_head` is the single u16 free-list head owned by this' \
   'SAFETY: `pending_frame_hint_masks` has one initialized slot per' \
   'SAFETY: the waiter arena contains `lane_slots *'

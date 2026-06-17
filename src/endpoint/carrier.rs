@@ -34,7 +34,10 @@ impl RawPayload {
 
     #[inline]
     pub(crate) unsafe fn into_payload<'a>(self) -> Payload<'a> {
-        let bytes = /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*self.bytes };
+        let bytes = /* SAFETY: `RawPayload` is created from a staged endpoint
+        payload slice and consumed before the endpoint borrow ends; this only
+        restores the shared byte-slice view. */
+            unsafe { &*self.bytes };
         Payload::new(bytes)
     }
 }
@@ -78,7 +81,7 @@ pub(crate) struct RecvPollRequest<'a, 'cx> {
     pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
 }
 
-pub(crate) struct DecodePollRequest<'a, 'cx> {
+pub(crate) struct BranchRecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
     pub(crate) handle: PackedEndpointHandle,
     pub(crate) logical_label: u8,
@@ -150,11 +153,13 @@ pub(crate) struct EndpointOps<'r> {
         handle: PackedEndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease,
     pub(crate) reset_public_recv_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
-    pub(crate) begin_public_decode_state: unsafe fn(
+    pub(crate) begin_public_branch_recv_state: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
-    ) -> crate::endpoint::kernel::PublicOpLease,
-    pub(crate) reset_public_decode_state: unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
+    )
+        -> crate::endpoint::kernel::PublicOpLease,
+    pub(crate) reset_public_branch_recv_state:
+        unsafe fn(ptr: NonNull<()>, handle: PackedEndpointHandle),
     pub(crate) preview_send: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
@@ -168,7 +173,7 @@ pub(crate) struct EndpointOps<'r> {
         cx: &mut Context<'_>,
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ),
-    pub(crate) poll_decode: for<'a, 'cx> unsafe fn(DecodePollRequest<'a, 'cx>),
+    pub(crate) poll_branch_recv: for<'a, 'cx> unsafe fn(BranchRecvPollRequest<'a, 'cx>),
     pub(crate) poll_send: unsafe fn(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
@@ -229,7 +234,7 @@ where
     {
         let endpoint = unsafe {
             // SAFETY: this helper preserves the same header tag, generation,
-            // and role preflight as the raw pointer projection above.
+            // and validated role preflight as the raw pointer projection above.
             Self::public_endpoint_ptr_from_header::<'r, ROLE>(ptr, handle)?
         };
         Some(unsafe {
@@ -251,7 +256,7 @@ where
     {
         let Some(endpoint) = (unsafe {
             // SAFETY: this callback-level helper applies the same carrier tag,
-            // generation, and role preflight as direct raw endpoint projection.
+            // generation, and validated role preflight as direct raw endpoint projection.
             Self::public_endpoint_mut_from_header::<'r, ROLE>(ptr, handle)
         }) else {
             return missing;
@@ -270,12 +275,12 @@ where
             reset_public_send_state: Self::reset_public_send_state_raw::<ROLE>,
             init_public_recv_state: Self::init_public_recv_state_raw::<ROLE>,
             reset_public_recv_state: Self::reset_public_recv_state_raw::<ROLE>,
-            begin_public_decode_state: Self::begin_public_decode_state_raw::<ROLE>,
-            reset_public_decode_state: Self::reset_public_decode_state_raw::<ROLE>,
+            begin_public_branch_recv_state: Self::begin_public_branch_recv_state_raw::<ROLE>,
+            reset_public_branch_recv_state: Self::reset_public_branch_recv_state_raw::<ROLE>,
             preview_send: Self::preview_public_send::<ROLE>,
             poll_recv: Self::poll_recv_public_endpoint::<ROLE>,
             poll_offer: Self::poll_offer_public_endpoint::<ROLE>,
-            poll_decode: Self::poll_decode_public_endpoint::<ROLE>,
+            poll_branch_recv: Self::poll_branch_recv_public_endpoint::<ROLE>,
             poll_send: Self::poll_send_public_endpoint::<ROLE>,
         }
     }

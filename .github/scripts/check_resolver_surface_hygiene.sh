@@ -14,8 +14,15 @@ check_absent "ContextProvider" "ContextProvider" src README.md
 check_absent "shared_context_query" "shared_context_query" src README.md
 check_absent "with_epf_route" "with_epf_route" src README.md
 check_absent "route_keys::|RESOLVER_INPUT0" "route_keys/RESOLVER_INPUT0" src README.md
+if [[ -e src/resolver_audit.rs ]]; then
+  echo "boundary deny pattern detected: resolver audit replay owner returned" >&2
+  FAILED=1
+fi
 check_absent "ResolverCtx|HostSlots|pub\\(crate\\) enum Action|AbortInfo|run_resolver\\(|resolver_mode_tag\\(" "in-core resolver owner forbidden path" \
-  src/resolver_audit.rs src/rendezvous/port.rs src/rendezvous/core.rs src/endpoint/kernel/core.rs
+  src/rendezvous/port.rs src/rendezvous/core.rs src/endpoint/kernel/core.rs
+check_absent "emit_endpoint_resolver_audit|endpoint_resolver_args|ResolverSlot::Endpoint(Rx|Tx)|hash_tap_event|emit_resolver_audit_replay|EndpointRxAuditPlan" \
+  "endpoint resolver replay audit residue" \
+  src README.md
 check_absent "RouteResolverDecision|route_resolver_decision_from_action|Defer""Source::Epf" "EPF route authority forbidden path" \
   src/endpoint/kernel/authority.rs src/endpoint/kernel/core.rs
 

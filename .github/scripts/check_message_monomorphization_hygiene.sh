@@ -51,7 +51,7 @@ def block_after(source: str, anchor: str) -> str:
 
 raw_owners = {
     "RawRecvFuture": ("src/endpoint/futures.rs", endpoint, ".poll_recv("),
-    "RawDecodeFuture": ("src/endpoint/futures.rs", endpoint, ".poll_decode("),
+    "RawBranchRecvFuture": ("src/endpoint/futures.rs", endpoint, ".poll_branch_recv("),
     "RawOfferFuture": ("src/endpoint/branch.rs", endpoint, ".poll_offer("),
     "RawSendFuture": ("src/endpoint/send.rs", send, ".poll_send("),
 }
@@ -89,12 +89,12 @@ if re.search(r"impl<[^>]*(M|A)[^>]*>\s+Future\s+for\s+SendFuture", send, re.S):
 
 for future_name, raw_name in [
     ("RecvFuture", "RawRecvFuture"),
-    ("DecodeFuture", "RawDecodeFuture"),
+    ("BranchRecvFuture", "RawBranchRecvFuture"),
 ]:
     future_block = block_after(endpoint, f"impl<'e, 'r, const ROLE: u8, M> Future for {future_name}")
     if "this.raw.poll_raw(" not in future_block:
         fail(f"{future_name} must delegate progress to {raw_name}::poll_raw")
-    for forbidden in ["poll_recv(", "poll_decode(", "poll_offer(", "poll_send("]:
+    for forbidden in ["poll_recv(", "poll_branch_recv(", "poll_offer(", "poll_send("]:
         if forbidden in future_block:
             fail(f"{future_name} Future impl must not call {forbidden} directly")
 
@@ -121,7 +121,7 @@ for forbidden in ["Raw" "Recv" "Flags", "Raw" "Offer" "Lease"]:
 send_future_block = block_after(send, "impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture")
 if "this.raw.poll_raw(" not in send_future_block:
     fail("SendFuture must delegate progress to RawSendFuture::poll_raw")
-for forbidden in ["poll_recv(", "poll_decode(", "poll_offer(", "poll_send("]:
+for forbidden in ["poll_recv(", "poll_branch_recv(", "poll_offer(", "poll_send("]:
     if forbidden in send_future_block:
         fail(f"SendFuture Future impl must not call {forbidden} directly")
 

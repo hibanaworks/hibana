@@ -1,13 +1,13 @@
 use super::{
-    BranchCommitPlan, BranchKind, BranchPreviewView, CursorEndpoint, DecodeCommitBuilder,
-    DecodeCommitPlan, DecodeProgressPlan, DecodeRuntimeDesc, EndpointRxAuditPlan, EventCursor,
-    MaterializedRouteBranch, Payload, Poll, PreparedDecodeProgressPlan, PreparedDecodePublishPlan,
-    RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRows, StateIndex, Transport,
-    decode_phase_invariant, lane_port,
+    BranchCommitPlan, BranchKind, BranchPreviewView, BranchRecvCommitBuilder, BranchRecvCommitPlan,
+    BranchRecvProgressPlan, BranchRecvRuntimeDesc, CursorEndpoint, EndpointRxEventPlan,
+    EventCursor, MaterializedRouteBranch, Payload, Poll, PreparedBranchRecvProgressPlan,
+    PreparedBranchRecvPublishPlan, RecvError, RecvMeta, RecvResult, RouteState,
+    SelectedRouteCommitRows, StateIndex, Transport, branch_recv_phase_invariant, lane_port,
     prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
-use crate::global::typestate::RelocatableResidentLaneStep;
+use crate::{global::typestate::RelocatableResidentLaneStep, transport::trace::TapFrameMeta};
 
 mod commit_builder;
 
@@ -15,10 +15,10 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    fn prepare_decode_transport_wait(
+    fn prepare_branch_recv_transport_wait(
         &mut self,
         branch: &MaterializedRouteBranch<'r>,
-        desc: DecodeRuntimeDesc,
+        desc: BranchRecvRuntimeDesc,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
         let expected = desc.logical_label();
         if branch.label != expected {
@@ -28,7 +28,7 @@ where
             });
         }
         if desc.frame_label() != crate::transport::FrameLabel::new(branch.branch_meta.frame_label) {
-            return Err(decode_phase_invariant());
+            return Err(branch_recv_phase_invariant());
         }
         if !matches!(branch.branch_meta.kind, BranchKind::WireRecv)
             || branch.staged_payload.is_some()
@@ -38,12 +38,12 @@ where
         let meta = self
             .cursor
             .try_recv_meta_at(state_index_to_usize(branch.branch_meta.cursor_index))
-            .ok_or_else(decode_phase_invariant)?;
+            .ok_or_else(branch_recv_phase_invariant)?;
         if meta.origin.is_session() {
-            return Err(decode_phase_invariant());
+            return Err(branch_recv_phase_invariant());
         }
         if desc.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
-            return Err(decode_phase_invariant());
+            return Err(branch_recv_phase_invariant());
         }
         Ok(Some(meta))
     }
@@ -52,9 +52,9 @@ where
         Payload::new(&[])
     }
 
-    fn finish_route_branch_decode(
+    fn finish_route_branch_recv(
         &mut self,
-        desc: DecodeRuntimeDesc,
+        desc: BranchRecvRuntimeDesc,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>> {
@@ -74,24 +74,24 @@ where
                 desc.validate_payload(payload).map_err(RecvError::Codec)?;
                 let branch_view = BranchPreviewView::from_materialized(branch);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
-                let audit = self.build_endpoint_rx_audit_plan(branch_view);
+                let event = EndpointRxEventPlan::from_branch(branch_view);
                 let route_seed_rows = branch_plan.route_seed_rows();
                 let publish_plan =
-                    self.with_decode_commit_builder(route_seed_rows, |mut builder| {
-                        builder.build_non_wire_decode_commit_plan(
+                    self.with_branch_recv_commit_builder(route_seed_rows, |mut builder| {
+                        builder.build_non_wire_branch_recv_commit_plan(
                             branch_plan,
-                            audit,
+                            event,
                             branch_view,
                             branch_meta.kind,
                             payload,
                         )
                     })?;
-                let committed_payload = self.publish_decode_commit_plan(publish_plan);
+                let committed_payload = self.publish_branch_recv_commit_plan(publish_plan);
                 branch.staged_payload = None;
                 Ok(committed_payload)
             }
 
-            BranchKind::ArmSendHint => Err(decode_phase_invariant()),
+            BranchKind::ArmSendHint => Err(branch_recv_phase_invariant()),
             BranchKind::WireRecv => {
                 let meta = if let Some(meta) = prepared_meta {
                     meta
@@ -101,23 +101,23 @@ where
                 {
                     meta
                 } else {
-                    return Err(decode_phase_invariant());
+                    return Err(branch_recv_phase_invariant());
                 };
                 if meta.origin.is_session() {
-                    return Err(decode_phase_invariant());
+                    return Err(branch_recv_phase_invariant());
                 }
 
                 let staged_payload = branch
                     .staged_payload
                     .take()
-                    .ok_or_else(decode_phase_invariant)?;
+                    .ok_or_else(branch_recv_phase_invariant)?;
                 if staged_payload.lane() != meta.lane {
                     branch.staged_payload = Some(staged_payload);
-                    return Err(decode_phase_invariant());
+                    return Err(branch_recv_phase_invariant());
                 }
                 if staged_payload.transport_frame_label() != meta.frame_label {
                     branch.staged_payload = Some(staged_payload);
-                    return Err(decode_phase_invariant());
+                    return Err(branch_recv_phase_invariant());
                 }
                 let committed_payload = staged_payload;
                 let payload = match committed_payload
@@ -133,34 +133,35 @@ where
 
                 branch.staged_payload = Some(committed_payload);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
-                let branch_recv_meta = branch_plan.meta().ok_or_else(decode_phase_invariant)?;
+                let branch_recv_meta =
+                    branch_plan.meta().ok_or_else(branch_recv_phase_invariant)?;
                 let route_seed_rows = branch_plan.route_seed_rows();
-                let audit = self.build_endpoint_rx_audit_plan(branch_view);
+                let event = EndpointRxEventPlan::from_branch(branch_view);
                 let publish_plan =
-                    self.with_decode_commit_builder(route_seed_rows, |mut builder| {
-                        builder.build_decode_commit_plan(
+                    self.with_branch_recv_commit_builder(route_seed_rows, |mut builder| {
+                        builder.build_branch_recv_commit_plan(
                             branch_plan,
                             branch_view,
                             meta,
                             branch_recv_meta,
-                            audit,
+                            event,
                             payload,
                         )
                     })?;
                 crate::invariant_some(branch.staged_payload.take()).commit();
-                let committed_payload = self.publish_decode_commit_plan(publish_plan);
+                let committed_payload = self.publish_branch_recv_commit_plan(publish_plan);
                 Ok(committed_payload)
             }
         }
     }
 
-    fn with_decode_commit_builder(
+    fn with_branch_recv_commit_builder(
         &mut self,
         route_seed_rows: super::SelectedRouteCommitRowsRef,
         f: impl for<'build> FnOnce(
-            DecodeCommitBuilder<'build, 'r, ROLE, T>,
-        ) -> RecvResult<DecodeCommitPlan<'r>>,
-    ) -> RecvResult<PreparedDecodePublishPlan<'r>> {
+            BranchRecvCommitBuilder<'build, 'r, ROLE, T>,
+        ) -> RecvResult<BranchRecvCommitPlan<'r>>,
+    ) -> RecvResult<PreparedBranchRecvPublishPlan<'r>> {
         let plan = {
             let Self {
                 cursor,
@@ -168,17 +169,17 @@ where
                 ..
             } = self;
             let route_rows = SelectedRouteCommitRows::from_seed(route_seed_rows)?;
-            f(DecodeCommitBuilder {
+            f(BranchRecvCommitBuilder {
                 cursor,
                 decision_state,
                 route_rows: Some(route_rows),
                 _role: core::marker::PhantomData,
             })?
         };
-        self.prepare_decode_publish_plan(plan)
+        self.prepare_branch_recv_publish_plan(plan)
     }
 
-    fn collect_decode_reentry_route_rows_from_parts(
+    fn collect_branch_recv_reentry_route_rows_from_parts(
         cursor: &EventCursor,
         decision_state: &RouteState,
         meta: RecvMeta,
@@ -186,15 +187,17 @@ where
         plan: &mut SelectedRouteCommitRows,
     ) -> RecvResult<()> {
         let mut result = Ok(());
-        let completed =
-            cursor.visit_decode_reentry_route_rows(meta.scope, branch_scope, |scope, selected| {
+        let completed = cursor.visit_branch_recv_reentry_route_rows(
+            meta.scope,
+            branch_scope,
+            |scope, selected| {
                 if Self::selected_route_arm_from_parts(decision_state, cursor, scope).is_some()
                     || plan.arm_for_scope(cursor, scope).is_some()
                 {
                     return true;
                 }
                 let Some(selected) = selected else {
-                    result = Err(decode_phase_invariant());
+                    result = Err(branch_recv_phase_invariant());
                     return false;
                 };
                 result =
@@ -207,11 +210,12 @@ where
                         plan,
                     );
                 result.is_ok()
-            });
+            },
+        );
         if completed {
             result
         } else {
-            Err(decode_phase_invariant())
+            Err(branch_recv_phase_invariant())
         }
     }
 
@@ -231,7 +235,7 @@ where
         None
     }
 
-    fn authorized_route_arm_for_decode(
+    fn authorized_route_arm_for_branch_recv(
         decision_state: &RouteState,
         cursor: &EventCursor,
         rows: &SelectedRouteCommitRows,
@@ -243,37 +247,37 @@ where
         Self::selected_route_arm_from_parts(decision_state, cursor, scope)
     }
 
-    fn decode_reentry_cursor_step_from_parts(
+    fn branch_recv_reentry_cursor_step_from_parts(
         cursor: &EventCursor,
         decision_state: &RouteState,
         rows: &SelectedRouteCommitRows,
         meta: RecvMeta,
         next_index: StateIndex,
     ) -> Option<RelocatableResidentLaneStep> {
-        cursor.decode_reentry_cursor_step(meta, next_index, |scope| {
-            Self::authorized_route_arm_for_decode(decision_state, cursor, rows, scope)
+        cursor.branch_recv_reentry_cursor_step(meta, next_index, |scope| {
+            Self::authorized_route_arm_for_branch_recv(decision_state, cursor, rows, scope)
         })
     }
 
-    fn prepare_decode_publish_plan(
+    fn prepare_branch_recv_publish_plan(
         &mut self,
-        plan: DecodeCommitPlan<'r>,
-    ) -> RecvResult<PreparedDecodePublishPlan<'r>> {
+        plan: BranchRecvCommitPlan<'r>,
+    ) -> RecvResult<PreparedBranchRecvPublishPlan<'r>> {
         let progress = match plan.progress {
-            DecodeProgressPlan::Wire { delta } => PreparedDecodeProgressPlan::Wire {
+            BranchRecvProgressPlan::Wire { delta } => PreparedBranchRecvProgressPlan::Wire {
                 delta: self
                     .prepare_commit_delta(delta)
                     .map_err(|_| RecvError::PhaseInvariant)?,
             },
-            DecodeProgressPlan::NonWire { delta } => PreparedDecodeProgressPlan::NonWire {
+            BranchRecvProgressPlan::NonWire { delta } => PreparedBranchRecvProgressPlan::NonWire {
                 delta: self
                     .prepare_commit_delta(delta)
                     .map_err(|_| RecvError::PhaseInvariant)?,
             },
         };
-        Ok(PreparedDecodePublishPlan {
+        Ok(PreparedBranchRecvPublishPlan {
             branch: plan.branch,
-            audit: plan.audit,
+            event: plan.event,
             progress,
             committed_payload: plan.committed_payload,
         })
@@ -284,37 +288,42 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    fn publish_decode_commit_plan(&mut self, plan: PreparedDecodePublishPlan<'r>) -> Payload<'r> {
+    fn publish_branch_recv_commit_plan(
+        &mut self,
+        plan: PreparedBranchRecvPublishPlan<'r>,
+    ) -> Payload<'r> {
         match plan.progress {
-            PreparedDecodeProgressPlan::Wire { delta, .. } => {
+            PreparedBranchRecvProgressPlan::Wire { delta, .. } => {
                 self.commit_prepared_delta(delta);
             }
-            PreparedDecodeProgressPlan::NonWire { delta } => {
+            PreparedBranchRecvProgressPlan::NonWire { delta } => {
                 self.commit_prepared_delta(delta);
             }
         }
         self.publish_branch_preview_commit_plan(plan.branch);
-        self.publish_endpoint_rx_audit(plan.audit);
+        let endpoint_meta =
+            TapFrameMeta::new(self.sid.raw(), plan.event.lane, ROLE, plan.event.label);
+        self.emit_endpoint_event(plan.event.event_id, endpoint_meta, plan.event.lane);
         plan.committed_payload
     }
 }
 
-impl<'r, const ROLE: u8, T> crate::endpoint::kernel::core::DecodeKernelEndpoint<'r>
+impl<'r, const ROLE: u8, T> crate::endpoint::kernel::core::BranchRecvKernelEndpoint<'r>
     for CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
     #[inline]
-    fn prepare_decode_kernel_transport_wait(
+    fn prepare_branch_recv_kernel_transport_wait(
         &mut self,
-        desc: DecodeRuntimeDesc,
+        desc: BranchRecvRuntimeDesc,
         branch: &MaterializedRouteBranch<'r>,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
-        self.prepare_decode_transport_wait(branch, desc)
+        self.prepare_branch_recv_transport_wait(branch, desc)
     }
 
     #[inline]
-    fn poll_decode_kernel_transport_payload(
+    fn poll_branch_recv_kernel_transport_payload(
         &mut self,
         meta: crate::global::typestate::RecvMeta,
         pending_recv: &mut lane_port::PendingRecv,
@@ -336,12 +345,12 @@ where
     }
 
     #[inline]
-    fn finish_decode_kernel(
+    fn finish_branch_recv_kernel(
         &mut self,
-        desc: DecodeRuntimeDesc,
+        desc: BranchRecvRuntimeDesc,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_route_branch_decode(desc, prepared_meta, branch)
+        self.finish_route_branch_recv(desc, prepared_meta, branch)
     }
 }

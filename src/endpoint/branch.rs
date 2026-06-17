@@ -1,6 +1,6 @@
 use super::{
     Endpoint, EndpointError, EndpointOp, RecvResult, RouteBranch,
-    futures::{DecodeFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
+    futures::{BranchRecvFuture, OfferFuture, OfferFutureLease, RawOfferFuture},
     send::SendFuture,
 };
 use crate::transport::wire::{WireEncode, WirePayload};
@@ -43,7 +43,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         M: crate::g::Message,
         M::Payload: WirePayload,
     {
-        DecodeFuture::<'e, 'r, ROLE, M>::new(self)
+        BranchRecvFuture::<'e, 'r, ROLE, M>::new(self)
     }
 
     /// Send the first payload of a selected route arm.
@@ -102,7 +102,9 @@ impl<'r, const ROLE: u8> Drop for Endpoint<'r, ROLE> {
 
 impl<'e, 'r, const ROLE: u8> Drop for RouteBranch<'e, 'r, ROLE> {
     fn drop(&mut self) {
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+        /* SAFETY: `RouteBranch` owns the route preview borrow produced by
+        `offer`. Dropping an unconsumed branch restores that preview exactly
+        once through the endpoint pointer carried by the branch. */
         unsafe {
             (&mut *self.endpoint).restore_public_route_branch();
         }
@@ -131,7 +133,9 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
             }
             OfferFutureLease::RestoreOnDrop => {}
         }
-        match /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { (&mut *self.endpoint).poll_offer(cx) } {
+        match /* SAFETY: `RawOfferFuture` holds the public offer lease and owns
+        the mutable endpoint operation until poll returns Ready or Drop restores
+        the offer state. */ unsafe { (&mut *self.endpoint).poll_offer(cx) } {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => {
                 self.lease = OfferFutureLease::Completed;
@@ -172,7 +176,9 @@ impl<'e, 'r, const ROLE: u8> Future for OfferFuture<'e, 'r, ROLE> {
 impl<'e, 'r, const ROLE: u8> Drop for RawOfferFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         if self.lease == OfferFutureLease::RestoreOnDrop {
-            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+            /* SAFETY: this offer future still owns the restore-on-drop lease.
+            Dropping it releases the public offer state before another endpoint
+            operation can borrow the same endpoint. */
             unsafe {
                 (&mut *self.endpoint).reset_public_offer_state();
             }

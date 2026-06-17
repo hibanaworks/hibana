@@ -11,12 +11,12 @@ FAILED=0
 ENDPOINT_RAW_FILES=(src/endpoint/futures.rs src/endpoint/branch.rs)
 
 check_required "struct RawRecvFuture" "RawRecvFuture owner missing" "${ENDPOINT_RAW_FILES[@]}"
-check_required "struct RawDecodeFuture" "RawDecodeFuture owner missing" "${ENDPOINT_RAW_FILES[@]}"
+check_required "struct RawBranchRecvFuture" "RawBranchRecvFuture owner missing" "${ENDPOINT_RAW_FILES[@]}"
 check_required "struct RawOfferFuture" "RawOfferFuture owner missing" "${ENDPOINT_RAW_FILES[@]}"
 check_required "struct RawSendFuture" "RawSendFuture owner missing" src/endpoint/send.rs
 
 check_required "raw: RawRecvFuture<'e, 'r, ROLE>" "RecvFuture must wrap raw recv owner" "${ENDPOINT_RAW_FILES[@]}"
-check_required "raw: RawDecodeFuture<'e, 'r, ROLE>" "DecodeFuture must wrap raw decode owner" "${ENDPOINT_RAW_FILES[@]}"
+check_required "raw: RawBranchRecvFuture<'e, 'r, ROLE>" "BranchRecvFuture must wrap raw decode owner" "${ENDPOINT_RAW_FILES[@]}"
 check_required "raw: RawOfferFuture<'e, 'r, ROLE>" "OfferFuture must wrap raw offer owner" "${ENDPOINT_RAW_FILES[@]}"
 check_required "raw: RawSendFuture<'a, 'e, 'r, ROLE>" "SendFuture must wrap raw send owner" src/endpoint/send.rs
 

@@ -124,7 +124,8 @@ where
 
     #[inline]
     pub(crate) fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+        /* SAFETY: `Rendezvous` owns the installed resident slab pointer; this
+        returns base/len without a slice borrow aliasing endpoint leases. */
         unsafe {
             let slab = &mut *self.slab;
             (slab.as_mut_ptr(), slab.len())
@@ -135,10 +136,9 @@ where
     pub(crate) fn endpoint_storage_floor(&self) -> usize {
         let (_, slab_len) = self.slab_ptr_and_len();
         let mut floor = slab_len;
-        let endpoint_leases = self.endpoint_leases_ptr();
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
             if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }

@@ -97,22 +97,22 @@ fi
 echo "== runtime performance operation-count tests =="
 run_runtime_test \
 	  -p hibana \
-	  --test offer_decode_receive_evidence \
+	  --test offer_branch_recv_evidence \
 	  offer_requires_framed_receive_evidence_for_branch_demux \
 
 	run_runtime_test \
 	  -p hibana \
-	  --test offer_decode_receive_evidence \
-	  offer_decode_transport_consumes_frame_once \
+	  --test offer_branch_recv_evidence \
+	  branch_recv_transport_consumes_frame_once \
 
 	run_runtime_test \
 	  -p hibana \
-	  --test offer_decode_receive_evidence \
+	  --test offer_branch_recv_evidence \
 	  forgotten_route_branch_leaves_endpoint_fail_closed \
 
 	run_runtime_test \
 	  -p hibana \
-	  --test offer_decode_receive_evidence \
+	  --test offer_branch_recv_evidence \
 	  forgotten_route_recv_future_leaves_endpoint_fail_closed \
 
 	run_runtime_test \

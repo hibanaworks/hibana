@@ -247,45 +247,48 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint) fn begin_public_decode_state(&mut self) -> super::core::PublicOpLease {
+    pub(in crate::endpoint) fn begin_public_branch_recv_state(
+        &mut self,
+    ) -> super::core::PublicOpLease {
         let lease =
             self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::BranchRecv);
         match lease {
             super::core::PublicOpLease::Held => {}
             super::core::PublicOpLease::Rejected => {
-                self.public_decode_state = super::decode::DecodeState::empty();
+                self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                 return lease;
             }
         }
         if let Some(branch) = self.public_route_branch.take() {
-            self.public_decode_state = super::decode::DecodeState::new(branch);
+            self.public_branch_recv_state = super::branch_recv::BranchRecvState::new(branch);
             lease
         } else {
             self.public_op_busy_fault();
-            self.public_decode_state = super::decode::DecodeState::empty();
+            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             super::core::PublicOpLease::Rejected
         }
     }
 
     #[inline]
-    pub(in crate::endpoint) fn reset_public_decode_state(&mut self) {
+    pub(in crate::endpoint) fn reset_public_branch_recv_state(&mut self) {
         self.clear_session_waiter();
         self.finish_public_op(PublicActiveOp::BranchRecv);
-        if self.public_decode_state.restore_on_drop() == super::decode::DecodeRestore::Armed
-            && let Some(branch) = self.public_decode_state.branch.take()
+        if self.public_branch_recv_state.restore_on_drop()
+            == super::branch_recv::BranchRecvRestore::Armed
+            && let Some(branch) = self.public_branch_recv_state.branch.take()
         {
             self.restore_materialized_route_branch(branch);
         }
-        self.public_decode_state = super::decode::DecodeState::empty();
+        self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
 
     #[inline]
-    pub(in crate::endpoint) fn terminal_clear_public_decode_state(&mut self) {
+    pub(in crate::endpoint) fn terminal_clear_public_branch_recv_state(&mut self) {
         self.clear_session_waiter();
         self.clear_public_op_if_current(PublicActiveOp::BranchRecv);
         let mut state = core::mem::replace(
-            &mut self.public_decode_state,
-            super::decode::DecodeState::empty(),
+            &mut self.public_branch_recv_state,
+            super::branch_recv::BranchRecvState::empty(),
         );
         state.discard_terminal();
     }

@@ -16,24 +16,24 @@ pub(crate) struct OfferFuture<'e, 'r, const ROLE: u8> {
     pub(super) raw: RawOfferFuture<'e, 'r, ROLE>,
 }
 
-pub(crate) struct RawDecodeFuture<'e, 'r, const ROLE: u8> {
+pub(crate) struct RawBranchRecvFuture<'e, 'r, const ROLE: u8> {
     endpoint: *mut Endpoint<'r, ROLE>,
     lease: crate::endpoint::kernel::PublicOpLease,
-    progress: DecodeFutureProgress,
+    progress: BranchRecvFutureProgress,
     _borrow: core::marker::PhantomData<&'e mut Endpoint<'r, ROLE>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum DecodeFutureProgress {
+enum BranchRecvFutureProgress {
     Pending,
     Finished,
 }
 
-pub(crate) struct DecodeFuture<'e, 'r, const ROLE: u8, M>
+pub(crate) struct BranchRecvFuture<'e, 'r, const ROLE: u8, M>
 where
     M: crate::g::Message,
 {
-    raw: RawDecodeFuture<'e, 'r, ROLE>,
+    raw: RawBranchRecvFuture<'e, 'r, ROLE>,
     _msg: core::marker::PhantomData<M>,
 }
 
@@ -87,24 +87,27 @@ where
     _msg: core::marker::PhantomData<M>,
 }
 
-impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
+impl<'e, 'r, const ROLE: u8> RawBranchRecvFuture<'e, 'r, ROLE> {
     #[inline]
     fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         let branch = core::mem::ManuallyDrop::new(branch);
         let endpoint = branch.endpoint;
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
-        let lease = unsafe { (&mut *endpoint).begin_public_decode_state() };
+        /* SAFETY: consuming `RouteBranch` transfers its route preview borrow to
+        this branch-recv future. Beginning branch recv arms the public
+        branch-recv state once on the same endpoint pointer carried by the
+        branch. */
+        let lease = unsafe { (&mut *endpoint).begin_public_branch_recv_state() };
         Self {
             endpoint,
             lease,
-            progress: DecodeFutureProgress::Pending,
+            progress: BranchRecvFutureProgress::Pending,
             _borrow: core::marker::PhantomData,
         }
     }
 
     #[inline]
     fn finish(&mut self) {
-        self.progress = DecodeFutureProgress::Finished;
+        self.progress = BranchRecvFutureProgress::Finished;
     }
 
     #[inline]
@@ -114,7 +117,7 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
-        if self.progress == DecodeFutureProgress::Finished {
+        if self.progress == BranchRecvFutureProgress::Finished {
             crate::invariant();
         }
         match self.lease {
@@ -124,8 +127,10 @@ impl<'e, 'r, const ROLE: u8> RawDecodeFuture<'e, 'r, ROLE> {
                 return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
             }
         }
-        let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_decode(logical_label, validate, cx) {
+        let endpoint = /* SAFETY: this branch-recv future holds the public branch-recv
+        lease while `progress` is Pending. Polling owns `&mut self`, so no
+        second endpoint operation can borrow the same branch-recv state. */ unsafe { &mut *self.endpoint };
+        match endpoint.poll_branch_recv(logical_label, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.finish();
@@ -165,7 +170,9 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
             }
             RecvFutureLease::RestoreOnDrop => {}
         }
-        let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
+        let endpoint = /* SAFETY: this recv future holds the public recv lease
+        while it is in `RestoreOnDrop`. Polling owns `&mut self`, which keeps
+        the endpoint recv operation exclusive. */ unsafe { &mut *self.endpoint };
         match endpoint.poll_recv(logical_label, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
@@ -180,14 +187,14 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     }
 }
 
-impl<'e, 'r, const ROLE: u8, M> DecodeFuture<'e, 'r, ROLE, M>
+impl<'e, 'r, const ROLE: u8, M> BranchRecvFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
 {
     #[inline]
     pub(super) fn new(branch: RouteBranch<'e, 'r, ROLE>) -> Self {
         Self {
-            raw: RawDecodeFuture::new(branch),
+            raw: RawBranchRecvFuture::new(branch),
             _msg: core::marker::PhantomData,
         }
     }
@@ -207,7 +214,7 @@ where
     }
 }
 
-impl<'e, 'r, const ROLE: u8, M> Future for DecodeFuture<'e, 'r, ROLE, M>
+impl<'e, 'r, const ROLE: u8, M> Future for BranchRecvFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
     M::Payload: WirePayload,
@@ -257,16 +264,18 @@ where
     }
 }
 
-impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture<'e, 'r, ROLE> {
+impl<'e, 'r, const ROLE: u8> Drop for RawBranchRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         match (self.lease, self.progress) {
-            (crate::endpoint::kernel::PublicOpLease::Held, DecodeFutureProgress::Pending) => {
-                /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+            (crate::endpoint::kernel::PublicOpLease::Held, BranchRecvFutureProgress::Pending) => {
+                /* SAFETY: pending branch recv still owns the public branch-recv
+                lease. Drop disarms that state once before the route branch
+                preview can be offered again. */
                 unsafe {
-                    (&mut *self.endpoint).reset_public_decode_state();
+                    (&mut *self.endpoint).reset_public_branch_recv_state();
                 }
             }
-            (crate::endpoint::kernel::PublicOpLease::Held, DecodeFutureProgress::Finished)
+            (crate::endpoint::kernel::PublicOpLease::Held, BranchRecvFutureProgress::Finished)
             | (crate::endpoint::kernel::PublicOpLease::Rejected, _) => {}
         }
     }
@@ -275,7 +284,9 @@ impl<'e, 'r, const ROLE: u8> Drop for RawDecodeFuture<'e, 'r, ROLE> {
 impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture<'e, 'r, ROLE> {
     fn drop(&mut self) {
         if self.lease == RecvFutureLease::RestoreOnDrop {
-            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+            /* SAFETY: pending recv still owns the public recv lease. Drop
+            resets that endpoint state exactly once because `self.lease` has not
+            moved to Completed. */
             unsafe {
                 (&mut *self.endpoint).reset_public_recv_state();
             }

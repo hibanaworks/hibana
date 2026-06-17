@@ -182,7 +182,8 @@ impl<'a> LaneSetView<'a> {
             return 0;
         }
         if self.is_word_mode() {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `word_idx < word_len` bounds the lane-word slice stored
+            in this view; word-mode reads one initialized `LaneWord`. */
             unsafe { *self.ptr.cast::<LaneWord>().add(word_idx) }
         } else {
             let bits = LaneWord::BITS as usize;
@@ -206,7 +207,8 @@ impl<'a> LaneSetView<'a> {
         if self.ptr.is_null() || idx >= self.byte_len() {
             0
         } else {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `idx < byte_len` bounds the byte-mode lane-set view
+            stored in this descriptor image. */
             unsafe { *self.ptr.add(idx) }
         }
     }
@@ -297,14 +299,18 @@ impl LaneSet {
         if word_len > u16::MAX as usize {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: route/frontier initialization passes an unpublished
+        `LaneSet`; the lane-word pointer and checked u16 length are installed
+        before the set is exposed. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
             core::ptr::addr_of_mut!((*dst).word_len).write(word_len as u16);
         }
         let mut idx = 0usize;
         while idx < word_len {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < word_len` bounds the lane-word backing slice, and
+            initialization clears every word before any lane-set operation can
+            read it. */
             unsafe {
                 ptr.add(idx).write(0);
             }
@@ -326,7 +332,8 @@ impl LaneSet {
     pub(crate) fn clear(&mut self) {
         let mut idx = 0usize;
         while idx < self.word_len() {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < word_len` bounds this lane-set's word slice, and
+            `&mut self` owns the clear operation. */
             unsafe {
                 self.ptr.add(idx).write(0);
             }
@@ -340,7 +347,8 @@ impl LaneSet {
         if word_idx >= self.word_len() {
             return;
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `word_idx < word_len` bounds the lane-set word containing
+        `lane`, and `&mut self` owns the read-modify-write for that word. */
         unsafe {
             let word = self.ptr.add(word_idx);
             word.write(word.read() | bit);
@@ -353,7 +361,8 @@ impl LaneSet {
         if word_idx >= self.word_len() {
             return;
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `word_idx < word_len` bounds the lane-set word containing
+        `lane`, and `&mut self` owns the removal read-modify-write. */
         unsafe {
             let word = self.ptr.add(word_idx);
             word.write(word.read() & !bit);
@@ -370,7 +379,8 @@ impl LaneSet {
         };
         let mut idx = 0usize;
         while idx < len {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < len` is inside both initialized destination and source
+            lane-word views; `&mut self` owns the destination copy. */
             unsafe {
                 self.ptr.add(idx).write(src.word_at(idx));
             }

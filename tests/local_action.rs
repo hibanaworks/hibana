@@ -109,7 +109,7 @@ fn local_route_program<const PAYLOAD_LABEL: u8, P>() -> RoleProgram<0> {
     project(&route)
 }
 
-fn run_local_route_decode_empty_payload(
+fn run_local_route_recv_empty_payload(
     cluster: &'static TestKit,
     slab: &'static mut [u8],
     transport: &TestTransport,
@@ -133,7 +133,7 @@ fn run_local_route_decode_empty_payload(
     assert!(transport_queue_is_empty(transport));
 }
 
-fn run_local_route_decode_non_empty_payload_fails_closed(
+fn run_local_route_recv_non_empty_payload_fails_closed(
     cluster: &'static TestKit,
     slab: &'static mut [u8],
     transport: &TestTransport,
@@ -173,21 +173,21 @@ fn local_action_flow_executes() {
 }
 
 #[test]
-fn local_route_decode_accepts_only_empty_payload() {
+fn local_route_recv_accepts_only_empty_payload() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            run_local_route_decode_empty_payload(cluster, slab, &transport);
+            run_local_route_recv_empty_payload(cluster, slab, &transport);
         });
     });
 }
 
 #[test]
-fn local_route_decode_rejects_non_empty_payload() {
+fn local_route_recv_rejects_non_empty_payload() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
-            run_local_route_decode_non_empty_payload_fails_closed(cluster, slab, &transport);
+            run_local_route_recv_non_empty_payload_fails_closed(cluster, slab, &transport);
         });
     });
 }

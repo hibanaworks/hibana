@@ -340,7 +340,7 @@ fn drop_public_preview_branch_preserves_offer_progression() {
 }
 
 #[test]
-fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
+fn live_endpoint_branch_recv_survives_endpoint_lease_table_growth() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -367,7 +367,7 @@ fn live_endpoint_offer_decode_survives_endpoint_lease_table_growth() {
                 let value = branch
                     .recv::<Msg<71, u32>>()
                     .await
-                    .expect("decode survives endpoint lease root relocation");
+                    .expect("branch recv survives endpoint lease root relocation");
                 assert_eq!(value, 8888);
 
                 send_tail(&mut controller, 99).await;
@@ -406,7 +406,7 @@ fn forgotten_route_branch_leaves_endpoint_fail_closed() {
 }
 
 #[test]
-fn offer_decode_transport_consumes_frame_once() {
+fn branch_recv_transport_consumes_frame_once() {
     with_route_workspace(|controller, worker, transport| {
         futures::executor::block_on(async {
             send_left(controller, 1234).await;

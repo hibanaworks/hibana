@@ -106,12 +106,12 @@ impl RecvRuntimeDesc {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct DecodeRuntimeDesc {
+pub(crate) struct BranchRecvRuntimeDesc {
     pub(crate) core: MsgCore,
     validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
 }
 
-impl DecodeRuntimeDesc {
+impl BranchRecvRuntimeDesc {
     #[inline]
     pub(crate) const fn new(
         logical_label: u8,

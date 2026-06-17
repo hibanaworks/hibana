@@ -37,7 +37,7 @@ fn retain_large_choreography_symbols() {
     let _ = fanout_program::run
         as fn(&mut localside::ControllerEndpoint<'_>, &mut localside::WorkerEndpoint<'_>);
     let _ = fanout_program::controller_program as fn() -> crate::runtime::program::RoleProgram<0>;
-    let _ = localside::worker_offer_decode_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
+    let _ = localside::worker_offer_recv_u8::<0> as fn(&mut localside::WorkerEndpoint<'_>) -> u8;
 }
 
 #[test]

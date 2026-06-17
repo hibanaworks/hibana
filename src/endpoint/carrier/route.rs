@@ -1,4 +1,6 @@
-use super::{Context, DecodePollRequest, NonNull, OutSlot, PackedEndpointHandle, Poll, RawPayload};
+use super::{
+    BranchRecvPollRequest, Context, NonNull, OutSlot, PackedEndpointHandle, Poll, RawPayload,
+};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -8,8 +10,8 @@ where
         handle: PackedEndpointHandle,
     ) {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: offer-state reset owns the carrier endpoint slot selected
+            // by `handle` and clears only the resident public offer state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |endpoint| {
                 endpoint.reset_public_offer_state();
             });
@@ -21,8 +23,8 @@ where
         handle: PackedEndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: offer-state initialization owns the carrier endpoint slot
+            // selected by `handle` and installs only the public offer state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,
@@ -37,39 +39,40 @@ where
         handle: PackedEndpointHandle,
     ) {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: route-branch restore owns the carrier endpoint slot
+            // selected by `handle` and restores the resident branch preview.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |endpoint| {
                 endpoint.restore_public_route_branch();
             });
         }
     }
 
-    pub(super) unsafe fn begin_public_decode_state_raw<const ROLE: u8>(
+    pub(super) unsafe fn begin_public_branch_recv_state_raw<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: branch-recv decode initialization owns the carrier
+            // endpoint slot selected by `handle` and arms only public decode
+            // state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,
                 crate::endpoint::kernel::PublicOpLease::Rejected,
-                |kernel| kernel.begin_public_decode_state(),
+                |kernel| kernel.begin_public_branch_recv_state(),
             )
         }
     }
 
-    pub(super) unsafe fn reset_public_decode_state_raw<const ROLE: u8>(
+    pub(super) unsafe fn reset_public_branch_recv_state_raw<const ROLE: u8>(
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
     ) {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: branch-recv reset owns the carrier endpoint slot selected
+            // by `handle` and clears only the resident branch-recv state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
-                kernel.reset_public_decode_state();
+                kernel.reset_public_branch_recv_state();
             });
         }
     }
@@ -81,8 +84,9 @@ where
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ) {
         let poll = unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: offer polling owns the carrier endpoint slot selected by
+            // `handle`; the route label poll result is copied into the out slot
+            // after the callback returns.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,
@@ -95,10 +99,10 @@ where
         OutSlot::new(out).write(poll);
     }
 
-    pub(super) unsafe fn poll_decode_public_endpoint<const ROLE: u8>(
-        request: DecodePollRequest<'_, '_>,
+    pub(super) unsafe fn poll_branch_recv_public_endpoint<const ROLE: u8>(
+        request: BranchRecvPollRequest<'_, '_>,
     ) {
-        let DecodePollRequest {
+        let BranchRecvPollRequest {
             ptr,
             handle,
             logical_label,
@@ -107,15 +111,16 @@ where
             out,
         } = request;
         let poll = unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: branch recv polling owns the carrier endpoint slot
+            // selected by `handle`; validation and payload staging stay inside
+            // this decode poll callback.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| match kernel.poll_public_decode(logical_label, validate, cx) {
+                |kernel| match kernel.poll_public_branch_recv(logical_label, validate, cx) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),

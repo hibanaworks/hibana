@@ -154,13 +154,16 @@ impl RouteTable {
 
     #[inline]
     fn raw_frames(&self) -> *mut RouteFrame {
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        /* SAFETY: `frames` is written during route-table binding/rebinding and
+        then remains the table-owned frame column until the next owner-local
+        storage transition; slot helpers bound indices by `route_slots`. */
         unsafe { *self.frames.get() }
     }
 
     #[inline]
     fn raw_pending_frame_hint_masks(&self) -> *mut FrameLabelMask {
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        /* SAFETY: pending hint masks are initialized for every bound lane slot
+        before safe route-table methods can query the column. */
         unsafe { *self.pending_frame_hint_masks.get() }
     }
 
@@ -183,8 +186,9 @@ impl RouteTable {
         let mut lane_idx = 0usize;
         while lane_idx < shape.lane_slots {
             unsafe {
-                // SAFETY: `lane_heads` points at `lane_slots` u16 entries
-                // owned by this `RouteTable`.
+                // SAFETY: `bind_storage` has exclusive publication of the
+                // replacement lane-head column; `lane_idx` is within
+                // `shape.lane_slots`.
                 parts.lane_heads.add(lane_idx).write(Self::FRAME_LIST_END);
             }
             lane_idx += 1;
@@ -281,7 +285,9 @@ impl RouteTable {
             } else {
                 Self::FRAME_LIST_END
             };
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `migrate_to` owns the destination frame column in
+            `dst_parts`; `idx` is bounded by `shape.route_slots`, and each
+            destination frame is initialized before the table is rebound. */
             unsafe {
                 dst_parts.frames.add(idx).write(RouteFrame::free(next));
             }
@@ -289,7 +295,9 @@ impl RouteTable {
         }
         let mut lane_idx = 0usize;
         while lane_idx < shape.lane_slots {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `dst_parts.lane_heads` has `shape.lane_slots` initialized
+            entries reserved for the replacement table, and `lane_idx` is inside
+            that destination column. */
             unsafe {
                 dst_parts
                     .lane_heads
@@ -298,7 +306,8 @@ impl RouteTable {
             }
             lane_idx += 1;
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `dst_parts.free_head` is the replacement table's single
+        free-list head and is written before any destination frame is popped. */
         unsafe {
             dst_parts.free_head.write(if shape.route_slots == 0 {
                 Self::FRAME_LIST_END
@@ -308,7 +317,9 @@ impl RouteTable {
         }
         let mut hint_idx = 0usize;
         while hint_idx < self.lane_slots() {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: both pending-hint columns are initialized for their lane
+            counts; `hint_idx` is within the old table and the replacement has
+            at least that many lanes. */
             unsafe {
                 dst_parts
                     .pending_frame_hint_masks
@@ -318,7 +329,9 @@ impl RouteTable {
             hint_idx += 1;
         }
         while hint_idx < shape.lane_slots {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `hint_idx` is within the replacement lane count but past
+            the old table's lane count, so this slot is initialized to the empty
+            hint mask before publication. */
             unsafe {
                 dst_parts
                     .pending_frame_hint_masks
@@ -331,7 +344,9 @@ impl RouteTable {
         let waiter_count = checked_mul_usize(shape.lane_slots, MAX_TRACKED_ROLES);
         let src_waiter_count = checked_mul_usize(self.lane_slots(), MAX_TRACKED_ROLES);
         while waiter_idx < src_waiter_count {
-            /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+            /* SAFETY: `waiter_idx` is within the initialized source waiter
+            column and the replacement waiter column. The clone initializes each
+            destination waiter slot once before rebinding. */
             unsafe {
                 let src_waiter = &*self.waiters_ptr().add(waiter_idx);
                 WaiterSlot::init_clone_from(dst_parts.waiters.add(waiter_idx), src_waiter);
@@ -339,7 +354,8 @@ impl RouteTable {
             waiter_idx += 1;
         }
         while waiter_idx < waiter_count {
-            /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+            /* SAFETY: `waiter_idx` is only in the replacement waiter column;
+            this initializes the new lane/role waiter slot before publication. */
             unsafe {
                 WaiterSlot::init_empty(dst_parts.waiters.add(waiter_idx));
             }
@@ -350,28 +366,43 @@ impl RouteTable {
         }
         let mut lane_idx = 0usize;
         while lane_idx < self.lane_slots() {
-            let mut current = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.lane_heads_ptr().add(lane_idx) };
+            let mut current = /* SAFETY: `lane_idx` is bounded by the current
+            table's `lane_slots`; the lane-head column is initialized before
+            migration begins. */
+                unsafe { *self.lane_heads_ptr().add(lane_idx) };
             let mut prev_new = Self::FRAME_LIST_END;
             while current != Self::FRAME_LIST_END {
                 let src_idx = current as usize;
-                let next = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { (*self.frames_ptr().add(src_idx)).next };
+                let next = /* SAFETY: `src_idx` comes from the current table's
+                route-frame linked list for `lane_idx`, so it names an
+                initialized source frame. */
+                    unsafe { (*self.frames_ptr().add(src_idx)).next };
                 let dst_idx = crate::invariant_some(
                     /* SAFETY: migration owns the destination column bundle and pops each destination frame at most once. */
                     unsafe { dst_parts.pop_free_slot() },
                 );
-                let mut moved = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.frames_ptr().add(src_idx) };
+                let mut moved = /* SAFETY: `src_idx` is the current source frame
+                being migrated; the source table remains bound and initialized
+                for the whole copy phase. */
+                    unsafe { *self.frames_ptr().add(src_idx) };
                 moved.next = Self::FRAME_LIST_END;
-                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                /* SAFETY: `dst_idx` was popped from the replacement free list,
+                so this destination frame slot is owned by migration and not
+                linked elsewhere yet. */
                 unsafe {
                     dst_parts.frames.add(dst_idx).write(moved);
                 }
                 if prev_new == Self::FRAME_LIST_END {
-                    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                    /* SAFETY: `lane_idx` is inside the replacement lane-head
+                    column; this publishes the first migrated frame for that
+                    lane into the replacement list. */
                     unsafe {
                         *dst_parts.lane_heads.add(lane_idx) = dst_idx as u16;
                     }
                 } else {
-                    /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                    /* SAFETY: `prev_new` is the previous frame slot popped from
+                    the same replacement free list and linked in this migration
+                    pass. */
                     unsafe {
                         (*dst_parts.frames.add(prev_new as usize)).next = dst_idx as u16;
                     }
@@ -393,8 +424,12 @@ impl RouteTable {
         lane_base: u32,
         lane_slots: usize,
     ) {
-        let parts = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        let parts = /* SAFETY: `storage` is the fresh route-table arena leased
+        by rendezvous capacity growth for `route_slots` and `lane_slots`. */
+            unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
+        /* SAFETY: `bind_from_storage_with_layout` has exclusive `&mut self`;
+        `bind_storage` initializes all route-table columns before publishing the
+        pointers into this table. */
         unsafe {
             self.bind_storage(RouteTableStorageBinding {
                 parts,
@@ -414,8 +449,13 @@ impl RouteTable {
         lane_base: u32,
         lane_slots: usize,
     ) {
-        let parts = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        let parts = /* SAFETY: `storage` is the replacement route-table arena;
+        migration derives columns with the same layout used for capacity
+        accounting. */
+            unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
+        /* SAFETY: `migrate_to` copies initialized source route frames and
+        waiters into the replacement column bundle without rebinding this table
+        during the copy phase. */
         unsafe {
             self.migrate_to(
                 parts,
@@ -435,8 +475,12 @@ impl RouteTable {
         lane_base: u32,
         lane_slots: usize,
     ) {
-        let parts = /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */ unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        let parts = /* SAFETY: `storage` is the already staged replacement arena
+        whose route-frame, lane-head, hint, and waiter columns were initialized
+        by `migrate_from_storage`. */
+            unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
+        /* SAFETY: `rebind_from_storage` has exclusive `&mut self` and only
+        swaps this table's column pointers to the staged replacement bundle. */
         unsafe {
             self.rebind_storage(RouteTableStorageBinding {
                 parts,
@@ -454,7 +498,9 @@ impl RouteTable {
         route_slots: usize,
         lane_slots: usize,
     ) {
-        let parts = /* SAFETY: the caller passes initialized route-table storage. */ unsafe {
+        let parts = /* SAFETY: the route-table owner passes initialized storage
+        with `route_slots`/`lane_slots`; this helper only derives column
+        pointers for clearing waiter slots and does not create live aliases. */ unsafe {
             Self::storage_parts(storage, route_slots, lane_slots)
         };
         let waiter_count = checked_mul_usize(lane_slots, MAX_TRACKED_ROLES);
@@ -495,11 +541,6 @@ impl RouteTable {
             ),
             storage as usize,
         );
-        // SAFETY: `storage` is the caller-provided route-table arena. This
-        // owner derives all column pointers from the single layout formula used
-        // by `storage_layout`, so each pointer stays within that arena when the
-        // caller supplied the advertised layout.
-        let lane_heads = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(lane_heads_offset) }.cast::<u16>();
         let lane_heads_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<u16>());
         let free_head_offset = checked_sub_usize(
             Self::align_up(
@@ -511,9 +552,6 @@ impl RouteTable {
             ),
             storage as usize,
         );
-        // SAFETY: See the lane-head derivation above; this is the next aligned
-        // column in the same resident route-table arena.
-        let free_head = unsafe { storage.add(free_head_offset) }.cast::<u16>();
         let hint_offset = checked_sub_usize(
             Self::align_up(
                 checked_add_usize(
@@ -524,9 +562,6 @@ impl RouteTable {
             ),
             storage as usize,
         );
-        // SAFETY: The pending-hint column is derived by the same storage layout
-        // owner and follows the single free-head slot.
-        let pending_frame_hint_masks = unsafe { storage.add(hint_offset) }.cast::<FrameLabelMask>();
         let hint_bytes = checked_mul_usize(lane_slots, core::mem::size_of::<FrameLabelMask>());
         let waiters_offset = checked_sub_usize(
             Self::align_up(
@@ -535,9 +570,18 @@ impl RouteTable {
             ),
             storage as usize,
         );
-        // SAFETY: The waiter column is the final aligned column owned by the
-        // route table storage layout.
-        let waiters = unsafe { storage.add(waiters_offset) }.cast::<WaiterSlot>();
+        /* SAFETY: `storage_parts` owns only pointer derivation for the
+        caller-provided route-table arena. All offsets are computed by this
+        layout formula, aligned for their typed columns, and no references are
+        created until bounded route-table methods index the initialized slots. */
+        let (lane_heads, free_head, pending_frame_hint_masks, waiters) = unsafe {
+            (
+                storage.add(lane_heads_offset).cast::<u16>(),
+                storage.add(free_head_offset).cast::<u16>(),
+                storage.add(hint_offset).cast::<FrameLabelMask>(),
+                storage.add(waiters_offset).cast::<WaiterSlot>(),
+            )
+        };
         RouteTableStorageParts {
             frames,
             lane_heads,
@@ -554,13 +598,15 @@ impl RouteTable {
 
     #[inline]
     pub(super) fn lane_heads_ptr(&self) -> *mut u16 {
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        /* SAFETY: `lane_heads` is the initialized route-list head column for
+        the currently bound lane range. */
         unsafe { *self.lane_heads.get() }
     }
 
     #[inline]
     pub(super) fn free_head_ptr(&self) -> *mut u16 {
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        /* SAFETY: `free_head` is the single initialized frame free-list head
+        owned by this route table. */
         unsafe { *self.free_head.get() }
     }
 
@@ -571,7 +617,8 @@ impl RouteTable {
 
     #[inline]
     pub(super) fn waiters_ptr(&self) -> *mut WaiterSlot {
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
+        /* SAFETY: `RouteTable` owns `waiters`, initialized with `lane_slots *
+        MAX_TRACKED_ROLES` entries during bind or migration. */
         unsafe { *self.waiters.get() }
     }
 }

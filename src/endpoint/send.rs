@@ -85,7 +85,10 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
             crate::invariant();
         }
         let poll = {
-            let endpoint = /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *self.endpoint };
+            let endpoint = /* SAFETY: `SendFuture::pending` stores the endpoint
+            pointer while the send lease is held. Polling owns `&mut self`, so
+            this is the only mutable access until the future resolves or Drop
+            resets the send state. */ unsafe { &mut *self.endpoint };
             endpoint.poll_send(cx, self.payload.take())
         };
         match poll {
@@ -118,7 +121,9 @@ impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
 impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture<'a, 'e, 'r, ROLE> {
     fn drop(&mut self) {
         if !self.endpoint.is_null() {
-            /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+            /* SAFETY: a non-null endpoint means this send future still holds
+            the public send lease. Drop owns the future and releases that lease
+            exactly once through the same endpoint pointer. */
             unsafe {
                 (&mut *self.endpoint).reset_public_send_state();
             }

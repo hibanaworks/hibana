@@ -114,15 +114,52 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
 fn resolver_audit_emit_stays_infallible() {
     let source = read("src/endpoint/kernel/core/decision_resolver/impls.rs");
     let audit_fn = source
-        .split("fn emit_decision_resolver_audit")
+        .split("fn emit_dynamic_resolver_audit")
         .nth(1)
-        .and_then(|tail| tail.split("fn evaluate_arm_decision_resolver").next())
+        .and_then(|tail| {
+            tail.split("pub(in crate::endpoint::kernel) fn emit_dynamic_resolver_success_audit")
+                .next()
+        })
         .expect("decision resolver audit emit helper must stay local");
 
     assert!(
         !audit_fn.contains("SendResult") && !audit_fn.contains("Ok(())"),
         "resolver audit emit must not return Result when it has no error source"
     );
+    assert!(
+        source.contains("emit_dynamic_resolver_success_audit")
+            && source.contains("emit_dynamic_resolver_reject_audit")
+            && source.contains("ids::RESOLVER_AUDIT")
+            && source.contains("((resolver_id as u32) << 16) | result"),
+        "dynamic resolver audit must be the only local resolver authority evidence path"
+    );
+}
+
+#[test]
+fn endpoint_hot_paths_do_not_emit_resolver_audit_replay() {
+    let endpoint_hot_path = [
+        read("src/endpoint/kernel/core/send_ops.rs"),
+        read("src/endpoint/kernel/recv.rs"),
+        read("src/endpoint/kernel/branch_recv.rs"),
+        read("src/endpoint/kernel/branch_recv/finish.rs"),
+        read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs"),
+        read("src/endpoint/kernel/core/route_preview.rs"),
+    ]
+    .join("\n");
+    for forbidden in [
+        "emit_endpoint_resolver_audit",
+        "emit_resolver_audit_replay",
+        "ResolverSlot::EndpointRx",
+        "ResolverSlot::EndpointTx",
+        "ids::RESOLVER_AUDIT",
+        "endpoint_resolver_args",
+        "EndpointRxAuditPlan",
+    ] {
+        assert!(
+            !endpoint_hot_path.contains(forbidden),
+            "endpoint hot paths must not know resolver audit replay: {forbidden}"
+        );
+    }
 }
 
 #[test]
@@ -187,7 +224,7 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
         "init_public_offer_state(&mut self) -> bool",
         "init_public_send_state(&mut self, init: &SendInit) -> bool",
         "init_public_recv_state(&mut self) -> bool",
-        "begin_public_decode_state(&mut self) -> bool",
+        "begin_public_branch_recv_state(&mut self) -> bool",
         "restore_on_drop: bool",
         "restore_on_drop = false",
         "restore_on_drop = true",

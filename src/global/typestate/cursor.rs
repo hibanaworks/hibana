@@ -122,7 +122,9 @@ struct EventCursorMachine {
 impl EventCursorMachine {
     #[inline(always)]
     unsafe fn init_from_event_rows(dst: *mut Self, role: u8, event_program: LocalEventProgram) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `EventCursor::init_from_compiled` passes an unpublished
+        cursor-machine field; role id and local event-program slice are written
+        before cursor methods can read the machine. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).role).write(role);
             core::ptr::addr_of_mut!((*dst).event_program).write(event_program);
@@ -418,7 +420,10 @@ impl EventCursorState {
         logical_lane_count: usize,
         completed_event_word_count: usize,
     ) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: endpoint cursor initialization passes an unpublished
+        `EventCursorState` plus three resident columns. Lane cursor and current
+        label columns are initialized for `logical_lane_count`; completed-event
+        words are initialized for the computed word count before publication. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).idx).write(0);
             core::ptr::addr_of_mut!((*dst).resident_row_index).write(0);
@@ -483,7 +488,9 @@ impl EventCursor {
         if self.state.is_null() {
             crate::invariant();
         }
-        /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */
+        /* SAFETY: `self.state` is the cursor-state section installed from the
+        endpoint arena during cursor initialization; shared access is tied to
+        `&self`. */
         unsafe { &*self.state }
     }
 
@@ -492,7 +499,8 @@ impl EventCursor {
         if self.state.is_null() {
             crate::invariant();
         }
-        /* SAFETY: the pointer comes from pinned owner storage and this path holds unique mutable access for the borrow. */
+        /* SAFETY: `&mut self` is the cursor mutation token, so this is the only
+        mutable borrow of the resident cursor-state section for the operation. */
         unsafe { &mut *self.state }
     }
 
@@ -517,7 +525,8 @@ impl EventCursor {
         if len == 0 {
             &[]
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `lane_cursors` was initialized with one u16 per logical
+            lane in this cursor state, and `len` comes from the same role image. */
             unsafe { slice::from_raw_parts(self.state().lane_cursors, len) }
         }
     }
@@ -528,7 +537,8 @@ impl EventCursor {
         if len == 0 {
             &mut []
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `lane_cursors` has one initialized u16 per logical lane,
+            and `&mut self` owns mutable cursor progress for that slice. */
             unsafe { slice::from_raw_parts_mut(self.state_mut().lane_cursors, len) }
         }
     }
@@ -544,7 +554,8 @@ impl EventCursor {
         if len == 0 {
             &[]
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `completed_event_words` was initialized with the word
+            count derived from this cursor's local event row length. */
             unsafe { slice::from_raw_parts(self.state().completed_event_words, len) }
         }
     }
@@ -555,7 +566,9 @@ impl EventCursor {
         if len == 0 {
             &mut []
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `completed_event_words` has the initialized word count
+            derived from the local event rows, and `&mut self` owns updates to
+            that bitset. */
             unsafe { slice::from_raw_parts_mut(self.state_mut().completed_event_words, len) }
         }
     }
@@ -610,7 +623,8 @@ impl EventCursor {
         if len == 0 {
             &[]
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `current_step_label_codes` was initialized with one u16
+            per logical lane in this cursor state. */
             unsafe { slice::from_raw_parts(self.state().current_step_label_codes, len) }
         }
     }
@@ -621,7 +635,8 @@ impl EventCursor {
         if len == 0 {
             &mut []
         } else {
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `current_step_label_codes` has one initialized u16 per
+            logical lane, and `&mut self` owns current-step label updates. */
             unsafe { slice::from_raw_parts_mut(self.state_mut().current_step_label_codes, len) }
         }
     }
@@ -644,7 +659,9 @@ impl EventCursor {
         completed_event_words: *mut u32,
         role_descriptor: RoleDescriptorRef,
     ) {
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+        /* SAFETY: endpoint initialization passes an unpublished `EventCursor`
+        field and disjoint cursor backing columns from the endpoint arena.
+        Machine and state are fully initialized before the cursor is exposed. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).state).write(state);
             EventCursorMachine::init_from_event_rows(

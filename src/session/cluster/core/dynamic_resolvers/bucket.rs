@@ -21,7 +21,9 @@ pub(crate) struct ResolverBucket<'cfg> {
 
 impl<'cfg> ResolverBucket<'cfg> {
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `RendezvousEntry::init_from_parts` passes an unpublished
+        resolver bucket cell. The sidecar pointer and capacity are initialized
+        together before the entry can be linked into the registry. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).storage).write(Sidecar::EMPTY);
             core::ptr::addr_of_mut!((*dst).capacity).write(0);
@@ -70,7 +72,9 @@ impl<'cfg> ResolverBucket<'cfg> {
         let mut idx = 0usize;
         let mut count = 0usize;
         while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `idx < self.capacity` bounds this resolver-bucket slot,
+            and `entries` is the sidecar pointer currently installed for this
+            bucket. Shared counting does not mutate resolver storage. */
             unsafe {
                 if (*entries.add(idx)).is_some() {
                     count += 1;
@@ -89,7 +93,9 @@ impl<'cfg> ResolverBucket<'cfg> {
         let entries = storage.ptr();
         let mut idx = 0usize;
         while idx < capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `storage` is the fresh resolver sidecar allocated for
+            this bucket. `idx < capacity` selects one uninitialized slot, and
+            the bucket is not committed until every slot is written to `None`. */
             unsafe {
                 entries.add(idx).write(None);
             }
@@ -108,7 +114,9 @@ impl<'cfg> ResolverBucket<'cfg> {
         let new_entries = storage.ptr();
         let mut idx = 0usize;
         while idx < new_capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `new_entries` is the unpublished replacement resolver
+            sidecar. The loop initializes every slot in `0..new_capacity`
+            before any copied entry can be observed through `self.storage`. */
             unsafe {
                 new_entries.add(idx).write(None);
             }
@@ -119,7 +127,9 @@ impl<'cfg> ResolverBucket<'cfg> {
             let mut next = 0usize;
             let mut source_idx = 0usize;
             while source_idx < source_capacity {
-                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                /* SAFETY: `source_idx < source_capacity` reads an initialized
+                slot from the current bucket, and `next < new_capacity` is
+                checked before writing the unpublished replacement slot. */
                 unsafe {
                     if let Some(entry) = *source_entries.add(source_idx) {
                         if next >= new_capacity {
@@ -172,7 +182,10 @@ impl<'cfg> ResolverBucket<'cfg> {
         .ok_or(ClusterError::resource_exhausted(
             ResourceScope::ResolverTable,
         ))?;
-        /* SAFETY: session cluster storage owns this resident slab region and checks the carved offset before raw access. */
+        /* SAFETY: the session cluster allocator returned a resolver sidecar
+        sized and aligned by `ResolverBucket::{storage_bytes, storage_align}`.
+        This bucket commits that sidecar only after initialization succeeds, and
+        frees the old sidecar before replacing the installed pointer. */
         unsafe {
             if source_storage.ptr().is_null() {
                 self.bind_from_storage(storage.cast(), required);
@@ -204,7 +217,9 @@ impl<'cfg> ResolverBucket<'cfg> {
         let mut first_empty = None;
         let mut idx = 0usize;
         while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `idx < self.capacity` bounds the installed resolver
+            bucket sidecar. `&mut self` is the bucket mutation token, so this
+            scan may update an existing slot or remember a vacant one. */
             unsafe {
                 let slot = &mut *entries.add(idx);
                 if let Some(stored) = slot {
@@ -223,7 +238,9 @@ impl<'cfg> ResolverBucket<'cfg> {
                 ResourceScope::ResolverTable,
             ));
         };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `first_empty` was produced by the bounded scan above over the
+        installed resolver sidecar, and `&mut self` still owns the bucket slot
+        mutation. */
         unsafe {
             *entries.add(idx) = Some(ResolverBucketEntry { eff_index, entry });
         }
@@ -237,7 +254,9 @@ impl<'cfg> ResolverBucket<'cfg> {
         }
         let mut idx = 0usize;
         while idx < self.capacity {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `idx < self.capacity` bounds the installed resolver
+            bucket sidecar. This shared lookup returns a borrow tied to `&self`
+            and does not mutate resolver entries. */
             unsafe {
                 if let Some(stored) = (&*entries.add(idx)).as_ref()
                     && stored.eff_index == eff_index

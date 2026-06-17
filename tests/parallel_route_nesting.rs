@@ -529,7 +529,7 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
                     branch
                         .recv::<Msg<ROUTE_PAYLOAD, u8>>()
                         .await
-                        .expect("decode route payload"),
+                        .expect("recv route payload"),
                     10
                 );
                 assert_eq!(

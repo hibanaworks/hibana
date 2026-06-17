@@ -368,7 +368,9 @@ where
                     frontier_entry_capacity,
                 );
                 cached_key.clear();
-                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                /* SAFETY: frontier scratch has not been initialized yet in
+                this branch. The observed-state cell is written after clearing
+                cached-key scratch and before the initialized flag is stored. */
                 unsafe {
                     frontier_global_observed_state_ptr_from_storage(scratch_ptr, layout).write(
                         GlobalFrontierObservedState {

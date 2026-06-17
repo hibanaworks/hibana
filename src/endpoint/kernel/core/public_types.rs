@@ -3,7 +3,7 @@ use super::{
     OfferState, Owner, Payload, Port, RendezvousId, RouteCommitRowSetBuilder, RouteState, SendMeta,
     SendState, SessionCtx, SessionId, StateIndex, Transport, lane_port,
 };
-use crate::endpoint::kernel::{decode, recv};
+use crate::endpoint::kernel::{branch_recv, recv};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::endpoint) enum PublicActiveOp {
@@ -59,7 +59,7 @@ where
     pub(in crate::endpoint) public_offer_state: OfferState<'r>,
     pub(in crate::endpoint) public_route_branch: Option<MaterializedRouteBranch<'r>>,
     pub(in crate::endpoint) public_recv_state: recv::RecvState,
-    pub(in crate::endpoint) public_decode_state: decode::DecodeState<'r>,
+    pub(in crate::endpoint) public_branch_recv_state: branch_recv::BranchRecvState<'r>,
     pub(in crate::endpoint) public_send_state: SendState<'r>,
     pub(crate) session: SessionCtx<'r, T>,
     pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,

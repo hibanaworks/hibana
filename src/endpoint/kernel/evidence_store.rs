@@ -45,14 +45,18 @@ impl ScopeEvidenceTable {
         if len > u16::MAX as usize {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: endpoint initialization passes an unpublished
+        `ScopeEvidenceTable` field plus its scope-evidence backing slice. This
+        writes the table pointer and u16 length after the length bound check. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).slots).write(slots);
             core::ptr::addr_of_mut!((*dst).len).write(len as u16);
         }
         let mut idx = 0usize;
         while idx < len {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < len` selects one slot in the unpublished
+            scope-evidence backing slice; each slot is written to EMPTY before
+            any endpoint evidence lookup can reach the table. */
             unsafe {
                 slots.add(idx).write(ScopeEvidenceSlot::EMPTY);
             }
@@ -66,41 +70,44 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn get(&self, slot: usize) -> Option<&ScopeEvidence> {
+    fn slot(&self, slot: usize) -> Option<&ScopeEvidenceSlot> {
         if !self.contains(slot) {
             return None;
         }
-        Some(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe { &(*self.slots.add(slot)).evidence },
-        )
+        /* SAFETY: `contains` bounds `slot` inside the initialized
+        scope-evidence table installed during endpoint initialization. Shared
+        access is tied to `&self` and only reads the selected slot. */
+        Some(unsafe { &*self.slots.add(slot) })
+    }
+
+    #[inline]
+    fn slot_mut(&mut self, slot: usize) -> Option<&mut ScopeEvidenceSlot> {
+        if !self.contains(slot) {
+            return None;
+        }
+        /* SAFETY: `contains` bounds `slot` inside the initialized
+        scope-evidence table, and `&mut self` is the endpoint evidence mutation
+        token for the selected slot. */
+        Some(unsafe { &mut *self.slots.add(slot) })
+    }
+
+    #[inline]
+    pub(super) fn get(&self, slot: usize) -> Option<&ScopeEvidence> {
+        Some(&self.slot(slot)?.evidence)
     }
 
     #[inline]
     pub(super) fn get_mut(&mut self, slot: usize) -> Option<&mut ScopeEvidence> {
-        if !self.contains(slot) {
-            return None;
-        }
-        Some(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-            unsafe { &mut (*self.slots.add(slot)).evidence },
-        )
+        Some(&mut self.slot_mut(slot)?.evidence)
     }
 
     #[inline]
     pub(super) fn generation(&self, slot: usize) -> u16 {
-        if !self.contains(slot) {
-            crate::invariant();
-        }
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-        unsafe { (*self.slots.add(slot)).generation }
+        crate::invariant_some(self.slot(slot)).generation
     }
 
     pub(super) fn bump_generation(&mut self, slot: usize) {
-        if !self.contains(slot) {
-            crate::invariant();
-        }
-        let generation = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut (*self.slots.add(slot)).generation };
+        let generation = &mut crate::invariant_some(self.slot_mut(slot)).generation;
         let next = generation.wrapping_add(1);
         *generation = if next == 0 { 1 } else { next };
     }

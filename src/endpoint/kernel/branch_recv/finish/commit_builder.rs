@@ -1,26 +1,29 @@
 use super::{
-    BranchCommitPlan, BranchKind, BranchPreviewView, CursorEndpoint, DecodeCommitBuilder,
-    DecodeCommitPlan, DecodeProgressPlan, EndpointRxAuditPlan, Payload, RecvError, RecvMeta,
-    RecvResult, StateIndex, Transport, decode_phase_invariant, scope_slot_for_route_from_cursor,
-    state_index_to_usize,
+    BranchCommitPlan, BranchKind, BranchPreviewView, BranchRecvCommitBuilder, BranchRecvCommitPlan,
+    BranchRecvProgressPlan, CursorEndpoint, EndpointRxEventPlan, Payload, RecvError, RecvMeta,
+    RecvResult, StateIndex, Transport, branch_recv_phase_invariant,
+    scope_slot_for_route_from_cursor, state_index_to_usize,
 };
 use crate::endpoint::kernel::core::{CommitDelta, CommitRow};
 
-impl<'build, 'r, const ROLE: u8, T> DecodeCommitBuilder<'build, 'r, ROLE, T>
+impl<'build, 'r, const ROLE: u8, T> BranchRecvCommitBuilder<'build, 'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(super) fn build_decode_commit_plan(
+    pub(super) fn build_branch_recv_commit_plan(
         &mut self,
         branch_plan: BranchCommitPlan,
         branch: BranchPreviewView,
         meta: RecvMeta,
         branch_meta: RecvMeta,
-        audit: EndpointRxAuditPlan,
+        event: EndpointRxEventPlan,
         committed_payload: Payload<'r>,
-    ) -> RecvResult<DecodeCommitPlan<'r>> {
-        let mut route_rows = self.route_rows.take().ok_or_else(decode_phase_invariant)?;
-        CursorEndpoint::<ROLE, T>::collect_decode_reentry_route_rows_from_parts(
+    ) -> RecvResult<BranchRecvCommitPlan<'r>> {
+        let mut route_rows = self
+            .route_rows
+            .take()
+            .ok_or_else(branch_recv_phase_invariant)?;
+        CursorEndpoint::<ROLE, T>::collect_branch_recv_reentry_route_rows_from_parts(
             self.cursor,
             self.decision_state,
             meta,
@@ -40,7 +43,7 @@ where
                     branch_meta.lane,
                 ),
                 |candidate| {
-                    CursorEndpoint::<ROLE, T>::authorized_route_arm_for_decode(
+                    CursorEndpoint::<ROLE, T>::authorized_route_arm_for_branch_recv(
                         self.decision_state,
                         self.cursor,
                         &route_rows,
@@ -48,8 +51,8 @@ where
                     )
                 },
             )
-            .map_err(|_| decode_phase_invariant())?;
-        let reentry_cursor = CursorEndpoint::<ROLE, T>::decode_reentry_cursor_step_from_parts(
+            .map_err(|_| branch_recv_phase_invariant())?;
+        let reentry_cursor = CursorEndpoint::<ROLE, T>::branch_recv_reentry_cursor_step_from_parts(
             self.cursor,
             self.decision_state,
             &route_rows,
@@ -63,23 +66,26 @@ where
             enabled.progress_step(),
         )
         .with_lane_relocation(reentry_cursor);
-        Ok(DecodeCommitPlan {
+        Ok(BranchRecvCommitPlan {
             branch: branch_plan,
-            audit,
-            progress: DecodeProgressPlan::Wire { delta },
+            event,
+            progress: BranchRecvProgressPlan::Wire { delta },
             committed_payload,
         })
     }
 
-    pub(super) fn build_non_wire_decode_commit_plan(
+    pub(super) fn build_non_wire_branch_recv_commit_plan(
         &mut self,
         branch_plan: BranchCommitPlan,
-        audit: EndpointRxAuditPlan,
+        event: EndpointRxEventPlan,
         branch: BranchPreviewView,
         kind: BranchKind,
         payload: Payload<'r>,
-    ) -> RecvResult<DecodeCommitPlan<'r>> {
-        let route_rows = self.route_rows.take().ok_or_else(decode_phase_invariant)?;
+    ) -> RecvResult<BranchRecvCommitPlan<'r>> {
+        let route_rows = self
+            .route_rows
+            .take()
+            .ok_or_else(branch_recv_phase_invariant)?;
         let branch_meta = branch.branch_meta;
         let progress = match kind {
             BranchKind::LocalAction => {
@@ -107,7 +113,7 @@ where
                         },
                     )
                     .map_err(|_| RecvError::PhaseInvariant)?;
-                DecodeProgressPlan::NonWire {
+                BranchRecvProgressPlan::NonWire {
                     delta: CommitDelta::from_event_row(
                         branch_meta.eff_index,
                         branch_meta.label,
@@ -125,18 +131,20 @@ where
             }
             BranchKind::TerminalArm => {
                 let next_index = StateIndex::from_usize(self.cursor.index());
-                DecodeProgressPlan::NonWire {
+                BranchRecvProgressPlan::NonWire {
                     delta: CommitDelta::route_rows(
                         route_rows.as_route_only_commit_rows(branch_meta.lane_wire),
                         next_index,
                     ),
                 }
             }
-            BranchKind::WireRecv | BranchKind::ArmSendHint => return Err(decode_phase_invariant()),
+            BranchKind::WireRecv | BranchKind::ArmSendHint => {
+                return Err(branch_recv_phase_invariant());
+            }
         };
-        Ok(DecodeCommitPlan {
+        Ok(BranchRecvCommitPlan {
             branch: branch_plan,
-            audit,
+            event,
             progress,
             committed_payload: payload,
         })

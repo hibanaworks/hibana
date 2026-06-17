@@ -500,12 +500,15 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = self.offer_lane_for_scope(scope_id);
-        self.emit_decision_resolver_audit(offer_lane, resolver_id);
         let cluster = self.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let resolution = match cluster.resolve_dynamic_resolver(rv_id, eff_index, resolver_id) {
-            Ok(resolution) => resolution,
+            Ok(resolution) => {
+                self.emit_dynamic_resolver_success_audit(offer_lane, resolver_id, resolution);
+                resolution
+            }
             Err(ClusterError::ResolverReject { resolver_id }) => {
+                self.emit_dynamic_resolver_reject_audit(offer_lane, resolver_id);
                 return Ok(RouteResolveStep::Reject(resolver_id));
             }
             Err(

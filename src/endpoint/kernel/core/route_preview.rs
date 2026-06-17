@@ -1,6 +1,6 @@
 use super::{
-    Arm, CursorEndpoint, Lane, RecvError, RecvResult, ResolverSlot, ScopeId, TapEvent,
-    TapFrameMeta, Transport, emit, events, ids, resolver_audit, state_index_to_usize,
+    Arm, CursorEndpoint, RecvError, RecvResult, ScopeId, TapFrameMeta, Transport, emit, events,
+    state_index_to_usize,
 };
 
 #[repr(u8)]
@@ -94,22 +94,6 @@ where
             .map_err(|_| RecvError::PhaseInvariant)
     }
 
-    #[inline]
-    pub(crate) fn endpoint_resolver_args(lane: Lane, label: u8) -> u32 {
-        ((ROLE as u32) << 24) | ((lane.as_wire() as u32) << 16) | ((label as u32) << 8)
-    }
-
-    #[inline]
-    pub(crate) fn emit_resolver_audit_event(&self, id: u16, arg0: u32, arg1: u32, lane: Lane) {
-        let port = self.port_for_lane(lane.raw() as usize);
-        let causal = TapEvent::make_causal_key(lane.as_wire(), 1);
-        let event = events::raw_event(port.now32(), id)
-            .with_causal_key(causal)
-            .with_arg0(arg0)
-            .with_arg1(arg1);
-        emit(port.tap(), event);
-    }
-
     pub(crate) fn emit_endpoint_event(&self, id: u16, meta: TapFrameMeta, lane: u8) {
         let port = self.port_for_lane(lane as usize);
         let packed =
@@ -118,36 +102,5 @@ where
             .with_arg0(meta.sid)
             .with_arg1(packed);
         emit(port.tap(), event);
-    }
-
-    pub(crate) fn emit_endpoint_resolver_audit(
-        &self,
-        slot: ResolverSlot,
-        event_id: u16,
-        arg0: u32,
-        arg1: u32,
-        lane: Lane,
-    ) {
-        let port = self.port_for_lane(lane.raw() as usize);
-        let event = events::raw_event(port.now32(), event_id)
-            .with_arg0(arg0)
-            .with_arg1(arg1);
-        self.emit_resolver_audit_replay(slot, event, lane);
-    }
-
-    pub(crate) fn emit_resolver_audit_replay(
-        &self,
-        slot: ResolverSlot,
-        event: TapEvent,
-        lane: Lane,
-    ) {
-        let event_hash = resolver_audit::hash_tap_event(&event);
-        let slot_id = resolver_audit::slot_tag(slot);
-        self.emit_resolver_audit_event(
-            ids::RESOLVER_AUDIT,
-            event_hash,
-            (u32::from(slot_id) << 16) | u32::from(event.id()),
-            lane,
-        );
     }
 }

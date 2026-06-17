@@ -300,7 +300,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .expect("enter worker-left");
         localside::controller_send_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut controller, 7);
         assert_eq!(
-            localside::worker_offer_decode_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut worker,),
+            localside::worker_offer_recv_u8::<{ HIGH_LANE_LEFT_LABEL }>(&mut worker,),
             7,
             "lane 33 route payload must survive exact lane-set runtime selection"
         );
@@ -321,7 +321,7 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             .expect("enter worker-right");
         localside::controller_send_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut controller, 9);
         assert_eq!(
-            localside::worker_offer_decode_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut worker,),
+            localside::worker_offer_recv_u8::<{ HIGH_LANE_RIGHT_LABEL }>(&mut worker,),
             9,
             "lane 34 route payload must survive exact lane-set runtime selection"
         );

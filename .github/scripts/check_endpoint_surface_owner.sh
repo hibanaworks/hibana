@@ -110,7 +110,7 @@ for forbidden in \
   "fn reset_public_send_state(" \
   "fn poll_public_offer(" \
   "fn poll_public_recv(" \
-  "fn poll_public_decode(" \
+  "fn poll_public_branch_recv(" \
   "fn poll_public_send("
 do
   check_absent_literal "${forbidden}" \

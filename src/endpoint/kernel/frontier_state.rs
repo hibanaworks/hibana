@@ -64,7 +64,7 @@ impl RootFrontierTable {
         if capacity.observed_key_lane_word_count > u8::MAX as usize {
             crate::invariant();
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `FrontierState::init_empty` passes an unpublished root table; row/pool/lane-word columns are installed before borrow. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).ptr).write(storage.rows);
             core::ptr::addr_of_mut!((*dst).active_entries).write(storage.active_entries);
@@ -78,7 +78,7 @@ impl RootFrontierTable {
         }
         let mut slot_idx = 0usize;
         while slot_idx < capacity.row_count {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `slot_idx < row_count` selects one unpublished root row; every row starts EMPTY before exposure. */
             unsafe {
                 storage.rows.add(slot_idx).write(RootFrontierState::EMPTY);
             }
@@ -86,7 +86,7 @@ impl RootFrontierTable {
                 crate::invariant_some(slot_idx.checked_mul(capacity.observed_key_lane_word_count));
             let mut word_idx = 0usize;
             while word_idx < capacity.observed_key_lane_word_count {
-                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                /* SAFETY: `base + word_idx` is inside this unpublished row's observed-key lane-word slice; the mask is zeroed before reads. */
                 unsafe {
                     storage
                         .observed_key_offer_lanes
@@ -99,7 +99,7 @@ impl RootFrontierTable {
         }
         let mut entry_idx = 0usize;
         while entry_idx < capacity.pool_capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `entry_idx < pool_capacity` selects paired active-entry/observed-key pool slots initialized before publication. */
             unsafe {
                 storage
                     .active_entries
@@ -154,7 +154,7 @@ impl RootFrontierTable {
         }
         ActiveEntrySet {
             slots: EntryBuffer::from_parts(
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                /* SAFETY: row active span is allocated from this table's active-entry pool and stays below `active_pool_used()`. */
                 unsafe { self.active_entries.add(row.active_start as usize) },
                 row.active_len as usize,
             ),
@@ -168,7 +168,7 @@ impl RootFrontierTable {
 
     #[inline]
     fn observed_key_offer_lanes_ptr(&self, slot_idx: usize) -> *mut LaneWord {
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: bounded root row index times per-row word count selects that row's observed-key lane-word segment. */
         unsafe {
             self.observed_key_offer_lanes.add(crate::invariant_some(
                 slot_idx.checked_mul(self.observed_key_lane_word_count()),
@@ -194,7 +194,7 @@ impl RootFrontierTable {
             return FrontierObservationKey::EMPTY;
         }
         FrontierObservationKey::from_parts(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: row active span names the observed-key pool segment paired with this root row. */
             unsafe { self.observed_key_slots.add(row.active_start as usize) },
             row.active_len as usize,
             self.observed_key_offer_lanes_ptr(slot_idx),
@@ -205,7 +205,7 @@ impl RootFrontierTable {
     #[inline]
     fn clear_row_observed_key_lanes(&mut self, slot_idx: usize) {
         let mut key = FrontierObservationKey::from_parts(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: live root row active span names its paired observed-key pool segment; clearing uses the row's lane words. */
             unsafe {
                 self.observed_key_slots
                     .add(self[slot_idx].active_start as usize)
@@ -251,7 +251,7 @@ impl RootFrontierTable {
         let len = row.active_len as usize;
         let mut insert_rel = 0usize;
         while insert_rel < len {
-            let existing = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { *self.active_entries.add(start + insert_rel) };
+            let existing = /* SAFETY: `insert_rel < row.active_len` bounds a shared read inside the root row active-entry span. */ unsafe { *self.active_entries.add(start + insert_rel) };
             if existing.entry == entry {
                 return false;
             }
@@ -269,7 +269,7 @@ impl RootFrontierTable {
         let insert_idx = start + insert_rel;
         let mut idx = used;
         while idx > insert_idx {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx` and `idx - 1` are inside initialized active-entry/observed-key pools; `&mut self` owns this insert shift. */
             unsafe {
                 self.active_entries
                     .add(idx)
@@ -280,7 +280,7 @@ impl RootFrontierTable {
             }
             idx -= 1;
         }
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `insert_idx < pool_capacity`; active entry and observed-key slot are written together before row lengths change. */
         unsafe {
             self.active_entries
                 .add(insert_idx)
@@ -318,7 +318,7 @@ impl RootFrontierTable {
         let entry = crate::invariant_some(super::frontier::checked_state_index(entry_idx));
         while remove_rel < len {
             if
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `remove_rel < row.active_len` bounds this shared read inside the root row active-entry span. */
             unsafe { (*self.active_entries.add(start + remove_rel)).entry } == entry {
                 break;
             }
@@ -331,7 +331,7 @@ impl RootFrontierTable {
         let remove_idx = start + remove_rel;
         let mut idx = remove_idx;
         while idx + 1 < used {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx` and `idx + 1` are inside used active-entry/observed-key pools; `&mut self` owns removal compaction. */
             unsafe {
                 self.active_entries
                     .add(idx)
@@ -343,7 +343,7 @@ impl RootFrontierTable {
             idx += 1;
         }
         if used != 0 {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `used - 1` is the old tail slot after compaction; clearing paired pools removes stale cells. */
             unsafe {
                 self.active_entries
                     .add(used - 1)
@@ -383,7 +383,7 @@ impl RootFrontierTable {
         let active_len = row.active_len as usize;
         let new_len = key.len();
         let mut dst = FrontierObservationKey::from_parts(
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: row active span is the observed-key pool span paired with this live root row. */
             unsafe { self.observed_key_slots.add(row.active_start as usize) },
             active_len,
             self.observed_key_offer_lanes_ptr(slot_idx),
@@ -421,7 +421,7 @@ impl RootFrontierTable {
             let used = self.active_pool_used();
             let mut idx = start;
             while idx + active_span < used {
-                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                /* SAFETY: `idx` and `idx + active_span` are inside used pools; `&mut self` owns the root-row removal shift. */
                 unsafe {
                     self.active_entries
                         .add(idx)
@@ -434,7 +434,7 @@ impl RootFrontierTable {
             }
             let mut clear_idx = used - active_span;
             while clear_idx < used {
-                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                /* SAFETY: `clear_idx` walks the old tail span after compaction; clearing paired pools removes stale cells. */
                 unsafe {
                     self.active_entries
                         .add(clear_idx)
@@ -472,7 +472,7 @@ impl Index<usize> for RootFrontierTable {
         if index >= self.capacity() {
             crate::invariant();
         }
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `index < capacity` bounds the initialized root row column; `&self` creates only a shared row borrow. */
         unsafe { &*self.ptr.add(index) }
     }
 }
@@ -483,7 +483,7 @@ impl IndexMut<usize> for RootFrontierTable {
         if index >= self.capacity() {
             crate::invariant();
         }
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `index < capacity` bounds the initialized root row column, and `&mut self` is the row mutation token. */
         unsafe { &mut *self.ptr.add(index) }
     }
 }

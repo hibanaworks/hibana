@@ -174,7 +174,11 @@ where
     T: crate::transport::Transport + 'cfg,
 {
     unsafe fn init_unregistered(dst: *mut Self) {
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+        /* SAFETY: `SessionKitStorage::init` calls this with its single
+        `MaybeUninit<SessionKit<T>>` slot under `&mut self`. `SessionCluster`
+        initializes its registry before exposure, `_local_only` is written
+        exactly once, and no `SessionKit` reference exists until this function
+        returns. */
         unsafe {
             crate::session::cluster::core::SessionCluster::init_empty(core::ptr::addr_of_mut!(
                 (*dst).inner

@@ -4,8 +4,8 @@ use core::task::Poll;
 
 use super::{
     core::{
-        CursorEndpoint, DecodeRuntimeDesc, PublicActiveOp, SendCommitOutcome, SendState,
-        kernel_decode, kernel_recv, kernel_send,
+        BranchRecvRuntimeDesc, CursorEndpoint, PublicActiveOp, SendCommitOutcome, SendState,
+        kernel_branch_recv, kernel_recv, kernel_send,
     },
     lane_port,
     offer::OfferState,
@@ -115,14 +115,14 @@ where
     }
 
     #[inline(never)]
-    pub(in crate::endpoint) fn poll_public_decode(
+    pub(in crate::endpoint) fn poll_public_branch_recv(
         &mut self,
         logical_label: u8,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<Payload<'r>>> {
         if let Some(kind) = self.session_fault() {
-            self.terminal_clear_public_decode_state();
+            self.terminal_clear_public_branch_recv_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
         if self.public_active_op != PublicActiveOp::BranchRecv {
@@ -131,40 +131,40 @@ where
             self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
         }
-        let mut decode_state = core::mem::replace(
-            &mut self.public_decode_state,
-            super::decode::DecodeState::empty(),
+        let mut branch_recv_state = core::mem::replace(
+            &mut self.public_branch_recv_state,
+            super::branch_recv::BranchRecvState::empty(),
         );
-        let Some(branch) = decode_state.branch() else {
+        let Some(branch) = branch_recv_state.branch() else {
             self.clear_session_waiter();
-            self.public_decode_state = super::decode::DecodeState::empty();
+            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
             return Poll::Ready(Err(err));
         };
-        let descriptor = DecodeRuntimeDesc::new(
+        let descriptor = BranchRecvRuntimeDesc::new(
             logical_label,
             crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
             validate,
         );
-        match kernel_decode(self, descriptor, &mut decode_state, cx) {
+        match kernel_branch_recv(self, descriptor, &mut branch_recv_state, cx) {
             Poll::Pending => {
                 self.register_session_waiter(cx.waker());
-                self.public_decode_state = decode_state;
+                self.public_branch_recv_state = branch_recv_state;
                 Poll::Pending
             }
             Poll::Ready(result) => match result {
                 Ok(payload) => {
                     self.clear_session_waiter();
                     self.finish_public_op(PublicActiveOp::BranchRecv);
-                    self.public_decode_state = super::decode::DecodeState::empty();
+                    self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                     Poll::Ready(Ok(payload))
                 }
                 Err(err) => {
-                    decode_state.discard_terminal();
+                    branch_recv_state.discard_terminal();
                     self.clear_session_waiter();
                     self.finish_public_op(PublicActiveOp::BranchRecv);
-                    self.public_decode_state = super::decode::DecodeState::empty();
+                    self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                     self.poison_for_recv_error(&err);
                     Poll::Ready(Err(err))
                 }

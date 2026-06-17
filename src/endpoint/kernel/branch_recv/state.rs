@@ -3,27 +3,27 @@ use crate::{
     global::typestate::RecvMeta,
 };
 
-pub(crate) struct DecodeState<'r> {
+pub(crate) struct BranchRecvState<'r> {
     pub(crate) branch: Option<MaterializedRouteBranch<'r>>,
     prepared_meta: Option<RecvMeta>,
     pending_recv: lane_port::PendingRecv,
-    restore_on_drop: DecodeRestore,
+    restore_on_drop: BranchRecvRestore,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) enum DecodeRestore {
+pub(crate) enum BranchRecvRestore {
     Disarmed,
     Armed,
 }
 
-impl<'r> DecodeState<'r> {
+impl<'r> BranchRecvState<'r> {
     #[inline]
     pub(crate) const fn empty() -> Self {
         Self {
             branch: None,
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
-            restore_on_drop: DecodeRestore::Disarmed,
+            restore_on_drop: BranchRecvRestore::Disarmed,
         }
     }
 
@@ -33,18 +33,18 @@ impl<'r> DecodeState<'r> {
             branch: Some(branch),
             prepared_meta: None,
             pending_recv: lane_port::PendingRecv::new(),
-            restore_on_drop: DecodeRestore::Armed,
+            restore_on_drop: BranchRecvRestore::Armed,
         }
     }
 
     #[inline]
-    pub(crate) const fn restore_on_drop(&self) -> DecodeRestore {
+    pub(crate) const fn restore_on_drop(&self) -> BranchRecvRestore {
         self.restore_on_drop
     }
 
     #[inline]
     pub(crate) fn disarm_restore(&mut self) {
-        self.restore_on_drop = DecodeRestore::Disarmed;
+        self.restore_on_drop = BranchRecvRestore::Disarmed;
     }
 
     #[inline]

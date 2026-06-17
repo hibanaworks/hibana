@@ -74,17 +74,17 @@ for required in [
     "pub(crate) struct MsgCore",
     "pub(crate) struct SendRuntimeDesc",
     "pub(crate) struct RecvRuntimeDesc",
-    "pub(crate) struct DecodeRuntimeDesc",
+    "pub(crate) struct BranchRecvRuntimeDesc",
 ]:
     if required not in runtime_types:
         fail(f"missing non-generic runtime descriptor owner: {required}")
 
 for required in [
     "pub(crate) trait RecvKernelEndpoint",
-    "pub(crate) trait DecodeKernelEndpoint",
+    "pub(crate) trait BranchRecvKernelEndpoint",
     "pub(crate) trait SendKernelEndpoint",
     "pub(crate) fn kernel_recv",
-    "pub(crate) fn kernel_decode",
+    "pub(crate) fn kernel_branch_recv",
     "pub(crate) fn kernel_send",
 ]:
     if required not in core:
@@ -92,7 +92,7 @@ for required in [
 
 for name, trait_name in [
     ("kernel_recv", "RecvKernelEndpoint"),
-    ("kernel_decode", "DecodeKernelEndpoint"),
+    ("kernel_branch_recv", "BranchRecvKernelEndpoint"),
     ("kernel_send", "SendKernelEndpoint"),
 ]:
     if f"#[inline(never)]\npub(crate) fn {name}" not in core:
@@ -104,9 +104,9 @@ for required in [
     "fn prepare_recv_kernel_descriptor(",
     "fn poll_recv_kernel_payload_source(",
     "fn finish_recv_kernel_payload(",
-    "fn prepare_decode_kernel_transport_wait(",
-    "fn poll_decode_kernel_transport_payload(",
-    "fn finish_decode_kernel(",
+    "fn prepare_branch_recv_kernel_transport_wait(",
+    "fn poll_branch_recv_kernel_transport_payload(",
+    "fn finish_branch_recv_kernel(",
     "fn poll_send_init_kernel(",
     "fn poll_send_pending_kernel(",
     "fn finish_send_after_transport_kernel(",
@@ -114,7 +114,7 @@ for required in [
     if required not in core:
         fail(f"runtime kernels must own state-machine loops and call endpoint primitive ops: {required}")
 
-if "endpoint.poll_recv_kernel(" in core or "endpoint.poll_decode_kernel(" in core or "endpoint.poll_send_kernel(" in core:
+if "endpoint.poll_recv_kernel(" in core or "endpoint.poll_branch_recv_kernel(" in core or "endpoint.poll_send_kernel(" in core:
     fail("kernel entry points must not delegate whole poll loops back to generic endpoint impls")
 
 poll_send_state = re.search(r"pub\(crate\)\s+fn\s+poll_send_state[\s\S]*?\n    \}\n\}", core)
@@ -122,7 +122,7 @@ if poll_send_state and "kernel_send(self, state, payload, cx)" not in poll_send_
     fail("generic poll_send_state must delegate to non-generic kernel_send")
 
 recv = read("src/endpoint/kernel/recv.rs")
-decode = read("src/endpoint/kernel/decode.rs") + "\n" + read_tree("src/endpoint/kernel/decode")
+branch_recv = read("src/endpoint/kernel/branch_recv.rs") + "\n" + read_tree("src/endpoint/kernel/branch_recv")
 poll_public_recv = extract_rust_function(public_runtime, "poll_public_recv")
 if not poll_public_recv or not all(
     required in poll_public_recv
@@ -135,12 +135,12 @@ if not poll_public_recv or not all(
     ]
 ):
     fail("generic poll_public_recv must delegate to non-generic kernel_recv with label and validation evidence")
-if "kernel_decode(self, descriptor, &mut decode_state, cx)" not in public_runtime:
-    fail("generic poll_public_decode must delegate to non-generic kernel_decode")
+if "kernel_branch_recv(self, descriptor, &mut branch_recv_state, cx)" not in public_runtime:
+    fail("generic poll_public_branch_recv must delegate to non-generic kernel_branch_recv")
 
 if re.search(
     r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",
-    core + runtime_types + read("src/endpoint/kernel/recv.rs") + decode,
+    core + runtime_types + read("src/endpoint/kernel/recv.rs") + branch_recv,
 ):
     fail("forbidden per-operation message descriptor names must not return")
 
@@ -193,10 +193,10 @@ if [[ "${#HIBANA_RLIBS[@]}" != "1" ]]; then
 fi
 
 "${LLVM_NM}" --demangle "${HIBANA_RLIBS[0]}" 2>/dev/null \
-  | rg '\bT hibana::endpoint::kernel::core::kernel_(recv|decode|send)::h[[:xdigit:]]+' \
+  | rg '\bT hibana::endpoint::kernel::core::kernel_(recv|branch_recv|send)::h[[:xdigit:]]+' \
   >"${SYMBOLS_FILE}"
 
-for kernel in recv decode send; do
+for kernel in recv branch_recv send; do
   count="$(rg "kernel_${kernel}::h" "${SYMBOLS_FILE}" | wc -l | tr -d ' ')"
   if [[ "${count}" != "1" ]]; then
     echo "kernel monomorphization quarantine violation: kernel_${kernel} symbol count is ${count}, expected 1" >&2

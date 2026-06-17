@@ -11,7 +11,7 @@ pub fn controller_send_u32<const LOGICAL_LABEL: u8>(
 }
 
 #[inline(never)]
-pub fn worker_offer_decode_u32<const LOGICAL_LABEL: u8>(worker: &mut WorkerEndpoint<'_>) -> u32 {
+pub fn worker_offer_recv_u32<const LOGICAL_LABEL: u8>(worker: &mut WorkerEndpoint<'_>) -> u32 {
     let branch = crate::invariant_ok(drive(worker.offer()));
     if branch.label() != LOGICAL_LABEL {
         crate::invariant();

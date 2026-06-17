@@ -79,7 +79,7 @@ pub(super) struct AssocTable {
 
 impl AssocTable {
     pub(super) unsafe fn init_empty(dst: *mut Self) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `Rendezvous` initialization passes an unpublished `AssocTable`; lane range is zeroed and column pointers are null before binding. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).lane_base).write(0);
             core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
@@ -178,7 +178,7 @@ impl AssocTable {
             ),
             storage as usize,
         );
-        let ref_counts = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(count_offset) }.cast::<u8>();
+        let ref_counts = /* SAFETY: `count_offset` follows the SessionId column within `storage_bytes(lane_slots)` and creates no borrow. */ unsafe { storage.add(count_offset) }.cast::<u8>();
         let fault_offset = Self::checked_sub_usize(
             Self::align_up(
                 Self::checked_add_usize(
@@ -189,7 +189,7 @@ impl AssocTable {
             ),
             storage as usize,
         );
-        let faults = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(fault_offset) }.cast::<u8>();
+        let faults = /* SAFETY: `fault_offset` follows ref-counts, is u8-aligned inside the assoc arena, and aliases no borrowed column. */ unsafe { storage.add(fault_offset) }.cast::<u8>();
         let waiter_offset = Self::checked_sub_usize(
             Self::align_up(
                 Self::checked_add_usize(
@@ -200,7 +200,7 @@ impl AssocTable {
             ),
             storage as usize,
         );
-        let waiters = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
+        let waiters = /* SAFETY: `waiter_offset` follows faults, is `WaiterSlot`-aligned inside the assoc arena, and only computes the column pointer. */ unsafe { storage.add(waiter_offset) }.cast::<WaiterSlot>();
         AssocStorageParts {
             lane_to_sid,
             ref_counts,
@@ -220,7 +220,9 @@ impl AssocTable {
     ) {
         let mut idx = 0usize;
         while idx < lane_slots {
-            /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+            /* SAFETY: `idx < lane_slots` selects matching cells in all four
+            assoc columns. `bind_storage` initializes the unpublished lane slot
+            before installing the column pointers on `self`. */
             unsafe {
                 lane_to_sid.add(idx).write(SessionId::new(0));
                 ref_counts.add(idx).write(0);
@@ -246,7 +248,9 @@ impl AssocTable {
         let parts = /* SAFETY: the caller supplies the assoc-table arena with `lane_slots` capacity. */ unsafe {
             Self::storage_parts(storage, lane_slots)
         };
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: `parts` was carved from the caller-provided assoc arena for
+        exactly `lane_slots`; `bind_storage` initializes every lane slot before
+        installing these column pointers on `self`. */
         unsafe {
             self.bind_storage(
                 lane_base,
@@ -281,7 +285,9 @@ impl AssocTable {
         };
         let mut idx = 0usize;
         while idx < lane_slots {
-            /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+            /* SAFETY: `idx < lane_slots` selects matching unpublished
+            replacement cells in the sid/count/fault/waiter columns; each
+            replacement slot is reset before source lanes are copied into it. */
             unsafe {
                 parts.lane_to_sid.add(idx).write(SessionId::new(0));
                 parts.ref_counts.add(idx).write(0);
@@ -296,7 +302,9 @@ impl AssocTable {
             if lane >= lane_base {
                 let new_idx = (lane - lane_base) as usize;
                 if new_idx < lane_slots {
-                    /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                    /* SAFETY: `source_idx < source_slots` reads one initialized
+                    source assoc lane, and `new_idx < lane_slots` writes the
+                    corresponding unpublished replacement lane in all columns. */
                     unsafe {
                         parts
                             .lane_to_sid
@@ -371,25 +379,30 @@ impl AssocTable {
 
     #[inline]
     fn lane_to_sid_ptr(&self) -> *mut SessionId {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: `lane_to_sid` is written only by assoc storage binding, and
+        callers must resolve a lane slot against `lane_base/lane_slots` before
+        dereferencing this column pointer. */
         unsafe { *self.lane_to_sid.get() }
     }
 
     #[inline]
     fn ref_counts_ptr(&self) -> *mut u8 {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: `ref_counts` is installed with the assoc lane range and is
+        read or written only after `lane_slot` or a bounded `0..lane_slots` scan. */
         unsafe { *self.ref_counts.get() }
     }
 
     #[inline]
     fn faults_ptr(&self) -> *mut u8 {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: `faults` is the fault column paired with the current assoc
+        lane range; callers index it only for live assoc slots. */
         unsafe { *self.faults.get() }
     }
 
     #[inline]
     fn waiters_ptr(&self) -> *mut WaiterSlot {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: `waiters` is initialized with one `WaiterSlot` per assoc
+        lane; waiter operations index it only through bounded assoc slots. */
         unsafe { *self.waiters.get() }
     }
 
@@ -409,7 +422,9 @@ impl AssocTable {
         let Some(idx) = self.lane_slot(lane) else {
             crate::invariant();
         };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `lane_slot` proved `idx` is inside this assoc table's lane
+        range. Register updates sid/count/fault/waiter columns as one lane-slot
+        transition from empty to attached. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -431,7 +446,9 @@ impl AssocTable {
     #[inline]
     pub(super) fn increment(&self, lane: Lane, sid: SessionId) -> Option<u8> {
         let idx = self.lane_slot(lane)?;
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `lane_slot` bounds `idx` inside the assoc columns. Increment
+        reads sid/count from the same lane slot and writes only the count when
+        it still belongs to `sid`. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -455,7 +472,9 @@ impl AssocTable {
     #[inline]
     pub(super) fn decrement(&self, lane: Lane, sid: SessionId) -> Option<u8> {
         let idx = self.lane_slot(lane)?;
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `lane_slot` bounds `idx` inside the assoc columns. Decrement
+        updates the count and clears sid/fault/waiter only when the same slot's
+        last reference for `sid` is released. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -478,7 +497,9 @@ impl AssocTable {
 
     #[inline]
     pub(super) fn for_each_lane(&self, sid: SessionId, mut visit: impl FnMut(Lane)) {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: the scan is bounded by `0..lane_slots` for the current assoc
+        columns. It only reads sid/count pairs and yields lanes derived from the
+        same table's `lane_base`. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -497,7 +518,8 @@ impl AssocTable {
         let Some(idx) = self.lane_slot(lane) else {
             return;
         };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `lane_slot` bounds the waiter slot. The sid/count check uses
+        the paired assoc columns before replacing the waiter for that lane. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -513,7 +535,8 @@ impl AssocTable {
         let Some(idx) = self.lane_slot(lane) else {
             return;
         };
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `lane_slot` bounds the waiter slot. The paired sid/count
+        columns still have to match `sid` before the waiter is cleared. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -526,7 +549,9 @@ impl AssocTable {
 
     #[inline]
     pub(super) fn wake_session_waiters(&self, sid: SessionId) {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: the scan is bounded by the current assoc lane count. Wakers
+        are read from the waiter column only for slots whose paired sid/count
+        columns belong to `sid`. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -545,7 +570,8 @@ impl AssocTable {
     #[inline]
     pub(super) fn get_sid(&self, lane: Lane) -> Option<SessionId> {
         let idx = self.lane_slot(lane)?;
-        /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+        /* SAFETY: `lane_slot` bounds `idx` inside sid/count columns; the sid is
+        returned only when the paired count marks the slot attached. */
         unsafe {
             let counts = self.ref_counts_ptr();
             (*counts.add(idx) != 0).then_some(*self.lane_to_sid_ptr().add(idx))
@@ -554,7 +580,8 @@ impl AssocTable {
 
     #[inline]
     pub(super) fn session_fault(&self, sid: SessionId) -> Option<SessionFaultKind> {
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: the scan is bounded by `lane_slots` and reads the fault byte
+        only from slots whose sid/count pair belongs to the queried session. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();
@@ -582,7 +609,9 @@ impl AssocTable {
         if let Some(existing) = self.session_fault(sid) {
             return existing;
         }
-        /* SAFETY: the association table owns the lane/session slots and checks slot presence before raw access. */
+        /* SAFETY: the scan is bounded by `lane_slots` and writes the encoded
+        fault only into slots whose sid/count pair belongs to the poisoned
+        session. */
         unsafe {
             let sids = self.lane_to_sid_ptr();
             let counts = self.ref_counts_ptr();

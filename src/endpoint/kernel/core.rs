@@ -34,7 +34,6 @@ use crate::{
     observe::{events, ids},
     rendezvous::SessionFaultKind,
     rendezvous::{core::EndpointLeaseId, port::Port},
-    resolver_audit::{self, ResolverSlot},
     session::{
         brand::Owner,
         cluster::error::ClusterError,
@@ -76,23 +75,23 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     ) -> RecvResult<Payload<'r>>;
 }
 
-pub(crate) trait DecodeKernelEndpoint<'r> {
-    fn prepare_decode_kernel_transport_wait(
+pub(crate) trait BranchRecvKernelEndpoint<'r> {
+    fn prepare_branch_recv_kernel_transport_wait(
         &mut self,
-        desc: DecodeRuntimeDesc,
+        desc: BranchRecvRuntimeDesc,
         branch: &MaterializedRouteBranch<'r>,
     ) -> RecvResult<Option<RecvMeta>>;
 
-    fn poll_decode_kernel_transport_payload(
+    fn poll_branch_recv_kernel_transport_payload(
         &mut self,
         meta: RecvMeta,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>>;
 
-    fn finish_decode_kernel(
+    fn finish_branch_recv_kernel(
         &mut self,
-        desc: DecodeRuntimeDesc,
+        desc: BranchRecvRuntimeDesc,
         prepared_meta: Option<RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
     ) -> RecvResult<Payload<'r>>;
@@ -165,10 +164,10 @@ pub(crate) fn kernel_recv<'r>(
 }
 
 #[inline(never)]
-pub(crate) fn kernel_decode<'r>(
-    endpoint: &mut dyn DecodeKernelEndpoint<'r>,
-    desc: DecodeRuntimeDesc,
-    state: &mut super::decode::DecodeState<'r>,
+pub(crate) fn kernel_branch_recv<'r>(
+    endpoint: &mut dyn BranchRecvKernelEndpoint<'r>,
+    desc: BranchRecvRuntimeDesc,
+    state: &mut super::branch_recv::BranchRecvState<'r>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
     if state.branch().is_none() {
@@ -177,7 +176,7 @@ pub(crate) fn kernel_decode<'r>(
     if state.prepared_meta().is_none() {
         let prepared = {
             let branch = crate::invariant_some(state.branch());
-            match endpoint.prepare_decode_kernel_transport_wait(desc, branch) {
+            match endpoint.prepare_branch_recv_kernel_transport_wait(desc, branch) {
                 Ok(meta) => meta,
                 Err(err) => return Poll::Ready(Err(err)),
             }
@@ -190,7 +189,7 @@ pub(crate) fn kernel_decode<'r>(
             branch.staged_payload.is_none()
         };
         if needs_transport {
-            let frame = match endpoint.poll_decode_kernel_transport_payload(
+            let frame = match endpoint.poll_branch_recv_kernel_transport_payload(
                 meta,
                 state.pending_recv_mut(),
                 cx,
@@ -209,7 +208,7 @@ pub(crate) fn kernel_decode<'r>(
     let prepared_meta = state.prepared_meta();
     let result = {
         let branch = crate::invariant_some(state.branch_mut());
-        endpoint.finish_decode_kernel(desc, prepared_meta, branch)
+        endpoint.finish_branch_recv_kernel(desc, prepared_meta, branch)
     };
     match result {
         Ok(payload) => {
@@ -449,7 +448,7 @@ where
         self.terminal_clear_public_send_state();
         self.terminal_clear_public_recv_state();
         self.terminal_clear_public_offer_state();
-        self.terminal_clear_public_decode_state();
+        self.terminal_clear_public_branch_recv_state();
         if let Some(branch) = self.public_route_branch.take() {
             branch.discard_terminal();
         }

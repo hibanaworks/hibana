@@ -29,7 +29,8 @@ impl OfferLaneEntrySlotMasks {
     pub(crate) fn clear(&mut self) {
         let mut idx = 0usize;
         while idx < self.len() {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < len` bounds the lane-mask column owned by this
+            offer-entry view, and `&mut self` owns the mask reset. */
             unsafe {
                 self.ptr.add(idx).write(0);
             }
@@ -40,7 +41,8 @@ impl OfferLaneEntrySlotMasks {
     #[inline]
     pub(crate) fn set_logical_mask(&mut self, logical_lane: usize, value: u8) {
         if logical_lane < self.len() {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `logical_lane < len` bounds the lane-mask column, and
+            this mutable view owns the single mask write for that logical lane. */
             unsafe {
                 self.ptr.add(logical_lane).write(value);
             }
@@ -56,7 +58,8 @@ impl Index<usize> for OfferLaneEntrySlotMasks {
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
         if index < self.len() {
-            /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+            /* SAFETY: `index < len` bounds the lane-mask column installed in
+            this offer-entry mask view; shared indexing only reads one byte. */
             unsafe { &*self.ptr.add(index) }
         } else {
             &ZERO_LANE_MASK
@@ -470,7 +473,9 @@ impl OfferEntryTable {
         slots: *mut OfferEntrySlot,
         capacity: usize,
     ) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `FrontierState::init_empty` passes an unpublished
+        `OfferEntryTable`; the entry buffer records the offer-entry backing
+        slice before table methods can inspect it. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).slots).write(EntryBuffer::from_parts(slots, capacity));
         }
@@ -479,7 +484,8 @@ impl OfferEntryTable {
         }
         let mut idx = 0usize;
         while idx < capacity {
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `idx < capacity` selects one offer-entry slot in the
+            frontier-owned backing slice; every slot starts EMPTY. */
             unsafe { slots.add(idx).write(OfferEntrySlot::EMPTY) };
             idx += 1;
         }

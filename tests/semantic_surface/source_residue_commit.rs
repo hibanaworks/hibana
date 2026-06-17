@@ -147,11 +147,11 @@ fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
 }
 
 #[test]
-fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
+fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let recv = read("src/endpoint/kernel/recv.rs");
-    let finish = read("src/endpoint/kernel/decode/finish.rs");
-    let decode_builder = read("src/endpoint/kernel/decode/finish/commit_builder.rs");
+    let finish = read("src/endpoint/kernel/branch_recv/finish.rs");
+    let branch_recv_builder = read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs");
     let select = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
     let select_alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
@@ -173,11 +173,11 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         .nth(1)
         .and_then(|tail| tail.split("fn finish_recv_payload").next())
         .expect("recv publish must stay factored");
-    let decode_publish = finish
-        .split("fn publish_decode_commit_plan(&mut self, plan: PreparedDecodePublishPlan")
+    let branch_recv_publish = finish
+        .split("fn publish_branch_recv_commit_plan(")
         .nth(1)
         .and_then(|tail| tail.split("plan.committed_payload").next())
-        .expect("decode publish function must stay factored");
+        .expect("branch-recv publish function must stay factored");
     let lane_relocation_preflight = commit_delta
         .split("fn preflight_lane_relocation")
         .nth(1)
@@ -334,12 +334,12 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         "send route selection must be folded into the prepared CommitDelta, not applied by a side route commit path"
     );
     assert!(
-        decode_builder.contains("CommitDelta::from_recv_meta(")
-            && decode_builder.contains("route_rows.as_commit_rows(")
-            && !decode_builder.contains("with_selected_route_rows")
-            && !decode_builder.contains("apply_selected_route_commit_row")
-            && !decode_builder.contains("record_prepared_route_selection"),
-        "decode route rows must be carried by PreparedCommitDelta, not applied inside a decode-side transaction"
+        branch_recv_builder.contains("CommitDelta::from_recv_meta(")
+            && branch_recv_builder.contains("route_rows.as_commit_rows(")
+            && !branch_recv_builder.contains("with_selected_route_rows")
+            && !branch_recv_builder.contains("apply_selected_route_commit_row")
+            && !branch_recv_builder.contains("record_prepared_route_selection"),
+        "branch-recv route rows must be carried by PreparedCommitDelta, not applied inside a side transaction"
     );
     assert!(
         select.contains("CommitDelta::route_rows(")
@@ -367,19 +367,19 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         commit_pos < emit_pos,
         "passive route materialization must not emit route selection before prepared CommitDelta commit"
     );
-    let decode_commit_pos = decode_publish
+    let branch_recv_commit_pos = branch_recv_publish
         .find("self.commit_prepared_delta(delta);")
-        .expect("decode publish must commit a prepared delta");
-    let decode_branch_publish_pos = decode_publish
+        .expect("branch-recv publish must commit a prepared delta");
+    let branch_recv_branch_publish_pos = branch_recv_publish
         .find("self.publish_branch_preview_commit_plan(plan.branch);")
-        .expect("decode publish must publish branch preview");
-    let decode_audit_publish_pos = decode_publish
-        .find("self.publish_endpoint_rx_audit(plan.audit);")
-        .expect("decode publish must publish rx audit");
+        .expect("branch-recv publish must publish branch preview");
+    let branch_recv_event_publish_pos = branch_recv_publish
+        .find("self.emit_endpoint_event(plan.event.event_id, endpoint_meta, plan.event.lane);")
+        .expect("branch-recv publish must publish endpoint event");
     assert!(
-        decode_commit_pos < decode_branch_publish_pos
-            && decode_commit_pos < decode_audit_publish_pos,
-        "decode route/evidence publish must happen after prepared CommitDelta commit"
+        branch_recv_commit_pos < branch_recv_branch_publish_pos
+            && branch_recv_commit_pos < branch_recv_event_publish_pos,
+        "branch-recv route/evidence publish must happen after prepared CommitDelta commit"
     );
     assert!(
         offer_select.contains("commit_cursor_realign_index(")
@@ -397,8 +397,8 @@ fn send_recv_decode_publish_paths_apply_prepared_deltas_only() {
         ),
         ("recv", recv_publish, "self.commit_prepared_delta(delta);"),
         (
-            "decode",
-            decode_publish,
+            "branch-recv",
+            branch_recv_publish,
             "self.commit_prepared_delta(delta);",
         ),
     ] {
@@ -470,49 +470,49 @@ fn route_stack_depth_cap_is_projection_sealed() {
 }
 
 #[test]
-fn decode_progress_plan_no_longer_carries_route_cleanup_inputs() {
-    let decode = read("src/endpoint/kernel/decode.rs");
-    let decode_finish = read("src/endpoint/kernel/decode/finish.rs");
-    let decode_builder = read("src/endpoint/kernel/decode/finish/commit_builder.rs");
-    let wire_progress = decode
-        .split("enum DecodeProgressPlan")
+fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
+    let branch_recv = read("src/endpoint/kernel/branch_recv.rs");
+    let branch_recv_finish = read("src/endpoint/kernel/branch_recv/finish.rs");
+    let branch_recv_builder = read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs");
+    let wire_progress = branch_recv
+        .split("enum BranchRecvProgressPlan")
         .nth(1)
         .and_then(|tail| tail.split("Branch {").next())
-        .expect("DecodeProgressPlan::Wire must stay visible");
-    let with_builder = decode_finish
-        .split("fn with_decode_commit_builder(")
+        .expect("BranchRecvProgressPlan::Wire must stay visible");
+    let with_builder = branch_recv_finish
+        .split("fn with_branch_recv_commit_builder(")
         .nth(1)
         .and_then(|tail| {
-            tail.split("    fn collect_decode_reentry_route_rows_from_parts")
+            tail.split("    fn collect_branch_recv_reentry_route_rows_from_parts")
                 .next()
         })
-        .expect("decode builder boundary must stay visible");
+        .expect("branch-recv builder boundary must stay visible");
 
     assert!(
         wire_progress.contains("delta: CommitDelta")
             && !wire_progress.contains("branch_scope")
             && !wire_progress.contains("branch_lane"),
-        "wire decode progress must carry only the semantic commit delta"
+        "wire branch-recv progress must carry only the semantic commit delta"
     );
     assert!(
-        decode.contains("NonWire { delta: CommitDelta }")
-            && decode.contains("enum PreparedDecodeProgressPlan")
-            && decode.contains("Wire { delta: PreparedCommitDelta }")
-            && decode.contains("NonWire { delta: PreparedCommitDelta }")
-            && decode.contains("struct DecodeCommitPlan<'r>")
-            && !decode.contains("struct DecodePublishPlan")
-            && with_builder.contains(") -> RecvResult<PreparedDecodePublishPlan<'r>>")
-            && with_builder.contains("self.prepare_decode_publish_plan(plan)")
-            && decode_builder.contains("RecvResult<DecodeCommitPlan<'r>>")
-            && !decode_builder.contains("fn publish_decode_commit_plan(")
-            && !decode.contains(concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"))
-            && !decode.contains(concat!("Prepared", "Empty", "BranchCommitDelta")),
-        "decode planning may carry CommitDelta only inside the commit builder and must return PreparedDecodePublishPlan across the endpoint boundary"
+        branch_recv.contains("NonWire { delta: CommitDelta }")
+            && branch_recv.contains("enum PreparedBranchRecvProgressPlan")
+            && branch_recv.contains("Wire { delta: PreparedCommitDelta }")
+            && branch_recv.contains("NonWire { delta: PreparedCommitDelta }")
+            && branch_recv.contains("struct BranchRecvCommitPlan<'r>")
+            && !branch_recv.contains("struct DecodePublishPlan")
+            && with_builder.contains(") -> RecvResult<PreparedBranchRecvPublishPlan<'r>>")
+            && with_builder.contains("self.prepare_branch_recv_publish_plan(plan)")
+            && branch_recv_builder.contains("RecvResult<BranchRecvCommitPlan<'r>>")
+            && !branch_recv_builder.contains("fn publish_branch_recv_commit_plan(")
+            && !branch_recv.contains(concat!("Prepared", "Syn", "thetic", "BranchCommitDelta"))
+            && !branch_recv.contains(concat!("Prepared", "Empty", "BranchCommitDelta")),
+        "branch-recv planning may carry CommitDelta only inside the commit builder and must return PreparedBranchRecvPublishPlan across the endpoint boundary"
     );
     for forbidden in ["route_ancestor_arm", "scope_parent("] {
         assert!(
-            !decode_finish.contains(forbidden),
-            "decode commit planning must not re-grow endpoint-side route ancestry walk: {forbidden}"
+            !branch_recv_finish.contains(forbidden),
+            "branch-recv commit planning must not re-grow endpoint-side route ancestry walk: {forbidden}"
         );
     }
 }

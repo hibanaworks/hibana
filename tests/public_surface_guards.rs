@@ -725,17 +725,19 @@ fn dynamic_resolver_surface_uses_one_decision_resolver() {
 
 #[test]
 fn core_resolver_audit_has_no_in_crate_resolver_owner() {
-    let resolver_audit = read("src/resolver_audit.rs");
-    for forbidden in [
-        "pub(crate) struct ResolverCtx",
-        "pub(crate) struct HostSlots",
-        "pub(crate) enum Action",
-        "pub(crate) struct AbortInfo",
-        "pub(crate) enum Trap",
-    ] {
+    assert!(
+        !repo_path("src/resolver_audit.rs").exists(),
+        "resolver audit replay owner must not return"
+    );
+    let production = [
+        read("src/endpoint/kernel/core.rs"),
+        read_dir_rs("src/endpoint/kernel/core"),
+    ]
+    .join("\n");
+    for forbidden in "emit_endpoint_resolver_audit|endpoint_resolver_args|ResolverSlot::EndpointRx|ResolverSlot::EndpointTx|hash_tap_event|emit_resolver_audit_replay|EndpointRxAuditPlan|pub(crate) struct ResolverCtx|pub(crate) struct HostSlots|pub(crate) enum Action|pub(crate) struct AbortInfo|pub(crate) enum Trap".split('|') {
         assert!(
-            !resolver_audit.contains(forbidden),
-            "hibana core must not keep an in-crate resolver owner: {forbidden}"
+            !production.contains(forbidden),
+            "hibana core must not keep resolver replay audit residue: {forbidden}"
         );
     }
 

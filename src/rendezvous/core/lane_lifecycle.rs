@@ -40,10 +40,13 @@ where
         slab: &mut [u8],
     ) -> Option<(*mut Self, &mut [TapEvent; TAP_EVENTS], &mut [u8])> {
         let layout = Self::resident_carve_layout(slab)?;
-        let header_ptr = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe {
+        let header_ptr = /* SAFETY: `resident_carve_layout` proved
+        `header_start` is inside `slab` and aligned for `Rendezvous`. */ unsafe {
             slab.as_mut_ptr().add(layout.header_start).cast::<Self>()
         };
-        let tap_ptr = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe {
+        let tap_ptr = /* SAFETY: `resident_carve_layout` proved `tap_start` is
+        inside `slab` and aligned for `TapEvent`; `TAP_EVENTS` initialized
+        cells fit before the runtime slice. */ unsafe {
             slab.as_mut_ptr().add(layout.tap_start).cast::<TapEvent>()
         };
         let mut idx = 0usize;
@@ -57,9 +60,12 @@ where
         let tap_storage = /* SAFETY: tap storage was carved at TapEvent alignment and initialized for exactly TAP_EVENTS elements. */ unsafe {
             &mut *(tap_ptr.cast::<[TapEvent; TAP_EVENTS]>())
         };
-        let runtime_ptr = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { slab.as_mut_ptr().add(layout.runtime_start) };
+        let runtime_ptr = /* SAFETY: `runtime_start <= slab.len()` was checked
+        by `resident_carve_layout`, so this points at the runtime suffix. */ unsafe { slab.as_mut_ptr().add(layout.runtime_start) };
         let runtime_len = slab.len() - layout.runtime_start;
-        let runtime_slab = /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */ unsafe { core::slice::from_raw_parts_mut(runtime_ptr, runtime_len) };
+        let runtime_slab = /* SAFETY: `runtime_ptr` and `runtime_len` describe
+        the suffix of the same caller slab after the rendezvous header and tap
+        ring; it is disjoint from both initialized prefixes. */ unsafe { core::slice::from_raw_parts_mut(runtime_ptr, runtime_len) };
         Some((header_ptr, tap_storage, runtime_slab))
     }
 
@@ -75,9 +81,13 @@ where
     ) -> Option<*mut Self> {
         let RuntimeResources { slab } = resources;
         let lane_range = RuntimeResources::initial_lane_range();
-        let (dst, tap_storage, runtime_slab) = /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */ unsafe { Self::carve_resident_storage(slab) }?;
+        let (dst, tap_storage, runtime_slab) = /* SAFETY: `slab` is the
+        exclusive runtime resource for this rendezvous; carving initializes the
+        tap ring and returns disjoint header/runtime regions. */ unsafe { Self::carve_resident_storage(slab) }?;
         let image_frontier = 0u32;
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: `dst` is the unpublished rendezvous header carved from the
+        caller slab. All resident fields, tables, lane range, and transport
+        owners are written before the pointer is returned to the session kit. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).id).write(rv_id);

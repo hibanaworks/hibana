@@ -6,6 +6,33 @@ where
     'cfg: 'rv,
 {
     #[inline]
+    pub(crate) fn endpoint_lease_slot_by_index(&self, idx: usize) -> Option<&EndpointLeaseSlot> {
+        if idx >= usize::from(self.endpoint_lease_capacity) {
+            return None;
+        }
+        let endpoint_leases = self.endpoint_leases_ptr();
+        /* SAFETY: `idx` is within the initialized endpoint-lease table owned by
+        this `Rendezvous`. The returned shared borrow is scoped to this call and
+        cannot outlive the rendezvous owner. */
+        Some(unsafe { &*endpoint_leases.add(idx) })
+    }
+
+    #[inline]
+    pub(crate) fn endpoint_lease_slot_by_index_mut(
+        &mut self,
+        idx: usize,
+    ) -> Option<&mut EndpointLeaseSlot> {
+        if idx >= usize::from(self.endpoint_lease_capacity) {
+            return None;
+        }
+        let endpoint_leases = self.endpoint_leases_ptr();
+        /* SAFETY: `&mut self` is the endpoint-lease table's mutation token.
+        `idx` is inside the initialized lease table, and the mutable slot borrow
+        is returned as the only live reference to that slot. */
+        Some(unsafe { &mut *endpoint_leases.add(idx) })
+    }
+
+    #[inline]
     fn endpoint_lease(
         &self,
         lease_slot: EndpointLeaseId,
@@ -15,8 +42,7 @@ where
         if idx >= usize::from(self.endpoint_lease_capacity) {
             return None;
         }
-        let endpoint_leases = self.endpoint_leases_ptr();
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
+        let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
         if slot.is_live() && slot.generation == generation {
             Some(slot)
         } else {
@@ -34,8 +60,7 @@ where
         if idx >= usize::from(self.endpoint_lease_capacity) {
             return None;
         }
-        let endpoint_leases = self.endpoint_leases_ptr();
-        let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &mut *endpoint_leases.add(idx) };
+        let slot = crate::invariant_some(self.endpoint_lease_slot_by_index_mut(idx));
         if slot.is_live() && slot.generation == generation {
             Some(slot)
         } else {
@@ -80,12 +105,13 @@ where
         let mut idx = 0usize;
         while idx < required_slots {
             let slot = if idx < current {
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                unsafe { *source_ptr.add(idx) }
+                *crate::invariant_some(self.endpoint_lease_slot_by_index(idx))
             } else {
                 EndpointLeaseSlot::EMPTY
             };
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: `lease` is the freshly allocated endpoint-lease sidecar
+            with `required_slots` capacity; this loop writes each destination
+            slot once before publishing `endpoint_lease_storage`. */
             unsafe {
                 new_ptr.add(idx).write(slot);
             }
@@ -124,10 +150,9 @@ where
     #[inline]
     pub(crate) fn resident_route_frame_slots_floor(&self) -> usize {
         let mut required = 0usize;
-        let endpoint_leases = self.endpoint_leases_ptr();
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
             if slot.is_live() {
                 required =
                     core::cmp::max(required, slot.resident_budget.route_frame_slots as usize);
@@ -140,10 +165,9 @@ where
     #[inline]
     pub(crate) fn resident_route_lane_slots_floor(&self) -> usize {
         let mut required = 0usize;
-        let endpoint_leases = self.endpoint_leases_ptr();
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
             if slot.is_live() {
                 required = core::cmp::max(required, slot.resident_budget.route_lane_slots as usize);
             }
@@ -155,10 +179,9 @@ where
     #[inline]
     pub(crate) fn resident_frontier_workspace_floor(&self) -> usize {
         let mut required = 0usize;
-        let endpoint_leases = self.endpoint_leases_ptr();
         let mut idx = 0usize;
         while idx < usize::from(self.endpoint_lease_capacity) {
-            let slot = /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */ unsafe { &*endpoint_leases.add(idx) };
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
             if slot.is_live() {
                 required = core::cmp::max(
                     required,

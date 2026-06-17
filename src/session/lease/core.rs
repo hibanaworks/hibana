@@ -46,7 +46,9 @@ where
     /// # Safety
     /// `dst` must point to valid, writable memory for `Self`.
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+        /* SAFETY: `SessionKitStorage::init` provides the unpublished
+        `RendezvousTable` slot. This initializer writes both registry fields
+        before any table lookup can borrow the list head. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).head).write(None);
             core::ptr::addr_of_mut!((*dst).len).write(0);
@@ -56,7 +58,9 @@ where
     fn entry_ref(&self, id: &RendezvousId) -> Option<&RendezvousEntry<'cfg, T>> {
         let mut current = self.head;
         while let Some(entry_ptr) = current {
-            let entry = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
+            let entry = /* SAFETY: `self.head` links only initialized
+            `RendezvousEntry` nodes carved from rendezvous slabs; shared lookup
+            does not activate a lease and follows the pinned `next` chain. */ unsafe {
                 entry_ptr.as_ref()
             };
             if entry.id == *id {
@@ -70,7 +74,9 @@ where
     fn entry_mut(&mut self, id: &RendezvousId) -> Option<&mut RendezvousEntry<'cfg, T>> {
         let mut current = self.head;
         while let Some(mut entry_ptr) = current {
-            let entry = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
+            let entry = /* SAFETY: `&mut self` is the registry mutation token.
+            The selected entry pointer belongs to the pinned intrusive list, and
+            no rendezvous lease is created until the caller marks the entry. */ unsafe {
                 entry_ptr.as_mut()
             };
             if entry.id == *id {
@@ -173,7 +179,9 @@ where
     fn rendezvous_ref(&self) -> Option<&Rendezvous<'cfg, 'cfg, T>> {
         match self.state {
             RendezvousEntryState::Available => Some(
-                /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+                /* SAFETY: an `Available` entry has no active
+                `RendezvousLease`; this shared borrow is tied to the registry
+                lookup and reads the pinned rendezvous pointer stored at insert. */
                 unsafe { self.rendezvous.as_ref() },
             ),
             RendezvousEntryState::Leased => None,
@@ -183,7 +191,9 @@ where
     fn rendezvous_mut(&mut self) -> Option<&mut Rendezvous<'cfg, 'cfg, T>> {
         match self.state {
             RendezvousEntryState::Available => Some(
-                /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+                /* SAFETY: `&mut self` is the unique registry entry borrow and
+                `Available` proves no affine lease currently owns the pinned
+                rendezvous pointer. */
                 unsafe { self.rendezvous.as_mut() },
             ),
             RendezvousEntryState::Leased => None,
@@ -191,7 +201,9 @@ where
     }
 
     fn rendezvous(&mut self) -> &mut Rendezvous<'cfg, 'cfg, T> {
-        /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+        /* SAFETY: `RendezvousLease::new` reaches this after marking the entry
+        `Leased`; the lease owns the only mutable path to this pinned rendezvous
+        until its Drop clears the state. */
         unsafe { self.rendezvous.as_mut() }
     }
 }
@@ -206,7 +218,10 @@ where
         rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T>>,
         next: Option<NonNull<RendezvousEntry<'cfg, T>>>,
     ) {
-        /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+        /* SAFETY: registry insertion passes an unpublished `RendezvousEntry`
+        sidecar cell. Each field is written once, the resolver bucket receives
+        its own empty initialization, and the entry is linked from `self.head`
+        only after this initializer returns. */
         unsafe {
             core::ptr::addr_of_mut!((*dst).id).write(rv_id);
             core::ptr::addr_of_mut!((*dst).rendezvous).write(rendezvous);
@@ -226,7 +241,9 @@ where
     T: Transport,
 {
     fn drop(&mut self) {
-        /* SAFETY: the lease owner stores pinned rendezvous/tap/slab pointers and borrows them through one lease path at a time. */
+        /* SAFETY: dropping the registry entry owns the stored rendezvous slab
+        node. Active leases borrow the entry and therefore cannot overlap entry
+        drop; the pointer is dropped exactly once with the entry. */
         unsafe {
             ptr::drop_in_place(self.rendezvous.as_ptr());
         }

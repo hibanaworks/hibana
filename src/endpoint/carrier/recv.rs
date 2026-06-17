@@ -8,8 +8,8 @@ where
         handle: PackedEndpointHandle,
     ) -> crate::endpoint::kernel::PublicOpLease {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: recv-state initialization owns the carrier endpoint slot
+            // selected by `handle` and installs only public recv state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,
@@ -24,8 +24,8 @@ where
         handle: PackedEndpointHandle,
     ) {
         unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: recv-state reset owns the carrier endpoint slot selected
+            // by `handle` and clears only the resident recv state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
                 kernel.reset_public_recv_state();
             });
@@ -44,8 +44,9 @@ where
             out,
         } = request;
         let poll = unsafe {
-            // SAFETY: this raw callback has exclusive access to the carrier
-            // endpoint slot selected by `handle` for the duration of the call.
+            // SAFETY: endpoint recv polling owns the carrier endpoint slot
+            // selected by `handle`; validation and payload staging stay inside
+            // this recv poll callback.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(
                 ptr,
                 handle,

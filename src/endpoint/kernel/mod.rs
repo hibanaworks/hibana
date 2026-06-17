@@ -1,8 +1,8 @@
 //! Endpoint kernel split by layer.
 
 mod authority;
+mod branch_recv;
 mod core;
-mod decode;
 pub(crate) mod endpoint_init;
 mod evidence;
 mod evidence_store;
@@ -21,14 +21,18 @@ mod lane_slots {
             if len > u16::MAX as usize {
                 crate::invariant();
             }
-            /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+            /* SAFETY: endpoint initialization passes an unpublished
+            `LaneSlotArray` field. The backing pointer and checked u16 length
+            are written before any lane slot accessor can observe the array. */
             unsafe {
                 core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
                 core::ptr::addr_of_mut!((*dst).len).write(len as u16);
             }
             let mut idx = 0usize;
             while idx < len {
-                /* SAFETY: initialization owns exclusive writable storage for this field and writes it exactly once before exposure. */
+                /* SAFETY: `idx < len` selects one slot in the endpoint-owned
+                lane slot backing slice, and every slot is initialized to
+                `None` before the endpoint is published. */
                 unsafe {
                     ptr.add(idx).write(None);
                 }
@@ -46,20 +50,28 @@ mod lane_slots {
             if lane_idx >= self.len() {
                 return None;
             }
-            Some(
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
-                unsafe { self.ptr.add(lane_idx) },
-            )
+            /* SAFETY: `lane_idx < self.len` bounds this endpoint lane-slot
+            array; the pointer was installed from the endpoint arena during
+            initialization. */
+            Some(unsafe { self.ptr.add(lane_idx) })
         }
 
         #[inline]
         pub(super) fn get(&self, lane_idx: usize) -> Option<&Option<T>> {
-            self.slot_ptr(lane_idx).map(|ptr| /* SAFETY: the pointer comes from pinned owner storage and this path only creates a shared borrow. */ unsafe { &*ptr })
+            self.slot_ptr(lane_idx).map(|ptr| {
+                /* SAFETY: `slot_ptr` returned a lane slot owned by this array;
+                shared access is tied to `&self` and cannot mutate the option. */
+                unsafe { &*ptr }
+            })
         }
 
         #[inline]
         pub(super) fn get_mut(&mut self, lane_idx: usize) -> Option<&mut Option<T>> {
-            self.slot_ptr(lane_idx).map(|ptr| /* SAFETY: the pointer comes from pinned owner storage and this path holds the unique mutable access for the borrow. */ unsafe { &mut *ptr })
+            self.slot_ptr(lane_idx).map(|ptr| {
+                /* SAFETY: `&mut self` is the lane-slot mutation token, so the
+                returned mutable option is the only live borrow of this slot. */
+                unsafe { &mut *ptr }
+            })
         }
 
         #[inline]
@@ -70,7 +82,9 @@ mod lane_slots {
             } else {
                 self.ptr
             };
-            /* SAFETY: the pointer and length are carved from one backing slice after bounds and alignment checks. */
+            /* SAFETY: `ptr,len` describe the initialized endpoint lane-slot
+            slice installed by `init_from_parts`; zero-length arrays use a
+            dangling pointer accepted by `from_raw_parts_mut`. */
             unsafe { core::slice::from_raw_parts_mut(ptr, len).iter_mut() }
         }
     }
@@ -95,7 +109,8 @@ mod lane_slots {
         fn drop(&mut self) {
             let mut idx = 0usize;
             while idx < self.len() {
-                /* SAFETY: the offset was checked against the backing allocation before pointer arithmetic. */
+                /* SAFETY: `idx < self.len` selects an initialized lane slot in
+                this array, and Drop owns the array so no slot borrow remains. */
                 unsafe {
                     core::ptr::drop_in_place(self.ptr.add(idx));
                 }
@@ -114,7 +129,9 @@ mod lane_slots {
             let mut storage = std::vec::Vec::with_capacity(256);
             storage.resize_with(256, MaybeUninit::<Option<u16>>::uninit);
             let mut array = MaybeUninit::<LaneSlotArray<u16>>::uninit();
-            /* SAFETY: the caller supplies exclusive uninitialized storage and this initializer writes all exposed fields before return. */
+            /* SAFETY: `array` is this test's uninitialized `LaneSlotArray`
+            storage and `storage` owns 256 uninitialized option slots until the
+            initialized array takes responsibility for dropping them. */
             unsafe {
                 LaneSlotArray::init_from_parts(
                     array.as_mut_ptr(),
