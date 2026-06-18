@@ -242,8 +242,8 @@ impl<const N: usize> RoleImageBytes<N> {
         roll_row: PackedRollScopeRow,
     ) {
         let offset = Self::column_offset(column, row, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
-        self.write_u32(offset, roll_row.scope_raw());
-        self.write_u32(offset + 4, roll_row.event_row_raw());
+        self.write_u16(offset, roll_row.scope_raw());
+        self.write_u32(offset + 2, roll_row.event_row_raw());
     }
 
     #[inline(always)]

@@ -21,7 +21,7 @@ pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
-pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 8;
+pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -244,13 +244,13 @@ impl PackedRouteArmRow {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedRollScopeRow {
-    scope: u32,
+    scope: u16,
     event_row: PackedLaneRange,
 }
 
 impl PackedRollScopeRow {
     pub(crate) const EMPTY: Self = Self {
-        scope: u32::MAX,
+        scope: u16::MAX,
         event_row: PackedLaneRange::EMPTY,
     };
 
@@ -268,13 +268,13 @@ impl PackedRollScopeRow {
             panic!("roll scope row overflow");
         }
         Self {
-            scope: scope.raw(),
+            scope: scope.local_ordinal(),
             event_row: row,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn from_packed_parts(scope: u32, event_row_raw: u32) -> Self {
+    pub(crate) const fn from_packed_parts(scope: u16, event_row_raw: u32) -> Self {
         Self {
             scope,
             event_row: PackedLaneRange::from_raw(event_row_raw),
@@ -282,7 +282,7 @@ impl PackedRollScopeRow {
     }
 
     #[inline(always)]
-    pub(crate) const fn scope_raw(self) -> u32 {
+    pub(crate) const fn scope_raw(self) -> u16 {
         self.scope
     }
 
@@ -293,7 +293,7 @@ impl PackedRollScopeRow {
 
     #[inline(always)]
     pub(crate) const fn is_empty(self) -> bool {
-        self.scope == u32::MAX
+        self.scope == u16::MAX
     }
 
     #[inline(always)]
@@ -301,7 +301,7 @@ impl PackedRollScopeRow {
         if self.is_empty() {
             None
         } else {
-            Some(crate::global::const_dsl::ScopeId::from_raw(self.scope))
+            Some(crate::global::const_dsl::ScopeId::roll_scope(self.scope))
         }
     }
 

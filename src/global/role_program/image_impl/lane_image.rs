@@ -258,8 +258,8 @@ impl RoleLaneImage {
         match self.column_offset(self.columns.roll_scopes, slot, ROLE_IMAGE_ROLL_SCOPE_STRIDE) {
             Some(offset) => {
                 let row = PackedRollScopeRow::from_packed_parts(
-                    self.read_u32_at(offset),
-                    self.read_u32_at(offset + 4),
+                    self.read_u16_at(offset),
+                    self.read_u32_at(offset + 2),
                 );
                 if row.is_empty() { None } else { Some(row) }
             }
