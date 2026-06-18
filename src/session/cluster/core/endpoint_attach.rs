@@ -16,6 +16,58 @@ where
     occupied_lane_index: usize,
 }
 
+#[derive(Clone, Copy)]
+struct SessionRoleClaimKey {
+    rv_id: RendezvousId,
+    sid: SessionId,
+    role: u8,
+}
+
+struct SessionRoleClaim<'cluster, 'cfg, T>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    cluster: &'cluster SessionCluster<'cfg, T>,
+    claim: Option<SessionRoleClaimKey>,
+}
+
+impl<'cluster, 'cfg, T> SessionRoleClaim<'cluster, 'cfg, T>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    fn claim<const ROLE: u8>(
+        cluster: &'cluster SessionCluster<'cfg, T>,
+        rv_id: RendezvousId,
+        sid: SessionId,
+    ) -> Result<Self, ClusterError> {
+        cluster.claim_session_role(sid, ROLE, rv_id)?;
+        Ok(Self {
+            cluster,
+            claim: Some(SessionRoleClaimKey {
+                rv_id,
+                sid,
+                role: ROLE,
+            }),
+        })
+    }
+
+    fn disarm(&mut self) {
+        self.claim = None;
+    }
+}
+
+impl<'cluster, 'cfg, T> Drop for SessionRoleClaim<'cluster, 'cfg, T>
+where
+    T: crate::transport::Transport + 'cfg,
+{
+    fn drop(&mut self) {
+        if let Some(claim) = self.claim.take() {
+            self.cluster
+                .release_session_role_claim(claim.sid, claim.role, claim.rv_id);
+        }
+    }
+}
+
 impl<'cfg, T> SessionCluster<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -165,6 +217,14 @@ where
             });
 
         if let Err(err) = init_result {
+            /* SAFETY: the caller still owns the session-role claim and endpoint
+            lease while attach is unpublished. Disable public Drop's release
+            path so rollback remains single-owner and explicit. */
+            unsafe {
+                (*dst).public_generation = 0;
+                (*dst).public_slot_ownership =
+                    crate::endpoint::kernel::PublicSlotOwnership::Borrowed;
+            }
             /* SAFETY: endpoint initialization failed before publication, so
             attach still owns `dst` and drops the partially initialized endpoint
             image exactly once. */
@@ -172,16 +232,6 @@ where
                 core::ptr::drop_in_place(dst);
             }
             return Err(err);
-        }
-
-        if let Err(err) = self.bind_session_role(sid, ROLE, rv_id) {
-            /* SAFETY: role binding failed after endpoint image initialization
-            but before handle return. Attach still owns `dst` and tears down the
-            resident endpoint once. */
-            unsafe {
-                core::ptr::drop_in_place(dst);
-            }
-            return Err(AttachError::cluster(err));
         }
 
         /* SAFETY: endpoint attach owns `dst` until this finalization call.
@@ -221,6 +271,29 @@ where
     }
 
     #[inline]
+    fn required_assoc_slots_for_endpoint<const ROLE: u8>(
+        rv: &crate::rendezvous::core::Rendezvous<'cfg, 'cfg, T>,
+        sid: SessionId,
+        role_image: RoleImageSlice<ROLE>,
+        logical_lane_count: usize,
+    ) -> usize {
+        let mut required = rv.active_lane_attachment_count();
+        if !rv.has_lane_attachment(sid, Lane::new(0)) {
+            required += 1;
+        }
+        let mut logical_idx = 1usize;
+        while logical_idx < logical_lane_count {
+            if role_image.has_active_lane(logical_idx)
+                && !rv.has_lane_attachment(sid, Lane::new(logical_idx as u32))
+            {
+                required += 1;
+            }
+            logical_idx += 1;
+        }
+        required
+    }
+
+    #[inline]
     fn attach_public_endpoint_inner<'r, 'prog, const ROLE: u8, P>(
         &'r self,
         rv_id: RendezvousId,
@@ -237,17 +310,26 @@ where
             session storage only long enough to compute endpoint storage
             requirements and reserve a live endpoint slot. */
             unsafe {
+                let mut role_claim = SessionRoleClaim::claim::<ROLE>(self, rv_id, sid)
+                    .map_err(AttachError::cluster)?;
+                let logical_lane_count = role_image.logical_lane_count().max(1);
                 self.with_storage_mut(|core| {
-                    core.locals
+                    let rv = core
+                        .locals
                         .get_mut_checked(&rv_id)
                         .map_err(Self::map_rendezvous_access_error)
-                        .map_err(AttachError::cluster)?
-                        .ensure_core_lane_storage_for_lane_slots(
-                            role_image.logical_lane_count().max(1),
-                        )
-                        .map_err(|scope| {
-                            AttachError::cluster(ClusterError::resource_exhausted(scope))
-                        })
+                        .map_err(AttachError::cluster)?;
+                    let required_assoc_slots = Self::required_assoc_slots_for_endpoint(
+                        rv,
+                        sid,
+                        role_image,
+                        logical_lane_count,
+                    );
+                    rv.ensure_core_lane_storage_for_assoc_entries(
+                        logical_lane_count,
+                        required_assoc_slots,
+                    )
+                    .map_err(|scope| AttachError::cluster(ClusterError::resource_exhausted(scope)))
                 })?;
                 let storage_layout = Self::public_endpoint_storage_requirement(role_image);
                 let resident_budget = Self::public_endpoint_resident_budget(role_image);
@@ -282,6 +364,7 @@ where
                     })?;
                     return Err(err);
                 }
+                role_claim.disarm();
                 Ok((slot, generation))
             },
             Err(err) => Err(err),

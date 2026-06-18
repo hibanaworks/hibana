@@ -8,6 +8,25 @@ source ./.github/scripts/lib/hygiene_common.sh
 
 FAILED=0
 
+resolver_authority_deny_self_test() {
+  local pattern="RouteResolverDecision|route_resolver_decision_from_action|\\bDefer\\b|\\bDeferred\\b|Source::Epf"
+  local tmp_dir
+  local token
+  tmp_dir="$(mktemp -d)"
+  for token in RouteResolverDecision route_resolver_decision_from_action Defer Deferred Source::Epf; do
+    printf '%s\n' "${token}" > "${tmp_dir}/authority.rs"
+    local matches
+    capture_rg matches "resolver authority deny self-test ${token}" -n "${pattern}" "${tmp_dir}/authority.rs"
+    if [[ -z "${matches}" ]]; then
+      echo "resolver authority deny self-test missed token: ${token}" >&2
+      FAILED=1
+    fi
+  done
+  rm -rf "${tmp_dir}"
+}
+
+resolver_authority_deny_self_test
+
 check_absent "ResolverSnapshotProvider" "ResolverSnapshotProvider" src README.md
 check_absent "EpfInputProvider" "EpfInputProvider" src README.md
 check_absent "ContextProvider" "ContextProvider" src README.md

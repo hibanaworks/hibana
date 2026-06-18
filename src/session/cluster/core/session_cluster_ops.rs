@@ -1,7 +1,7 @@
 use super::{
     AttachError, ClusterError, CompiledProgramRef, EndpointLeaseId, Lane, LaneLease, LeaseError,
     PublicEndpointStorageLayout, RegisterRendezvousError, Rendezvous, RendezvousError,
-    RendezvousId, ResourceScope, RoleBindingError, RoleImageSlice, SessionId, SessionStorage,
+    RendezvousId, ResourceScope, RoleClaimError, RoleImageSlice, SessionId, SessionStorage,
 };
 
 // # Unsafe Owner Contract
@@ -335,7 +335,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn bind_session_role(
+    pub(crate) fn claim_session_role(
         &self,
         sid: SessionId,
         role: u8,
@@ -343,15 +343,18 @@ where
     ) -> Result<(), ClusterError> {
         self.with_storage_mut(|core| {
             core.locals
-                .bind_session_role(sid, role, rv_id)
+                .claim_session_role(sid, role, rv_id)
                 .map_err(|error| match error {
-                    RoleBindingError::RendezvousUnregistered(id) => {
+                    RoleClaimError::RendezvousUnregistered(id) => {
                         ClusterError::RendezvousUnregistered { id: id.raw() }
                     }
-                    RoleBindingError::RendezvousMismatch { expected, actual } => {
+                    RoleClaimError::RendezvousMismatch { expected, actual } => {
                         ClusterError::RendezvousMismatch { expected, actual }
                     }
-                    RoleBindingError::CapacityExceeded => {
+                    RoleClaimError::AlreadyClaimed(id) => {
+                        ClusterError::RendezvousBusy { id: id.raw() }
+                    }
+                    RoleClaimError::CapacityExceeded => {
                         ClusterError::resource_exhausted(ResourceScope::RendezvousTable)
                     }
                 })
@@ -359,8 +362,12 @@ where
     }
 
     #[inline]
-    pub(crate) fn unbind_session_role(&self, sid: SessionId, role: u8, rv_id: RendezvousId) {
-        self.with_storage_mut(|core| core.locals.unbind_session_role(sid, role, rv_id));
+    pub(crate) fn release_session_role_claim(&self, sid: SessionId, role: u8, rv_id: RendezvousId) {
+        let released =
+            self.with_storage_mut(|core| core.locals.release_session_role_claim(sid, role, rv_id));
+        if !released {
+            crate::invariant();
+        }
     }
 
     pub(crate) fn with_resident_program_ref<const ROLE: u8, P, F, R, E>(

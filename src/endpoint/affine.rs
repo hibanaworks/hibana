@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 
 use crate::{
     rendezvous::core::{LaneRelease, Rendezvous},
-    session::types::Lane,
+    session::types::{Lane, SessionId},
     transport::Transport,
 };
 
@@ -20,6 +20,7 @@ use crate::{
 /// borrow is carried by `active_leases`.
 pub(crate) struct LaneGuard<'lease, T: Transport> {
     rendezvous: *const (),
+    sid: SessionId,
     lane: Lane,
     active_leases: &'lease Cell<u32>,
     _marker: PhantomData<fn() -> T>,
@@ -31,11 +32,13 @@ where
 {
     pub(crate) fn new_detached(
         rendezvous: *const (),
+        sid: SessionId,
         lane: Lane,
         active_leases: &'lease Cell<u32>,
     ) -> Self {
         Self {
             rendezvous,
+            sid,
             lane,
             active_leases,
             _marker: PhantomData,
@@ -48,6 +51,7 @@ where
     T: Transport,
 {
     fn drop(&mut self) {
+        let sid = self.sid;
         let lane = self.lane;
         if !self.rendezvous.is_null() {
             /* SAFETY: `LaneGuard` stores the rendezvous pointer that issued the
@@ -55,8 +59,8 @@ where
             the counted lane handle and emit the release evidence. */
             unsafe {
                 let rv = &*self.rendezvous.cast::<Rendezvous<'static, 'static, T>>();
-                match rv.release_lane(lane) {
-                    LaneRelease::Released(sid) => rv.emit_lane_release(sid, lane),
+                match rv.release_lane(sid, lane) {
+                    LaneRelease::Released => rv.emit_lane_release(sid, lane),
                     LaneRelease::StillHeld => {}
                 }
             }

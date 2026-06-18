@@ -1,6 +1,6 @@
 use core::{ptr, ptr::NonNull};
 
-use super::{ROLE_BINDING_SLOTS, RendezvousEntry, RendezvousTable, SessionRoleBinding};
+use super::{ROLE_CLAIM_SLOTS, RendezvousEntry, RendezvousTable, SessionRoleClaim};
 use crate::{
     rendezvous::core::Rendezvous,
     session::types::{RendezvousId, SessionId},
@@ -74,12 +74,12 @@ where
         Ok(id)
     }
 
-    pub(crate) fn bind_session_role(
+    pub(crate) fn claim_session_role(
         &mut self,
         sid: SessionId,
         role: u8,
         rv: RendezvousId,
-    ) -> Result<(), RoleBindingError> {
+    ) -> Result<(), RoleClaimError> {
         if role >= crate::g::ROLE_DOMAIN_SIZE {
             crate::invariant();
         }
@@ -94,22 +94,18 @@ where
                 target = Some(entry_ptr);
             }
             let mut col = 0usize;
-            while col < ROLE_BINDING_SLOTS {
-                if let Some(binding) = &mut entry.role_bindings[col]
-                    && binding.sid == sid
-                    && binding.role == role
+            while col < ROLE_CLAIM_SLOTS {
+                if let Some(claim) = &entry.role_claims[col]
+                    && claim.sid == sid
+                    && claim.role == role
                 {
-                    if binding.rv != rv {
-                        return Err(RoleBindingError::RendezvousMismatch {
-                            expected: binding.rv.raw(),
+                    if entry.id != rv {
+                        return Err(RoleClaimError::RendezvousMismatch {
+                            expected: entry.id.raw(),
                             actual: rv.raw(),
                         });
                     }
-                    binding.refs = binding
-                        .refs
-                        .checked_add(1)
-                        .ok_or(RoleBindingError::CapacityExceeded)?;
-                    return Ok(());
+                    return Err(RoleClaimError::AlreadyClaimed(rv));
                 }
                 col += 1;
             }
@@ -117,50 +113,50 @@ where
         }
 
         let Some(mut target) = target else {
-            return Err(RoleBindingError::RendezvousUnregistered(rv));
+            return Err(RoleClaimError::RendezvousUnregistered(rv));
         };
         let entry = /* SAFETY: target was discovered in the initialized registry list above. */ unsafe {
             target.as_mut()
         };
         let mut col = 0usize;
-        while col < ROLE_BINDING_SLOTS {
-            if entry.role_bindings[col].is_none() {
-                entry.role_bindings[col] = Some(SessionRoleBinding {
-                    sid,
-                    role,
-                    rv,
-                    refs: 1,
-                });
+        while col < ROLE_CLAIM_SLOTS {
+            if entry.role_claims[col].is_none() {
+                entry.role_claims[col] = Some(SessionRoleClaim { sid, role });
                 return Ok(());
             }
             col += 1;
         }
-        Err(RoleBindingError::CapacityExceeded)
+        Err(RoleClaimError::CapacityExceeded)
     }
 
-    pub(crate) fn unbind_session_role(&mut self, sid: SessionId, role: u8, rv: RendezvousId) {
+    pub(crate) fn release_session_role_claim(
+        &mut self,
+        sid: SessionId,
+        role: u8,
+        rv: RendezvousId,
+    ) -> bool {
         let mut current = self.head;
         while let Some(mut entry_ptr) = current {
             let entry = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
                 entry_ptr.as_mut()
             };
-            let mut col = 0usize;
-            while col < ROLE_BINDING_SLOTS {
-                if let Some(binding) = &mut entry.role_bindings[col]
-                    && binding.sid == sid
-                    && binding.role == role
-                    && binding.rv == rv
-                {
-                    binding.refs -= 1;
-                    if binding.refs == 0 {
-                        entry.role_bindings[col] = None;
+            if entry.id == rv {
+                let mut col = 0usize;
+                while col < ROLE_CLAIM_SLOTS {
+                    if let Some(claim) = &entry.role_claims[col]
+                        && claim.sid == sid
+                        && claim.role == role
+                    {
+                        entry.role_claims[col] = None;
+                        return true;
                     }
-                    return;
+                    col += 1;
                 }
-                col += 1;
+                return false;
             }
             current = entry.next;
         }
+        false
     }
 
     pub(crate) fn ensure_dynamic_resolver_capacity(
@@ -254,13 +250,15 @@ pub(crate) enum RegisterRendezvousError {
     StorageExhausted,
 }
 
-/// Session-role binding failures.
+/// Session-role claim failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RoleBindingError {
+pub(crate) enum RoleClaimError {
     /// No rendezvous with the requested identifier exists.
     RendezvousUnregistered(RendezvousId),
     /// A session role is already attached to another rendezvous.
     RendezvousMismatch { expected: u16, actual: u16 },
-    /// The selected rendezvous has no remaining role binding row capacity.
+    /// A live endpoint already owns this session role on the selected rendezvous.
+    AlreadyClaimed(RendezvousId),
+    /// The selected rendezvous has no remaining role claim row capacity.
     CapacityExceeded,
 }

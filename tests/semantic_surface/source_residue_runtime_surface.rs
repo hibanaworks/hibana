@@ -1,5 +1,16 @@
 use super::common::*;
 
+fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
+    let marker = format!("struct {name} {{");
+    let tail = source
+        .split(&marker)
+        .nth(1)
+        .unwrap_or_else(|| panic!("{name} struct must stay visible"));
+    tail.split("\n}")
+        .next()
+        .unwrap_or_else(|| panic!("{name} struct body must stay visible"))
+}
+
 #[test]
 fn production_and_gates_do_not_reintroduce_std_feature_branches() {
     let production = read_production_rs_tree("src");
@@ -104,6 +115,116 @@ fn transport_surface_has_no_custom_error_axis() {
 }
 
 #[test]
+fn session_role_claim_stays_affine_without_refcount_owner() {
+    let lease_core = read("src/session/lease/core.rs");
+    let claim = named_struct_body(&lease_core, "SessionRoleClaim");
+    assert!(
+        claim.contains("sid: SessionId,") && claim.contains("role: u8,"),
+        "session-role claim must keep only the live claim identity"
+    );
+    for forbidden in ["rv:", "refs:", "RendezvousId"] {
+        assert!(
+            !claim.contains(forbidden),
+            "session-role claim must not own rendezvous identity or refcount residue: {forbidden}"
+        );
+    }
+
+    let lease_ops = read("src/session/lease/core/registry_ops.rs");
+    let cluster_ops = read("src/session/cluster/core/session_cluster_ops.rs");
+    let endpoint_attach = read("src/session/cluster/core/endpoint_attach.rs");
+    let claim_scope = [
+        lease_ops.as_str(),
+        cluster_ops.as_str(),
+        endpoint_attach.as_str(),
+    ]
+    .join("\n");
+    for required in ["claim_session_role", "release_session_role_claim"] {
+        assert!(
+            claim_scope.contains(required),
+            "session-role ownership must use affine claim vocabulary: {required}"
+        );
+    }
+    for forbidden in [
+        "bind_session_role",
+        "unbind_session_role",
+        "SessionRoleBinding",
+        "role_bindings",
+        "RoleBindingError::AlreadyBound",
+        "RoleBindingError",
+        "binding.refs",
+        "refs += 1",
+        "refs -= 1",
+        "SessionRoleBinding { sid, role, rv",
+    ] {
+        assert!(
+            !claim_scope.contains(forbidden),
+            "session-role ownership must not reintroduce binding/refcount residue: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn role_lane_mask_stays_lane_indexed_projection_only() {
+    let steps = read("src/global/steps.rs");
+    assert!(
+        steps.contains("struct RoleLaneMask {\n    lanes: [u16; ROLE_LANE_COUNT],\n}"),
+        "RoleLaneMask must stay lane-indexed u16 storage"
+    );
+    for required in [
+        "fn union(self, other: Self, active_span: u16) -> Self",
+        "fn intersects(&self, other: &Self, active_span: u16) -> bool",
+        "fn shift_lanes(self, offset: u16, active_span: u16) -> Self",
+    ] {
+        assert!(
+            steps.contains(required),
+            "RoleLaneMask ops must be bounded by active lane span: {required}"
+        );
+    }
+    for forbidden in [
+        "ROLE_LANE_WORDS",
+        "words: [u64",
+        "bits: [u64",
+        "1u64 <<",
+        "0..=u8::MAX",
+        "while lane <= u8::MAX",
+    ] {
+        assert!(
+            !steps.contains(forbidden),
+            "RoleLaneMask must not re-grow flattened u64 or fixed full-lane scans: {forbidden}"
+        );
+    }
+
+    let source = read("src/g/source.rs");
+    for required in [
+        "shift_lanes(self.lane_span, right.lane_span)",
+        "intersects(&right_role_lane_mask, combined_lane_span)",
+        "union(right_role_lane_mask, combined_lane_span)",
+    ] {
+        assert!(
+            source.contains(required),
+            "ProgramSourceData::par must pass the right/computed lane span: {required}"
+        );
+    }
+
+    for (path, contents) in [
+        ("src/runtime", read_production_rs_tree("src/runtime")),
+        (
+            "src/runtime_core",
+            read_production_rs_tree("src/runtime_core"),
+        ),
+        ("src/endpoint", read_production_rs_tree("src/endpoint")),
+        ("src/transport", read("src/transport.rs")),
+        ("src/rendezvous", read_production_rs_tree("src/rendezvous")),
+        ("src/session", read_production_rs_tree("src/session")),
+    ] {
+        assert!(
+            !contents.contains("RoleLaneMask"),
+            "RoleLaneMask must stay confined to projection layers, found in {path}"
+        );
+    }
+}
+
+#[test]
 fn public_surface_scanner_covers_trait_associated_items_and_type_shape() {
     let g_allowlist = read(".github/allowlists/g-public-api.txt");
     let runtime_allowlist = read(".github/allowlists/runtime-public-api.txt");
@@ -169,6 +290,11 @@ fn public_surface_scanner_covers_trait_associated_items_and_type_shape() {
             && scanner.contains("trait_item_name")
             && scanner.contains("collect_public_enum_shape")
             && scanner.contains("collect_public_struct_shape")
+            && scanner.contains("def run_self_test()")
+            && scanner.contains("FixtureEnum::Added variant Added")
+            && scanner.contains("FixtureStruct::exposed pub field exposed: u8")
+            && scanner.contains("FixtureTuple::0 pub field 0: u8")
+            && scanner.contains("FixtureVariantFields::Struct.named field named: u8")
             && scanner.contains("parse_tuple_fields")
             && scanner.contains("parse_named_fields")
             && scanner.contains("src/global/message.rs")

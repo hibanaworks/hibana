@@ -60,7 +60,8 @@ src/rendezvous/core/lane_lifecycle.rs	260	1	recursive
 src/rendezvous/core/storage_layout.rs	171	1	recursive
 src/rendezvous/core/storage_layout/capacity.rs	560	1	recursive
 src/rendezvous/core/storage_runtime_budget.rs	120	1	recursive
-src/rendezvous/association.rs	635	1	recursive
+src/rendezvous/association.rs	450	1	recursive
+src/rendezvous/association/storage.rs	430	1	recursive
 src/rendezvous/core.rs	540	1	recursive
 src/rendezvous/port.rs	646	1	recursive
 src/rendezvous/port/recv_frame.rs	700	1	recursive

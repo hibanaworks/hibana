@@ -19,16 +19,14 @@ use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::transport::Transport;
 
 mod registry_ops;
-pub(crate) use registry_ops::{RegisterRendezvousError, RoleBindingError};
+pub(crate) use registry_ops::{RegisterRendezvousError, RoleClaimError};
 
-const ROLE_BINDING_SLOTS: usize = crate::g::ROLE_DOMAIN_SIZE as usize;
+const ROLE_CLAIM_SLOTS: usize = crate::g::ROLE_DOMAIN_SIZE as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SessionRoleBinding {
+struct SessionRoleClaim {
     sid: SessionId,
     role: u8,
-    rv: RendezvousId,
-    refs: u8,
 }
 
 /// Local rendezvous registry backed by nodes carved from each rendezvous slab.
@@ -149,7 +147,7 @@ where
     rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T>>,
     state: RendezvousEntryState,
     resolver_bucket: crate::session::cluster::core::ResolverBucket<'cfg>,
-    role_bindings: [Option<SessionRoleBinding>; ROLE_BINDING_SLOTS],
+    role_claims: [Option<SessionRoleClaim>; ROLE_CLAIM_SLOTS],
     next: Option<NonNull<RendezvousEntry<'cfg, T>>>,
     _marker: PhantomData<&'cfg mut Rendezvous<'cfg, 'cfg, T>>,
 }
@@ -229,7 +227,7 @@ where
             crate::session::cluster::core::ResolverBucket::init_empty(core::ptr::addr_of_mut!(
                 (*dst).resolver_bucket
             ));
-            core::ptr::addr_of_mut!((*dst).role_bindings).write([None; ROLE_BINDING_SLOTS]);
+            core::ptr::addr_of_mut!((*dst).role_claims).write([None; ROLE_CLAIM_SLOTS]);
             core::ptr::addr_of_mut!((*dst).next).write(next);
             core::ptr::addr_of_mut!((*dst)._marker).write(PhantomData);
         }
@@ -292,9 +290,9 @@ where
     }
 
     #[inline]
-    pub(crate) fn release_lane_with_tap(&mut self, lane: Lane) {
-        self.with_rendezvous(|rv| match rv.release_lane(lane) {
-            LaneRelease::Released(sid) => {
+    pub(crate) fn release_lane_with_tap(&mut self, sid: SessionId, lane: Lane) {
+        self.with_rendezvous(|rv| match rv.release_lane(sid, lane) {
+            LaneRelease::Released => {
                 rv.emit_lane_release(sid, lane);
             }
             LaneRelease::StillHeld => {}

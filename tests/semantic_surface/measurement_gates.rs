@@ -45,6 +45,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "actual_max_stack = max(metrics[\"peak_stack_bytes\"] for metrics in seen.values())",
         "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
         "bash ./.github/scripts/check_no_split_guard_literals.sh",
+        "python3 .github/scripts/check_public_api_allowlists.py --self-test",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
     ] {

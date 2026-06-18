@@ -96,7 +96,10 @@ impl ProgramSourceData {
         add_scope_budget(self.scope_budget(), next.scope_budget());
         Self {
             eff,
-            role_lane_mask: self.role_lane_mask.union(next.role_lane_mask),
+            role_lane_mask: self.role_lane_mask.union(
+                next.role_lane_mask,
+                max_lane_span(self.lane_span, next.lane_span),
+            ),
             lane_span: max_lane_span(self.lane_span, next.lane_span),
             error,
         }
@@ -184,7 +187,10 @@ impl ProgramSourceData {
             .with_scope_controller_role(scope, controller);
         Self {
             eff: left_eff.extend_list(right_eff),
-            role_lane_mask: self.role_lane_mask.union(right.role_lane_mask),
+            role_lane_mask: self.role_lane_mask.union(
+                right.role_lane_mask,
+                max_lane_span(self.lane_span, right.lane_span),
+            ),
             lane_span: max_lane_span(self.lane_span, right.lane_span),
             error,
         }
@@ -195,8 +201,14 @@ impl ProgramSourceData {
         if self.eff.is_empty() || right.eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelArmAbsent));
         }
-        let right_role_lane_mask = right.role_lane_mask.shift_lanes(self.lane_span);
-        if self.role_lane_mask.intersects(&right_role_lane_mask) {
+        let right_role_lane_mask = right
+            .role_lane_mask
+            .shift_lanes(self.lane_span, right.lane_span);
+        let combined_lane_span = add_lane_span(self.lane_span, right.lane_span);
+        if self
+            .role_lane_mask
+            .intersects(&right_role_lane_mask, combined_lane_span)
+        {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelConflict));
         }
         let parallel_scope = ScopeId::parallel(0);
@@ -209,8 +221,10 @@ impl ProgramSourceData {
             .rebase_scopes(right_offset);
         Self {
             eff: left_eff.extend_list(right_eff).with_scope(parallel_scope),
-            role_lane_mask: self.role_lane_mask.union(right_role_lane_mask),
-            lane_span: add_lane_span(self.lane_span, right.lane_span),
+            role_lane_mask: self
+                .role_lane_mask
+                .union(right_role_lane_mask, combined_lane_span),
+            lane_span: combined_lane_span,
             error,
         }
     }

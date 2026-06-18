@@ -6,7 +6,7 @@ use crate::global::ROLE_DOMAIN_SIZE;
 // RoleLaneMask — compact role/lane facts for g::par disjoint checking
 // =============================================================================
 
-/// Const bitset of `(role, lane)` pairs for parallel composition checking.
+/// Lane-indexed role facts for parallel composition checking.
 ///
 /// This is the compiled summary used by `g::par`; the checker keeps the
 /// correlation between role and lane without carrying a typelist-shaped owner
@@ -18,16 +18,16 @@ use crate::global::ROLE_DOMAIN_SIZE;
 /// - Compile-time checking only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RoleLaneMask {
-    words: [u64; ROLE_LANE_WORDS],
+    lanes: [u16; ROLE_LANE_COUNT],
 }
 
-const ROLE_LANE_WORDS: usize = (ROLE_DOMAIN_SIZE * (u8::MAX as usize + 1)).div_ceil(64);
+const ROLE_LANE_COUNT: usize = u8::MAX as usize + 1;
 
 impl RoleLaneMask {
     /// Create an empty mask.
     pub(crate) const fn empty() -> Self {
         Self {
-            words: [0; ROLE_LANE_WORDS],
+            lanes: [0; ROLE_LANE_COUNT],
         }
     }
 
@@ -37,57 +37,49 @@ impl RoleLaneMask {
             (role_index as usize) < ROLE_DOMAIN_SIZE,
             "role_index must be < ROLE_DOMAIN_SIZE"
         );
-        let bit_index = (lane as usize * ROLE_DOMAIN_SIZE) + role_index as usize;
-        let word = bit_index / 64;
-        let bit = 1u64 << (bit_index % 64);
-        self.words[word] |= bit;
+        let bit = 1u16 << role_index;
+        self.lanes[lane as usize] |= bit;
         self
     }
 
-    /// Compute the union of two masks.
-    pub(crate) const fn union(self, other: Self) -> Self {
+    /// Compute the union of two masks inside the caller-owned active lane span.
+    pub(crate) const fn union(self, other: Self, active_span: u16) -> Self {
         let mut out = Self::empty();
-        let mut idx = 0usize;
-        while idx < ROLE_LANE_WORDS {
-            out.words[idx] = self.words[idx] | other.words[idx];
-            idx += 1;
+        let mut lane = 0usize;
+        while lane < active_span as usize {
+            out.lanes[lane] = self.lanes[lane] | other.lanes[lane];
+            lane += 1;
         }
         out
     }
 
-    /// Check if any role overlaps within the same lane.
-    pub(crate) const fn intersects(&self, other: &Self) -> bool {
-        let mut idx = 0usize;
-        while idx < ROLE_LANE_WORDS {
-            if (self.words[idx] & other.words[idx]) != 0 {
+    /// Check if any role overlaps within the caller-owned active lane span.
+    pub(crate) const fn intersects(&self, other: &Self, active_span: u16) -> bool {
+        let mut lane = 0usize;
+        while lane < active_span as usize {
+            if (self.lanes[lane] & other.lanes[lane]) != 0 {
                 return true;
             }
-            idx += 1;
+            lane += 1;
         }
         false
     }
 
     /// Shift every lane fact by a projection-internal lane offset.
-    pub(crate) const fn shift_lanes(self, offset: u16) -> Self {
+    pub(crate) const fn shift_lanes(self, offset: u16, active_span: u16) -> Self {
         if offset == 0 {
             return self;
         }
         let mut out = Self::empty();
         let mut lane = 0usize;
-        while lane <= u8::MAX as usize {
+        while lane < active_span as usize {
             let shifted = lane + offset as usize;
-            let mut role = 0usize;
-            while role < ROLE_DOMAIN_SIZE {
-                let bit_index = (lane * ROLE_DOMAIN_SIZE) + role;
-                let word = bit_index / 64;
-                let bit = 1u64 << (bit_index % 64);
-                if (self.words[word] & bit) != 0 {
-                    if shifted > u8::MAX as usize {
-                        panic!("projection internal lane overflow");
-                    }
-                    out = out.with_role(role as u8, shifted as u8);
+            let role_bits = self.lanes[lane];
+            if role_bits != 0 {
+                if shifted > u8::MAX as usize {
+                    panic!("projection internal lane overflow");
                 }
-                role += 1;
+                out.lanes[shifted] = role_bits;
             }
             lane += 1;
         }
@@ -97,15 +89,15 @@ impl RoleLaneMask {
 
 #[cfg(test)]
 mod tests {
-    use super::{ROLE_LANE_WORDS, RoleLaneMask};
+    use super::{ROLE_LANE_COUNT, RoleLaneMask};
     use core::mem::size_of;
 
     #[test]
-    fn role_lane_mask_covers_every_u8_lane_as_fixed_bitset() {
+    fn role_lane_mask_is_lane_indexed_u16_storage() {
         assert_eq!(
             size_of::<RoleLaneMask>(),
-            ROLE_LANE_WORDS * size_of::<u64>(),
-            "parallel ownership facts must stay as a fixed const bitset"
+            ROLE_LANE_COUNT * size_of::<u16>(),
+            "parallel ownership facts must stay lane-indexed without u64 words"
         );
     }
 
@@ -115,16 +107,23 @@ mod tests {
         let lane1_role0 = RoleLaneMask::empty().with_role(0, 1);
         let lane0_role1 = RoleLaneMask::empty().with_role(1, 0);
 
-        assert!(!lane0_role0.intersects(&lane1_role0));
-        assert!(!lane0_role0.intersects(&lane0_role1));
-        assert!(lane0_role0.intersects(&RoleLaneMask::empty().with_role(0, 0)));
+        assert!(!lane0_role0.intersects(&lane1_role0, 2));
+        assert!(!lane0_role0.intersects(&lane0_role1, 1));
+        assert!(lane0_role0.intersects(&RoleLaneMask::empty().with_role(0, 0), 1));
     }
 
     #[test]
     fn role_lane_mask_tracks_high_u8_lanes() {
         let high_role0 = RoleLaneMask::empty().with_role(0, u8::MAX);
         let high_role1 = RoleLaneMask::empty().with_role(1, u8::MAX);
-        assert!(!high_role0.intersects(&high_role1));
-        assert!(high_role0.intersects(&RoleLaneMask::empty().with_role(0, u8::MAX)));
+        assert!(!high_role0.intersects(&high_role1, 256));
+        assert!(high_role0.intersects(&RoleLaneMask::empty().with_role(0, u8::MAX), 256));
+    }
+
+    #[test]
+    fn role_lane_mask_active_span_controls_high_lane_collision() {
+        let high = RoleLaneMask::empty().with_role(15, u8::MAX);
+        assert!(!high.intersects(&high, 255));
+        assert!(high.intersects(&high, 256));
     }
 }

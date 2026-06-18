@@ -288,6 +288,14 @@ where
     }
 
     #[inline]
+    fn target_assoc_slots(required_assoc_slots: usize) -> Option<usize> {
+        if required_assoc_slots > usize::from(u16::MAX) {
+            return None;
+        }
+        Some(required_assoc_slots.max(1))
+    }
+
+    #[inline]
     fn lease_sidecar<S>(&mut self, bytes: usize, align: usize) -> Option<Sidecar<S>> {
         Some(
             self.allocate_external_persistent_sidecar_bytes(bytes, align)?
@@ -318,20 +326,26 @@ where
         }
     }
 
-    fn ensure_lane_storage_for_lane_slots(
+    fn ensure_lane_storage(
         &mut self,
         required_lane_slots: usize,
+        required_assoc_slots: usize,
     ) -> Result<(), ResourceScope> {
-        let target_slots = self
+        let target_lane_slots = self
             .lane_slot_count()
             .max(Self::target_lane_slots(required_lane_slots).ok_or(ResourceScope::LaneStorage)?);
+        let target_assoc_slots = self
+            .assoc
+            .assoc_slots()
+            .max(Self::target_assoc_slots(required_assoc_slots).ok_or(ResourceScope::LaneStorage)?);
         let lane_base = self.lane_base();
         let target_slots_u32 =
-            u32::try_from(target_slots).map_err(|_| ResourceScope::LaneStorage)?;
+            u32::try_from(target_lane_slots).map_err(|_| ResourceScope::LaneStorage)?;
         let lane_end = lane_base
             .checked_add(target_slots_u32)
             .ok_or(ResourceScope::LaneStorage)?;
-        let core_growth = self.lane_slot_count() < target_slots;
+        let core_growth = self.lane_slot_count() < target_lane_slots
+            || self.assoc.assoc_slots() < target_assoc_slots;
 
         let assoc_was_bound = self.assoc.is_bound();
         let need_assoc = !assoc_was_bound || core_growth;
@@ -343,7 +357,7 @@ where
         let source_assoc = self.assoc_storage;
         let lease = self
             .lease_sidecar::<u8>(
-                AssocTable::storage_bytes(target_slots),
+                AssocTable::storage_bytes(target_assoc_slots),
                 AssocTable::storage_align(),
             )
             .ok_or(ResourceScope::LaneStorage)?;
@@ -351,27 +365,39 @@ where
         /* SAFETY: all required sidecar storage was leased before any table owner is rebound. */
         unsafe {
             if assoc_was_bound {
-                self.assoc
-                    .init_replacement_storage(lease.ptr(), lane_base, target_slots);
+                self.assoc.init_replacement_storage(
+                    lease.ptr(),
+                    lane_base,
+                    target_lane_slots,
+                    target_assoc_slots,
+                );
             } else {
-                self.assoc
-                    .bind_from_storage(lease.ptr(), lane_base, target_slots);
+                self.assoc.bind_from_storage(
+                    lease.ptr(),
+                    lane_base,
+                    target_lane_slots,
+                    target_assoc_slots,
+                );
             }
         }
         if assoc_was_bound {
             if let Err(error) = self.release_sidecar(source_assoc, ResourceScope::LaneStorage) {
                 /* SAFETY: the replacement assoc arena was initialized above but not published. */
                 unsafe {
-                    AssocTable::clear_waiters_in_storage(lease.ptr(), target_slots);
+                    AssocTable::clear_waiters_in_storage(lease.ptr(), target_assoc_slots);
                 }
                 self.release_new_sidecar_or_invariant(lease, ResourceScope::LaneStorage);
                 return Err(error);
             }
-            self.assoc.clear_current_waiters();
+            self.assoc.clear_current_overflow_waiters();
             /* SAFETY: the replacement assoc arena was staged before source release succeeded. */
             unsafe {
-                self.assoc
-                    .commit_storage(lease.ptr(), lane_base, target_slots);
+                self.assoc.commit_storage(
+                    lease.ptr(),
+                    lane_base,
+                    target_lane_slots,
+                    target_assoc_slots,
+                );
             }
         }
         self.assoc_storage = lease;
@@ -379,11 +405,12 @@ where
         Ok(())
     }
 
-    pub(crate) fn ensure_core_lane_tables_for_lane_slots(
+    pub(crate) fn ensure_core_lane_tables_for_assoc_entries(
         &mut self,
         required_lane_slots: usize,
+        required_assoc_slots: usize,
     ) -> Result<(), ResourceScope> {
-        self.ensure_lane_storage_for_lane_slots(required_lane_slots)
+        self.ensure_lane_storage(required_lane_slots, required_assoc_slots)
     }
 
     pub(crate) fn ensure_route_table_capacity(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -431,14 +432,14 @@ def trait_item_name(statement: str) -> str:
     return "item"
 
 
-def collect_surface(surface: Surface) -> list[str]:
+def collect_surface(surface: Surface, root: Path = ROOT) -> list[str]:
     items: list[str] = []
     public_names: set[str] = set()
     for source in surface.sources:
-        lines = (ROOT / source).read_text(encoding="utf-8").splitlines()
+        lines = (root / source).read_text(encoding="utf-8").splitlines()
         public_names.update(public_type_names(lines))
     for source in surface.sources:
-        path = ROOT / source
+        path = root / source
         lines = path.read_text(encoding="utf-8").splitlines()
         index = 0
         while index < len(lines):
@@ -468,8 +469,8 @@ def collect_surface(surface: Surface) -> list[str]:
     return items
 
 
-def read_allowlist(path: str) -> list[str]:
-    full = ROOT / path
+def read_allowlist(path: str, root: Path = ROOT) -> list[str]:
+    full = root / path
     return [
         line.strip()
         for line in full.read_text(encoding="utf-8").splitlines()
@@ -490,7 +491,100 @@ def report_mismatch(label: str, expected: list[str], actual: list[str]) -> None:
             print(f"  {marker} {item}", file=sys.stderr)
 
 
-def main() -> int:
+def write_fixture(root: Path, path: str, text: str) -> None:
+    full = root / path
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(text, encoding="utf-8")
+
+
+def require_self_test(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def run_self_test() -> int:
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = "src/runtime.rs"
+        allowlist = ".github/allowlists/runtime-public-api.txt"
+        surface = Surface(allowlist, (source,))
+        write_fixture(
+            root,
+            source,
+            """
+pub enum FixtureEnum {
+    Existing,
+    Added,
+}
+
+pub struct FixtureStruct {
+    pub exposed: u8,
+    hidden: u8,
+}
+
+pub struct FixtureTuple(pub u8, u16);
+
+pub enum FixtureVariantFields {
+    Tuple(u16),
+    Struct { named: u8 },
+}
+""".strip()
+            + "\n",
+        )
+
+        actual = collect_surface(surface, root)
+        for required in [
+            "FixtureEnum::Added variant Added",
+            "FixtureStruct::exposed pub field exposed: u8",
+            "FixtureTuple::0 pub field 0: u8",
+            "FixtureVariantFields::Tuple::0 field 0: u16",
+            "FixtureVariantFields::Struct.named field named: u8",
+        ]:
+            require_self_test(
+                required in actual,
+                f"self-test fixture did not expose public surface item: {required}",
+            )
+
+        missing_added_variant = [
+            item for item in actual if item != "FixtureEnum::Added variant Added"
+        ]
+        require_self_test(
+            actual != missing_added_variant,
+            "enum variant fixture must produce allowlist drift when omitted",
+        )
+
+        missing_public_fields = [
+            item
+            for item in actual
+            if item
+            not in {
+                "FixtureStruct::exposed pub field exposed: u8",
+                "FixtureTuple::0 pub field 0: u8",
+                "FixtureVariantFields::Tuple::0 field 0: u16",
+                "FixtureVariantFields::Struct.named field named: u8",
+            }
+        ]
+        require_self_test(
+            actual != missing_public_fields,
+            "public field fixture must produce allowlist drift when omitted",
+        )
+
+        write_fixture(root, allowlist, "\n".join(actual) + "\n")
+        require_self_test(
+            read_allowlist(allowlist, root) == actual,
+            "self-test fixture allowlist round trip failed",
+        )
+
+    print("public API allowlist scanner self-test passed")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if argv == ["--self-test"]:
+        return run_self_test()
+    if argv:
+        print("usage: check_public_api_allowlists.py [--self-test]", file=sys.stderr)
+        return 2
     failed = False
     for label, surface in SURFACES.items():
         actual = collect_surface(surface)
@@ -505,4 +599,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

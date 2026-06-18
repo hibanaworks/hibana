@@ -36,20 +36,17 @@ where
         if self.session_fault(sid).is_some() {
             return Err(RendezvousError::SessionPoisoned { sid });
         }
-        let first_attach = match self.assoc.get_sid(lane) {
-            None => {
-                self.assoc.register(lane, sid);
-                true
+        let lane_was_empty = !self.assoc.lane_has_entries(lane);
+        let first_attach = if self.assoc.has_entry(lane, sid) {
+            if self.assoc.increment(lane, sid).is_none() {
+                return Err(RendezvousError::LaneAttachOverflow { lane });
             }
-            Some(existing) if existing == sid => {
-                if self.assoc.increment(lane, sid).is_none() {
-                    return Err(RendezvousError::LaneAttachOverflow { lane });
-                }
-                false
+            false
+        } else {
+            if !self.assoc.register(lane, sid) {
+                return Err(RendezvousError::LaneAttachOverflow { lane });
             }
-            Some(_other) => {
-                return Err(RendezvousError::LaneBusy { lane });
-            }
+            true
         };
 
         if first_attach {
@@ -63,9 +60,21 @@ where
                 ),
             );
 
-            self.reset_lane_recycled_state(lane);
+            if lane_was_empty {
+                self.reset_lane_recycled_state(lane);
+            }
         }
         Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn has_lane_attachment(&self, sid: SessionId, lane: Lane) -> bool {
+        self.assoc.has_entry(lane, sid)
+    }
+
+    #[inline]
+    pub(crate) fn active_lane_attachment_count(&self) -> usize {
+        self.assoc.active_entry_count()
     }
 
     pub(crate) fn open_port_guard<'a>(
@@ -100,7 +109,7 @@ where
             rx,
         });
         let guard =
-            LaneGuard::new_detached((self as *const Self).cast::<()>(), lane, active_leases);
+            LaneGuard::new_detached((self as *const Self).cast::<()>(), sid, lane, active_leases);
         (port, guard)
     }
 

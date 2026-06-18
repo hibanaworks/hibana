@@ -148,14 +148,15 @@ where
         self.assoc.clear_waiter(sid, lane);
     }
 
-    pub(crate) fn release_lane(&self, lane: Lane) -> LaneRelease {
-        let sid = crate::invariant_some(self.assoc.get_sid(lane));
+    pub(crate) fn release_lane(&self, sid: SessionId, lane: Lane) -> LaneRelease {
         let remaining = crate::invariant_some(self.assoc.decrement(lane, sid));
         if remaining > 0 {
             return LaneRelease::StillHeld;
         }
-        self.reset_lane_recycled_state(lane);
-        LaneRelease::Released(sid)
+        if !self.assoc.lane_has_entries(lane) {
+            self.reset_lane_recycled_state(lane);
+        }
+        LaneRelease::Released
     }
 
     pub(crate) fn reset_lane_recycled_state(&self, lane: Lane) {

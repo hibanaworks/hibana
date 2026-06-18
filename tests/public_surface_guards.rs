@@ -117,13 +117,13 @@ fn resolver_sidecar_replacement_publishes_after_release() {
 fn assoc_and_route_sidecar_replacement_stage_before_release() {
     let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
     let assoc_stage_pos = capacity
-        .find(".init_replacement_storage(lease.ptr(), lane_base, target_slots);")
+        .find(".init_replacement_storage(\n                    lease.ptr(),\n                    lane_base,\n                    target_lane_slots,\n                    target_assoc_slots,\n                );")
         .expect("assoc replacement must stage entries before release");
     let assoc_release_pos = capacity
         .find("self.release_sidecar(source_assoc, ResourceScope::LaneStorage)")
         .expect("assoc replacement must release the source sidecar");
     let assoc_commit_pos = capacity
-        .find(".commit_storage(lease.ptr(), lane_base, target_slots);")
+        .find(".commit_storage(\n                    lease.ptr(),\n                    lane_base,\n                    target_lane_slots,\n                    target_assoc_slots,\n                );")
         .expect("assoc replacement must publish only after release");
     assert!(
         assoc_stage_pos < assoc_release_pos && assoc_release_pos < assoc_commit_pos,
@@ -144,9 +144,9 @@ fn assoc_and_route_sidecar_replacement_stage_before_release() {
         "route replacement must stage, release, then publish"
     );
 
-    let assoc = read("src/rendezvous/association.rs");
+    let assoc = read("src/rendezvous/association/storage.rs");
     assert!(
-        assoc.contains("pub(super) unsafe fn init_replacement_storage")
+        assoc.contains("pub(in crate::rendezvous) unsafe fn init_replacement_storage")
             && assoc.contains("WaiterSlot::init_clone_from")
             && !assoc.contains("core::ptr::read(source_waiters.add(source_idx))"),
         "assoc staging must not move out of the published source waiter column"

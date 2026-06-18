@@ -78,7 +78,7 @@ fn assoc_sidecar_reclaims_alignment_padding() {
         .allocate_external_persistent_sidecar_bytes(1, 1)
         .expect("prefix sidecar");
     assert_eq!(prefix.bytes(), 1);
-    rv.ensure_core_lane_tables_for_lane_slots(1)
+    rv.ensure_core_lane_tables_for_assoc_entries(1, 1)
         .expect("initial assoc storage");
     let first_assoc = rv.assoc_storage;
     assert!(
@@ -86,7 +86,7 @@ fn assoc_sidecar_reclaims_alignment_padding() {
         "prefix allocation must force assoc alignment padding"
     );
     let expected_reclaim_offset = rv.reclaim_offset_for_sidecar(first_assoc);
-    rv.ensure_core_lane_tables_for_lane_slots(2)
+    rv.ensure_core_lane_tables_for_assoc_entries(2, 2)
         .expect("grown assoc storage");
 
     assert!(
@@ -126,7 +126,7 @@ fn sidecar_release_saturation_fails_closed() {
 fn assoc_replacement_release_failure_keeps_published_storage() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_core_lane_tables_for_lane_slots(1)
+    rv.ensure_core_lane_tables_for_assoc_entries(1, 1)
         .expect("initial assoc storage");
     rv.set_image_frontier(2048);
     saturate_free_regions(rv);
@@ -136,7 +136,7 @@ fn assoc_replacement_release_failure_keeps_published_storage() {
     let before_frontier = rv.image_frontier;
 
     assert_eq!(
-        rv.ensure_core_lane_tables_for_lane_slots(2),
+        rv.ensure_core_lane_tables_for_assoc_entries(2, 2),
         Err(ResourceScope::LaneStorage),
         "assoc growth must fail closed when source sidecar release cannot be recorded"
     );

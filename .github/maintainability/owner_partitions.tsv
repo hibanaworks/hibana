@@ -156,6 +156,7 @@ src/global/typestate/cursor	src/global/typestate/cursor/lane_progress.rs
 src/global/typestate/cursor	src/global/typestate/cursor/navigation.rs
 src/global/typestate/cursor	src/global/typestate/cursor/scope_route
 src/global/typestate/cursor	src/global/typestate/cursor/scope_route.rs
+src/rendezvous	src/rendezvous/association
 src/rendezvous	src/rendezvous/association.rs
 src/rendezvous	src/rendezvous/core
 src/rendezvous	src/rendezvous/core.rs

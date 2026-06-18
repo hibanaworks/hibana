@@ -103,7 +103,7 @@ pub(crate) struct LanePortAccess<'lease, 'cfg, T: Transport> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LaneRelease {
     StillHeld,
-    Released(SessionId),
+    Released,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -423,7 +423,7 @@ where
 {
     fn drop(&mut self) {
         if let Some(mut lease) = self.lease.take() {
-            lease.release_lane_with_tap(self.lane);
+            lease.release_lane_with_tap(self.sid, self.lane);
         }
         if let Some(active_leases) = self.active_leases.take() {
             let current = active_leases.get();

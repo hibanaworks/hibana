@@ -720,6 +720,11 @@ fn source_residue_forbidden_literals_are_checked_without_split_hiding() {
             && resolver_gate.contains("!tests/semantic_surface/source_residue_pico_hygiene.rs"),
         "resolver hygiene must use an explicit guard-file scope instead of split forbidden literals"
     );
+    assert!(
+        resolver_gate.contains("resolver_authority_deny_self_test")
+            && resolver_gate.contains("resolver authority deny self-test missed token"),
+        "resolver hygiene must fixture-test each forbidden authority token"
+    );
 }
 
 #[test]

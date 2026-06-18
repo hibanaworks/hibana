@@ -28,6 +28,11 @@ fn controller_program() -> RoleProgram<0> {
     project(&program)
 }
 
+fn worker_program() -> RoleProgram<1> {
+    let program = g::send::<0, 1, Msg<1, ()>>();
+    project(&program)
+}
+
 fn decode_rv_lane(packed: u32) -> (u32, u16) {
     let rv = packed >> 16;
     let lane = (packed & 0xFFFF) as u16;
@@ -55,6 +60,19 @@ fn collect_lane_events(mut port: impl Iterator<Item = tap::TapEvent>) -> Vec<Lan
                 sid: event.arg0(),
                 lane,
             });
+        }
+    }
+    events
+}
+
+fn collect_claim_event_ids(mut port: impl Iterator<Item = tap::TapEvent>) -> Vec<u16> {
+    let mut events = Vec::new();
+    for event in &mut port {
+        if event.id() == tap::LANE_ACQUIRE
+            || event.id() == tap::LANE_RELEASE
+            || event.id() == tap::ENDPOINT_SESSION
+        {
+            events.push(event.id());
         }
     }
     events
@@ -172,54 +190,174 @@ fn lane_lifecycle_keeps_full_session_id_in_evidence() {
 }
 
 #[test]
-fn shared_sid_lane_emits_one_association_pair() {
+fn duplicate_live_session_role_claim_fails_without_runtime_evidence() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let slab_ptr = slab as *mut [u8];
-        let (mid_events, final_events) = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+        let (initial_events, duplicate_debug, duplicate_events, release_events) =
+            with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+                let slab = unsafe { &mut *slab_ptr };
+                let rv = cluster
+                    .rendezvous(slab, transport.clone())
+                    .expect("register rendezvous");
+                let mut tap_port = rv.tap();
+
+                let sid = SessionId::new(11);
+                let controller_program = controller_program();
+                let mut endpoint = rv
+                    .enter(sid, &controller_program)
+                    .expect("attach first cursor");
+                let initial_events = collect_claim_event_ids(tap_port.by_ref());
+                let duplicate_debug = match rv.enter(sid, &controller_program) {
+                    Ok(endpoint) => {
+                        drop(endpoint);
+                        panic!("duplicate live session-role claim must fail");
+                    }
+                    Err(error) => format!("{error:?}"),
+                };
+                let duplicate_events = collect_claim_event_ids(tap_port.by_ref());
+                futures::executor::block_on(endpoint.send::<Msg<1, ()>>(&()))
+                    .expect("original endpoint must still progress after duplicate claim failure");
+                drop(endpoint);
+                let release_events = collect_claim_event_ids(tap_port);
+                (
+                    initial_events,
+                    duplicate_debug,
+                    duplicate_events,
+                    release_events,
+                )
+            });
+
+        assert_eq!(
+            initial_events,
+            vec![tap::LANE_ACQUIRE],
+            "first enter must acquire the session lane"
+        );
+        assert_eq!(
+            duplicate_events,
+            Vec::<u16>::new(),
+            "duplicate claim failure must not emit lane or endpoint-session evidence"
+        );
+        assert!(
+            duplicate_debug.contains("rv-busy"),
+            "duplicate claim should fail closed at attach boundary: {duplicate_debug}"
+        );
+        assert_eq!(
+            release_events,
+            vec![tap::LANE_RELEASE],
+            "dropping the original endpoint must release the single live claim"
+        );
+    });
+}
+
+#[test]
+fn dropped_session_role_claim_can_be_reentered() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let slab = unsafe { &mut *slab_ptr };
             let rv = cluster
                 .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
-            let mut tap_port = rv.tap();
-
-            let sid = SessionId::new(11);
+            let sid = SessionId::new(12);
             let controller_program = controller_program();
-            let endpoint_a = rv
-                .enter(sid, &controller_program)
-                .expect("attach first cursor");
-            let endpoint_b = rv
-                .enter(sid, &controller_program)
-                .expect("attach second cursor");
 
-            drop(endpoint_a);
-            let mid_events = collect_lane_events(tap_port.by_ref());
-            drop(endpoint_b);
-            let final_events = collect_lane_events(tap_port);
-            (mid_events, final_events)
+            let endpoint = rv
+                .enter(sid, &controller_program)
+                .expect("first claim must attach");
+            drop(endpoint);
+            let endpoint = rv
+                .enter(sid, &controller_program)
+                .expect("released claim must be reusable");
+            drop(endpoint);
+
+            collect_lane_events(rv.tap())
         });
 
         assert_eq!(
-            mid_events,
-            vec![LaneEvent {
-                ts: 0,
-                id: tap::LANE_ACQUIRE,
-                rv: 1,
-                sid: 11,
-                lane: 0,
-            }],
-            "first drop must not release a shared session/lane association"
+            events.iter().map(|event| event.id).collect::<Vec<_>>(),
+            vec![
+                tap::LANE_ACQUIRE,
+                tap::LANE_RELEASE,
+                tap::LANE_ACQUIRE,
+                tap::LANE_RELEASE,
+            ],
+            "same session-role must re-enter only after the live claim is released"
+        );
+    });
+}
+
+#[test]
+fn distinct_session_or_role_claims_can_coexist() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let slab = unsafe { &mut *slab_ptr };
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let controller_program = controller_program();
+            let worker_program = worker_program();
+            let sid_a = SessionId::new(13);
+            let sid_b = SessionId::new(14);
+
+            let endpoint_a = rv
+                .enter(sid_a, &controller_program)
+                .expect("role 0 session A");
+            let endpoint_b = rv
+                .enter(sid_b, &controller_program)
+                .expect("role 0 session B");
+            let endpoint_c = rv.enter(sid_a, &worker_program).expect("role 1 session A");
+
+            drop(endpoint_c);
+            drop(endpoint_b);
+            drop(endpoint_a);
+        });
+    });
+}
+
+#[test]
+fn same_session_role_on_different_rendezvous_is_mismatch() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        let (error_debug, second_rv_events) = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let slab = unsafe { &mut *slab_ptr };
+            let midpoint = slab.len() / 2;
+            let (left_slab, right_slab) = slab.split_at_mut(midpoint);
+            let rv_a = cluster
+                .rendezvous(left_slab, transport.clone())
+                .expect("register first rendezvous");
+            let rv_b = cluster
+                .rendezvous(right_slab, transport.clone())
+                .expect("register second rendezvous");
+            let sid = SessionId::new(15);
+            let controller_program = controller_program();
+            let endpoint = rv_a
+                .enter(sid, &controller_program)
+                .expect("first rendezvous claim");
+            let error_debug = match rv_b.enter(sid, &controller_program) {
+                Ok(endpoint) => {
+                    drop(endpoint);
+                    panic!("same session-role on another rendezvous must fail");
+                }
+                Err(error) => format!("{error:?}"),
+            };
+            let second_rv_events = collect_claim_event_ids(rv_b.tap());
+            drop(endpoint);
+            (error_debug, second_rv_events)
+        });
+
+        assert!(
+            error_debug.contains("rv-mismatch"),
+            "same session-role on another rendezvous must be a mismatch: {error_debug}"
         );
         assert_eq!(
-            final_events,
-            vec![LaneEvent {
-                ts: 1,
-                id: tap::LANE_RELEASE,
-                rv: 1,
-                sid: 11,
-                lane: 0,
-            }],
-            "last drop must release the shared session/lane association exactly once"
+            second_rv_events,
+            Vec::<u16>::new(),
+            "mismatched rendezvous claim must not emit lifecycle evidence on the second rendezvous"
         );
     });
 }
