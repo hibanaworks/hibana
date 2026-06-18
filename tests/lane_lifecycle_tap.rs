@@ -65,7 +65,7 @@ fn collect_lane_events(mut port: impl Iterator<Item = tap::TapEvent>) -> Vec<Lan
     events
 }
 
-fn collect_claim_event_ids(mut port: impl Iterator<Item = tap::TapEvent>) -> Vec<u16> {
+fn collect_endpoint_lifecycle_event_ids(mut port: impl Iterator<Item = tap::TapEvent>) -> Vec<u16> {
     let mut events = Vec::new();
     for event in &mut port {
         if event.id() == tap::LANE_ACQUIRE
@@ -190,7 +190,7 @@ fn lane_lifecycle_keeps_full_session_id_in_evidence() {
 }
 
 #[test]
-fn duplicate_live_session_role_claim_fails_without_runtime_evidence() {
+fn duplicate_live_session_role_endpoint_lease_fails_without_runtime_evidence() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let slab_ptr = slab as *mut [u8];
@@ -207,19 +207,19 @@ fn duplicate_live_session_role_claim_fails_without_runtime_evidence() {
                 let mut endpoint = rv
                     .enter(sid, &controller_program)
                     .expect("attach first cursor");
-                let initial_events = collect_claim_event_ids(tap_port.by_ref());
+                let initial_events = collect_endpoint_lifecycle_event_ids(tap_port.by_ref());
                 let duplicate_debug = match rv.enter(sid, &controller_program) {
                     Ok(endpoint) => {
                         drop(endpoint);
-                        panic!("duplicate live session-role claim must fail");
+                        panic!("duplicate live session-role endpoint lease must fail");
                     }
                     Err(error) => format!("{error:?}"),
                 };
-                let duplicate_events = collect_claim_event_ids(tap_port.by_ref());
+                let duplicate_events = collect_endpoint_lifecycle_event_ids(tap_port.by_ref());
                 futures::executor::block_on(endpoint.send::<Msg<1, ()>>(&()))
-                    .expect("original endpoint must still progress after duplicate claim failure");
+                    .expect("original endpoint must still progress after duplicate lease failure");
                 drop(endpoint);
-                let release_events = collect_claim_event_ids(tap_port);
+                let release_events = collect_endpoint_lifecycle_event_ids(tap_port);
                 (
                     initial_events,
                     duplicate_debug,
@@ -236,22 +236,22 @@ fn duplicate_live_session_role_claim_fails_without_runtime_evidence() {
         assert_eq!(
             duplicate_events,
             Vec::<u16>::new(),
-            "duplicate claim failure must not emit lane or endpoint-session evidence"
+            "duplicate endpoint lease failure must not emit lane or endpoint-session evidence"
         );
         assert!(
             duplicate_debug.contains("rv-busy"),
-            "duplicate claim should fail closed at attach boundary: {duplicate_debug}"
+            "duplicate endpoint lease should fail closed at attach boundary: {duplicate_debug}"
         );
         assert_eq!(
             release_events,
             vec![tap::LANE_RELEASE],
-            "dropping the original endpoint must release the single live claim"
+            "dropping the original endpoint must release the single live endpoint lease"
         );
     });
 }
 
 #[test]
-fn dropped_session_role_claim_can_be_reentered() {
+fn dropped_endpoint_lease_allows_same_session_role_to_reenter() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let slab_ptr = slab as *mut [u8];
@@ -265,11 +265,11 @@ fn dropped_session_role_claim_can_be_reentered() {
 
             let endpoint = rv
                 .enter(sid, &controller_program)
-                .expect("first claim must attach");
+                .expect("first endpoint lease must attach");
             drop(endpoint);
             let endpoint = rv
                 .enter(sid, &controller_program)
-                .expect("released claim must be reusable");
+                .expect("released endpoint lease must be reusable");
             drop(endpoint);
 
             collect_lane_events(rv.tap())
@@ -283,13 +283,13 @@ fn dropped_session_role_claim_can_be_reentered() {
                 tap::LANE_ACQUIRE,
                 tap::LANE_RELEASE,
             ],
-            "same session-role must re-enter only after the live claim is released"
+            "same session-role must re-enter only after the live endpoint lease is released"
         );
     });
 }
 
 #[test]
-fn distinct_session_or_role_claims_can_coexist() {
+fn distinct_session_or_role_endpoint_leases_can_coexist() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let slab_ptr = slab as *mut [u8];
@@ -319,6 +319,33 @@ fn distinct_session_or_role_claims_can_coexist() {
 }
 
 #[test]
+fn same_role_sessions_are_limited_by_endpoint_leases_not_role_domain() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let slab_ptr = slab as *mut [u8];
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let slab = unsafe { &mut *slab_ptr };
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let controller_program = controller_program();
+            let mut endpoints = Vec::new();
+
+            for idx in 0..17u32 {
+                endpoints.push(
+                    rv.enter(SessionId::new(0x2000 + idx), &controller_program)
+                        .expect(
+                            "endpoint lease table must allow more same-role sessions than roles",
+                        ),
+                );
+            }
+
+            drop(endpoints);
+        });
+    });
+}
+
+#[test]
 fn same_session_role_on_different_rendezvous_is_mismatch() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
@@ -337,7 +364,7 @@ fn same_session_role_on_different_rendezvous_is_mismatch() {
             let controller_program = controller_program();
             let endpoint = rv_a
                 .enter(sid, &controller_program)
-                .expect("first rendezvous claim");
+                .expect("first rendezvous endpoint lease");
             let error_debug = match rv_b.enter(sid, &controller_program) {
                 Ok(endpoint) => {
                     drop(endpoint);
@@ -345,7 +372,7 @@ fn same_session_role_on_different_rendezvous_is_mismatch() {
                 }
                 Err(error) => format!("{error:?}"),
             };
-            let second_rv_events = collect_claim_event_ids(rv_b.tap());
+            let second_rv_events = collect_endpoint_lifecycle_event_ids(rv_b.tap());
             drop(endpoint);
             (error_debug, second_rv_events)
         });
@@ -357,7 +384,7 @@ fn same_session_role_on_different_rendezvous_is_mismatch() {
         assert_eq!(
             second_rv_events,
             Vec::<u16>::new(),
-            "mismatched rendezvous claim must not emit lifecycle evidence on the second rendezvous"
+            "mismatched rendezvous endpoint lease must not emit lifecycle evidence on the second rendezvous"
         );
     });
 }

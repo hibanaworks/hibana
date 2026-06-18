@@ -636,20 +636,55 @@ fn crate_package_artifact_is_a_first_class_gate() {
         !cargo.contains("autotests")
             && !cargo.contains("[[test]]")
             && cargo.contains("\"/tests/**\""),
-        "repository tests must remain Cargo-auto-discovered and ship with the crate so cargo publish is warning-free"
+        "package tests must remain Cargo-auto-discovered while repo-only gates stay outside the crate package"
     );
+    for excluded in [
+        "\"!/tests/docs_surface.rs\"",
+        "\"!/tests/local_only_hygiene.rs\"",
+        "\"!/tests/no_default_rodata.rs\"",
+        "\"!/tests/public_surface_guards.rs\"",
+        "\"!/tests/root_surface.rs\"",
+        "\"!/tests/runtime_surface.rs\"",
+        "\"!/tests/semantic_surface.rs\"",
+        "\"!/tests/semantic_surface/**\"",
+        "\"!/tests/transport_resolver_signal_surface.rs\"",
+    ] {
+        assert!(
+            cargo.contains(excluded),
+            "crate package must exclude repo-only gate source: {excluded}"
+        );
+    }
+    for forbidden in [
+        ".github/",
+        ".github/allowlists/",
+        ".github/measurement_snapshots/",
+        ".github/maintainability/",
+        "tests/semantic_surface.rs",
+        "tests/semantic_surface/",
+        "tests/public_surface_guards.rs",
+        "tests/runtime_surface.rs",
+        "tests/root_surface.rs",
+        "tests/docs_surface.rs",
+    ] {
+        assert!(
+            package_gate.contains(forbidden),
+            "package artifact gate must reject repo-only package contents: {forbidden}"
+        );
+    }
     for required in [
         "src must not depend on tests/support",
         "source-tree test support must not ship in the production crate package",
         "SOURCE_TEST_SUPPORT_PATTERN",
         "^src/.*/tests/",
         "run_package_clean \"cargo package --list\"",
-        "run_package_clean \"cargo package --no-verify\"",
+        "run_package_with_repo_test_exclusions \"cargo package --no-verify\"",
         "package lib check",
         "package lib test build",
-        "shipped repository tests must include their module tree",
-        "package representative test build",
-        "--test semantic_surface --no-run",
+        "packaged tests must include their module tree",
+        "package UI test",
+        "--test ui",
+        "package behavior test",
+        "--test lane_lifecycle_tap",
         "package lib check --no-default-features",
         "package lib test build --no-default-features",
         "package docs --no-default-features",

@@ -728,31 +728,39 @@ fn source_tree_does_not_retain_impossible_test_only_helpers() {
         );
     }
 }
-
 #[test]
-fn package_artifact_ships_repo_tests_without_publish_warning_filter() {
+fn package_artifact_ships_self_contained_tests_and_excludes_repo_gates() {
     let cargo = read("Cargo.toml");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
-
     assert!(
         !cargo.contains("autotests")
             && !cargo.contains("[[test]]")
             && cargo.contains("\"/tests/**\"")
+            && cargo.contains("\"!/tests/semantic_surface.rs\"")
+            && cargo.contains("\"!/tests/semantic_surface/**\"")
+            && cargo.contains("\"!/tests/public_surface_guards.rs\"")
+            && cargo.contains("\"!/tests/runtime_surface.rs\"")
             && !package_gate.contains("repo repository tests must not ship")
             && !package_gate.contains("run_package_clean_with_omitted_repo_tests")
-            && !package_gate.contains("ignoring test `"),
-        "repo repository tests must stay Cargo-auto-discovered and ship with the crate so publish is warning-free"
+            && package_gate.contains("run_package_with_repo_test_exclusions")
+            && package_gate.contains("warning: ignoring test `")
+            && package_gate.contains("package artifact check detected unexpected warnings"),
+        "package tests must stay Cargo-auto-discovered while repo-only gates stay outside the crate package"
     );
     assert!(
-        package_gate.contains("run_package_clean \"cargo package --no-verify\"")
-            && package_gate.contains("shipped repository tests must include their module tree")
-            && package_gate.contains("package representative test build")
-            && package_gate.contains("--test semantic_surface --no-run")
+        package_gate
+            .contains("run_package_with_repo_test_exclusions \"cargo package --no-verify\"")
+            && package_gate.contains("packaged tests must include their module tree")
+            && package_gate.contains("package UI test")
+            && package_gate.contains("--test ui")
+            && package_gate.contains("package behavior test")
+            && package_gate.contains("--test lane_lifecycle_tap")
+            && package_gate.contains("repo-only gate source shipped in crate package")
+            && package_gate.contains(".github/measurement_snapshots/")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must reject package warnings and compile a representative packaged repository target"
+        "package artifact gate must reject package warnings and execute self-contained packaged tests"
     );
 }
-
 #[test]
 fn cached_recv_meta_index_overflow_fails_closed() {
     fn impl_fn_body<'a>(source: &'a str, name: &str) -> &'a str {

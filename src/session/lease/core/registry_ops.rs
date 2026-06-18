@@ -1,9 +1,12 @@
 use core::{ptr, ptr::NonNull};
 
-use super::{ROLE_CLAIM_SLOTS, RendezvousEntry, RendezvousTable, SessionRoleClaim};
+use super::{EndpointLeaseId, EndpointResidentBudget, RendezvousEntry, RendezvousTable};
 use crate::{
     rendezvous::core::Rendezvous,
-    session::types::{RendezvousId, SessionId},
+    session::{
+        cluster::error::ClusterError,
+        types::{RendezvousId, SessionId},
+    },
     transport::Transport,
 };
 
@@ -74,12 +77,15 @@ where
         Ok(id)
     }
 
-    pub(crate) fn claim_session_role(
+    pub(crate) fn allocate_endpoint_lease_for_session_role(
         &mut self,
+        rv: RendezvousId,
         sid: SessionId,
         role: u8,
-        rv: RendezvousId,
-    ) -> Result<(), RoleClaimError> {
+        bytes: usize,
+        align: usize,
+        resident_budget: EndpointResidentBudget,
+    ) -> Result<(EndpointLeaseId, u32, usize, usize), ClusterError> {
         if role >= crate::g::ROLE_DOMAIN_SIZE {
             crate::invariant();
         }
@@ -93,70 +99,41 @@ where
             if entry.id == rv {
                 target = Some(entry_ptr);
             }
-            let mut col = 0usize;
-            while col < ROLE_CLAIM_SLOTS {
-                if let Some(claim) = &entry.role_claims[col]
-                    && claim.sid == sid
-                    && claim.role == role
-                {
-                    if entry.id != rv {
-                        return Err(RoleClaimError::RendezvousMismatch {
-                            expected: entry.id.raw(),
-                            actual: rv.raw(),
-                        });
-                    }
-                    return Err(RoleClaimError::AlreadyClaimed(rv));
+            if entry.is_active() {
+                return Err(ClusterError::RendezvousBusy { id: entry.id.raw() });
+            }
+            if crate::invariant_some(entry.rendezvous_ref())
+                .has_live_endpoint_session_role(sid, role)
+            {
+                if entry.id != rv {
+                    return Err(ClusterError::RendezvousMismatch {
+                        expected: entry.id.raw(),
+                        actual: rv.raw(),
+                    });
                 }
-                col += 1;
+                return Err(ClusterError::RendezvousBusy { id: rv.raw() });
             }
             current = entry.next;
         }
 
         let Some(mut target) = target else {
-            return Err(RoleClaimError::RendezvousUnregistered(rv));
+            return Err(ClusterError::RendezvousUnregistered { id: rv.raw() });
         };
         let entry = /* SAFETY: target was discovered in the initialized registry list above. */ unsafe {
             target.as_mut()
         };
-        let mut col = 0usize;
-        while col < ROLE_CLAIM_SLOTS {
-            if entry.role_claims[col].is_none() {
-                entry.role_claims[col] = Some(SessionRoleClaim { sid, role });
-                return Ok(());
-            }
-            col += 1;
+        let Some(rendezvous) = entry.rendezvous_mut() else {
+            return Err(ClusterError::RendezvousBusy { id: rv.raw() });
+        };
+        if let Err(resource) = rendezvous.ensure_endpoint_resident_budget(resident_budget) {
+            return Err(ClusterError::resource_exhausted(resource));
         }
-        Err(RoleClaimError::CapacityExceeded)
-    }
-
-    pub(crate) fn release_session_role_claim(
-        &mut self,
-        sid: SessionId,
-        role: u8,
-        rv: RendezvousId,
-    ) -> bool {
-        let mut current = self.head;
-        while let Some(mut entry_ptr) = current {
-            let entry = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
-                entry_ptr.as_mut()
-            };
-            if entry.id == rv {
-                let mut col = 0usize;
-                while col < ROLE_CLAIM_SLOTS {
-                    if let Some(claim) = &entry.role_claims[col]
-                        && claim.sid == sid
-                        && claim.role == role
-                    {
-                        entry.role_claims[col] = None;
-                        return true;
-                    }
-                    col += 1;
-                }
-                return false;
-            }
-            current = entry.next;
-        }
-        false
+        /* SAFETY: duplicate session-role ownership has been rejected by scanning
+        every registered rendezvous entry above; the selected rendezvous now owns
+        the endpoint lease slot and writes the live `(sid, role)` identity atomically
+        with the endpoint storage reservation. */
+        unsafe { rendezvous.allocate_endpoint_lease(sid, role, bytes, align, resident_budget) }
+            .map_err(ClusterError::resource_exhausted)
     }
 
     pub(crate) fn ensure_dynamic_resolver_capacity(
@@ -248,17 +225,4 @@ pub(crate) enum RegisterRendezvousError {
     CapacityExceeded,
     /// Caller-provided slab cannot fit the rendezvous resident header or registry node.
     StorageExhausted,
-}
-
-/// Session-role claim failures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RoleClaimError {
-    /// No rendezvous with the requested identifier exists.
-    RendezvousUnregistered(RendezvousId),
-    /// A session role is already attached to another rendezvous.
-    RendezvousMismatch { expected: u16, actual: u16 },
-    /// A live endpoint already owns this session role on the selected rendezvous.
-    AlreadyClaimed(RendezvousId),
-    /// The selected rendezvous has no remaining role claim row capacity.
-    CapacityExceeded,
 }

@@ -466,7 +466,6 @@ where
         }
         if self.public_generation != 0 {
             let cluster = self.session.cluster();
-            cluster.release_session_role_claim(self.sid, ROLE, self.public_rv);
             if self.public_slot_ownership == PublicSlotOwnership::Owned {
                 cluster.release_public_endpoint_slot_owned(
                     self.public_rv,

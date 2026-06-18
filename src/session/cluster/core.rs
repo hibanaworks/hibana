@@ -12,7 +12,7 @@
 
 use core::marker::PhantomData;
 
-use crate::session::lease::core::{LeaseError, RegisterRendezvousError, RoleClaimError};
+use crate::session::lease::core::{LeaseError, RegisterRendezvousError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PublicEndpointStorageLayout {

@@ -16,58 +16,6 @@ where
     occupied_lane_index: usize,
 }
 
-#[derive(Clone, Copy)]
-struct SessionRoleClaimKey {
-    rv_id: RendezvousId,
-    sid: SessionId,
-    role: u8,
-}
-
-struct SessionRoleClaim<'cluster, 'cfg, T>
-where
-    T: crate::transport::Transport + 'cfg,
-{
-    cluster: &'cluster SessionCluster<'cfg, T>,
-    claim: Option<SessionRoleClaimKey>,
-}
-
-impl<'cluster, 'cfg, T> SessionRoleClaim<'cluster, 'cfg, T>
-where
-    T: crate::transport::Transport + 'cfg,
-{
-    fn claim<const ROLE: u8>(
-        cluster: &'cluster SessionCluster<'cfg, T>,
-        rv_id: RendezvousId,
-        sid: SessionId,
-    ) -> Result<Self, ClusterError> {
-        cluster.claim_session_role(sid, ROLE, rv_id)?;
-        Ok(Self {
-            cluster,
-            claim: Some(SessionRoleClaimKey {
-                rv_id,
-                sid,
-                role: ROLE,
-            }),
-        })
-    }
-
-    fn disarm(&mut self) {
-        self.claim = None;
-    }
-}
-
-impl<'cluster, 'cfg, T> Drop for SessionRoleClaim<'cluster, 'cfg, T>
-where
-    T: crate::transport::Transport + 'cfg,
-{
-    fn drop(&mut self) {
-        if let Some(claim) = self.claim.take() {
-            self.cluster
-                .release_session_role_claim(claim.sid, claim.role, claim.rv_id);
-        }
-    }
-}
-
 impl<'cfg, T> SessionCluster<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -217,8 +165,8 @@ where
             });
 
         if let Err(err) = init_result {
-            /* SAFETY: the caller still owns the session-role claim and endpoint
-            lease while attach is unpublished. Disable public Drop's release
+            /* SAFETY: the caller still owns the endpoint lease while attach is
+            unpublished. Disable public Drop's release
             path so rollback remains single-owner and explicit. */
             unsafe {
                 (*dst).public_generation = 0;
@@ -310,8 +258,6 @@ where
             session storage only long enough to compute endpoint storage
             requirements and reserve a live endpoint slot. */
             unsafe {
-                let mut role_claim = SessionRoleClaim::claim::<ROLE>(self, rv_id, sid)
-                    .map_err(AttachError::cluster)?;
                 let logical_lane_count = role_image.logical_lane_count().max(1);
                 self.with_storage_mut(|core| {
                     let rv = core
@@ -336,6 +282,7 @@ where
                 let (slot, generation, dst) = self
                     .allocate_public_endpoint_storage_for_rv::<ROLE>(
                         rv_id,
+                        sid,
                         storage_layout.total_bytes,
                         storage_layout.total_align,
                         resident_budget,
@@ -364,7 +311,6 @@ where
                     })?;
                     return Err(err);
                 }
-                role_claim.disarm();
                 Ok((slot, generation))
             },
             Err(err) => Err(err),

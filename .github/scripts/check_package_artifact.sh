@@ -30,12 +30,75 @@ run_package_clean() {
   trap - RETURN
 }
 
+run_package_with_repo_test_exclusions() {
+  local label="$1"
+  shift
+
+  local log
+  log="$(mktemp)"
+  trap 'rm -f "${log}"' RETURN
+
+  if ! "$@" >"${log}" 2>&1; then
+    cat "${log}" >&2
+    echo "package artifact check failed while running: ${label}" >&2
+    exit 1
+  fi
+  python3 - "${log}" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+log = Path(sys.argv[1]).read_text(encoding="utf-8")
+allowed = re.compile(
+    r"^warning: ignoring test `(docs_surface|local_only_hygiene|no_default_rodata|"
+    r"public_surface_guards|root_surface|runtime_surface|semantic_surface|"
+    r"transport_resolver_signal_surface)` as `tests/[^`]+\.rs` is not included "
+    r"in the published package$"
+)
+unexpected = [
+    line for line in log.splitlines()
+    if "warning:" in line and not allowed.match(line)
+]
+if unexpected:
+    print(log, file=sys.stderr, end="")
+    print("package artifact check detected unexpected warnings", file=sys.stderr)
+    for line in unexpected:
+        print(line, file=sys.stderr)
+    sys.exit(1)
+PY
+
+  cat "${log}"
+  rm -f "${log}"
+  trap - RETURN
+}
+
 PACKAGE_LIST="$(run_package_clean "cargo package --list" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --list --allow-dirty)"
 
-for required in Cargo.toml README.md src/lib.rs tests/docs_surface.rs tests/semantic_surface.rs; do
+for required in Cargo.toml README.md src/lib.rs tests/ui.rs tests/lane_lifecycle_tap.rs; do
   if ! grep -qx "${required}" <<<"${PACKAGE_LIST}"; then
     echo "package artifact check failed: ${required} must ship in the published crate package" >&2
+    exit 1
+  fi
+done
+
+for forbidden in \
+  '.github/' \
+  '.github/allowlists/' \
+  '.github/measurement_snapshots/' \
+  '.github/maintainability/' \
+  'tests/docs_surface.rs' \
+  'tests/local_only_hygiene.rs' \
+  'tests/no_default_rodata.rs' \
+  'tests/public_surface_guards.rs' \
+  'tests/root_surface.rs' \
+  'tests/runtime_surface.rs' \
+  'tests/semantic_surface.rs' \
+  'tests/semantic_surface/' \
+  'tests/transport_resolver_signal_surface.rs'
+do
+  if grep -qF "${forbidden}" <<<"${PACKAGE_LIST}"; then
+    echo "package artifact check failed: repo-only gate source shipped in crate package: ${forbidden}" >&2
     exit 1
   fi
 done
@@ -163,7 +226,7 @@ def rust_module_candidates(source: Path, mod_name: str) -> list[Path]:
 
 seen: set[Path] = set()
 missing: list[str] = []
-stack = sorted(Path("tests").glob("*.rs"))
+stack = sorted(path for path in Path("tests").glob("*.rs") if path.as_posix() in PACKAGE_FILES)
 while stack:
     source = stack.pop()
     if source in seen:
@@ -197,7 +260,7 @@ while stack:
 
 if missing:
     print(
-        "package artifact check failed: shipped repository tests must include their module tree",
+        "package artifact check failed: packaged tests must include their module tree",
         file=sys.stderr,
     )
     for item in missing:
@@ -205,7 +268,7 @@ if missing:
     sys.exit(1)
 PY
 
-run_package_clean "cargo package --no-verify" \
+run_package_with_repo_test_exclusions "cargo package --no-verify" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --allow-dirty --no-verify
 
 TMP_DIR="$(mktemp -d)"
@@ -221,9 +284,12 @@ run_package_clean "package lib check" \
 run_package_clean "package lib test build" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --lib --no-run
-run_package_clean "package representative test build" \
+run_package_clean "package UI test" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test semantic_surface --no-run
+    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test ui
+run_package_clean "package behavior test" \
+  env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
+    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test lane_lifecycle_tap
 run_package_clean "package lib check --no-default-features" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib

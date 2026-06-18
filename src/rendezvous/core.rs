@@ -153,6 +153,8 @@ impl EndpointResidentBudget {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EndpointLeaseSlot {
     pub(crate) generation: u32,
+    pub(crate) sid: SessionId,
+    pub(crate) role: u8,
     pub(crate) offset: u32,
     pub(crate) len: u32,
     pub(crate) resident_budget: EndpointResidentBudget,
@@ -162,6 +164,8 @@ pub(crate) struct EndpointLeaseSlot {
 impl EndpointLeaseSlot {
     const EMPTY: Self = Self {
         generation: 0,
+        sid: SessionId::new(0),
+        role: 0,
         offset: 0,
         len: 0,
         resident_budget: EndpointResidentBudget::ZERO,

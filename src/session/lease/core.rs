@@ -14,20 +14,12 @@
 
 use core::{marker::PhantomData, ptr, ptr::NonNull};
 
-use crate::rendezvous::core::{LaneRelease, Rendezvous};
+use crate::rendezvous::core::{EndpointLeaseId, EndpointResidentBudget, LaneRelease, Rendezvous};
 use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::transport::Transport;
 
 mod registry_ops;
-pub(crate) use registry_ops::{RegisterRendezvousError, RoleClaimError};
-
-const ROLE_CLAIM_SLOTS: usize = crate::g::ROLE_DOMAIN_SIZE as usize;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SessionRoleClaim {
-    sid: SessionId,
-    role: u8,
-}
+pub(crate) use registry_ops::RegisterRendezvousError;
 
 /// Local rendezvous registry backed by nodes carved from each rendezvous slab.
 pub(crate) struct RendezvousTable<'cfg, T: Transport> {
@@ -147,7 +139,6 @@ where
     rendezvous: NonNull<Rendezvous<'cfg, 'cfg, T>>,
     state: RendezvousEntryState,
     resolver_bucket: crate::session::cluster::core::ResolverBucket<'cfg>,
-    role_claims: [Option<SessionRoleClaim>; ROLE_CLAIM_SLOTS],
     next: Option<NonNull<RendezvousEntry<'cfg, T>>>,
     _marker: PhantomData<&'cfg mut Rendezvous<'cfg, 'cfg, T>>,
 }
@@ -227,7 +218,6 @@ where
             crate::session::cluster::core::ResolverBucket::init_empty(core::ptr::addr_of_mut!(
                 (*dst).resolver_bucket
             ));
-            core::ptr::addr_of_mut!((*dst).role_claims).write([None; ROLE_CLAIM_SLOTS]);
             core::ptr::addr_of_mut!((*dst).next).write(next);
             core::ptr::addr_of_mut!((*dst)._marker).write(PhantomData);
         }

@@ -2,9 +2,11 @@ use super::common::*;
 
 fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
     let marker = format!("struct {name} {{");
+    let visible_marker = format!("pub(crate) struct {name} {{");
     let tail = source
         .split(&marker)
         .nth(1)
+        .or_else(|| source.split(&visible_marker).nth(1))
         .unwrap_or_else(|| panic!("{name} struct must stay visible"));
     tail.split("\n}")
         .next()
@@ -115,36 +117,54 @@ fn transport_surface_has_no_custom_error_axis() {
 }
 
 #[test]
-fn session_role_claim_stays_affine_without_refcount_owner() {
+fn endpoint_lease_slot_is_session_role_authority() {
     let lease_core = read("src/session/lease/core.rs");
-    let claim = named_struct_body(&lease_core, "SessionRoleClaim");
-    assert!(
-        claim.contains("sid: SessionId,") && claim.contains("role: u8,"),
-        "session-role claim must keep only the live claim identity"
-    );
-    for forbidden in ["rv:", "refs:", "RendezvousId"] {
-        assert!(
-            !claim.contains(forbidden),
-            "session-role claim must not own rendezvous identity or refcount residue: {forbidden}"
-        );
-    }
-
-    let lease_ops = read("src/session/lease/core/registry_ops.rs");
+    let rendezvous_core = read("src/rendezvous/core.rs");
+    let endpoint_lease = read("src/rendezvous/core/endpoint_leases.rs");
+    let registry_ops = read("src/session/lease/core/registry_ops.rs");
     let cluster_ops = read("src/session/cluster/core/session_cluster_ops.rs");
     let endpoint_attach = read("src/session/cluster/core/endpoint_attach.rs");
-    let claim_scope = [
-        lease_ops.as_str(),
+    let endpoint_core = read("src/endpoint/kernel/core.rs");
+    let production_scope = [
+        lease_core.as_str(),
+        rendezvous_core.as_str(),
+        endpoint_lease.as_str(),
+        registry_ops.as_str(),
         cluster_ops.as_str(),
         endpoint_attach.as_str(),
+        endpoint_core.as_str(),
     ]
     .join("\n");
-    for required in ["claim_session_role", "release_session_role_claim"] {
-        assert!(
-            claim_scope.contains(required),
-            "session-role ownership must use affine claim vocabulary: {required}"
-        );
-    }
+
+    let lease_slot = named_struct_body(&rendezvous_core, "EndpointLeaseSlot");
+    assert!(
+        lease_slot.contains("sid: SessionId,") && lease_slot.contains("role: u8,"),
+        "endpoint lease slot must be the live session-role identity owner"
+    );
+    assert!(
+        registry_ops.contains("allocate_endpoint_lease_for_session_role")
+            && registry_ops.contains("has_live_endpoint_session_role(sid, role)")
+            && endpoint_lease.contains("pub(crate) fn has_live_endpoint_session_role"),
+        "endpoint allocation must scan live endpoint leases before claiming a slot"
+    );
+    assert!(
+        cluster_ops.contains("core.locals.allocate_endpoint_lease_for_session_role")
+            && cluster_ops.contains("sid,\n                ROLE,")
+            && endpoint_attach.contains("allocate_public_endpoint_storage_for_rv::<ROLE>")
+            && endpoint_attach
+                .contains("sid,\n                        storage_layout.total_bytes,")
+            && !endpoint_core.contains("release_session_role_claim"),
+        "attach/drop must route session-role ownership through endpoint lease allocation/release only"
+    );
+
     for forbidden in [
+        "ROLE_CLAIM_SLOTS",
+        "role_claims",
+        "SessionRoleClaim",
+        "SessionRoleClaimKey",
+        "claim_session_role",
+        "release_session_role_claim",
+        "RoleClaimError",
         "bind_session_role",
         "unbind_session_role",
         "SessionRoleBinding",
@@ -154,11 +174,10 @@ fn session_role_claim_stays_affine_without_refcount_owner() {
         "binding.refs",
         "refs += 1",
         "refs -= 1",
-        "SessionRoleBinding { sid, role, rv",
     ] {
         assert!(
-            !claim_scope.contains(forbidden),
-            "session-role ownership must not reintroduce binding/refcount residue: {forbidden}"
+            !production_scope.contains(forbidden),
+            "session-role ownership must not reintroduce claim/refcount residue: {forbidden}"
         );
     }
 }

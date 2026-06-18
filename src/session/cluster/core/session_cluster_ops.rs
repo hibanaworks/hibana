@@ -1,7 +1,7 @@
 use super::{
     AttachError, ClusterError, CompiledProgramRef, EndpointLeaseId, Lane, LaneLease, LeaseError,
     PublicEndpointStorageLayout, RegisterRendezvousError, Rendezvous, RendezvousError,
-    RendezvousId, ResourceScope, RoleClaimError, RoleImageSlice, SessionId, SessionStorage,
+    RendezvousId, ResourceScope, RoleImageSlice, SessionId, SessionStorage,
 };
 
 // # Unsafe Owner Contract
@@ -117,6 +117,7 @@ where
     pub(crate) fn allocate_public_endpoint_storage_for_rv<'r, const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
+        sid: SessionId,
         required_bytes: usize,
         required_align: usize,
         resident_budget: crate::rendezvous::core::EndpointResidentBudget,
@@ -134,20 +135,19 @@ where
         let core = /* SAFETY: `SessionCluster` owns the pinned
         `SessionStorage` cell. This attach allocation takes the cluster storage
         mutation path before leasing the target rendezvous entry. */ unsafe { &mut *self.storage_ptr() };
+        let (slot, generation, offset, _len) =
+            core.locals.allocate_endpoint_lease_for_session_role(
+                rv_id,
+                sid,
+                ROLE,
+                required_bytes,
+                required_align,
+                resident_budget,
+            )?;
         let rv = core
             .locals
             .get_mut_checked(&rv_id)
             .map_err(Self::map_rendezvous_access_error)?;
-        if let Err(resource) = rv.ensure_endpoint_resident_budget(resident_budget) {
-            return Err(ClusterError::resource_exhausted(resource));
-        }
-        let (slot, generation, offset, _len) =
-            (/* SAFETY: the leased rendezvous owns endpoint lease allocation.
-            `required_bytes/align` and `resident_budget` are checked before a
-            live endpoint slot and storage offset are returned. */unsafe {
-                rv.allocate_endpoint_lease(required_bytes, required_align, resident_budget)
-            })
-            .map_err(ClusterError::resource_exhausted)?;
         let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
         let Some(storage_end) = offset.checked_add(required_bytes) else {
             rv.release_endpoint_lease(slot, generation)
@@ -331,42 +331,6 @@ where
             {
                 crate::invariant();
             }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn claim_session_role(
-        &self,
-        sid: SessionId,
-        role: u8,
-        rv_id: RendezvousId,
-    ) -> Result<(), ClusterError> {
-        self.with_storage_mut(|core| {
-            core.locals
-                .claim_session_role(sid, role, rv_id)
-                .map_err(|error| match error {
-                    RoleClaimError::RendezvousUnregistered(id) => {
-                        ClusterError::RendezvousUnregistered { id: id.raw() }
-                    }
-                    RoleClaimError::RendezvousMismatch { expected, actual } => {
-                        ClusterError::RendezvousMismatch { expected, actual }
-                    }
-                    RoleClaimError::AlreadyClaimed(id) => {
-                        ClusterError::RendezvousBusy { id: id.raw() }
-                    }
-                    RoleClaimError::CapacityExceeded => {
-                        ClusterError::resource_exhausted(ResourceScope::RendezvousTable)
-                    }
-                })
-        })
-    }
-
-    #[inline]
-    pub(crate) fn release_session_role_claim(&self, sid: SessionId, role: u8, rv_id: RendezvousId) {
-        let released =
-            self.with_storage_mut(|core| core.locals.release_session_role_claim(sid, role, rv_id));
-        if !released {
-            crate::invariant();
         }
     }
 

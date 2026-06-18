@@ -132,14 +132,16 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`runtime::tap::{TapEvent, TapPort}`",
         "cargo +1.95.0 check --no-default-features --lib -p hibana",
         "cargo +1.95.0 check --lib -p hibana",
+        "cargo +1.95.0 test -p hibana --test ui",
+        "cargo +1.95.0 test -p hibana --test lane_lifecycle_tap",
         "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
-        "The full test suite is repository-only",
-        "source-tree test support that",
-        "intentionally excluded from the production crate package",
+        "The crate package ships self-contained compile/UI/API and runtime behavior tests.",
+        "Repository-only gates that read `.github`, public-surface allowlists,",
+        "measurement snapshots, or maintainability budgets stay outside the production",
         "bash ./.github/scripts/run_final_form_gates.sh",
-        "repo-only unit tests are enabled",
+        "repo-only unit",
+        "tests are enabled through `hibana_repo_tests`",
         "`hibana_repo_tests`",
-        "It is intentionally kept outside the crate package.",
     ] {
         assert!(
             readme.contains(required),
@@ -202,7 +204,6 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "runtime::advanced::resolver::replay::ResolverAttrs",
         "kit.enter::<",
         "fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError>",
-        "cargo +1.95.0 test -p hibana",
     ] {
         assert_absent(
             &readme,

@@ -2,7 +2,7 @@
 ///
 /// This is the top-level local session coordinator. It manages:
 /// - Local rendezvous owners
-/// - Session-role claims for resident endpoints
+/// - Session-role endpoint leases for resident endpoints
 /// - Dynamic route resolver storage
 ///
 /// Resident mutable state of SessionCluster.
@@ -12,7 +12,7 @@
 /// The following invariants MUST be maintained by all code accessing `SessionStorage`:
 ///
 /// 1. **No duplicate attach mutation**: at most one `LaneLease` mutates a rendezvous at a time
-/// 2. **Session-role exclusivity**: live public endpoints hold unique `(rv_id, sid, role)` claims
+/// 2. **Session-role exclusivity**: live public endpoints hold unique `(rendezvous, sid, role)` endpoint leases
 /// 3. **Rendezvous ownership**: Rendezvous instances are owned by the cluster and remain attached while leases exist
 /// 4. **Resolver ownership**: dynamic resolvers are registered only for resident program sites
 ///

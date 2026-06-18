@@ -691,11 +691,15 @@ For a published crate consumer, the useful checks are ordinary Cargo commands:
 ```bash
 cargo +1.95.0 check --no-default-features --lib -p hibana
 cargo +1.95.0 check --lib -p hibana
+cargo +1.95.0 test -p hibana --test ui
+cargo +1.95.0 test -p hibana --test lane_lifecycle_tap
 cargo +1.95.0 doc -p hibana --no-deps --no-default-features
 ```
 
-The full test suite is repository-only; it depends on source-tree test support that
-is intentionally excluded from the production crate package.
+The crate package ships self-contained compile/UI/API and runtime behavior tests.
+Repository-only gates that read `.github`, public-surface allowlists,
+measurement snapshots, or maintainability budgets stay outside the production
+crate package.
 
 For a repository checkout, maintainers should run the repository gate suite
 before release:
@@ -704,7 +708,7 @@ before release:
 bash ./.github/scripts/run_final_form_gates.sh
 ```
 
-Use that gate rather than raw `cargo test`; repo-only unit tests are enabled
-through `hibana_repo_tests`. The suite protects the public surface, `no_std` build,
-projection boundary, descriptor publication, future layout, route authority, and
-size measurements. It is intentionally kept outside the crate package.
+Use that gate rather than raw `cargo test` for release decisions; repo-only unit
+tests are enabled through `hibana_repo_tests`. The suite protects the public
+surface, `no_std` build, projection boundary, descriptor publication, future
+layout, route authority, and size measurements.
