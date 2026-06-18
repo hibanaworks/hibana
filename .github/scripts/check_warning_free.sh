@@ -35,9 +35,9 @@ run_warning_free() {
   trap - RETURN
 }
 
-run_warning_free "cargo +${TOOLCHAIN} check --all-targets -p hibana" \
-  cargo +"${TOOLCHAIN}" check --all-targets -p hibana
+run_warning_free "cargo +${TOOLCHAIN} check --lib -p hibana" \
+  cargo +"${TOOLCHAIN}" check --lib -p hibana
+run_warning_free "cargo +${TOOLCHAIN} check --test semantic_surface -p hibana" \
+  cargo +"${TOOLCHAIN}" check --test semantic_surface -p hibana
 run_warning_free "cargo +${TOOLCHAIN} check --no-default-features --lib -p hibana" \
   cargo +"${TOOLCHAIN}" check --no-default-features --lib -p hibana
-run_warning_free "cargo +${TOOLCHAIN} test -p hibana" \
-  cargo +"${TOOLCHAIN}" test -p hibana

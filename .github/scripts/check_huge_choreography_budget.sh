@@ -23,7 +23,6 @@ commands = [
         "hibana",
         "--test",
         "huge_choreography_compile",
-        "--no-run",
     ],
     [
         "cargo",
@@ -33,7 +32,6 @@ commands = [
         "hibana",
         "--test",
         "huge_choreography_runtime",
-        "--no-run",
     ],
 ]
 

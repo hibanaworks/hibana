@@ -9,6 +9,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         read(".github/scripts/check_kernel_monomorphization_quarantine.sh");
     let run_final_gate = read(".github/scripts/run_final_form_gates.sh");
     let rust_1_95_gate = read(".github/scripts/check_rust_1_95_stable.sh");
+    let warning_free_gate = read(".github/scripts/check_warning_free.sh");
+    let direct_projection_gate = read(".github/scripts/check_direct_projection_binary.sh");
+    let package_gate = read(".github/scripts/check_package_artifact.sh");
+    let huge_gate = read(".github/scripts/check_huge_choreography_budget.sh");
     let thumb_header_gate = read(".github/scripts/check_thumbv6m_frame_header_codegen.sh");
     let thumb_mask_gate = read(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
     let final_gate_with_helpers =
@@ -187,10 +191,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "final-form gates must not override Rust test harness parallelism"
     );
     assert!(
-        rust_1_95_gate.contains("cargo +1.95.0 test -p hibana --tests --no-run")
-            && !rust_1_95_gate.contains("find tests")
-            && !rust_1_95_gate.contains("--test \"${test_name}\""),
-        "Rust 1.95 gate must compile integration tests in one Cargo invocation, not one target per Cargo build"
+        !format!(
+            "{rust_1_95_gate}\n{warning_free_gate}\n{direct_projection_gate}\n{package_gate}\n{huge_gate}"
+        )
+        .contains("--no-run")
+            && !warning_free_gate.contains("check --all-targets")
+            && !warning_free_gate.contains("cargo +\"${TOOLCHAIN}\" test -p hibana")
+            && rust_1_95_gate.contains("cargo +1.95.0 test -p hibana --test semantic_surface")
+            && rust_1_95_gate
+                .contains("cargo +1.95.0 test -p hibana --test dynamic_route_scope_resolver"),
+        "final-form gates must not use no-run, all-integration, all-target, or all-test Cargo builds"
     );
     let size_gate_pos = run_final_gate
         .find("bash ./.github/scripts/check_final_form_measurements.sh")

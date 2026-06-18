@@ -281,9 +281,9 @@ PKG_DIR="$(find "${TMP_DIR}" -maxdepth 1 -type d -name 'hibana-*' | head -n 1)"
 run_package_clean "package lib check" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --lib
-run_package_clean "package lib test build" \
+run_package_clean "package lib test" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --lib --no-run
+    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --lib
 run_package_clean "package UI test" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test ui
@@ -293,9 +293,9 @@ run_package_clean "package behavior test" \
 run_package_clean "package lib check --no-default-features" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" check --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib
-run_package_clean "package lib test build --no-default-features" \
+run_package_clean "package lib test --no-default-features" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib --no-run
+    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --no-default-features --lib
 run_package_clean "package docs --no-default-features" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" RUSTDOCFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" doc --manifest-path "${PKG_DIR}/Cargo.toml" --no-deps --no-default-features

@@ -557,8 +557,7 @@ impl RoleLaneScratch {
                 self.route_scope_rows[route_slot] = scope;
                 let conflict = Self::dependency_conflict_for_scope(markers, view_len, scope);
                 self.route_scope_conflicts[route_slot] =
-                    PackedEventConflict::from_conflict(conflict)
-                        .with_route_reentry(marker.reentry.is_reentrant());
+                    PackedEventConflict::from_conflict(conflict).with_route_reentry(marker.reentry);
                 let mut arm = 0usize;
                 while arm < 2 {
                     let (start, end) = ranges[arm];

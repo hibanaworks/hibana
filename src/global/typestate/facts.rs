@@ -78,19 +78,24 @@ impl PackedEventConflict {
     }
 
     #[inline(always)]
-    pub(crate) const fn with_route_reentry(self, reentry: bool) -> Self {
-        if !reentry {
-            if self.0 == Self::ABSENT_RAW
-                || self.0 == (Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
-            {
-                return Self::none();
+    pub(crate) const fn with_route_reentry(self, mark: ReentryMark) -> Self {
+        match mark {
+            ReentryMark::SinglePass => {
+                if self.0 == Self::ABSENT_RAW
+                    || self.0 == (Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
+                {
+                    Self::none()
+                } else {
+                    Self(self.0 & !Self::ROUTE_REENTRY_BIT)
+                }
             }
-            return Self(self.0 & !Self::ROUTE_REENTRY_BIT);
-        }
-        if self.0 == Self::ABSENT_RAW {
-            Self(Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
-        } else {
-            Self(self.0 | Self::ROUTE_REENTRY_BIT)
+            ReentryMark::Reentrant => {
+                if self.0 == Self::ABSENT_RAW {
+                    Self(Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
+                } else {
+                    Self(self.0 | Self::ROUTE_REENTRY_BIT)
+                }
+            }
         }
     }
 
