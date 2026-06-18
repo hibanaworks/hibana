@@ -49,7 +49,7 @@ impl CompiledProgramImage {
             while local < segment_len {
                 let idx = segment_start + local;
                 let node = eff_list.node_at(idx);
-                let resolver = if let Some((resolver, _scope)) = eff_list.resolver_with_scope(idx) {
+                if let Some((resolver, _scope)) = eff_list.resolver_with_scope(idx) {
                     let row_idx = summary.validation.resolver_row_len;
                     if row_idx < MAX_COMPILED_RESOLVER_ROWS {
                         summary.validation.resolver_rows[row_idx] =
@@ -67,10 +67,7 @@ impl CompiledProgramImage {
                         panic!("CompiledProgram: resolver side table exceeded");
                     }
                     resolver_markers_len = increment_compact_count(resolver_markers_len);
-                    resolver
-                } else {
-                    RouteResolver::Intrinsic
-                };
+                }
                 if matches!(node.kind, EffKind::Atom) {
                     let atom = node.atom_data();
                     summary.validation.segments[segment].atom_mask |= 1u128 << local;
@@ -99,12 +96,6 @@ impl CompiledProgramImage {
                     }
                     if to + 1 > role_count {
                         role_count = to + 1;
-                    }
-                    if resolver.is_dynamic() {
-                        summary
-                            .program
-                            .compiled_program_counts
-                            .dynamic_resolver_sites += 1;
                     }
                 }
                 local += 1;
@@ -168,6 +159,15 @@ impl CompiledProgramImage {
                         );
                         summary.program.compiled_program_counts.route_resolvers =
                             summary.program.lowering_facts.route_scope_count as usize;
+                        match eff_list.resolver_for_scope(marker.scope_id) {
+                            Some(resolver) if resolver.is_dynamic() => {
+                                summary
+                                    .program
+                                    .compiled_program_counts
+                                    .dynamic_resolver_sites += 1;
+                            }
+                            Some(_) | None => {}
+                        }
                     }
                 }
             } else {
@@ -178,12 +178,6 @@ impl CompiledProgramImage {
                     active_route_depth = decrement_compact_count(active_route_depth);
                 }
                 active_scope_depth = decrement_compact_count(active_scope_depth);
-            }
-            if let Some(controller_role) = marker.controller_role {
-                let controller_role = checked_role_index(controller_role);
-                if controller_role + 1 > role_count {
-                    role_count = controller_role + 1;
-                }
             }
             scope_idx += 1;
         }

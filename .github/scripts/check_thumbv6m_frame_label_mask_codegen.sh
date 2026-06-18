@@ -78,7 +78,6 @@ EOF
 
 CARGO_TERM_COLOR=never \
 CARGO_TERM_PROGRESS_WHEN=never \
-CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}" \
 TERM=dumb \
   cargo +"${TOOLCHAIN}" rustc \
     --manifest-path "${HARNESS_DIR}/Cargo.toml" \

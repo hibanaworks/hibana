@@ -1,11 +1,11 @@
 use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
-    PROGRAM_IMAGE_INTRINSIC_ROUTE_EFF, PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE,
-    PROGRAM_IMAGE_RESOLVER_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts,
+    PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE, PROGRAM_IMAGE_RESOLVER_STRIDE,
+    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange, ProgramImageColumns,
+    ProgramImageFacts,
 };
 use crate::{
-    eff::{EffAtom, EffIndex},
+    eff::EffAtom,
     global::compiled::lowering::{CompiledProgramImage, CompiledProgramView},
     global::const_dsl::{
         INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
@@ -44,6 +44,7 @@ impl<const N: usize> ProgramImageBytes<N> {
             idx += 1;
         }
         let markers = view.scope_markers();
+        let mut seen_route_ordinals = [false; crate::eff::meta::MAX_EFF_NODES];
         let mut route_resolver_len = 0usize;
         idx = 0;
         while idx < markers.len() {
@@ -51,7 +52,14 @@ impl<const N: usize> ProgramImageBytes<N> {
             if matches!(marker.event, ScopeEvent::Enter)
                 && matches!(marker.scope_kind, ScopeKind::Route)
             {
-                route_resolver_len += 1;
+                let ordinal = marker.scope_id.local_ordinal() as usize;
+                if ordinal >= seen_route_ordinals.len() {
+                    crate::invariant();
+                }
+                if !seen_route_ordinals[ordinal] {
+                    seen_route_ordinals[ordinal] = true;
+                    route_resolver_len += 1;
+                }
             }
             idx += 1;
         }
@@ -158,67 +166,32 @@ impl<const N: usize> ProgramImageBytes<N> {
         row: usize,
         scope: ScopeId,
         controller_role: Option<u8>,
-        decision: Option<(RouteResolver, EffIndex, u8)>,
+        decision: Option<(RouteResolver, u8)>,
     ) {
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
         self.write_u16(out, scope.raw());
-        let (resolver_id, eff_dense, decision_tag) = match decision {
-            Some((resolver, eff, tag)) => {
+        let (resolver_id, decision_tag) = match decision {
+            Some((resolver, tag)) => {
                 let resolver_id = match resolver {
                     RouteResolver::Dynamic { resolver_id, .. } => resolver_id,
                     RouteResolver::Intrinsic => INTRINSIC_ROUTE_RESOLVER_ID,
                 };
-                let dense = eff.dense_ordinal();
-                if dense > u16::MAX as usize {
-                    crate::invariant();
-                }
-                (resolver_id, dense as u16, tag)
+                (resolver_id, tag)
             }
             None => (
                 INTRINSIC_ROUTE_RESOLVER_ID,
-                PROGRAM_IMAGE_INTRINSIC_ROUTE_EFF,
                 PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
             ),
         };
         self.write_u16(out + 2, resolver_id);
-        self.write_u16(out + 4, eff_dense);
         self.write_u8(
-            out + 6,
+            out + 4,
             match controller_role {
                 Some(role) => role,
                 None => PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE,
             },
         );
-        self.write_u8(out + 7, decision_tag);
-    }
-
-    #[inline(always)]
-    const fn route_scope_end(
-        scope_markers: &[crate::global::const_dsl::ScopeMarker],
-        enter_idx: usize,
-        scope: ScopeId,
-        segment_limit: usize,
-    ) -> usize {
-        let mut scope_end = segment_limit;
-        let mut scan_idx = enter_idx + 1;
-        let mut nest_depth = 1usize;
-        while scan_idx < scope_markers.len() {
-            let scan_marker = scope_markers[scan_idx];
-            if scan_marker.scope_id.local_ordinal() == scope.local_ordinal() {
-                match scan_marker.event {
-                    ScopeEvent::Enter => nest_depth += 1,
-                    ScopeEvent::Exit => {
-                        nest_depth -= 1;
-                        if nest_depth == 0 {
-                            scope_end = scan_marker.offset;
-                            break;
-                        }
-                    }
-                }
-            }
-            scan_idx += 1;
-        }
-        scope_end
+        self.write_u8(out + 5, decision_tag);
     }
 
     #[inline(always)]
@@ -226,7 +199,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         view: &CompiledProgramView<'_>,
         route_scope: ScopeId,
         route_enter_marker_idx: usize,
-    ) -> Option<(RouteResolver, EffIndex, u8)> {
+    ) -> Option<(RouteResolver, u8)> {
         let scope_markers = view.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
             return None;
@@ -238,36 +211,117 @@ impl<const N: usize> ProgramImageBytes<N> {
         {
             return None;
         }
-        let scope_start = route_marker.offset;
-        let scope_end = Self::route_scope_end(
-            scope_markers,
-            route_enter_marker_idx,
-            route_marker.scope_id,
-            view.len(),
-        );
-        if scope_start >= crate::eff::meta::MAX_EFF_NODES || scope_start >= scope_end {
-            return None;
-        }
-
-        let mut marker_idx = route_enter_marker_idx + 1;
-        while marker_idx < scope_markers.len() {
-            let marker = scope_markers[marker_idx];
-            if marker.offset != scope_start {
-                break;
-            }
-            if matches!(marker.event, ScopeEvent::Enter)
-                && !matches!(marker.scope_kind, ScopeKind::Plain)
-            {
-                return None;
-            }
-            marker_idx += 1;
-        }
-        match view.resident_resolver_at(scope_start) {
-            Some(resolver @ RouteResolver::Dynamic { .. }) => {
-                Some((resolver, EffIndex::from_dense_ordinal(scope_start), 0))
-            }
+        match view.resolver_for_scope(route_scope) {
+            Some(resolver @ RouteResolver::Dynamic { .. }) => Some((resolver, 0)),
             Some(RouteResolver::Intrinsic) | None => None,
         }
+    }
+
+    #[inline(always)]
+    const fn route_arm_ranges_from_first_enter(
+        scope_markers: &[crate::global::const_dsl::ScopeMarker],
+        enter_idx: usize,
+    ) -> Option<(usize, usize, usize, usize)> {
+        if enter_idx >= scope_markers.len() {
+            return None;
+        }
+        let scope_id = scope_markers[enter_idx].scope_id;
+        let mut enter_offsets = [usize::MAX; 2];
+        let mut exit_offsets = [usize::MAX; 2];
+        let mut enter_len = 1usize;
+        let mut exit_len = 0usize;
+        enter_offsets[0] = scope_markers[enter_idx].offset;
+        let mut idx = enter_idx + 1;
+        while idx < scope_markers.len() && (enter_len < 2 || exit_len < 2) {
+            let marker = scope_markers[idx];
+            if marker.scope_id.same(scope_id) && matches!(marker.scope_kind, ScopeKind::Route) {
+                match marker.event {
+                    ScopeEvent::Enter => {
+                        if enter_len < 2 {
+                            enter_offsets[enter_len] = marker.offset;
+                        }
+                        enter_len += 1;
+                    }
+                    ScopeEvent::Exit => {
+                        if exit_len < 2 {
+                            exit_offsets[exit_len] = marker.offset;
+                        }
+                        exit_len += 1;
+                    }
+                }
+            }
+            idx += 1;
+        }
+        if enter_len == 2 && exit_len == 2 {
+            Some((
+                enter_offsets[0],
+                exit_offsets[0],
+                enter_offsets[1],
+                exit_offsets[1],
+            ))
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    const fn first_visible_controller_mask(
+        view: &CompiledProgramView<'_>,
+        start: usize,
+        end: usize,
+    ) -> u16 {
+        let mut seen_lane_words = [0u64; 4];
+        let mut controller_mask = 0u16;
+        let mut idx = start;
+        while idx < end && idx < view.len() {
+            if let Some(atom) = view.atom_at(idx) {
+                let lane = atom.lane as usize;
+                let word = lane / 64;
+                let bit = lane % 64;
+                if word >= seen_lane_words.len() || atom.from >= u16::BITS as u8 {
+                    return 0;
+                }
+                let mask = 1u64 << bit;
+                if (seen_lane_words[word] & mask) != 0 {
+                    return controller_mask;
+                }
+                seen_lane_words[word] |= mask;
+                controller_mask |= 1u16 << atom.from;
+            }
+            idx += 1;
+        }
+        controller_mask
+    }
+
+    #[inline(always)]
+    const fn unique_controller_role(mask: u16) -> Option<u8> {
+        if mask == 0 || (mask & (mask - 1)) != 0 {
+            return None;
+        }
+        let mut role = 0u8;
+        while role < u16::BITS as u8 {
+            if (mask & (1u16 << role)) != 0 {
+                return Some(role);
+            }
+            role += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    const fn route_controller_role(
+        view: &CompiledProgramView<'_>,
+        route_enter_marker_idx: usize,
+    ) -> Option<u8> {
+        let scope_markers = view.scope_markers();
+        let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
+            Self::route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx)
+        else {
+            return None;
+        };
+        let mask = Self::first_visible_controller_mask(view, arm0_start, arm0_end)
+            | Self::first_visible_controller_mask(view, arm1_start, arm1_end);
+        Self::unique_controller_role(mask)
     }
 
     #[inline(always)]
@@ -308,13 +362,23 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
 
         let mut route_row = 0usize;
+        let mut seen_route_ordinals = [false; crate::eff::meta::MAX_EFF_NODES];
         idx = 0;
         while idx < markers.len() {
             let marker = markers[idx];
             if matches!(marker.event, ScopeEvent::Enter)
                 && matches!(marker.scope_kind, ScopeKind::Route)
             {
-                let controller = marker.controller_role;
+                let ordinal = marker.scope_id.local_ordinal() as usize;
+                if ordinal >= seen_route_ordinals.len() {
+                    crate::invariant();
+                }
+                if seen_route_ordinals[ordinal] {
+                    idx += 1;
+                    continue;
+                }
+                seen_route_ordinals[ordinal] = true;
+                let controller = Self::route_controller_role(&view, idx);
                 let decision = Self::route_resolver_decision(&view, marker.scope_id, idx);
                 out.write_route_resolver(
                     columns.route_resolvers,

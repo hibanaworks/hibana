@@ -1,6 +1,6 @@
 use super::{
-    ClusterError, DecisionArm, DynamicResolverEntry, DynamicResolverKey, EffIndex, RendezvousId,
-    ResolverRef, SessionCluster,
+    ClusterError, DecisionArm, DynamicResolverEntry, DynamicResolverKey, RendezvousId, ResolverRef,
+    SessionCluster,
 };
 impl<'cfg, T> SessionCluster<'cfg, T>
 where
@@ -37,7 +37,7 @@ where
         self.with_resident_program_ref(rv_id, program, |compiled| {
             let mut matched_sites = 0usize;
             let mut missing_sites = 0usize;
-            for site in compiled.dynamic_resolver_sites_for(RESOLVER) {
+            for site in compiled.route_resolver_sites_for(RESOLVER) {
                 matched_sites += 1;
                 let site_scope = site.scope();
                 if site_scope.is_none() {
@@ -45,7 +45,7 @@ where
                         resolver_id: RESOLVER,
                     });
                 }
-                let key = DynamicResolverKey::new(rv_id, site.eff_index());
+                let key = DynamicResolverKey::new(rv_id, site_scope);
                 if self.dynamic_resolver(key).is_none() {
                     missing_sites += 1;
                 }
@@ -56,12 +56,11 @@ where
                 });
             }
             self.ensure_dynamic_resolver_capacity(rv_id, missing_sites)?;
-            for site in compiled.dynamic_resolver_sites_for(RESOLVER) {
+            for site in compiled.route_resolver_sites_for(RESOLVER) {
                 self.register_dynamic_resolver_resolver(
                     rv_id,
-                    site.eff_index(),
                     site.resolver_id(),
-                    site.resolver_scope(),
+                    site.scope(),
                     resolver,
                 )?;
             }
@@ -72,12 +71,11 @@ where
     pub(crate) fn register_dynamic_resolver_resolver<const RESOLVER: u16>(
         &self,
         rv_id: RendezvousId,
-        eff_index: EffIndex,
         resolver_id: u16,
         scope: crate::global::const_dsl::ScopeId,
         resolver_ref: ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), ClusterError> {
-        let key = DynamicResolverKey::new(rv_id, eff_index);
+        let key = DynamicResolverKey::new(rv_id, scope);
         if resolver_id != RESOLVER {
             return Err(ClusterError::ResolverReject {
                 resolver_id: RESOLVER,
@@ -91,7 +89,6 @@ where
         let entry = DynamicResolverEntry {
             resolver_ref: resolver_ref.erase(),
             resolver_id,
-            scope,
         };
         if self.dynamic_resolver(key).is_none() {
             self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
@@ -102,10 +99,10 @@ where
     pub(crate) fn resolve_dynamic_resolver(
         &self,
         rv_id: RendezvousId,
-        eff_index: EffIndex,
+        scope: crate::global::const_dsl::ScopeId,
         resolver_id: u16,
     ) -> Result<DecisionArm, ClusterError> {
-        let key = DynamicResolverKey::new(rv_id, eff_index);
+        let key = DynamicResolverKey::new(rv_id, scope);
         let Some(entry) = self.dynamic_resolver(key) else {
             return Err(ClusterError::DynamicResolverInvariant { resolver_id });
         };
@@ -117,9 +114,6 @@ where
             .resolver_ref
             .resolve_decision()
             .map_err(|_| ClusterError::ResolverReject { resolver_id })?;
-        if entry.scope.is_none() {
-            return Err(ClusterError::ResolverReject { resolver_id });
-        }
         Ok(arm)
     }
 }

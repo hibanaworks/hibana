@@ -452,7 +452,15 @@ impl RoleLaneScratch {
     #[inline(always)]
     const fn route_scope_conflict_for_commit(&self, scope: ScopeId) -> PackedEventConflict {
         match self.route_slot_for_scope(scope) {
-            Some(slot) => self.route_scope_conflicts[slot],
+            Some(slot) => {
+                let conflict = self.route_scope_conflicts[slot];
+                match conflict.to_conflict() {
+                    Some(LocalConflict::RouteArm { scope: parent, .. }) if parent.same(scope) => {
+                        PackedEventConflict::none()
+                    }
+                    Some(_) | None => conflict,
+                }
+            }
             None => PackedEventConflict::none(),
         }
     }

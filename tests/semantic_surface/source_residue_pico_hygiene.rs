@@ -60,8 +60,6 @@ fn run_script(script: &str) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let output = Command::new("bash")
         .arg(root.join(script))
-        .env("CARGO_BUILD_JOBS", "1")
-        .env("RUST_TEST_THREADS", "1")
         .output()
         .unwrap_or_else(|err| panic!("run {script} failed: {err}"));
     assert!(

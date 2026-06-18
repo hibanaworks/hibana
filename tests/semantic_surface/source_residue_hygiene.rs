@@ -112,7 +112,7 @@ fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
 
 #[test]
 fn resolver_audit_emit_stays_infallible() {
-    let source = read("src/endpoint/kernel/core/decision_resolver/impls.rs");
+    let source = read("src/endpoint/kernel/core/decision_resolver/impls/audit.rs");
     let audit_fn = source
         .split("fn emit_dynamic_resolver_audit")
         .nth(1)
@@ -120,7 +120,7 @@ fn resolver_audit_emit_stays_infallible() {
             tail.split("pub(in crate::endpoint::kernel) fn emit_dynamic_resolver_success_audit")
                 .next()
         })
-        .expect("decision resolver audit emit helper must stay local");
+        .expect("decision resolver audit emit helper must stay in audit owner");
     assert!(
         !audit_fn.contains("SendResult") && !audit_fn.contains("Ok(())"),
         "resolver audit emit must not return Result when it has no error source"

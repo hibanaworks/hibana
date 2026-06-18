@@ -106,12 +106,14 @@ impl ProgramAtomRow {
 #[derive(Clone, Copy)]
 struct ProgramResolverRow {
     offset: u16,
+    scope: crate::global::const_dsl::ScopeId,
     resolver: RouteResolver,
 }
 
 impl ProgramResolverRow {
     const EMPTY: Self = Self {
         offset: u16::MAX,
+        scope: crate::global::const_dsl::ScopeId::none(),
         resolver: RouteResolver::Intrinsic,
     };
 
@@ -119,6 +121,7 @@ impl ProgramResolverRow {
     const fn new(offset: usize, resolver: RouteResolver) -> Self {
         Self {
             offset: ProgramImageSegmentData::compact_count(offset),
+            scope: resolver.scope(),
             resolver,
         }
     }

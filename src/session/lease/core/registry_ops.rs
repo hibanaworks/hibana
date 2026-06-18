@@ -185,14 +185,14 @@ where
                 },
             )?
             .resolver_bucket
-            .insert(key.eff_index, entry)
+            .insert(key.scope, entry)
     }
 
     pub(crate) fn dynamic_resolver(
         &self,
         key: crate::session::cluster::core::DynamicResolverKey,
     ) -> Option<&crate::session::cluster::core::DynamicResolverEntry<'cfg>> {
-        self.entry_ref(&key.rv)?.resolver_bucket.get(key.eff_index)
+        self.entry_ref(&key.rv)?.resolver_bucket.get(key.scope)
     }
 }
 

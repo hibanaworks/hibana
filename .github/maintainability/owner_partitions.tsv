@@ -135,6 +135,7 @@ src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
 src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
 src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
 src/global/compiled/lowering	src/global/compiled/lowering/seal/first_recv_dispatch.rs
+src/global/compiled/lowering	src/global/compiled/lowering/seal/first_visible_frontier.rs
 src/global/compiled/lowering	src/global/compiled/lowering/seal/passive_child.rs
 src/global/role_program	src/global/role_program/image_impl
 src/global/role_program	src/global/role_program/image_impl.rs
@@ -178,6 +179,7 @@ tests	tests/cursor_send_recv_session_fault_cancel.rs
 tests	tests/cursor_send_recv_session_forget_recv.rs
 tests	tests/cursor_send_recv_session_forget_send.rs
 tests	tests/cursor_send_recv_session_progress.rs
+tests	tests/dynamic_route_scope_resolver.rs
 tests	tests/docs_surface.rs
 tests	tests/huge_choreography_compile.rs
 tests	tests/huge_choreography_runtime.rs

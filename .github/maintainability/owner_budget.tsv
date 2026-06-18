@@ -86,7 +86,7 @@ src/global/program.rs	120	1	recursive
 src/global/compiled/images/image.rs	160	1	recursive
 src/global/compiled/images/image/role_descriptor_ref.rs	260	1	recursive
 src/global/compiled/images/mod.rs	50	1	recursive
-src/global/compiled/images/program.rs	260	1	recursive
+src/global/compiled/images/program.rs	120	1	recursive
 src/global/compiled/lowering/driver.rs	350	1	recursive
 src/global/compiled/lowering/driver/impls.rs	220	1	recursive
 src/global/compiled/lowering/driver/impls/image.rs	400	1	recursive

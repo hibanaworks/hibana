@@ -5,8 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
-export RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
 source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg

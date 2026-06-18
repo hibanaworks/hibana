@@ -136,6 +136,16 @@ impl EventCursor {
         self.try_local_meta_from_node(idx)
     }
 
+    #[inline]
+    fn route_authority_at(&self, idx: usize, route_arm: Option<u8>) -> (ScopeId, Option<u8>) {
+        let Some(region) = self.enclosing_route_scope_rows_at(idx) else {
+            return (ScopeId::none(), None);
+        };
+        let scope = region.scope();
+        let selected_arm = route_arm.or_else(|| self.route_arm_for_index(scope, idx));
+        (scope, selected_arm)
+    }
+
     pub(super) fn try_send_meta_from_node(&self, idx: usize) -> Option<SendMeta> {
         let node = self.machine().node(idx);
         match node.action() {
@@ -147,19 +157,26 @@ impl EventCursor {
                 origin,
                 resolver,
                 lane,
-            } => Some(SendMeta {
-                eff_index,
-                peer,
-                label,
-                frame_label,
-                semantic: node.event_semantic(),
-                origin,
-                next: state_index_to_usize(node.next()),
-                scope: node.scope(),
-                route_arm: node.route_arm(),
-                resolver,
-                lane,
-            }),
+            } => {
+                let scope = node.scope();
+                let route_arm = node.route_arm();
+                let (route_scope, selected_route_arm) = self.route_authority_at(idx, route_arm);
+                Some(SendMeta {
+                    eff_index,
+                    peer,
+                    label,
+                    frame_label,
+                    semantic: node.event_semantic(),
+                    origin,
+                    next: state_index_to_usize(node.next()),
+                    scope,
+                    route_scope,
+                    route_arm,
+                    selected_route_arm,
+                    resolver,
+                    lane,
+                })
+            }
             LocalAction::Recv { .. } | LocalAction::Local { .. } | LocalAction::Terminate => None,
         }
     }
@@ -175,20 +192,26 @@ impl EventCursor {
                 origin,
                 resolver,
                 lane,
-            } => Some(RecvMeta {
-                eff_index,
-                peer,
-                label,
-                frame_label,
-                semantic: node.event_semantic(),
-                origin,
-                next: state_index_to_usize(node.next()),
-                scope: node.scope(),
-                route_arm: node.route_arm(),
-                choice: node.choice_mark(),
-                resolver,
-                lane,
-            }),
+            } => {
+                let scope = node.scope();
+                let route_arm = node.route_arm();
+                let (route_scope, _) = self.route_authority_at(idx, route_arm);
+                Some(RecvMeta {
+                    eff_index,
+                    peer,
+                    label,
+                    frame_label,
+                    semantic: node.event_semantic(),
+                    origin,
+                    next: state_index_to_usize(node.next()),
+                    scope,
+                    route_scope,
+                    route_arm,
+                    choice: node.choice_mark(),
+                    resolver,
+                    lane,
+                })
+            }
             LocalAction::Send { .. } | LocalAction::Local { .. } | LocalAction::Terminate => None,
         }
     }
@@ -203,18 +226,24 @@ impl EventCursor {
                 origin,
                 resolver,
                 lane,
-            } => Some(LocalMeta {
-                eff_index,
-                label,
-                frame_label,
-                semantic: node.event_semantic(),
-                origin,
-                next: state_index_to_usize(node.next()),
-                scope: node.scope(),
-                route_arm: node.route_arm(),
-                resolver,
-                lane,
-            }),
+            } => {
+                let scope = node.scope();
+                let route_arm = node.route_arm();
+                let (route_scope, _) = self.route_authority_at(idx, route_arm);
+                Some(LocalMeta {
+                    eff_index,
+                    label,
+                    frame_label,
+                    semantic: node.event_semantic(),
+                    origin,
+                    next: state_index_to_usize(node.next()),
+                    scope,
+                    route_scope,
+                    route_arm,
+                    resolver,
+                    lane,
+                })
+            }
             LocalAction::Send { .. } | LocalAction::Recv { .. } | LocalAction::Terminate => None,
         }
     }

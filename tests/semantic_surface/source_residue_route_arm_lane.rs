@@ -25,7 +25,7 @@ fn route_arm_lane_first_last_use_resident_columns() {
     let last = cursor
         .split("fn route_arm_lane_last_eff_inner")
         .nth(1)
-        .and_then(|tail| tail.split("fn controller_arm_entry_for_label_inner").next())
+        .and_then(|tail| tail.split("fn controller_arm_entry_by_arm_inner").next())
         .expect("route arm lane last-eff implementation must stay present");
 
     assert!(

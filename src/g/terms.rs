@@ -1,6 +1,4 @@
-use super::{
-    Par, ProgramSourceData, ProgramSourceError, ProgramTerm, Resolve, Roll, Route, Send, Seq,
-};
+use super::{Par, ProgramSourceData, ProgramTerm, Resolve, Roll, Route, Send, Seq};
 use crate::global::steps::RoleLaneMask;
 
 impl<const FROM: u8, const TO: u8, M> ProgramTerm for Send<FROM, TO, M>
@@ -33,22 +31,7 @@ where
     const PROGRAM_SOURCE: ProgramSourceData = {
         let left = <Left as ProgramTerm>::PROGRAM_SOURCE;
         let right = <Right as ProgramTerm>::PROGRAM_SOURCE;
-        let left_head = left.route_head();
-        let right_head = right.route_head();
-        let mut route_error = ProgramSourceData::merge_error(left_head.error, right_head.error);
-        if left_head.label == right_head.label {
-            route_error = ProgramSourceData::merge_error(
-                route_error,
-                Some(ProgramSourceError::RouteDuplicateLabel),
-            );
-        }
-        if left_head.controller != right_head.controller {
-            route_error = ProgramSourceData::merge_error(
-                route_error,
-                Some(ProgramSourceError::RouteControllerMismatch),
-            );
-        }
-        left.route_with_controller(right, left_head.controller, route_error)
+        left.route(right)
     };
 }
 

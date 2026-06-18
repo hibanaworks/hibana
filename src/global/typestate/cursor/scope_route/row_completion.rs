@@ -21,6 +21,18 @@ impl EventCursor {
         self.event_row_set_live_events_done(row_set, selected_arm_for_scope)
     }
 
+    pub(super) fn selected_route_arm_completes_scope(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        if self.route_scope_reentry(scope_id) && arm == 0 {
+            return false;
+        }
+        self.selected_route_arm_event_row_done(scope_id, arm, selected_arm_for_scope)
+    }
+
     pub(super) fn dependency_row_live_events_done(
         &self,
         dependency: LocalDependency,

@@ -82,7 +82,7 @@ where
         if meta.label != branch_meta.label
             || meta.frame_label != branch_meta.frame_label
             || meta.lane != branch_meta.lane_wire
-            || meta.scope != branch_meta.scope_id
+            || meta.route_scope != branch_meta.scope_id
         {
             return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
         }
@@ -92,7 +92,7 @@ where
         {
             return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
         }
-        meta.route_arm = Some(branch_meta.selected_arm);
+        meta.selected_route_arm = Some(branch_meta.selected_arm);
 
         Ok(crate::endpoint::kernel::SendPreview::new(
             meta,

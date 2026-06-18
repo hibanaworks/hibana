@@ -15,6 +15,23 @@ impl EventCursor {
         self.route_scope_rows(self.node_scope_id_at(idx))
     }
 
+    pub(crate) fn enclosing_route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
+        let mut selected = None;
+        let mut selected_len = usize::MAX;
+        let mut slot = 0usize;
+        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+            if idx >= region.start() && idx < region.end() {
+                let len = region.end() - region.start();
+                if len < selected_len {
+                    selected = Some(region);
+                    selected_len = len;
+                }
+            }
+            slot += 1;
+        }
+        selected
+    }
+
     #[inline(always)]
     pub(crate) fn checked_route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
         self.route_scope_rows(self.checked_node_scope_id_at(idx)?)
@@ -85,6 +102,27 @@ impl EventCursor {
         self.passive_observer_arm_entry_index(scope_id, arm)
     }
 
+    pub(crate) fn route_arm_for_index(&self, scope_id: ScopeId, idx: usize) -> Option<u8> {
+        let slot = self.route_scope_slot_inner(scope_id)?;
+        let mut arm = 0u8;
+        while arm <= 1 {
+            if let Some(row) = self
+                .machine()
+                .event_program()
+                .route_arm_event_row_by_slot(slot, arm)
+                && idx >= row.start()
+                && idx < row.end()
+            {
+                return Some(arm);
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        None
+    }
+
     #[inline(always)]
     pub(crate) fn route_scope_reentry(&self, scope_id: ScopeId) -> bool {
         self.machine().route_scope_reentry(scope_id)
@@ -97,7 +135,7 @@ impl EventCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        if let Some((resolver, _, _)) = self.route_scope_controller_resolver(scope_id)
+        if let Some((resolver, _)) = self.route_scope_controller_resolver(scope_id)
             && resolver.is_dynamic()
         {
             return None;
@@ -142,7 +180,7 @@ impl EventCursor {
         !self.is_route_controller(scope_id)
             && !self
                 .route_scope_controller_resolver(scope_id)
-                .is_some_and(|(resolver, _, _)| resolver.is_dynamic())
+                .is_some_and(|(resolver, _)| resolver.is_dynamic())
     }
 
     pub(crate) fn passive_descendant_dispatch_arm_from_exact_frame_label(

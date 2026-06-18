@@ -4,6 +4,7 @@ use super::{
     SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep, StagedSendPayload,
     StateIndex, TapFrameMeta, Transport, ids, lane_port,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
+    prepare_route_site_materialization_rows_from_resident_route_commit_range,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -17,7 +18,7 @@ where
         event_idx: usize,
         meta: SendMeta,
     ) -> SendResult<super::SelectedRouteCommitRowsRef> {
-        let Some(selected_arm) = meta.route_arm else {
+        let Some(selected_arm) = meta.selected_route_arm else {
             return Ok(super::SelectedRouteCommitRowsRef::EMPTY);
         };
         let Self {
@@ -27,14 +28,25 @@ where
             ..
         } = self;
         let mut rows = route_commit_rows.begin();
-        prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
-            decision_state,
-            cursor,
-            meta.lane,
-            event_idx,
-            selected_arm,
-            &mut rows,
-        )
+        if meta.route_scope.is_none() {
+            prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
+                decision_state,
+                cursor,
+                meta.lane,
+                event_idx,
+                selected_arm,
+                &mut rows,
+            )
+        } else {
+            prepare_route_site_materialization_rows_from_resident_route_commit_range(
+                decision_state,
+                cursor,
+                meta.lane,
+                meta.route_scope,
+                selected_arm,
+                &mut rows,
+            )
+        }
         .map_err(|_| SendError::PhaseInvariant)?;
         Ok(rows.as_commit_rows(meta.lane))
     }
@@ -137,8 +149,8 @@ where
             preview_idx,
             crate::global::typestate::EventCommitMeta::from(meta),
             |scope| {
-                if scope == meta.scope {
-                    meta.route_arm
+                if scope == meta.route_scope {
+                    meta.selected_route_arm
                 } else {
                     self.selected_arm_for_scope(scope)
                 }
@@ -148,8 +160,8 @@ where
             Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
         };
         let route_rows = self.build_send_selected_route_rows(preview_idx, meta)?;
-        let current_route_scope = meta.scope;
-        let current_route_arm = meta.route_arm;
+        let current_route_scope = meta.route_scope;
+        let current_route_arm = meta.selected_route_arm;
         let reentry_cursor =
             self.cursor
                 .send_reentry_cursor_step(meta, enabled.cursor_after(), |scope| {

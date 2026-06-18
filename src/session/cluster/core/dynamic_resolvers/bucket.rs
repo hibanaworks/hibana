@@ -2,14 +2,14 @@ use core::marker::PhantomData;
 
 use super::DynamicResolverEntry;
 use crate::{
-    eff::EffIndex,
+    global::const_dsl::ScopeId,
     rendezvous::core::Sidecar,
     session::cluster::error::{ClusterError, ResourceScope},
 };
 
 #[derive(Clone, Copy)]
 pub(in crate::session::cluster::core) struct ResolverBucketEntry<'cfg> {
-    pub(crate) eff_index: EffIndex,
+    pub(crate) scope: ScopeId,
     entry: DynamicResolverEntry<'cfg>,
 }
 
@@ -205,7 +205,7 @@ impl<'cfg> ResolverBucket<'cfg> {
 
     pub(crate) fn insert(
         &mut self,
-        eff_index: EffIndex,
+        scope: ScopeId,
         entry: DynamicResolverEntry<'cfg>,
     ) -> Result<(), ClusterError> {
         let entries = self.entries_ptr();
@@ -223,7 +223,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             unsafe {
                 let slot = &mut *entries.add(idx);
                 if let Some(stored) = slot {
-                    if stored.eff_index == eff_index {
+                    if stored.scope == scope {
                         stored.entry = entry;
                         return Ok(());
                     }
@@ -242,12 +242,12 @@ impl<'cfg> ResolverBucket<'cfg> {
         installed resolver sidecar, and `&mut self` still owns the bucket slot
         mutation. */
         unsafe {
-            *entries.add(idx) = Some(ResolverBucketEntry { eff_index, entry });
+            *entries.add(idx) = Some(ResolverBucketEntry { scope, entry });
         }
         Ok(())
     }
 
-    pub(crate) fn get(&self, eff_index: EffIndex) -> Option<&DynamicResolverEntry<'cfg>> {
+    pub(crate) fn get(&self, scope: ScopeId) -> Option<&DynamicResolverEntry<'cfg>> {
         let entries = self.entries_ptr();
         if entries.is_null() {
             return None;
@@ -259,7 +259,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             and does not mutate resolver entries. */
             unsafe {
                 if let Some(stored) = (&*entries.add(idx)).as_ref()
-                    && stored.eff_index == eff_index
+                    && stored.scope == scope
                 {
                     return Some(&stored.entry);
                 }

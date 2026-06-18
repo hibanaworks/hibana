@@ -1,4 +1,4 @@
-use super::{ClusterError, EffIndex, PhantomData, RendezvousId, fmt};
+use super::{ClusterError, PhantomData, RendezvousId, fmt};
 // # Unsafe Owner Contract
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
@@ -232,12 +232,12 @@ unsafe fn dispatch_decision_state<S>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicResolverKey {
     pub(crate) rv: RendezvousId,
-    pub(crate) eff_index: EffIndex,
+    pub(crate) scope: crate::global::const_dsl::ScopeId,
 }
 
 impl DynamicResolverKey {
-    pub(crate) const fn new(rv: RendezvousId, eff_index: EffIndex) -> Self {
-        Self { rv, eff_index }
+    pub(crate) const fn new(rv: RendezvousId, scope: crate::global::const_dsl::ScopeId) -> Self {
+        Self { rv, scope }
     }
 }
 
@@ -245,5 +245,4 @@ impl DynamicResolverKey {
 pub(crate) struct DynamicResolverEntry<'cfg> {
     pub(crate) resolver_ref: ErasedResolverRef<'cfg>,
     pub(crate) resolver_id: u16,
-    pub(crate) scope: crate::global::const_dsl::ScopeId,
 }

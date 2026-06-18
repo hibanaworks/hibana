@@ -146,15 +146,15 @@ impl EventCursor {
         {
             return current;
         }
-        if let Some(region) = self.route_scope_rows_at(current)
+        if let Some(region) = self.enclosing_route_scope_rows_at(current)
             && self.is_route_controller(region.scope())
             && self
-                .controller_arm_entry_for_label(region.scope(), target_label)
+                .send_preview_controller_arm_entry_for_label(region.scope(), target_label)
                 .is_some()
         {
             return current;
         }
-        if let Some(region) = self.route_scope_rows_at(current)
+        if let Some(region) = self.enclosing_route_scope_rows_at(current)
             && let Some(selected_arm) = selected_arm_for_scope(region.scope())
             && let Some(idx) = self.selected_route_label_index(
                 region.scope(),
@@ -241,6 +241,7 @@ impl EventCursor {
             if self
                 .controller_arm_entry_by_arm(scope_id, arm)
                 .is_some_and(|(entry, _)| state_index_to_usize(entry) == idx)
+                || self.route_arm_for_index(scope_id, idx) == Some(arm)
             {
                 return true;
             }
@@ -264,6 +265,11 @@ impl EventCursor {
                 && label == target_label
             {
                 return Some((arm, state_index_to_usize(entry)));
+            }
+            if let Some(idx) =
+                self.selected_route_label_index(scope_id, target_label, arm, |_| None)
+            {
+                return Some((arm, idx));
             }
             if arm == 1 {
                 break;
@@ -316,7 +322,7 @@ impl EventCursor {
             preview_route_arm,
             arm_for_scope,
         )?;
-        if !self.selected_route_arm_event_row_done(scope_id, arm, |scope| {
+        if !self.selected_route_arm_completes_scope(scope_id, arm, |scope| {
             self.send_preview_selected_arm_for_scope_with_route(
                 scope,
                 preview_route_arm,
@@ -339,13 +345,11 @@ impl EventCursor {
         }
         if let Some(meta) = self.try_send_meta_at(idx)
             && meta.label == target_label
-            && self.index_for_lane_step(meta.lane as usize) == Some(idx)
         {
             return Some(idx);
         }
         if let Some(meta) = self.try_local_meta_at(idx)
             && meta.label == target_label
-            && self.index_for_lane_step(meta.lane as usize) == Some(idx)
         {
             return Some(idx);
         }
@@ -371,15 +375,15 @@ impl EventCursor {
         {
             return idx;
         }
-        if let Some(region) = self.route_scope_rows_at(self.index())
+        if let Some(region) = self.enclosing_route_scope_rows_at(self.index())
             && self.is_route_controller(region.scope())
             && self
-                .controller_arm_entry_for_label(region.scope(), target_label)
+                .send_preview_controller_arm_entry_for_label(region.scope(), target_label)
                 .is_some()
         {
             return self.index();
         }
-        if let Some(region) = self.route_scope_rows_at(self.index())
+        if let Some(region) = self.enclosing_route_scope_rows_at(self.index())
             && let Some(selected_arm) = selected_arm_for_scope(region.scope())
             && let Some(idx) = self.selected_route_label_index(
                 region.scope(),
@@ -390,7 +394,7 @@ impl EventCursor {
         {
             return idx;
         }
-        if self.route_scope_rows_at(self.index()).is_some() {
+        if self.enclosing_route_scope_rows_at(self.index()).is_some() {
             return self.index();
         }
         if let Some(idx) = self.first_pending_step_index(usize::MAX) {
@@ -416,7 +420,7 @@ impl EventCursor {
         };
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
-        if let Some(region) = self.route_scope_rows_at(idx) {
+        if let Some(region) = self.enclosing_route_scope_rows_at(idx) {
             let scope_id = region.scope();
             let at_route_start = idx == region.start();
             let unlabeled =
@@ -444,6 +448,17 @@ impl EventCursor {
                             arm,
                         });
                     }
+                }
+                if at_decision
+                    && preview_route_arm.is_none()
+                    && let Some(arm) = self.route_arm_for_index(scope_id, idx)
+                    && let Some(lane) = self.send_preview_lane_at(idx)
+                {
+                    preview_route_arm = Some(SendPreviewRouteArm {
+                        lane,
+                        scope: scope_id,
+                        arm,
+                    });
                 }
             } else if at_decision {
                 let lane_wire = lane_for_label_or_offer(scope_id, target_label);
@@ -501,7 +516,7 @@ impl EventCursor {
                     idx = state_index_to_usize(self.node_next_index_at(idx));
                     continue;
                 }
-                if let Some(region) = self.route_scope_rows_at(idx)
+                if let Some(region) = self.enclosing_route_scope_rows_at(idx)
                     && let Some(end) = self.send_preview_route_scope_end_if_complete(
                         region.scope(),
                         preview_route_arm,
@@ -514,7 +529,7 @@ impl EventCursor {
                 return Err(SendPreviewError::Invariant);
             }
 
-            let current_meta = if self.is_local_action_at(idx) {
+            let mut current_meta = if self.is_local_action_at(idx) {
                 let local = self
                     .try_local_meta_at(idx)
                     .ok_or(SendPreviewError::Invariant)?;
@@ -527,7 +542,9 @@ impl EventCursor {
                     origin: local.origin,
                     next: local.next,
                     scope: local.scope,
+                    route_scope: local.route_scope,
                     route_arm: local.route_arm,
+                    selected_route_arm: local.route_arm,
                     resolver: local.resolver,
                     lane: local.lane,
                 }
@@ -535,7 +552,14 @@ impl EventCursor {
                 self.try_send_meta_at(idx)
                     .ok_or(SendPreviewError::Invariant)?
             };
-
+            if let Some(preview) = preview_route_arm {
+                if current_meta.route_scope.is_none() {
+                    current_meta.route_scope = preview.scope;
+                }
+                if current_meta.route_scope == preview.scope {
+                    current_meta.selected_route_arm = Some(preview.arm);
+                }
+            }
             let Some(progress_step) = self
                 .pending_event_progress_step(idx, current_meta.lane, |scope| {
                     self.send_preview_selected_arm_for_scope_with_route(
@@ -571,7 +595,7 @@ impl EventCursor {
                 return Ok((current_meta, StateIndex::from_usize(idx)));
             }
 
-            if let Some(region) = self.route_scope_rows_at(idx)
+            if let Some(region) = self.enclosing_route_scope_rows_at(idx)
                 && let Some(end) = self.send_preview_route_scope_end_if_complete(
                     region.scope(),
                     preview_route_arm,

@@ -1,36 +1,21 @@
-use crate::{eff::EffIndex, global::const_dsl::ScopeId};
+use crate::global::const_dsl::ScopeId;
 
 /// Precomputed dynamic resolver site discovered during program lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DynamicResolverSite {
-    eff_index: EffIndex,
+pub(crate) struct RouteResolverSite {
     resolver_id: u16,
     scope: ScopeId,
 }
 
-impl DynamicResolverSite {
+impl RouteResolverSite {
     #[inline(always)]
-    pub(crate) const fn new(eff_index: EffIndex, resolver_id: u16, scope: ScopeId) -> Self {
-        Self {
-            eff_index,
-            resolver_id,
-            scope,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn eff_index(&self) -> EffIndex {
-        self.eff_index
+    pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
+        Self { resolver_id, scope }
     }
 
     #[inline(always)]
     pub(crate) const fn resolver_id(&self) -> u16 {
         self.resolver_id
-    }
-
-    #[inline(always)]
-    pub(crate) const fn resolver_scope(&self) -> ScopeId {
-        self.scope
     }
 
     #[inline(always)]

@@ -17,13 +17,6 @@ pub(crate) struct ProgramSourceData {
     error: Option<ProgramSourceError>,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RouteHead {
-    pub(crate) controller: u8,
-    pub(crate) label: u8,
-    pub(crate) error: Option<ProgramSourceError>,
-}
-
 impl ProgramSourceData {
     pub(crate) const fn from_parts(
         eff: EffList,
@@ -65,30 +58,6 @@ impl ProgramSourceData {
         self.eff
     }
 
-    pub(crate) const fn route_head(&self) -> RouteHead {
-        if self.eff.is_empty() {
-            return RouteHead {
-                controller: 0,
-                label: 0,
-                error: Some(ProgramSourceError::RouteArmHead),
-            };
-        }
-        let node = self.eff.node_at(0);
-        if !matches!(node.kind, crate::eff::EffKind::Atom) {
-            return RouteHead {
-                controller: 0,
-                label: 0,
-                error: Some(ProgramSourceError::RouteArmHead),
-            };
-        }
-        let atom = node.atom_data();
-        RouteHead {
-            controller: atom.from,
-            label: atom.label,
-            error: None,
-        }
-    }
-
     pub(crate) const fn seq(self, next: Self) -> Self {
         let error = Self::merge_error(self.error, next.error);
         let rebased = next.eff.rebase_scopes(self.scope_budget());
@@ -124,6 +93,7 @@ impl ProgramSourceData {
                 if matches!(marker.event, ScopeEvent::Enter)
                     && matches!(marker.scope_kind, ScopeKind::Route)
                     && marker.scope_id.same(scope)
+                    && !found
                 {
                     eff = eff.push_resolver(
                         marker.offset,
@@ -165,26 +135,18 @@ impl ProgramSourceData {
         }
     }
 
-    pub(crate) const fn route_with_controller(
-        self,
-        right: Self,
-        controller: u8,
-        route_error: Option<ProgramSourceError>,
-    ) -> Self {
+    pub(crate) const fn route(self, right: Self) -> Self {
         let mut error = Self::merge_error(self.error, right.error);
-        error = Self::merge_error(error, route_error);
+        if self.eff.is_empty() || right.eff.is_empty() {
+            error = Self::merge_error(error, Some(ProgramSourceError::RouteArmAbsent));
+        }
         let scope = ScopeId::route(0);
         let left_budget = self.scope_budget();
         let left_arm = self.into_eff();
         let right_arm = right.into_eff();
         let right_offset = add_scope_budget(1, left_budget);
-        let left_eff = left_arm
-            .rebase_scopes(1)
-            .with_scope_controller(scope, controller);
-        let right_eff = right_arm
-            .rebase_scopes(right_offset)
-            .with_scope(scope)
-            .with_scope_controller_role(scope, controller);
+        let left_eff = left_arm.rebase_scopes(1).with_scope(scope);
+        let right_eff = right_arm.rebase_scopes(right_offset).with_scope(scope);
         Self {
             eff: left_eff.extend_list(right_eff),
             role_lane_mask: self.role_lane_mask.union(

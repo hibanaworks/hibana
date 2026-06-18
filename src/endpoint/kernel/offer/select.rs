@@ -525,7 +525,7 @@ where
             && self
                 .cursor
                 .route_scope_controller_resolver(scope_id)
-                .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
+                .is_some_and(|(resolver, _)| resolver.is_dynamic());
         let frontier_facts = CursorEndpoint::<ROLE, T>::frontier_facts_at(
             &self.cursor,
             scope_id,
@@ -638,7 +638,7 @@ where
         let is_dynamic_route_scope = self
             .cursor
             .route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
+            .is_some_and(|(resolver, _)| resolver.is_dynamic());
         if is_dynamic_route_scope {
             return None;
         }

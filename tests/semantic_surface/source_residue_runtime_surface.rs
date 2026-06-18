@@ -1,14 +1,17 @@
 use super::common::*;
 
 fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
-    let marker = format!("struct {name} {{");
-    let visible_marker = format!("pub(crate) struct {name} {{");
+    let marker = format!("struct {name}");
+    let visible_marker = format!("pub(crate) struct {name}");
     let tail = source
         .split(&marker)
         .nth(1)
         .or_else(|| source.split(&visible_marker).nth(1))
         .unwrap_or_else(|| panic!("{name} struct must stay visible"));
-    tail.split("\n}")
+    tail.split_once('{')
+        .unwrap_or_else(|| panic!("{name} struct body must start with an opening brace"))
+        .1
+        .split("\n}")
         .next()
         .unwrap_or_else(|| panic!("{name} struct body must stay visible"))
 }
@@ -232,7 +235,7 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
     );
     for required in [
         "scope: ScopeId,",
-        "pub(crate) const fn resolver_scope(&self) -> ScopeId",
+        "pub(crate) const fn scope(&self) -> ScopeId",
         "pub(crate) scope: crate::global::const_dsl::ScopeId",
         "scope: ScopeId,",
         "pub(crate) struct RouteFrame {\n    pub(crate) scope: ScopeId,",
@@ -258,6 +261,81 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
             "scope identity must not reintroduce compact/u64/canonical residue: {forbidden}"
         );
     }
+}
+
+#[test]
+fn route_resolver_authority_is_scope_keyed() {
+    let const_dsl = read("src/global/const_dsl.rs");
+    let eff_list = read("src/global/const_dsl/eff_list.rs");
+    let source = read("src/g/source.rs");
+    let seal = read("src/global/compiled/lowering/seal.rs");
+    let blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
+    let program = read("src/global/compiled/images/program.rs");
+    let program_ref = read("src/global/compiled/images/image/program_ref.rs");
+    let dynamic_resolvers = read("src/session/cluster/core/dynamic_resolvers.rs");
+    let dynamic_entry = named_struct_body(&dynamic_resolvers, "DynamicResolverEntry");
+    let bucket = read("src/session/cluster/core/dynamic_resolvers/bucket.rs");
+    let session_effects = read("src/session/cluster/core/session_effect_steps.rs");
+    let production_scope = [
+        const_dsl.as_str(),
+        eff_list.as_str(),
+        source.as_str(),
+        seal.as_str(),
+        blob_storage.as_str(),
+        program.as_str(),
+        program_ref.as_str(),
+        dynamic_resolvers.as_str(),
+        bucket.as_str(),
+        session_effects.as_str(),
+    ]
+    .join("\n");
+
+    for required in [
+        "pub(crate) struct RouteResolverSite",
+        "pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self",
+        "pub(crate) const fn scope(&self) -> ScopeId",
+        "pub(crate) struct DynamicResolverKey {\n    pub(crate) rv: RendezvousId,\n    pub(crate) scope: crate::global::const_dsl::ScopeId,",
+        "pub(crate) const fn new(rv: RendezvousId, scope: crate::global::const_dsl::ScopeId) -> Self",
+        "pub(crate) fn route_resolver_sites_for",
+        "compiled.route_resolver_sites_for(RESOLVER)",
+        "let site_scope = site.scope();",
+        "DynamicResolverKey::new(",
+        "site_scope)",
+        "view.resolver_for_scope(route_scope)",
+        "resolver_for_scope(&self, scope: ScopeId)",
+    ] {
+        assert!(
+            production_scope.contains(required),
+            "route resolver authority must stay scope-keyed: {required}"
+        );
+    }
+    for forbidden in [
+        "DynamicResolverSite",
+        "dynamic_resolver_sites_for",
+        "first_route_head_decision_resolver_id",
+        "nested_non_resolver_enter",
+        "resident_resolver_at(scope_start)",
+        "ProjectionRouteResolverMismatch",
+        "ProjectionRouteResolverAbsent",
+        "RouteHead",
+        "route_head",
+        "RouteArmHead",
+        "RouteDuplicateLabel",
+        "pub(crate) controller_role",
+        "marker.controller_role",
+        "with_scope_controller",
+        "with_scope_controller_role",
+        "eff_index: EffIndex",
+    ] {
+        assert!(
+            !production_scope.contains(forbidden),
+            "route resolver authority must not regain arm-head or eff-index residue: {forbidden}"
+        );
+    }
+    assert!(
+        !dynamic_entry.contains("scope:"),
+        "dynamic resolver entry must not duplicate the scope key owned by DynamicResolverKey/bucket"
+    );
 }
 
 #[test]

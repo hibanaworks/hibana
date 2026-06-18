@@ -20,7 +20,8 @@ macro_rules! final_form_protocol {
                     g::send::<0, 1, Msg<21, ()>>(),
                     g::send::<2, 3, Msg<22, ()>>(),
                 ),
-            ),
+            )
+            .resolve::<0x9120>(),
             g::send::<1, 0, Msg<23, ()>>(),
         )
     };

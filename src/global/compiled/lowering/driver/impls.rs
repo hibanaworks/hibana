@@ -69,6 +69,25 @@ impl<'a> CompiledProgramView<'a> {
         }
         None
     }
+
+    #[inline(always)]
+    pub(crate) const fn resolver_for_scope(
+        &self,
+        scope: crate::global::const_dsl::ScopeId,
+    ) -> Option<RouteResolver> {
+        if scope.is_none() {
+            return None;
+        }
+        let mut row_idx = 0usize;
+        while row_idx < self.resolver_rows.len() {
+            let row = self.resolver_rows[row_idx];
+            if row.scope.same(scope) {
+                return Some(row.resolver.with_scope(scope));
+            }
+            row_idx += 1;
+        }
+        None
+    }
 }
 
 impl ProgramImageValidationData {

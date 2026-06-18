@@ -362,6 +362,7 @@ where
         if let Some(step) = delta.lane_relocation() {
             self.apply_prepared_lane_relocation(step);
         }
+        self.apply_prepared_route_completion_cursor(delta.selected_routes());
         CommittedCommitDelta {
             event: delta.event(),
             selected_routes: delta.take_selected_routes(),
@@ -383,6 +384,44 @@ where
     fn apply_prepared_lane_relocation(&mut self, target: super::RelocatableResidentLaneStep) {
         let refresh = self.cursor.set_lane_cursor_to_relocatable_step(target);
         self.refresh_after_cursor_move(refresh);
+    }
+
+    #[inline(always)]
+    fn selected_arm_from_prepared_rows(
+        cursor: &super::EventCursor,
+        rows: &super::PreparedRouteCommitRows,
+        scope: super::ScopeId,
+    ) -> Option<u8> {
+        let mut idx = 0usize;
+        while idx < rows.len() {
+            let row = rows.get(cursor, idx)?;
+            if row.scope() == scope {
+                return Some(row.selected_arm());
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    fn apply_prepared_route_completion_cursor(&mut self, rows: &super::PreparedRouteCommitRows) {
+        let idx = self.cursor.index();
+        if self.cursor.enclosing_route_scope_rows_at(idx).is_none() {
+            return;
+        }
+        let cursor = &self.cursor;
+        let decision_state = &self.decision_state;
+        let Some(end) = cursor.selected_enclosing_route_scope_end_at(idx, |scope| {
+            Self::selected_arm_from_prepared_rows(cursor, rows, scope).or_else(|| {
+                let scope_slot = cursor.route_scope_slot(scope)?;
+                decision_state.selected_arm_for_scope_slot(scope_slot)
+            })
+        }) else {
+            return;
+        };
+        if end != idx && self.cursor.contains_node_index(end) {
+            self.cursor.set_index(end);
+        }
     }
 
     #[inline(always)]

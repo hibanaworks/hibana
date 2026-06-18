@@ -57,21 +57,26 @@ impl<T> DerefMut for LeasedState<T> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointArenaSection {
-    offset: usize,
-    align: usize,
-    pub(crate) bytes: usize,
-    count: usize,
+    offset: u32,
+    bytes: u32,
+    count: u32,
+    align: u16,
 }
 
 impl EndpointArenaSection {
     #[inline(always)]
     pub(crate) const fn offset(self) -> usize {
-        self.offset
+        self.offset as usize
     }
 
     #[inline(always)]
     pub(crate) const fn count(self) -> usize {
-        self.count
+        self.count as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn bytes(self) -> usize {
+        self.bytes as usize
     }
 }
 
@@ -116,123 +121,119 @@ impl EndpointArenaLayout {
         let mut total_align = 1usize;
 
         let event_cursor_state = Self::section::<EventCursorState>(offset);
-        offset = event_cursor_state.offset + event_cursor_state.bytes;
-        total_align = max_usize(total_align, event_cursor_state.align);
+        offset = event_cursor_state.end_offset();
+        total_align = max_usize(total_align, event_cursor_state.align());
 
         let event_cursor_lane_cursors =
             Self::section_array::<u16>(offset, footprint.logical_lane_count);
-        offset = event_cursor_lane_cursors.offset + event_cursor_lane_cursors.bytes;
-        total_align = max_usize(total_align, event_cursor_lane_cursors.align);
+        offset = event_cursor_lane_cursors.end_offset();
+        total_align = max_usize(total_align, event_cursor_lane_cursors.align());
 
         let event_cursor_current_step_label_codes =
             Self::section_array::<u16>(offset, footprint.logical_lane_count);
-        offset = event_cursor_current_step_label_codes.offset
-            + event_cursor_current_step_label_codes.bytes;
-        total_align = max_usize(total_align, event_cursor_current_step_label_codes.align);
+        offset = event_cursor_current_step_label_codes.end_offset();
+        total_align = max_usize(total_align, event_cursor_current_step_label_codes.align());
 
         let event_cursor_completed_event_words =
             Self::section_array::<u32>(offset, bit_word_count(footprint.local_step_count));
-        offset =
-            event_cursor_completed_event_words.offset + event_cursor_completed_event_words.bytes;
-        total_align = max_usize(total_align, event_cursor_completed_event_words.align);
+        offset = event_cursor_completed_event_words.end_offset();
+        total_align = max_usize(total_align, event_cursor_completed_event_words.align());
 
         let decision_state = Self::section::<RouteState>(offset);
-        offset = decision_state.offset + decision_state.bytes;
-        total_align = max_usize(total_align, decision_state.align);
+        offset = decision_state.end_offset();
+        total_align = max_usize(total_align, decision_state.align());
 
         let route_state_lane_dense_by_lane =
             Self::section_array::<DenseLaneOrdinal>(offset, footprint.logical_lane_count);
-        offset = route_state_lane_dense_by_lane.offset + route_state_lane_dense_by_lane.bytes;
-        total_align = max_usize(total_align, route_state_lane_dense_by_lane.align);
+        offset = route_state_lane_dense_by_lane.end_offset();
+        total_align = max_usize(total_align, route_state_lane_dense_by_lane.align());
 
         let route_state_lane_route_arm_lens =
             Self::section_array::<u8>(offset, footprint.active_lane_count);
-        offset = route_state_lane_route_arm_lens.offset + route_state_lane_route_arm_lens.bytes;
-        total_align = max_usize(total_align, route_state_lane_route_arm_lens.align);
+        offset = route_state_lane_route_arm_lens.end_offset();
+        total_align = max_usize(total_align, route_state_lane_route_arm_lens.align());
 
         let route_state_lane_reentry_counts =
             Self::section_array::<u8>(offset, footprint.active_lane_count);
-        offset = route_state_lane_reentry_counts.offset + route_state_lane_reentry_counts.bytes;
-        total_align = max_usize(total_align, route_state_lane_reentry_counts.align);
+        offset = route_state_lane_reentry_counts.end_offset();
+        total_align = max_usize(total_align, route_state_lane_reentry_counts.align());
 
         let route_state_scope_selected_arms = Self::section_array::<RouteScopeSelectedArmSlot>(
             offset,
             footprint.scope_evidence_count(),
         );
-        offset = route_state_scope_selected_arms.offset + route_state_scope_selected_arms.bytes;
-        total_align = max_usize(total_align, route_state_scope_selected_arms.align);
+        offset = route_state_scope_selected_arms.end_offset();
+        total_align = max_usize(total_align, route_state_scope_selected_arms.align());
 
         let route_state_lane_word_count = footprint.lane_word_count();
         let route_state_lane_reentry_lanes =
             Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset = route_state_lane_reentry_lanes.offset + route_state_lane_reentry_lanes.bytes;
-        total_align = max_usize(total_align, route_state_lane_reentry_lanes.align);
+        offset = route_state_lane_reentry_lanes.end_offset();
+        total_align = max_usize(total_align, route_state_lane_reentry_lanes.align());
 
         let route_state_lane_offer_reentry_lanes =
             Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset = route_state_lane_offer_reentry_lanes.offset
-            + route_state_lane_offer_reentry_lanes.bytes;
-        total_align = max_usize(total_align, route_state_lane_offer_reentry_lanes.align);
+        offset = route_state_lane_offer_reentry_lanes.end_offset();
+        total_align = max_usize(total_align, route_state_lane_offer_reentry_lanes.align());
 
         let route_state_active_offer_lanes =
             Self::section_array::<LaneWord>(offset, route_state_lane_word_count);
-        offset = route_state_active_offer_lanes.offset + route_state_active_offer_lanes.bytes;
-        total_align = max_usize(total_align, route_state_active_offer_lanes.align);
+        offset = route_state_active_offer_lanes.end_offset();
+        total_align = max_usize(total_align, route_state_active_offer_lanes.align());
 
         let route_commit_row_set_builder = Self::section::<RouteCommitRowSetBuilder>(offset);
-        offset = route_commit_row_set_builder.offset + route_commit_row_set_builder.bytes;
-        total_align = max_usize(total_align, route_commit_row_set_builder.align);
+        offset = route_commit_row_set_builder.end_offset();
+        total_align = max_usize(total_align, route_commit_row_set_builder.align());
 
         let route_arm_stack = Self::section_array::<RouteArmState>(
             offset,
             checked_usize_mul(footprint.active_lane_count, footprint.max_route_stack_depth),
         );
-        offset = route_arm_stack.offset + route_arm_stack.bytes;
-        total_align = max_usize(total_align, route_arm_stack.align);
+        offset = route_arm_stack.end_offset();
+        total_align = max_usize(total_align, route_arm_stack.align());
 
         let lane_offer_state_slots =
             Self::section_array::<LaneOfferState>(offset, footprint.active_lane_count);
-        offset = lane_offer_state_slots.offset + lane_offer_state_slots.bytes;
-        total_align = max_usize(total_align, lane_offer_state_slots.align);
+        offset = lane_offer_state_slots.end_offset();
+        total_align = max_usize(total_align, lane_offer_state_slots.align());
 
         let frontier_state = Self::section::<FrontierState>(offset);
-        offset = frontier_state.offset + frontier_state.bytes;
-        total_align = max_usize(total_align, frontier_state.align);
+        offset = frontier_state.end_offset();
+        total_align = max_usize(total_align, frontier_state.align());
 
         let frontier_root_rows =
             Self::section_array::<RootFrontierState>(offset, footprint.active_lane_count);
-        offset = frontier_root_rows.offset + frontier_root_rows.bytes;
-        total_align = max_usize(total_align, frontier_root_rows.align);
+        offset = frontier_root_rows.end_offset();
+        total_align = max_usize(total_align, frontier_root_rows.align());
 
         let frontier_root_active_slots =
             Self::section_array::<ActiveEntrySlot>(offset, footprint.frontier_entry_count());
-        offset = frontier_root_active_slots.offset + frontier_root_active_slots.bytes;
-        total_align = max_usize(total_align, frontier_root_active_slots.align);
+        offset = frontier_root_active_slots.end_offset();
+        total_align = max_usize(total_align, frontier_root_active_slots.align());
 
         let frontier_root_observed_key_slots = Self::section_array::<FrontierObservationSlot>(
             offset,
             footprint.frontier_entry_count(),
         );
-        offset = frontier_root_observed_key_slots.offset + frontier_root_observed_key_slots.bytes;
-        total_align = max_usize(total_align, frontier_root_observed_key_slots.align);
+        offset = frontier_root_observed_key_slots.end_offset();
+        total_align = max_usize(total_align, frontier_root_observed_key_slots.align());
 
         let frontier_root_observed_offer_lanes = Self::section_array::<LaneWord>(
             offset,
             checked_usize_mul(footprint.active_lane_count, footprint.lane_word_count()),
         );
-        offset =
-            frontier_root_observed_offer_lanes.offset + frontier_root_observed_offer_lanes.bytes;
-        total_align = max_usize(total_align, frontier_root_observed_offer_lanes.align);
+        offset = frontier_root_observed_offer_lanes.end_offset();
+        total_align = max_usize(total_align, frontier_root_observed_offer_lanes.align());
 
         let frontier_offer_entry_slots =
             Self::section_array::<OfferEntrySlot>(offset, footprint.frontier_entry_count());
-        offset = frontier_offer_entry_slots.offset + frontier_offer_entry_slots.bytes;
-        total_align = max_usize(total_align, frontier_offer_entry_slots.align);
+        offset = frontier_offer_entry_slots.end_offset();
+        total_align = max_usize(total_align, frontier_offer_entry_slots.align());
 
         let scope_evidence_slots =
             Self::section_array::<ScopeEvidenceSlot>(offset, footprint.scope_evidence_count());
-        offset = scope_evidence_slots.offset + scope_evidence_slots.bytes;
-        total_align = max_usize(total_align, scope_evidence_slots.align);
+        offset = scope_evidence_slots.end_offset();
+        total_align = max_usize(total_align, scope_evidence_slots.align());
 
         Self {
             header_align: total_align,
@@ -394,10 +395,10 @@ impl EndpointArenaLayout {
         let align = core::mem::align_of::<T>();
         let bytes = core::mem::size_of::<T>();
         EndpointArenaSection {
-            offset: align_up(offset, align),
-            align,
-            bytes,
+            offset: narrow_u32(align_up(offset, align)),
+            bytes: narrow_u32(bytes),
             count: 1,
+            align: narrow_u16(align),
         }
     }
 
@@ -406,11 +407,23 @@ impl EndpointArenaLayout {
         let align = core::mem::align_of::<T>();
         let bytes = checked_usize_mul(core::mem::size_of::<T>(), count);
         EndpointArenaSection {
-            offset: align_up(offset, align),
-            align,
-            bytes,
-            count,
+            offset: narrow_u32(align_up(offset, align)),
+            bytes: narrow_u32(bytes),
+            count: narrow_u32(count),
+            align: narrow_u16(align),
         }
+    }
+}
+
+impl EndpointArenaSection {
+    #[inline(always)]
+    const fn align(self) -> usize {
+        self.align as usize
+    }
+
+    #[inline(always)]
+    const fn end_offset(self) -> usize {
+        checked_usize_add(self.offset(), self.bytes())
     }
 }
 
@@ -448,9 +461,33 @@ const fn checked_usize_mul(lhs: usize, rhs: usize) -> usize {
     lhs * rhs
 }
 
+#[inline(always)]
+const fn checked_usize_add(lhs: usize, rhs: usize) -> usize {
+    if lhs > usize::MAX - rhs {
+        crate::invariant();
+    }
+    lhs + rhs
+}
+
+#[inline(always)]
+const fn narrow_u32(value: usize) -> u32 {
+    if value > u32::MAX as usize {
+        crate::invariant();
+    }
+    value as u32
+}
+
+#[inline(always)]
+const fn narrow_u16(value: usize) -> u16 {
+    if value > u16::MAX as usize {
+        crate::invariant();
+    }
+    value as u16
+}
+
 #[cfg(test)]
 mod tests {
-    use super::EndpointArenaLayout;
+    use super::{EndpointArenaLayout, EndpointArenaSection};
     use crate::global::role_program::RuntimeRoleFootprint;
 
     const fn test_footprint(
@@ -468,6 +505,15 @@ mod tests {
             endpoint_lane_slot_count,
             logical_lane_count,
         }
+    }
+
+    #[test]
+    fn endpoint_arena_layout_records_stay_compact() {
+        assert_eq!(core::mem::size_of::<EndpointArenaSection>(), 16);
+        assert!(
+            core::mem::size_of::<EndpointArenaLayout>() <= 384,
+            "endpoint arena layout record must stay compact for attach stack"
+        );
     }
 
     #[test]

@@ -209,6 +209,11 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
+    fn route_scope_rows_by_slot(&self, slot: usize) -> Option<RouteScopeRows> {
+        self.event_program().route_scope_rows_by_slot(slot)
+    }
+
+    #[inline(always)]
     fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
         matches!(scope_id.kind(), ScopeKind::Parallel).then_some(scope_id)
     }
@@ -348,23 +353,6 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn controller_arm_entry_for_label(&self, scope_id: ScopeId, label: u8) -> Option<StateIndex> {
-        let mut arm = 0u8;
-        while arm <= 1 {
-            if let Some((entry, entry_label)) = self.controller_arm_entry_by_arm(scope_id, arm)
-                && entry_label == label
-            {
-                return Some(entry);
-            }
-            if arm == 1 {
-                break;
-            }
-            arm += 1;
-        }
-        None
-    }
-
-    #[inline(always)]
     fn controller_arm_entry_by_arm(&self, scope_id: ScopeId, arm: u8) -> Option<(StateIndex, u8)> {
         let slot = self.route_scope_dense_ordinal(scope_id)?;
         let row = self
@@ -388,7 +376,7 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn route_controller(&self, scope_id: ScopeId) -> Option<(RouteResolver, EffIndex, u8)> {
+    fn route_controller(&self, scope_id: ScopeId) -> Option<(RouteResolver, u8)> {
         self.program_ref().route_controller(scope_id)
     }
 }

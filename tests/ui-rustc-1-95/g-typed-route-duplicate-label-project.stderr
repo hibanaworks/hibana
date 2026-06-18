@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: route arms reuse the same label
+error[E0080]: evaluation panicked: Route unprojectable for this role: arms not mergeable, wire dispatch non-deterministic, and no route resolver provided
  --> src/g.rs
   |
   |     const { validate_choreography::<Steps>() };
@@ -16,8 +16,13 @@ note: inside `g::panic_choreography_error`
   |
  ::: src/g.rs
   |
-  |         ProgramSourceError::RouteDuplicateLabel => panic!("route arms reuse the same label"),
-  |                                                    ----------------------------------------- in this macro invocation
+  |           ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
+  |  _____________________________________________________________-
+  | |             "Route unprojectable for this role: arms not mergeable, ",
+  | |             "wire dispatch non-deterministic, ",
+  | |             "and no route resolver provided",
+  | |         )),
+  | |__________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/g.rs

@@ -8,6 +8,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let kernel_monomorphization_gate =
         read(".github/scripts/check_kernel_monomorphization_quarantine.sh");
     let run_final_gate = read(".github/scripts/run_final_form_gates.sh");
+    let rust_1_95_gate = read(".github/scripts/check_rust_1_95_stable.sh");
     let thumb_header_gate = read(".github/scripts/check_thumbv6m_frame_header_codegen.sh");
     let thumb_mask_gate = read(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
     let final_gate_with_helpers =
@@ -20,8 +21,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
 
     for required in [
         "if [[ \"${HIBANA_OMIT_FIXED_SNAPSHOT_CHECK:-0}\" != \"1\" ]]; then",
-        "export CARGO_BUILD_JOBS=\"${CARGO_BUILD_JOBS:-1}\"",
-        "export RUST_TEST_THREADS=\"${RUST_TEST_THREADS:-1}\"",
         "fixed snapshot thumb budget check omitted by explicit override; worktree size snapshot still runs",
         "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs",
         "rustup target add --toolchain \"${TOOLCHAIN}\" thumbv6m-none-eabi",
@@ -117,8 +116,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "\"tap_ring_bytes\"",
         "resident_prefix_bytes must include the internal tap ring carved before the runtime slab",
         "Rendezvous header, transport T field, alignment padding, and tap ring",
-        "export CARGO_BUILD_JOBS=\"${CARGO_BUILD_JOBS:-1}\"",
-        "export RUST_TEST_THREADS=\"${RUST_TEST_THREADS:-1}\"",
         "\"pico_total_sram_bytes\"",
         "SNAPSHOT_FILE=\"${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json\"",
         "budget_snapshot = json.load(f)",
@@ -180,9 +177,20 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "CI must run fixed Pico snapshots and the worktree size snapshot unless an explicit local override is set"
     );
     assert!(
-        run_final_gate.contains("export CARGO_BUILD_JOBS=\"${CARGO_BUILD_JOBS:-1}\"")
-            && run_final_gate.contains("export RUST_TEST_THREADS=\"${RUST_TEST_THREADS:-1}\""),
-        "final-form gate must default heavy build/test work to serial execution"
+        !final_gate_with_helpers.contains("CARGO_BUILD_JOBS")
+            && !worktree_gate.contains("CARGO_BUILD_JOBS"),
+        "final-form gates must not override Cargo build parallelism"
+    );
+    assert!(
+        !final_gate_with_helpers.contains("RUST_TEST_THREADS")
+            && !worktree_gate.contains("RUST_TEST_THREADS"),
+        "final-form gates must not override Rust test harness parallelism"
+    );
+    assert!(
+        rust_1_95_gate.contains("cargo +1.95.0 test -p hibana --tests --no-run")
+            && !rust_1_95_gate.contains("find tests")
+            && !rust_1_95_gate.contains("--test \"${test_name}\""),
+        "Rust 1.95 gate must compile integration tests in one Cargo invocation, not one target per Cargo build"
     );
     let size_gate_pos = run_final_gate
         .find("bash ./.github/scripts/check_final_form_measurements.sh")
@@ -277,7 +285,6 @@ fn thumbv6m_frame_header_codegen_has_no_aeabi_u64_helpers() {
     let output = std::process::Command::new("bash")
         .arg(&script)
         .env("TOOLCHAIN", "stable")
-        .env("CARGO_BUILD_JOBS", "1")
         .output()
         .unwrap_or_else(|err| panic!("run {} failed: {err}", script.display()));
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -299,7 +306,6 @@ fn thumbv6m_mask_codegen_has_no_aeabi_u64_helpers() {
     let output = std::process::Command::new("bash")
         .arg(&script)
         .env("TOOLCHAIN", "stable")
-        .env("CARGO_BUILD_JOBS", "1")
         .output()
         .unwrap_or_else(|err| panic!("run {} failed: {err}", script.display()));
     let stdout = String::from_utf8_lossy(&output.stdout);

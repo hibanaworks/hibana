@@ -3,7 +3,7 @@ pub(super) mod program;
 
 pub(crate) use self::{
     image::{CompiledProgramRef, ProgramImageBytes, RoleDescriptorRef, RoleImageSlice},
-    program::{DynamicResolverSite, EventSemanticKind},
+    program::{EventSemanticKind, RouteResolverSite},
 };
 
 #[cfg(all(test, hibana_repo_tests))]

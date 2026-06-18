@@ -107,12 +107,41 @@ impl EventCursor {
     ) -> Option<usize> {
         let region = self.route_scope_rows_at(idx)?;
         let arm = selected_arm_for_scope(region.scope())?;
-        if !self.selected_route_arm_event_row_done(region.scope(), arm, |scope| {
+        if !self.selected_route_arm_completes_scope(region.scope(), arm, |scope| {
             selected_arm_for_scope(scope)
         }) {
             return None;
         }
         Some(region.end())
+    }
+
+    #[inline(always)]
+    pub(crate) fn selected_enclosing_route_scope_end_at(
+        &self,
+        idx: usize,
+        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        let mut selected = None;
+        let mut selected_len = usize::MAX;
+        let mut slot = 0usize;
+        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+            if idx >= region.start() && idx < region.end() {
+                let scope = region.scope();
+                if let Some(arm) = selected_arm_for_scope(scope)
+                    && self.selected_route_arm_completes_scope(scope, arm, |candidate| {
+                        selected_arm_for_scope(candidate)
+                    })
+                {
+                    let len = region.end() - region.start();
+                    if len < selected_len {
+                        selected = Some(region.end());
+                        selected_len = len;
+                    }
+                }
+            }
+            slot += 1;
+        }
+        selected
     }
 
     pub(crate) fn visit_branch_recv_reentry_route_rows(
@@ -248,8 +277,13 @@ impl EventCursor {
         next_index: StateIndex,
         authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
+        let scope = if meta.route_scope.is_none() {
+            meta.scope
+        } else {
+            meta.route_scope
+        };
         self.event_reentry_cursor_step(
-            meta.scope,
+            scope,
             meta.lane,
             meta.eff_index,
             next_index,
@@ -363,15 +397,6 @@ impl EventCursor {
             | LocalAction::Local { eff_index, .. } => Some(eff_index),
             LocalAction::Terminate => None,
         }
-    }
-
-    fn controller_arm_entry_for_label_inner(
-        &self,
-        scope_id: ScopeId,
-        label: u8,
-    ) -> Option<StateIndex> {
-        self.machine()
-            .controller_arm_entry_for_label(scope_id, label)
     }
 
     fn controller_arm_entry_by_arm_inner(
@@ -684,19 +709,6 @@ impl EventCursor {
         self.route_arm_lane_last_eff_inner(scope_id, arm, lane)
     }
 
-    /// Get the controller arm entry index for a given label.
-    /// Returns the StateIndex of the arm whose label matches, used by send preview for O(1) lookup.
-    pub(crate) fn controller_arm_entry_for_label(
-        &self,
-        scope_id: ScopeId,
-        label: u8,
-    ) -> Option<StateIndex> {
-        if !self.is_route_controller(scope_id) {
-            return None;
-        }
-        self.controller_arm_entry_for_label_inner(scope_id, label)
-    }
-
     /// Get the controller arm entry (index, label) for a given arm number.
     /// Used by offer() to navigate to the selected arm's entry point.
     pub(crate) fn controller_arm_entry_by_arm(
@@ -727,13 +739,12 @@ impl EventCursor {
     #[inline]
     /// Get route controller resolver metadata.
     ///
-    /// The tuple `(RouteResolver, EffIndex, u8)` corresponds to the
-    /// controller-provided resolver binding, the effect index of the send action
-    /// that declared it, and the decision tag baked by projection.
+    /// The tuple `(RouteResolver, u8)` corresponds to the route-scope resolver
+    /// binding and the decision tag baked by projection.
     pub(crate) fn route_scope_controller_resolver(
         &self,
         scope_id: ScopeId,
-    ) -> Option<(RouteResolver, EffIndex, u8)> {
+    ) -> Option<(RouteResolver, u8)> {
         self.machine().route_controller(scope_id)
     }
 }

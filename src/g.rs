@@ -44,16 +44,13 @@ pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum ProgramSourceError {
-    RouteArmHead,
-    RouteDuplicateLabel,
+    RouteArmAbsent,
     RouteControllerMismatch,
     RollBodyAbsent,
     ParallelArmAbsent,
     ParallelConflict,
     ResolverIdOutOfDomain,
     ResolverTargetNotRoute,
-    ProjectionRouteResolverMismatch,
-    ProjectionRouteResolverAbsent,
     ProjectionRouteUnprojectable,
 }
 
@@ -69,10 +66,9 @@ impl ProgramSourceError {
 
 pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
     match error {
-        ProgramSourceError::RouteArmHead => {
+        ProgramSourceError::RouteArmAbsent => {
             panic!("g::route arms must begin with a visible action")
         }
-        ProgramSourceError::RouteDuplicateLabel => panic!("route arms reuse the same label"),
         ProgramSourceError::RouteControllerMismatch => {
             panic!("route arms use different first visible controllers")
         }
@@ -89,8 +85,6 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         ProgramSourceError::ResolverTargetNotRoute => {
             panic!("route resolver can only be attached to a route")
         }
-        ProgramSourceError::ProjectionRouteResolverMismatch => panic!("route resolver mismatch"),
-        ProgramSourceError::ProjectionRouteResolverAbsent => panic!("route resolver absent"),
         ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
             "Route unprojectable for this role: arms not mergeable, ",
             "wire dispatch non-deterministic, ",

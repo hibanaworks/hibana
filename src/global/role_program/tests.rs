@@ -3,6 +3,7 @@ use crate::eff::{EffAtom, EffStruct, EventOrigin};
 use crate::g::{self, Msg, Program};
 use crate::global::compiled::images::{CompiledProgramRef, ProgramColumnRange, RoleDescriptorRef};
 use crate::global::const_dsl::{EffList, ScopeKind};
+use crate::global::event_program::LocalEventProgram;
 use crate::global::program::Projectable;
 use crate::global::typestate::LocalConflict;
 
@@ -13,6 +14,7 @@ mod protocol_matrix;
 
 const LOCAL_STEP_STRESS_ROW_BUDGET: usize = 512;
 const _: () = assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
+const NESTED_PAR_ROUTE_RESOLVER: u16 = 0x91;
 
 const fn test_atom(label: u8, lane: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -44,6 +46,110 @@ fn with_role_descriptor<const ROLE: u8, R>(
     f: impl FnOnce(RoleDescriptorRef) -> R,
 ) -> R {
     f(RoleDescriptorRef::from_resident(program.role_image_ref()))
+}
+
+#[test]
+fn explicit_resolver_route_scope_survives_nested_parallel_head() {
+    let left = g::par(
+        g::send::<0, 1, Msg<31, u8>>(),
+        g::send::<0, 2, Msg<32, u8>>(),
+    );
+    let right = g::send::<0, 1, Msg<33, u8>>();
+    let route = g::route(left, right).resolve::<NESTED_PAR_ROUTE_RESOLVER>();
+    let role0: RoleProgram<0> = project(&route);
+    let program_ref = role0.role_image_ref().program;
+
+    assert_eq!(program_ref.route_resolver_row_count(), 1);
+    let scope = program_ref
+        .route_resolver_scope_at_row(0)
+        .expect("route scope row");
+    assert_eq!(
+        program_ref.route_resolver_id_at_row(0),
+        Some(NESTED_PAR_ROUTE_RESOLVER)
+    );
+    assert_eq!(program_ref.route_controller_role(scope), Some(0));
+    assert!(program_ref.route_controller(scope).is_some());
+
+    let events = LocalEventProgram::from_rows(*role0.role_image_ref());
+    let slot = events.route_scope_slot(scope).expect("route slot");
+    let left = events
+        .route_arm_event_row_by_slot(slot, 0)
+        .expect("left route arm row");
+    let right = events
+        .route_arm_event_row_by_slot(slot, 1)
+        .expect("right route arm row");
+    assert!(
+        left.start() < left.end(),
+        "left route arm row must be nonempty"
+    );
+    assert!(
+        right.start() < right.end(),
+        "right route arm row must be nonempty"
+    );
+    assert_ne!(left, right, "route arm rows must stay arm-distinct");
+}
+
+#[test]
+fn simple_controller_route_arm_event_rows_are_exact() {
+    let route = g::route(
+        g::send::<0, 1, Msg<71, u32>>(),
+        g::send::<0, 1, Msg<72, u32>>(),
+    );
+    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>>());
+    let role0: RoleProgram<0> = project(&program);
+    let events = LocalEventProgram::from_rows(*role0.role_image_ref());
+    let region = events
+        .route_scope_rows_by_slot(0)
+        .expect("simple route scope row");
+    let slot = events
+        .route_scope_slot(region.scope())
+        .expect("simple route slot");
+    let left = events
+        .route_arm_event_row_by_slot(slot, 0)
+        .expect("left route arm row");
+    let right = events
+        .route_arm_event_row_by_slot(slot, 1)
+        .expect("right route arm row");
+
+    assert_eq!((region.start(), region.end()), (0, 2));
+    assert_eq!((left.start(), left.end()), (0, 1));
+    assert_eq!((right.start(), right.end()), (1, 2));
+    assert_eq!(
+        events.event_conflict_for_index(0).to_conflict(),
+        Some(LocalConflict::RouteArm {
+            scope: region.scope(),
+            arm: 0,
+        })
+    );
+    assert_eq!(
+        events.event_conflict_for_index(1).to_conflict(),
+        Some(LocalConflict::RouteArm {
+            scope: region.scope(),
+            arm: 1,
+        })
+    );
+    let left_commit = events.route_commit_range_by_slot(slot, 0);
+    let right_commit = events.route_commit_range_by_slot(slot, 1);
+    assert_eq!(left_commit.len(), 1);
+    assert_eq!(right_commit.len(), 1);
+    assert_eq!(
+        events
+            .route_commit_row_at(left_commit.start())
+            .to_conflict(),
+        Some(LocalConflict::RouteArm {
+            scope: region.scope(),
+            arm: 0,
+        })
+    );
+    assert_eq!(
+        events
+            .route_commit_row_at(right_commit.start())
+            .to_conflict(),
+        Some(LocalConflict::RouteArm {
+            scope: region.scope(),
+            arm: 1,
+        })
+    );
 }
 
 #[test]

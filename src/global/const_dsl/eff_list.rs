@@ -137,7 +137,6 @@ impl EffList {
                 scope_kind: rebased.kind(),
                 event: marker.event,
                 reentry: marker.reentry,
-                controller_role: marker.controller_role,
             };
             let ordinal = rebased.ordinal();
             if ordinal == ScopeId::ORDINAL_CAPACITY {
@@ -219,7 +218,6 @@ impl EffList {
                 marker.scope_kind,
                 marker.event,
                 marker.reentry,
-                marker.controller_role,
             );
             scope_idx += 1;
         }
@@ -240,7 +238,7 @@ impl EffList {
         event: ScopeEvent,
         reentry: ReentryMark,
     ) -> Self {
-        self.push_scope_marker_full(offset, scope_id, scope_kind, event, reentry, None)
+        self.push_scope_marker_full(offset, scope_id, scope_kind, event, reentry)
     }
 
     pub(super) const fn push_scope_marker_full(
@@ -250,7 +248,6 @@ impl EffList {
         scope_kind: ScopeKind,
         event: ScopeEvent,
         reentry: ReentryMark,
-        controller_role: Option<u8>,
     ) -> Self {
         if self.scope_marker_len >= MAX_CAPACITY {
             panic!("EffList scope marker capacity exceeded");
@@ -282,7 +279,6 @@ impl EffList {
             scope_kind,
             event,
             reentry,
-            controller_role,
         };
         self.scope_marker_len += 1;
         self
@@ -333,7 +329,6 @@ impl EffList {
             scope_kind: scope.kind(),
             event: ScopeEvent::Enter,
             reentry,
-            controller_role: None,
         };
         self.scope_marker_len += 1;
         self
@@ -359,23 +354,6 @@ impl EffList {
             marker_idx += 1;
         }
         self
-    }
-
-    /// Wrap the effect list with a Route scope that has controller role information.
-    /// Used by binary `route(left, right)` after deriving the controller from the arm entry.
-    pub(crate) const fn with_scope_controller(self, scope: ScopeId, controller_role: u8) -> Self {
-        // Use with_scope for correct marker ordering, then update controller_role
-        self.with_scope(scope)
-            .with_scope_controller_role(scope, controller_role)
-    }
-
-    /// Update controller_role for all markers with the given scope_id.
-    pub(crate) const fn with_scope_controller_role(
-        self,
-        scope: ScopeId,
-        controller_role: u8,
-    ) -> Self {
-        self.update_scope_markers(scope, None, Some(controller_role))
     }
 
     pub(crate) const fn push_resolver(mut self, offset: usize, resolver: RouteResolver) -> Self {
@@ -409,6 +387,21 @@ impl EffList {
             let marker = self.resolver_markers[idx];
             if marker.offset == offset {
                 return Some(marker.resolver);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    pub(crate) const fn resolver_for_scope(&self, scope: ScopeId) -> Option<RouteResolver> {
+        if scope.is_none() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.resolver_marker_len {
+            let marker = self.resolver_markers[idx];
+            if marker.scope_id.same(scope) {
+                return Some(marker.resolver.with_scope(scope));
             }
             idx += 1;
         }
@@ -449,34 +442,6 @@ impl EffList {
         } else {
             Some(stack[stack_len - 1])
         }
-    }
-
-    /// Update scope markers by ordinal-indexed lists (no full scan).
-    const fn update_scope_markers(
-        mut self,
-        scope: ScopeId,
-        reentry: Option<ReentryMark>,
-        controller_role: Option<u8>,
-    ) -> Self {
-        if scope.is_none() {
-            return self;
-        }
-        let mut marker_idx = 0usize;
-        while marker_idx < self.scope_marker_len {
-            let marker = self.scope_markers[marker_idx];
-            if marker.scope_id.raw() == scope.raw() {
-                let mut updated = marker;
-                if let Some(value) = reentry {
-                    updated.reentry = value;
-                }
-                if let Some(role) = controller_role {
-                    updated.controller_role = Some(role);
-                }
-                self.scope_markers[marker_idx] = updated;
-            }
-            marker_idx += 1;
-        }
-        self
     }
 
     pub(crate) const fn resolver_with_scope(

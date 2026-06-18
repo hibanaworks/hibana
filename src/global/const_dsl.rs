@@ -76,6 +76,7 @@ impl ReentryMark {
 #[derive(Clone, Copy)]
 pub(crate) struct ResolverMarker {
     pub(crate) offset: usize,
+    pub(crate) scope_id: ScopeId,
     pub(crate) resolver: RouteResolver,
 }
 
@@ -83,12 +84,17 @@ impl ResolverMarker {
     const fn empty() -> Self {
         Self {
             offset: 0,
+            scope_id: ScopeId::none(),
             resolver: RouteResolver::Intrinsic,
         }
     }
 
     const fn new(offset: usize, resolver: RouteResolver) -> Self {
-        Self { offset, resolver }
+        Self {
+            offset,
+            scope_id: resolver.scope(),
+            resolver,
+        }
     }
 }
 
@@ -99,9 +105,6 @@ pub(crate) struct ScopeMarker {
     pub(crate) scope_kind: ScopeKind,
     pub(crate) event: ScopeEvent,
     pub(crate) reentry: ReentryMark,
-    /// Controller role for route scopes, derived from the first visible arm action.
-    /// `None` for scopes without route-controller semantics.
-    pub(crate) controller_role: Option<u8>,
 }
 
 impl ScopeMarker {
@@ -112,7 +115,6 @@ impl ScopeMarker {
             scope_kind: ScopeKind::Plain,
             event: ScopeEvent::Enter,
             reentry: ReentryMark::SinglePass,
-            controller_role: None,
         }
     }
 }

@@ -19,7 +19,9 @@ pub(crate) struct SendMeta {
     pub(crate) origin: EventOrigin,
     pub(crate) next: usize,
     pub(crate) scope: ScopeId,
+    pub(crate) route_scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
+    pub(crate) selected_route_arm: Option<u8>,
     pub(crate) resolver: RouteResolver,
     /// Type-level lane for parallel composition; lane 0 is the primary lane.
     pub(crate) lane: u8,
@@ -88,6 +90,7 @@ pub(crate) struct RecvMeta {
     pub(crate) origin: EventOrigin,
     pub(crate) next: usize,
     pub(crate) scope: ScopeId,
+    pub(crate) route_scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
     /// Route-choice role of this recv.
     pub(crate) choice: RouteChoiceMark,
@@ -120,6 +123,7 @@ pub(crate) struct LocalMeta {
     pub(crate) origin: EventOrigin,
     pub(crate) next: usize,
     pub(crate) scope: ScopeId,
+    pub(crate) route_scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
     pub(crate) resolver: RouteResolver,
     /// Type-level lane for parallel composition; lane 0 is the primary lane.

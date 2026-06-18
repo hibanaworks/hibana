@@ -4,7 +4,7 @@ use super::columns::{
 };
 use crate::{
     eff::{EffAtom, EffStruct, EventOrigin},
-    global::compiled::images::program::DynamicResolverSite,
+    global::compiled::images::program::RouteResolverSite,
     global::const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeId},
     global::role_program::BlobPtr,
 };
@@ -102,20 +102,6 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn atom_row_count(&self) -> usize {
-        self.columns.atoms.len as usize
-    }
-
-    #[inline(always)]
-    pub(crate) const fn atom_eff_at_row(&self, row: usize) -> Option<usize> {
-        let offset = match self.column_offset(self.columns.atoms, row, PROGRAM_IMAGE_ATOM_STRIDE) {
-            Some(offset) => offset,
-            None => return None,
-        };
-        Some(self.read_u16_at(offset) as usize)
-    }
-
-    #[inline(always)]
     pub(crate) const fn resident_resolver_at(&self, eff_idx: usize) -> Option<RouteResolver> {
         let mut row = 0usize;
         while row < self.columns.resolvers.len as usize {
@@ -148,11 +134,11 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) fn dynamic_resolver_sites_for(
+    pub(crate) fn route_resolver_sites_for(
         &self,
         resolver_id: u16,
-    ) -> impl Iterator<Item = DynamicResolverSite> + '_ {
-        crate::session::cluster::effects::ProgramImageDynamicResolverSiteIter::new(self)
+    ) -> impl Iterator<Item = RouteResolverSite> + '_ {
+        crate::session::cluster::effects::ProgramImageRouteResolverSiteIter::new(self)
             .filter(move |site| site.resolver_id() == resolver_id)
     }
 }

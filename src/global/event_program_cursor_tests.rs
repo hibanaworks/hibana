@@ -114,7 +114,7 @@ fn production_cursor_reenters_completed_rolled_seq_head() {
 }
 
 #[test]
-fn production_cursor_reenters_rolled_route_head_inside_sequence() {
+fn production_cursor_reenters_rolled_route_scope_inside_sequence() {
     let inner = crate::g::route(
         crate::g::send::<0, 1, crate::g::Msg<162, ()>>(),
         crate::g::send::<0, 1, crate::g::Msg<163, ()>>(),

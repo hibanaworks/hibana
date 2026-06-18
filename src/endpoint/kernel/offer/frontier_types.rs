@@ -141,6 +141,7 @@ impl CachedRecvMeta {
                 origin: self.origin,
                 next: state_index_to_usize(self.next),
                 scope: self.scope,
+                route_scope: self.scope,
                 route_arm: self.route_arm.as_option(),
                 choice: self.choice,
                 resolver: self.resolver,

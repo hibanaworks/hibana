@@ -89,7 +89,6 @@ fn no_default_no_source_path_rodata() {
     let status = Command::new(cargo)
         .current_dir(&probe_dir)
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env("CARGO_BUILD_JOBS", "1")
         .args([
             "build",
             "--release",

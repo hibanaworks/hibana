@@ -62,7 +62,7 @@ where
         let is_dynamic = self
             .cursor
             .route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _, _)| resolver.is_dynamic());
+            .is_some_and(|(resolver, _)| resolver.is_dynamic());
         match (is_controller, is_dynamic) {
             (true, true) => OfferScopeProfile::ControllerDynamic,
             (true, false) => OfferScopeProfile::ControllerIntrinsic,

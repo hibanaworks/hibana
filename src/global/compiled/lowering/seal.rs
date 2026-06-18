@@ -9,6 +9,7 @@ use crate::{
 };
 
 mod first_recv_dispatch;
+mod first_visible_frontier;
 mod passive_child;
 
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
@@ -378,7 +379,6 @@ const fn validate_route_projection_guarantees<const ROLE: u8>(
                     eff_list,
                     scope_markers,
                     marker_idx,
-                    marker.controller_role,
                     marker.reentry,
                 ) {
                     return Some(error);
@@ -396,24 +396,26 @@ const fn validate_route_scope<const ROLE: u8>(
     eff_list: &EffList,
     scope_markers: &[crate::global::const_dsl::ScopeMarker],
     route_enter_marker_idx: usize,
-    controller_role: Option<u8>,
     reentry: ReentryMark,
 ) -> Option<ProgramSourceError> {
-    let (arm0_enter_marker_idx, arm0_start, arm0_end, arm1_enter_marker_idx, arm1_start, arm1_end) =
+    let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
-    if let Some(error) = validate_decision_resolver_consistency(
-        view,
-        eff_list,
-        arm0_enter_marker_idx,
-        arm1_enter_marker_idx,
-    ) {
+    let route_scope = scope_markers[route_enter_marker_idx].scope_id;
+    let has_dynamic_resolver = scope_has_dynamic_resolver(view, route_scope);
+    let controller_mask = first_visible_controller_mask(eff_list, arm0_start, arm0_end)
+        | first_visible_controller_mask(eff_list, arm1_start, arm1_end);
+    if !has_dynamic_resolver
+        && let Some(error) = first_visible_frontier::validate_intrinsic_first_visible_frontier::<ROLE>(
+            eff_list, arm0_start, arm0_end, arm1_start, arm1_end,
+        )
+    {
         return Some(error);
     }
     if reentry.is_reentrant() {
         return None;
     }
 
-    if matches!(controller_role, Some(role) if role == ROLE) {
+    if matches!(unique_controller_role(controller_mask), Some(role) if role == ROLE) {
         return None;
     }
 
@@ -434,7 +436,7 @@ const fn validate_route_scope<const ROLE: u8>(
     if dispatchable_after_shared_prefix(&left, left_len, &right, right_len) {
         return None;
     }
-    if scope_has_dynamic_resolver(view, eff_list, arm0_enter_marker_idx, arm1_enter_marker_idx) {
+    if has_dynamic_resolver {
         return None;
     }
     Some(ProgramSourceError::ProjectionRouteUnprojectable)
@@ -494,72 +496,50 @@ const fn route_arm_ranges_from_first_enter(
 
 const fn scope_has_dynamic_resolver(
     view: &super::CompiledProgramView<'_>,
-    eff_list: &EffList,
-    arm0_enter_marker_idx: usize,
-    arm1_enter_marker_idx: usize,
+    route_scope: crate::global::const_dsl::ScopeId,
 ) -> bool {
-    first_route_head_decision_resolver_id(view, eff_list, arm0_enter_marker_idx).is_some()
-        || first_route_head_decision_resolver_id(view, eff_list, arm1_enter_marker_idx).is_some()
+    match view.resolver_for_scope(route_scope) {
+        Some(RouteResolver::Dynamic { .. }) => true,
+        Some(RouteResolver::Intrinsic) | None => false,
+    }
 }
 
-const fn validate_decision_resolver_consistency(
-    view: &super::CompiledProgramView<'_>,
-    eff_list: &EffList,
-    arm0_enter_marker_idx: usize,
-    arm1_enter_marker_idx: usize,
-) -> Option<ProgramSourceError> {
-    let left = first_route_head_decision_resolver_id(view, eff_list, arm0_enter_marker_idx);
-    let right = first_route_head_decision_resolver_id(view, eff_list, arm1_enter_marker_idx);
-    if let Some(left_id) = left {
-        if let Some(right_id) = right {
-            if left_id != right_id {
-                return Some(ProgramSourceError::ProjectionRouteResolverMismatch);
+const fn first_visible_controller_mask(eff_list: &EffList, start: usize, end: usize) -> u16 {
+    let mut seen_lane_words = [0u64; 4];
+    let mut controller_mask = 0u16;
+    let mut idx = start;
+    while idx < end && idx < eff_list.len() {
+        let node = eff_list.node_at(idx);
+        if matches!(node.kind, eff::EffKind::Atom) {
+            let atom = node.atom_data();
+            let lane = atom.lane as usize;
+            let word = lane / 64;
+            let bit = lane % 64;
+            if word >= seen_lane_words.len() || atom.from >= u16::BITS as u8 {
+                return 0;
             }
-        } else {
-            return Some(ProgramSourceError::ProjectionRouteResolverAbsent);
+            let mask = 1u64 << bit;
+            if (seen_lane_words[word] & mask) != 0 {
+                return controller_mask;
+            }
+            seen_lane_words[word] |= mask;
+            controller_mask |= 1u16 << atom.from;
         }
-    } else if right.is_some() {
-        return Some(ProgramSourceError::ProjectionRouteResolverAbsent);
+        idx += 1;
     }
-    None
+    controller_mask
 }
 
-const fn first_route_head_decision_resolver_id(
-    view: &super::CompiledProgramView<'_>,
-    eff_list: &EffList,
-    route_enter_marker_idx: usize,
-) -> Option<u16> {
-    let scope_markers = view.scope_markers();
-    if route_enter_marker_idx >= scope_markers.len() {
+const fn unique_controller_role(mask: u16) -> Option<u8> {
+    if !first_visible_frontier::has_exactly_one_bit(mask) {
         return None;
     }
-    let route_enter = scope_markers[route_enter_marker_idx];
-    if !matches!(route_enter.event, ScopeEvent::Enter)
-        || !matches!(route_enter.scope_kind, ScopeKind::Route)
-    {
-        return None;
-    }
-    let mut marker_idx = route_enter_marker_idx + 1;
-    let mut nested_non_resolver_enter = false;
-    while marker_idx < scope_markers.len() {
-        let marker = scope_markers[marker_idx];
-        if marker.offset != route_enter.offset {
-            break;
+    let mut role = 0u8;
+    while role < u16::BITS as u8 {
+        if (mask & (1u16 << role)) != 0 {
+            return Some(role);
         }
-        if matches!(marker.event, ScopeEvent::Enter)
-            && !matches!(marker.scope_kind, ScopeKind::Plain)
-        {
-            nested_non_resolver_enter = true;
-        }
-        marker_idx += 1;
-    }
-    if nested_non_resolver_enter {
-        return None;
-    }
-    if let Some((RouteResolver::Dynamic { resolver_id, .. }, _scope)) =
-        eff_list.resolver_with_scope(route_enter.offset)
-    {
-        return Some(resolver_id);
+        role += 1;
     }
     None
 }

@@ -24,7 +24,6 @@ struct PublicEndpointStorageLayout {
 use core::fmt;
 
 use super::error::{AttachError, ClusterError, ResourceScope};
-use crate::eff::EffIndex;
 use crate::global::compiled::images::{CompiledProgramRef, RoleImageSlice};
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;

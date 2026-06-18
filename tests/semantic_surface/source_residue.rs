@@ -575,7 +575,8 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     assert!(
         event_progress.contains("fn send_preview_start_index_for_label(")
             && event_progress.contains("selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>")
-            && event_progress.contains("if self.route_scope_rows_at(self.index()).is_some()")
+            && event_progress
+                .contains("if self.enclosing_route_scope_rows_at(self.index()).is_some()")
             && !event_progress.contains(".unwrap_or_else(|| self.index())"),
         "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind cursor resume shortcut"
     );
