@@ -76,10 +76,6 @@ fn largest_role_section(rows: RoleImageRef) -> usize {
         .max(rbl(columns.conflicts, ROLE_IMAGE_CONFLICT_STRIDE))
         .max(rbl(columns.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE))
         .max(rbl(
-            columns.route_scope_reentry_bits,
-            ROLE_IMAGE_LANE_STRIDE,
-        ))
-        .max(rbl(
             columns.route_scope_conflicts,
             ROLE_IMAGE_CONFLICT_STRIDE,
         ))

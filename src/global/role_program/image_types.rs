@@ -405,7 +405,6 @@ pub(crate) struct RoleImageColumns {
     pub(crate) dependencies: ColumnRange,
     pub(crate) conflicts: ColumnRange,
     pub(crate) route_scopes: ColumnRange,
-    pub(crate) route_scope_reentry_bits: ColumnRange,
     pub(crate) route_scope_conflicts: ColumnRange,
     pub(crate) route_arms: ColumnRange,
     pub(crate) resident_boundaries: ColumnRange,
@@ -435,7 +434,6 @@ impl RoleImageColumns {
         len = Self::max_end(len, self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE);
         len = Self::max_end(len, self.conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
         len = Self::max_end(len, self.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
-        len = Self::max_end(len, self.route_scope_reentry_bits, ROLE_IMAGE_LANE_STRIDE);
         len = Self::max_end(len, self.route_scope_conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
         len = Self::max_end(len, self.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE);
         len = Self::max_end(len, self.resident_boundaries, ROLE_IMAGE_U16_STRIDE);
@@ -470,7 +468,6 @@ pub(crate) struct RoleLaneScratch {
     pub(crate) local_step_dependencies: [PackedLocalDependency; MAX_LOCAL_STEP_LANES],
     pub(crate) local_step_conflicts: [PackedEventConflict; MAX_LOCAL_STEP_LANES],
     pub(crate) route_scope_rows: [crate::global::const_dsl::ScopeId; MAX_ROUTE_SCOPE_LANE_ROWS],
-    pub(crate) route_scope_reentry_bits: [u8; MAX_ROUTE_SCOPE_LANE_ROWS.div_ceil(8)],
     pub(crate) route_scope_conflicts: [PackedEventConflict; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) route_arm_rows: [PackedRouteArmRow; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS],

@@ -21,11 +21,6 @@ impl RoleLaneScratch {
     const ACTIVE_LANE_NONE: u16 = u16::MAX;
 
     #[inline(always)]
-    const fn reentry_bit_parts(slot: usize) -> (usize, u8) {
-        (slot / 8, 1u8 << (slot % 8))
-    }
-
-    #[inline(always)]
     const fn local_row_has_lane(&self, row: PackedLaneRange, lane: u8) -> bool {
         let mut pos = row.start();
         let end = row.end();
@@ -560,13 +555,10 @@ impl RoleLaneScratch {
                     panic!("route conflict row overflow");
                 }
                 self.route_scope_rows[route_slot] = scope;
-                if marker.reentry.is_reentrant() {
-                    let (byte, bit) = Self::reentry_bit_parts(route_slot);
-                    self.route_scope_reentry_bits[byte] |= bit;
-                }
                 let conflict = Self::dependency_conflict_for_scope(markers, view_len, scope);
                 self.route_scope_conflicts[route_slot] =
-                    PackedEventConflict::from_conflict(conflict);
+                    PackedEventConflict::from_conflict(conflict)
+                        .with_route_reentry(marker.reentry.is_reentrant());
                 let mut arm = 0usize;
                 while arm < 2 {
                     let (start, end) = ranges[arm];
@@ -641,7 +633,6 @@ impl RoleLaneScratch {
             local_step_dependencies: [PackedLocalDependency::none(); MAX_LOCAL_STEP_LANES],
             local_step_conflicts: [PackedEventConflict::none(); MAX_LOCAL_STEP_LANES],
             route_scope_rows: [ScopeId::none(); MAX_ROUTE_SCOPE_LANE_ROWS],
-            route_scope_reentry_bits: [0; MAX_ROUTE_SCOPE_LANE_ROWS.div_ceil(8)],
             route_scope_conflicts: [PackedEventConflict::none(); MAX_ROUTE_SCOPE_LANE_ROWS],
             route_arm_rows: [PackedRouteArmRow::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
             resident_row_boundaries: [0; MAX_RESIDENT_ROW_BOUNDARY_ROWS],

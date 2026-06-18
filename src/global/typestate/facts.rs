@@ -31,7 +31,9 @@ pub(crate) struct PackedEventConflict(u16);
 impl PackedEventConflict {
     const ABSENT_RAW: u16 = u16::MAX;
     const ARM_BITS: u16 = 1;
-    const ROUTE_MASK: u16 = (1 << 13) - 1;
+    const ROUTE_MASK: u16 = (1 << 12) - 1;
+    const ROUTE_REENTRY_BIT: u16 = 1 << 13;
+    const NO_CONFLICT_BIT: u16 = 1 << 14;
     /// Maximum row-chain length for conflict traversal.
     ///
     /// An event conflict row can only point through route-scope conflict rows
@@ -57,7 +59,7 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn is_none(self) -> bool {
-        self.0 == Self::ABSENT_RAW
+        self.0 == Self::ABSENT_RAW || (self.0 & Self::NO_CONFLICT_BIT) != 0
     }
 
     #[inline(always)]
@@ -76,6 +78,28 @@ impl PackedEventConflict {
     }
 
     #[inline(always)]
+    pub(crate) const fn with_route_reentry(self, reentry: bool) -> Self {
+        if !reentry {
+            if self.0 == Self::ABSENT_RAW
+                || self.0 == (Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
+            {
+                return Self::none();
+            }
+            return Self(self.0 & !Self::ROUTE_REENTRY_BIT);
+        }
+        if self.0 == Self::ABSENT_RAW {
+            Self(Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
+        } else {
+            Self(self.0 | Self::ROUTE_REENTRY_BIT)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_reentry(self) -> bool {
+        self.0 != Self::ABSENT_RAW && (self.0 & Self::ROUTE_REENTRY_BIT) != 0
+    }
+
+    #[inline(always)]
     pub(crate) const fn from_conflict(conflict: LocalConflict) -> Self {
         match conflict {
             LocalConflict::RouteArm { scope, arm } => Self::route_arm(scope, arm),
@@ -85,11 +109,11 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn to_conflict(self) -> Option<LocalConflict> {
-        if self.0 == Self::ABSENT_RAW {
+        if self.is_none() {
             return None;
         }
         let arm = (self.0 & 1) as u8;
-        let ordinal = self.0 >> Self::ARM_BITS;
+        let ordinal = (self.0 >> Self::ARM_BITS) & Self::ROUTE_MASK;
         Some(LocalConflict::RouteArm {
             scope: ScopeId::route(ordinal),
             arm,

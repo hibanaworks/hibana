@@ -293,16 +293,7 @@ impl RoleLaneImage {
         if self.route_scope_by_slot(slot).is_none() {
             return false;
         }
-        let byte = slot / 8;
-        let bit = 1u8 << (slot % 8);
-        match self.read_u8(
-            self.columns.route_scope_reentry_bits,
-            byte,
-            ROLE_IMAGE_LANE_STRIDE,
-        ) {
-            Some(bits) => (bits & bit) != 0,
-            None => false,
-        }
+        self.route_scope_conflict_by_slot(slot).route_reentry()
     }
 
     #[inline(always)]

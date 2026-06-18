@@ -23,7 +23,6 @@ impl<const N: usize> RoleImageBytes<N> {
         let dependency_len = scratch.dependency_row_len();
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
-        let route_scope_reentry_len = route_scope_len.div_ceil(8);
         let route_arm_len = route_scope_len * 2;
         let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
@@ -36,7 +35,6 @@ impl<const N: usize> RoleImageBytes<N> {
             + (dependency_len * ROLE_IMAGE_DEPENDENCY_STRIDE)
             + (conflict_len * ROLE_IMAGE_CONFLICT_STRIDE)
             + (route_scope_len * ROLE_IMAGE_ROUTE_SCOPE_STRIDE)
-            + (route_scope_reentry_len * ROLE_IMAGE_LANE_STRIDE)
             + (route_scope_len * ROLE_IMAGE_CONFLICT_STRIDE)
             + (route_arm_len * ROLE_IMAGE_ROUTE_ARM_STRIDE)
             + (resident_boundary_len * ROLE_IMAGE_U16_STRIDE)
@@ -65,7 +63,6 @@ impl<const N: usize> RoleImageBytes<N> {
         let dependency_len = scratch.dependency_row_len();
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
-        let route_scope_reentry_len = route_scope_len.div_ceil(8);
         let route_arm_len = route_scope_len * 2;
         let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
@@ -80,8 +77,6 @@ impl<const N: usize> RoleImageBytes<N> {
         let (conflicts, offset) = Self::column_at(offset, conflict_len, ROLE_IMAGE_CONFLICT_STRIDE);
         let (route_scopes, offset) =
             Self::column_at(offset, route_scope_len, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
-        let (route_scope_reentry_bits, offset) =
-            Self::column_at(offset, route_scope_reentry_len, ROLE_IMAGE_LANE_STRIDE);
         let (route_scope_conflicts, offset) =
             Self::column_at(offset, route_scope_len, ROLE_IMAGE_CONFLICT_STRIDE);
         let (route_arms, offset) =
@@ -113,7 +108,6 @@ impl<const N: usize> RoleImageBytes<N> {
             dependencies,
             conflicts,
             route_scopes,
-            route_scope_reentry_bits,
             route_scope_conflicts,
             route_arms,
             resident_boundaries,
@@ -450,7 +444,6 @@ impl<const N: usize> RoleImageBytes<N> {
         let dependency_len = scratch.dependency_row_len();
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
-        let route_scope_reentry_len = route_scope_len.div_ceil(8);
         let route_arm_len = route_scope_len * 2;
         let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
@@ -485,12 +478,6 @@ impl<const N: usize> RoleImageBytes<N> {
             columns.route_scopes,
             route_scope_len,
             &scratch.route_scope_rows,
-        );
-        out.write_u8_rows(
-            columns.route_scope_reentry_bits,
-            route_scope_reentry_len,
-            ROLE_IMAGE_LANE_STRIDE,
-            &scratch.route_scope_reentry_bits,
         );
         out.write_conflict_rows(
             columns.route_scope_conflicts,
