@@ -97,32 +97,29 @@ impl<'a> CompiledProgramView<'a> {
 impl ProgramImageValidationData {
     #[inline(always)]
     const fn view<'a>(&'a self) -> CompiledProgramView<'a> {
-        CompiledProgramView {
-            segments: &self.segments,
-            len: self.len,
-            atom_rows: /* SAFETY: `ProgramImageValidationData` stores the atom
-            row pointer and row count produced by lowering the same compiled
-            image. */ unsafe {
-                core::slice::from_raw_parts(self.atom_rows.as_ptr(), self.atom_row_len)
-            },
-            scope_markers: /* SAFETY: scope-marker pointer and count are paired
-            fields in this validation data and are read only for validation. */ unsafe {
-                core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
-            },
-            route_frontiers: /* SAFETY: route-frontier pointer and count are paired
-            fields in this validation data and are read only for validation. */ unsafe {
-                core::slice::from_raw_parts(
+        /* SAFETY: `ProgramImageValidationData` owns these image validation arrays;
+        lowering writes each initialized prefix before exposing the program view,
+        every prefix len is bounded by its backing array capacity, and the view
+        lifetime is tied to `&self` so no mutable alias exists while the slices are
+        borrowed. */
+        unsafe {
+            CompiledProgramView {
+                segments: &self.segments,
+                len: self.len,
+                atom_rows: core::slice::from_raw_parts(self.atom_rows.as_ptr(), self.atom_row_len),
+                scope_markers: core::slice::from_raw_parts(
+                    self.scope_markers.as_ptr(),
+                    self.scope_marker_len,
+                ),
+                route_frontiers: core::slice::from_raw_parts(
                     self.route_frontiers.as_ptr(),
                     self.route_frontier_len,
-                )
-            },
-            route_resolver_sites: /* SAFETY: route-resolver-site pointer and count are paired
-            fields in this validation data and are read only for validation. */ unsafe {
-                core::slice::from_raw_parts(
+                ),
+                route_resolver_sites: core::slice::from_raw_parts(
                     self.route_resolver_sites.as_ptr(),
                     self.route_resolver_site_len,
-                )
-            },
+                ),
+            }
         }
     }
 }

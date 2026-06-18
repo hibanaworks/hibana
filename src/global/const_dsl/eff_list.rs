@@ -413,7 +413,10 @@ impl EffList {
     }
 
     pub(crate) const fn route_frontier_summaries(&self) -> &[RouteFrontierSummary] {
-        /* SAFETY: `route_frontier_len` is advanced only after writing the row. */
+        /* SAFETY: `EffList` owns the route-frontier storage, `route_frontier_len`
+        advances only after writing each initialized row inside the fixed
+        capacity, and this shared slice is bounded to `&self` without mutable
+        aliasing. */
         unsafe {
             core::slice::from_raw_parts(self.route_frontiers.as_ptr(), self.route_frontier_len)
         }
