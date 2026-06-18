@@ -11,7 +11,7 @@
 //! No returned slice outlives `self`, and no method exposes mutable aliases to
 //! those rows while a shared prefix view exists.
 mod eff_list;
-mod eff_list_resolver;
+mod route;
 
 use crate::eff::{self, EffStruct};
 use crate::global::Message;
@@ -23,80 +23,12 @@ const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
 mod scope;
 
 pub(crate) use self::eff_list::const_send_typed;
+pub(crate) use self::route::{
+    ReentryMark, RouteFrontierSummary, RouteResolver, RouteResolverMarker,
+};
 pub(crate) use self::scope::{ScopeEvent, ScopeId, ScopeKind};
 
 pub(crate) const INTRINSIC_ROUTE_RESOLVER_ID: u16 = u16::MAX;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RouteResolver {
-    Intrinsic,
-    Dynamic { resolver_id: u16, scope: ScopeId },
-}
-
-impl RouteResolver {
-    /// Bind a route decision site to a registered runtime resolver id.
-    pub(crate) const fn dynamic(resolver_id: u16) -> Self {
-        Self::Dynamic {
-            resolver_id,
-            scope: ScopeId::none(),
-        }
-    }
-
-    pub(crate) const fn is_dynamic(self) -> bool {
-        matches!(self, Self::Dynamic { .. })
-    }
-
-    pub(crate) const fn scope(self) -> ScopeId {
-        match self {
-            Self::Dynamic { scope, .. } => scope,
-            Self::Intrinsic => ScopeId::none(),
-        }
-    }
-
-    pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
-        match self {
-            Self::Dynamic { resolver_id, .. } => Self::Dynamic { resolver_id, scope },
-            Self::Intrinsic => Self::Intrinsic,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReentryMark {
-    SinglePass,
-    Reentrant,
-}
-
-impl ReentryMark {
-    pub(crate) const fn is_reentrant(self) -> bool {
-        matches!(self, Self::Reentrant)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct ResolverMarker {
-    pub(crate) offset: usize,
-    pub(crate) scope_id: ScopeId,
-    pub(crate) resolver: RouteResolver,
-}
-
-impl ResolverMarker {
-    const fn empty() -> Self {
-        Self {
-            offset: 0,
-            scope_id: ScopeId::none(),
-            resolver: RouteResolver::Intrinsic,
-        }
-    }
-
-    const fn new(offset: usize, resolver: RouteResolver) -> Self {
-        Self {
-            offset,
-            scope_id: resolver.scope(),
-            resolver,
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(crate) struct ScopeMarker {
@@ -125,7 +57,6 @@ pub(crate) struct SegmentSummary {
     eff_len: u16,
     scope_marker_len: u16,
     route_scope_enter_len: u16,
-    resolver_marker_len: u16,
 }
 
 impl SegmentSummary {
@@ -133,7 +64,6 @@ impl SegmentSummary {
         eff_len: 0,
         scope_marker_len: 0,
         route_scope_enter_len: 0,
-        resolver_marker_len: 0,
     };
 
     #[inline(always)]
@@ -158,12 +88,6 @@ impl SegmentSummary {
         }
         self
     }
-
-    #[inline(always)]
-    const fn with_resolver_marker(mut self) -> Self {
-        self.resolver_marker_len = Self::bump(self.resolver_marker_len);
-        self
-    }
 }
 
 /// Accumulator used to build `EffStruct` sequences in const contexts.
@@ -175,6 +99,8 @@ pub(crate) struct EffList {
     scope_budget: u16,
     scope_markers: [ScopeMarker; MAX_CAPACITY],
     scope_marker_len: usize,
-    resolver_markers: [ResolverMarker; MAX_CAPACITY],
+    resolver_markers: [RouteResolverMarker; MAX_CAPACITY],
     resolver_marker_len: usize,
+    route_frontiers: [RouteFrontierSummary; MAX_CAPACITY],
+    route_frontier_len: usize,
 }

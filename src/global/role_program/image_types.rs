@@ -12,15 +12,16 @@ pub(crate) const MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2;
 pub(crate) const MAX_RESIDENT_LANE_BIT_BYTES: usize = LANE_DOMAIN_SIZE * 4;
 pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
 pub(crate) const PACKED_ROUTE_ARM_ROW_EMPTY: u32 = u32::MAX;
-pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 10;
+pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 12;
 pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
 pub(crate) const ROLE_IMAGE_DEPENDENCY_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_CONFLICT_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
+pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
-pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 6;
+pub(crate) const ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 8;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedLaneRange(u32);
@@ -243,13 +244,13 @@ impl PackedRouteArmRow {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedRollScopeRow {
-    scope: u16,
+    scope: u32,
     event_row: PackedLaneRange,
 }
 
 impl PackedRollScopeRow {
     pub(crate) const EMPTY: Self = Self {
-        scope: u16::MAX,
+        scope: u32::MAX,
         event_row: PackedLaneRange::EMPTY,
     };
 
@@ -267,13 +268,13 @@ impl PackedRollScopeRow {
             panic!("roll scope row overflow");
         }
         Self {
-            scope: scope.local_ordinal(),
+            scope: scope.raw(),
             event_row: row,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn from_packed_parts(scope: u16, event_row_raw: u32) -> Self {
+    pub(crate) const fn from_packed_parts(scope: u32, event_row_raw: u32) -> Self {
         Self {
             scope,
             event_row: PackedLaneRange::from_raw(event_row_raw),
@@ -281,7 +282,7 @@ impl PackedRollScopeRow {
     }
 
     #[inline(always)]
-    pub(crate) const fn scope_raw(self) -> u16 {
+    pub(crate) const fn scope_raw(self) -> u32 {
         self.scope
     }
 
@@ -292,7 +293,7 @@ impl PackedRollScopeRow {
 
     #[inline(always)]
     pub(crate) const fn is_empty(self) -> bool {
-        self.scope == u16::MAX
+        self.scope == u32::MAX
     }
 
     #[inline(always)]
@@ -300,7 +301,7 @@ impl PackedRollScopeRow {
         if self.is_empty() {
             None
         } else {
-            Some(crate::global::const_dsl::ScopeId::roll_scope(self.scope))
+            Some(crate::global::const_dsl::ScopeId::from_raw(self.scope))
         }
     }
 
@@ -321,7 +322,7 @@ pub(crate) struct PackedLocalEventRow {
     pub(crate) eff_index: u16,
     pub(crate) dependency_row: u16,
     pub(crate) conflict_row: u16,
-    pub(crate) scope_slot: u16,
+    pub(crate) scope: crate::global::const_dsl::ScopeId,
     pub(crate) frame_label: u8,
     pub(crate) flags: u8,
 }
@@ -404,6 +405,7 @@ pub(crate) struct RoleImageColumns {
     pub(crate) dependencies: ColumnRange,
     pub(crate) conflicts: ColumnRange,
     pub(crate) route_scopes: ColumnRange,
+    pub(crate) route_scope_reentry_bits: ColumnRange,
     pub(crate) route_scope_conflicts: ColumnRange,
     pub(crate) route_arms: ColumnRange,
     pub(crate) resident_boundaries: ColumnRange,
@@ -432,7 +434,8 @@ impl RoleImageColumns {
         len = Self::max_end(len, self.lanes, ROLE_IMAGE_LANE_STRIDE);
         len = Self::max_end(len, self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE);
         len = Self::max_end(len, self.conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
-        len = Self::max_end(len, self.route_scopes, ROLE_IMAGE_U16_STRIDE);
+        len = Self::max_end(len, self.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
+        len = Self::max_end(len, self.route_scope_reentry_bits, ROLE_IMAGE_LANE_STRIDE);
         len = Self::max_end(len, self.route_scope_conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
         len = Self::max_end(len, self.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE);
         len = Self::max_end(len, self.resident_boundaries, ROLE_IMAGE_U16_STRIDE);
@@ -466,7 +469,8 @@ pub(crate) struct RoleLaneScratch {
     pub(crate) local_step_lanes: [u8; MAX_LOCAL_STEP_LANES],
     pub(crate) local_step_dependencies: [PackedLocalDependency; MAX_LOCAL_STEP_LANES],
     pub(crate) local_step_conflicts: [PackedEventConflict; MAX_LOCAL_STEP_LANES],
-    pub(crate) route_scope_rows: [u16; MAX_ROUTE_SCOPE_LANE_ROWS],
+    pub(crate) route_scope_rows: [crate::global::const_dsl::ScopeId; MAX_ROUTE_SCOPE_LANE_ROWS],
+    pub(crate) route_scope_reentry_bits: [u8; MAX_ROUTE_SCOPE_LANE_ROWS.div_ceil(8)],
     pub(crate) route_scope_conflicts: [PackedEventConflict; MAX_ROUTE_SCOPE_LANE_ROWS],
     pub(crate) route_arm_rows: [PackedRouteArmRow; MAX_ROUTE_ARM_LANE_ROWS],
     pub(crate) resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS],

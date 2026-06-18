@@ -1,5 +1,5 @@
 use crate::global::const_dsl::{
-    EffList, INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
+    EffList, INTRINSIC_ROUTE_RESOLVER_ID, RouteFrontierSummary, ScopeEvent, ScopeId, ScopeKind,
 };
 use crate::global::steps::RoleLaneMask;
 
@@ -14,7 +14,90 @@ pub(crate) struct ProgramSourceData {
     eff: EffList,
     role_lane_mask: RoleLaneMask,
     lane_span: u16,
+    frontier: SourceFrontier,
     error: Option<ProgramSourceError>,
+}
+
+#[derive(Clone, Copy)]
+struct SourceFrontier {
+    label_words: [u64; 4],
+    controller_mask: u16,
+    empty: bool,
+    invalid: bool,
+}
+
+impl SourceFrontier {
+    const EMPTY: Self = Self {
+        label_words: [0; 4],
+        controller_mask: 0,
+        empty: true,
+        invalid: false,
+    };
+
+    const fn from_eff(eff: &EffList) -> Self {
+        if eff.is_empty() {
+            return Self::EMPTY;
+        }
+        let node = eff.node_at(0);
+        if !matches!(node.kind, crate::eff::EffKind::Atom) {
+            return Self::EMPTY;
+        }
+        let atom = node.atom_data();
+        Self::atom(atom.from, atom.label)
+    }
+
+    const fn atom(from: u8, label: u8) -> Self {
+        let mut words = [0u64; 4];
+        let word = (label / 64) as usize;
+        let bit = label % 64;
+        words[word] = 1u64 << bit;
+        let invalid = from >= u16::BITS as u8;
+        Self {
+            label_words: words,
+            controller_mask: if invalid { 0 } else { 1u16 << from },
+            empty: false,
+            invalid,
+        }
+    }
+
+    const fn seq(self, next: Self) -> Self {
+        if self.empty { next } else { self }
+    }
+
+    const fn union(self, other: Self) -> Self {
+        let mut words = [0u64; 4];
+        let mut idx = 0usize;
+        while idx < words.len() {
+            words[idx] = self.label_words[idx] | other.label_words[idx];
+            idx += 1;
+        }
+        Self {
+            label_words: words,
+            controller_mask: self.controller_mask | other.controller_mask,
+            empty: self.empty && other.empty,
+            invalid: self.invalid || other.invalid,
+        }
+    }
+
+    const fn label_collision(self, other: Self) -> bool {
+        let mut idx = 0usize;
+        while idx < self.label_words.len() {
+            if (self.label_words[idx] & other.label_words[idx]) != 0 {
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+
+    const fn route_summary(scope: ScopeId, left: Self, right: Self) -> RouteFrontierSummary {
+        RouteFrontierSummary::new(
+            scope,
+            left.controller_mask | right.controller_mask,
+            left.empty || right.empty || left.invalid || right.invalid,
+            left.label_collision(right),
+        )
+    }
 }
 
 impl ProgramSourceData {
@@ -27,6 +110,7 @@ impl ProgramSourceData {
             eff,
             role_lane_mask,
             lane_span,
+            frontier: SourceFrontier::from_eff(&eff),
             error: None,
         }
     }
@@ -70,6 +154,7 @@ impl ProgramSourceData {
                 max_lane_span(self.lane_span, next.lane_span),
             ),
             lane_span: max_lane_span(self.lane_span, next.lane_span),
+            frontier: self.frontier.seq(next.frontier),
             error,
         }
     }
@@ -95,10 +180,7 @@ impl ProgramSourceData {
                     && marker.scope_id.same(scope)
                     && !found
                 {
-                    eff = eff.push_resolver(
-                        marker.offset,
-                        RouteResolver::dynamic(resolver_id).with_scope(scope),
-                    );
+                    eff = eff.push_route_resolver(scope, resolver_id);
                     found = true;
                 }
                 marker_idx += 1;
@@ -112,6 +194,7 @@ impl ProgramSourceData {
             eff,
             role_lane_mask: self.role_lane_mask,
             lane_span: self.lane_span,
+            frontier: self.frontier,
             error,
         }
     }
@@ -131,6 +214,7 @@ impl ProgramSourceData {
             eff,
             role_lane_mask: self.role_lane_mask,
             lane_span: self.lane_span,
+            frontier: self.frontier,
             error,
         }
     }
@@ -147,13 +231,17 @@ impl ProgramSourceData {
         let right_offset = add_scope_budget(1, left_budget);
         let left_eff = left_arm.rebase_scopes(1).with_scope(scope);
         let right_eff = right_arm.rebase_scopes(right_offset).with_scope(scope);
+        let route_summary = SourceFrontier::route_summary(scope, self.frontier, right.frontier);
         Self {
-            eff: left_eff.extend_list(right_eff),
+            eff: left_eff
+                .extend_list(right_eff)
+                .push_route_frontier(route_summary),
             role_lane_mask: self.role_lane_mask.union(
                 right.role_lane_mask,
                 max_lane_span(self.lane_span, right.lane_span),
             ),
             lane_span: max_lane_span(self.lane_span, right.lane_span),
+            frontier: self.frontier.union(right.frontier),
             error,
         }
     }
@@ -187,6 +275,7 @@ impl ProgramSourceData {
                 .role_lane_mask
                 .union(right_role_lane_mask, combined_lane_span),
             lane_span: combined_lane_span,
+            frontier: self.frontier.union(right.frontier),
             error,
         }
     }
@@ -206,7 +295,7 @@ const fn add_lane_span(lhs: u16, rhs: u16) -> u16 {
 
 const fn add_scope_budget(lhs: u16, rhs: u16) -> u16 {
     let sum = lhs as u32 + rhs as u32;
-    if sum > ScopeId::ORDINAL_CAPACITY as u32 {
+    if sum > ScopeId::LOCAL_CAPACITY as u32 {
         panic!("structured scope budget exceeded");
     }
     sum as u16

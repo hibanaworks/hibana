@@ -14,8 +14,7 @@ pub(crate) use self::{
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_RESOLVER_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-    ProgramColumnRange,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
 };
 /// Sealed runtime owner for role-local immutable compiled facts within a compiled program ref.
 #[derive(Clone, Copy)]

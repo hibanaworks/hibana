@@ -137,8 +137,11 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_scope_ordinal_by_slot(self, slot: usize) -> Option<u16> {
-        self.lanes().route_scope_ordinal_by_slot(slot)
+    pub(crate) const fn route_scope_by_slot(
+        self,
+        slot: usize,
+    ) -> Option<crate::global::const_dsl::ScopeId> {
+        self.lanes().route_scope_by_slot(slot)
     }
 
     #[inline(always)]

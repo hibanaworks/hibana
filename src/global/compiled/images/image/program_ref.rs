@@ -1,11 +1,9 @@
 use super::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_RESOLVER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts,
+    PROGRAM_IMAGE_ATOM_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
     eff::{EffAtom, EffStruct, EventOrigin},
     global::compiled::images::program::RouteResolverSite,
-    global::const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeId},
     global::role_program::BlobPtr,
 };
 
@@ -71,6 +69,11 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
+    pub(super) const fn read_u32_at(&self, offset: usize) -> u32 {
+        self.read_u16_at(offset) as u32 | ((self.read_u16_at(offset + 2) as u32) << 16)
+    }
+
+    #[inline(always)]
     pub(crate) const fn atom_at(&self, eff_idx: usize) -> Option<EffAtom> {
         let mut row = 0usize;
         while row < self.columns.atoms.len as usize {
@@ -99,33 +102,6 @@ impl CompiledProgramRef {
             Some(atom) => EffStruct::atom(atom),
             None => EffStruct::pure(),
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn resident_resolver_at(&self, eff_idx: usize) -> Option<RouteResolver> {
-        let mut row = 0usize;
-        while row < self.columns.resolvers.len as usize {
-            let offset = match self.column_offset(
-                self.columns.resolvers,
-                row,
-                PROGRAM_IMAGE_RESOLVER_STRIDE,
-            ) {
-                Some(offset) => offset,
-                None => return None,
-            };
-            if self.read_u16_at(offset) as usize == eff_idx {
-                let resolver_id = self.read_u16_at(offset + 2);
-                if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
-                    return Some(RouteResolver::Intrinsic);
-                }
-                return Some(RouteResolver::Dynamic {
-                    resolver_id,
-                    scope: ScopeId::from_raw(self.read_u16_at(offset + 4)),
-                });
-            }
-            row += 1;
-        }
-        None
     }
 
     #[inline(always)]

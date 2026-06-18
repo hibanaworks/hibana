@@ -1,8 +1,7 @@
 use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
-    PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE, PROGRAM_IMAGE_RESOLVER_STRIDE,
-    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange, ProgramImageColumns,
-    ProgramImageFacts,
+    PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
+    ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
     eff::EffAtom,
@@ -32,14 +31,10 @@ impl<const N: usize> ProgramImageBytes<N> {
     pub(crate) const fn columns(image: &CompiledProgramImage) -> ProgramImageColumns {
         let view = image.view();
         let mut atom_len = 0usize;
-        let mut resolver_len = 0usize;
         let mut idx = 0usize;
         while idx < view.len() {
             if view.atom_at(idx).is_some() {
                 atom_len += 1;
-            }
-            if view.resident_resolver_at(idx).is_some() {
-                resolver_len += 1;
             }
             idx += 1;
         }
@@ -67,9 +62,6 @@ impl<const N: usize> ProgramImageBytes<N> {
         let mut offset = 0usize;
         let atoms = ProgramColumnRange::new(offset, atom_len, PROGRAM_IMAGE_ATOM_STRIDE);
         offset = atoms.end_offset(PROGRAM_IMAGE_ATOM_STRIDE);
-        let resolvers =
-            ProgramColumnRange::new(offset, resolver_len, PROGRAM_IMAGE_RESOLVER_STRIDE);
-        offset = resolvers.end_offset(PROGRAM_IMAGE_RESOLVER_STRIDE);
         let route_resolvers = ProgramColumnRange::new(
             offset,
             route_resolver_len,
@@ -77,7 +69,6 @@ impl<const N: usize> ProgramImageBytes<N> {
         );
         let columns = ProgramImageColumns {
             atoms,
-            resolvers,
             route_resolvers,
         };
         if offset > columns.blob_len() {
@@ -111,6 +102,12 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
+    const fn write_u32(&mut self, offset: usize, value: u32) {
+        self.write_u16(offset, value as u16);
+        self.write_u16(offset + 2, (value >> 16) as u16);
+    }
+
+    #[inline(always)]
     const fn column_offset(column: ProgramColumnRange, row: usize, stride: usize) -> usize {
         if row >= column.len as usize {
             crate::invariant();
@@ -139,27 +136,6 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn write_resolver(
-        &mut self,
-        column: ProgramColumnRange,
-        row: usize,
-        offset: usize,
-        resolver: RouteResolver,
-    ) {
-        if offset > u16::MAX as usize {
-            crate::invariant();
-        }
-        let resolver_id = match resolver {
-            RouteResolver::Dynamic { resolver_id, .. } => resolver_id,
-            RouteResolver::Intrinsic => INTRINSIC_ROUTE_RESOLVER_ID,
-        };
-        let out = Self::column_offset(column, row, PROGRAM_IMAGE_RESOLVER_STRIDE);
-        self.write_u16(out, offset as u16);
-        self.write_u16(out + 2, resolver_id);
-        self.write_u16(out + 4, resolver.scope().raw());
-    }
-
-    #[inline(always)]
     const fn write_route_resolver(
         &mut self,
         column: ProgramColumnRange,
@@ -169,7 +145,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         decision: Option<(RouteResolver, u8)>,
     ) {
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
-        self.write_u16(out, scope.raw());
+        self.write_u32(out, scope.raw());
         let (resolver_id, decision_tag) = match decision {
             Some((resolver, tag)) => {
                 let resolver_id = match resolver {
@@ -183,15 +159,15 @@ impl<const N: usize> ProgramImageBytes<N> {
                 PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
             ),
         };
-        self.write_u16(out + 2, resolver_id);
+        self.write_u16(out + 4, resolver_id);
         self.write_u8(
-            out + 4,
+            out + 6,
             match controller_role {
                 Some(role) => role,
                 None => PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE,
             },
         );
-        self.write_u8(out + 5, decision_tag);
+        self.write_u8(out + 7, decision_tag);
     }
 
     #[inline(always)]
@@ -218,82 +194,6 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn route_arm_ranges_from_first_enter(
-        scope_markers: &[crate::global::const_dsl::ScopeMarker],
-        enter_idx: usize,
-    ) -> Option<(usize, usize, usize, usize)> {
-        if enter_idx >= scope_markers.len() {
-            return None;
-        }
-        let scope_id = scope_markers[enter_idx].scope_id;
-        let mut enter_offsets = [usize::MAX; 2];
-        let mut exit_offsets = [usize::MAX; 2];
-        let mut enter_len = 1usize;
-        let mut exit_len = 0usize;
-        enter_offsets[0] = scope_markers[enter_idx].offset;
-        let mut idx = enter_idx + 1;
-        while idx < scope_markers.len() && (enter_len < 2 || exit_len < 2) {
-            let marker = scope_markers[idx];
-            if marker.scope_id.same(scope_id) && matches!(marker.scope_kind, ScopeKind::Route) {
-                match marker.event {
-                    ScopeEvent::Enter => {
-                        if enter_len < 2 {
-                            enter_offsets[enter_len] = marker.offset;
-                        }
-                        enter_len += 1;
-                    }
-                    ScopeEvent::Exit => {
-                        if exit_len < 2 {
-                            exit_offsets[exit_len] = marker.offset;
-                        }
-                        exit_len += 1;
-                    }
-                }
-            }
-            idx += 1;
-        }
-        if enter_len == 2 && exit_len == 2 {
-            Some((
-                enter_offsets[0],
-                exit_offsets[0],
-                enter_offsets[1],
-                exit_offsets[1],
-            ))
-        } else {
-            None
-        }
-    }
-
-    #[inline(always)]
-    const fn first_visible_controller_mask(
-        view: &CompiledProgramView<'_>,
-        start: usize,
-        end: usize,
-    ) -> u16 {
-        let mut seen_lane_words = [0u64; 4];
-        let mut controller_mask = 0u16;
-        let mut idx = start;
-        while idx < end && idx < view.len() {
-            if let Some(atom) = view.atom_at(idx) {
-                let lane = atom.lane as usize;
-                let word = lane / 64;
-                let bit = lane % 64;
-                if word >= seen_lane_words.len() || atom.from >= u16::BITS as u8 {
-                    return 0;
-                }
-                let mask = 1u64 << bit;
-                if (seen_lane_words[word] & mask) != 0 {
-                    return controller_mask;
-                }
-                seen_lane_words[word] |= mask;
-                controller_mask |= 1u16 << atom.from;
-            }
-            idx += 1;
-        }
-        controller_mask
-    }
-
-    #[inline(always)]
     const fn unique_controller_role(mask: u16) -> Option<u8> {
         if mask == 0 || (mask & (mask - 1)) != 0 {
             return None;
@@ -314,14 +214,16 @@ impl<const N: usize> ProgramImageBytes<N> {
         route_enter_marker_idx: usize,
     ) -> Option<u8> {
         let scope_markers = view.scope_markers();
-        let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
-            Self::route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx)
-        else {
+        if route_enter_marker_idx >= scope_markers.len() {
             return None;
-        };
-        let mask = Self::first_visible_controller_mask(view, arm0_start, arm0_end)
-            | Self::first_visible_controller_mask(view, arm1_start, arm1_end);
-        Self::unique_controller_role(mask)
+        }
+        let route_scope = scope_markers[route_enter_marker_idx].scope_id;
+        match view.route_frontier_summary(route_scope) {
+            Some(summary) if !summary.is_invalid() => {
+                Self::unique_controller_role(summary.controller_mask())
+            }
+            Some(_) | None => None,
+        }
     }
 
     #[inline(always)]
@@ -347,16 +249,11 @@ impl<const N: usize> ProgramImageBytes<N> {
 
         let mut out = Self::empty();
         let mut atom_row = 0usize;
-        let mut resolver_row = 0usize;
         let mut idx = 0usize;
         while idx < view.len() {
             if let Some(atom) = view.atom_at(idx) {
                 out.write_atom(columns.atoms, atom_row, idx, atom);
                 atom_row += 1;
-            }
-            if let Some(resolver) = view.resident_resolver_at(idx) {
-                out.write_resolver(columns.resolvers, resolver_row, idx, resolver);
-                resolver_row += 1;
             }
             idx += 1;
         }

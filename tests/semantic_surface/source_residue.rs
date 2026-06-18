@@ -545,15 +545,13 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && !offer_commit.contains("self.apply_selected_route_commit_row("),
         "route selection must materialize resident route commit rows and leave route-state application inside prepared commit deltas"
     );
-    let resolver_with_scope = eff_list
-        .split("pub(crate) const fn resolver_with_scope")
-        .nth(1)
-        .and_then(|tail| tail.split("pub(crate) const fn push_control_spec").next())
-        .expect("projection resolver scope helper must stay visible");
     assert!(
-        resolver_with_scope.contains("None if resolver.is_dynamic() => crate::invariant()")
-            && !resolver_with_scope.contains("None => ScopeId::none()"),
-        "dynamic resolver scope lookup must fail closed instead of falling back to root scope"
+        eff_list.contains("pub(crate) const fn push_route_resolver")
+            && eff_list.contains("if self.resolver_markers[idx].scope.same(scope)")
+            && !eff_list.contains("pub(crate) const fn resolver_with_scope")
+            && !eff_list.contains("pub(crate) const fn resolver_at")
+            && !eff_list.contains("scope_id_for_offset"),
+        "dynamic resolver authority must be keyed by route ScopeId without offset fallback"
     );
     let route_lowering_source =
         role_scope_rows.as_str().to_owned() + &first_recv_dispatch + &passive_child;

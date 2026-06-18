@@ -3,15 +3,13 @@ use super::super::{
     PackedLocalEventRow, PackedRollScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
     ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
     ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE,
+    RoleLaneImage, RouteArmLaneStepRow,
 };
+use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
 impl RoleLaneImage {
-    const ROUTE_SCOPE_ROW_EMPTY: u16 = u16::MAX;
-    const ROUTE_SCOPE_ROW_REENTRY: u16 = 1 << 15;
-    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_REENTRY - 1;
-
     #[inline(always)]
     pub(crate) const fn new(columns: super::super::RoleImageColumns, blob: BlobPtr) -> Self {
         Self { columns, blob }
@@ -78,9 +76,9 @@ impl RoleLaneImage {
                 self.read_u16_at(offset),
                 self.read_u16_at(offset + 2),
                 self.read_u16_at(offset + 4),
-                self.read_u16_at(offset + 6),
-                self.byte_at(offset + 8),
-                self.byte_at(offset + 9),
+                self.read_u32_at(offset + 6),
+                self.byte_at(offset + 10),
+                self.byte_at(offset + 11),
             )),
             None => None,
         }
@@ -260,8 +258,8 @@ impl RoleLaneImage {
         match self.column_offset(self.columns.roll_scopes, slot, ROLE_IMAGE_ROLL_SCOPE_STRIDE) {
             Some(offset) => {
                 let row = PackedRollScopeRow::from_packed_parts(
-                    self.read_u16_at(offset),
-                    self.read_u32_at(offset + 2),
+                    self.read_u32_at(offset),
+                    self.read_u32_at(offset + 4),
                 );
                 if row.is_empty() { None } else { Some(row) }
             }
@@ -270,29 +268,39 @@ impl RoleLaneImage {
     }
 
     #[inline(always)]
-    const fn route_scope_row(&self, slot: usize) -> Option<u16> {
-        self.read_u16(self.columns.route_scopes, slot, ROLE_IMAGE_U16_STRIDE)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn route_scope_ordinal_by_slot(&self, slot: usize) -> Option<u16> {
-        let row = match self.route_scope_row(slot) {
-            Some(row) => row,
-            None => return None,
-        };
-        if row == Self::ROUTE_SCOPE_ROW_EMPTY {
-            None
-        } else {
-            Some(row & Self::ROUTE_SCOPE_ROW_ORDINAL_MASK)
+    const fn route_scope_row(&self, slot: usize) -> Option<ScopeId> {
+        match self.column_offset(
+            self.columns.route_scopes,
+            slot,
+            ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
+        ) {
+            Some(offset) => Some(ScopeId::from_raw(self.read_u32_at(offset))),
+            None => None,
         }
     }
 
     #[inline(always)]
+    pub(crate) const fn route_scope_by_slot(&self, slot: usize) -> Option<ScopeId> {
+        let row = match self.route_scope_row(slot) {
+            Some(row) => row,
+            None => return None,
+        };
+        if row.is_none() { None } else { Some(row) }
+    }
+
+    #[inline(always)]
     pub(crate) const fn route_scope_reentry_by_slot(&self, slot: usize) -> bool {
-        match self.route_scope_row(slot) {
-            Some(row) => {
-                row != Self::ROUTE_SCOPE_ROW_EMPTY && (row & Self::ROUTE_SCOPE_ROW_REENTRY) != 0
-            }
+        if self.route_scope_by_slot(slot).is_none() {
+            return false;
+        }
+        let byte = slot / 8;
+        let bit = 1u8 << (slot % 8);
+        match self.read_u8(
+            self.columns.route_scope_reentry_bits,
+            byte,
+            ROLE_IMAGE_LANE_STRIDE,
+        ) {
+            Some(bits) => (bits & bit) != 0,
             None => false,
         }
     }
@@ -336,7 +344,10 @@ impl RoleLaneImage {
         }
         let row_idx = slot * 2 + arm as usize;
         match self.route_arm_row(row_idx).child_slot_delta() {
-            Some(delta) => self.route_scope_ordinal_by_slot(slot + delta as usize),
+            Some(delta) => match self.route_scope_by_slot(slot + delta as usize) {
+                Some(scope) => Some(scope.local_ordinal()),
+                None => None,
+            },
             None => None,
         }
     }

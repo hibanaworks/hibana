@@ -4,7 +4,7 @@ use crate::{
     eff::{self, EffIndex, EventOrigin},
     global::{
         compiled::images::EventSemanticKind,
-        const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, RouteResolver, ScopeId, ScopeKind},
+        const_dsl::{ReentryMark, ScopeId, ScopeKind},
     },
 };
 
@@ -286,7 +286,6 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         origin: EventOrigin,
-        resolver: RouteResolver,
         /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
     },
@@ -297,7 +296,6 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         origin: EventOrigin,
-        resolver: RouteResolver,
         /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
     },
@@ -307,7 +305,6 @@ pub(crate) enum LocalAction {
         label: u8,
         frame_label: u8,
         origin: EventOrigin,
-        resolver: RouteResolver,
         /// Type-level lane for parallel composition; lane 0 is the primary lane.
         lane: u8,
     },
@@ -323,7 +320,6 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         origin: EventOrigin,
-        resolver_id: u16,
         lane: u8,
     },
     Recv {
@@ -332,7 +328,6 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         origin: EventOrigin,
-        resolver_id: u16,
         lane: u8,
     },
     Local {
@@ -340,7 +335,6 @@ enum PackedLocalAction {
         label: u8,
         frame_label: u8,
         origin: EventOrigin,
-        resolver_id: u16,
         lane: u8,
     },
     Terminate,
@@ -353,7 +347,6 @@ pub(crate) struct LocalAtomFacts {
     pub(crate) label: u8,
     pub(crate) frame_label: u8,
     pub(crate) origin: EventOrigin,
-    pub(crate) resolver: RouteResolver,
     pub(crate) lane: u8,
 }
 
@@ -378,23 +371,6 @@ pub(crate) struct LocalNodeMeta {
     pub(crate) scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
     pub(crate) choice: RouteChoiceMark,
-}
-
-#[inline(always)]
-const fn encode_resolver_id(resolver: RouteResolver) -> u16 {
-    match resolver {
-        RouteResolver::Dynamic { resolver_id, .. } => resolver_id,
-        RouteResolver::Intrinsic => INTRINSIC_ROUTE_RESOLVER_ID,
-    }
-}
-
-#[inline(always)]
-const fn decode_resolver(resolver_id: u16, scope: ScopeId) -> RouteResolver {
-    if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
-        RouteResolver::Intrinsic
-    } else {
-        RouteResolver::Dynamic { resolver_id, scope }
-    }
 }
 
 impl LocalAction {
@@ -488,7 +464,6 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 origin: facts.origin,
-                resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
@@ -507,7 +482,6 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 origin: facts.origin,
-                resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
@@ -525,7 +499,6 @@ impl LocalNode {
                 label: facts.label,
                 frame_label: facts.frame_label,
                 origin: facts.origin,
-                resolver_id: encode_resolver_id(facts.resolver),
                 lane: facts.lane,
             },
             next: meta.next,
@@ -556,7 +529,6 @@ impl LocalNode {
                 label,
                 frame_label,
                 origin,
-                resolver_id,
                 lane,
             } => LocalAction::Send {
                 eff_index,
@@ -564,7 +536,6 @@ impl LocalNode {
                 label,
                 frame_label,
                 origin,
-                resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
             PackedLocalAction::Recv {
@@ -573,7 +544,6 @@ impl LocalNode {
                 label,
                 frame_label,
                 origin,
-                resolver_id,
                 lane,
             } => LocalAction::Recv {
                 eff_index,
@@ -581,7 +551,6 @@ impl LocalNode {
                 label,
                 frame_label,
                 origin,
-                resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
             PackedLocalAction::Local {
@@ -589,14 +558,12 @@ impl LocalNode {
                 label,
                 frame_label,
                 origin,
-                resolver_id,
                 lane,
             } => LocalAction::Local {
                 eff_index,
                 label,
                 frame_label,
                 origin,
-                resolver: decode_resolver(resolver_id, self.scope),
                 lane,
             },
             PackedLocalAction::Terminate => LocalAction::Terminate,

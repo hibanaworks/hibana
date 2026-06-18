@@ -8,6 +8,5 @@ pub(crate) use self::{
 
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::image::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_RESOLVER_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-    ProgramColumnRange,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
 };

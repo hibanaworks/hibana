@@ -54,16 +54,6 @@ pub(crate) enum ProgramSourceError {
     ProjectionRouteUnprojectable,
 }
 
-impl ProgramSourceError {
-    pub(crate) const fn from_dynamic_resolver_source_status(status: u8) -> Option<Self> {
-        match status {
-            0 => None,
-            1 => Some(Self::ResolverTargetNotRoute),
-            2..=u8::MAX => crate::invariant(),
-        }
-    }
-}
-
 pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
     match error {
         ProgramSourceError::RouteArmAbsent => {
@@ -217,11 +207,6 @@ where
         panic_choreography_error(error);
     }
     let source = source_data.eff_list();
-    if let Some(error) = ProgramSourceError::from_dynamic_resolver_source_status(
-        source.dynamic_resolver_source_status(),
-    ) {
-        panic_choreography_error(error);
-    }
     ProgramProjection::<Steps>::IMAGE.validate_projection_program();
     if let Some(error) = crate::global::compiled::lowering::projection_error_all_roles(
         &ProgramProjection::<Steps>::IMAGE,

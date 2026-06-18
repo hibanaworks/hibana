@@ -34,7 +34,6 @@ impl CompiledProgramImage {
 
     const fn scan_into(summary: &mut Self, eff_list: &EffList) {
         let mut scope_count = 0u16;
-        let mut resolver_markers_len = 0u16;
         let mut role_count = 0usize;
         let mut route_scope_ordinals = [0u64; ROUTE_SCOPE_ORDINAL_WORDS];
         summary.program.lowering_facts.eff_count = eff_list.len() as u16;
@@ -49,25 +48,6 @@ impl CompiledProgramImage {
             while local < segment_len {
                 let idx = segment_start + local;
                 let node = eff_list.node_at(idx);
-                if let Some((resolver, _scope)) = eff_list.resolver_with_scope(idx) {
-                    let row_idx = summary.validation.resolver_row_len;
-                    if row_idx < MAX_COMPILED_RESOLVER_ROWS {
-                        summary.validation.resolver_rows[row_idx] =
-                            ProgramResolverRow::new(idx, resolver);
-                        summary.validation.resolver_row_len += 1;
-                        if summary.validation.segments[segment].resolver_row_len == 0 {
-                            summary.validation.segments[segment].resolver_row_start =
-                                ProgramImageSegmentData::compact_count(row_idx);
-                        }
-                        summary.validation.segments[segment].resolver_row_len =
-                            increment_compact_count(
-                                summary.validation.segments[segment].resolver_row_len,
-                            );
-                    } else {
-                        panic!("CompiledProgram: resolver side table exceeded");
-                    }
-                    resolver_markers_len = increment_compact_count(resolver_markers_len);
-                }
                 if matches!(node.kind, EffKind::Atom) {
                     let atom = node.atom_data();
                     summary.validation.segments[segment].atom_mask |= 1u128 << local;
@@ -101,6 +81,17 @@ impl CompiledProgramImage {
                 local += 1;
             }
             segment += 1;
+        }
+
+        let route_frontiers = eff_list.route_frontier_summaries();
+        let mut frontier_idx = 0usize;
+        while frontier_idx < route_frontiers.len() {
+            if frontier_idx >= MAX_COMPILED_ROUTE_RESOLVER_SITES {
+                panic!("CompiledProgram: route frontier table exceeded");
+            }
+            summary.validation.route_frontiers[frontier_idx] = route_frontiers[frontier_idx];
+            summary.validation.route_frontier_len += 1;
+            frontier_idx += 1;
         }
 
         let src_scope_markers = eff_list.scope_markers();
@@ -159,14 +150,20 @@ impl CompiledProgramImage {
                         );
                         summary.program.compiled_program_counts.route_resolvers =
                             summary.program.lowering_facts.route_scope_count as usize;
-                        match eff_list.resolver_for_scope(marker.scope_id) {
-                            Some(resolver) if resolver.is_dynamic() => {
-                                summary
-                                    .program
-                                    .compiled_program_counts
-                                    .dynamic_resolver_sites += 1;
+                        if let Some(RouteResolver::Dynamic { resolver_id, .. }) =
+                            eff_list.resolver_for_scope(marker.scope_id)
+                        {
+                            let site_idx = summary.validation.route_resolver_site_len;
+                            if site_idx >= MAX_COMPILED_ROUTE_RESOLVER_SITES {
+                                panic!("CompiledProgram: route resolver site table exceeded");
                             }
-                            Some(_) | None => {}
+                            summary.validation.route_resolver_sites[site_idx] =
+                                RouteResolverSite::new(marker.scope_id, resolver_id);
+                            summary.validation.route_resolver_site_len += 1;
+                            summary
+                                .program
+                                .compiled_program_counts
+                                .dynamic_resolver_sites += 1;
                         }
                     }
                 }
@@ -224,8 +221,10 @@ impl CompiledProgramImage {
                 atom_row_len: 0,
                 scope_markers: [ScopeMarker::empty(); MAX_COMPILED_SCOPE_MARKERS],
                 scope_marker_len: src_scope_markers.len(),
-                resolver_rows: [ProgramResolverRow::EMPTY; MAX_COMPILED_RESOLVER_ROWS],
-                resolver_row_len: 0,
+                route_frontiers: [RouteFrontierSummary::EMPTY; MAX_COMPILED_ROUTE_RESOLVER_SITES],
+                route_frontier_len: 0,
+                route_resolver_sites: [RouteResolverSite::EMPTY; MAX_COMPILED_ROUTE_RESOLVER_SITES],
+                route_resolver_site_len: 0,
             },
             program: ProgramImageData {
                 compiled_program_counts: CompiledProgramCounts {

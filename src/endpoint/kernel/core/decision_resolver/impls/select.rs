@@ -56,7 +56,6 @@ where
             scope: meta.scope,
             route_arm: CachedRouteArm::from_option(meta.route_arm),
             choice: meta.choice,
-            resolver: meta.resolver,
             lane: meta.lane,
             flags: CachedRecvMeta::FLAG_RECV_STEP,
         }
@@ -87,7 +86,6 @@ where
             scope: scope_id,
             route_arm: CachedRouteArm::some(route_arm),
             choice: RouteChoiceMark::Ordinary,
-            resolver: meta.resolver(),
             lane: meta.lane,
             flags: 0,
         }
@@ -117,7 +115,6 @@ where
             scope: meta.scope,
             route_arm: CachedRouteArm::some(route_arm),
             choice: RouteChoiceMark::Ordinary,
-            resolver: meta.resolver,
             lane: meta.lane,
             flags: 0,
         }
@@ -151,7 +148,6 @@ where
             scope: scope_id,
             route_arm: CachedRouteArm::some(route_arm),
             choice: RouteChoiceMark::Ordinary,
-            resolver: RouteResolver::Intrinsic,
             lane,
             flags: 0,
         }

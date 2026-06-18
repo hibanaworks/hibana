@@ -1,7 +1,6 @@
 use super::*;
 use crate::global::compiled::images::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_RESOLVER_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-    ProgramColumnRange,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
 };
 use std::println;
 
@@ -63,12 +62,10 @@ fn largest_program_section(
     program_ref: crate::global::compiled::images::CompiledProgramRef,
 ) -> usize {
     let columns = program_ref.columns;
-    pbl(columns.atoms, PROGRAM_IMAGE_ATOM_STRIDE)
-        .max(pbl(columns.resolvers, PROGRAM_IMAGE_RESOLVER_STRIDE))
-        .max(pbl(
-            columns.route_resolvers,
-            PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-        ))
+    pbl(columns.atoms, PROGRAM_IMAGE_ATOM_STRIDE).max(pbl(
+        columns.route_resolvers,
+        PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    ))
 }
 
 fn largest_role_section(rows: RoleImageRef) -> usize {
@@ -77,7 +74,11 @@ fn largest_role_section(rows: RoleImageRef) -> usize {
         .max(rbl(columns.lanes, ROLE_IMAGE_LANE_STRIDE))
         .max(rbl(columns.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE))
         .max(rbl(columns.conflicts, ROLE_IMAGE_CONFLICT_STRIDE))
-        .max(rbl(columns.route_scopes, ROLE_IMAGE_U16_STRIDE))
+        .max(rbl(columns.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE))
+        .max(rbl(
+            columns.route_scope_reentry_bits,
+            ROLE_IMAGE_LANE_STRIDE,
+        ))
         .max(rbl(
             columns.route_scope_conflicts,
             ROLE_IMAGE_CONFLICT_STRIDE,

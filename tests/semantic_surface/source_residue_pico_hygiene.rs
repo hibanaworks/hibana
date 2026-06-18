@@ -504,10 +504,16 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
             "route-arm descriptor row must stay u32/range based: {required}"
         );
     }
-    for required in ["scope: u16", "event_row: PackedLaneRange"] {
+    for required in ["scope: u32", "event_row: PackedLaneRange"] {
         assert!(
             roll_scope.contains(required),
-            "roll-scope descriptor row must stay u16/range based: {required}"
+            "roll-scope descriptor row must carry ScopeId raw plus event range: {required}"
+        );
+    }
+    for required in ["scope: scope.raw()", "ScopeId::from_raw(self.scope)"] {
+        assert!(
+            image_types.contains(required),
+            "roll-scope descriptor row must preserve ScopeId identity: {required}"
         );
     }
 
@@ -521,7 +527,6 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
         "const fn w64",
         "from_raw(raw: u64)",
         "raw(self) -> u64",
-        "ROLE_IMAGE_ROLL_SCOPE_STRIDE: usize = 8",
     ] {
         assert!(
             !descriptor_hot_path.contains(forbidden),

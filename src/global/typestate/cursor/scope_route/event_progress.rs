@@ -125,6 +125,35 @@ impl EventCursor {
         Ok(EnabledEventCommit::new(progress_step, cursor_after))
     }
 
+    fn local_label_at(&self, idx: usize) -> Option<u8> {
+        if let Some(meta) = self.try_recv_meta_at(idx) {
+            return Some(meta.label);
+        }
+        if let Some(meta) = self.try_send_meta_at(idx) {
+            return Some(meta.label);
+        }
+        if let Some(meta) = self.try_local_meta_at(idx) {
+            return Some(meta.label);
+        }
+        None
+    }
+
+    fn route_arm_label_index(&self, scope_id: ScopeId, arm: u8, target_label: u8) -> Option<usize> {
+        let slot = self.route_scope_slot(scope_id)?;
+        let row = self
+            .machine()
+            .event_program()
+            .route_arm_event_row_by_slot(slot, arm)?;
+        let mut idx = row.start();
+        while idx < row.end() {
+            if self.local_label_at(idx) == Some(target_label) {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
     pub(crate) fn recv_start_index_for_label(
         &self,
         target_label: u8,
@@ -146,11 +175,9 @@ impl EventCursor {
         {
             return current;
         }
-        if let Some(region) = self.enclosing_route_scope_rows_at(current)
-            && self.is_route_controller(region.scope())
-            && self
-                .send_preview_controller_arm_entry_for_label(region.scope(), target_label)
-                .is_some()
+        if self
+            .send_preview_controller_scope_for_label_at(current, target_label)
+            .is_some()
         {
             return current;
         }
@@ -253,6 +280,33 @@ impl EventCursor {
         false
     }
 
+    fn send_preview_controller_scope_for_label_at(
+        &self,
+        idx: usize,
+        target_label: u8,
+    ) -> Option<ScopeId> {
+        let mut selected = None;
+        let mut selected_len = 0usize;
+        let mut slot = 0usize;
+        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+            if idx >= region.start() && idx < region.end() {
+                let scope = region.scope();
+                let len = region.end() - region.start();
+                if len >= selected_len
+                    && self.is_route_controller(scope)
+                    && self
+                        .send_preview_controller_arm_entry_for_label(scope, target_label)
+                        .is_some()
+                {
+                    selected = Some(scope);
+                    selected_len = len;
+                }
+            }
+            slot += 1;
+        }
+        selected
+    }
+
     #[inline]
     fn send_preview_controller_arm_entry_for_label(
         &self,
@@ -266,9 +320,7 @@ impl EventCursor {
             {
                 return Some((arm, state_index_to_usize(entry)));
             }
-            if let Some(idx) =
-                self.selected_route_label_index(scope_id, target_label, arm, |_| None)
-            {
+            if let Some(idx) = self.route_arm_label_index(scope_id, arm, target_label) {
                 return Some((arm, idx));
             }
             if arm == 1 {
@@ -375,11 +427,9 @@ impl EventCursor {
         {
             return idx;
         }
-        if let Some(region) = self.enclosing_route_scope_rows_at(self.index())
-            && self.is_route_controller(region.scope())
-            && self
-                .send_preview_controller_arm_entry_for_label(region.scope(), target_label)
-                .is_some()
+        if self
+            .send_preview_controller_scope_for_label_at(self.index(), target_label)
+            .is_some()
         {
             return self.index();
         }
@@ -420,9 +470,16 @@ impl EventCursor {
         };
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
-        if let Some(region) = self.enclosing_route_scope_rows_at(idx) {
-            let scope_id = region.scope();
-            let at_route_start = idx == region.start();
+        if let Some(scope_id) = self
+            .send_preview_controller_scope_for_label_at(idx, target_label)
+            .or_else(|| {
+                self.enclosing_route_scope_rows_at(idx)
+                    .map(|region| region.scope())
+            })
+        {
+            let at_route_start = self
+                .route_scope_rows(scope_id)
+                .is_some_and(|region| idx == region.start());
             let unlabeled =
                 !self.is_send_at(idx) && !self.is_recv_at(idx) && !self.is_local_action_at(idx);
             let at_decision = at_route_start || unlabeled;
@@ -545,7 +602,6 @@ impl EventCursor {
                     route_scope: local.route_scope,
                     route_arm: local.route_arm,
                     selected_route_arm: local.route_arm,
-                    resolver: local.resolver,
                     lane: local.lane,
                 }
             } else {

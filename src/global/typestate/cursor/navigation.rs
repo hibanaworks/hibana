@@ -155,7 +155,6 @@ impl EventCursor {
                 label,
                 frame_label,
                 origin,
-                resolver,
                 lane,
             } => {
                 let scope = node.scope();
@@ -173,7 +172,6 @@ impl EventCursor {
                     route_scope,
                     route_arm,
                     selected_route_arm,
-                    resolver,
                     lane,
                 })
             }
@@ -190,7 +188,6 @@ impl EventCursor {
                 label,
                 frame_label,
                 origin,
-                resolver,
                 lane,
             } => {
                 let scope = node.scope();
@@ -208,7 +205,6 @@ impl EventCursor {
                     route_scope,
                     route_arm,
                     choice: node.choice_mark(),
-                    resolver,
                     lane,
                 })
             }
@@ -224,7 +220,6 @@ impl EventCursor {
                 label,
                 frame_label,
                 origin,
-                resolver,
                 lane,
             } => {
                 let scope = node.scope();
@@ -240,7 +235,6 @@ impl EventCursor {
                     scope,
                     route_scope,
                     route_arm,
-                    resolver,
                     lane,
                 })
             }

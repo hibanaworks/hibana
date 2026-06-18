@@ -57,10 +57,8 @@ where
         if let Some(arm) = self.selected_arm_for_scope(scope_id) {
             return Some(arm);
         }
-        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        offer_lanes.first_set(self.cursor.logical_lane_count())?;
-        self.preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
-            .map(|token| token.arm().as_u8())
+        self.preview_route_arm_selection_non_consuming(scope_id)
+            .map(Arm::as_u8)
             .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
     }
 

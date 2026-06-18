@@ -4,7 +4,7 @@ use super::super::frontier::FrontierKind;
 use super::first_recv_dispatch::FirstRecvDispatchCache;
 use crate::eff::{EffIndex, EventOrigin};
 use crate::global::compiled::images::EventSemanticKind;
-use crate::global::const_dsl::{RouteResolver, ScopeId};
+use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{RecvMeta, RouteChoiceMark, StateIndex, state_index_to_usize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,7 +95,6 @@ pub(in crate::endpoint::kernel) struct CachedRecvMeta {
     pub(in crate::endpoint::kernel) scope: ScopeId,
     pub(in crate::endpoint::kernel) route_arm: CachedRouteArm,
     pub(in crate::endpoint::kernel) choice: RouteChoiceMark,
-    pub(in crate::endpoint::kernel) resolver: RouteResolver,
     pub(in crate::endpoint::kernel) lane: u8,
     pub(in crate::endpoint::kernel) flags: u8,
 }
@@ -115,7 +114,6 @@ impl CachedRecvMeta {
         scope: ScopeId::none(),
         route_arm: CachedRouteArm::none(),
         choice: RouteChoiceMark::Ordinary,
-        resolver: RouteResolver::Intrinsic,
         lane: 0,
         flags: 0,
     };
@@ -144,7 +142,6 @@ impl CachedRecvMeta {
                 route_scope: self.scope,
                 route_arm: self.route_arm.as_option(),
                 choice: self.choice,
-                resolver: self.resolver,
                 lane: self.lane,
             },
         ))

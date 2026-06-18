@@ -19,9 +19,11 @@ use scope_rows::RouteArmProjectionRowInput;
 
 impl RoleLaneScratch {
     const ACTIVE_LANE_NONE: u16 = u16::MAX;
-    const ROUTE_SCOPE_ROW_EMPTY: u16 = u16::MAX;
-    const ROUTE_SCOPE_ROW_REENTRY: u16 = 1 << 15;
-    const ROUTE_SCOPE_ROW_ORDINAL_MASK: u16 = Self::ROUTE_SCOPE_ROW_REENTRY - 1;
+
+    #[inline(always)]
+    const fn reentry_bit_parts(slot: usize) -> (usize, u8) {
+        (slot / 8, 1u8 << (slot % 8))
+    }
 
     #[inline(always)]
     const fn local_row_has_lane(&self, row: PackedLaneRange, lane: u8) -> bool {
@@ -423,12 +425,8 @@ impl RoleLaneScratch {
     }
 
     #[inline(always)]
-    const fn route_scope_ordinal_from_row(row: u16) -> Option<u16> {
-        if row == Self::ROUTE_SCOPE_ROW_EMPTY {
-            None
-        } else {
-            Some(row & Self::ROUTE_SCOPE_ROW_ORDINAL_MASK)
-        }
+    const fn route_scope_from_row(row: ScopeId) -> Option<ScopeId> {
+        if row.is_none() { None } else { Some(row) }
     }
 
     #[inline(always)]
@@ -436,11 +434,10 @@ impl RoleLaneScratch {
         if scope.is_none() {
             return None;
         }
-        let target = scope.local_ordinal();
         let mut slot = 0usize;
         while slot < MAX_ROUTE_SCOPE_LANE_ROWS {
-            if let Some(ordinal) = Self::route_scope_ordinal_from_row(self.route_scope_rows[slot])
-                && ordinal == target
+            if let Some(candidate) = Self::route_scope_from_row(self.route_scope_rows[slot])
+                && candidate.same(scope)
             {
                 return Some(slot);
             }
@@ -470,11 +467,11 @@ impl RoleLaneScratch {
         if arm >= 2 {
             panic!("route commit arm overflow");
         }
-        let Some(ordinal) = Self::route_scope_ordinal_from_row(self.route_scope_rows[slot]) else {
+        let Some(scope) = Self::route_scope_from_row(self.route_scope_rows[slot]) else {
             panic!("route commit scope row missing");
         };
         let mut len = 0usize;
-        let mut conflict = PackedEventConflict::route_arm(ScopeId::route(ordinal), arm);
+        let mut conflict = PackedEventConflict::route_arm(scope, arm);
         while len < MAX_ROUTE_SCOPE_LANE_ROWS + 1 {
             let Some(LocalConflict::RouteArm { scope, .. }) = conflict.to_conflict() else {
                 return len;
@@ -503,11 +500,11 @@ impl RoleLaneScratch {
         if arm >= 2 {
             panic!("route commit arm overflow");
         }
-        let Some(ordinal) = Self::route_scope_ordinal_from_row(self.route_scope_rows[slot]) else {
+        let Some(scope) = Self::route_scope_from_row(self.route_scope_rows[slot]) else {
             panic!("route commit scope row missing");
         };
         let mut depth = 0usize;
-        let mut conflict = PackedEventConflict::route_arm(ScopeId::route(ordinal), arm);
+        let mut conflict = PackedEventConflict::route_arm(scope, arm);
         while depth <= target && depth < MAX_ROUTE_SCOPE_LANE_ROWS + 1 {
             let Some(LocalConflict::RouteArm { scope, .. }) = conflict.to_conflict() else {
                 panic!("route commit row missing");
@@ -562,16 +559,11 @@ impl RoleLaneScratch {
                 if route_slot >= MAX_ROUTE_SCOPE_LANE_ROWS {
                     panic!("route conflict row overflow");
                 }
-                let ordinal = scope.local_ordinal();
-                if ordinal > Self::ROUTE_SCOPE_ROW_ORDINAL_MASK {
-                    panic!("route scope ordinal overflow");
+                self.route_scope_rows[route_slot] = scope;
+                if marker.reentry.is_reentrant() {
+                    let (byte, bit) = Self::reentry_bit_parts(route_slot);
+                    self.route_scope_reentry_bits[byte] |= bit;
                 }
-                self.route_scope_rows[route_slot] = ordinal
-                    | if marker.reentry.is_reentrant() {
-                        Self::ROUTE_SCOPE_ROW_REENTRY
-                    } else {
-                        0
-                    };
                 let conflict = Self::dependency_conflict_for_scope(markers, view_len, scope);
                 self.route_scope_conflicts[route_slot] =
                     PackedEventConflict::from_conflict(conflict);
@@ -648,7 +640,8 @@ impl RoleLaneScratch {
             local_step_lanes: [0; MAX_LOCAL_STEP_LANES],
             local_step_dependencies: [PackedLocalDependency::none(); MAX_LOCAL_STEP_LANES],
             local_step_conflicts: [PackedEventConflict::none(); MAX_LOCAL_STEP_LANES],
-            route_scope_rows: [Self::ROUTE_SCOPE_ROW_EMPTY; MAX_ROUTE_SCOPE_LANE_ROWS],
+            route_scope_rows: [ScopeId::none(); MAX_ROUTE_SCOPE_LANE_ROWS],
+            route_scope_reentry_bits: [0; MAX_ROUTE_SCOPE_LANE_ROWS.div_ceil(8)],
             route_scope_conflicts: [PackedEventConflict::none(); MAX_ROUTE_SCOPE_LANE_ROWS],
             route_arm_rows: [PackedRouteArmRow::EMPTY; MAX_ROUTE_ARM_LANE_ROWS],
             resident_row_boundaries: [0; MAX_RESIDENT_ROW_BOUNDARY_ROWS],

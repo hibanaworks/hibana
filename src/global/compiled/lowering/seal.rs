@@ -9,7 +9,6 @@ use crate::{
 };
 
 mod first_recv_dispatch;
-mod first_visible_frontier;
 mod passive_child;
 
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
@@ -402,14 +401,17 @@ const fn validate_route_scope<const ROLE: u8>(
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
     let route_scope = scope_markers[route_enter_marker_idx].scope_id;
     let has_dynamic_resolver = scope_has_dynamic_resolver(view, route_scope);
-    let controller_mask = first_visible_controller_mask(eff_list, arm0_start, arm0_end)
-        | first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-    if !has_dynamic_resolver
-        && let Some(error) = first_visible_frontier::validate_intrinsic_first_visible_frontier::<ROLE>(
-            eff_list, arm0_start, arm0_end, arm1_start, arm1_end,
-        )
-    {
-        return Some(error);
+    let Some(frontier) = view.route_frontier_summary(route_scope) else {
+        return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+    };
+    let controller_mask = frontier.controller_mask();
+    if !has_dynamic_resolver {
+        if frontier.is_invalid() || frontier.has_label_collision() {
+            return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+        }
+        if !has_exactly_one_bit(controller_mask) {
+            return Some(ProgramSourceError::RouteControllerMismatch);
+        }
     }
     if reentry.is_reentrant() {
         return None;
@@ -504,34 +506,8 @@ const fn scope_has_dynamic_resolver(
     }
 }
 
-const fn first_visible_controller_mask(eff_list: &EffList, start: usize, end: usize) -> u16 {
-    let mut seen_lane_words = [0u64; 4];
-    let mut controller_mask = 0u16;
-    let mut idx = start;
-    while idx < end && idx < eff_list.len() {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            let lane = atom.lane as usize;
-            let word = lane / 64;
-            let bit = lane % 64;
-            if word >= seen_lane_words.len() || atom.from >= u16::BITS as u8 {
-                return 0;
-            }
-            let mask = 1u64 << bit;
-            if (seen_lane_words[word] & mask) != 0 {
-                return controller_mask;
-            }
-            seen_lane_words[word] |= mask;
-            controller_mask |= 1u16 << atom.from;
-        }
-        idx += 1;
-    }
-    controller_mask
-}
-
 const fn unique_controller_role(mask: u16) -> Option<u8> {
-    if !first_visible_frontier::has_exactly_one_bit(mask) {
+    if !has_exactly_one_bit(mask) {
         return None;
     }
     let mut role = 0u8;
@@ -542,6 +518,11 @@ const fn unique_controller_role(mask: u16) -> Option<u8> {
         role += 1;
     }
     None
+}
+
+#[inline(always)]
+const fn has_exactly_one_bit(mask: u16) -> bool {
+    mask != 0 && (mask & (mask - 1)) == 0
 }
 
 const fn collect_local_sigs<const ROLE: u8>(

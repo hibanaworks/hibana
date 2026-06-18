@@ -2,11 +2,12 @@ use super::super::{
     ColumnRange, LANE_DOMAIN_SIZE, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
     ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
     ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_U16_STRIDE,
-    RoleImageBytes, RoleImageColumns, RoleImageRef, RoleLaneScratch, RouteArmLaneStepRow,
-    RuntimeRoleFacts,
+    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
+    ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBytes, RoleImageColumns,
+    RoleImageRef, RoleLaneScratch, RouteArmLaneStepRow, RuntimeRoleFacts,
 };
 use crate::global::compiled::images::CompiledProgramRef;
+use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{PackedEventConflict, PackedLocalDependency};
 
 impl<const N: usize> RoleImageBytes<N> {
@@ -22,6 +23,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let dependency_len = scratch.dependency_row_len();
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
+        let route_scope_reentry_len = route_scope_len.div_ceil(8);
         let route_arm_len = route_scope_len * 2;
         let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
@@ -33,7 +35,8 @@ impl<const N: usize> RoleImageBytes<N> {
             + (local_len * ROLE_IMAGE_LANE_STRIDE)
             + (dependency_len * ROLE_IMAGE_DEPENDENCY_STRIDE)
             + (conflict_len * ROLE_IMAGE_CONFLICT_STRIDE)
-            + (route_scope_len * ROLE_IMAGE_U16_STRIDE)
+            + (route_scope_len * ROLE_IMAGE_ROUTE_SCOPE_STRIDE)
+            + (route_scope_reentry_len * ROLE_IMAGE_LANE_STRIDE)
             + (route_scope_len * ROLE_IMAGE_CONFLICT_STRIDE)
             + (route_arm_len * ROLE_IMAGE_ROUTE_ARM_STRIDE)
             + (resident_boundary_len * ROLE_IMAGE_U16_STRIDE)
@@ -62,6 +65,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let dependency_len = scratch.dependency_row_len();
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
+        let route_scope_reentry_len = route_scope_len.div_ceil(8);
         let route_arm_len = route_scope_len * 2;
         let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
@@ -75,7 +79,9 @@ impl<const N: usize> RoleImageBytes<N> {
             Self::column_at(offset, dependency_len, ROLE_IMAGE_DEPENDENCY_STRIDE);
         let (conflicts, offset) = Self::column_at(offset, conflict_len, ROLE_IMAGE_CONFLICT_STRIDE);
         let (route_scopes, offset) =
-            Self::column_at(offset, route_scope_len, ROLE_IMAGE_U16_STRIDE);
+            Self::column_at(offset, route_scope_len, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
+        let (route_scope_reentry_bits, offset) =
+            Self::column_at(offset, route_scope_reentry_len, ROLE_IMAGE_LANE_STRIDE);
         let (route_scope_conflicts, offset) =
             Self::column_at(offset, route_scope_len, ROLE_IMAGE_CONFLICT_STRIDE);
         let (route_arms, offset) =
@@ -107,6 +113,7 @@ impl<const N: usize> RoleImageBytes<N> {
             dependencies,
             conflicts,
             route_scopes,
+            route_scope_reentry_bits,
             route_scope_conflicts,
             route_arms,
             resident_boundaries,
@@ -189,9 +196,9 @@ impl<const N: usize> RoleImageBytes<N> {
         self.write_u16(offset, event.eff_index);
         self.write_u16(offset + 2, event.dependency_row);
         self.write_u16(offset + 4, event.conflict_row);
-        self.write_u16(offset + 6, event.packed_scope_slot());
-        self.write_u8(offset + 8, event.frame_label);
-        self.write_u8(offset + 9, event.flags);
+        self.write_u32(offset + 6, event.scope().raw());
+        self.write_u8(offset + 10, event.frame_label);
+        self.write_u8(offset + 11, event.flags);
     }
 
     #[inline(always)]
@@ -241,8 +248,8 @@ impl<const N: usize> RoleImageBytes<N> {
         roll_row: PackedRollScopeRow,
     ) {
         let offset = Self::column_offset(column, row, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
-        self.write_u16(offset, roll_row.scope_raw());
-        self.write_u32(offset + 2, roll_row.event_row_raw());
+        self.write_u32(offset, roll_row.scope_raw());
+        self.write_u32(offset + 4, roll_row.event_row_raw());
     }
 
     #[inline(always)]
@@ -351,6 +358,25 @@ impl<const N: usize> RoleImageBytes<N> {
     }
 
     #[inline(always)]
+    const fn write_scope_rows<const M: usize>(
+        &mut self,
+        column: ColumnRange,
+        len: usize,
+        values: &[ScopeId; M],
+    ) {
+        let mut idx = 0usize;
+        while idx < len {
+            self.w32(
+                column,
+                idx,
+                ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
+                values[idx].raw(),
+            );
+            idx += 1;
+        }
+    }
+
+    #[inline(always)]
     const fn write_dependency_rows<const M: usize>(
         &mut self,
         column: ColumnRange,
@@ -424,6 +450,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let dependency_len = scratch.dependency_row_len();
         let conflict_len = scratch.conflict_row_len();
         let route_scope_len = footprint.route_scope_count;
+        let route_scope_reentry_len = route_scope_len.div_ceil(8);
         let route_arm_len = route_scope_len * 2;
         let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
         let resident_boundary_len = scratch.resident_boundary_count();
@@ -454,11 +481,16 @@ impl<const N: usize> RoleImageBytes<N> {
             conflict_len,
             &scratch.local_step_conflicts,
         );
-        out.write_u16_rows(
+        out.write_scope_rows(
             columns.route_scopes,
             route_scope_len,
-            ROLE_IMAGE_U16_STRIDE,
             &scratch.route_scope_rows,
+        );
+        out.write_u8_rows(
+            columns.route_scope_reentry_bits,
+            route_scope_reentry_len,
+            ROLE_IMAGE_LANE_STRIDE,
+            &scratch.route_scope_reentry_bits,
         );
         out.write_conflict_rows(
             columns.route_scope_conflicts,

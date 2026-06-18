@@ -1,49 +1,65 @@
 mod audit;
 mod select;
 
-use super::super::{CursorEndpoint, EventSemanticKind, SendError, SendMeta, SendResult, Transport};
+use super::super::{
+    CursorEndpoint, SelectedRouteCommitRow, SendError, SendMeta, SendResult, Transport,
+};
+use crate::global::typestate::PackedEventConflict;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(crate) fn decide_dynamic_resolver(
+    pub(crate) fn decide_dynamic_resolvers_for_send(
         &mut self,
         meta: &SendMeta,
         target_label: u8,
+        preview_idx: usize,
     ) -> SendResult<()> {
-        let resolver = if meta.route_scope.is_none() {
-            meta.resolver()
+        if meta.label != target_label {
+            return Err(SendError::PhaseInvariant);
+        }
+        let Some(selected_arm) = meta.selected_route_arm else {
+            return Ok(());
+        };
+        let conflict = if meta.route_scope.is_none() {
+            self.cursor.event_conflict_for_index(preview_idx)
         } else {
-            self.cursor
-                .route_scope_controller_resolver(meta.route_scope)
+            PackedEventConflict::route_arm(meta.route_scope, selected_arm)
+        };
+        let range = self
+            .cursor
+            .route_commit_range_for_conflict(conflict, Some(selected_arm))
+            .ok_or(SendError::PhaseInvariant)?;
+        let mut idx = 0usize;
+        while idx < range.len() {
+            let route_row = self
+                .cursor
+                .route_commit_row_at(range, idx)
+                .and_then(SelectedRouteCommitRow::from_resident_conflict)
+                .ok_or(SendError::PhaseInvariant)?;
+            let scope_id = route_row.scope();
+            let arm_index = route_row.selected_arm();
+            let resolver = self
+                .cursor
+                .route_scope_controller_resolver(scope_id)
                 .map_or(
                     crate::global::const_dsl::RouteResolver::Intrinsic,
                     |(resolver, _)| resolver,
-                )
-        };
-        let crate::global::const_dsl::RouteResolver::Dynamic { .. } = resolver else {
-            return Ok(());
-        };
-        match meta.semantic {
-            EventSemanticKind::DecisionArm => {
-                self.decide_dynamic_route_arm(meta, target_label, resolver)
+                );
+            if let crate::global::const_dsl::RouteResolver::Dynamic { .. } = resolver {
+                self.decide_dynamic_route_arm(meta.lane, scope_id, arm_index, resolver)?;
             }
-            EventSemanticKind::ProtocolEvent => {
-                if !meta.route_scope.is_none() {
-                    self.cursor
-                        .route_scope_controller_resolver(meta.route_scope)
-                        .ok_or(SendError::PhaseInvariant)?;
-                }
-                self.decide_dynamic_route_arm(meta, target_label, resolver)
-            }
+            idx += 1;
         }
+        Ok(())
     }
 
     fn decide_dynamic_route_arm(
         &mut self,
-        meta: &SendMeta,
-        target_label: u8,
+        lane: u8,
+        scope_id: crate::global::const_dsl::ScopeId,
+        arm_index: u8,
         resolver: crate::global::const_dsl::RouteResolver,
     ) -> SendResult<()> {
         let crate::global::const_dsl::RouteResolver::Dynamic {
@@ -54,11 +70,6 @@ where
             return Err(SendError::PhaseInvariant);
         };
 
-        if meta.label != target_label {
-            return Err(SendError::PhaseInvariant);
-        }
-        let scope_id = meta.route_scope;
-        let arm_index = meta.selected_route_arm.ok_or(SendError::PhaseInvariant)?;
         if scope_id.is_none() || scope_id != resolver_scope {
             return Err(SendError::PhaseInvariant);
         }
@@ -75,7 +86,7 @@ where
             match cluster.resolve_dynamic_resolver(self.rendezvous_id(), scope_id, resolver_id) {
                 Ok(resolution) => {
                     self.emit_dynamic_resolver_success_audit(
-                        meta.lane,
+                        lane,
                         scope_id,
                         resolver_id,
                         resolution,
@@ -85,7 +96,7 @@ where
                 Err(crate::session::cluster::error::ClusterError::ResolverReject {
                     resolver_id,
                 }) => {
-                    self.emit_dynamic_resolver_reject_audit(meta.lane, scope_id, resolver_id);
+                    self.emit_dynamic_resolver_reject_audit(lane, scope_id, resolver_id);
                     return Err(SendError::ResolverReject { resolver_id });
                 }
                 Err(err) => return Err(Self::send_error_from_cluster(err)),

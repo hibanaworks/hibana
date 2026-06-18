@@ -19,29 +19,46 @@ pub(crate) enum ScopeEvent {
     Exit,
 }
 
-/// Encoded scope identifier embedding the scope kind and a local ordinal.
+/// Encoded scope identifier carried by lowering, route tables, resolver sites,
+/// and endpoint evidence.
 ///
-/// `u16::MAX` is the absent sentinel. Present scopes use the high three bits for
-/// [`ScopeKind`] and the low thirteen bits for the local ordinal.
+/// `u32::MAX` is the absent sentinel. Present scopes use a Pico-sized packed
+/// layout: `kind:2 | nest:9 | range:9 | local:12`.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScopeId {
-    raw: u16,
+    raw: u32,
 }
 
 impl ScopeId {
-    const ABSENT_RAW: u16 = u16::MAX;
-    const KIND_SHIFT: u16 = 13;
-    const KIND_MASK: u16 = 0b111;
-    const LOCAL_MASK: u16 = 0x1fff;
+    const ABSENT_RAW: u32 = u32::MAX;
+    const LOCAL_SHIFT: u32 = 0;
+    const RANGE_SHIFT: u32 = 12;
+    const NEST_SHIFT: u32 = 21;
+    const KIND_SHIFT: u32 = 30;
+    const KIND_MASK: u32 = 0b11;
+    const LOCAL_MASK: u32 = 0x0fff;
+    const RANGE_MASK: u32 = 0x01ff;
+    const NEST_MASK: u32 = 0x01ff;
 
-    pub(crate) const ORDINAL_CAPACITY: u16 = Self::LOCAL_MASK;
+    pub(crate) const MAX_LOCAL_ORDINAL: u16 = Self::LOCAL_MASK as u16;
+    pub(crate) const LOCAL_CAPACITY: u16 = Self::MAX_LOCAL_ORDINAL + 1;
 
     pub(crate) const fn new(kind: ScopeKind, local: u16) -> Self {
-        if local > Self::LOCAL_MASK {
+        Self::new_with_parts(kind, local, 0, 0)
+    }
+
+    pub(crate) const fn new_with_parts(kind: ScopeKind, local: u16, range: u16, nest: u16) -> Self {
+        if local as u32 > Self::LOCAL_MASK
+            || range as u32 > Self::RANGE_MASK
+            || nest as u32 > Self::NEST_MASK
+        {
             panic!("scope ordinal overflow");
         }
-        let raw = ((kind as u16) << Self::KIND_SHIFT) | local;
+        let raw = ((kind as u32) << Self::KIND_SHIFT)
+            | ((nest as u32) << Self::NEST_SHIFT)
+            | ((range as u32) << Self::RANGE_SHIFT)
+            | ((local as u32) << Self::LOCAL_SHIFT);
         Self { raw }
     }
 
@@ -55,7 +72,7 @@ impl ScopeId {
         self.raw == Self::ABSENT_RAW
     }
 
-    pub(crate) const fn raw(self) -> u16 {
+    pub(crate) const fn raw(self) -> u32 {
         self.raw
     }
 
@@ -63,11 +80,11 @@ impl ScopeId {
         self.raw == other.raw
     }
 
-    pub(crate) const fn from_raw(raw: u16) -> Self {
+    pub(crate) const fn from_raw(raw: u32) -> Self {
         if raw == Self::ABSENT_RAW {
             return Self::none();
         }
-        if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u16 {
+        if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u32 {
             crate::invariant();
         }
         Self { raw }
@@ -94,7 +111,21 @@ impl ScopeId {
         if self.is_none() {
             return 0;
         }
-        self.raw & Self::LOCAL_MASK
+        (self.raw & Self::LOCAL_MASK) as u16
+    }
+
+    pub(crate) const fn range_ordinal(self) -> u16 {
+        if self.is_none() {
+            return 0;
+        }
+        ((self.raw >> Self::RANGE_SHIFT) & Self::RANGE_MASK) as u16
+    }
+
+    pub(crate) const fn nest_ordinal(self) -> u16 {
+        if self.is_none() {
+            return 0;
+        }
+        ((self.raw >> Self::NEST_SHIFT) & Self::NEST_MASK) as u16
     }
 
     pub(crate) const fn add_ordinal(self, delta: u16) -> Self {
@@ -103,10 +134,15 @@ impl ScopeId {
         }
         let ordinal = self.local_ordinal();
         let sum = ordinal as u32 + delta as u32;
-        if sum > Self::LOCAL_MASK as u32 {
+        if sum > Self::LOCAL_MASK {
             panic!("scope ordinal overflow");
         }
-        Self::new(self.kind(), sum as u16)
+        Self::new_with_parts(
+            self.kind(),
+            sum as u16,
+            self.range_ordinal(),
+            self.nest_ordinal(),
+        )
     }
 
     pub(crate) const fn route(ordinal: u16) -> Self {
@@ -127,17 +163,25 @@ mod tests {
     use super::{ScopeId, ScopeKind};
 
     #[test]
-    fn scope_id_is_two_byte_sentinel_identity() {
-        assert_eq!(core::mem::size_of::<ScopeId>(), 2);
+    fn scope_id_is_u32_sentinel_identity() {
+        assert_eq!(core::mem::size_of::<ScopeId>(), 4);
         assert!(ScopeId::none().is_none());
 
-        let route = ScopeId::route(ScopeId::ORDINAL_CAPACITY);
+        let route = ScopeId::route(ScopeId::MAX_LOCAL_ORDINAL);
         assert_eq!(route.kind(), ScopeKind::Route);
-        assert_eq!(route.local_ordinal(), 0x1fff);
+        assert_eq!(route.local_ordinal(), 0x0fff);
 
         let parallel = ScopeId::parallel(3071);
         assert_eq!(parallel.kind(), ScopeKind::Parallel);
         assert_eq!(parallel.local_ordinal(), 3071);
         assert!(ScopeId::new(ScopeKind::Plain, 0).same(ScopeId::from_raw(0)));
+
+        let max = ScopeId::new_with_parts(ScopeKind::Route, 0x0fff, 0x01ff, 0x01ff);
+        assert_eq!(max.kind(), ScopeKind::Route);
+        assert_eq!(max.local_ordinal(), 0x0fff);
+        assert_eq!(max.range_ordinal(), 0x01ff);
+        assert_eq!(max.nest_ordinal(), 0x01ff);
+        assert!(max.same(ScopeId::from_raw(max.raw())));
+        assert!(ScopeId::LOCAL_CAPACITY as usize >= crate::eff::meta::MAX_EFF_NODES);
     }
 }

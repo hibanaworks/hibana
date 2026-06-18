@@ -201,7 +201,7 @@ fn endpoint_lease_slot_is_session_role_authority() {
 }
 
 #[test]
-fn scope_id_is_single_u16_identity_without_compact_shadow() {
+fn scope_id_is_single_u32_identity_without_compact_shadow() {
     let scope = read("src/global/const_dsl/scope.rs");
     let const_dsl = read("src/global/const_dsl.rs");
     let program = read("src/global/compiled/images/program.rs");
@@ -226,12 +226,13 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
 
     let scope_body = named_struct_body(&scope, "ScopeId");
     assert!(
-        scope_body.contains("raw: u16,")
-            && scope.contains("const ABSENT_RAW: u16 = u16::MAX;")
-            && scope.contains("const KIND_SHIFT: u16 = 13;")
-            && scope.contains("const LOCAL_MASK: u16 = 0x1fff;")
-            && scope.contains("pub(crate) const ORDINAL_CAPACITY: u16 = Self::LOCAL_MASK;"),
-        "ScopeId must be a u16 sentinel with 3-bit kind and 13-bit local ordinal"
+        scope_body.contains("raw: u32,")
+            && scope.contains("const ABSENT_RAW: u32 = u32::MAX;")
+            && scope.contains("const KIND_SHIFT: u32 = 30;")
+            && scope.contains("const LOCAL_MASK: u32 = 0x0fff;")
+            && scope
+                .contains("pub(crate) const LOCAL_CAPACITY: u16 = Self::MAX_LOCAL_ORDINAL + 1;"),
+        "ScopeId must be a u32 sentinel with kind/local/range/nest packed identity"
     );
     for required in [
         "scope: ScopeId,",
@@ -247,9 +248,8 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
     }
     for forbidden in [
         "struct ScopeId {\n    raw: u64",
+        "struct ScopeId {\n    raw: u16",
         "CompactScopeId",
-        "range_ordinal",
-        "nest_ordinal",
         "canonical_raw",
         "KIND_SHIFT: u64",
         "scope.raw() as u32",
@@ -266,6 +266,7 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
 #[test]
 fn route_resolver_authority_is_scope_keyed() {
     let const_dsl = read("src/global/const_dsl.rs");
+    let route_dsl = read("src/global/const_dsl/route.rs");
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let source = read("src/g/source.rs");
     let seal = read("src/global/compiled/lowering/seal.rs");
@@ -278,6 +279,7 @@ fn route_resolver_authority_is_scope_keyed() {
     let session_effects = read("src/session/cluster/core/session_effect_steps.rs");
     let production_scope = [
         const_dsl.as_str(),
+        route_dsl.as_str(),
         eff_list.as_str(),
         source.as_str(),
         seal.as_str(),
@@ -294,6 +296,8 @@ fn route_resolver_authority_is_scope_keyed() {
         "pub(crate) struct RouteResolverSite",
         "pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self",
         "pub(crate) const fn scope(&self) -> ScopeId",
+        "pub(crate) struct RouteResolverMarker",
+        "pub(crate) scope: ScopeId,\n    pub(crate) resolver_id: u16,",
         "pub(crate) struct DynamicResolverKey {\n    pub(crate) rv: RendezvousId,\n    pub(crate) scope: crate::global::const_dsl::ScopeId,",
         "pub(crate) const fn new(rv: RendezvousId, scope: crate::global::const_dsl::ScopeId) -> Self",
         "pub(crate) fn route_resolver_sites_for",
@@ -303,6 +307,10 @@ fn route_resolver_authority_is_scope_keyed() {
         "site_scope)",
         "view.resolver_for_scope(route_scope)",
         "resolver_for_scope(&self, scope: ScopeId)",
+        "pub(crate) struct RouteFrontierSummary",
+        "push_route_frontier(route_summary)",
+        "route_frontier_summaries(&self)",
+        "view.route_frontier_summary(route_scope)",
     ] {
         assert!(
             production_scope.contains(required),
@@ -312,6 +320,17 @@ fn route_resolver_authority_is_scope_keyed() {
     for forbidden in [
         "DynamicResolverSite",
         "dynamic_resolver_sites_for",
+        "pub(crate) struct ResolverMarker",
+        "offset: usize,\n    pub(crate) scope_id: ScopeId,\n    pub(crate) resolver: RouteResolver",
+        "pub(crate) const fn resolver_at(",
+        "pub(crate) const fn resolver_with_scope(",
+        "PROGRAM_IMAGE_RESOLVER_STRIDE",
+        "ProgramResolverRow",
+        "resident_resolver_at",
+        "first_visible_frontier",
+        "first_visible_controller_mask",
+        "collect_first_visible_frontier",
+        "seen_lane_words",
         "first_route_head_decision_resolver_id",
         "nested_non_resolver_enter",
         "resident_resolver_at(scope_start)",

@@ -403,8 +403,15 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && role_program.contains("struct RoleLaneImage")
             && role_program.contains("struct RoleLaneScratch")
             && role_program.contains("struct PackedLocalEventRow")
-            && role_program.contains("scope_slot: u16")
-            && role_program.contains("ROLE_IMAGE_EVENT_STRIDE: usize = 10")
+            && role_program.contains("scope: crate::global::const_dsl::ScopeId")
+            && role_program.contains("ROLE_IMAGE_EVENT_STRIDE: usize = 12")
+            && role_program.contains("ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 4")
+            && role_program.contains(
+                "route_scope_rows: [crate::global::const_dsl::ScopeId; MAX_ROUTE_SCOPE_LANE_ROWS]"
+            )
+            && !role_program.contains("scope_slot: u16")
+            && !role_image.contains("encode_scope_slot")
+            && !role_image.contains("decode_scope_slot")
             && !role_program
                 .split("struct PackedLocalEventRow")
                 .nth(1)
@@ -537,17 +544,17 @@ fn resident_descriptor_metadata_stays_columnar() {
             && !segment.contains("policies: [RouteResolver; MAX_SEGMENT_EFFS]")
             && segment.contains("atom_row_start: u16")
             && segment.contains("atom_row_len: u16")
-            && segment.contains("resolver_row_start: u16")
-            && segment.contains("resolver_row_len: u16")
+            && !segment.contains("resolver_row_start: u16")
+            && !segment.contains("resolver_row_len: u16")
             && !segment.contains("route_scope_row_start: u16")
             && !segment.contains("route_scope_row_len: u16")
             && !lowering.contains("struct ProgramRouteScopeRow")
             && lowering.contains("struct ProgramAtomRow")
-            && lowering.contains("struct ProgramResolverRow")
+            && !lowering.contains("struct ProgramResolverRow")
             && lowering
                 .contains("const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES")
             && lowering.contains(
-                "const MAX_COMPILED_RESOLVER_ROWS: usize = crate::eff::meta::MAX_EFF_NODES"
+                "const MAX_COMPILED_ROUTE_RESOLVER_SITES: usize = crate::eff::meta::MAX_EFF_NODES"
             )
             && !lowering.contains("resolver_rows_complete: bool")
             && !lowering.contains("ProgramSourceLookup")
@@ -564,8 +571,10 @@ fn resident_descriptor_metadata_stays_columnar() {
             && !lowering.contains("message_atoms")
             && !lowering.contains("self.atom_rows[offset]")
             && !lowering.contains("route_scope_rows: [ProgramRouteScopeRow")
-            && lowering.contains("resolver_rows: [ProgramResolverRow; MAX_COMPILED_RESOLVER_ROWS]"),
-        "resident descriptor metadata must stay columnar: segment rows own atoms, scope markers, and resolver metadata without side tables"
+            && lowering.contains(
+                "route_resolver_sites: [RouteResolverSite; MAX_COMPILED_ROUTE_RESOLVER_SITES]"
+            ),
+        "resident descriptor metadata must stay columnar: segment rows own atoms and route resolver sites without per-offset resolver side tables"
     );
 }
 

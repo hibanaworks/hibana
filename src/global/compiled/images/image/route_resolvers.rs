@@ -15,7 +15,7 @@ impl CompiledProgramRef {
                 row,
                 PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
             )?;
-            if ScopeId::from_raw(self.read_u16_at(offset)) == scope_id {
+            if ScopeId::from_raw(self.read_u32_at(offset)) == scope_id {
                 return Some(offset);
             }
             row += 1;
@@ -26,7 +26,7 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
         let offset = self.route_resolver_row(scope_id)?;
-        let role = self.byte_at(offset + 4);
+        let role = self.byte_at(offset + 6);
         if role == PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE {
             None
         } else {
@@ -37,13 +37,13 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) fn route_controller(&self, scope_id: ScopeId) -> Option<(RouteResolver, u8)> {
         let offset = self.route_resolver_row(scope_id)?;
-        let resolver_id = self.read_u16_at(offset + 2);
+        let resolver_id = self.read_u16_at(offset + 4);
         if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
             return None;
         }
-        let scope = ScopeId::from_raw(self.read_u16_at(offset));
+        let scope = ScopeId::from_raw(self.read_u32_at(offset));
         let resolver = RouteResolver::Dynamic { resolver_id, scope };
-        Some((resolver, self.byte_at(offset + 5)))
+        Some((resolver, self.byte_at(offset + 7)))
     }
 
     #[inline(always)]
@@ -58,7 +58,7 @@ impl CompiledProgramRef {
             row,
             PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
         )?;
-        Some(ScopeId::from_raw(self.read_u16_at(offset)))
+        Some(ScopeId::from_raw(self.read_u32_at(offset)))
     }
 
     #[inline(always)]
@@ -68,7 +68,7 @@ impl CompiledProgramRef {
             row,
             PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
         )?;
-        let resolver_id = self.read_u16_at(offset + 2);
+        let resolver_id = self.read_u16_at(offset + 4);
         (resolver_id != INTRINSIC_ROUTE_RESOLVER_ID).then_some(resolver_id)
     }
 }

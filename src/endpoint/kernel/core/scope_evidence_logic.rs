@@ -437,6 +437,31 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint::kernel) fn preview_route_arm_selection_non_consuming(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<Arm> {
+        if let Some(token) = self.peek_scope_ack(scope_id) {
+            return Some(token.arm());
+        }
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut lane_idx = 0usize;
+        while lane_idx < lane_limit {
+            if let Some(arm) = self
+                .ports
+                .get(lane_idx)
+                .and_then(|port| port.as_ref())
+                .and_then(|port| port.peek_route_arm_selection(scope_id, ROLE))
+                .and_then(Arm::new)
+            {
+                return Some(arm);
+            }
+            lane_idx += 1;
+        }
+        None
+    }
+
+    #[inline]
     pub(in crate::endpoint::kernel) fn next_slot_in_mask(slot_mask: &mut u8) -> Option<usize> {
         if *slot_mask == 0 {
             return None;

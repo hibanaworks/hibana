@@ -103,6 +103,31 @@ where
                 self.port_for_lane(lane_wire as usize).clear_route_hints();
                 return;
             }
+            None if self
+                .cursor
+                .route_scope_controller_resolver(scope_id)
+                .is_some_and(|(resolver, _)| resolver.is_dynamic()) =>
+            {
+                let Some(arm) = super::Arm::new(selected_arm) else {
+                    crate::invariant();
+                };
+                self.record_route_arm_selection_for_lane(
+                    lane_wire as usize,
+                    scope_id,
+                    selected_arm,
+                );
+                self.emit_route_arm_selection(
+                    scope_id,
+                    RouteArmToken::from_resolver(arm),
+                    lane_wire,
+                );
+                if self.arm_has_recv(scope_id, selected_arm) {
+                    self.consume_scope_ready_arm(scope_id, selected_arm);
+                }
+                self.clear_scope_evidence(scope_id);
+                self.port_for_lane(lane_wire as usize).clear_route_hints();
+                return;
+            }
             None => {
                 if self.arm_has_recv(scope_id, selected_arm) {
                     self.consume_scope_ready_arm(scope_id, selected_arm);
@@ -224,6 +249,7 @@ where
         &mut self,
         meta: SendMeta,
         descriptor: SendRuntimeDesc,
+        preview_cursor_index: Option<StateIndex>,
     ) -> SendResult<()> {
         if meta.origin.is_session() {
             return Err(SendError::PhaseInvariant);
@@ -232,7 +258,11 @@ where
             return Err(SendError::PhaseInvariant);
         }
 
-        self.decide_dynamic_resolver(&meta, descriptor.logical_label())?;
+        let preview_idx = match preview_cursor_index {
+            Some(index) => state_index_to_usize(index),
+            None => self.cursor.index(),
+        };
+        self.decide_dynamic_resolvers_for_send(&meta, descriptor.logical_label(), preview_idx)?;
 
         Ok(())
     }
@@ -301,7 +331,7 @@ where
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
         }
-        if let Err(err) = self.validate_send_payload(meta, descriptor) {
+        if let Err(err) = self.validate_send_payload(meta, descriptor, preview_cursor_index) {
             return SendInitOutcome::Ready(Err(err));
         }
         let step = match self.begin_send_transport(preview_cursor_index, meta, payload) {

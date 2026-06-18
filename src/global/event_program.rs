@@ -174,11 +174,14 @@ impl LocalEventProgram {
         if scope_id.is_none() || !matches!(scope_id.kind(), ScopeKind::Route) {
             return None;
         }
-        let target = scope_id.local_ordinal();
         let mut slot = 0usize;
         let limit = self.footprint().route_scope_count;
         while slot < limit {
-            if self.rows().route_scope_ordinal_by_slot(slot) == Some(target) {
+            if self
+                .rows()
+                .route_scope_by_slot(slot)
+                .is_some_and(|scope| scope.same(scope_id))
+            {
                 return Some(slot);
             }
             slot += 1;
@@ -224,8 +227,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn route_scope_rows_by_slot(self, slot: usize) -> Option<RouteScopeRows> {
-        let ordinal = self.rows().route_scope_ordinal_by_slot(slot)?;
-        let scope_id = ScopeId::route(ordinal);
+        let scope_id = self.rows().route_scope_by_slot(slot)?;
         let mut start = usize::MAX;
         let mut end = 0usize;
         let mut arm = 0u8;
@@ -297,7 +299,7 @@ impl LocalEventProgram {
         slot: usize,
         arm: u8,
     ) -> Option<PassiveArmChildFact> {
-        let route_scope = ScopeId::route(self.rows().route_scope_ordinal_by_slot(slot)?);
+        let route_scope = self.rows().route_scope_by_slot(slot)?;
         let child_route_scope = self
             .rows()
             .passive_arm_child_ordinal_by_slot(slot, arm)

@@ -3,7 +3,6 @@ use super::super::{
 };
 use crate::global::{
     compiled::images::{CompiledProgramRef, EventSemanticKind},
-    const_dsl::ScopeKind,
     typestate::{
         LocalAtomFacts, LocalConflict, LocalNode, LocalNodeMeta, PackedEventConflict,
         RouteChoiceMark, StateIndex,
@@ -12,52 +11,22 @@ use crate::global::{
 
 impl PackedLocalEventRow {
     const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
-    const SCOPE_SLOT_KIND_SHIFT: u16 = 13;
-    const SCOPE_SLOT_ORDINAL_MASK: u16 = (1 << Self::SCOPE_SLOT_KIND_SHIFT) - 1;
-    const SCOPE_SLOT_NONE: u16 = u16::MAX;
 
     pub(crate) const EMPTY: Self = Self {
         eff_index: u16::MAX,
         dependency_row: u16::MAX,
         conflict_row: u16::MAX,
-        scope_slot: Self::SCOPE_SLOT_NONE,
+        scope: ScopeId::none(),
         frame_label: 0,
         flags: 0,
     };
-
-    #[inline(always)]
-    const fn encode_scope_slot(scope: ScopeId) -> u16 {
-        if scope.is_none() {
-            return Self::SCOPE_SLOT_NONE;
-        }
-        let ordinal = scope.local_ordinal();
-        if ordinal > Self::SCOPE_SLOT_ORDINAL_MASK {
-            panic!("local event scope ordinal overflow");
-        }
-        ((scope.kind() as u16) << Self::SCOPE_SLOT_KIND_SHIFT) | ordinal
-    }
-
-    #[inline(always)]
-    const fn decode_scope_slot(slot: u16) -> ScopeId {
-        if slot == Self::SCOPE_SLOT_NONE {
-            return ScopeId::none();
-        }
-        let kind = match (slot >> Self::SCOPE_SLOT_KIND_SHIFT) as u8 {
-            0 => ScopeKind::Plain,
-            1 => ScopeKind::Route,
-            2 => ScopeKind::Roll,
-            3 => ScopeKind::Parallel,
-            _ => panic!("local event scope kind overflow"),
-        };
-        ScopeId::new(kind, slot & Self::SCOPE_SLOT_ORDINAL_MASK)
-    }
 
     #[inline(always)]
     pub(crate) const fn from_packed_parts(
         eff_index: u16,
         dependency_row: u16,
         conflict_row: u16,
-        scope_slot: u16,
+        scope_raw: u32,
         frame_label: u8,
         flags: u8,
     ) -> Self {
@@ -65,15 +34,15 @@ impl PackedLocalEventRow {
             eff_index,
             dependency_row,
             conflict_row,
-            scope_slot,
+            scope: ScopeId::from_raw(scope_raw),
             frame_label,
             flags,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn packed_scope_slot(self) -> u16 {
-        self.scope_slot
+    pub(crate) const fn scope(self) -> ScopeId {
+        self.scope
     }
 
     #[inline(always)]
@@ -94,7 +63,7 @@ impl PackedLocalEventRow {
             eff_index: eff_idx as u16,
             dependency_row: u16::MAX,
             conflict_row: u16::MAX,
-            scope_slot: Self::encode_scope_slot(scope),
+            scope,
             frame_label,
             flags,
         }
@@ -150,11 +119,7 @@ impl PackedLocalEventRow {
         }
         let eff_idx = self.eff_index as usize;
         let atom = program.node_at(eff_idx).atom_data();
-        let scope = Self::decode_scope_slot(self.scope_slot);
-        let resolver = match program.resident_resolver_at(eff_idx) {
-            Some(resolver) => resolver.with_scope(scope),
-            None => crate::global::const_dsl::RouteResolver::Intrinsic,
-        };
+        let scope = self.scope;
         let semantic = EventSemanticKind::ProtocolEvent;
         let route_arm = match conflict.to_conflict() {
             Some(LocalConflict::RouteArm { arm, .. }) => Some(arm),
@@ -167,7 +132,6 @@ impl PackedLocalEventRow {
             label: atom.label,
             frame_label: self.frame_label,
             origin: atom.origin,
-            resolver,
             lane: atom.lane,
         };
         let meta = LocalNodeMeta {

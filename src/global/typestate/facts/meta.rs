@@ -1,9 +1,6 @@
 use crate::{
     eff::{EffIndex, EventOrigin},
-    global::{
-        compiled::images::EventSemanticKind,
-        const_dsl::{RouteResolver, ScopeId},
-    },
+    global::{compiled::images::EventSemanticKind, const_dsl::ScopeId},
 };
 
 use super::{RouteChoiceMark, StateIndex};
@@ -22,16 +19,8 @@ pub(crate) struct SendMeta {
     pub(crate) route_scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
     pub(crate) selected_route_arm: Option<u8>,
-    pub(crate) resolver: RouteResolver,
     /// Type-level lane for parallel composition; lane 0 is the primary lane.
     pub(crate) lane: u8,
-}
-
-impl SendMeta {
-    #[inline(always)]
-    pub(crate) const fn resolver(&self) -> RouteResolver {
-        self.resolver
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +83,6 @@ pub(crate) struct RecvMeta {
     pub(crate) route_arm: Option<u8>,
     /// Route-choice role of this recv.
     pub(crate) choice: RouteChoiceMark,
-    pub(crate) resolver: RouteResolver,
     /// Type-level lane for parallel composition; lane 0 is the primary lane.
     pub(crate) lane: u8,
 }
@@ -125,7 +113,6 @@ pub(crate) struct LocalMeta {
     pub(crate) scope: ScopeId,
     pub(crate) route_scope: ScopeId,
     pub(crate) route_arm: Option<u8>,
-    pub(crate) resolver: RouteResolver,
     /// Type-level lane for parallel composition; lane 0 is the primary lane.
     pub(crate) lane: u8,
 }

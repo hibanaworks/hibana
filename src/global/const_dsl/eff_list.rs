@@ -1,7 +1,7 @@
 use super::{
     EffList, EffStruct, MAX_CAPACITY, MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, ReentryMark,
-    ResolverMarker, RouteResolver, ScopeEvent, ScopeId, ScopeKind, ScopeMarker, SegmentSummary,
-    eff,
+    RouteFrontierSummary, RouteResolver, RouteResolverMarker, ScopeEvent, ScopeId, ScopeKind,
+    ScopeMarker, SegmentSummary, eff,
 };
 impl EffList {
     /// Create an empty accumulator.
@@ -13,8 +13,10 @@ impl EffList {
             scope_budget: 0,
             scope_markers: [ScopeMarker::empty(); MAX_CAPACITY],
             scope_marker_len: 0,
-            resolver_markers: [ResolverMarker::empty(); MAX_CAPACITY],
+            resolver_markers: [RouteResolverMarker::empty(); MAX_CAPACITY],
             resolver_marker_len: 0,
+            route_frontiers: [RouteFrontierSummary::EMPTY; MAX_CAPACITY],
+            route_frontier_len: 0,
         }
     }
 
@@ -60,14 +62,6 @@ impl EffList {
         } else {
             offset / MAX_SEGMENT_EFFS
         }
-    }
-
-    #[inline(always)]
-    pub(super) const fn summary_segment_for_effect_indexed_offset(offset: usize) -> usize {
-        if offset >= MAX_CAPACITY {
-            panic!("EffList effect marker offset out of bounds");
-        }
-        offset / MAX_SEGMENT_EFFS
     }
 
     #[inline(always)]
@@ -139,10 +133,10 @@ impl EffList {
                 reentry: marker.reentry,
             };
             let ordinal = rebased.ordinal();
-            if ordinal == ScopeId::ORDINAL_CAPACITY {
+            let next = ordinal + 1;
+            if next > ScopeId::LOCAL_CAPACITY {
                 panic!("scope ordinal overflow");
             }
-            let next = ordinal + 1;
             if next > max {
                 max = next;
             }
@@ -151,14 +145,14 @@ impl EffList {
         let mut resolver_idx = 0usize;
         while resolver_idx < self.resolver_marker_len {
             let marker = self.resolver_markers[resolver_idx];
-            let mut resolver = marker.resolver;
-            let scope = resolver.scope();
-            if !scope.is_none() {
-                let rebased = scope.add_ordinal(offset);
-                resolver = resolver.with_scope(rebased);
-            }
-            self.resolver_markers[resolver_idx] = ResolverMarker::new(marker.offset, resolver);
+            self.resolver_markers[resolver_idx] =
+                RouteResolverMarker::new(marker.scope.add_ordinal(offset), marker.resolver_id);
             resolver_idx += 1;
+        }
+        let mut frontier_idx = 0usize;
+        while frontier_idx < self.route_frontier_len {
+            self.route_frontiers[frontier_idx] = self.route_frontiers[frontier_idx].rebase(offset);
+            frontier_idx += 1;
         }
         self.scope_budget = max;
         self
@@ -224,8 +218,13 @@ impl EffList {
         let mut resolver_idx = 0;
         while resolver_idx < other.resolver_marker_len {
             let marker = other.resolver_markers[resolver_idx];
-            self = self.push_resolver(base + marker.offset, marker.resolver);
+            self = self.push_route_resolver(marker.scope, marker.resolver_id);
             resolver_idx += 1;
+        }
+        let mut frontier_idx = 0;
+        while frontier_idx < other.route_frontier_len {
+            self = self.push_route_frontier(other.route_frontiers[frontier_idx]);
+            frontier_idx += 1;
         }
         self
     }
@@ -253,10 +252,10 @@ impl EffList {
             panic!("EffList scope marker capacity exceeded");
         }
         let ordinal = scope_id.ordinal();
-        if ordinal == ScopeId::ORDINAL_CAPACITY {
+        let next = ordinal + 1;
+        if next > ScopeId::LOCAL_CAPACITY {
             panic!("scope ordinal overflow");
         }
-        let next = ordinal + 1;
         if next > self.scope_budget {
             self.scope_budget = next;
         }
@@ -302,10 +301,10 @@ impl EffList {
             panic!("EffList scope marker capacity exceeded");
         }
         let ordinal = scope.ordinal();
-        if ordinal == ScopeId::ORDINAL_CAPACITY {
+        let next = ordinal + 1;
+        if next > ScopeId::LOCAL_CAPACITY {
             panic!("scope ordinal overflow");
         }
-        let next = ordinal + 1;
         if next > self.scope_budget {
             self.scope_budget = next;
         }
@@ -356,14 +355,14 @@ impl EffList {
         self
     }
 
-    pub(crate) const fn push_resolver(mut self, offset: usize, resolver: RouteResolver) -> Self {
-        if offset > self.len || offset > MAX_CAPACITY {
-            panic!("EffList resolver marker offset out of bounds");
+    pub(crate) const fn push_route_resolver(mut self, scope: ScopeId, resolver_id: u16) -> Self {
+        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+            panic!("EffList route resolver scope");
         }
         let mut idx = 0usize;
         while idx < self.resolver_marker_len {
-            if self.resolver_markers[idx].offset == offset {
-                self.resolver_markers[idx] = ResolverMarker::new(offset, resolver);
+            if self.resolver_markers[idx].scope.same(scope) {
+                self.resolver_markers[idx] = RouteResolverMarker::new(scope, resolver_id);
                 return self;
             }
             idx += 1;
@@ -371,26 +370,10 @@ impl EffList {
         if self.resolver_marker_len >= MAX_CAPACITY {
             panic!("EffList resolver marker capacity exceeded");
         }
-        let segment = Self::summary_segment_for_effect_indexed_offset(offset);
-        self.segment_summaries[segment] = self.segment_summaries[segment].with_resolver_marker();
-        self.resolver_markers[self.resolver_marker_len] = ResolverMarker::new(offset, resolver);
+        self.resolver_markers[self.resolver_marker_len] =
+            RouteResolverMarker::new(scope, resolver_id);
         self.resolver_marker_len += 1;
         self
-    }
-
-    pub(crate) const fn resolver_at(&self, offset: usize) -> Option<RouteResolver> {
-        if offset >= MAX_CAPACITY {
-            crate::invariant();
-        }
-        let mut idx = 0usize;
-        while idx < self.resolver_marker_len {
-            let marker = self.resolver_markers[idx];
-            if marker.offset == offset {
-                return Some(marker.resolver);
-            }
-            idx += 1;
-        }
-        None
     }
 
     pub(crate) const fn resolver_for_scope(&self, scope: ScopeId) -> Option<RouteResolver> {
@@ -400,69 +383,39 @@ impl EffList {
         let mut idx = 0usize;
         while idx < self.resolver_marker_len {
             let marker = self.resolver_markers[idx];
-            if marker.scope_id.same(scope) {
-                return Some(marker.resolver.with_scope(scope));
+            if marker.scope.same(scope) {
+                return Some(marker.resolver());
             }
             idx += 1;
         }
         None
     }
 
-    pub(crate) const fn scope_id_for_offset(&self, offset: usize) -> Option<ScopeId> {
-        if offset >= MAX_CAPACITY {
-            crate::invariant();
+    pub(crate) const fn push_route_frontier(mut self, summary: RouteFrontierSummary) -> Self {
+        let scope = summary.scope();
+        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+            panic!("EffList route frontier scope");
         }
-        let mut stack = [ScopeId::none(); MAX_CAPACITY];
-        let mut stack_len = 0usize;
-        let mut marker_idx = 0usize;
-        while marker_idx < self.scope_marker_len {
-            let marker = self.scope_markers[marker_idx];
-            if marker.offset > offset {
-                break;
+        let mut idx = 0usize;
+        while idx < self.route_frontier_len {
+            if self.route_frontiers[idx].scope().same(scope) {
+                self.route_frontiers[idx] = summary;
+                return self;
             }
-            match marker.event {
-                ScopeEvent::Enter => {
-                    if stack_len >= MAX_CAPACITY {
-                        panic!("EffList scope stack overflow");
-                    }
-                    stack[stack_len] = marker.scope_id;
-                    stack_len += 1;
-                }
-                ScopeEvent::Exit => {
-                    if stack_len == 0 {
-                        crate::invariant();
-                    }
-                    stack_len -= 1;
-                }
-            }
-            marker_idx += 1;
+            idx += 1;
         }
-        if stack_len == 0 {
-            None
-        } else {
-            Some(stack[stack_len - 1])
+        if self.route_frontier_len >= MAX_CAPACITY {
+            panic!("EffList route frontier capacity exceeded");
         }
+        self.route_frontiers[self.route_frontier_len] = summary;
+        self.route_frontier_len += 1;
+        self
     }
 
-    pub(crate) const fn resolver_with_scope(
-        &self,
-        offset: usize,
-    ) -> Option<(RouteResolver, ScopeId)> {
-        match self.resolver_at(offset) {
-            Some(resolver) => {
-                let baked_scope = resolver.scope();
-                let scope = if baked_scope.is_none() {
-                    match self.scope_id_for_offset(offset) {
-                        Some(scope) => scope,
-                        None if resolver.is_dynamic() => crate::invariant(),
-                        None => baked_scope,
-                    }
-                } else {
-                    baked_scope
-                };
-                Some((resolver.with_scope(scope), scope))
-            }
-            None => None,
+    pub(crate) const fn route_frontier_summaries(&self) -> &[RouteFrontierSummary] {
+        /* SAFETY: `route_frontier_len` is advanced only after writing the row. */
+        unsafe {
+            core::slice::from_raw_parts(self.route_frontiers.as_ptr(), self.route_frontier_len)
         }
     }
 

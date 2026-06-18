@@ -8,6 +8,11 @@ pub(crate) struct RouteResolverSite {
 }
 
 impl RouteResolverSite {
+    pub(crate) const EMPTY: Self = Self {
+        resolver_id: crate::global::const_dsl::INTRINSIC_ROUTE_RESOLVER_ID,
+        scope: ScopeId::none(),
+    };
+
     #[inline(always)]
     pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
         Self { resolver_id, scope }

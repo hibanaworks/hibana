@@ -1,8 +1,7 @@
 use crate::global::compiled::lowering::CompiledProgramImage;
 
 pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 7;
-pub(crate) const PROGRAM_IMAGE_RESOLVER_STRIDE: usize = 6;
-pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6;
+pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8;
 pub(crate) const PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE: u8 = u8::MAX;
 pub(crate) const PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG: u8 = 0;
 
@@ -46,7 +45,6 @@ impl ProgramColumnRange {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ProgramImageColumns {
     pub(crate) atoms: ProgramColumnRange,
-    pub(crate) resolvers: ProgramColumnRange,
     pub(crate) route_resolvers: ProgramColumnRange,
 }
 
@@ -54,9 +52,6 @@ impl ProgramImageColumns {
     #[inline(always)]
     pub(crate) const fn blob_len(self) -> usize {
         let mut len = self.atoms.end_offset(PROGRAM_IMAGE_ATOM_STRIDE);
-        if self.resolvers.end_offset(PROGRAM_IMAGE_RESOLVER_STRIDE) > len {
-            len = self.resolvers.end_offset(PROGRAM_IMAGE_RESOLVER_STRIDE);
-        }
         if self
             .route_resolvers
             .end_offset(PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE)

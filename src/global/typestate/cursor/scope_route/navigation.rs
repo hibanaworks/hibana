@@ -456,6 +456,7 @@ impl EventCursor {
             return node_scope;
         }
         let mut conflict = self.machine().event_conflict_for_index(self.idx_usize());
+        let mut first_unresolved = ScopeId::none();
         let mut depth = 0usize;
         let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
         while depth < depth_bound {
@@ -468,13 +469,21 @@ impl EventCursor {
             let Some(selected) =
                 selected_arm_for_scope(scope).or_else(|| preview_selected_arm_for_scope(scope))
             else {
-                return scope;
+                if first_unresolved.is_none() {
+                    first_unresolved = scope;
+                }
+                conflict = self.route_scope_conflict_row(scope);
+                depth += 1;
+                continue;
             };
             if selected != arm {
                 return scope;
             }
             conflict = self.route_scope_conflict_row(scope);
             depth += 1;
+        }
+        if !first_unresolved.is_none() {
+            return first_unresolved;
         }
         node_scope
     }

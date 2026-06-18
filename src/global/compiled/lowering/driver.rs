@@ -3,16 +3,20 @@ use crate::{
         EffAtom, EffKind, EventOrigin,
         meta::{MAX_SEGMENT_EFFS, MAX_SEGMENTS},
     },
-    global::const_dsl::{EffList, RouteResolver, ScopeEvent, ScopeMarker, SegmentSummary},
+    global::const_dsl::{
+        EffList, RouteFrontierSummary, RouteResolver, ScopeEvent, ScopeMarker, SegmentSummary,
+    },
 };
 
-use super::super::images::program::{CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES};
+use super::super::images::program::{
+    CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES, RouteResolverSite,
+};
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_WORDS: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(64);
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
 const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES;
 const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
-const MAX_COMPILED_RESOLVER_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
+const MAX_COMPILED_ROUTE_RESOLVER_SITES: usize = crate::eff::meta::MAX_EFF_NODES;
 
 mod impls;
 
@@ -50,8 +54,6 @@ struct ProgramImageSegmentData {
     atom_row_len: u16,
     scope_marker_start: u16,
     scope_marker_len: u16,
-    resolver_row_start: u16,
-    resolver_row_len: u16,
 }
 
 impl ProgramImageSegmentData {
@@ -63,8 +65,6 @@ impl ProgramImageSegmentData {
         atom_row_len: 0,
         scope_marker_start: 0,
         scope_marker_len: 0,
-        resolver_row_start: 0,
-        resolver_row_len: 0,
     };
 
     #[inline(always)]
@@ -103,30 +103,6 @@ impl ProgramAtomRow {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ProgramResolverRow {
-    offset: u16,
-    scope: crate::global::const_dsl::ScopeId,
-    resolver: RouteResolver,
-}
-
-impl ProgramResolverRow {
-    const EMPTY: Self = Self {
-        offset: u16::MAX,
-        scope: crate::global::const_dsl::ScopeId::none(),
-        resolver: RouteResolver::Intrinsic,
-    };
-
-    #[inline(always)]
-    const fn new(offset: usize, resolver: RouteResolver) -> Self {
-        Self {
-            offset: ProgramImageSegmentData::compact_count(offset),
-            scope: resolver.scope(),
-            resolver,
-        }
-    }
-}
-
 #[derive(Clone)]
 struct ProgramImageValidationData {
     segments: [ProgramImageSegmentData; MAX_SEGMENTS],
@@ -135,8 +111,10 @@ struct ProgramImageValidationData {
     atom_row_len: usize,
     scope_markers: [ScopeMarker; MAX_COMPILED_SCOPE_MARKERS],
     scope_marker_len: usize,
-    resolver_rows: [ProgramResolverRow; MAX_COMPILED_RESOLVER_ROWS],
-    resolver_row_len: usize,
+    route_frontiers: [RouteFrontierSummary; MAX_COMPILED_ROUTE_RESOLVER_SITES],
+    route_frontier_len: usize,
+    route_resolver_sites: [RouteResolverSite; MAX_COMPILED_ROUTE_RESOLVER_SITES],
+    route_resolver_site_len: usize,
 }
 
 #[derive(Clone)]
@@ -218,5 +196,6 @@ pub(crate) struct CompiledProgramView<'a> {
     len: usize,
     atom_rows: &'a [ProgramAtomRow],
     scope_markers: &'a [ScopeMarker],
-    resolver_rows: &'a [ProgramResolverRow],
+    route_frontiers: &'a [RouteFrontierSummary],
+    route_resolver_sites: &'a [RouteResolverSite],
 }

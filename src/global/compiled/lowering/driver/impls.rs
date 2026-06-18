@@ -16,6 +16,25 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
+    pub(crate) const fn route_frontier_summary(
+        &self,
+        scope: crate::global::const_dsl::ScopeId,
+    ) -> Option<crate::global::const_dsl::RouteFrontierSummary> {
+        if scope.is_none() {
+            return None;
+        }
+        let mut idx = 0usize;
+        while idx < self.route_frontiers.len() {
+            let summary = self.route_frontiers[idx];
+            if summary.scope().same(scope) {
+                return Some(summary);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
     const fn segment_slot(offset: usize) -> (usize, usize) {
         if offset >= MAX_COMPILED_IMAGE_NODES {
             panic!("lowering offset out of bounds");
@@ -53,24 +72,6 @@ impl<'a> CompiledProgramView<'a> {
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_resolver_at(&self, offset: usize) -> Option<RouteResolver> {
-        if offset < self.len {
-            let (segment, _) = Self::segment_slot(offset);
-            let segment = self.segments[segment];
-            let mut row_idx = segment.resolver_row_start as usize;
-            let end = row_idx + segment.resolver_row_len as usize;
-            while row_idx < end {
-                let row = self.resolver_rows[row_idx];
-                if row.offset as usize == offset {
-                    return Some(row.resolver);
-                }
-                row_idx += 1;
-            }
-        }
-        None
-    }
-
-    #[inline(always)]
     pub(crate) const fn resolver_for_scope(
         &self,
         scope: crate::global::const_dsl::ScopeId,
@@ -79,10 +80,13 @@ impl<'a> CompiledProgramView<'a> {
             return None;
         }
         let mut row_idx = 0usize;
-        while row_idx < self.resolver_rows.len() {
-            let row = self.resolver_rows[row_idx];
-            if row.scope.same(scope) {
-                return Some(row.resolver.with_scope(scope));
+        while row_idx < self.route_resolver_sites.len() {
+            let site = self.route_resolver_sites[row_idx];
+            if site.scope().same(scope) {
+                return Some(RouteResolver::Dynamic {
+                    resolver_id: site.resolver_id(),
+                    scope,
+                });
             }
             row_idx += 1;
         }
@@ -105,9 +109,19 @@ impl ProgramImageValidationData {
             fields in this validation data and are read only for validation. */ unsafe {
                 core::slice::from_raw_parts(self.scope_markers.as_ptr(), self.scope_marker_len)
             },
-            resolver_rows: /* SAFETY: resolver-row pointer and count are paired
+            route_frontiers: /* SAFETY: route-frontier pointer and count are paired
             fields in this validation data and are read only for validation. */ unsafe {
-                core::slice::from_raw_parts(self.resolver_rows.as_ptr(), self.resolver_row_len)
+                core::slice::from_raw_parts(
+                    self.route_frontiers.as_ptr(),
+                    self.route_frontier_len,
+                )
+            },
+            route_resolver_sites: /* SAFETY: route-resolver-site pointer and count are paired
+            fields in this validation data and are read only for validation. */ unsafe {
+                core::slice::from_raw_parts(
+                    self.route_resolver_sites.as_ptr(),
+                    self.route_resolver_site_len,
+                )
             },
         }
     }
