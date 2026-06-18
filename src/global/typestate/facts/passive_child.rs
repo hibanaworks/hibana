@@ -21,7 +21,7 @@ impl PassiveArmChildFact {
         if let Some(child_scope) = child_route_scope
             && (child_scope.is_none()
                 || !matches!(child_scope.kind(), ScopeKind::Route)
-                || child_scope.canonical_raw() == route_scope.canonical_raw())
+                || child_scope.same(route_scope))
         {
             return None;
         }

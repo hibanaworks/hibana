@@ -8,7 +8,7 @@ use crate::{
     eff::{EffAtom, EffIndex},
     global::compiled::lowering::{CompiledProgramImage, CompiledProgramView},
     global::const_dsl::{
-        CompactScopeId, INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
+        INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
     },
 };
 
@@ -103,12 +103,6 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn write_u32(&mut self, offset: usize, value: u32) {
-        self.write_u16(offset, value as u16);
-        self.write_u16(offset + 2, (value >> 16) as u16);
-    }
-
-    #[inline(always)]
     const fn column_offset(column: ProgramColumnRange, row: usize, stride: usize) -> usize {
         if row >= column.len as usize {
             crate::invariant();
@@ -154,10 +148,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_RESOLVER_STRIDE);
         self.write_u16(out, offset as u16);
         self.write_u16(out + 2, resolver_id);
-        self.write_u32(
-            out + 4,
-            CompactScopeId::from_scope_id(resolver.scope()).raw(),
-        );
+        self.write_u16(out + 4, resolver.scope().raw());
     }
 
     #[inline(always)]
@@ -170,7 +161,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         decision: Option<(RouteResolver, EffIndex, u8)>,
     ) {
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
-        self.write_u32(out, CompactScopeId::from_scope_id(scope.canonical()).raw());
+        self.write_u16(out, scope.raw());
         let (resolver_id, eff_dense, decision_tag) = match decision {
             Some((resolver, eff, tag)) => {
                 let resolver_id = match resolver {
@@ -189,16 +180,16 @@ impl<const N: usize> ProgramImageBytes<N> {
                 PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
             ),
         };
-        self.write_u16(out + 4, resolver_id);
-        self.write_u16(out + 6, eff_dense);
+        self.write_u16(out + 2, resolver_id);
+        self.write_u16(out + 4, eff_dense);
         self.write_u8(
-            out + 8,
+            out + 6,
             match controller_role {
                 Some(role) => role,
                 None => PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE,
             },
         );
-        self.write_u8(out + 9, decision_tag);
+        self.write_u8(out + 7, decision_tag);
     }
 
     #[inline(always)]
@@ -243,7 +234,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         let route_marker = scope_markers[route_enter_marker_idx];
         if !matches!(route_marker.event, ScopeEvent::Enter)
             || !matches!(route_marker.scope_kind, ScopeKind::Route)
-            || route_marker.scope_id.canonical().raw() != route_scope.canonical().raw()
+            || !route_marker.scope_id.same(route_scope)
         {
             return None;
         }

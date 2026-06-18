@@ -6,11 +6,11 @@ use super::{
 //
 // This fragment owns route-decision table frames and route-scope head columns.
 // Unsafe operations bind resident storage once, keep route frames in explicit
-// free lists, and access table slots only after scope canonicalization and
+// free lists, and access table slots only after scope validation and
 // table-capacity checks performed by this owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ScopeCoord {
-    canonical: ScopeId,
+    scope: ScopeId,
 }
 
 impl ScopeCoord {
@@ -18,9 +18,7 @@ impl ScopeCoord {
         if scope.is_none() || scope.kind() != ScopeKind::Route {
             return None;
         }
-        Some(Self {
-            canonical: scope.canonical(),
-        })
+        Some(Self { scope })
     }
 }
 
@@ -51,7 +49,7 @@ pub(crate) struct RouteFrame {
 impl RouteFrame {
     fn assign(coord: ScopeCoord, next: u16) -> Self {
         Self {
-            scope: coord.canonical,
+            scope: coord.scope,
             entry: RouteEntry::empty(),
             next,
         }
@@ -267,7 +265,7 @@ impl RouteTable {
         let mut current = self.lane_head(lane_idx);
         while current != Self::FRAME_LIST_END {
             let idx = current as usize;
-            if self.frame_ref(idx).scope == coord.canonical {
+            if self.frame_ref(idx).scope == coord.scope {
                 return Some(idx);
             }
             current = self.frame_ref(idx).next;

@@ -5,11 +5,8 @@ use crate::endpoint::kernel::frontier::ObservedEntrySummary;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::lane_word_count;
 
-fn test_scope(raw: u64) -> ScopeId {
-    let Ok(ordinal) = u16::try_from(raw) else {
-        crate::invariant();
-    };
-    ScopeId::parallel(ordinal)
+fn test_scope(raw: u16) -> ScopeId {
+    ScopeId::parallel(raw)
 }
 
 fn observed_key_storage(
@@ -69,7 +66,7 @@ fn root_frontier_table_accepts_full_u8_lane_domain_rows() {
     let mut table = unsafe { table.assume_init() };
 
     for idx in 0..ROWS {
-        table.prepare_row(idx, test_scope(idx as u64 + 1));
+        table.prepare_row(idx, test_scope(idx as u16 + 1));
     }
 
     assert_eq!(table.capacity(), ROWS);

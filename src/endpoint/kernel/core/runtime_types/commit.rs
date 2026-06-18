@@ -4,14 +4,14 @@ use crate::{
         RouteOnlyCommitRowsRef, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
     },
     global::{
-        const_dsl::{CompactScopeId, ScopeId},
+        const_dsl::ScopeId,
         typestate::{RecvMeta, RelocatableResidentLaneStep, SendMeta, StateIndex},
     },
 };
 
 #[derive(Clone, Copy)]
 pub(crate) struct CommitRow {
-    scope: CompactScopeId,
+    scope: ScopeId,
     route_arm: Option<u8>,
     lane: u8,
 }
@@ -20,7 +20,7 @@ impl CommitRow {
     #[inline(always)]
     pub(crate) const fn new(scope: ScopeId, route_arm: Option<u8>, lane: u8) -> Self {
         Self {
-            scope: CompactScopeId::from_scope_id(scope),
+            scope,
             route_arm,
             lane,
         }
@@ -38,7 +38,7 @@ impl CommitRow {
 
     #[inline(always)]
     pub(crate) const fn scope(self) -> ScopeId {
-        self.scope.to_scope_id()
+        self.scope
     }
 
     #[inline(always)]

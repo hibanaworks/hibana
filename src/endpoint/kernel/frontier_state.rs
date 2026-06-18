@@ -652,7 +652,7 @@ impl FrontierState {
     }
 
     pub(super) fn detach_lane_from_root_frontier(&mut self, info: LaneOfferState) {
-        let root = info.parallel_root.canonical();
+        let root = info.parallel_root;
         if root.is_none() {
             return;
         }
@@ -665,7 +665,7 @@ impl FrontierState {
     }
 
     pub(super) fn attach_lane_to_root_frontier(&mut self, info: LaneOfferState) {
-        let root = info.parallel_root.canonical();
+        let root = info.parallel_root;
         if root.is_none() {
             return;
         }

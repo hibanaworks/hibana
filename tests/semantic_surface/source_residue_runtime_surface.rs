@@ -147,14 +147,29 @@ fn endpoint_lease_slot_is_session_role_authority() {
             && endpoint_lease.contains("pub(crate) fn has_live_endpoint_session_role"),
         "endpoint allocation must scan live endpoint leases before claiming a slot"
     );
+    let claim = cluster_ops
+        .find("core.locals.allocate_endpoint_lease_for_session_role")
+        .expect("endpoint storage owner must claim endpoint lease");
+    let resident = cluster_ops
+        .find("rv.ensure_endpoint_resident_budget(resident_budget)")
+        .expect("endpoint storage owner must ensure resident route/frontier budget");
+    let assoc = cluster_ops
+        .find("rv.ensure_core_lane_storage_for_assoc_entries")
+        .expect("endpoint storage owner must ensure lane association capacity");
     assert!(
         cluster_ops.contains("core.locals.allocate_endpoint_lease_for_session_role")
             && cluster_ops.contains("sid,\n                ROLE,")
             && endpoint_attach.contains("allocate_public_endpoint_storage_for_rv::<ROLE>")
-            && endpoint_attach
-                .contains("sid,\n                        storage_layout.total_bytes,")
+            && endpoint_attach.contains("PublicEndpointStorageRequest")
+            && endpoint_attach.contains("required_bytes: storage_layout.total_bytes")
+            && endpoint_attach.contains("required_align: storage_layout.total_align")
+            && registry_ops.find("has_live_endpoint_session_role(sid, role)")
+                < registry_ops.find("rendezvous.allocate_endpoint_lease")
+            && !registry_ops.contains("ensure_endpoint_resident_budget")
+            && claim < resident
+            && resident < assoc
             && !endpoint_core.contains("release_session_role_claim"),
-        "attach/drop must route session-role ownership through endpoint lease allocation/release only"
+        "attach/drop must claim endpoint lease before sidecar capacity growth and release only that lease"
     );
 
     for forbidden in [
@@ -178,6 +193,69 @@ fn endpoint_lease_slot_is_session_role_authority() {
         assert!(
             !production_scope.contains(forbidden),
             "session-role ownership must not reintroduce claim/refcount residue: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn scope_id_is_single_u16_identity_without_compact_shadow() {
+    let scope = read("src/global/const_dsl/scope.rs");
+    let const_dsl = read("src/global/const_dsl.rs");
+    let program = read("src/global/compiled/images/program.rs");
+    let route_resolvers = read("src/global/compiled/images/image/route_resolvers.rs");
+    let blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
+    let commit = read("src/endpoint/kernel/core/runtime_types/commit.rs");
+    let dynamic_resolvers = read("src/session/cluster/core/dynamic_resolvers.rs");
+    let session_effects = read("src/session/cluster/core/session_effect_steps.rs");
+    let route_table = read("src/rendezvous/tables/route_table.rs");
+    let production_scope = [
+        scope.as_str(),
+        const_dsl.as_str(),
+        program.as_str(),
+        route_resolvers.as_str(),
+        blob_storage.as_str(),
+        commit.as_str(),
+        dynamic_resolvers.as_str(),
+        session_effects.as_str(),
+        route_table.as_str(),
+    ]
+    .join("\n");
+
+    let scope_body = named_struct_body(&scope, "ScopeId");
+    assert!(
+        scope_body.contains("raw: u16,")
+            && scope.contains("const ABSENT_RAW: u16 = u16::MAX;")
+            && scope.contains("const KIND_SHIFT: u16 = 13;")
+            && scope.contains("const LOCAL_MASK: u16 = 0x1fff;")
+            && scope.contains("pub(crate) const ORDINAL_CAPACITY: u16 = Self::LOCAL_MASK;"),
+        "ScopeId must be a u16 sentinel with 3-bit kind and 13-bit local ordinal"
+    );
+    for required in [
+        "scope: ScopeId,",
+        "pub(crate) const fn resolver_scope(&self) -> ScopeId",
+        "pub(crate) scope: crate::global::const_dsl::ScopeId",
+        "scope: ScopeId,",
+        "pub(crate) struct RouteFrame {\n    pub(crate) scope: ScopeId,",
+    ] {
+        assert!(
+            production_scope.contains(required),
+            "compiled/runtime scope owners must store ScopeId directly: {required}"
+        );
+    }
+    for forbidden in [
+        "struct ScopeId {\n    raw: u64",
+        "CompactScopeId",
+        "range_ordinal",
+        "nest_ordinal",
+        "canonical_raw",
+        "KIND_SHIFT: u64",
+        "scope.raw() as u32",
+        "from_scope_id",
+        "to_scope_id",
+    ] {
+        assert!(
+            !production_scope.contains(forbidden),
+            "scope identity must not reintroduce compact/u64/canonical residue: {forbidden}"
         );
     }
 }

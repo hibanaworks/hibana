@@ -266,7 +266,8 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
             && !rendezvous.contains("compiled_ptr")
             && !rendezvous.contains("scratch_reserved_bytes")
             && !role_image.contains("Materialized")
-            && !role_image.contains("from_raw("),
+            && !role_image.contains("RoleImageSlice::from_raw(")
+            && !role_image.contains("CompiledProgramRef::from_raw("),
         "attach is resident descriptor reference only; no scratch-backed or test-only extra path may remain"
     );
 

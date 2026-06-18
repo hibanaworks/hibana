@@ -1,6 +1,6 @@
 use super::{
-    AttachError, ClusterError, EndpointInitArgs, EndpointLeaseId, Lane, RendezvousId,
-    RoleImageSlice, SessionCluster, SessionId,
+    AttachError, ClusterError, EndpointInitArgs, EndpointLeaseId, Lane,
+    PublicEndpointStorageRequest, RendezvousId, RoleImageSlice, SessionCluster, SessionId,
 };
 
 struct SecondaryEndpointLaneAttach<'lease, const ROLE: u8, T>
@@ -259,33 +259,32 @@ where
             requirements and reserve a live endpoint slot. */
             unsafe {
                 let logical_lane_count = role_image.logical_lane_count().max(1);
-                self.with_storage_mut(|core| {
+                let required_assoc_slots = self.with_storage_mut(|core| {
                     let rv = core
                         .locals
                         .get_mut_checked(&rv_id)
                         .map_err(Self::map_rendezvous_access_error)
                         .map_err(AttachError::cluster)?;
-                    let required_assoc_slots = Self::required_assoc_slots_for_endpoint(
+                    Ok::<usize, AttachError>(Self::required_assoc_slots_for_endpoint(
                         rv,
                         sid,
                         role_image,
                         logical_lane_count,
-                    );
-                    rv.ensure_core_lane_storage_for_assoc_entries(
-                        logical_lane_count,
-                        required_assoc_slots,
-                    )
-                    .map_err(|scope| AttachError::cluster(ClusterError::resource_exhausted(scope)))
+                    ))
                 })?;
                 let storage_layout = Self::public_endpoint_storage_requirement(role_image);
                 let resident_budget = Self::public_endpoint_resident_budget(role_image);
                 let (slot, generation, dst) = self
                     .allocate_public_endpoint_storage_for_rv::<ROLE>(
-                        rv_id,
-                        sid,
-                        storage_layout.total_bytes,
-                        storage_layout.total_align,
-                        resident_budget,
+                        PublicEndpointStorageRequest {
+                            rv_id,
+                            sid,
+                            required_bytes: storage_layout.total_bytes,
+                            required_align: storage_layout.total_align,
+                            logical_lane_count,
+                            required_assoc_slots,
+                            resident_budget,
+                        },
                     )?;
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);
                 let public_ops = crate::runtime::SessionKit::<'cfg, T>::endpoint_ops::<ROLE>();

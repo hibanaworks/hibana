@@ -123,7 +123,7 @@ impl ProgramSourceData {
                 let marker = markers[marker_idx];
                 if matches!(marker.event, ScopeEvent::Enter)
                     && matches!(marker.scope_kind, ScopeKind::Route)
-                    && marker.scope_id.canonical().raw() == scope.canonical().raw()
+                    && marker.scope_id.same(scope)
                 {
                     eff = eff.push_resolver(
                         marker.offset,

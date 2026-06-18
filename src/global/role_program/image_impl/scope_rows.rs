@@ -20,7 +20,7 @@ pub(super) struct RouteArmProjectionRowInput<'a> {
 impl RoleLaneScratch {
     #[inline(always)]
     pub(super) const fn same_scope(left: ScopeId, right: ScopeId) -> bool {
-        !left.is_none() && left.canonical_raw() == right.canonical_raw()
+        !left.is_none() && left.same(right)
     }
 
     #[inline(always)]

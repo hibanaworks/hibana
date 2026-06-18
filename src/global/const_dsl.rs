@@ -23,17 +23,14 @@ const MAX_CAPACITY: usize = eff::meta::MAX_EFF_NODES;
 mod scope;
 
 pub(crate) use self::eff_list::const_send_typed;
-pub(crate) use self::scope::{CompactScopeId, ScopeEvent, ScopeId, ScopeKind};
+pub(crate) use self::scope::{ScopeEvent, ScopeId, ScopeKind};
 
 pub(crate) const INTRINSIC_ROUTE_RESOLVER_ID: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RouteResolver {
     Intrinsic,
-    Dynamic {
-        resolver_id: u16,
-        scope: CompactScopeId,
-    },
+    Dynamic { resolver_id: u16, scope: ScopeId },
 }
 
 impl RouteResolver {
@@ -41,7 +38,7 @@ impl RouteResolver {
     pub(crate) const fn dynamic(resolver_id: u16) -> Self {
         Self::Dynamic {
             resolver_id,
-            scope: CompactScopeId::none(),
+            scope: ScopeId::none(),
         }
     }
 
@@ -51,17 +48,14 @@ impl RouteResolver {
 
     pub(crate) const fn scope(self) -> ScopeId {
         match self {
-            Self::Dynamic { scope, .. } => scope.to_scope_id(),
+            Self::Dynamic { scope, .. } => scope,
             Self::Intrinsic => ScopeId::none(),
         }
     }
 
     pub(crate) const fn with_scope(self, scope: ScopeId) -> Self {
         match self {
-            Self::Dynamic { resolver_id, .. } => Self::Dynamic {
-                resolver_id,
-                scope: CompactScopeId::from_scope_id(scope),
-            },
+            Self::Dynamic { resolver_id, .. } => Self::Dynamic { resolver_id, scope },
             Self::Intrinsic => Self::Intrinsic,
         }
     }

@@ -30,6 +30,17 @@ use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::session::types::{Lane, RendezvousId, SessionId};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::session::cluster::core) struct PublicEndpointStorageRequest {
+    rv_id: RendezvousId,
+    sid: SessionId,
+    required_bytes: usize,
+    required_align: usize,
+    logical_lane_count: usize,
+    required_assoc_slots: usize,
+    resident_budget: crate::rendezvous::core::EndpointResidentBudget,
+}
+
 struct EndpointInitArgs<'r, const ROLE: u8, T: crate::transport::Transport + 'r> {
     dst: *mut crate::endpoint::kernel::CursorEndpoint<'r, ROLE, T>,
     arena_storage: *mut u8,

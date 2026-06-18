@@ -4,10 +4,7 @@ use crate::{
     eff::{self, EffIndex, EventOrigin},
     global::{
         compiled::images::EventSemanticKind,
-        const_dsl::{
-            CompactScopeId, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, RouteResolver, ScopeId,
-            ScopeKind,
-        },
+        const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, RouteResolver, ScopeId, ScopeKind},
     },
 };
 
@@ -392,7 +389,7 @@ const fn encode_resolver_id(resolver: RouteResolver) -> u16 {
 }
 
 #[inline(always)]
-const fn decode_resolver(resolver_id: u16, scope: CompactScopeId) -> RouteResolver {
+const fn decode_resolver(resolver_id: u16, scope: ScopeId) -> RouteResolver {
     if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
         RouteResolver::Intrinsic
     } else {
@@ -431,7 +428,7 @@ impl LocalAction {
 pub(crate) struct LocalNode {
     action: PackedLocalAction,
     next: StateIndex,
-    scope: CompactScopeId,
+    scope: ScopeId,
     route_arm_raw: u8,
     /// Bit-packed node flags.
     /// FLAG_CHOICE_DETERMINANT marks the first recv of a route arm.
@@ -495,7 +492,7 @@ impl LocalNode {
                 lane: facts.lane,
             },
             next: meta.next,
-            scope: CompactScopeId::from_scope_id(meta.scope),
+            scope: meta.scope,
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
             flags: Self::flags(meta.choice, meta.semantic),
         }
@@ -514,7 +511,7 @@ impl LocalNode {
                 lane: facts.lane,
             },
             next: meta.next,
-            scope: CompactScopeId::from_scope_id(meta.scope),
+            scope: meta.scope,
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
             flags: Self::flags(meta.choice, meta.semantic),
         }
@@ -532,7 +529,7 @@ impl LocalNode {
                 lane: facts.lane,
             },
             next: meta.next,
-            scope: CompactScopeId::from_scope_id(meta.scope),
+            scope: meta.scope,
             route_arm_raw: Self::encode_route_arm(meta.route_arm),
             flags: Self::flags(meta.choice, meta.semantic),
         }
@@ -543,7 +540,7 @@ impl LocalNode {
         Self {
             action: PackedLocalAction::Terminate,
             next: index,
-            scope: CompactScopeId::none(),
+            scope: ScopeId::none(),
             route_arm_raw: Self::ROUTE_ARM_NONE,
             flags: 0,
         }
@@ -614,7 +611,7 @@ impl LocalNode {
 
     #[inline(always)]
     pub(crate) const fn scope(&self) -> ScopeId {
-        self.scope.to_scope_id()
+        self.scope
     }
 
     #[inline(always)]

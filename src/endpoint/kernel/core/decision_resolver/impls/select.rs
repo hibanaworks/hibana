@@ -501,7 +501,7 @@ where
         else {
             return Err(RecvError::PhaseInvariant);
         };
-        if scope_id.is_none() || scope_id != resolver_scope.to_scope_id() {
+        if scope_id.is_none() || scope_id != resolver_scope {
             return Err(RecvError::PhaseInvariant);
         }
         let offer_lane = self.offer_lane_for_scope(scope_id);

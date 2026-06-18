@@ -144,7 +144,7 @@ fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
 #[test]
 fn live_endpoint_send_survives_failed_later_attach_rollback() {
     let mut exercised = false;
-    for slab_bytes in [4608usize, 5120, 5632, 6144, 6656, 7168, 7680, 8192] {
+    for slab_bytes in (1024usize..=8192).step_by(128) {
         with_runtime_workspace(|slab| {
             let transport = TestTransport::new();
             with_resident_tls_ref(&SESSION_SLOT, |cluster| {

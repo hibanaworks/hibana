@@ -74,7 +74,7 @@ where
         rv_id: RendezvousId,
         eff_index: EffIndex,
         resolver_id: u16,
-        scope: crate::global::const_dsl::CompactScopeId,
+        scope: crate::global::const_dsl::ScopeId,
         resolver_ref: ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), ClusterError> {
         let key = DynamicResolverKey::new(rv_id, eff_index);
@@ -83,7 +83,7 @@ where
                 resolver_id: RESOLVER,
             });
         }
-        if scope.to_scope_id().is_none() {
+        if scope.is_none() {
             return Err(ClusterError::ResolverReject {
                 resolver_id: RESOLVER,
             });
@@ -117,7 +117,7 @@ where
             .resolver_ref
             .resolve_decision()
             .map_err(|_| ClusterError::ResolverReject { resolver_id })?;
-        if entry.scope.to_scope_id().is_none() {
+        if entry.scope.is_none() {
             return Err(ClusterError::ResolverReject { resolver_id });
         }
         Ok(arm)

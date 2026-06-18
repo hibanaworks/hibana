@@ -4,7 +4,7 @@ use super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
 impl EventCursor {
     #[inline(always)]
     fn same_scope(left: ScopeId, right: ScopeId) -> bool {
-        !left.is_none() && left.canonical_raw() == right.canonical_raw()
+        !left.is_none() && left == right
     }
 
     #[inline(always)]

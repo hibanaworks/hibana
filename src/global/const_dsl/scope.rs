@@ -19,53 +19,30 @@ pub(crate) enum ScopeEvent {
     Exit,
 }
 
-/// Encoded scope identifier embedding the scope kind and its structural ordinals.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ScopeId {
-    raw: u64,
-}
-
+/// Encoded scope identifier embedding the scope kind and a local ordinal.
+///
+/// `u16::MAX` is the absent sentinel. Present scopes use the high three bits for
+/// [`ScopeKind`] and the low thirteen bits for the local ordinal.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CompactScopeId {
-    raw: u32,
+pub(crate) struct ScopeId {
+    raw: u16,
 }
 
 impl ScopeId {
-    const ABSENT_RAW: u64 = u64::MAX;
-    const KIND_BITS: u64 = 3;
-    const LOCAL_BITS: u64 = 13;
-    const RANGE_BITS: u64 = 16;
-    const NEST_BITS: u64 = 16;
+    const ABSENT_RAW: u16 = u16::MAX;
+    const KIND_SHIFT: u16 = 13;
+    const KIND_MASK: u16 = 0b111;
+    const LOCAL_MASK: u16 = 0x1fff;
 
-    const NEST_SHIFT: u64 = 0;
-    const RANGE_SHIFT: u64 = Self::NEST_SHIFT + Self::NEST_BITS;
-    const LOCAL_SHIFT: u64 = Self::RANGE_SHIFT + Self::RANGE_BITS;
-    const KIND_SHIFT: u64 = Self::LOCAL_SHIFT + Self::LOCAL_BITS;
-
-    const KIND_MASK: u64 = (1 << Self::KIND_BITS) - 1;
-    const LOCAL_MASK: u64 = (1 << Self::LOCAL_BITS) - 1;
-    const RANGE_MASK: u64 = (1 << Self::RANGE_BITS) - 1;
-    const NEST_MASK: u64 = (1 << Self::NEST_BITS) - 1;
-
-    pub(crate) const ORDINAL_CAPACITY: u16 = Self::LOCAL_MASK as u16;
-
-    pub(crate) const fn compose(kind: ScopeKind, local: u16, range: u16, nest: u16) -> Self {
-        if local as u64 > Self::LOCAL_MASK
-            || range as u64 > Self::RANGE_MASK
-            || nest as u64 > Self::NEST_MASK
-        {
-            panic!("scope ordinal overflow");
-        }
-        let raw = ((kind as u64) << Self::KIND_SHIFT)
-            | ((local as u64) << Self::LOCAL_SHIFT)
-            | ((range as u64) << Self::RANGE_SHIFT)
-            | ((nest as u64) << Self::NEST_SHIFT);
-        Self { raw }
-    }
+    pub(crate) const ORDINAL_CAPACITY: u16 = Self::LOCAL_MASK;
 
     pub(crate) const fn new(kind: ScopeKind, local: u16) -> Self {
-        Self::compose(kind, local, 0, 0)
+        if local > Self::LOCAL_MASK {
+            panic!("scope ordinal overflow");
+        }
+        let raw = ((kind as u16) << Self::KIND_SHIFT) | local;
+        Self { raw }
     }
 
     pub(crate) const fn none() -> Self {
@@ -78,8 +55,22 @@ impl ScopeId {
         self.raw == Self::ABSENT_RAW
     }
 
-    pub(crate) const fn raw(self) -> u64 {
+    pub(crate) const fn raw(self) -> u16 {
         self.raw
+    }
+
+    pub(crate) const fn same(self, other: Self) -> bool {
+        self.raw == other.raw
+    }
+
+    pub(crate) const fn from_raw(raw: u16) -> Self {
+        if raw == Self::ABSENT_RAW {
+            return Self::none();
+        }
+        if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u16 {
+            crate::invariant();
+        }
+        Self { raw }
     }
 
     pub(crate) const fn kind(self) -> ScopeKind {
@@ -103,38 +94,7 @@ impl ScopeId {
         if self.is_none() {
             return 0;
         }
-        ((self.raw >> Self::LOCAL_SHIFT) & Self::LOCAL_MASK) as u16
-    }
-
-    pub(crate) const fn range_ordinal(self) -> u16 {
-        if self.is_none() {
-            return 0;
-        }
-        ((self.raw >> Self::RANGE_SHIFT) & Self::RANGE_MASK) as u16
-    }
-
-    pub(crate) const fn nest_ordinal(self) -> u16 {
-        if self.is_none() {
-            return 0;
-        }
-        ((self.raw >> Self::NEST_SHIFT) & Self::NEST_MASK) as u16
-    }
-
-    pub(crate) const fn canonical(self) -> Self {
-        if self.is_none() {
-            return Self::none();
-        }
-        Self::compose(self.kind(), self.local_ordinal(), 0, 0)
-    }
-
-    pub(crate) const fn canonical_raw(self) -> u64 {
-        if self.is_none() {
-            Self::ABSENT_RAW
-        } else {
-            let variable_mask =
-                (Self::RANGE_MASK << Self::RANGE_SHIFT) | (Self::NEST_MASK << Self::NEST_SHIFT);
-            self.raw & !variable_mask
-        }
+        self.raw & Self::LOCAL_MASK
     }
 
     pub(crate) const fn add_ordinal(self, delta: u16) -> Self {
@@ -146,12 +106,7 @@ impl ScopeId {
         if sum > Self::LOCAL_MASK as u32 {
             panic!("scope ordinal overflow");
         }
-        Self::compose(
-            self.kind(),
-            sum as u16,
-            self.range_ordinal(),
-            self.nest_ordinal(),
-        )
+        Self::new(self.kind(), sum as u16)
     }
 
     pub(crate) const fn route(ordinal: u16) -> Self {
@@ -167,106 +122,22 @@ impl ScopeId {
     }
 }
 
-impl CompactScopeId {
-    const ABSENT_RAW: u32 = u32::MAX;
-    const KIND_BITS: u32 = 3;
-    const ORDINAL_BITS: u32 = 9;
+#[cfg(test)]
+mod tests {
+    use super::{ScopeId, ScopeKind};
 
-    const NEST_SHIFT: u32 = 0;
-    const RANGE_SHIFT: u32 = Self::NEST_SHIFT + Self::ORDINAL_BITS;
-    const LOCAL_SHIFT: u32 = Self::RANGE_SHIFT + Self::ORDINAL_BITS;
-    const KIND_SHIFT: u32 = Self::LOCAL_SHIFT + Self::ORDINAL_BITS;
+    #[test]
+    fn scope_id_is_two_byte_sentinel_identity() {
+        assert_eq!(core::mem::size_of::<ScopeId>(), 2);
+        assert!(ScopeId::none().is_none());
 
-    const KIND_MASK: u32 = (1 << Self::KIND_BITS) - 1;
-    const ORDINAL_MASK: u32 = (1 << Self::ORDINAL_BITS) - 1;
+        let route = ScopeId::route(ScopeId::ORDINAL_CAPACITY);
+        assert_eq!(route.kind(), ScopeKind::Route);
+        assert_eq!(route.local_ordinal(), 0x1fff);
 
-    pub(crate) const fn none() -> Self {
-        Self {
-            raw: Self::ABSENT_RAW,
-        }
-    }
-
-    pub(crate) const fn decode_raw(raw: u32) -> Option<Self> {
-        if raw == Self::ABSENT_RAW {
-            return Some(Self::none());
-        }
-        if ((raw >> Self::KIND_SHIFT) & Self::KIND_MASK) > ScopeKind::Parallel as u32 {
-            None
-        } else {
-            Some(Self { raw })
-        }
-    }
-
-    pub(crate) const fn raw(self) -> u32 {
-        self.raw
-    }
-
-    pub(crate) const fn is_none(self) -> bool {
-        self.raw == Self::ABSENT_RAW
-    }
-
-    pub(crate) const fn from_scope_id(scope: ScopeId) -> Self {
-        if scope.is_none() {
-            return Self::none();
-        }
-        let local = scope.local_ordinal() as u32;
-        let range = scope.range_ordinal() as u32;
-        let nest = scope.nest_ordinal() as u32;
-        if local > Self::ORDINAL_MASK || range > Self::ORDINAL_MASK || nest > Self::ORDINAL_MASK {
-            panic!("scope ordinal overflow");
-        }
-        Self {
-            raw: ((scope.kind() as u32) << Self::KIND_SHIFT)
-                | (local << Self::LOCAL_SHIFT)
-                | (range << Self::RANGE_SHIFT)
-                | (nest << Self::NEST_SHIFT),
-        }
-    }
-
-    pub(crate) const fn to_scope_id(self) -> ScopeId {
-        if self.is_none() {
-            ScopeId::none()
-        } else {
-            ScopeId::compose(
-                self.kind(),
-                self.local_ordinal(),
-                self.range_ordinal(),
-                self.nest_ordinal(),
-            )
-        }
-    }
-
-    pub(crate) const fn kind(self) -> ScopeKind {
-        if self.is_none() {
-            return ScopeKind::Plain;
-        }
-        match ((self.raw >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8 {
-            0 => ScopeKind::Plain,
-            1 => ScopeKind::Route,
-            2 => ScopeKind::Roll,
-            3 => ScopeKind::Parallel,
-            _ => panic!("invalid scope kind"),
-        }
-    }
-
-    pub(crate) const fn local_ordinal(self) -> u16 {
-        if self.is_none() {
-            return 0;
-        }
-        ((self.raw >> Self::LOCAL_SHIFT) & Self::ORDINAL_MASK) as u16
-    }
-
-    pub(crate) const fn range_ordinal(self) -> u16 {
-        if self.is_none() {
-            return 0;
-        }
-        ((self.raw >> Self::RANGE_SHIFT) & Self::ORDINAL_MASK) as u16
-    }
-
-    pub(crate) const fn nest_ordinal(self) -> u16 {
-        if self.is_none() {
-            return 0;
-        }
-        ((self.raw >> Self::NEST_SHIFT) & Self::ORDINAL_MASK) as u16
+        let parallel = ScopeId::parallel(3071);
+        assert_eq!(parallel.kind(), ScopeKind::Parallel);
+        assert_eq!(parallel.local_ordinal(), 3071);
+        assert!(ScopeId::new(ScopeKind::Plain, 0).same(ScopeId::from_raw(0)));
     }
 }

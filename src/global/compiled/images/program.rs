@@ -1,19 +1,16 @@
-use crate::{
-    eff::EffIndex,
-    global::const_dsl::{CompactScopeId, ScopeId},
-};
+use crate::{eff::EffIndex, global::const_dsl::ScopeId};
 
 /// Precomputed dynamic resolver site discovered during program lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicResolverSite {
     eff_index: EffIndex,
     resolver_id: u16,
-    scope: CompactScopeId,
+    scope: ScopeId,
 }
 
 impl DynamicResolverSite {
     #[inline(always)]
-    pub(crate) const fn new(eff_index: EffIndex, resolver_id: u16, scope: CompactScopeId) -> Self {
+    pub(crate) const fn new(eff_index: EffIndex, resolver_id: u16, scope: ScopeId) -> Self {
         Self {
             eff_index,
             resolver_id,
@@ -32,13 +29,13 @@ impl DynamicResolverSite {
     }
 
     #[inline(always)]
-    pub(crate) const fn resolver_scope(&self) -> CompactScopeId {
+    pub(crate) const fn resolver_scope(&self) -> ScopeId {
         self.scope
     }
 
     #[inline(always)]
     pub(crate) const fn scope(&self) -> ScopeId {
-        self.scope.to_scope_id()
+        self.scope
     }
 }
 

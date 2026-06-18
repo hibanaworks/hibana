@@ -251,7 +251,7 @@ const fn passive_child_route_enter_index(
         let marker = scope_markers[idx];
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_kind, ScopeKind::Route)
-            && marker.scope_id.canonical().raw() != route.canonical().raw()
+            && !marker.scope_id.same(route)
             && marker.offset == arm_start
             && first_enter_for_scope(scope_markers, idx)
         {
@@ -287,8 +287,7 @@ const fn first_enter_for_scope(scope_markers: &[ScopeMarker], marker_idx: usize)
     let mut idx = 0usize;
     while idx < marker_idx {
         let candidate = scope_markers[idx];
-        if matches!(candidate.event, ScopeEvent::Enter)
-            && candidate.scope_id.canonical().raw() == marker.scope_id.canonical().raw()
+        if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(marker.scope_id)
         {
             return false;
         }
@@ -317,9 +316,7 @@ const fn route_arm_ranges_from_first_enter(
     let mut idx = enter_idx + 1;
     while idx < scope_markers.len() && (enter_len < 2 || exit_len < 2) {
         let marker = scope_markers[idx];
-        if marker.scope_id.canonical().raw() == route.canonical().raw()
-            && matches!(marker.scope_kind, ScopeKind::Route)
-        {
+        if marker.scope_id.same(route) && matches!(marker.scope_kind, ScopeKind::Route) {
             match marker.event {
                 ScopeEvent::Enter => {
                     if enter_len < 2 {

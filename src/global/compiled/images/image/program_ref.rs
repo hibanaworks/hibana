@@ -5,7 +5,7 @@ use super::columns::{
 use crate::{
     eff::{EffAtom, EffStruct, EventOrigin},
     global::compiled::images::program::DynamicResolverSite,
-    global::const_dsl::{CompactScopeId, INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver},
+    global::const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeId},
     global::role_program::BlobPtr,
 };
 
@@ -68,19 +68,6 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(super) const fn read_u16_at(&self, offset: usize) -> u16 {
         self.byte_at(offset) as u16 | ((self.byte_at(offset + 1) as u16) << 8)
-    }
-
-    #[inline(always)]
-    pub(super) const fn read_u32_at(&self, offset: usize) -> u32 {
-        self.read_u16_at(offset) as u32 | ((self.read_u16_at(offset + 2) as u32) << 16)
-    }
-
-    #[inline(always)]
-    pub(super) const fn compact_scope_from_bits(raw: u32) -> CompactScopeId {
-        match CompactScopeId::decode_raw(raw) {
-            Some(scope) => scope,
-            None => crate::invariant(),
-        }
     }
 
     #[inline(always)]
@@ -147,7 +134,7 @@ impl CompiledProgramRef {
                 }
                 return Some(RouteResolver::Dynamic {
                     resolver_id,
-                    scope: Self::compact_scope_from_bits(self.read_u32_at(offset + 4)),
+                    scope: ScopeId::from_raw(self.read_u16_at(offset + 4)),
                 });
             }
             row += 1;

@@ -1,7 +1,7 @@
 use super::{
     AttachError, ClusterError, CompiledProgramRef, EndpointLeaseId, Lane, LaneLease, LeaseError,
-    PublicEndpointStorageLayout, RegisterRendezvousError, Rendezvous, RendezvousError,
-    RendezvousId, ResourceScope, RoleImageSlice, SessionId, SessionStorage,
+    PublicEndpointStorageLayout, PublicEndpointStorageRequest, RegisterRendezvousError, Rendezvous,
+    RendezvousError, RendezvousId, ResourceScope, RoleImageSlice, SessionId, SessionStorage,
 };
 
 // # Unsafe Owner Contract
@@ -114,13 +114,12 @@ where
     }
 
     #[inline(never)]
-    pub(crate) fn allocate_public_endpoint_storage_for_rv<'r, const ROLE: u8>(
+    pub(in crate::session::cluster::core) fn allocate_public_endpoint_storage_for_rv<
+        'r,
+        const ROLE: u8,
+    >(
         &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        required_bytes: usize,
-        required_align: usize,
-        resident_budget: crate::rendezvous::core::EndpointResidentBudget,
+        request: PublicEndpointStorageRequest,
     ) -> Result<
         (
             EndpointLeaseId,
@@ -132,6 +131,15 @@ where
     where
         'cfg: 'r,
     {
+        let PublicEndpointStorageRequest {
+            rv_id,
+            sid,
+            required_bytes,
+            required_align,
+            logical_lane_count,
+            required_assoc_slots,
+            resident_budget,
+        } = request;
         let core = /* SAFETY: `SessionCluster` owns the pinned
         `SessionStorage` cell. This attach allocation takes the cluster storage
         mutation path before leasing the target rendezvous entry. */ unsafe { &mut *self.storage_ptr() };
@@ -164,6 +172,18 @@ where
             ));
         }
         if let Err(resource) = rv.ensure_endpoint_lease_live(slot, generation) {
+            rv.release_endpoint_lease(slot, generation)
+                .map_err(ClusterError::resource_exhausted)?;
+            return Err(ClusterError::resource_exhausted(resource));
+        }
+        if let Err(resource) = rv.ensure_endpoint_resident_budget(resident_budget) {
+            rv.release_endpoint_lease(slot, generation)
+                .map_err(ClusterError::resource_exhausted)?;
+            return Err(ClusterError::resource_exhausted(resource));
+        }
+        if let Err(resource) =
+            rv.ensure_core_lane_storage_for_assoc_entries(logical_lane_count, required_assoc_slots)
+        {
             rv.release_endpoint_lease(slot, generation)
                 .map_err(ClusterError::resource_exhausted)?;
             return Err(ClusterError::resource_exhausted(resource));

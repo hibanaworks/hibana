@@ -459,9 +459,7 @@ const fn route_arm_ranges_from_first_enter(
     let mut idx = enter_idx + 1;
     while idx < scope_markers.len() && (enter_len < 2 || exit_len < 2) {
         let marker = scope_markers[idx];
-        if marker.scope_id.canonical().raw() == scope_id.canonical().raw()
-            && matches!(marker.scope_kind, ScopeKind::Route)
-        {
+        if marker.scope_id.same(scope_id) && matches!(marker.scope_kind, ScopeKind::Route) {
             match marker.event {
                 ScopeEvent::Enter => {
                     if enter_len < 2 {

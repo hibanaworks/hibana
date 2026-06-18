@@ -125,9 +125,6 @@ where
         let Some(rendezvous) = entry.rendezvous_mut() else {
             return Err(ClusterError::RendezvousBusy { id: rv.raw() });
         };
-        if let Err(resource) = rendezvous.ensure_endpoint_resident_budget(resident_budget) {
-            return Err(ClusterError::resource_exhausted(resource));
-        }
         /* SAFETY: duplicate session-role ownership has been rejected by scanning
         every registered rendezvous entry above; the selected rendezvous now owns
         the endpoint lease slot and writes the live `(sid, role)` identity atomically

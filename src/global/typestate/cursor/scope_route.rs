@@ -385,12 +385,11 @@ impl EventCursor {
     fn passive_child_scope_inner(&self, route_scope: ScopeId, arm: u8) -> Option<ScopeId> {
         let slot = self.route_scope_slot_inner(route_scope)?;
         let row: PassiveArmChildFact = self.machine().passive_arm_child_fact_by_slot(slot, arm)?;
-        if row.route_scope() != route_scope.canonical() || row.arm() != arm {
+        if row.route_scope() != route_scope || row.arm() != arm {
             crate::invariant();
         }
         let child_scope = row.child_route_scope()?;
-        (child_scope != route_scope && child_scope.canonical_raw() != route_scope.canonical_raw())
-            .then_some(child_scope)
+        (child_scope != route_scope).then_some(child_scope)
     }
 
     #[inline(always)]

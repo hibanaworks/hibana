@@ -245,5 +245,5 @@ impl DynamicResolverKey {
 pub(crate) struct DynamicResolverEntry<'cfg> {
     pub(crate) resolver_ref: ErasedResolverRef<'cfg>,
     pub(crate) resolver_id: u16,
-    pub(crate) scope: crate::global::const_dsl::CompactScopeId,
+    pub(crate) scope: crate::global::const_dsl::ScopeId,
 }

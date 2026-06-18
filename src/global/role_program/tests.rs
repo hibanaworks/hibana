@@ -506,10 +506,7 @@ fn roll_projection_marks_seq_body_with_roll_scope() {
             .expect("rolled seq second local event");
         assert_eq!(first.scope().kind(), ScopeKind::Roll);
         assert_eq!(second.scope().kind(), ScopeKind::Roll);
-        assert_eq!(
-            first.scope().canonical_raw(),
-            second.scope().canonical_raw()
-        );
+        assert_eq!(first.scope(), second.scope());
     });
 }
 

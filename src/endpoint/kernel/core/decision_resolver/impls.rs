@@ -95,7 +95,7 @@ where
         }
         let scope_id = meta.scope;
         let arm_index = meta.route_arm.ok_or(SendError::PhaseInvariant)?;
-        if scope_id.is_none() || scope_id != resolver_scope.to_scope_id() {
+        if scope_id.is_none() || scope_id != resolver_scope {
             return Err(SendError::PhaseInvariant);
         }
 

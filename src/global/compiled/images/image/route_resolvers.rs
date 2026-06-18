@@ -14,7 +14,6 @@ impl CompiledProgramRef {
         if scope_id.is_none() {
             return None;
         }
-        let target = scope_id.canonical_raw();
         let mut row = 0usize;
         while row < self.columns.route_resolvers.len as usize {
             let offset = self.column_offset(
@@ -22,8 +21,7 @@ impl CompiledProgramRef {
                 row,
                 PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
             )?;
-            let scope = Self::compact_scope_from_bits(self.read_u32_at(offset)).to_scope_id();
-            if scope.canonical_raw() == target {
+            if ScopeId::from_raw(self.read_u16_at(offset)) == scope_id {
                 return Some(offset);
             }
             row += 1;
@@ -34,7 +32,7 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
         let offset = self.route_resolver_row(scope_id)?;
-        let role = self.byte_at(offset + 8);
+        let role = self.byte_at(offset + 6);
         if role == PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE {
             None
         } else {
@@ -48,12 +46,12 @@ impl CompiledProgramRef {
         scope_id: ScopeId,
     ) -> Option<(RouteResolver, crate::eff::EffIndex, u8)> {
         let offset = self.route_resolver_row(scope_id)?;
-        let eff_dense = self.read_u16_at(offset + 6);
+        let eff_dense = self.read_u16_at(offset + 4);
         if eff_dense == PROGRAM_IMAGE_INTRINSIC_ROUTE_EFF {
             return None;
         }
-        let resolver_id = self.read_u16_at(offset + 4);
-        let scope = Self::compact_scope_from_bits(self.read_u32_at(offset));
+        let resolver_id = self.read_u16_at(offset + 2);
+        let scope = ScopeId::from_raw(self.read_u16_at(offset));
         let resolver = if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
             RouteResolver::Intrinsic
         } else {
@@ -62,7 +60,7 @@ impl CompiledProgramRef {
         Some((
             resolver,
             EffIndex::from_dense_ordinal(eff_dense as usize),
-            self.byte_at(offset + 9),
+            self.byte_at(offset + 7),
         ))
     }
 }

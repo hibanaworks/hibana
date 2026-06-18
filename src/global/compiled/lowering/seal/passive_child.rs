@@ -59,13 +59,13 @@ const fn validate_passive_arm_child_projection(
     else {
         return None;
     };
-    if child.canonical().raw() == route.canonical().raw() {
+    if child.same(route) {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     }
     let Some((parent, parent_arm)) = nearest_route_parent_for_scope(scope_markers, child) else {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     };
-    if parent.canonical().raw() != route.canonical().raw() || parent_arm != arm {
+    if !parent.same(route) || parent_arm != arm {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     }
     let Some(child_slot) = route_scope_slot_for_scope(scope_markers, child) else {
@@ -108,7 +108,7 @@ const fn passive_child_route_enter_index(
         let marker = scope_markers[idx];
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_kind, ScopeKind::Route)
-            && marker.scope_id.canonical().raw() != route.canonical().raw()
+            && !marker.scope_id.same(route)
             && marker.offset == arm_start
         {
             let (_, _, left_end, _, _, right_end) =
@@ -153,7 +153,7 @@ const fn nearest_route_parent_for_scope(
         let marker = scope_markers[idx];
         if first_enter_for_scope(scope_markers, idx)
             && matches!(marker.scope_kind, ScopeKind::Route)
-            && marker.scope_id.canonical().raw() != scope.canonical().raw()
+            && !marker.scope_id.same(scope)
         {
             let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
                 route_arm_ranges(scope_markers, marker.scope_id);
@@ -211,9 +211,7 @@ const fn scope_first_enter_index(scope_markers: &[ScopeMarker], scope: ScopeId) 
     let mut idx = 0usize;
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
-        if matches!(marker.event, ScopeEvent::Enter)
-            && marker.scope_id.canonical().raw() == scope.canonical().raw()
-        {
+        if matches!(marker.event, ScopeEvent::Enter) && marker.scope_id.same(scope) {
             return Some(idx);
         }
         idx += 1;
@@ -230,9 +228,7 @@ const fn scope_segment_end(
     let mut scan = enter_idx + 1;
     while scan < scope_markers.len() {
         let candidate = scope_markers[scan];
-        if matches!(candidate.event, ScopeEvent::Exit)
-            && candidate.scope_id.canonical().raw() == marker.scope_id.canonical().raw()
-        {
+        if matches!(candidate.event, ScopeEvent::Exit) && candidate.scope_id.same(marker.scope_id) {
             return candidate.offset;
         }
         scan += 1;
@@ -251,7 +247,7 @@ const fn route_scope_slot_for_scope(
         if first_enter_for_scope(scope_markers, idx)
             && matches!(marker.scope_kind, ScopeKind::Route)
         {
-            if marker.scope_id.canonical().raw() == route.canonical().raw() {
+            if marker.scope_id.same(route) {
                 return Some(slot);
             }
             slot += 1;
@@ -269,8 +265,7 @@ const fn first_enter_for_scope(scope_markers: &[ScopeMarker], marker_idx: usize)
     let mut idx = 0usize;
     while idx < marker_idx {
         let candidate = scope_markers[idx];
-        if matches!(candidate.event, ScopeEvent::Enter)
-            && candidate.scope_id.canonical().raw() == marker.scope_id.canonical().raw()
+        if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(marker.scope_id)
         {
             return false;
         }
@@ -291,9 +286,7 @@ const fn route_arm_ranges(
     let mut idx = 0usize;
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
-        if marker.scope_id.canonical().raw() == scope_id.canonical().raw()
-            && matches!(marker.scope_kind, ScopeKind::Route)
-        {
+        if marker.scope_id.same(scope_id) && matches!(marker.scope_kind, ScopeKind::Route) {
             match marker.event {
                 ScopeEvent::Enter => {
                     if enter_len < 2 {
