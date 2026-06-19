@@ -164,9 +164,9 @@ impl FrameHeader {
 /// Transport-owned receive evidence.
 ///
 /// Evidence is descriptor input, not route authority. `Deterministic` is valid
-/// only when the endpoint has a single resident receive that does not require
-/// branch demux. Route/offer/decode demux paths must receive framed evidence and
-/// fail closed when the carrier cannot provide it.
+/// only for direct receives, or after a route branch has already materialized a
+/// unique receive descriptor. Offer and unresolved route demux paths must
+/// receive framed evidence and fail closed when the carrier cannot provide it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IngressEvidence {
     /// Headerless receive evidence for a deterministic single-resident recv.

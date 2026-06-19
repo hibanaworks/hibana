@@ -49,7 +49,7 @@ where
         if ingress.has_transport() {
             crate::invariant();
         }
-        let frame = match self.poll_received_transport_frame_for_lane(
+        let frame = match self.poll_received_framed_transport_frame_for_lane(
             pending_recv,
             offer_lane as usize,
             offer_lane,
@@ -104,7 +104,7 @@ where
         while let Some(lane_idx) =
             next_preferred_transport_lane(preferred_lane, lanes, lane_limit, &mut scan_idx)
         {
-            match self.poll_received_transport_frame_for_lane(
+            match self.poll_received_framed_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,
                 lane_idx as u8,

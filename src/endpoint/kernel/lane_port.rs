@@ -15,7 +15,7 @@ use crate::{
 };
 
 pub(crate) use crate::rendezvous::port::{
-    FrameMismatch, FrameObservation, PreambleFrame, ReceivedFrame,
+    FrameMismatch, FrameObservation, PreambleFrame, PreambleObservation, ReceivedFrame,
 };
 
 #[derive(Clone, Copy)]
@@ -251,22 +251,12 @@ where
         );
         return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
-    let Some(observed) = observed else {
-        emit_transport_mismatch_observation(
-            port,
-            expected_session_raw,
-            expected_lane_wire,
-            FrameMismatch::headerless_preamble(
-                expected_session_raw,
-                expected_lane_wire,
-                expected_target_role,
-            ),
-        );
-        return Poll::Ready(Err(RecvError::PhaseInvariant));
-    };
-    Poll::Ready(Ok(PreambleFrame::from_accepted_payload(
-        port, payload, observed,
-    )))
+    match observed {
+        Some(observed) => Poll::Ready(Ok(PreambleFrame::from_accepted_payload(
+            port, payload, observed,
+        ))),
+        None => Poll::Ready(Ok(PreambleFrame::from_deterministic_payload(port, payload))),
+    }
 }
 
 #[inline(always)]

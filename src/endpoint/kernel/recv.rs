@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
-    global::typestate::{CursorInvariantError, EventCommitMeta, StateIndex, state_index_to_usize},
+    global::typestate::{CursorInvariantError, EventCommitMeta, state_index_to_usize},
     transport::{
         Transport,
         wire::{CodecError, Payload},
@@ -20,9 +20,10 @@ use crate::{
 };
 
 mod evidence;
+mod matching;
 
 pub(crate) use evidence::MatchedRecvFrame;
-use evidence::{MatchAccumulator, MatchOutcome, ObservedInboundKey, RecvCandidate, RecvDescriptor};
+use evidence::{MatchOutcome, ObservedInboundKey, RecvDescriptor};
 
 pub(crate) struct RecvState {
     pending_recv: lane_port::PendingRecv,
@@ -41,27 +42,6 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    fn live_recv_label_on_lane(&self, lane_idx: usize, target_label: u8) -> bool {
-        let mut idx = 0usize;
-        while idx < self.cursor.local_steps_len() {
-            if let Some(meta) = self.cursor.try_recv_meta_at(idx)
-                && meta.label == target_label
-                && meta.lane as usize == lane_idx
-                && !meta.origin.is_session()
-                && self
-                    .cursor
-                    .event_enabled(idx, EventCommitMeta::from(meta), |scope| {
-                        self.selected_arm_for_scope(scope)
-                    })
-                    .is_ok()
-            {
-                return true;
-            }
-            idx += 1;
-        }
-        false
-    }
-
     fn poll_recv_preamble_for_label(
         &mut self,
         target_label: u8,
@@ -95,70 +75,7 @@ where
         }
     }
 
-    fn recv_candidate_for_observed_key(
-        &self,
-        idx: usize,
-        target_label: u8,
-        observed: ObservedInboundKey,
-    ) -> RecvResult<Option<RecvCandidate>> {
-        let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
-            return Ok(None);
-        };
-        if meta.label != target_label {
-            return Ok(None);
-        }
-        if meta.origin.is_session() {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let lane_idx = meta.lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
-        if !observed.matches_recv_meta(self.sid.raw(), lane_wire, ROLE, meta) {
-            return Ok(None);
-        }
-        let enabled = self
-            .cursor
-            .event_enabled(idx, EventCommitMeta::from(meta), |scope| {
-                self.selected_arm_for_scope(scope)
-            });
-        if enabled.is_err() {
-            return Ok(None);
-        }
-
-        Ok(Some(RecvCandidate {
-            desc: RecvDescriptor {
-                meta,
-                cursor_index: StateIndex::from_usize(idx),
-                lane_idx,
-                lane_wire,
-            },
-        }))
-    }
-
-    fn unique_recv_candidate(
-        &self,
-        target_label: u8,
-        observed: ObservedInboundKey,
-    ) -> RecvResult<Result<RecvCandidate, MatchOutcome>> {
-        let mut accumulator = MatchAccumulator::None;
-        let mut idx = 0usize;
-        while idx < self.cursor.local_steps_len() {
-            if let Some(candidate) =
-                self.recv_candidate_for_observed_key(idx, target_label, observed)?
-            {
-                accumulator = accumulator.add(candidate);
-                if matches!(accumulator, MatchAccumulator::Ambiguous) {
-                    break;
-                }
-            }
-            idx += 1;
-        }
-        Ok(accumulator.finish())
-    }
-
-    fn accept_observed_recv_frame(
+    fn accept_framed_recv_frame(
         &mut self,
         target_label: u8,
         frame: lane_port::PreambleFrame<'r>,
@@ -177,9 +94,8 @@ where
                 Ok(MatchedRecvFrame { desc, frame })
             }
             Err(MatchOutcome::None) => {
-                let mismatch = lane_port::FrameMismatch::label_mismatch(
-                    frame.observed_transport_frame(self.sid.raw(), frame.lane_wire(), ROLE),
-                );
+                let mismatch =
+                    self.framed_recv_mismatch_for_unmatched_candidate(target_label, &frame);
                 self.emit_materialization_mismatch_observation(
                     frame.lane_idx(),
                     frame.lane_wire(),
@@ -195,6 +111,52 @@ where
         }
     }
 
+    fn accept_deterministic_recv_frame(
+        &mut self,
+        target_label: u8,
+        frame: lane_port::PreambleFrame<'r>,
+    ) -> RecvResult<MatchedRecvFrame<'r>> {
+        let lane_wire = frame.lane_wire();
+        match self.unique_deterministic_recv_candidate(target_label, lane_wire)? {
+            Ok(candidate) => {
+                let desc = candidate.desc;
+                let frame = self.accept_materialized_transport_frame(
+                    desc.lane_idx,
+                    desc.lane_wire,
+                    desc.meta.peer,
+                    desc.meta.frame_label,
+                    frame,
+                )?;
+                Ok(MatchedRecvFrame { desc, frame })
+            }
+            Err(MatchOutcome::None) => {
+                self.emit_materialization_mismatch_observation(
+                    frame.lane_idx(),
+                    lane_wire,
+                    lane_port::FrameMismatch::headerless_preamble(self.sid.raw(), lane_wire, ROLE),
+                );
+                frame.discard_uncommitted();
+                Err(RecvError::PhaseInvariant)
+            }
+            Err(MatchOutcome::Ambiguous) => {
+                frame.discard_uncommitted();
+                Err(RecvError::PhaseInvariant)
+            }
+        }
+    }
+
+    fn accept_recv_frame(
+        &mut self,
+        target_label: u8,
+        frame: lane_port::PreambleFrame<'r>,
+    ) -> RecvResult<MatchedRecvFrame<'r>> {
+        if frame.is_deterministic() {
+            self.accept_deterministic_recv_frame(target_label, frame)
+        } else {
+            self.accept_framed_recv_frame(target_label, frame)
+        }
+    }
+
     fn poll_recv_frame_source(
         &mut self,
         target_label: u8,
@@ -206,7 +168,7 @@ where
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
         };
-        Poll::Ready(self.accept_observed_recv_frame(target_label, frame))
+        Poll::Ready(self.accept_recv_frame(target_label, frame))
     }
 
     fn build_recv_commit_plan(

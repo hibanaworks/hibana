@@ -135,12 +135,85 @@ impl Transport for MalformedRecvTransport {
 }
 
 type MalformedKitStorage = SessionKitStorage<'static, MalformedRecvTransport>;
+type DeterministicKitStorage = SessionKitStorage<'static, DeterministicRecvTransport>;
+
+#[derive(Clone)]
+struct DeterministicRecvTransport {
+    inner: TestTransport,
+}
+
+impl DeterministicRecvTransport {
+    fn new() -> Self {
+        Self {
+            inner: TestTransport::new(),
+        }
+    }
+
+    fn queue_is_empty(&self) -> bool {
+        self.inner.queue_is_empty()
+    }
+}
+
+impl Transport for DeterministicRecvTransport {
+    type Tx<'a>
+        = <TestTransport as Transport>::Tx<'a>
+    where
+        Self: 'a;
+    type Rx<'a>
+        = <TestTransport as Transport>::Rx<'a>
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.inner.open(port)
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: hibana::runtime::transport::Outgoing<'f>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        self.inner.poll_send(tx, outgoing, cx)
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        match self.inner.poll_recv(rx, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(frame)) => {
+                Poll::Ready(Ok(ReceivedFrame::deterministic(frame.payload())))
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+        }
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        self.inner.cancel_send(tx);
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        self.inner.requeue(rx)
+    }
+}
 
 std::thread_local! {
     static DEADLINE_SESSION_SLOT: UnsafeCell<DeadlineKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
     static MALFORMED_SESSION_SLOT: UnsafeCell<MalformedKitStorage> = const {
+        UnsafeCell::new(SessionKitStorage::uninit())
+    };
+    static DETERMINISTIC_SESSION_SLOT: UnsafeCell<DeterministicKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
     };
 }
@@ -210,6 +283,105 @@ fn assert_malformed_direct_recv_fails_closed(
             mismatch
         });
         assert_eq!(mismatch.evidence().reason(), expected_reason);
+    });
+}
+
+#[test]
+fn direct_recv_accepts_single_deterministic_transport_frame() {
+    with_runtime_workspace(|slab| {
+        let transport = DeterministicRecvTransport::new();
+        with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<90, u32>>();
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let mut tap = rv.tap();
+            let sid = SessionId::new(90);
+            let mut origin = rv.enter(sid, &origin_program).expect("origin endpoint");
+            let mut target = rv.enter(sid, &target_program).expect("target endpoint");
+
+            futures::executor::block_on(async {
+                origin
+                    .send::<Msg<90, u32>>(&1234)
+                    .await
+                    .expect("send deterministic payload");
+                let value = target
+                    .recv::<Msg<90, u32>>()
+                    .await
+                    .expect("direct recv accepts deterministic transport frame");
+                assert_eq!(value, 1234);
+            });
+
+            let events: Vec<_> = tap.by_ref().collect();
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event.id() == hibana::runtime::tap::ENDPOINT_RECV)
+                    .count(),
+                1,
+                "deterministic direct recv must emit exactly one endpoint recv event: {events:?}"
+            );
+            assert!(
+                events
+                    .iter()
+                    .all(|event| event.id() != hibana::runtime::tap::TRANSPORT_FRAME),
+                "headerless deterministic recv must not emit framed transport observation: {events:?}"
+            );
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn direct_recv_same_label_deterministic_frames_commit_by_lane_evidence() {
+    with_runtime_workspace(|slab| {
+        let transport = DeterministicRecvTransport::new();
+        with_resident_tls_ref(&DETERMINISTIC_SESSION_SLOT, |cluster| {
+            let program = g::par(
+                g::send::<1, 0, Msg<91, u32>>(),
+                g::send::<2, 0, Msg<91, u32>>(),
+            );
+            let target_program: RoleProgram<0> = project(&program);
+            let left_source_program: RoleProgram<1> = project(&program);
+            let right_source_program: RoleProgram<2> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(91);
+            let mut target = rv.enter(sid, &target_program).expect("target endpoint");
+            let mut left_source = rv
+                .enter(sid, &left_source_program)
+                .expect("left source endpoint");
+            let mut right_source = rv
+                .enter(sid, &right_source_program)
+                .expect("right source endpoint");
+
+            futures::executor::block_on(async {
+                right_source
+                    .send::<Msg<91, u32>>(&202)
+                    .await
+                    .expect("right lane sends first");
+                let first = target
+                    .recv::<Msg<91, u32>>()
+                    .await
+                    .expect("headerless recv commits observed right lane first");
+                assert_eq!(first, 202);
+
+                left_source
+                    .send::<Msg<91, u32>>(&101)
+                    .await
+                    .expect("left lane sends second");
+                let second = target
+                    .recv::<Msg<91, u32>>()
+                    .await
+                    .expect("headerless recv commits remaining left lane");
+                assert_eq!(second, 101);
+            });
+            assert!(transport.queue_is_empty());
+        });
     });
 }
 

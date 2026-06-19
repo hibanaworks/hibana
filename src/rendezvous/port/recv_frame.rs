@@ -4,22 +4,14 @@
 //! received from a specific port/Rx handle and must be committed, requeued, or
 //! explicitly discarded.
 
-use core::cell::Cell;
-
 use super::Port;
 use crate::{
     observe::{core::TapEvent, events, ids},
     transport::{FrameHeader, Transport, wire::Payload},
 };
 
-pub(super) struct RecvFrameReceiptState {
-    outstanding: Cell<bool>,
-}
-
-struct PortRecvFrameReceipt {
-    port_key: *const (),
-    state: *const RecvFrameReceiptState,
-}
+use super::super::recv_frame_receipt::PortRecvFrameReceipt;
+pub(super) use super::super::recv_frame_receipt::RecvFrameReceiptState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FrameObservation {
@@ -61,6 +53,12 @@ struct ReceivedFrameCore<'r> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ObservedSourceLabel(u32);
 
+#[derive(Clone, Copy)]
+pub(crate) enum PreambleObservation {
+    Framed(FrameObservation),
+    Deterministic,
+}
+
 /// Transport frame whose session, lane, and receiving target role are accepted.
 ///
 /// This type deliberately does not expose payload commit APIs. Offer/passive
@@ -83,82 +81,6 @@ pub(crate) struct PreambleFrame<'r> {
 /// Invariant: received transport frames must be committed, explicitly requeued, or explicitly discarded.
 pub(crate) struct ReceivedFrame<'r> {
     core: ReceivedFrameCore<'r>,
-}
-
-impl RecvFrameReceiptState {
-    #[inline]
-    pub(super) const fn new() -> Self {
-        Self {
-            outstanding: Cell::new(false),
-        }
-    }
-
-    #[inline]
-    fn issue(&self, port_key: *const ()) -> PortRecvFrameReceipt {
-        if self.outstanding.replace(true) {
-            crate::invariant();
-        }
-        PortRecvFrameReceipt {
-            port_key,
-            state: core::ptr::from_ref(self),
-        }
-    }
-
-    #[inline]
-    fn resolve(&self) {
-        if !self.outstanding.get() {
-            crate::invariant();
-        }
-        self.outstanding.set(false);
-    }
-
-    #[inline]
-    fn assert_current(&self) {
-        if !self.outstanding.get() {
-            crate::invariant();
-        }
-    }
-
-    #[inline]
-    pub(super) fn has_outstanding(&self) -> bool {
-        self.outstanding.get()
-    }
-}
-
-impl PortRecvFrameReceipt {
-    #[inline]
-    const fn is_current(&self) -> bool {
-        !self.state.is_null()
-    }
-
-    #[inline]
-    fn resolve(&mut self) {
-        if !self.state.is_null() {
-            // SAFETY: receipt construction stores a valid pointer to the
-            // port-local receipt state, and clearing `state` ensures one-shot
-            // resolution.
-            unsafe { &*self.state }.resolve();
-            self.port_key = core::ptr::null();
-            self.state = core::ptr::null();
-        }
-    }
-
-    #[inline]
-    fn assert_matches(&self, port_key: *const (), receipt_state: *const RecvFrameReceiptState) {
-        if self.state.is_null() {
-            return;
-        }
-        if self.port_key != port_key {
-            crate::invariant();
-        }
-        if self.state != receipt_state {
-            crate::invariant();
-        }
-        // SAFETY: the receipt stores a pointer to this port's receipt state.
-        // `assert_matches` has just proven both the port identity and the
-        // state pointer identity before reading the state.
-        unsafe { &*self.state }.assert_current();
-    }
 }
 
 impl FrameObservation {
@@ -290,6 +212,22 @@ impl FrameMismatch {
     }
 
     #[inline]
+    pub(crate) const fn source_label_mismatch(
+        observation: FrameObservation,
+        source_role: u8,
+        label: u8,
+    ) -> Self {
+        let kind = if observation.source_role() != source_role {
+            FrameMismatchKind::SourceRole
+        } else if observation.label_raw() != label {
+            FrameMismatchKind::Label
+        } else {
+            crate::invariant()
+        };
+        Self { observation, kind }
+    }
+
+    #[inline]
     pub(crate) fn tap_event(
         self,
         now32: u32,
@@ -320,14 +258,40 @@ pub(crate) fn transport_frame_tap_event(now32: u32, observation: FrameObservatio
 }
 
 impl ObservedSourceLabel {
+    const DETERMINISTIC: u32 = 1 << 31;
+
     #[inline]
     const fn from_observation(observation: FrameObservation) -> Self {
         Self(source_label(observation.source_role(), observation.label_raw()) as u32)
     }
 
     #[inline]
+    const fn deterministic() -> Self {
+        Self(Self::DETERMINISTIC)
+    }
+
+    #[inline]
     const fn from_source_label(source_role: u8, label: u8) -> Self {
         Self(source_label(source_role, label) as u32)
+    }
+
+    #[inline]
+    const fn preamble_observation(
+        self,
+        session_raw: u32,
+        lane_wire: u8,
+        target_role: u8,
+    ) -> PreambleObservation {
+        if self.is_deterministic() {
+            PreambleObservation::Deterministic
+        } else {
+            PreambleObservation::Framed(self.observation(session_raw, lane_wire, target_role))
+        }
+    }
+
+    #[inline]
+    const fn is_deterministic(self) -> bool {
+        (self.0 & Self::DETERMINISTIC) != 0
     }
 
     #[inline]
@@ -511,6 +475,22 @@ impl<'r> PreambleFrame<'r> {
     }
 
     #[inline(always)]
+    pub(crate) fn from_deterministic_payload<T>(port: &Port<'r, T>, payload: Payload<'r>) -> Self
+    where
+        T: Transport + 'r,
+    {
+        Self {
+            core: ReceivedFrameCore::from_payload(
+                port,
+                payload,
+                0,
+                0,
+                ObservedSourceLabel::deterministic(),
+            ),
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn accept_parts(
         self,
         expected_session_raw: u32,
@@ -519,9 +499,10 @@ impl<'r> PreambleFrame<'r> {
         frame_label: u8,
     ) -> Result<ReceivedFrame<'r>, FrameMismatch> {
         let mut core = self.core;
-        if let Some(kind) = core
-            .observed_source_label
-            .mismatch_expected(source_role, frame_label)
+        if !core.observed_source_label.is_deterministic()
+            && let Some(kind) = core
+                .observed_source_label
+                .mismatch_expected(source_role, frame_label)
         {
             let observation = core.observed_source_label.observation(
                 expected_session_raw,
@@ -546,20 +527,41 @@ impl<'r> PreambleFrame<'r> {
     }
 
     #[inline]
-    pub(crate) const fn observed_frame_label_raw(&self) -> u8 {
+    pub(crate) fn observed_frame_label_raw(&self) -> u8 {
+        if self.core.observed_source_label.is_deterministic() {
+            crate::invariant();
+        }
         self.core.observed_frame_label_raw()
     }
 
     #[inline]
-    pub(crate) const fn observed_transport_frame(
+    pub(crate) fn preamble_observation(
+        &self,
+        session_raw: u32,
+        lane_wire: u8,
+        target_role: u8,
+    ) -> PreambleObservation {
+        self.core
+            .observed_source_label
+            .preamble_observation(session_raw, lane_wire, target_role)
+    }
+
+    #[inline]
+    pub(crate) fn observed_transport_frame(
         &self,
         session_raw: u32,
         lane_wire: u8,
         target_role: u8,
     ) -> FrameObservation {
-        self.core
-            .observed_source_label
-            .observation(session_raw, lane_wire, target_role)
+        match self.preamble_observation(session_raw, lane_wire, target_role) {
+            PreambleObservation::Framed(observation) => observation,
+            PreambleObservation::Deterministic => crate::invariant(),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn is_deterministic(&self) -> bool {
+        self.core.observed_source_label.is_deterministic()
     }
 
     #[inline]

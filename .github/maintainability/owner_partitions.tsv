@@ -165,6 +165,7 @@ src/rendezvous	src/rendezvous/core.rs
 src/rendezvous	src/rendezvous/error.rs
 src/rendezvous	src/rendezvous/port
 src/rendezvous	src/rendezvous/port.rs
+src/rendezvous	src/rendezvous/recv_frame_receipt.rs
 src/rendezvous	src/rendezvous/tables
 src/rendezvous	src/rendezvous/tables.rs
 src/rendezvous	src/rendezvous/waiter.rs
@@ -220,5 +221,6 @@ tests/semantic_surface	tests/semantic_surface/source_residue_errors.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_hygiene.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_runtime_surface.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_pico_hygiene.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_recv_evidence.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_route_arm_lane.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_support.rs

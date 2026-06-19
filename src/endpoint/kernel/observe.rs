@@ -67,6 +67,37 @@ where
     }
 
     #[inline(always)]
+    pub(in crate::endpoint::kernel) fn poll_received_framed_transport_frame_for_lane(
+        &mut self,
+        pending_recv: &mut lane_port::PendingRecv,
+        lane_idx: usize,
+        lane_wire: u8,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
+        match self.poll_received_transport_frame_for_lane(pending_recv, lane_idx, lane_wire, cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(frame)) => {
+                if frame.is_deterministic() {
+                    self.emit_materialization_mismatch_observation(
+                        lane_idx,
+                        lane_wire,
+                        lane_port::FrameMismatch::headerless_preamble(
+                            self.sid.raw(),
+                            lane_wire,
+                            ROLE,
+                        ),
+                    );
+                    frame.discard_uncommitted();
+                    Poll::Ready(Err(RecvError::PhaseInvariant))
+                } else {
+                    Poll::Ready(Ok(frame))
+                }
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        }
+    }
+
+    #[inline(always)]
     pub(in crate::endpoint::kernel) fn poll_accepted_transport_frame(
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
@@ -95,10 +126,15 @@ where
         frame_label: u8,
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<lane_port::ReceivedFrame<'r>> {
-        let observed = frame.observed_transport_frame(self.sid.raw(), lane_wire, ROLE);
+        let observed = match frame.preamble_observation(self.sid.raw(), lane_wire, ROLE) {
+            lane_port::PreambleObservation::Framed(observation) => Some(observation),
+            lane_port::PreambleObservation::Deterministic => None,
+        };
         match frame.accept_parts(self.sid.raw(), ROLE, source_role, frame_label) {
             Ok(frame) => {
-                self.emit_materialized_transport_frame_observation(lane_idx, observed);
+                if let Some(observed) = observed {
+                    self.emit_materialized_transport_frame_observation(lane_idx, observed);
+                }
                 Ok(frame)
             }
             Err(mismatch) => {

@@ -258,7 +258,7 @@ where
     ) -> RecvResult<FrameHintResolution> {
         let recv_lane_idx = selection.offer_lane as usize;
         let recv_lane = recv_lane_idx as u8;
-        let frame = match self.poll_received_transport_frame_for_lane(
+        let frame = match self.poll_received_framed_transport_frame_for_lane(
             pending_recv,
             recv_lane_idx,
             recv_lane,

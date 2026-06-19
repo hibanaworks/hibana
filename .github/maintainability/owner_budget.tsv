@@ -63,6 +63,7 @@ src/rendezvous/core/storage_runtime_budget.rs	120	1	recursive
 src/rendezvous/association.rs	450	1	recursive
 src/rendezvous/association/storage.rs	430	1	recursive
 src/rendezvous/core.rs	540	1	recursive
+src/rendezvous/recv_frame_receipt.rs	120	1	recursive
 src/rendezvous/port.rs	646	1	recursive
 src/rendezvous/port/recv_frame.rs	700	1	recursive
 src/rendezvous/tables/route_table.rs	537	1	recursive
@@ -111,6 +112,7 @@ src/global/typestate/facts/meta.rs	140	1	recursive
 src/observe/core.rs	220	1	recursive
 src/transport.rs	420	1	recursive
 src/endpoint/kernel/recv.rs	380	1	recursive
+src/endpoint/kernel/recv/matching.rs	220	1	recursive
 src/endpoint/kernel/recv_commit_plan.rs	240	1	recursive
 src/transport/wire.rs	360	1	recursive
 src/endpoint/kernel/core/runtime_types/commit.rs	400	1	recursive

@@ -18,6 +18,8 @@ mod source_residue_errors;
 mod source_residue_hygiene;
 #[path = "semantic_surface/source_residue_pico_hygiene.rs"]
 mod source_residue_pico_hygiene;
+#[path = "semantic_surface/source_residue_recv_evidence.rs"]
+mod source_residue_recv_evidence;
 #[path = "semantic_surface/source_residue_route_arm_lane.rs"]
 mod source_residue_route_arm_lane;
 #[path = "semantic_surface/source_residue_runtime_surface.rs"]

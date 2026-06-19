@@ -500,11 +500,9 @@ rv.set_resolver(&role0, ResolverRef::<ROUTE_RESOLVER>::decision_state(
 ```
 
 Receive evidence is checked against the projected descriptor. `ReceivedFrame`
-has two construction paths: deterministic receive is valid only when a single
-active receive can be selected, while `offer()` and `RouteBranch::recv()`
-require `ReceivedFrame::framed(...)` with descriptor-checked frame metadata.
-Payload shape, queue position, carrier id, and driver observations are never
-branch authority.
+has two construction paths: deterministic receive is valid only for direct
+`recv()` or for `RouteBranch::recv()` after `offer()` has already materialized a
+unique receive descriptor. `offer()` and unresolved route demux require `ReceivedFrame::framed(...)` with descriptor-checked frame metadata. Payload shape, queue position, carrier id, and driver observations are never branch authority.
 
 ## Protocol Runtime
 
@@ -621,7 +619,8 @@ The canonical receive-side observation is the `ReceivedFrame` returned by
 `poll_recv(...)`. Payload and carrier observation cross the transport boundary
 together; there is no separate receive-observation hook.
 `ReceivedFrame::deterministic(...)` is valid only for a single deterministic
-receive; route offer and route branch receive demux require
+direct receive or an already materialized route branch receive descriptor.
+Route offer and unresolved route demux require
 `ReceivedFrame::framed(FrameHeader::from_bytes(header_bytes), payload)`, where
 the transport supplies one carrier-owned eight-byte observation and Hibana
 performs the session/lane/role/label comparison internally before any endpoint
@@ -636,9 +635,10 @@ value, so endpoint progress can verify the frame against the projected
 descriptor before previewing an `offer()` or committing a `recv()` or
 route branch first-step operation.
 
-Headerless receive is only valid when the projected frontier contains one
-deterministic receive. Branch observation and route branch receive require
-framed, descriptor-checked evidence. Payload shape, frame label, queue
+Headerless receive is only valid when direct `recv()` can select one live
+descriptor from the observed lane, or when `RouteBranch::recv()` already owns a
+materialized receive descriptor. Branch observation and unresolved route demux
+require framed, descriptor-checked evidence. Payload shape, frame label, queue
 position, and carrier-local hints do not select route arms.
 
 ### Resolvers

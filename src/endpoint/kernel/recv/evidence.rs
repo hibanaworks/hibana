@@ -7,20 +7,20 @@ pub(crate) struct MatchedRecvFrame<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct RecvCandidate {
-    pub(super) desc: RecvDescriptor,
+pub(in crate::endpoint::kernel::recv) struct RecvCandidate {
+    pub(in crate::endpoint::kernel::recv) desc: RecvDescriptor,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct RecvDescriptor {
-    pub(super) meta: RecvMeta,
-    pub(super) cursor_index: StateIndex,
-    pub(super) lane_idx: usize,
-    pub(super) lane_wire: u8,
+pub(in crate::endpoint::kernel::recv) struct RecvDescriptor {
+    pub(in crate::endpoint::kernel::recv) meta: RecvMeta,
+    pub(in crate::endpoint::kernel::recv) cursor_index: StateIndex,
+    pub(in crate::endpoint::kernel::recv) lane_idx: usize,
+    pub(in crate::endpoint::kernel::recv) lane_wire: u8,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct ObservedInboundKey {
+pub(in crate::endpoint::kernel::recv) struct ObservedInboundKey {
     session_raw: u32,
     lane_wire: u8,
     source_role: u8,
@@ -29,21 +29,21 @@ pub(super) struct ObservedInboundKey {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum MatchAccumulator {
+pub(in crate::endpoint::kernel::recv) enum MatchAccumulator {
     None,
     One(RecvCandidate),
     Ambiguous,
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum MatchOutcome {
+pub(in crate::endpoint::kernel::recv) enum MatchOutcome {
     None,
     Ambiguous,
 }
 
 impl ObservedInboundKey {
     #[inline]
-    pub(super) fn from_frame<const ROLE: u8>(
+    pub(in crate::endpoint::kernel::recv) fn from_frame<const ROLE: u8>(
         sid_raw: u32,
         frame: &lane_port::PreambleFrame<'_>,
     ) -> Self {
@@ -58,7 +58,7 @@ impl ObservedInboundKey {
     }
 
     #[inline]
-    pub(super) const fn matches_recv_meta(
+    pub(in crate::endpoint::kernel::recv) const fn matches_recv_meta(
         self,
         sid_raw: u32,
         lane_wire: u8,
@@ -75,7 +75,7 @@ impl ObservedInboundKey {
 
 impl MatchAccumulator {
     #[inline]
-    pub(super) const fn add(self, candidate: RecvCandidate) -> Self {
+    pub(in crate::endpoint::kernel::recv) const fn add(self, candidate: RecvCandidate) -> Self {
         match self {
             MatchAccumulator::None => MatchAccumulator::One(candidate),
             MatchAccumulator::One(_) | MatchAccumulator::Ambiguous => MatchAccumulator::Ambiguous,
@@ -83,7 +83,9 @@ impl MatchAccumulator {
     }
 
     #[inline]
-    pub(super) const fn finish(self) -> Result<RecvCandidate, MatchOutcome> {
+    pub(in crate::endpoint::kernel::recv) const fn finish(
+        self,
+    ) -> Result<RecvCandidate, MatchOutcome> {
         match self {
             MatchAccumulator::None => Err(MatchOutcome::None),
             MatchAccumulator::One(candidate) => Ok(candidate),
