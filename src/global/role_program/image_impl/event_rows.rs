@@ -26,7 +26,7 @@ impl PackedLocalEventRow {
         eff_index: u16,
         dependency_row: u16,
         conflict_row: u16,
-        scope_raw: u32,
+        scope_raw: u16,
         frame_label: u8,
         flags: u8,
     ) -> Self {

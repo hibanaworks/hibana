@@ -34,7 +34,6 @@ pub(crate) const INTRINSIC_ROUTE_RESOLVER_ID: u16 = u16::MAX;
 pub(crate) struct ScopeMarker {
     pub(crate) offset: usize,
     pub(crate) scope_id: ScopeId,
-    pub(crate) scope_kind: ScopeKind,
     pub(crate) event: ScopeEvent,
     pub(crate) reentry: ReentryMark,
 }
@@ -44,7 +43,6 @@ impl ScopeMarker {
         Self {
             offset: 0,
             scope_id: ScopeId::none(),
-            scope_kind: ScopeKind::Plain,
             event: ScopeEvent::Enter,
             reentry: ReentryMark::SinglePass,
         }
@@ -81,9 +79,9 @@ impl SegmentSummary {
     }
 
     #[inline(always)]
-    const fn with_scope_marker(mut self, scope_kind: ScopeKind, event: ScopeEvent) -> Self {
+    const fn with_scope_marker(mut self, scope_id: ScopeId, event: ScopeEvent) -> Self {
         self.scope_marker_len = Self::bump(self.scope_marker_len);
-        if matches!(scope_kind, ScopeKind::Route) && matches!(event, ScopeEvent::Enter) {
+        if matches!(scope_id.kind(), Some(ScopeKind::Route)) && matches!(event, ScopeEvent::Enter) {
             self.route_scope_enter_len = Self::bump(self.route_scope_enter_len);
         }
         self

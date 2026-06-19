@@ -56,7 +56,7 @@ impl RoleLaneScratch {
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
             let marker = markers[marker_idx];
-            if matches!(marker.scope_kind, ScopeKind::Parallel) {
+            if matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel)) {
                 match marker.event {
                     ScopeEvent::Enter => {
                         if parallel_len >= MAX_LOCAL_STEP_LANES
@@ -90,7 +90,7 @@ impl RoleLaneScratch {
                         parallel_ends[parallel_idx] = marker.offset;
                     }
                 }
-            } else if matches!(marker.scope_kind, ScopeKind::Route) {
+            } else if matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
                 has_route = true;
             }
             marker_idx += 1;
@@ -299,7 +299,7 @@ impl RoleLaneScratch {
         while marker_idx < markers.len() {
             let marker = markers[marker_idx];
             if matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_kind, ScopeKind::Parallel)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
             {
                 let mut exit_eff = usize::MAX;
                 let mut scan = marker_idx + 1;
@@ -544,7 +544,7 @@ impl RoleLaneScratch {
         while marker_idx < markers.len() {
             let marker = markers[marker_idx];
             if Self::first_enter_for_scope(markers, marker_idx)
-                && matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 let scope = marker.scope_id;
                 let view_len = view.len();

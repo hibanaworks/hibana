@@ -49,6 +49,7 @@ pub(crate) enum ProgramSourceError {
     RollBodyAbsent,
     ParallelArmAbsent,
     ParallelConflict,
+    ParallelDuplicateLabel,
     ResolverIdOutOfDomain,
     ResolverTargetNotRoute,
     ProjectionRouteUnprojectable,
@@ -69,6 +70,9 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         ProgramSourceError::ParallelConflict => {
             panic!("parallel lanes must use disjoint (role, lane) pairs")
         }
+        ProgramSourceError::ParallelDuplicateLabel => {
+            panic!("parallel frontier logical labels must be unique")
+        }
         ProgramSourceError::ResolverIdOutOfDomain => {
             panic!("route resolver id must be < u16::MAX")
         }
@@ -76,9 +80,8 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
             panic!("route resolver can only be attached to a route")
         }
         ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
-            "Route unprojectable for this role: arms not mergeable, ",
-            "wire dispatch non-deterministic, ",
-            "and no route resolver provided",
+            "Route unprojectable for this role: invalid, duplicate, ",
+            "or non-deterministic first-visible route frontier",
         )),
     }
 }

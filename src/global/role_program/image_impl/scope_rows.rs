@@ -58,7 +58,7 @@ impl RoleLaneScratch {
         while idx < markers.len() {
             let marker = markers[idx];
             if Self::same_scope(marker.scope_id, route)
-                && matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 match marker.event {
                     ScopeEvent::Enter => {
@@ -100,7 +100,7 @@ impl RoleLaneScratch {
         while idx < markers.len() {
             let marker = markers[idx];
             if Self::first_enter_for_scope(markers, idx)
-                && matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 if Self::same_scope(marker.scope_id, route) {
                     return Some(slot);
@@ -148,7 +148,10 @@ impl RoleLaneScratch {
                 && Self::same_scope(marker.scope_id, scope_id)
             {
                 return Some((
-                    marker.scope_kind,
+                    match marker.scope_id.kind() {
+                        Some(kind) => kind,
+                        None => return None,
+                    },
                     marker.offset,
                     Self::scope_segment_end(markers, idx, segment_limit),
                 ));
@@ -206,7 +209,7 @@ impl RoleLaneScratch {
     const fn route_arm_for_enter(markers: &[ScopeMarker], enter_idx: usize) -> Option<u8> {
         let marker = markers[enter_idx];
         if !matches!(marker.event, ScopeEvent::Enter)
-            || !matches!(marker.scope_kind, ScopeKind::Route)
+            || !matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {
             return None;
         }
@@ -215,7 +218,7 @@ impl RoleLaneScratch {
         while idx < enter_idx {
             let candidate = markers[idx];
             if matches!(candidate.event, ScopeEvent::Enter)
-                && matches!(candidate.scope_kind, ScopeKind::Route)
+                && matches!(candidate.scope_id.kind(), Some(ScopeKind::Route))
                 && Self::same_scope(candidate.scope_id, marker.scope_id)
             {
                 if arm == u8::MAX {
@@ -246,7 +249,7 @@ impl RoleLaneScratch {
         while idx < markers.len() {
             let marker = markers[idx];
             if matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                 && !Self::same_scope(marker.scope_id, scope_id)
             {
                 let start = marker.offset;
@@ -295,7 +298,7 @@ impl RoleLaneScratch {
                 break;
             }
             if matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                 && let Some(arm) = Self::route_arm_for_enter(markers, idx)
             {
                 let start = marker.offset;
@@ -340,7 +343,7 @@ impl RoleLaneScratch {
         while idx < markers.len() {
             let marker = markers[idx];
             if matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_kind, ScopeKind::Route)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                 && !Self::same_scope(marker.scope_id, route)
                 && marker.offset == arm_start
             {

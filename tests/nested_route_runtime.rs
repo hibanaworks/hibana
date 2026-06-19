@@ -112,7 +112,7 @@ fn nested_branch_commit_stack() {
                                     .expect("send outer left data");
 
                                 // =========================================================================
-                                // Outer route: Worker offers route arm, then decodes selected data
+                                // Outer route: Worker offers route arm, then receives selected data
                                 // =========================================================================
                                 let outer_branch = worker.offer().await.expect("offer outer route");
                                 assert_eq!(
@@ -135,7 +135,7 @@ fn nested_branch_commit_stack() {
                                     .expect("send inner left data");
 
                                 // =========================================================================
-                                // Inner route: Worker offers route arm, then decodes selected data
+                                // Inner route: Worker offers route arm, then receives selected data
                                 // =========================================================================
                                 let inner_branch = worker.offer().await.expect("offer inner route");
                                 assert_eq!(

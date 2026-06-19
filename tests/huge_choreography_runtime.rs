@@ -110,10 +110,10 @@ macro_rules! over_256_label_pairs {
 
 macro_rules! deep_nested_par_scope_program {
     () => {
-        g::send::<0, 1, Msg<90, ()>>()
+        g::send::<0, 1, Msg<250, ()>>()
     };
     ($lane:literal $($tail:literal)*) => {{
-        let left = g::send::<2, 3, Msg<91, ()>>();
+        let left = g::send::<2, 3, Msg<$lane, ()>>();
         let right = deep_nested_par_scope_program!($($tail)*);
         g::par(left, right)
     }};

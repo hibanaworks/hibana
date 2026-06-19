@@ -201,7 +201,7 @@ fn endpoint_lease_slot_is_session_role_authority() {
 }
 
 #[test]
-fn scope_id_is_single_u32_identity_without_compact_shadow() {
+fn scope_id_is_single_u16_identity_without_compact_shadow() {
     let scope = read("src/global/const_dsl/scope.rs");
     let const_dsl = read("src/global/const_dsl.rs");
     let program = read("src/global/compiled/images/program.rs");
@@ -224,15 +224,15 @@ fn scope_id_is_single_u32_identity_without_compact_shadow() {
     ]
     .join("\n");
 
-    let scope_body = named_struct_body(&scope, "ScopeId");
     assert!(
-        scope_body.contains("raw: u32,")
-            && scope.contains("const ABSENT_RAW: u32 = u32::MAX;")
-            && scope.contains("const KIND_SHIFT: u32 = 30;")
-            && scope.contains("const LOCAL_MASK: u32 = 0x0fff;")
+        scope.contains("pub(crate) struct ScopeId(u16);")
+            && scope.contains("const ABSENT_RAW: u16 = u16::MAX;")
+            && scope.contains("const RESERVED_BIT: u16 = 0x8000;")
+            && scope.contains("const KIND_SHIFT: u16 = 13;")
+            && scope.contains("const LOCAL_MASK: u16 = 0x1fff;")
             && scope
                 .contains("pub(crate) const LOCAL_CAPACITY: u16 = Self::MAX_LOCAL_ORDINAL + 1;"),
-        "ScopeId must be a u32 sentinel with kind/local/range/nest packed identity"
+        "ScopeId must be a u16 sentinel with reserved/kind/local packed identity"
     );
     for required in [
         "scope: ScopeId,",
@@ -247,12 +247,19 @@ fn scope_id_is_single_u32_identity_without_compact_shadow() {
         );
     }
     for forbidden in [
+        "struct ScopeId {\n    raw: u32",
         "struct ScopeId {\n    raw: u64",
-        "struct ScopeId {\n    raw: u16",
         "CompactScopeId",
         "canonical_raw",
+        "new_with_parts",
+        "range_ordinal",
+        "nest_ordinal",
+        "pub(crate) const fn ordinal(",
+        "ScopeKind::Plain",
+        "scope_kind:",
         "KIND_SHIFT: u64",
         "scope.raw() as u32",
+        "from_raw(raw: u32)",
         "from_scope_id",
         "to_scope_id",
     ] {
@@ -270,11 +277,14 @@ fn route_resolver_authority_is_scope_keyed() {
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let source = read("src/g/source.rs");
     let seal = read("src/global/compiled/lowering/seal.rs");
+    let columns = read("src/global/compiled/images/image/columns.rs");
     let blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
     let program = read("src/global/compiled/images/program.rs");
     let program_ref = read("src/global/compiled/images/image/program_ref.rs");
+    let route_resolvers = read("src/global/compiled/images/image/route_resolvers.rs");
     let dynamic_resolvers = read("src/session/cluster/core/dynamic_resolvers.rs");
     let dynamic_entry = named_struct_body(&dynamic_resolvers, "DynamicResolverEntry");
+    let route_site = named_struct_body(&program, "RouteResolverSite");
     let bucket = read("src/session/cluster/core/dynamic_resolvers/bucket.rs");
     let session_effects = read("src/session/cluster/core/session_effect_steps.rs");
     let production_scope = [
@@ -283,9 +293,11 @@ fn route_resolver_authority_is_scope_keyed() {
         eff_list.as_str(),
         source.as_str(),
         seal.as_str(),
+        columns.as_str(),
         blob_storage.as_str(),
         program.as_str(),
         program_ref.as_str(),
+        route_resolvers.as_str(),
         dynamic_resolvers.as_str(),
         bucket.as_str(),
         session_effects.as_str(),
@@ -296,6 +308,12 @@ fn route_resolver_authority_is_scope_keyed() {
         "pub(crate) struct RouteResolverSite",
         "pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self",
         "pub(crate) const fn scope(&self) -> ScopeId",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6",
+        "self.write_u16(out, scope.raw());",
+        "self.write_u16(out + 2, resolver_id);",
+        "self.write_u8(out + 4,",
+        "self.write_u8(out + 5, decision_tag);",
+        "if ScopeId::from_raw(self.read_u16_at(offset)) == scope_id",
         "pub(crate) struct RouteResolverMarker",
         "pub(crate) scope: ScopeId,\n    pub(crate) resolver_id: u16,",
         "pub(crate) struct DynamicResolverKey {\n    pub(crate) rv: RendezvousId,\n    pub(crate) scope: crate::global::const_dsl::ScopeId,",
@@ -345,16 +363,112 @@ fn route_resolver_authority_is_scope_keyed() {
         "with_scope_controller",
         "with_scope_controller_role",
         "eff_index: EffIndex",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 12",
+        "read_u32_at",
+        "write_u32",
     ] {
         assert!(
             !production_scope.contains(forbidden),
             "route resolver authority must not regain arm-head or eff-index residue: {forbidden}"
         );
     }
+    assert_eq!(
+        route_site.trim(),
+        "scope: ScopeId,\n    resolver_id: u16,",
+        "RouteResolverSite must be exactly scope + resolver_id"
+    );
     assert!(
         !dynamic_entry.contains("scope:"),
         "dynamic resolver entry must not duplicate the scope key owned by DynamicResolverKey/bucket"
     );
+}
+
+#[test]
+fn source_frontier_tracks_labels_with_u8_limb_mask_and_duplicate_flag() {
+    let source = read("src/g/source.rs");
+    let route = read("src/global/const_dsl/route.rs");
+    let seal = read("src/global/compiled/lowering/seal.rs");
+    let lowering_driver = read("src/global/compiled/lowering/driver.rs");
+    let lowering_image = read("src/global/compiled/lowering/driver/impls/image.rs");
+    let combined = [
+        source.as_str(),
+        route.as_str(),
+        seal.as_str(),
+        lowering_driver.as_str(),
+        lowering_image.as_str(),
+    ]
+    .join("\n");
+
+    for required in [
+        "struct LabelMask([u8; 32]);",
+        "let idx = (label >> 3) as usize;",
+        "let bit = label & 7;",
+        "bytes[idx] = 1u8 << bit;",
+        "labels: LabelMask,",
+        "duplicate_label: bool,",
+        "duplicate_label: self.duplicate_label\n                || other.duplicate_label\n                || self.labels.intersects(other.labels),",
+        "const fn route_choice(self, other: Self) -> Self",
+        "duplicate_label: self.duplicate_label || other.duplicate_label,",
+        "left.duplicate_label || right.duplicate_label,",
+        "left.labels.intersects(right.labels),",
+        "ProgramSourceError::ParallelDuplicateLabel",
+        "if frontier.duplicate_label",
+        "frontier: self.frontier.route_choice(right.frontier),",
+        "const FLAG_DUPLICATE_LABEL: u8 = 1 << 1;",
+        "const FLAG_BRANCH_LABEL_OVERLAP: u8 = 1 << 2;",
+        "pub(crate) const fn has_duplicate_label(self) -> bool",
+        "pub(crate) const fn has_branch_label_overlap(self) -> bool",
+        "if frontier.is_invalid() || frontier.has_duplicate_label()",
+        "if frontier.has_branch_label_overlap()",
+        "const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);",
+        "let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];",
+        "let byte = ordinal >> 3;",
+        "let bit = ordinal & 7;",
+        "let mask = 1u8 << bit;",
+    ] {
+        assert!(
+            combined.contains(required),
+            "route frontier validation must keep u8 label/scope masks and duplicate tracking: {required}"
+        );
+    }
+
+    let duplicate_reject = seal
+        .find("if frontier.is_invalid() || frontier.has_duplicate_label()")
+        .expect("duplicate-label route rejection must stay present");
+    let resolver_branch = seal
+        .find("let has_dynamic_resolver = scope_has_dynamic_resolver")
+        .expect("resolver branch must stay present");
+    assert!(
+        duplicate_reject < resolver_branch,
+        "duplicate-label rejection must run before resolver authority branching"
+    );
+    let intrinsic_branch = seal
+        .find("if !has_dynamic_resolver")
+        .expect("intrinsic route branch must stay present");
+    let overlap_reject = seal
+        .find("if frontier.has_branch_label_overlap()")
+        .expect("intrinsic branch-label overlap rejection must stay present");
+    assert!(
+        resolver_branch < intrinsic_branch && intrinsic_branch < overlap_reject,
+        "cross-branch label overlap must be rejected only under intrinsic route authority"
+    );
+
+    for forbidden in [
+        "label_words",
+        "[u64; 4]",
+        "route_scope_ordinals = [0u64",
+        "1u64 <<",
+        ">> 6",
+        "<< 6",
+        "/ 64",
+        "% 64",
+    ] {
+        assert!(
+            !combined.contains(forbidden),
+            "projection frontier masks must not re-grow u64 limb storage: {forbidden}"
+        );
+    }
 }
 
 #[test]

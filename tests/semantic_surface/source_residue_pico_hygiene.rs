@@ -483,6 +483,7 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
     let image_types = read("src/global/role_program/image_types.rs");
     let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
     let blob_image = read("src/global/role_program/image_impl/blob_image.rs");
+    let program_columns = read("src/global/compiled/images/image/columns.rs");
 
     let dependency = named_struct_body(&dependency_facts, "PackedLocalDependency");
     let route_arm = named_struct_body(&image_types, "PackedRouteArmRow");
@@ -504,6 +505,24 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
             "route-arm descriptor row must stay u32/range based: {required}"
         );
     }
+    let descriptor_hot_path = [
+        dependency_facts.as_str(),
+        image_types.as_str(),
+        lane_image.as_str(),
+        blob_image.as_str(),
+        program_columns.as_str(),
+    ]
+    .join("\n");
+    for required in [
+        "ROLE_IMAGE_EVENT_STRIDE: usize = 10",
+        "ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6",
+    ] {
+        assert!(
+            descriptor_hot_path.contains(required),
+            "scope descriptor rows must stay u16 ScopeId based: {required}"
+        );
+    }
     for required in ["scope: u16", "event_row: PackedLaneRange"] {
         assert!(
             roll_scope.contains(required),
@@ -519,8 +538,6 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
             "roll-scope descriptor row must preserve roll-scope identity without raw ScopeId storage: {required}"
         );
     }
-
-    let descriptor_hot_path = [dependency_facts, image_types, lane_image, blob_image].join("\n");
     for forbidden in [
         "struct PackedLocalDependency(u64)",
         "struct PackedRouteArmRow(u64)",

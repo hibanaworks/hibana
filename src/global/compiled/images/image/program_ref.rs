@@ -69,11 +69,6 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(super) const fn read_u32_at(&self, offset: usize) -> u32 {
-        self.read_u16_at(offset) as u32 | ((self.read_u16_at(offset + 2) as u32) << 16)
-    }
-
-    #[inline(always)]
     pub(crate) const fn atom_at(&self, eff_idx: usize) -> Option<EffAtom> {
         let mut row = 0usize;
         while row < self.columns.atoms.len as usize {

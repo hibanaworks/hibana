@@ -215,7 +215,7 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn parallel_root(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        matches!(scope_id.kind(), ScopeKind::Parallel).then_some(scope_id)
+        matches!(scope_id.kind(), Some(ScopeKind::Parallel)).then_some(scope_id)
     }
 
     #[inline(always)]
@@ -251,7 +251,7 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn enclosing_roll(&self, scope_id: ScopeId) -> Option<ScopeId> {
-        matches!(scope_id.kind(), ScopeKind::Roll).then_some(scope_id)
+        matches!(scope_id.kind(), Some(ScopeKind::Roll)).then_some(scope_id)
     }
 
     #[inline(always)]

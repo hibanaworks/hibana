@@ -19,19 +19,57 @@ pub(crate) struct ProgramSourceData {
 }
 
 #[derive(Clone, Copy)]
+struct LabelMask([u8; 32]);
+
+impl LabelMask {
+    const EMPTY: Self = Self([0; 32]);
+
+    const fn from_label(label: u8) -> Self {
+        let mut bytes = [0u8; 32];
+        let idx = (label >> 3) as usize;
+        let bit = label & 7;
+        bytes[idx] = 1u8 << bit;
+        Self(bytes)
+    }
+
+    const fn union(self, other: Self) -> Self {
+        let mut bytes = [0u8; 32];
+        let mut idx = 0usize;
+        while idx < bytes.len() {
+            bytes[idx] = self.0[idx] | other.0[idx];
+            idx += 1;
+        }
+        Self(bytes)
+    }
+
+    const fn intersects(self, other: Self) -> bool {
+        let mut idx = 0usize;
+        while idx < self.0.len() {
+            if (self.0[idx] & other.0[idx]) != 0 {
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+}
+
+#[derive(Clone, Copy)]
 struct SourceFrontier {
-    label_words: [u64; 4],
+    labels: LabelMask,
     controller_mask: u16,
     empty: bool,
     invalid: bool,
+    duplicate_label: bool,
 }
 
 impl SourceFrontier {
     const EMPTY: Self = Self {
-        label_words: [0; 4],
+        labels: LabelMask::EMPTY,
         controller_mask: 0,
         empty: true,
         invalid: false,
+        duplicate_label: false,
     };
 
     const fn from_eff(eff: &EffList) -> Self {
@@ -47,16 +85,13 @@ impl SourceFrontier {
     }
 
     const fn atom(from: u8, label: u8) -> Self {
-        let mut words = [0u64; 4];
-        let word = (label / 64) as usize;
-        let bit = label % 64;
-        words[word] = 1u64 << bit;
         let invalid = from >= u16::BITS as u8;
         Self {
-            label_words: words,
+            labels: LabelMask::from_label(label),
             controller_mask: if invalid { 0 } else { 1u16 << from },
             empty: false,
             invalid,
+            duplicate_label: false,
         }
     }
 
@@ -65,29 +100,25 @@ impl SourceFrontier {
     }
 
     const fn union(self, other: Self) -> Self {
-        let mut words = [0u64; 4];
-        let mut idx = 0usize;
-        while idx < words.len() {
-            words[idx] = self.label_words[idx] | other.label_words[idx];
-            idx += 1;
-        }
         Self {
-            label_words: words,
+            labels: self.labels.union(other.labels),
             controller_mask: self.controller_mask | other.controller_mask,
             empty: self.empty && other.empty,
             invalid: self.invalid || other.invalid,
+            duplicate_label: self.duplicate_label
+                || other.duplicate_label
+                || self.labels.intersects(other.labels),
         }
     }
 
-    const fn label_collision(self, other: Self) -> bool {
-        let mut idx = 0usize;
-        while idx < self.label_words.len() {
-            if (self.label_words[idx] & other.label_words[idx]) != 0 {
-                return true;
-            }
-            idx += 1;
+    const fn route_choice(self, other: Self) -> Self {
+        Self {
+            labels: self.labels.union(other.labels),
+            controller_mask: self.controller_mask | other.controller_mask,
+            empty: self.empty && other.empty,
+            invalid: self.invalid || other.invalid,
+            duplicate_label: self.duplicate_label || other.duplicate_label,
         }
-        false
     }
 
     const fn route_summary(scope: ScopeId, left: Self, right: Self) -> RouteFrontierSummary {
@@ -95,7 +126,8 @@ impl SourceFrontier {
             scope,
             left.controller_mask | right.controller_mask,
             left.empty || right.empty || left.invalid || right.invalid,
-            left.label_collision(right),
+            left.duplicate_label || right.duplicate_label,
+            left.labels.intersects(right.labels),
         )
     }
 }
@@ -176,7 +208,7 @@ impl ProgramSourceData {
             while marker_idx < markers.len() {
                 let marker = markers[marker_idx];
                 if matches!(marker.event, ScopeEvent::Enter)
-                    && matches!(marker.scope_kind, ScopeKind::Route)
+                    && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                     && marker.scope_id.same(scope)
                     && !found
                 {
@@ -241,7 +273,7 @@ impl ProgramSourceData {
                 max_lane_span(self.lane_span, right.lane_span),
             ),
             lane_span: max_lane_span(self.lane_span, right.lane_span),
-            frontier: self.frontier.union(right.frontier),
+            frontier: self.frontier.route_choice(right.frontier),
             error,
         }
     }
@@ -261,6 +293,10 @@ impl ProgramSourceData {
         {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelConflict));
         }
+        let frontier = self.frontier.union(right.frontier);
+        if frontier.duplicate_label {
+            error = Self::merge_error(error, Some(ProgramSourceError::ParallelDuplicateLabel));
+        }
         let parallel_scope = ScopeId::parallel(0);
         let left_budget = self.scope_budget();
         let right_offset = add_scope_budget(1, left_budget);
@@ -275,7 +311,7 @@ impl ProgramSourceData {
                 .role_lane_mask
                 .union(right_role_lane_mask, combined_lane_span),
             lane_span: combined_lane_span,
-            frontier: self.frontier.union(right.frontier),
+            frontier,
             error,
         }
     }

@@ -9,7 +9,8 @@ pub(crate) struct RouteFrontierSummary {
 
 impl RouteFrontierSummary {
     const FLAG_INVALID: u8 = 1 << 0;
-    const FLAG_LABEL_COLLISION: u8 = 1 << 1;
+    const FLAG_DUPLICATE_LABEL: u8 = 1 << 1;
+    const FLAG_BRANCH_LABEL_OVERLAP: u8 = 1 << 2;
 
     pub(crate) const EMPTY: Self = Self {
         scope: ScopeId::none(),
@@ -21,17 +22,21 @@ impl RouteFrontierSummary {
         scope: ScopeId,
         controller_mask: u16,
         invalid: bool,
-        label_collision: bool,
+        duplicate_label: bool,
+        branch_label_overlap: bool,
     ) -> Self {
-        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             panic!("route frontier summary scope");
         }
         let mut flags = 0u8;
         if invalid {
             flags |= Self::FLAG_INVALID;
         }
-        if label_collision {
-            flags |= Self::FLAG_LABEL_COLLISION;
+        if duplicate_label {
+            flags |= Self::FLAG_DUPLICATE_LABEL;
+        }
+        if branch_label_overlap {
+            flags |= Self::FLAG_BRANCH_LABEL_OVERLAP;
         }
         Self {
             scope,
@@ -64,8 +69,12 @@ impl RouteFrontierSummary {
         (self.flags & Self::FLAG_INVALID) != 0
     }
 
-    pub(crate) const fn has_label_collision(self) -> bool {
-        (self.flags & Self::FLAG_LABEL_COLLISION) != 0
+    pub(crate) const fn has_duplicate_label(self) -> bool {
+        (self.flags & Self::FLAG_DUPLICATE_LABEL) != 0
+    }
+
+    pub(crate) const fn has_branch_label_overlap(self) -> bool {
+        (self.flags & Self::FLAG_BRANCH_LABEL_OVERLAP) != 0
     }
 }
 
@@ -108,7 +117,7 @@ impl RouteResolverMarker {
     }
 
     pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
-        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             panic!("route resolver marker scope");
         }
         Self { scope, resolver_id }

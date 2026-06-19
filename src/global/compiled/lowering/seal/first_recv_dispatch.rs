@@ -53,7 +53,7 @@ pub(super) const fn validate_first_recv_dispatch_capacity<const ROLE: u8>(
     while marker_idx < scope_markers.len() {
         let marker = scope_markers[marker_idx];
         if matches!(marker.event, ScopeEvent::Enter)
-            && matches!(marker.scope_kind, ScopeKind::Route)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {
             let ordinal = marker.scope_id.local_ordinal() as usize;
             if ordinal >= seen_routes.len() {
@@ -250,7 +250,7 @@ const fn passive_child_route_enter_index(
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
         if matches!(marker.event, ScopeEvent::Enter)
-            && matches!(marker.scope_kind, ScopeKind::Route)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(route)
             && marker.offset == arm_start
             && first_enter_for_scope(scope_markers, idx)
@@ -316,7 +316,7 @@ const fn route_arm_ranges_from_first_enter(
     let mut idx = enter_idx + 1;
     while idx < scope_markers.len() && (enter_len < 2 || exit_len < 2) {
         let marker = scope_markers[idx];
-        if marker.scope_id.same(route) && matches!(marker.scope_kind, ScopeKind::Route) {
+        if marker.scope_id.same(route) && matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
             match marker.event {
                 ScopeEvent::Enter => {
                     if enter_len < 2 {

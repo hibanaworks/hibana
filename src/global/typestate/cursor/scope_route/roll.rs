@@ -23,8 +23,10 @@ impl EventCursor {
     }
 
     fn roll_scope_contains_index(&self, scope: ScopeId, idx: usize) -> bool {
-        if matches!(scope.kind(), crate::global::const_dsl::ScopeKind::Roll)
-            && let Some(row) = self.machine().roll_scope_row(scope)
+        if matches!(
+            scope.kind(),
+            Some(crate::global::const_dsl::ScopeKind::Roll)
+        ) && let Some(row) = self.machine().roll_scope_row(scope)
         {
             return row.start() <= idx && idx < row.end();
         }

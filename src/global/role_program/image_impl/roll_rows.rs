@@ -13,7 +13,7 @@ impl RoleLaneScratch {
         while marker_idx < markers.len() {
             let marker = markers[marker_idx];
             if Self::first_enter_for_scope(markers, marker_idx)
-                && matches!(marker.scope_kind, ScopeKind::Roll)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
             {
                 let end_eff = Self::scope_segment_end(markers, marker_idx, view.len());
                 let row =

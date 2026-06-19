@@ -76,9 +76,9 @@ impl RoleLaneImage {
                 self.read_u16_at(offset),
                 self.read_u16_at(offset + 2),
                 self.read_u16_at(offset + 4),
-                self.read_u32_at(offset + 6),
-                self.byte_at(offset + 10),
-                self.byte_at(offset + 11),
+                self.read_u16_at(offset + 6),
+                self.byte_at(offset + 8),
+                self.byte_at(offset + 9),
             )),
             None => None,
         }
@@ -274,7 +274,7 @@ impl RoleLaneImage {
             slot,
             ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
         ) {
-            Some(offset) => Some(ScopeId::from_raw(self.read_u32_at(offset))),
+            Some(offset) => Some(ScopeId::from_raw(self.read_u16_at(offset))),
             None => None,
         }
     }

@@ -190,9 +190,9 @@ impl<const N: usize> RoleImageBytes<N> {
         self.write_u16(offset, event.eff_index);
         self.write_u16(offset + 2, event.dependency_row);
         self.write_u16(offset + 4, event.conflict_row);
-        self.write_u32(offset + 6, event.scope().raw());
-        self.write_u8(offset + 10, event.frame_label);
-        self.write_u8(offset + 11, event.flags);
+        self.write_u16(offset + 6, event.scope().raw());
+        self.write_u8(offset + 8, event.frame_label);
+        self.write_u8(offset + 9, event.flags);
     }
 
     #[inline(always)]
@@ -360,7 +360,7 @@ impl<const N: usize> RoleImageBytes<N> {
     ) {
         let mut idx = 0usize;
         while idx < len {
-            self.w32(
+            self.w16(
                 column,
                 idx,
                 ROLE_IMAGE_ROUTE_SCOPE_STRIDE,

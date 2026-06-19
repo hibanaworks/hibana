@@ -15,12 +15,13 @@ impl PassiveArmChildFact {
         arm: u8,
         child_route_scope: Option<ScopeId>,
     ) -> Option<Self> {
-        if route_scope.is_none() || !matches!(route_scope.kind(), ScopeKind::Route) || arm > 1 {
+        if route_scope.is_none() || !matches!(route_scope.kind(), Some(ScopeKind::Route)) || arm > 1
+        {
             return None;
         }
         if let Some(child_scope) = child_route_scope
             && (child_scope.is_none()
-                || !matches!(child_scope.kind(), ScopeKind::Route)
+                || !matches!(child_scope.kind(), Some(ScopeKind::Route))
                 || child_scope.same(route_scope))
         {
             return None;

@@ -404,8 +404,8 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && role_program.contains("struct RoleLaneScratch")
             && role_program.contains("struct PackedLocalEventRow")
             && role_program.contains("scope: crate::global::const_dsl::ScopeId")
-            && role_program.contains("ROLE_IMAGE_EVENT_STRIDE: usize = 12")
-            && role_program.contains("ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 4")
+            && role_program.contains("ROLE_IMAGE_EVENT_STRIDE: usize = 10")
+            && role_program.contains("ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2")
             && role_program.contains(
                 "route_scope_rows: [crate::global::const_dsl::ScopeId; MAX_ROUTE_SCOPE_LANE_ROWS]"
             )

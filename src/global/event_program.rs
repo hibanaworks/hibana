@@ -171,7 +171,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn route_scope_slot(self, scope_id: ScopeId) -> Option<usize> {
-        if scope_id.is_none() || !matches!(scope_id.kind(), ScopeKind::Route) {
+        if scope_id.is_none() || !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
             return None;
         }
         let mut slot = 0usize;
@@ -205,7 +205,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn roll_scope_row(self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
-        if scope_id.is_none() || !matches!(scope_id.kind(), ScopeKind::Roll) {
+        if scope_id.is_none() || !matches!(scope_id.kind(), Some(ScopeKind::Roll)) {
             return None;
         }
         let target = scope_id.local_ordinal();

@@ -474,67 +474,82 @@ fn sparse_route_arm_program() -> Program<SparseRouteArmProgram> {
     g::seq(g::seq(route0, route1), g::seq(route2, route3))
 }
 
-type NonParticipantLane = g::Send<2, 3, Msg<108, ()>>;
-type NonParticipantLanes2 = g::Par<NonParticipantLane, NonParticipantLane>;
-type NonParticipantLanes4 = g::Par<NonParticipantLanes2, NonParticipantLanes2>;
-type NonParticipantLanes8 = g::Par<NonParticipantLanes4, NonParticipantLanes4>;
-type NonParticipantLanes16 = g::Par<NonParticipantLanes8, NonParticipantLanes8>;
-type NonParticipantLanes32 = g::Par<NonParticipantLanes16, NonParticipantLanes16>;
-type NonParticipantLanes63 = g::Par<
-    NonParticipantLanes32,
-    g::Par<
-        NonParticipantLanes16,
-        g::Par<
-            NonParticipantLanes8,
-            g::Par<NonParticipantLanes4, g::Par<NonParticipantLanes2, NonParticipantLane>>,
-        >,
-    >,
->;
-
-fn non_participant_lane() -> Program<g::Send<2, 3, Msg<108, ()>>> {
-    g::send::<2, 3, Msg<108, ()>>()
+macro_rules! par_frontier {
+    ($single:expr $(,)?) => {
+        $single
+    };
+    ($first:expr, $($rest:expr),+ $(,)?) => {
+        g::par($first, par_frontier!($($rest),+))
+    };
 }
 
-fn non_participant_lanes_2() -> Program<NonParticipantLanes2> {
-    g::par(non_participant_lane(), non_participant_lane())
-}
-
-fn non_participant_lanes_4() -> Program<NonParticipantLanes4> {
-    g::par(non_participant_lanes_2(), non_participant_lanes_2())
-}
-
-fn non_participant_lanes_8() -> Program<NonParticipantLanes8> {
-    g::par(non_participant_lanes_4(), non_participant_lanes_4())
-}
-
-fn non_participant_lanes_16() -> Program<NonParticipantLanes16> {
-    g::par(non_participant_lanes_8(), non_participant_lanes_8())
-}
-
-fn non_participant_lanes_32() -> Program<NonParticipantLanes32> {
-    g::par(non_participant_lanes_16(), non_participant_lanes_16())
-}
-
-fn non_participant_lanes_63() -> Program<NonParticipantLanes63> {
-    g::par(
-        non_participant_lanes_32(),
-        g::par(
-            non_participant_lanes_16(),
-            g::par(
-                non_participant_lanes_8(),
-                g::par(
-                    non_participant_lanes_4(),
-                    g::par(non_participant_lanes_2(), non_participant_lane()),
-                ),
-            ),
-        ),
-    )
-}
-
-type SparseRouteHighLaneProgram = g::Par<NonParticipantLanes63, SparseRouteArmProgram>;
-
-fn sparse_route_high_lane_program() -> Program<SparseRouteHighLaneProgram> {
-    g::par(non_participant_lanes_63(), sparse_route_arm_program())
+fn sparse_route_high_lane_program() -> impl Projectable {
+    let non_participant_lanes = par_frontier!(
+        g::send::<2, 3, Msg<108, ()>>(),
+        g::send::<2, 3, Msg<109, ()>>(),
+        g::send::<2, 3, Msg<110, ()>>(),
+        g::send::<2, 3, Msg<111, ()>>(),
+        g::send::<2, 3, Msg<112, ()>>(),
+        g::send::<2, 3, Msg<113, ()>>(),
+        g::send::<2, 3, Msg<114, ()>>(),
+        g::send::<2, 3, Msg<115, ()>>(),
+        g::send::<2, 3, Msg<116, ()>>(),
+        g::send::<2, 3, Msg<117, ()>>(),
+        g::send::<2, 3, Msg<118, ()>>(),
+        g::send::<2, 3, Msg<119, ()>>(),
+        g::send::<2, 3, Msg<120, ()>>(),
+        g::send::<2, 3, Msg<121, ()>>(),
+        g::send::<2, 3, Msg<122, ()>>(),
+        g::send::<2, 3, Msg<123, ()>>(),
+        g::send::<2, 3, Msg<124, ()>>(),
+        g::send::<2, 3, Msg<125, ()>>(),
+        g::send::<2, 3, Msg<126, ()>>(),
+        g::send::<2, 3, Msg<127, ()>>(),
+        g::send::<2, 3, Msg<128, ()>>(),
+        g::send::<2, 3, Msg<129, ()>>(),
+        g::send::<2, 3, Msg<130, ()>>(),
+        g::send::<2, 3, Msg<131, ()>>(),
+        g::send::<2, 3, Msg<132, ()>>(),
+        g::send::<2, 3, Msg<133, ()>>(),
+        g::send::<2, 3, Msg<134, ()>>(),
+        g::send::<2, 3, Msg<135, ()>>(),
+        g::send::<2, 3, Msg<136, ()>>(),
+        g::send::<2, 3, Msg<137, ()>>(),
+        g::send::<2, 3, Msg<138, ()>>(),
+        g::send::<2, 3, Msg<139, ()>>(),
+        g::send::<2, 3, Msg<140, ()>>(),
+        g::send::<2, 3, Msg<141, ()>>(),
+        g::send::<2, 3, Msg<142, ()>>(),
+        g::send::<2, 3, Msg<143, ()>>(),
+        g::send::<2, 3, Msg<144, ()>>(),
+        g::send::<2, 3, Msg<145, ()>>(),
+        g::send::<2, 3, Msg<146, ()>>(),
+        g::send::<2, 3, Msg<147, ()>>(),
+        g::send::<2, 3, Msg<148, ()>>(),
+        g::send::<2, 3, Msg<149, ()>>(),
+        g::send::<2, 3, Msg<150, ()>>(),
+        g::send::<2, 3, Msg<151, ()>>(),
+        g::send::<2, 3, Msg<152, ()>>(),
+        g::send::<2, 3, Msg<153, ()>>(),
+        g::send::<2, 3, Msg<154, ()>>(),
+        g::send::<2, 3, Msg<155, ()>>(),
+        g::send::<2, 3, Msg<156, ()>>(),
+        g::send::<2, 3, Msg<157, ()>>(),
+        g::send::<2, 3, Msg<158, ()>>(),
+        g::send::<2, 3, Msg<159, ()>>(),
+        g::send::<2, 3, Msg<160, ()>>(),
+        g::send::<2, 3, Msg<161, ()>>(),
+        g::send::<2, 3, Msg<162, ()>>(),
+        g::send::<2, 3, Msg<163, ()>>(),
+        g::send::<2, 3, Msg<164, ()>>(),
+        g::send::<2, 3, Msg<165, ()>>(),
+        g::send::<2, 3, Msg<166, ()>>(),
+        g::send::<2, 3, Msg<167, ()>>(),
+        g::send::<2, 3, Msg<168, ()>>(),
+        g::send::<2, 3, Msg<169, ()>>(),
+        g::send::<2, 3, Msg<170, ()>>(),
+    );
+    g::par(non_participant_lanes, sparse_route_arm_program())
 }
 
 type MultiPhaseProgramSteps = g::Seq<
@@ -610,8 +625,8 @@ fn roll_projection_marks_seq_body_with_roll_scope() {
         let second = rows
             .local_step_node(1)
             .expect("rolled seq second local event");
-        assert_eq!(first.scope().kind(), ScopeKind::Roll);
-        assert_eq!(second.scope().kind(), ScopeKind::Roll);
+        assert_eq!(first.scope().kind(), Some(ScopeKind::Roll));
+        assert_eq!(second.scope().kind(), Some(ScopeKind::Roll));
         assert_eq!(first.scope(), second.scope());
     });
 }
@@ -661,13 +676,13 @@ fn route_internal_parallel_scope_has_exact_resident_arm_relation() {
         let mut step_idx = 0usize;
         while step_idx < rows.local_step_count() {
             if let Some(node) = rows.local_step_node(step_idx)
-                && node.scope().kind() == ScopeKind::Parallel
+                && node.scope().kind() == Some(ScopeKind::Parallel)
             {
                 match rows.event_conflict_for_index(step_idx).to_conflict() {
                     Some(LocalConflict::RouteArm { scope, arm }) => {
                         assert_eq!(
                             scope.kind(),
-                            ScopeKind::Route,
+                            Some(ScopeKind::Route),
                             "parallel body event must carry an enclosing route conflict"
                         );
                         assert_eq!(

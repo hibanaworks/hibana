@@ -64,7 +64,7 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn route_arm(scope: ScopeId, arm: u8) -> Self {
-        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+        if scope.is_none() || !matches!(scope.kind(), Some(ScopeKind::Route)) {
             crate::invariant();
         }
         if arm > 1 {
@@ -180,7 +180,7 @@ impl RouteScopeRows {
         reentry: ReentryMark,
     ) -> Option<Self> {
         if scope.is_none()
-            || !matches!(scope.kind(), ScopeKind::Route)
+            || !matches!(scope.kind(), Some(ScopeKind::Route))
             || start >= end
             || end > u16::MAX as usize
         {

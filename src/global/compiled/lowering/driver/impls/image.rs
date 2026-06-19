@@ -35,7 +35,7 @@ impl CompiledProgramImage {
     const fn scan_into(summary: &mut Self, eff_list: &EffList) {
         let mut scope_count = 0u16;
         let mut role_count = 0usize;
-        let mut route_scope_ordinals = [0u64; ROUTE_SCOPE_ORDINAL_WORDS];
+        let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];
         summary.program.lowering_facts.eff_count = eff_list.len() as u16;
         let mut segment = 0usize;
         while segment < eff_list.segment_count() {
@@ -122,29 +122,29 @@ impl CompiledProgramImage {
                     max_active_scope_depth = active_scope_depth;
                 }
                 if matches!(
-                    marker.scope_kind,
-                    crate::global::const_dsl::ScopeKind::Parallel
+                    marker.scope_id.kind(),
+                    Some(crate::global::const_dsl::ScopeKind::Parallel)
                 ) {
                     summary.program.lowering_facts.parallel_enter_count = increment_compact_count(
                         summary.program.lowering_facts.parallel_enter_count,
                     );
                 } else if matches!(
-                    marker.scope_kind,
-                    crate::global::const_dsl::ScopeKind::Route
+                    marker.scope_id.kind(),
+                    Some(crate::global::const_dsl::ScopeKind::Route)
                 ) {
                     active_route_depth = increment_compact_count(active_route_depth);
                     if active_route_depth > max_route_depth {
                         max_route_depth = active_route_depth;
                     }
                     let ordinal = marker.scope_id.local_ordinal() as usize;
-                    let word = ordinal / 64;
-                    let bit = ordinal % 64;
-                    if word >= route_scope_ordinals.len() {
+                    let byte = ordinal >> 3;
+                    let bit = ordinal & 7;
+                    if byte >= route_scope_ordinals.len() {
                         panic!("route scope ordinal overflow");
                     }
-                    let mask = 1u64 << bit;
-                    if (route_scope_ordinals[word] & mask) == 0 {
-                        route_scope_ordinals[word] |= mask;
+                    let mask = 1u8 << bit;
+                    if (route_scope_ordinals[byte] & mask) == 0 {
+                        route_scope_ordinals[byte] |= mask;
                         summary.program.lowering_facts.route_scope_count = increment_compact_count(
                             summary.program.lowering_facts.route_scope_count,
                         );
@@ -169,8 +169,8 @@ impl CompiledProgramImage {
                 }
             } else {
                 if matches!(
-                    marker.scope_kind,
-                    crate::global::const_dsl::ScopeKind::Route
+                    marker.scope_id.kind(),
+                    Some(crate::global::const_dsl::ScopeKind::Route)
                 ) {
                     active_route_depth = decrement_compact_count(active_route_depth);
                 }

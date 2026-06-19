@@ -153,7 +153,7 @@ impl PackedLocalDependency {
         if scope.is_none() {
             return Self::none();
         }
-        if !matches!(scope.kind(), ScopeKind::Parallel) {
+        if !matches!(scope.kind(), Some(ScopeKind::Parallel)) {
             crate::invariant();
         }
         let dep_ordinal = scope.local_ordinal();
@@ -170,7 +170,7 @@ impl PackedLocalDependency {
             LocalConflict::Unconditional => (Self::CONFLICT_UNCONDITIONAL, 0),
             LocalConflict::SharedRoute => (Self::CONFLICT_SHARED_ROUTE, 0),
             LocalConflict::RouteArm { scope, arm } => {
-                if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+                if scope.is_none() || !matches!(scope.kind(), Some(ScopeKind::Route)) {
                     crate::invariant();
                 }
                 let route_ordinal = scope.local_ordinal();

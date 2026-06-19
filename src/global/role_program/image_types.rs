@@ -12,12 +12,12 @@ pub(crate) const MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2;
 pub(crate) const MAX_RESIDENT_LANE_BIT_BYTES: usize = LANE_DOMAIN_SIZE * 4;
 pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
 pub(crate) const PACKED_ROUTE_ARM_ROW_EMPTY: u32 = u32::MAX;
-pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 12;
+pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 10;
 pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
 pub(crate) const ROLE_IMAGE_DEPENDENCY_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_CONFLICT_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_U16_STRIDE: usize = 2;
-pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 4;
+pub(crate) const ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_STRIDE: usize = 8;
 pub(crate) const ROLE_IMAGE_LANE_RANGE_STRIDE: usize = 4;
 pub(crate) const ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE: usize = 5;
@@ -260,7 +260,10 @@ impl PackedRollScopeRow {
         row: PackedLaneRange,
     ) -> Self {
         if scope.is_none()
-            || !matches!(scope.kind(), crate::global::const_dsl::ScopeKind::Roll)
+            || !matches!(
+                scope.kind(),
+                Some(crate::global::const_dsl::ScopeKind::Roll)
+            )
             || row.is_empty()
             || row.start() > u16::MAX as usize
             || row.len() > u16::MAX as usize

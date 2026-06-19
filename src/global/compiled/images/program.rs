@@ -3,14 +3,14 @@ use crate::global::const_dsl::ScopeId;
 /// Precomputed dynamic resolver site discovered during program lowering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RouteResolverSite {
-    resolver_id: u16,
     scope: ScopeId,
+    resolver_id: u16,
 }
 
 impl RouteResolverSite {
     pub(crate) const EMPTY: Self = Self {
-        resolver_id: crate::global::const_dsl::INTRINSIC_ROUTE_RESOLVER_ID,
         scope: ScopeId::none(),
+        resolver_id: crate::global::const_dsl::INTRINSIC_ROUTE_RESOLVER_ID,
     };
 
     #[inline(always)]
@@ -67,7 +67,15 @@ pub(crate) struct CompiledProgramCounts {
 mod tests {
     use core::mem::size_of;
 
-    use super::{CompiledProgramCounts, EventSemanticKind};
+    use super::{CompiledProgramCounts, EventSemanticKind, RouteResolverSite};
+    use crate::global::const_dsl::ScopeId;
+
+    #[test]
+    fn route_resolver_site_is_scope_id_and_resolver_id_only() {
+        assert_eq!(size_of::<ScopeId>(), 2);
+        assert_eq!(size_of::<RouteResolverSite>(), 4);
+    }
+
     #[test]
     fn compiled_program_counts_remain_plain_derived_counts() {
         assert_eq!(size_of::<CompiledProgramCounts>(), 2 * size_of::<usize>());

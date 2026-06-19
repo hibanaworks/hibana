@@ -15,7 +15,7 @@ struct ScopeCoord {
 
 impl ScopeCoord {
     fn from_scope(scope: ScopeId) -> Option<Self> {
-        if scope.is_none() || scope.kind() != ScopeKind::Route {
+        if scope.kind() != Some(ScopeKind::Route) {
             return None;
         }
         Some(Self { scope })

@@ -16,7 +16,7 @@ pub(super) const fn validate_passive_child_projection_guarantees(
     while marker_idx < scope_markers.len() {
         let marker = scope_markers[marker_idx];
         if first_enter_for_scope(scope_markers, marker_idx)
-            && matches!(marker.scope_kind, ScopeKind::Route)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {
             let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
                 route_arm_ranges(scope_markers, marker.scope_id);
@@ -107,7 +107,7 @@ const fn passive_child_route_enter_index(
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
         if matches!(marker.event, ScopeEvent::Enter)
-            && matches!(marker.scope_kind, ScopeKind::Route)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(route)
             && marker.offset == arm_start
         {
@@ -152,7 +152,7 @@ const fn nearest_route_parent_for_scope(
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
         if first_enter_for_scope(scope_markers, idx)
-            && matches!(marker.scope_kind, ScopeKind::Route)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(scope)
         {
             let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
@@ -188,7 +188,7 @@ const fn scope_full_end(scope_markers: &[ScopeMarker], scope: ScopeId) -> Option
         return None;
     };
     let marker = scope_markers[enter_idx];
-    if matches!(marker.scope_kind, ScopeKind::Route) {
+    if matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
         let (_, _, left_end, _, _, right_end) = route_arm_ranges(scope_markers, scope);
         Some(if left_end > right_end {
             left_end
@@ -245,7 +245,7 @@ const fn route_scope_slot_for_scope(
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
         if first_enter_for_scope(scope_markers, idx)
-            && matches!(marker.scope_kind, ScopeKind::Route)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {
             if marker.scope_id.same(route) {
                 return Some(slot);
@@ -286,7 +286,9 @@ const fn route_arm_ranges(
     let mut idx = 0usize;
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
-        if marker.scope_id.same(scope_id) && matches!(marker.scope_kind, ScopeKind::Route) {
+        if marker.scope_id.same(scope_id)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+        {
             match marker.event {
                 ScopeEvent::Enter => {
                     if enter_len < 2 {

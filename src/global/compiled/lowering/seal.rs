@@ -175,14 +175,14 @@ pub(super) const fn exact_role_resident_row_facts(
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
         let marker = scope_markers[marker_idx];
-        if matches!(marker.scope_kind, ScopeKind::Parallel)
+        if matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
             && matches!(marker.event, ScopeEvent::Enter)
         {
             let mut exit_offset = usize::MAX;
             let mut exit_idx = marker_idx + 1;
             while exit_idx < scope_markers.len() {
                 let exit_marker = scope_markers[exit_idx];
-                if matches!(exit_marker.scope_kind, ScopeKind::Parallel)
+                if matches!(exit_marker.scope_id.kind(), Some(ScopeKind::Parallel))
                     && matches!(exit_marker.event, ScopeEvent::Exit)
                     && exit_marker.scope_id.raw() == marker.scope_id.raw()
                 {
@@ -326,7 +326,10 @@ const fn validate_scope_capacity(view: &super::CompiledProgramView<'_>) {
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];
         if matches!(marker.event, ScopeEvent::Enter)
-            && matches!(marker.scope_kind, ScopeKind::Route | ScopeKind::Roll)
+            && matches!(
+                marker.scope_id.kind(),
+                Some(ScopeKind::Route) | Some(ScopeKind::Roll)
+            )
         {
             let ordinal = marker.scope_id.local_ordinal() as usize;
             if ordinal >= seen_route_like.len() {
@@ -364,7 +367,7 @@ const fn validate_route_projection_guarantees<const ROLE: u8>(
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
         let marker = scope_markers[marker_idx];
-        if matches!(marker.scope_kind, ScopeKind::Route)
+        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && matches!(marker.event, ScopeEvent::Enter)
         {
             let ordinal = marker.scope_id.local_ordinal() as usize;
@@ -400,13 +403,16 @@ const fn validate_route_scope<const ROLE: u8>(
     let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
     let route_scope = scope_markers[route_enter_marker_idx].scope_id;
-    let has_dynamic_resolver = scope_has_dynamic_resolver(view, route_scope);
     let Some(frontier) = view.route_frontier_summary(route_scope) else {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     };
+    if frontier.is_invalid() || frontier.has_duplicate_label() {
+        return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+    }
+    let has_dynamic_resolver = scope_has_dynamic_resolver(view, route_scope);
     let controller_mask = frontier.controller_mask();
     if !has_dynamic_resolver {
-        if frontier.is_invalid() || frontier.has_label_collision() {
+        if frontier.has_branch_label_overlap() {
             return Some(ProgramSourceError::ProjectionRouteUnprojectable);
         }
         if !has_exactly_one_bit(controller_mask) {
@@ -463,7 +469,9 @@ const fn route_arm_ranges_from_first_enter(
     let mut idx = enter_idx + 1;
     while idx < scope_markers.len() && (enter_len < 2 || exit_len < 2) {
         let marker = scope_markers[idx];
-        if marker.scope_id.same(scope_id) && matches!(marker.scope_kind, ScopeKind::Route) {
+        if marker.scope_id.same(scope_id)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+        {
             match marker.event {
                 ScopeEvent::Enter => {
                     if enter_len < 2 {

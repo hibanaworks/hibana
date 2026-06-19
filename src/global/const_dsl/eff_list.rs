@@ -128,11 +128,10 @@ impl EffList {
             self.scope_markers[idx] = ScopeMarker {
                 offset: marker.offset,
                 scope_id: rebased,
-                scope_kind: rebased.kind(),
                 event: marker.event,
                 reentry: marker.reentry,
             };
-            let ordinal = rebased.ordinal();
+            let ordinal = rebased.local_ordinal();
             let next = ordinal + 1;
             if next > ScopeId::LOCAL_CAPACITY {
                 panic!("scope ordinal overflow");
@@ -209,7 +208,6 @@ impl EffList {
             self = self.push_scope_marker_full(
                 base + marker.offset,
                 marker.scope_id,
-                marker.scope_kind,
                 marker.event,
                 marker.reentry,
             );
@@ -233,25 +231,23 @@ impl EffList {
         self,
         offset: usize,
         scope_id: ScopeId,
-        scope_kind: ScopeKind,
         event: ScopeEvent,
         reentry: ReentryMark,
     ) -> Self {
-        self.push_scope_marker_full(offset, scope_id, scope_kind, event, reentry)
+        self.push_scope_marker_full(offset, scope_id, event, reentry)
     }
 
     pub(super) const fn push_scope_marker_full(
         mut self,
         offset: usize,
         scope_id: ScopeId,
-        scope_kind: ScopeKind,
         event: ScopeEvent,
         reentry: ReentryMark,
     ) -> Self {
         if self.scope_marker_len >= MAX_CAPACITY {
             panic!("EffList scope marker capacity exceeded");
         }
-        let ordinal = scope_id.ordinal();
+        let ordinal = scope_id.local_ordinal();
         let next = ordinal + 1;
         if next > ScopeId::LOCAL_CAPACITY {
             panic!("scope ordinal overflow");
@@ -271,11 +267,10 @@ impl EffList {
         }
         let segment = Self::summary_segment_for_scope_marker_offset(offset, self.len, event);
         self.segment_summaries[segment] =
-            self.segment_summaries[segment].with_scope_marker(scope_kind, event);
+            self.segment_summaries[segment].with_scope_marker(scope_id, event);
         self.scope_markers[idx] = ScopeMarker {
             offset,
             scope_id,
-            scope_kind,
             event,
             reentry,
         };
@@ -284,7 +279,7 @@ impl EffList {
     }
 
     const fn push_scope_marker(self, offset: usize, scope: ScopeId, event: ScopeEvent) -> Self {
-        self.push_scope_marker_raw(offset, scope, scope.kind(), event, ReentryMark::SinglePass)
+        self.push_scope_marker_raw(offset, scope, event, ReentryMark::SinglePass)
     }
 
     const fn push_scope_marker_outer_enter(self, offset: usize, scope: ScopeId) -> Self {
@@ -300,7 +295,7 @@ impl EffList {
         if self.scope_marker_len >= MAX_CAPACITY {
             panic!("EffList scope marker capacity exceeded");
         }
-        let ordinal = scope.ordinal();
+        let ordinal = scope.local_ordinal();
         let next = ordinal + 1;
         if next > ScopeId::LOCAL_CAPACITY {
             panic!("scope ordinal overflow");
@@ -321,11 +316,10 @@ impl EffList {
         let segment =
             Self::summary_segment_for_scope_marker_offset(offset, self.len, ScopeEvent::Enter);
         self.segment_summaries[segment] =
-            self.segment_summaries[segment].with_scope_marker(scope.kind(), ScopeEvent::Enter);
+            self.segment_summaries[segment].with_scope_marker(scope, ScopeEvent::Enter);
         self.scope_markers[idx] = ScopeMarker {
             offset,
             scope_id: scope,
-            scope_kind: scope.kind(),
             event: ScopeEvent::Enter,
             reentry,
         };
@@ -343,7 +337,7 @@ impl EffList {
         let mut marker_idx = 0usize;
         while marker_idx < self.scope_marker_len {
             let marker = self.scope_markers[marker_idx];
-            if matches!(marker.scope_kind, ScopeKind::Route)
+            if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                 && matches!(marker.event, ScopeEvent::Enter)
             {
                 let mut updated = marker;
@@ -356,7 +350,7 @@ impl EffList {
     }
 
     pub(crate) const fn push_route_resolver(mut self, scope: ScopeId, resolver_id: u16) -> Self {
-        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             panic!("EffList route resolver scope");
         }
         let mut idx = 0usize;
@@ -393,7 +387,7 @@ impl EffList {
 
     pub(crate) const fn push_route_frontier(mut self, summary: RouteFrontierSummary) -> Self {
         let scope = summary.scope();
-        if scope.is_none() || !matches!(scope.kind(), ScopeKind::Route) {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             panic!("EffList route frontier scope");
         }
         let mut idx = 0usize;
