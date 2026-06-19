@@ -8,6 +8,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let public_runtime = format!("{public_ops}\n{public_poll}");
     let endpoint_ops = read("src/endpoint/ops.rs");
     let send = read("src/endpoint/send.rs");
+    let send_resolver_proof = read("src/endpoint/kernel/core/send_resolver_proof.rs");
     let futures = read("src/endpoint/futures.rs");
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let branch = read("src/endpoint/branch.rs");
@@ -103,14 +104,57 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && endpoint_ops.contains("fn call_send_init_op(")
             && !endpoint_ops.contains("pub(super) unsafe fn init_public_send_state")
             && endpoint_ops.contains("match self.init_public_send_state(&init)")
-            && endpoint_ops.contains("kernel::PublicOpLease::Held => {}")
+            && endpoint_ops.contains("kernel::PublicOpLease::Held => Ok(())")
             && endpoint_ops.contains("kernel::PublicOpLease::Rejected =>")
             && endpoint_ops.contains("crate::endpoint::SendError::PhaseInvariant"),
-        "send must return a ready error future when send active-lease initialization fails after preview, with carrier unsafe concentrated in private helpers"
+        "send first-poll arming must fail locally when active-lease initialization is rejected, with carrier unsafe concentrated in private helpers"
     );
+    let direct_send_constructor = endpoint_ops
+        .split("pub fn send<'a, 'e, M>(")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("/// Receive the next deterministic message")
+                .next()
+        })
+        .expect("direct send constructor must stay visible");
+    let branch_send_constructor = branch
+        .split("pub fn send<'a, M>(")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("impl<'r, const ROLE: u8> Drop for Endpoint")
+                .next()
+        })
+        .expect("route branch send constructor must stay visible");
+    let send_future_poll = send
+        .split("fn poll_raw(")
+        .nth(1)
+        .and_then(|tail| tail.split("impl<'a, 'e, 'r, const ROLE: u8> Future").next())
+        .expect("send future poll must stay visible");
     assert!(
         send.contains("impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture")
+            && send.contains("enum SendFutureState")
+            && send.contains("DirectUnarmed")
+            && send.contains("Armed")
+            && send.contains("ReadyError(SendError)")
+            && send.contains("Done")
+            && send.contains("fn arm_on_first_poll(&mut self)")
+            && send.contains("endpoint.begin_public_send_state(logical_label)")
             && send.contains("pub(crate) fn ready_error(error: SendError) -> Self")
+            && send.contains("payload: Option<kernel::RawSendPayload>")
+            && send.contains("state: SendFutureState")
+            && !send.contains("ready_error: Option")
+            && !send.contains("logical_label: 0")
+            && !send.contains("RawSendPayload::empty")
+            && direct_send_constructor
+                .contains("SendFuture::pending_direct(endpoint, logical_label, payload)")
+            && !direct_send_constructor.contains("preview_send(")
+            && !direct_send_constructor.contains("init_public_send_state")
+            && branch_send_constructor.contains("preview_send(logical_label")
+            && branch_send_constructor.contains("send_runtime_desc(\n            logical_label,")
+            && branch_send_constructor.contains("init_public_send_state(&init)")
+            && branch_send_constructor.contains("SendFuture::pending_armed(endpoint, payload)")
+            && send_future_poll.contains("self.arm_on_first_poll()")
+            && send_future_poll.contains("endpoint.poll_send(cx, self.payload.take())")
             && endpoint_ops.contains("pub fn send<'a, 'e, M>(")
             && !endpoint_ops.contains("pub fn flow")
             && !send.contains("struct Flow")
@@ -140,8 +184,24 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawBranchRecvFuture"),
         "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"
     );
+    let resolver_authority = send_resolver_proof
+        .split("pub(crate) enum SendResolverAuthority")
+        .nth(1)
+        .and_then(|tail| tail.split("impl SendResolverAuthority").next())
+        .expect("send resolver authority must stay explicit");
+    assert!(
+        resolver_authority.contains("Direct(ResolverDecisionProofs)")
+            && resolver_authority.contains("MaterializedBranch"),
+        "send resolver authority must distinguish direct preview proofs from materialized route branches"
+    );
+    for forbidden in ["&", "Payload", "Codec", "RawSendPayload", "Wire"] {
+        assert!(
+            !resolver_authority.contains(forbidden),
+            "send resolver authority must not carry references, payloads, or codec hooks: {forbidden}"
+        );
+    }
     for required in [
-        "forgotten_send_future_leaves_endpoint_fail_closed",
+        "forgotten_unpolled_send_future_does_not_publish_runtime_progress",
         "forgotten_started_send_future_leaves_send_fail_closed",
         "drop_unpolled_send_future_keeps_endpoint_on_same_send_step",
         "forgotten_recv_future_leaves_endpoint_fail_closed",

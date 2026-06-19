@@ -2,9 +2,10 @@
 ///
 /// The endpoint is intentionally local-only and moves forward one descriptor
 /// step at a time. Successful sends, receives, and route branch first-step
-/// operations consume progress. Dropped send/route previews restore the
-/// endpoint to its detached step. Once a committed fault is observed, the same
-/// session generation cannot produce a new continuation.
+/// operations consume progress. Dropped unpolled sends do not publish runtime
+/// progress; dropped in-flight sends and route previews restore the endpoint to
+/// its detached step. Once a committed fault is observed, the same session
+/// generation cannot produce a new continuation.
 pub struct Endpoint<'r, const ROLE: u8> {
     pub(super) ptr: core::ptr::NonNull<super::carrier::KernelEndpointHeader<'r>>,
     pub(super) handle: super::carrier::PackedEndpointHandle,

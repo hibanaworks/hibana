@@ -12,7 +12,8 @@
 //! and poison the current session generation; they do not authorize hidden
 //! alternate progress.
 //! Successful sends, receives, and route branch first-step operations consume
-//! progress. Dropped send/route previews restore their resident endpoint state.
+//! progress. Dropped unpolled sends do not publish runtime progress; dropped
+//! in-flight sends and route previews restore their resident endpoint state.
 //!
 //! # Unsafe Owner Contract
 //!

@@ -341,7 +341,8 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
     assert!(
         endpoint.contains("route branch first-step\n//! operation succeeds")
             && endpoint.contains("route branch first-step operations consume")
-            && endpoint.contains("//! progress. Dropped send/route previews")
+            && endpoint
+                .contains("//! progress. Dropped unpolled sends do not publish runtime progress")
             && !endpoint.contains("when a send or route recv succeeds")
             && !endpoint.contains("Successful sends and route recvs consume progress"),
         "endpoint docs must include branch first-step operations as committed progress"

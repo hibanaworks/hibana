@@ -1,8 +1,8 @@
 //! Send future.
 //!
-//! [`crate::Endpoint::send`] previews the projected send descriptor and stores
-//! the resident send state before returning this future. Dropping the future
-//! before completion restores that resident state.
+//! [`crate::Endpoint::send`] creates an affine future without publishing runtime
+//! progress. The projected send descriptor is previewed on first poll, and only
+//! an armed resident send is restored on drop.
 
 use core::{
     future::Future,
@@ -13,14 +13,21 @@ use core::{
 
 use crate::{
     endpoint::{EndpointError, EndpointOp, SendError, SendResult, kernel},
-    g::Message,
     transport::{FrameLabel, wire::WireEncode},
 };
 
+#[derive(Clone, Copy)]
+enum SendFutureState {
+    DirectUnarmed { logical_label: u8 },
+    Armed,
+    ReadyError(SendError),
+    Done,
+}
+
 struct RawSendFuture<'a, 'e, 'r, const ROLE: u8> {
     endpoint: *mut super::Endpoint<'r, ROLE>,
-    payload: kernel::RawSendPayload,
-    init_error: Option<SendError>,
+    payload: Option<kernel::RawSendPayload>,
+    state: SendFutureState,
     _borrow: PhantomData<(&'a (), &'e mut super::Endpoint<'r, ROLE>)>,
 }
 
@@ -29,21 +36,40 @@ pub(crate) struct SendFuture<'a, 'e, 'r, const ROLE: u8> {
 }
 
 #[inline]
-pub(crate) fn send_runtime_desc<M>(frame_label: FrameLabel) -> kernel::SendRuntimeDesc
-where
-    M: Message,
-{
-    kernel::SendRuntimeDesc::new(<M as Message>::LOGICAL_LABEL, frame_label)
+pub(crate) const fn send_runtime_desc(
+    logical_label: u8,
+    frame_label: FrameLabel,
+) -> kernel::SendRuntimeDesc {
+    kernel::SendRuntimeDesc::new(logical_label, frame_label)
 }
 
 impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
     #[inline]
-    pub(crate) fn pending(
+    pub(crate) fn pending_direct(
+        endpoint: *mut super::Endpoint<'r, ROLE>,
+        logical_label: u8,
+        payload: &'a impl WireEncode,
+    ) -> Self {
+        Self {
+            raw: RawSendFuture::pending(
+                endpoint,
+                SendFutureState::DirectUnarmed { logical_label },
+                Some(kernel::RawSendPayload::from_typed(payload)),
+            ),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn pending_armed(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         payload: &'a impl WireEncode,
     ) -> Self {
         Self {
-            raw: RawSendFuture::pending(endpoint, kernel::RawSendPayload::from_typed(payload)),
+            raw: RawSendFuture::pending(
+                endpoint,
+                SendFutureState::Armed,
+                Some(kernel::RawSendPayload::from_typed(payload)),
+            ),
         }
     }
 
@@ -57,11 +83,15 @@ impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
 
 impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
     #[inline]
-    fn pending(endpoint: *mut super::Endpoint<'r, ROLE>, payload: kernel::RawSendPayload) -> Self {
+    fn pending(
+        endpoint: *mut super::Endpoint<'r, ROLE>,
+        state: SendFutureState,
+        payload: Option<kernel::RawSendPayload>,
+    ) -> Self {
         Self {
             endpoint,
             payload,
-            init_error: None,
+            state,
             _borrow: PhantomData,
         }
     }
@@ -70,35 +100,74 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
     fn ready_error(error: SendError) -> Self {
         Self {
             endpoint: core::ptr::null_mut(),
-            payload: kernel::RawSendPayload::empty(),
-            init_error: Some(error),
+            payload: None,
+            state: SendFutureState::ReadyError(error),
             _borrow: PhantomData,
         }
     }
 
     #[inline]
+    fn mark_done(&mut self) {
+        self.endpoint = core::ptr::null_mut();
+        self.state = SendFutureState::Done;
+    }
+
+    #[inline]
+    fn arm_on_first_poll(&mut self) -> SendResult<()> {
+        let logical_label = match self.state {
+            SendFutureState::Armed => return Ok(()),
+            SendFutureState::DirectUnarmed { logical_label } => logical_label,
+            SendFutureState::ReadyError(_) | SendFutureState::Done => crate::invariant(),
+        };
+        if self.endpoint.is_null() {
+            crate::invariant();
+        }
+        let result = {
+            let endpoint = /* SAFETY: unarmed send futures hold the unique
+            endpoint borrow but have not yet published resident send state. */
+                unsafe { &mut *self.endpoint };
+            endpoint.begin_public_send_state(logical_label)
+        };
+        match result {
+            Ok(()) => {
+                self.state = SendFutureState::Armed;
+                Ok(())
+            }
+            Err(error) => {
+                self.mark_done();
+                Err(error)
+            }
+        }
+    }
+
+    #[inline]
     fn poll_raw(&mut self, cx: &mut Context<'_>) -> Poll<SendResult<()>> {
-        if let Some(error) = self.init_error.take() {
+        if let SendFutureState::ReadyError(error) = self.state {
+            self.mark_done();
+            return Poll::Ready(Err(error));
+        }
+        if let Err(error) = self.arm_on_first_poll() {
             return Poll::Ready(Err(error));
         }
         if self.endpoint.is_null() {
             crate::invariant();
         }
         let poll = {
-            let endpoint = /* SAFETY: `SendFuture::pending` stores the endpoint
+            let endpoint = /* SAFETY: an armed send future stores the endpoint
             pointer while the send lease is held. Polling owns `&mut self`, so
             this is the only mutable access until the future resolves or Drop
-            resets the send state. */ unsafe { &mut *self.endpoint };
+            resets the send state. */
+                unsafe { &mut *self.endpoint };
             endpoint.poll_send(cx, self.payload.take())
         };
         match poll {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(_outcome)) => {
-                self.endpoint = core::ptr::null_mut();
+                self.mark_done();
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(err)) => {
-                self.endpoint = core::ptr::null_mut();
+                self.mark_done();
                 Poll::Ready(Err(err))
             }
         }
@@ -120,10 +189,12 @@ impl<'a, 'e, 'r, const ROLE: u8> Future for SendFuture<'a, 'e, 'r, ROLE> {
 
 impl<'a, 'e, 'r, const ROLE: u8> Drop for RawSendFuture<'a, 'e, 'r, ROLE> {
     fn drop(&mut self) {
-        if !self.endpoint.is_null() {
-            /* SAFETY: a non-null endpoint means this send future still holds
-            the public send lease. Drop owns the future and releases that lease
-            exactly once through the same endpoint pointer. */
+        if !self.endpoint.is_null()
+            && let SendFutureState::Armed = self.state
+        {
+            /* SAFETY: an armed send future holds the public send lease.
+            Drop owns the future and releases that lease exactly once
+            through the same endpoint pointer. */
             unsafe {
                 (&mut *self.endpoint).reset_public_send_state();
             }

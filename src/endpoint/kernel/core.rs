@@ -98,7 +98,7 @@ pub(crate) trait SendKernelEndpoint<'r> {
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        resolver_decisions: ResolverDecisionProofs,
+        resolver_authority: SendResolverAuthority,
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r>;
 
@@ -214,12 +214,12 @@ pub(crate) fn kernel_send<'r>(
                 descriptor,
                 meta,
                 preview_cursor_index,
-                resolver_decisions,
+                resolver_authority,
             } => match endpoint.poll_send_init_kernel(
                 *descriptor,
                 *meta,
                 *preview_cursor_index,
-                *resolver_decisions,
+                *resolver_authority,
                 payload.take(),
             ) {
                 SendInitOutcome::Ready(result) => {
@@ -264,14 +264,14 @@ where
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        resolver_decisions: ResolverDecisionProofs,
+        resolver_authority: SendResolverAuthority,
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r> {
         self.poll_send_init(
             descriptor,
             meta,
             preview_cursor_index,
-            resolver_decisions,
+            resolver_authority,
             payload,
         )
     }

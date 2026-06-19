@@ -549,6 +549,11 @@ fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
             let future = origin.send::<Msg<SAME_LABEL, u32>>(&value);
             drop(future);
             let after_drop = rv.tap().collect::<Vec<_>>();
+            assert_eq!(
+                read_counters().drop_calls,
+                0,
+                "dropping an unpolled send future must not call ResolverRef::decide"
+            );
             assert!(
                 after_drop.iter().all(|event| {
                     event.id() != tap::RESOLVER_AUDIT
@@ -582,8 +587,8 @@ fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
     });
     assert_eq!(
         read_counters().drop_calls,
-        2,
-        "preview may decide again after drop, but each send attempt must call once"
+        1,
+        "only the polled send attempt may call ResolverRef::decide"
     );
 }
 

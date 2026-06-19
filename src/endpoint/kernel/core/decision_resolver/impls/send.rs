@@ -1,6 +1,6 @@
 use super::super::super::{
     CursorEndpoint, ResolverDecisionProof, ResolverDecisionProofs, SelectedRouteCommitRow,
-    SendError, SendMeta, SendResult, Transport,
+    SendError, SendMeta, SendResolverAuthority, SendResult, Transport,
 };
 use crate::global::typestate::PackedEventConflict;
 
@@ -52,16 +52,17 @@ where
         meta: &SendMeta,
         target_label: u8,
         preview_idx: usize,
-        proofs: ResolverDecisionProofs,
+        authority: SendResolverAuthority,
     ) -> SendResult<()> {
         if meta.label != target_label {
             return Err(SendError::PhaseInvariant);
         }
         let Some(range) = self.send_route_commit_range(meta, preview_idx)? else {
-            return if proofs.is_empty() {
-                Ok(())
-            } else {
-                Err(SendError::PhaseInvariant)
+            return match authority {
+                SendResolverAuthority::Direct(proofs) if proofs.is_empty() => Ok(()),
+                SendResolverAuthority::Direct(_) | SendResolverAuthority::MaterializedBranch => {
+                    Err(SendError::PhaseInvariant)
+                }
             };
         };
         let mut consumed = 0u8;
@@ -81,19 +82,29 @@ where
                     crate::global::const_dsl::RouteResolver::Intrinsic,
                     |(resolver, _)| resolver,
                 );
-            if let crate::global::const_dsl::RouteResolver::Dynamic { .. } = resolver
-                && let Some(proof_index) = self.verify_dynamic_route_arm_preview(
-                    meta.lane, scope_id, arm_index, resolver, proofs,
-                )?
-            {
-                if proof_index < u8::BITS as usize {
-                    consumed |= 1u8 << proof_index;
-                } else {
-                    return Err(SendError::PhaseInvariant);
+            if let crate::global::const_dsl::RouteResolver::Dynamic { .. } = resolver {
+                match authority {
+                    SendResolverAuthority::Direct(proofs) => {
+                        if let Some(proof_index) = self.verify_dynamic_route_arm_preview(
+                            meta.lane, scope_id, arm_index, resolver, proofs,
+                        )? {
+                            if proof_index < u8::BITS as usize {
+                                consumed |= 1u8 << proof_index;
+                            } else {
+                                return Err(SendError::PhaseInvariant);
+                            }
+                        }
+                    }
+                    SendResolverAuthority::MaterializedBranch => {
+                        self.verify_materialized_branch_route_arm(scope_id, arm_index, resolver)?;
+                    }
                 }
             }
             idx += 1;
         }
+        let SendResolverAuthority::Direct(proofs) = authority else {
+            return Ok(());
+        };
         if proofs.len() >= u8::BITS as usize {
             return Err(SendError::PhaseInvariant);
         }
@@ -107,6 +118,30 @@ where
         } else {
             Err(SendError::PhaseInvariant)
         }
+    }
+
+    fn verify_materialized_branch_route_arm(
+        &self,
+        scope_id: crate::global::const_dsl::ScopeId,
+        arm_index: u8,
+        resolver: crate::global::const_dsl::RouteResolver,
+    ) -> SendResult<()> {
+        let crate::global::const_dsl::RouteResolver::Dynamic {
+            scope: resolver_scope,
+            ..
+        } = resolver
+        else {
+            return Err(SendError::PhaseInvariant);
+        };
+        if scope_id.is_none() || scope_id != resolver_scope {
+            return Err(SendError::PhaseInvariant);
+        }
+        if let Some(selected) = self.selected_arm_for_scope(scope_id)
+            && selected != arm_index
+        {
+            return Err(SendError::PhaseInvariant);
+        }
+        Ok(())
     }
 
     fn send_route_commit_range(

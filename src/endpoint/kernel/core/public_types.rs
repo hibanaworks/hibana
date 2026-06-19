@@ -1,7 +1,8 @@
 use super::{
     BranchMeta, EndpointLeaseId, EventCursor, FrontierState, LaneGuard, LaneSlotArray, LeasedState,
     OfferState, Owner, Port, RendezvousId, ResolverDecisionProofs, RouteCommitRowSetBuilder,
-    RouteState, SendMeta, SendState, SessionCtx, SessionId, StateIndex, Transport, lane_port,
+    RouteState, SendMeta, SendResolverAuthority, SendState, SessionCtx, SessionId, StateIndex,
+    Transport, lane_port,
 };
 use crate::endpoint::kernel::{branch_recv, recv};
 
@@ -149,16 +150,16 @@ impl<'a> OfferedFrame<'a> {
 pub(crate) struct SendPreview {
     meta: SendMeta,
     cursor_index: StateIndex,
-    resolver_decisions: ResolverDecisionProofs,
+    resolver_authority: SendResolverAuthority,
 }
 
 impl SendPreview {
     #[inline]
-    pub(crate) const fn new(meta: SendMeta, cursor_index: StateIndex) -> Self {
+    pub(crate) const fn materialized_branch(meta: SendMeta, cursor_index: StateIndex) -> Self {
         Self {
             meta,
             cursor_index,
-            resolver_decisions: ResolverDecisionProofs::empty(),
+            resolver_authority: SendResolverAuthority::materialized_branch(),
         }
     }
 
@@ -171,7 +172,7 @@ impl SendPreview {
         Self {
             meta,
             cursor_index,
-            resolver_decisions,
+            resolver_authority: SendResolverAuthority::direct(resolver_decisions),
         }
     }
 
@@ -181,8 +182,8 @@ impl SendPreview {
     }
 
     #[inline]
-    pub(crate) const fn into_parts(self) -> (SendMeta, StateIndex, ResolverDecisionProofs) {
-        (self.meta, self.cursor_index, self.resolver_decisions)
+    pub(crate) const fn into_parts(self) -> (SendMeta, StateIndex, SendResolverAuthority) {
+        (self.meta, self.cursor_index, self.resolver_authority)
     }
 }
 

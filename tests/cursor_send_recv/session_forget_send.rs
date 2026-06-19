@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn forgotten_send_future_leaves_endpoint_fail_closed() {
+fn forgotten_unpolled_send_future_does_not_publish_runtime_progress() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -24,13 +24,8 @@ fn forgotten_send_future_leaves_endpoint_fail_closed() {
             let future = origin_endpoint.send::<Msg<53, u32>>(&payload);
             core::mem::forget(future);
 
-            let error = futures::executor::block_on(origin_endpoint.send::<Msg<53, u32>>(&payload))
-                .expect_err("forgotten send future must reject even the same send");
-            assert!(format!("{error:?}").contains("operation: \"send\""));
-            assert!(
-                format!("{error:?}").contains("PhaseInvariant"),
-                "busy endpoint must report phase invariant evidence: {error:?}"
-            );
+            futures::executor::block_on(origin_endpoint.send::<Msg<53, u32>>(&payload))
+                .expect("forgotten unpolled send future must not acquire a runtime send lease");
         });
     });
 }

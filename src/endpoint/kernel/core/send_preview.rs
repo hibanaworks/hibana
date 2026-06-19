@@ -81,7 +81,7 @@ where
         }
         meta.selected_route_arm = Some(branch_meta.selected_arm);
 
-        Ok(crate::endpoint::kernel::SendPreview::new(
+        Ok(crate::endpoint::kernel::SendPreview::materialized_branch(
             meta,
             branch_meta.cursor_index,
         ))

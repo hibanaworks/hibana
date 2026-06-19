@@ -1,7 +1,7 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Port, ResolverDecisionProofs, SendMeta,
-    SendPreview, SendResult, StateIndex, Transport, lane_port,
+    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Port, SendMeta, SendPreview,
+    SendResolverAuthority, SendResult, StateIndex, Transport, lane_port,
 };
 
 pub(crate) struct StagedSendPayload {
@@ -155,7 +155,7 @@ pub(crate) enum SendState<'r> {
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        resolver_decisions: ResolverDecisionProofs,
+        resolver_authority: SendResolverAuthority,
     },
     Sending {
         pending: PendingSendIo<'r>,

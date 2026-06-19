@@ -600,12 +600,9 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         .find("self.begin_send_transport(preview_cursor_index, meta, payload)")
         .expect("send init must stage payload through begin_send_transport");
     assert!(
-        validate_send_payload < begin_send_transport,
+        validate_send_payload < begin_send_transport
+            && poll_send_init.contains("resolver_authority"),
         "payload encode/transport staging must happen only after selected-arm candidate validation"
-    );
-    assert!(
-        poll_send_init.contains("resolver_decisions"),
-        "send init validation must receive the preview resolver proof"
     );
     let verifier = send_decision_resolver
         .split("pub(crate) fn verify_dynamic_resolver_send_preview")

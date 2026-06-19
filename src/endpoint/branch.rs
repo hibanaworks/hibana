@@ -80,7 +80,8 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         let preview = /* SAFETY: preview_send returned Ok and initialized the out slot. */ unsafe {
             preview.assume_init()
         };
-        let desc = crate::endpoint::send::send_runtime_desc::<M>(
+        let desc = crate::endpoint::send::send_runtime_desc(
+            logical_label,
             crate::transport::FrameLabel::new(preview.frame_label()),
         );
         let init = crate::endpoint::kernel::SendInit::new(desc, preview);
@@ -93,7 +94,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
                 return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
             }
         }
-        SendFuture::pending(endpoint, payload)
+        SendFuture::pending_armed(endpoint, payload)
     }
 }
 

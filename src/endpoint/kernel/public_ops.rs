@@ -170,12 +170,12 @@ where
             super::core::PublicOpLease::Held => {}
             super::core::PublicOpLease::Rejected => return lease,
         }
-        let (meta, preview_cursor_index, resolver_decisions) = init.preview.into_parts();
+        let (meta, preview_cursor_index, resolver_authority) = init.preview.into_parts();
         self.public_send_state = SendState::Init {
             descriptor: init.descriptor,
             meta,
             preview_cursor_index: Some(preview_cursor_index),
-            resolver_decisions,
+            resolver_authority,
         };
         lease
     }

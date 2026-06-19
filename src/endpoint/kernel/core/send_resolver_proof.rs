@@ -170,3 +170,21 @@ impl ResolverDecisionProofs {
         None
     }
 }
+
+#[derive(Clone, Copy)]
+pub(crate) enum SendResolverAuthority {
+    Direct(ResolverDecisionProofs),
+    MaterializedBranch,
+}
+
+impl SendResolverAuthority {
+    #[inline]
+    pub(crate) const fn direct(proofs: ResolverDecisionProofs) -> Self {
+        Self::Direct(proofs)
+    }
+
+    #[inline]
+    pub(crate) const fn materialized_branch() -> Self {
+        Self::MaterializedBranch
+    }
+}

@@ -133,6 +133,24 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
+    pub(super) fn begin_public_send_state(&mut self, logical_label: u8) -> SendResult<()> {
+        let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
+        self.preview_send(logical_label, preview.as_mut_ptr())?;
+        let preview = /* SAFETY: `preview_send` returned `Ok`, so the carrier
+        callback wrote one `SendPreview` into this local `MaybeUninit` slot
+        before return. */ unsafe { preview.assume_init() };
+        let desc = send::send_runtime_desc(
+            logical_label,
+            crate::transport::FrameLabel::new(preview.frame_label()),
+        );
+        let init = kernel::SendInit::new(desc, preview);
+        match self.init_public_send_state(&init) {
+            kernel::PublicOpLease::Held => Ok(()),
+            kernel::PublicOpLease::Rejected => Err(crate::endpoint::SendError::PhaseInvariant),
+        }
+    }
+
+    #[inline]
     pub(super) fn reset_public_send_state(&mut self) {
         self.call_handle_op(self.ops().reset_public_send_state);
     }
@@ -252,10 +270,10 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     #[inline]
     /// Send the next deterministic message as `M`.
     ///
-    /// The endpoint previews the projected send descriptor before returning the
-    /// future. Dropping the future before completion leaves the endpoint on the
-    /// same typestate step. A preview mismatch is reported as a send failure
-    /// and must not be treated as permission to choose another branch.
+    /// The endpoint previews the projected send descriptor on first poll.
+    /// Dropping the future before completion leaves the endpoint on the same
+    /// typestate step. A preview mismatch is reported as a send failure and
+    /// must not be treated as permission to choose another branch.
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: &'a M::Payload,
@@ -270,21 +288,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     {
         let endpoint = core::ptr::from_mut(self);
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
-        let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
-        if let Err(error) = self.preview_send(logical_label, preview.as_mut_ptr()) {
-            return send::SendFuture::ready_error(error);
-        }
-        let preview = /* SAFETY: `preview_send` returned `Ok`, so the carrier callback wrote one `SendPreview` into this local `MaybeUninit` slot before return. */ unsafe { preview.assume_init() };
-        let desc =
-            send::send_runtime_desc::<M>(crate::transport::FrameLabel::new(preview.frame_label()));
-        let init = kernel::SendInit::new(desc, preview);
-        match self.init_public_send_state(&init) {
-            kernel::PublicOpLease::Held => {}
-            kernel::PublicOpLease::Rejected => {
-                return send::SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
-            }
-        }
-        send::SendFuture::pending(endpoint, payload)
+        send::SendFuture::pending_direct(endpoint, logical_label, payload)
     }
 
     #[inline]

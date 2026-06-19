@@ -29,7 +29,7 @@ pub(super) struct FrameExpectation {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RawSendPayload {
-    ptr: Option<NonNull<()>>,
+    ptr: NonNull<()>,
     encode: unsafe fn(*const (), &mut [u8]) -> Result<usize, crate::transport::wire::CodecError>,
 }
 
@@ -90,40 +90,18 @@ impl<'r> PendingSend<'r> {
 
 impl RawSendPayload {
     #[inline(always)]
-    pub(crate) fn empty() -> Self {
-        Self {
-            ptr: None,
-            encode: crate::transport::wire::erased_encoder::<()>(),
-        }
-    }
-
-    #[inline(always)]
     pub(crate) fn from_typed<P: WireEncode>(payload: &P) -> Self {
         Self {
-            ptr: Some(NonNull::from(payload).cast()),
+            ptr: NonNull::from(payload).cast(),
             encode: crate::transport::wire::erased_encoder::<P>(),
         }
     }
 
     #[inline(always)]
-    pub(crate) fn take(&mut self) -> Option<Self> {
-        let payload = Self {
-            ptr: Some(self.ptr?),
-            encode: self.encode,
-        };
-        self.ptr = None;
-        Some(payload)
-    }
-
-    #[inline(always)]
     pub(crate) fn encode_into(self, scratch: &mut [u8]) -> Result<usize, SendError> {
-        let ptr = self
-            .ptr
-            .ok_or(SendError::PhaseInvariant)?
-            .as_ptr()
-            .cast_const();
+        let ptr = self.ptr.as_ptr().cast_const();
         // SAFETY: `from_typed` stores the encoder matching the erased payload
-        // pointer, and `take` preserves that pair exactly once.
+        // pointer, and the public send future moves that pair into staging once.
         unsafe { (self.encode)(ptr, scratch) }.map_err(SendError::Codec)
     }
 }
