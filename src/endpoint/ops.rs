@@ -311,7 +311,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// Observe the next route decision.
     ///
     /// This is a preview operation. It returns a [`RouteBranch`] whose
-    /// [`RouteBranch::label`] is the selected choreography branch label.
+    /// [`RouteBranch::label`] is the selected arm's first logical label.
     /// Dropping the future before completion leaves endpoint progress unchanged.
     /// Dynamic branches must be selected by an explicit resolver decision at a
     /// projected route point; transport hints and payload labels are demux

@@ -26,3 +26,5 @@ mod source_residue_route_arm_lane;
 mod source_residue_runtime_surface;
 #[path = "semantic_surface/source_residue_support.rs"]
 mod source_residue_support;
+#[path = "semantic_surface/source_residue_unsafe_contract.rs"]
+mod source_residue_unsafe_contract;

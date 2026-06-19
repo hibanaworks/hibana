@@ -56,6 +56,7 @@ fn branch_recv_failure_completion_is_terminal_without_branch_restore() {
 #[test]
 fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let send_preview = read("src/endpoint/kernel/core/send_preview.rs");
+    let send_preview_authority = read("src/endpoint/kernel/core/send_preview_authority.rs");
     let recv = read("src/endpoint/kernel/recv.rs");
     let facts =
         read("src/global/typestate/facts.rs") + &read("src/global/typestate/facts/dependency.rs");
@@ -312,6 +313,35 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !event_done_guard.contains("target_phase"),
         "dependency conflict must be carried by resident dependency rows, and dependency progress must not be tied to the current phase"
     );
+    assert!(
+        cursor_scope_route.contains("fn intrinsic_send_preview_controller_arm_entry_for_label(")
+            && cursor_scope_route
+                .contains("fn send_preview_selected_controller_arm_entry_for_label(")
+            && cursor_scope_route.contains(
+                "if at_decision && let Some(selected) = preview_controller_arm_for_scope(scope_id)"
+            )
+            && cursor_scope_route.contains(
+                "let entry_idx = self.send_preview_selected_controller_arm_entry_for_label("
+            )
+            && cursor_scope_route.contains("preview_route_arm = Some(SendPreviewRouteArm")
+            && !cursor_scope_route.contains("fn send_preview_controller_arm_entry_for_label("),
+        "dynamic route send preview must choose a selected-arm candidate before any intrinsic label-first controller search"
+    );
+    assert!(
+        send_preview_authority.contains("fn preview_dynamic_resolver_arm_for_scope(")
+            && send_preview_authority.contains("fn preview_controller_send_arm_for_scope(")
+            && send_preview_authority
+                .contains(".resolve_dynamic_resolver(self.rendezvous_id(), scope_id, resolver_id)")
+            && send_preview_authority.contains(
+                ".route_scope_controller_resolver(scope_id)\n            .is_some_and(|(resolver, _)| resolver.is_dynamic())"
+            )
+            && send_preview.contains("let preview_error = Cell::new(None::<SendError>);")
+            && send_preview.contains("preview_error.set(Some(error));")
+            && send_preview.contains(
+                "if let Some(error) = preview_error.get() {\n            return Err(error);\n        }"
+            ),
+        "send preview must treat dynamic resolver rejection as explicit authority failure instead of None fallback"
+    );
     for (name, guard) in [
         ("event_conflict_allows", event_conflict_guard),
         ("node_in_selected_route_arm", selected_arm_membership_guard),
@@ -552,6 +582,21 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && !eff_list.contains("pub(crate) const fn resolver_at")
             && !eff_list.contains("scope_id_for_offset"),
         "dynamic resolver authority must be keyed by route ScopeId without offset fallback"
+    );
+    let poll_send_init = send_ops
+        .split("pub(crate) fn poll_send_init(")
+        .nth(1)
+        .and_then(|tail| tail.split("fn poll_send_transport(").next())
+        .expect("send init must stay visible");
+    let validate_send_payload = poll_send_init
+        .find("self.validate_send_payload(meta, descriptor, preview_cursor_index)")
+        .expect("send init must validate selected-arm descriptor before staging payload");
+    let begin_send_transport = poll_send_init
+        .find("self.begin_send_transport(preview_cursor_index, meta, payload)")
+        .expect("send init must stage payload through begin_send_transport");
+    assert!(
+        validate_send_payload < begin_send_transport,
+        "payload encode/transport staging must happen only after selected-arm candidate validation"
     );
     let route_lowering_source =
         role_scope_rows.as_str().to_owned() + &first_recv_dispatch + &passive_child;

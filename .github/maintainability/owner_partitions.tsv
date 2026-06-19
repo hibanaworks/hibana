@@ -77,6 +77,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/route_commit_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/send_preview_authority.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types/commit.rs
@@ -224,3 +225,4 @@ tests/semantic_surface	tests/semantic_surface/source_residue_pico_hygiene.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_recv_evidence.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_route_arm_lane.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_support.rs
+tests/semantic_surface	tests/semantic_surface/source_residue_unsafe_contract.rs

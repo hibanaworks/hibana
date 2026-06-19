@@ -728,6 +728,7 @@ fn source_tree_does_not_retain_impossible_test_only_helpers() {
         );
     }
 }
+
 #[test]
 fn package_artifact_ships_self_contained_tests_and_excludes_repo_gates() {
     let cargo = read("Cargo.toml");
@@ -775,7 +776,6 @@ fn cached_recv_meta_index_overflow_fails_closed() {
             .unwrap_or(tail.len());
         &tail[..next]
     }
-
     let source = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
     for name in [
         "cached_recv_meta_from_recv",

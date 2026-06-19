@@ -10,6 +10,7 @@ FAILED=0
 
 runtime_rs="$(cat src/runtime.rs src/runtime/session_kit.rs)"
 port_rs="$(
+  cat src/rendezvous/recv_frame_receipt.rs
   cat src/rendezvous/port.rs
   if [[ -d src/rendezvous/port ]]; then
     find src/rendezvous/port -type f -name '*.rs' -print0 | sort -z | xargs -0 cat

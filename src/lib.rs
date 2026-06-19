@@ -44,7 +44,7 @@
 //! - [`Endpoint::send`] sends the next deterministic message;
 //! - [`Endpoint::recv`] receives a deterministic message;
 //! - [`Endpoint::offer`] observes a route branch;
-//! - [`RouteBranch::label`] reports the selected choreography label;
+//! - [`RouteBranch::label`] reports the selected arm's first logical label;
 //! - [`RouteBranch::recv`] receives the first payload in a selected receive arm;
 //! - [`RouteBranch::send`] sends the first payload in a selected send arm.
 //!

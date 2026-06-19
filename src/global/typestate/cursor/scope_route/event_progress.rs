@@ -173,11 +173,7 @@ impl EventCursor {
         false
     }
 
-    fn send_preview_controller_scope_for_label_at(
-        &self,
-        idx: usize,
-        target_label: u8,
-    ) -> Option<ScopeId> {
+    fn send_preview_controller_scope_at(&self, idx: usize) -> Option<ScopeId> {
         let mut selected = None;
         let mut selected_len = 0usize;
         let mut slot = 0usize;
@@ -185,12 +181,7 @@ impl EventCursor {
             if idx >= region.start() && idx < region.end() {
                 let scope = region.scope();
                 let len = region.end() - region.start();
-                if len >= selected_len
-                    && self.is_route_controller(scope)
-                    && self
-                        .send_preview_controller_arm_entry_for_label(scope, target_label)
-                        .is_some()
-                {
+                if len >= selected_len && self.is_route_controller(scope) {
                     selected = Some(scope);
                     selected_len = len;
                 }
@@ -201,7 +192,7 @@ impl EventCursor {
     }
 
     #[inline]
-    fn send_preview_controller_arm_entry_for_label(
+    fn intrinsic_send_preview_controller_arm_entry_for_label(
         &self,
         scope_id: ScopeId,
         target_label: u8,
@@ -222,6 +213,29 @@ impl EventCursor {
             arm += 1;
         }
         None
+    }
+
+    #[inline]
+    fn send_preview_selected_controller_arm_entry_for_label(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        target_label: u8,
+    ) -> Result<usize, SendPreviewError> {
+        if let Some((entry, label)) = self.controller_arm_entry_by_arm(scope_id, arm) {
+            if label == target_label {
+                return Ok(state_index_to_usize(entry));
+            }
+            if let Some(idx) = self.route_arm_label_index(scope_id, arm, target_label) {
+                return Ok(idx);
+            }
+            return Err(SendPreviewError::LabelMismatch {
+                expected: label,
+                actual: target_label,
+            });
+        }
+        self.route_arm_label_index(scope_id, arm, target_label)
+            .ok_or(SendPreviewError::Invariant)
     }
 
     #[inline]
@@ -321,7 +335,7 @@ impl EventCursor {
             return idx;
         }
         if self
-            .send_preview_controller_scope_for_label_at(self.index(), target_label)
+            .send_preview_controller_scope_at(self.index())
             .is_some()
         {
             return self.index();
@@ -350,6 +364,7 @@ impl EventCursor {
         &self,
         target_label: u8,
         mut committed_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        mut preview_controller_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
         mut lane_for_label_or_offer: impl FnMut(ScopeId, u8) -> u8,
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
@@ -363,13 +378,10 @@ impl EventCursor {
         };
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
-        if let Some(scope_id) = self
-            .send_preview_controller_scope_for_label_at(idx, target_label)
-            .or_else(|| {
-                self.enclosing_route_scope_rows_at(idx)
-                    .map(|region| region.scope())
-            })
-        {
+        if let Some(scope_id) = self.send_preview_controller_scope_at(idx).or_else(|| {
+            self.enclosing_route_scope_rows_at(idx)
+                .map(|region| region.scope())
+        }) {
             let at_route_start = self
                 .route_scope_rows(scope_id)
                 .is_some_and(|region| idx == region.start());
@@ -380,12 +392,37 @@ impl EventCursor {
             if self.is_route_controller(scope_id) {
                 let at_arm_entry = self.send_preview_is_at_controller_arm_entry(scope_id, idx);
                 let at_decision = at_arm_entry || at_decision;
+                if at_decision && let Some(selected) = preview_controller_arm_for_scope(scope_id) {
+                    let entry_idx = self.send_preview_selected_controller_arm_entry_for_label(
+                        scope_id,
+                        selected,
+                        target_label,
+                    )?;
+                    if let Some(committed) = committed_arm_for_scope(scope_id)
+                        && committed != selected
+                        && !self.route_scope_reentry(scope_id)
+                    {
+                        return Err(SendPreviewError::Invariant);
+                    }
+                    idx = entry_idx;
+                    if let Some(lane) = self.send_preview_lane_at(idx) {
+                        preview_route_arm = Some(SendPreviewRouteArm {
+                            lane,
+                            scope: scope_id,
+                            arm: selected,
+                        });
+                    }
+                }
                 if at_decision
-                    && let Some((arm, entry_idx)) =
-                        self.send_preview_controller_arm_entry_for_label(scope_id, target_label)
+                    && preview_route_arm.is_none()
+                    && let Some((arm, entry_idx)) = self
+                        .intrinsic_send_preview_controller_arm_entry_for_label(
+                            scope_id,
+                            target_label,
+                        )
                 {
-                    if let Some(selected) = committed_arm_for_scope(scope_id)
-                        && selected != arm
+                    if let Some(committed) = committed_arm_for_scope(scope_id)
+                        && committed != arm
                         && !self.route_scope_reentry(scope_id)
                     {
                         return Err(SendPreviewError::Invariant);

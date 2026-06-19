@@ -76,7 +76,10 @@ impl PortRecvFrameReceipt {
         if self.state.is_null() {
             return;
         }
-        if self.port_key != port_key || self.state != receipt_state {
+        if self.port_key != port_key {
+            crate::invariant();
+        }
+        if self.state != receipt_state {
             crate::invariant();
         }
         // SAFETY: the receipt stores a pointer to this port's receipt state.

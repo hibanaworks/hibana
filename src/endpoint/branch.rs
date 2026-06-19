@@ -21,7 +21,10 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
         }
     }
 
-    /// Return the selected choreography label for this route branch.
+    /// Return the selected arm's first logical label.
+    ///
+    /// This is not branch authority for resolved routes; resolver decisions own
+    /// that authority before the branch is materialized.
     #[inline]
     pub fn label(&self) -> u8 {
         self.label

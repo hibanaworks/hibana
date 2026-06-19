@@ -218,6 +218,11 @@ match branch.label() {
 }
 ```
 
+`RouteBranch::label()` reports the selected arm's first logical message label.
+For resolved routes this label is not branch authority; `ResolverRef::decide()`
+is. For intrinsic routes the first visible endpoint operation is branch
+authority.
+
 If the chosen route arm begins with a send, send the first message through the
 branch:
 

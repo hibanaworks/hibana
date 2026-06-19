@@ -325,6 +325,7 @@ mod route_preview;
 mod runtime_types;
 mod send_ops;
 mod send_preview;
+mod send_preview_authority;
 
 pub(crate) use super::decision_state::{
     PreparedRouteCommitRows, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,

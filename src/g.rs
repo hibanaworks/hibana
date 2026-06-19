@@ -153,7 +153,7 @@ pub const fn seq<LeftSteps, RightSteps>(
 ///
 /// Intrinsic routes derive branch authority from first-visible endpoint
 /// evidence; their arms must agree on the first-visible controller. Resolved
-/// routes use [`ResolverRef::decide`](crate::runtime::ResolverRef::decide) as
+/// routes use [`ResolverRef::decide`](crate::runtime::resolver::ResolverRef::decide) as
 /// branch authority instead.
 pub const fn route<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,

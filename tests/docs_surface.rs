@@ -100,6 +100,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Resolver state is the external input owner",
         "A resolved route uses `ResolverRef::decide()` as branch authority",
         "intrinsic route derives branch authority from projected first visible endpoint",
+        "`RouteBranch::label()` reports the selected arm's first logical message label",
+        "For resolved routes this label is not branch authority",
         "rv.set_resolver(&role0, ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;",
         "External resolver state uses the same explicit registration path.",
         "decisions come from the typed resolver",
@@ -440,6 +442,8 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "Route offer and unresolved route demux require",
         "Payload shape, queue position, carrier id, and driver observations are never",
         "branch authority.",
+        "`RouteBranch::label()` reports the selected arm's first logical message label",
+        "For resolved routes this label is not branch authority",
     ] {
         assert!(
             readme.contains(required),
@@ -459,6 +463,8 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "duplicate branch labels",
         "branch labels must be unique",
         "duplicate branch labels rejected",
+        "label is branch authority",
+        "selected choreography branch label",
     ] {
         assert!(
             !readme.contains(forbidden),

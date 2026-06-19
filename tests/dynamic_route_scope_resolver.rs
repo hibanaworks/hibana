@@ -7,6 +7,7 @@ mod tls_ref_support;
 use core::cell::UnsafeCell;
 
 use common::TestTransport;
+use futures::FutureExt;
 use hibana::{
     g::{self, Msg},
     runtime::{
@@ -31,6 +32,8 @@ const RIGHT: u8 = 33;
 const NESTED_LEFT: u8 = 41;
 const NESTED_INNER_RIGHT: u8 = 42;
 const NESTED_OUTER_RIGHT: u8 = 43;
+const SAME_LABEL: u8 = 55;
+const SAME_LABEL_ROUTE_RESOLVER: u16 = 0x94;
 static LEFT_ARM: DecisionArm = DecisionArm::Left;
 static RIGHT_ARM: DecisionArm = DecisionArm::Right;
 static UNIT: () = ();
@@ -66,6 +69,12 @@ fn nested_resolver_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     )
 }
 
+fn same_label_outbound_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let left = g::send::<0, 1, Msg<SAME_LABEL, u32>>();
+    let right = g::send::<0, 2, Msg<SAME_LABEL, u32>>();
+    project(&g::route(left, right).resolve::<SAME_LABEL_ROUTE_RESOLVER>())
+}
+
 fn resolver_audits(events: &[tap::TapEvent]) -> Vec<tap::TapEvent> {
     events
         .iter()
@@ -98,6 +107,105 @@ fn resolver_sites(events: &[tap::TapEvent]) -> Vec<u32> {
         .into_iter()
         .map(route_site)
         .collect()
+}
+
+fn route_arm_selections(events: &[tap::TapEvent]) -> Vec<tap::TapEvent> {
+    events
+        .iter()
+        .copied()
+        .filter(|event| event.id() == tap::ROUTE_ARM_SELECTION)
+        .collect()
+}
+
+fn selected_arm(event: tap::TapEvent) -> u32 {
+    event.arg1() & 0xff
+}
+
+fn assert_same_label_route_send_uses_selected_arm(
+    resolver_arm: &'static DecisionArm,
+    expected_arm: u32,
+    value: u32,
+) {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let sid = SessionId::new(0x0009_1500 + expected_arm);
+        let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let role0 = same_label_outbound_program::<0>();
+            let role1 = same_label_outbound_program::<1>();
+            let role2 = same_label_outbound_program::<2>();
+            rv.set_resolver(
+                &role0,
+                ResolverRef::<SAME_LABEL_ROUTE_RESOLVER>::decision_state(resolver_arm, choose_arm),
+            )
+            .expect("install sender resolver");
+            let mut origin = rv.enter(sid, &role0).expect("attach origin");
+            let mut left_peer = rv.enter(sid, &role1).expect("attach left peer");
+            let mut right_peer = rv.enter(sid, &role2).expect("attach right peer");
+
+            futures::executor::block_on(async {
+                origin
+                    .send::<Msg<SAME_LABEL, u32>>(&value)
+                    .await
+                    .expect("same-label resolved route send");
+                if expected_arm == 0 {
+                    assert!(
+                        right_peer
+                            .recv::<Msg<SAME_LABEL, u32>>()
+                            .now_or_never()
+                            .is_none(),
+                        "right peer must not receive the unselected left-arm send"
+                    );
+                    assert_eq!(
+                        left_peer
+                            .recv::<Msg<SAME_LABEL, u32>>()
+                            .await
+                            .expect("left peer receives selected arm"),
+                        value
+                    );
+                } else {
+                    assert!(
+                        left_peer
+                            .recv::<Msg<SAME_LABEL, u32>>()
+                            .now_or_never()
+                            .is_none(),
+                        "left peer must not receive the unselected right-arm send"
+                    );
+                    assert_eq!(
+                        right_peer
+                            .recv::<Msg<SAME_LABEL, u32>>()
+                            .await
+                            .expect("right peer receives selected arm"),
+                        value
+                    );
+                }
+            });
+
+            rv.tap().collect::<Vec<_>>()
+        });
+
+        let audits = resolver_audits(&events);
+        assert_eq!(
+            audits.len(),
+            1,
+            "same-label send must audit one resolver decision: {events:?}"
+        );
+        assert_eq!(resolver_id(audits[0]), SAME_LABEL_ROUTE_RESOLVER as u32);
+
+        let selections = route_arm_selections(&events);
+        assert!(
+            !selections.is_empty(),
+            "same-label send must emit selected route arm evidence: {events:?}"
+        );
+        assert!(
+            selections
+                .iter()
+                .all(|event| selected_arm(*event) == expected_arm),
+            "route selection evidence must name only selected arm {expected_arm}: {selections:?}"
+        );
+    });
 }
 
 #[test]
@@ -158,6 +266,16 @@ fn left_decision_materializes_nested_parallel_arm_once() {
         assert_eq!(resolver_id(audits[0]), ROUTE_RESOLVER as u32);
         assert_eq!(route_site(audits[0]), 0);
     });
+}
+
+#[test]
+fn same_label_resolved_outbound_left_sends_to_left_peer_only() {
+    assert_same_label_route_send_uses_selected_arm(&LEFT_ARM, 0, 5501);
+}
+
+#[test]
+fn same_label_resolved_outbound_right_sends_to_right_peer_only() {
+    assert_same_label_route_send_uses_selected_arm(&RIGHT_ARM, 1, 5502);
 }
 
 #[test]
