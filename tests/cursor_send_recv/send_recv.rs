@@ -95,6 +95,57 @@ fn cursor_send_and_recv_roundtrip() {
 }
 
 #[test]
+fn direct_recv_same_label_parallel_frames_commit_by_observed_evidence() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::par(
+                g::send::<1, 0, Msg<55, u32>>(),
+                g::send::<2, 0, Msg<55, u32>>(),
+            );
+            let target_program: RoleProgram<0> = project(&program);
+            let left_source_program: RoleProgram<1> = project(&program);
+            let right_source_program: RoleProgram<2> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(55);
+            let mut target = rv.enter(sid, &target_program).expect("target endpoint");
+            let mut left_source = rv
+                .enter(sid, &left_source_program)
+                .expect("left source endpoint");
+            let mut right_source = rv
+                .enter(sid, &right_source_program)
+                .expect("right source endpoint");
+
+            futures::executor::block_on(async {
+                right_source
+                    .send::<Msg<55, u32>>(&202)
+                    .await
+                    .expect("right lane sends first");
+                let first = target
+                    .recv::<Msg<55, u32>>()
+                    .await
+                    .expect("recv commits observed right-lane frame first");
+                assert_eq!(first, 202);
+
+                left_source
+                    .send::<Msg<55, u32>>(&101)
+                    .await
+                    .expect("left lane sends second");
+                let second = target
+                    .recv::<Msg<55, u32>>()
+                    .await
+                    .expect("recv commits remaining left-lane frame");
+                assert_eq!(second, 101);
+            });
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
 fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();

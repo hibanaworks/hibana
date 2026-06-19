@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, duplicate, or non-deterministic first-visible route frontier
+error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or non-deterministic first-visible route frontier
  --> src/g.rs
   |
   |     const { validate_choreography::<Steps>() };
@@ -19,7 +19,7 @@ note: inside `g::panic_choreography_error`
   |
   |           ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
   |  _____________________________________________________________-
-  | |             "Route unprojectable for this role: invalid, duplicate, ",
+  | |             "Route unprojectable for this role: invalid, ambiguous endpoint operation, ",
   | |             "or non-deterministic first-visible route frontier",
   | |         )),
   | |__________- in this macro invocation

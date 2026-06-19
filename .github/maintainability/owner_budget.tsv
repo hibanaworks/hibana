@@ -113,4 +113,4 @@ src/transport.rs	420	1	recursive
 src/endpoint/kernel/recv.rs	380	1	recursive
 src/transport/wire.rs	360	1	recursive
 src/endpoint/kernel/core/runtime_types/commit.rs	400	1	recursive
-src/global/typestate/cursor/scope_route/event_progress.rs	730	1	recursive
+src/global/typestate/cursor/scope_route/event_progress.rs	700	1	recursive

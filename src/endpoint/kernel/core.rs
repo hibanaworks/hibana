@@ -54,23 +54,17 @@ pub(in crate::endpoint::kernel) use route_commit_helpers::{
 };
 
 pub(crate) trait RecvKernelEndpoint<'r> {
-    fn prepare_recv_kernel_descriptor(
+    fn poll_recv_kernel_frame_source(
         &mut self,
-        label: u8,
-    ) -> RecvResult<super::recv::PreparedRecv>;
-
-    fn poll_recv_kernel_payload_source(
-        &mut self,
-        desc: super::recv::RecvDescriptor,
+        logical_label: u8,
         state: &mut super::recv::RecvState,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Payload<'r>>>;
+    ) -> Poll<RecvResult<super::recv::MatchedRecvFrame<'r>>>;
 
-    fn finish_recv_kernel_payload(
+    fn finish_recv_kernel_frame(
         &mut self,
-        desc: super::recv::RecvDescriptor,
-        payload: Payload<'r>,
-        erased: RecvRuntimeDesc,
+        logical_label: u8,
+        frame: super::recv::MatchedRecvFrame<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
 }
@@ -126,29 +120,12 @@ pub(crate) fn kernel_recv<'r>(
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
-    let prepared = match state.prepared() {
-        Some(prepared) => prepared,
-        None => {
-            let prepared = match endpoint.prepare_recv_kernel_descriptor(logical_label) {
-                Ok(prepared) => prepared,
-                Err(err) => return Poll::Ready(Err(err)),
-            };
-            state.set_prepared(prepared);
-            prepared
-        }
-    };
-    match endpoint.poll_recv_kernel_payload_source(prepared.descriptor, state, cx) {
+    match endpoint.poll_recv_kernel_frame_source(logical_label, state, cx) {
         Poll::Pending => Poll::Pending,
-        Poll::Ready(Ok(payload)) => {
-            state.clear_prepared();
+        Poll::Ready(Ok(frame)) => {
             Poll::Ready(
                 endpoint
-                    .finish_recv_kernel_payload(
-                        prepared.descriptor,
-                        payload,
-                        prepared.runtime,
-                        validate,
-                    )
+                    .finish_recv_kernel_frame(logical_label, frame, validate)
                     .map(|payload| unsafe {
                         // SAFETY: recv payloads returned by the kernel are backed by
                         // endpoint-resident transport, ingress, or a canonical zero-length slice.
@@ -156,10 +133,7 @@ pub(crate) fn kernel_recv<'r>(
                     }),
             )
         }
-        Poll::Ready(Err(err)) => {
-            state.clear_prepared();
-            Poll::Ready(Err(err))
-        }
+        Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
     }
 }
 
@@ -186,7 +160,7 @@ pub(crate) fn kernel_branch_recv<'r>(
     if let Some(meta) = state.prepared_meta() {
         let needs_transport = {
             let branch = crate::invariant_some(state.branch());
-            branch.staged_payload.is_none()
+            branch.offered_frame.is_none()
         };
         if needs_transport {
             let frame = match endpoint.poll_branch_recv_kernel_transport_payload(
@@ -202,7 +176,7 @@ pub(crate) fn kernel_branch_recv<'r>(
                 }
             };
             let branch = crate::invariant_some(state.branch_mut());
-            branch.staged_payload = Some(StagedPayload::new(frame));
+            branch.offered_frame = Some(OfferedFrame::new(frame));
         }
     }
     let prepared_meta = state.prepared_meta();

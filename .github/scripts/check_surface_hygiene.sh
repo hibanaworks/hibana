@@ -460,8 +460,8 @@ check_absent \
   src/endpoint tests
 
 check_absent \
-  "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_payload|RecvRuntimeDesc::new\\([^,]+,[^,]+,[^,]+\\)" \
-  "deterministic recv must carry descriptor evidence into complete runtime descriptor" \
+  "kernel_recv\\(self,[[:space:]]*logical_label,[[:space:]]*accepts_empty_payload|poll_public_recv\\(logical_label,[[:space:]]*accepts_empty_payload|struct[[:space:]]+RecvRuntimeDesc|(^|[^[:alnum:]_])RecvRuntimeDesc::|prepare_recv_descriptor\\(|prepare_recv_kernel_descriptor\\(" \
+  "deterministic recv must use observed evidence and RecvCommitPlan authority" \
   src/endpoint src/endpoint/kernel
 
 check_absent \
@@ -810,7 +810,7 @@ check_absent "rebuild_pending_offers|build_frontier_snapshot|select_offer_entry|
   "offer-kernel cleanup forbidden path" \
   src/endpoint/kernel/core.rs
 check_absent "duplicate route label" \
-  "route duplicate-label const panic residue" \
+  "route label const panic residue" \
   src/global/program.rs
 check_absent "\\b(RouteLabelBits|BitEq|BitsEqual|BitsCons|BitsNil|Bit0|Bit1)\\b" \
   "route label bit-table forbidden path" \

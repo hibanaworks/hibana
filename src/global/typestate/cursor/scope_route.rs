@@ -100,22 +100,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn selected_route_scope_end_at(
-        &self,
-        idx: usize,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
-        let region = self.route_scope_rows_at(idx)?;
-        let arm = selected_arm_for_scope(region.scope())?;
-        if !self.selected_route_arm_completes_scope(region.scope(), arm, |scope| {
-            selected_arm_for_scope(scope)
-        }) {
-            return None;
-        }
-        Some(region.end())
-    }
-
-    #[inline(always)]
     pub(crate) fn selected_enclosing_route_scope_end_at(
         &self,
         idx: usize,

@@ -63,9 +63,9 @@ where
         };
         let branch_meta = branch.branch_meta;
         let branch_label = branch.label;
-        let has_staged_payload = branch.staged_payload.is_some();
+        let has_offered_frame = branch.offered_frame.is_some();
 
-        if branch_meta.kind != BranchKind::ArmSendHint || has_staged_payload {
+        if branch_meta.kind != BranchKind::ArmSendHint || has_offered_frame {
             return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
         }
         if target_label != branch_label {

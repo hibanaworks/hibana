@@ -97,7 +97,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         .split("pub(crate) fn event_lane_head_allows")
         .nth(1)
         .and_then(|tail| {
-            tail.split("pub(crate) fn selected_route_scope_end_at")
+            tail.split("pub(crate) fn selected_enclosing_route_scope_end_at")
                 .next()
         })
         .expect("event lane-head guard must stay cursor-owned");

@@ -1,9 +1,13 @@
 use crate::global::const_dsl::{
-    EffList, INTRINSIC_ROUTE_RESOLVER_ID, RouteFrontierSummary, ScopeEvent, ScopeId, ScopeKind,
+    EffList, INTRINSIC_ROUTE_RESOLVER_ID, ScopeEvent, ScopeId, ScopeKind,
 };
 use crate::global::steps::RoleLaneMask;
 
 use super::ProgramSourceError;
+
+mod frontier;
+
+use frontier::EndpointOpFrontier;
 
 pub(crate) trait ProgramTerm {
     const PROGRAM_SOURCE: ProgramSourceData;
@@ -14,122 +18,8 @@ pub(crate) struct ProgramSourceData {
     eff: EffList,
     role_lane_mask: RoleLaneMask,
     lane_span: u16,
-    frontier: SourceFrontier,
+    frontier: EndpointOpFrontier,
     error: Option<ProgramSourceError>,
-}
-
-#[derive(Clone, Copy)]
-struct LabelMask([u8; 32]);
-
-impl LabelMask {
-    const EMPTY: Self = Self([0; 32]);
-
-    const fn from_label(label: u8) -> Self {
-        let mut bytes = [0u8; 32];
-        let idx = (label >> 3) as usize;
-        let bit = label & 7;
-        bytes[idx] = 1u8 << bit;
-        Self(bytes)
-    }
-
-    const fn union(self, other: Self) -> Self {
-        let mut bytes = [0u8; 32];
-        let mut idx = 0usize;
-        while idx < bytes.len() {
-            bytes[idx] = self.0[idx] | other.0[idx];
-            idx += 1;
-        }
-        Self(bytes)
-    }
-
-    const fn intersects(self, other: Self) -> bool {
-        let mut idx = 0usize;
-        while idx < self.0.len() {
-            if (self.0[idx] & other.0[idx]) != 0 {
-                return true;
-            }
-            idx += 1;
-        }
-        false
-    }
-}
-
-#[derive(Clone, Copy)]
-struct SourceFrontier {
-    labels: LabelMask,
-    controller_mask: u16,
-    empty: bool,
-    invalid: bool,
-    duplicate_label: bool,
-}
-
-impl SourceFrontier {
-    const EMPTY: Self = Self {
-        labels: LabelMask::EMPTY,
-        controller_mask: 0,
-        empty: true,
-        invalid: false,
-        duplicate_label: false,
-    };
-
-    const fn from_eff(eff: &EffList) -> Self {
-        if eff.is_empty() {
-            return Self::EMPTY;
-        }
-        let node = eff.node_at(0);
-        if !matches!(node.kind, crate::eff::EffKind::Atom) {
-            return Self::EMPTY;
-        }
-        let atom = node.atom_data();
-        Self::atom(atom.from, atom.label)
-    }
-
-    const fn atom(from: u8, label: u8) -> Self {
-        let invalid = from >= u16::BITS as u8;
-        Self {
-            labels: LabelMask::from_label(label),
-            controller_mask: if invalid { 0 } else { 1u16 << from },
-            empty: false,
-            invalid,
-            duplicate_label: false,
-        }
-    }
-
-    const fn seq(self, next: Self) -> Self {
-        if self.empty { next } else { self }
-    }
-
-    const fn union(self, other: Self) -> Self {
-        Self {
-            labels: self.labels.union(other.labels),
-            controller_mask: self.controller_mask | other.controller_mask,
-            empty: self.empty && other.empty,
-            invalid: self.invalid || other.invalid,
-            duplicate_label: self.duplicate_label
-                || other.duplicate_label
-                || self.labels.intersects(other.labels),
-        }
-    }
-
-    const fn route_choice(self, other: Self) -> Self {
-        Self {
-            labels: self.labels.union(other.labels),
-            controller_mask: self.controller_mask | other.controller_mask,
-            empty: self.empty && other.empty,
-            invalid: self.invalid || other.invalid,
-            duplicate_label: self.duplicate_label || other.duplicate_label,
-        }
-    }
-
-    const fn route_summary(scope: ScopeId, left: Self, right: Self) -> RouteFrontierSummary {
-        RouteFrontierSummary::new(
-            scope,
-            left.controller_mask | right.controller_mask,
-            left.empty || right.empty || left.invalid || right.invalid,
-            left.duplicate_label || right.duplicate_label,
-            left.labels.intersects(right.labels),
-        )
-    }
 }
 
 impl ProgramSourceData {
@@ -142,7 +32,7 @@ impl ProgramSourceData {
             eff,
             role_lane_mask,
             lane_span,
-            frontier: SourceFrontier::from_eff(&eff),
+            frontier: EndpointOpFrontier::from_eff(&eff),
             error: None,
         }
     }
@@ -258,12 +148,15 @@ impl ProgramSourceData {
         }
         let scope = ScopeId::route(0);
         let left_budget = self.scope_budget();
+        let left_frontier = self.frontier;
+        let right_frontier = right.frontier;
         let left_arm = self.into_eff();
         let right_arm = right.into_eff();
         let right_offset = add_scope_budget(1, left_budget);
         let left_eff = left_arm.rebase_scopes(1).with_scope(scope);
         let right_eff = right_arm.rebase_scopes(right_offset).with_scope(scope);
-        let route_summary = SourceFrontier::route_summary(scope, self.frontier, right.frontier);
+        let route_summary =
+            EndpointOpFrontier::route_summary(scope, &left_arm, left_frontier, right_frontier);
         Self {
             eff: left_eff
                 .extend_list(right_eff)
@@ -273,7 +166,7 @@ impl ProgramSourceData {
                 max_lane_span(self.lane_span, right.lane_span),
             ),
             lane_span: max_lane_span(self.lane_span, right.lane_span),
-            frontier: self.frontier.route_choice(right.frontier),
+            frontier: left_frontier.route_choice(right_frontier, &left_arm),
             error,
         }
     }
@@ -293,9 +186,11 @@ impl ProgramSourceData {
         {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelConflict));
         }
-        let frontier = self.frontier.union(right.frontier);
-        if frontier.duplicate_label {
-            error = Self::merge_error(error, Some(ProgramSourceError::ParallelDuplicateLabel));
+        let frontier = self
+            .frontier
+            .concurrent_union(right.frontier.rebase_parallel_inbound_lanes(self.lane_span));
+        if frontier.ambiguous_endpoint_op {
+            error = Self::merge_error(error, Some(ProgramSourceError::ParallelAmbiguousEndpointOp));
         }
         let parallel_scope = ScopeId::parallel(0);
         let left_budget = self.scope_budget();

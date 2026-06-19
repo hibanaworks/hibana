@@ -1,10 +1,12 @@
 //! Branch-recv path helpers for `RouteBranch::recv`.
 
 mod finish;
+mod payload;
 mod state;
 
 use core::task::Poll;
 
+use payload::BranchRecvCommitPayload;
 pub(crate) use state::{BranchRecvRestore, BranchRecvState};
 
 use super::decision_state::RouteState;
@@ -23,7 +25,10 @@ use crate::{
     endpoint::{RecvError, RecvResult},
     global::typestate::{EventCursor, RecvMeta, StateIndex, state_index_to_usize},
     observe::ids,
-    transport::{Transport, wire::Payload},
+    transport::{
+        Transport,
+        wire::{CodecError, Payload},
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -54,11 +59,11 @@ enum BranchRecvProgressPlan {
     NonWire { delta: CommitDelta },
 }
 
-struct BranchRecvCommitPlan<'r> {
+struct RecvCommitPlan<'r> {
     branch: BranchCommitPlan,
     event: EndpointRxEventPlan,
     progress: BranchRecvProgressPlan,
-    committed_payload: Payload<'r>,
+    payload: BranchRecvCommitPayload<'r>,
 }
 
 enum PreparedBranchRecvProgressPlan {
@@ -70,7 +75,7 @@ struct PreparedBranchRecvPublishPlan<'r> {
     branch: BranchCommitPlan,
     event: EndpointRxEventPlan,
     progress: PreparedBranchRecvProgressPlan,
-    committed_payload: Payload<'r>,
+    payload: BranchRecvCommitPayload<'r>,
 }
 
 struct BranchRecvCommitBuilder<'build, 'r, const ROLE: u8, T>
@@ -86,4 +91,47 @@ where
 #[inline]
 pub(super) fn branch_recv_phase_invariant() -> RecvError {
     RecvError::PhaseInvariant
+}
+
+impl<'r> RecvCommitPlan<'r> {
+    fn wire<F>(
+        branch: BranchCommitPlan,
+        event: EndpointRxEventPlan,
+        progress: BranchRecvProgressPlan,
+        frame: lane_port::ReceivedFrame<'r>,
+        validate: F,
+    ) -> RecvResult<Self>
+    where
+        F: FnOnce(Payload<'r>) -> Result<(), CodecError>,
+    {
+        if let Err(err) = frame.validated_payload(validate) {
+            frame.discard_uncommitted();
+            return Err(RecvError::Codec(err));
+        }
+        Ok(Self {
+            branch,
+            event,
+            progress,
+            payload: BranchRecvCommitPayload::Wire(frame),
+        })
+    }
+
+    fn non_wire<F>(
+        branch: BranchCommitPlan,
+        event: EndpointRxEventPlan,
+        progress: BranchRecvProgressPlan,
+        payload: Payload<'r>,
+        validate: F,
+    ) -> RecvResult<Self>
+    where
+        F: FnOnce(Payload<'r>) -> Result<(), CodecError>,
+    {
+        validate(payload).map_err(RecvError::Codec)?;
+        Ok(Self {
+            branch,
+            event,
+            progress,
+            payload: BranchRecvCommitPayload::NonWire(payload),
+        })
+    }
 }

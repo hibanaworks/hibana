@@ -220,7 +220,7 @@ where
                     Ok(outcome) => {
                         if branch_send {
                             let branch = crate::invariant_some(self.public_route_branch.take());
-                            if branch.staged_payload.is_some() {
+                            if branch.offered_frame.is_some() {
                                 crate::invariant();
                             }
                         }

@@ -81,8 +81,8 @@ where
         &mut self,
         branch: MaterializedRouteBranch<'r>,
     ) {
-        if let Some(staged_payload) = branch.staged_payload {
-            let frame = staged_payload.into_frame();
+        if let Some(offered_frame) = branch.offered_frame {
+            let frame = offered_frame.into_frame();
             let port = self.port_for_lane(frame.lane_idx());
             if lane_port::requeue_recv_frame(port, frame).is_err() {
                 self.poison_session(SessionFaultKind::TransportClosed);

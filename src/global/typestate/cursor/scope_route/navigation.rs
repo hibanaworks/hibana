@@ -90,18 +90,6 @@ impl EventCursor {
             .map(state_index_to_usize)
     }
 
-    #[inline]
-    pub(crate) fn selected_route_arm_recv_entry_index(
-        &self,
-        scope_id: ScopeId,
-        arm: u8,
-    ) -> Option<usize> {
-        if let Some(idx) = self.route_scope_arm_recv_index(scope_id, arm) {
-            return Some(idx);
-        }
-        self.passive_observer_arm_entry_index(scope_id, arm)
-    }
-
     pub(crate) fn route_arm_for_index(&self, scope_id: ScopeId, idx: usize) -> Option<u8> {
         let slot = self.route_scope_slot_inner(scope_id)?;
         let mut arm = 0u8;

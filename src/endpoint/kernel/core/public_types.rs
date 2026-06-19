@@ -1,6 +1,6 @@
 use super::{
     BranchMeta, EndpointLeaseId, EventCursor, FrontierState, LaneGuard, LaneSlotArray, LeasedState,
-    OfferState, Owner, Payload, Port, RendezvousId, RouteCommitRowSetBuilder, RouteState, SendMeta,
+    OfferState, Owner, Port, RendezvousId, RouteCommitRowSetBuilder, RouteState, SendMeta,
     SendState, SessionCtx, SessionId, StateIndex, Transport, lane_port,
 };
 use crate::endpoint::kernel::{branch_recv, recv};
@@ -69,14 +69,14 @@ where
 
 pub(crate) struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r> {
     pub(crate) label: u8,
-    pub(crate) staged_payload: Option<StagedPayload<'r>>,
+    pub(crate) offered_frame: Option<OfferedFrame<'r>>,
     pub(crate) branch_meta: BranchMeta,
     pub(crate) _cfg: core::marker::PhantomData<fn() -> &'r T>,
 }
 
 pub(crate) struct MaterializedRouteBranch<'r> {
     pub(crate) label: u8,
-    pub(crate) staged_payload: Option<StagedPayload<'r>>,
+    pub(crate) offered_frame: Option<OfferedFrame<'r>>,
     pub(crate) branch_meta: BranchMeta,
 }
 
@@ -88,7 +88,7 @@ impl<'r> MaterializedRouteBranch<'r> {
 
     #[inline]
     pub(crate) fn discard_terminal(mut self) {
-        if let Some(payload) = self.staged_payload.take() {
+        if let Some(payload) = self.offered_frame.take() {
             payload.discard_terminal();
         }
     }
@@ -114,11 +114,11 @@ impl BranchPreviewView {
     }
 }
 
-pub(crate) struct StagedPayload<'a> {
+pub(crate) struct OfferedFrame<'a> {
     frame: lane_port::ReceivedFrame<'a>,
 }
 
-impl<'a> StagedPayload<'a> {
+impl<'a> OfferedFrame<'a> {
     #[inline]
     pub(crate) const fn new(frame: lane_port::ReceivedFrame<'a>) -> Self {
         Self { frame }
@@ -130,14 +130,6 @@ impl<'a> StagedPayload<'a> {
     }
 
     #[inline]
-    pub(crate) fn validated_payload<E, F>(&self, validate: F) -> Result<Payload<'a>, E>
-    where
-        F: FnOnce(Payload<'a>) -> Result<(), E>,
-    {
-        self.frame.validated_payload(validate)
-    }
-
-    #[inline]
     pub(crate) const fn lane(&self) -> u8 {
         self.frame.lane_wire()
     }
@@ -145,11 +137,6 @@ impl<'a> StagedPayload<'a> {
     #[inline]
     pub(crate) const fn transport_frame_label(&self) -> u8 {
         self.frame.frame_label_raw()
-    }
-
-    #[inline]
-    pub(crate) fn commit(self) -> Payload<'a> {
-        self.frame.into_payload()
     }
 
     #[inline]
@@ -189,7 +176,7 @@ where
     fn from(branch: RouteBranch<'r, ROLE, T>) -> Self {
         Self {
             label: branch.label,
-            staged_payload: branch.staged_payload,
+            offered_frame: branch.offered_frame,
             branch_meta: branch.branch_meta,
         }
     }

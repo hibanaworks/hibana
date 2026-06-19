@@ -73,7 +73,6 @@ send = read("src/endpoint/send.rs")
 for required in [
     "pub(crate) struct MsgCore",
     "pub(crate) struct SendRuntimeDesc",
-    "pub(crate) struct RecvRuntimeDesc",
     "pub(crate) struct BranchRecvRuntimeDesc",
 ]:
     if required not in runtime_types:
@@ -101,9 +100,8 @@ for name, trait_name in [
         fail(f"{name} must be a transport/runtime-erased kernel entry point")
 
 for required in [
-    "fn prepare_recv_kernel_descriptor(",
-    "fn poll_recv_kernel_payload_source(",
-    "fn finish_recv_kernel_payload(",
+    "fn poll_recv_kernel_frame_source(",
+    "fn finish_recv_kernel_frame(",
     "fn prepare_branch_recv_kernel_transport_wait(",
     "fn poll_branch_recv_kernel_transport_payload(",
     "fn finish_branch_recv_kernel(",

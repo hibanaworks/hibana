@@ -9,8 +9,8 @@ pub(crate) struct RouteFrontierSummary {
 
 impl RouteFrontierSummary {
     const FLAG_INVALID: u8 = 1 << 0;
-    const FLAG_DUPLICATE_LABEL: u8 = 1 << 1;
-    const FLAG_BRANCH_LABEL_OVERLAP: u8 = 1 << 2;
+    const FLAG_AMBIGUOUS_ENDPOINT_OP: u8 = 1 << 1;
+    const FLAG_INTRINSIC_BRANCH_OP_OVERLAP: u8 = 1 << 2;
 
     pub(crate) const EMPTY: Self = Self {
         scope: ScopeId::none(),
@@ -22,8 +22,8 @@ impl RouteFrontierSummary {
         scope: ScopeId,
         controller_mask: u16,
         invalid: bool,
-        duplicate_label: bool,
-        branch_label_overlap: bool,
+        ambiguous_endpoint_op: bool,
+        intrinsic_branch_op_overlap: bool,
     ) -> Self {
         if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             panic!("route frontier summary scope");
@@ -32,11 +32,11 @@ impl RouteFrontierSummary {
         if invalid {
             flags |= Self::FLAG_INVALID;
         }
-        if duplicate_label {
-            flags |= Self::FLAG_DUPLICATE_LABEL;
+        if ambiguous_endpoint_op {
+            flags |= Self::FLAG_AMBIGUOUS_ENDPOINT_OP;
         }
-        if branch_label_overlap {
-            flags |= Self::FLAG_BRANCH_LABEL_OVERLAP;
+        if intrinsic_branch_op_overlap {
+            flags |= Self::FLAG_INTRINSIC_BRANCH_OP_OVERLAP;
         }
         Self {
             scope,
@@ -69,12 +69,12 @@ impl RouteFrontierSummary {
         (self.flags & Self::FLAG_INVALID) != 0
     }
 
-    pub(crate) const fn has_duplicate_label(self) -> bool {
-        (self.flags & Self::FLAG_DUPLICATE_LABEL) != 0
+    pub(crate) const fn has_ambiguous_endpoint_op(self) -> bool {
+        (self.flags & Self::FLAG_AMBIGUOUS_ENDPOINT_OP) != 0
     }
 
-    pub(crate) const fn has_branch_label_overlap(self) -> bool {
-        (self.flags & Self::FLAG_BRANCH_LABEL_OVERLAP) != 0
+    pub(crate) const fn has_intrinsic_branch_op_overlap(self) -> bool {
+        (self.flags & Self::FLAG_INTRINSIC_BRANCH_OP_OVERLAP) != 0
     }
 }
 

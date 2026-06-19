@@ -51,6 +51,7 @@ src/endpoint/kernel	src/endpoint/kernel/endpoint_init.rs
 src/endpoint/kernel	src/endpoint/kernel/mod.rs
 src/endpoint/kernel	src/endpoint/kernel/public_ops.rs
 src/endpoint/kernel	src/endpoint/kernel/public_poll.rs
+src/endpoint/kernel	src/endpoint/kernel/recv
 src/endpoint/kernel	src/endpoint/kernel/recv.rs
 src/endpoint/kernel	src/endpoint/kernel/authority.rs
 src/endpoint/kernel	src/endpoint/kernel/evidence.rs

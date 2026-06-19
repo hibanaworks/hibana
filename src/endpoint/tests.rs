@@ -91,10 +91,6 @@ fn send_future_and_runtime_descriptor_size_gates_hold() {
         "SendFuture must stay within the direct-send future budget",
     );
     assert!(
-        size_of::<kernel::RecvRuntimeDesc>() <= WORD,
-        "RecvRuntimeDesc must stay smaller than a pointer-sized descriptor",
-    );
-    assert!(
         size_of::<kernel::BranchRecvRuntimeDesc>() <= 3 * WORD,
         "BranchRecvRuntimeDesc must be core plus decode metadata only",
     );

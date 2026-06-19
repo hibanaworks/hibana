@@ -406,13 +406,13 @@ const fn validate_route_scope<const ROLE: u8>(
     let Some(frontier) = view.route_frontier_summary(route_scope) else {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     };
-    if frontier.is_invalid() || frontier.has_duplicate_label() {
+    if frontier.is_invalid() || frontier.has_ambiguous_endpoint_op() {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     }
     let has_dynamic_resolver = scope_has_dynamic_resolver(view, route_scope);
     let controller_mask = frontier.controller_mask();
     if !has_dynamic_resolver {
-        if frontier.has_branch_label_overlap() {
+        if frontier.has_intrinsic_branch_op_overlap() {
             return Some(ProgramSourceError::ProjectionRouteUnprojectable);
         }
         if !has_exactly_one_bit(controller_mask) {

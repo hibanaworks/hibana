@@ -1,8 +1,8 @@
 use super::{
-    BranchCommitPlan, BranchKind, BranchPreviewView, BranchRecvCommitBuilder, BranchRecvCommitPlan,
+    BranchCommitPlan, BranchKind, BranchPreviewView, BranchRecvCommitBuilder,
     BranchRecvProgressPlan, BranchRecvRuntimeDesc, CursorEndpoint, EndpointRxEventPlan,
     EventCursor, MaterializedRouteBranch, Payload, Poll, PreparedBranchRecvProgressPlan,
-    PreparedBranchRecvPublishPlan, RecvError, RecvMeta, RecvResult, RouteState,
+    PreparedBranchRecvPublishPlan, RecvCommitPlan, RecvError, RecvMeta, RecvResult, RouteState,
     SelectedRouteCommitRows, StateIndex, Transport, branch_recv_phase_invariant, lane_port,
     prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
@@ -10,6 +10,7 @@ use super::{
 use crate::{global::typestate::RelocatableResidentLaneStep, transport::trace::TapFrameMeta};
 
 mod commit_builder;
+use commit_builder::WireBranchRecvCommitInput;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -31,7 +32,7 @@ where
             return Err(branch_recv_phase_invariant());
         }
         if !matches!(branch.branch_meta.kind, BranchKind::WireRecv)
-            || branch.staged_payload.is_some()
+            || branch.offered_frame.is_some()
         {
             return Ok(None);
         }
@@ -71,7 +72,6 @@ where
         match branch_meta.kind {
             BranchKind::LocalAction | BranchKind::TerminalArm => {
                 let payload = Self::non_wire_branch_payload();
-                desc.validate_payload(payload).map_err(RecvError::Codec)?;
                 let branch_view = BranchPreviewView::from_materialized(branch);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
                 let event = EndpointRxEventPlan::from_branch(branch_view);
@@ -84,10 +84,11 @@ where
                             branch_view,
                             branch_meta.kind,
                             payload,
+                            |payload| desc.validate_payload(payload),
                         )
                     })?;
                 let committed_payload = self.publish_branch_recv_commit_plan(publish_plan);
-                branch.staged_payload = None;
+                branch.offered_frame = None;
                 Ok(committed_payload)
             }
 
@@ -107,48 +108,37 @@ where
                     return Err(branch_recv_phase_invariant());
                 }
 
-                let staged_payload = branch
-                    .staged_payload
-                    .take()
-                    .ok_or_else(branch_recv_phase_invariant)?;
-                if staged_payload.lane() != meta.lane {
-                    branch.staged_payload = Some(staged_payload);
+                let Some(offered_frame) = branch.offered_frame.as_ref() else {
                     return Err(branch_recv_phase_invariant());
-                }
-                if staged_payload.transport_frame_label() != meta.frame_label {
-                    branch.staged_payload = Some(staged_payload);
-                    return Err(branch_recv_phase_invariant());
-                }
-                let committed_payload = staged_payload;
-                let payload = match committed_payload
-                    .validated_payload(|payload| desc.validate_payload(payload))
-                {
-                    Ok(payload) => payload,
-                    Err(err) => {
-                        branch.staged_payload = Some(committed_payload);
-                        return Err(RecvError::Codec(err));
-                    }
                 };
+                if offered_frame.lane() != meta.lane {
+                    return Err(branch_recv_phase_invariant());
+                }
+                if offered_frame.transport_frame_label() != meta.frame_label {
+                    return Err(branch_recv_phase_invariant());
+                }
                 let branch_view = BranchPreviewView::from_materialized(branch);
 
-                branch.staged_payload = Some(committed_payload);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
                 let branch_recv_meta =
                     branch_plan.meta().ok_or_else(branch_recv_phase_invariant)?;
                 let route_seed_rows = branch_plan.route_seed_rows();
                 let event = EndpointRxEventPlan::from_branch(branch_view);
+                let frame = crate::invariant_some(branch.offered_frame.take()).into_frame();
                 let publish_plan =
                     self.with_branch_recv_commit_builder(route_seed_rows, |mut builder| {
                         builder.build_branch_recv_commit_plan(
-                            branch_plan,
-                            branch_view,
-                            meta,
-                            branch_recv_meta,
-                            event,
-                            payload,
+                            WireBranchRecvCommitInput {
+                                branch_plan,
+                                branch: branch_view,
+                                meta,
+                                branch_meta: branch_recv_meta,
+                                event,
+                                frame,
+                            },
+                            |payload| desc.validate_payload(payload),
                         )
                     })?;
-                crate::invariant_some(branch.staged_payload.take()).commit();
                 let committed_payload = self.publish_branch_recv_commit_plan(publish_plan);
                 Ok(committed_payload)
             }
@@ -160,7 +150,7 @@ where
         route_seed_rows: super::SelectedRouteCommitRowsRef,
         f: impl for<'build> FnOnce(
             BranchRecvCommitBuilder<'build, 'r, ROLE, T>,
-        ) -> RecvResult<BranchRecvCommitPlan<'r>>,
+        ) -> RecvResult<RecvCommitPlan<'r>>,
     ) -> RecvResult<PreparedBranchRecvPublishPlan<'r>> {
         let plan = {
             let Self {
@@ -261,25 +251,29 @@ where
 
     fn prepare_branch_recv_publish_plan(
         &mut self,
-        plan: BranchRecvCommitPlan<'r>,
+        plan: RecvCommitPlan<'r>,
     ) -> RecvResult<PreparedBranchRecvPublishPlan<'r>> {
         let progress = match plan.progress {
-            BranchRecvProgressPlan::Wire { delta } => PreparedBranchRecvProgressPlan::Wire {
-                delta: self
-                    .prepare_commit_delta(delta)
-                    .map_err(|_| RecvError::PhaseInvariant)?,
+            BranchRecvProgressPlan::Wire { delta } => match self.prepare_commit_delta(delta) {
+                Ok(delta) => PreparedBranchRecvProgressPlan::Wire { delta },
+                Err(_) => {
+                    plan.payload.discard_uncommitted();
+                    return Err(RecvError::PhaseInvariant);
+                }
             },
-            BranchRecvProgressPlan::NonWire { delta } => PreparedBranchRecvProgressPlan::NonWire {
-                delta: self
-                    .prepare_commit_delta(delta)
-                    .map_err(|_| RecvError::PhaseInvariant)?,
+            BranchRecvProgressPlan::NonWire { delta } => match self.prepare_commit_delta(delta) {
+                Ok(delta) => PreparedBranchRecvProgressPlan::NonWire { delta },
+                Err(_) => {
+                    plan.payload.discard_uncommitted();
+                    return Err(RecvError::PhaseInvariant);
+                }
             },
         };
         Ok(PreparedBranchRecvPublishPlan {
             branch: plan.branch,
             event: plan.event,
             progress,
-            committed_payload: plan.committed_payload,
+            payload: plan.payload,
         })
     }
 }
@@ -304,7 +298,7 @@ where
         let endpoint_meta =
             TapFrameMeta::new(self.sid.raw(), plan.event.lane, ROLE, plan.event.label);
         self.emit_endpoint_event(plan.event.event_id, endpoint_meta, plan.event.lane);
-        plan.committed_payload
+        plan.payload.into_payload()
     }
 }
 

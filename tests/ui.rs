@@ -73,6 +73,7 @@ const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-project-role-out-of-range.rs",
     "tests/ui/g-role-out-of-range.rs",
     "tests/ui/g-roleprogram-witness-mismatch.rs",
+    "tests/ui/g-par-ambiguous-outbound-op.rs",
     "tests/ui/g-route-passive-first-visible-ambiguous.rs",
     "tests/ui/g-route-controller-mismatch.rs",
     "tests/ui/g-route-roll-before-resolve.rs",
@@ -134,21 +135,22 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-resolver-data-send.rs");
     compile_fail(&t, "tests/ui/g-role-out-of-range.rs");
     compile_fail(&t, "tests/ui/g-roleprogram-witness-mismatch.rs");
-    compile_fail(&t, "tests/ui/g-par-duplicate-label.rs");
+    compile_fail(&t, "tests/ui/g-par-ambiguous-outbound-op.rs");
     compile_fail(&t, "tests/ui/g-route-passive-first-visible-ambiguous.rs");
-    compile_fail(&t, "tests/ui/g-route-intra-arm-duplicate-label.rs");
-    compile_fail(&t, "tests/ui/g-route-resolved-intra-arm-duplicate-label.rs");
     compile_fail(&t, "tests/ui/g-route-controller-mismatch.rs");
     compile_fail(&t, "tests/ui/g-route-roll-before-resolve.rs");
     compile_fail(&t, "tests/ui/g-route-unprojectable.rs");
     compile_fail(&t, "tests/ui/g-typed-route-duplicate-label-project.rs");
     t.pass("tests/ui-pass/g-par-many.rs");
     t.pass("tests/ui-pass/g-par-same-role-auto-lanes.rs");
+    t.pass("tests/ui-pass/g-par-same-label-distinct-local-endpoints.rs");
+    t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
     t.pass("tests/ui-pass/g-route-merged.rs");
     t.pass("tests/ui-pass/g-route-resolver-scope-nested-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-label.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-overlap-after-left-par.rs");
+    t.pass("tests/ui-pass/g-route-resolved-intra-arm-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-route-static-basic.rs");
     t.pass("tests/ui-pass/g-route-static-prefix-local.rs");
     t.pass("tests/ui-pass/g-route-static-prefix-send.rs");

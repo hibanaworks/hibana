@@ -13,7 +13,7 @@ use crate::{
 };
 
 use crate::endpoint::kernel::{
-    core::{RouteBranch, StagedPayload},
+    core::{OfferedFrame, RouteBranch},
     lane_port,
 };
 
@@ -77,7 +77,7 @@ where
         };
         Ok(RouteBranch {
             label: meta.label,
-            staged_payload: transport_payload_for_branch.map(StagedPayload::new),
+            offered_frame: transport_payload_for_branch.map(OfferedFrame::new),
             branch_meta,
             _cfg: PhantomData,
         })

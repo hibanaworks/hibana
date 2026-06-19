@@ -385,14 +385,16 @@ fn route_resolver_authority_is_scope_keyed() {
 }
 
 #[test]
-fn source_frontier_tracks_labels_with_u8_limb_mask_and_duplicate_flag() {
+fn source_frontier_tracks_endpoint_ops_without_label_duplicate_authority() {
     let source = read("src/g/source.rs");
+    let source_frontier = read("src/g/source/frontier.rs");
     let route = read("src/global/const_dsl/route.rs");
     let seal = read("src/global/compiled/lowering/seal.rs");
     let lowering_driver = read("src/global/compiled/lowering/driver.rs");
     let lowering_image = read("src/global/compiled/lowering/driver/impls/image.rs");
     let combined = [
         source.as_str(),
+        source_frontier.as_str(),
         route.as_str(),
         seal.as_str(),
         lowering_driver.as_str(),
@@ -401,26 +403,41 @@ fn source_frontier_tracks_labels_with_u8_limb_mask_and_duplicate_flag() {
     .join("\n");
 
     for required in [
-        "struct LabelMask([u8; 32]);",
-        "let idx = (label >> 3) as usize;",
-        "let bit = label & 7;",
-        "bytes[idx] = 1u8 << bit;",
-        "labels: LabelMask,",
-        "duplicate_label: bool,",
-        "duplicate_label: self.duplicate_label\n                || other.duplicate_label\n                || self.labels.intersects(other.labels),",
-        "const fn route_choice(self, other: Self) -> Self",
-        "duplicate_label: self.duplicate_label || other.duplicate_label,",
-        "left.duplicate_label || right.duplicate_label,",
-        "left.labels.intersects(right.labels),",
-        "ProgramSourceError::ParallelDuplicateLabel",
-        "if frontier.duplicate_label",
-        "frontier: self.frontier.route_choice(right.frontier),",
-        "const FLAG_DUPLICATE_LABEL: u8 = 1 << 1;",
-        "const FLAG_BRANCH_LABEL_OVERLAP: u8 = 1 << 2;",
-        "pub(crate) const fn has_duplicate_label(self) -> bool",
-        "pub(crate) const fn has_branch_label_overlap(self) -> bool",
-        "if frontier.is_invalid() || frontier.has_duplicate_label()",
-        "if frontier.has_branch_label_overlap()",
+        "struct EndpointOpFrontier",
+        "const ENDPOINT_OP_FRONTIER_CAPACITY: usize = crate::global::role_program::LANE_DOMAIN_SIZE * 2;",
+        "struct EndpointOpKey(u32);",
+        "struct OutboundOpKey(u16);",
+        "struct ProjectedInboundKey(u32);",
+        "ops: [EndpointOpKey; ENDPOINT_OP_FRONTIER_CAPACITY]",
+        "const KIND_OUTBOUND: u32 = 1 << 31;",
+        "const KIND_INBOUND: u32 = 1 << 30;",
+        "const PAYLOAD_MASK: u32 = 0x00ff_ffff;",
+        "const fn new(local_role: u8, logical_label: u8) -> Self",
+        "const fn new(local_role: u8, lane: u8, source_role: u8, frame_label: u8) -> Self",
+        "enum EndpointOpKind",
+        "EndpointOpKind::Outbound",
+        "EndpointOpKind::Inbound",
+        "ambiguous_endpoint_op: bool",
+        "const fn concurrent_union(self, other: Self) -> Self",
+        "const fn rebase_parallel_inbound_lanes(mut self, delta: u16) -> Self",
+        "rebase_inbound_lane(delta)",
+        "ambiguous_endpoint_op: self.ambiguous_endpoint_op\n                || other.ambiguous_endpoint_op\n                || self.intersects(other),",
+        "const fn route_choice(self, other: Self, left_arm: &EffList) -> Self",
+        "rebase_right_route_arm_inbound_frame_labels(left_arm)",
+        "const fn count_frame_labels_before_right_arm(left_arm: &EffList, target: u8, lane: u8) -> u8",
+        "ambiguous_endpoint_op: self.ambiguous_endpoint_op || other.ambiguous_endpoint_op,",
+        "left.ambiguous_endpoint_op || right.ambiguous_endpoint_op",
+        "left.intersects(right)",
+        "ProgramSourceError::ParallelAmbiguousEndpointOp",
+        "if frontier.ambiguous_endpoint_op",
+        "right.frontier.rebase_parallel_inbound_lanes(self.lane_span)",
+        "frontier: left_frontier.route_choice(right_frontier, &left_arm),",
+        "const FLAG_AMBIGUOUS_ENDPOINT_OP: u8 = 1 << 1;",
+        "const FLAG_INTRINSIC_BRANCH_OP_OVERLAP: u8 = 1 << 2;",
+        "pub(crate) const fn has_ambiguous_endpoint_op(self) -> bool",
+        "pub(crate) const fn has_intrinsic_branch_op_overlap(self) -> bool",
+        "if frontier.is_invalid() || frontier.has_ambiguous_endpoint_op()",
+        "if frontier.has_intrinsic_branch_op_overlap()",
         "const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);",
         "let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];",
         "let byte = ordinal >> 3;",
@@ -429,32 +446,38 @@ fn source_frontier_tracks_labels_with_u8_limb_mask_and_duplicate_flag() {
     ] {
         assert!(
             combined.contains(required),
-            "route frontier validation must keep u8 label/scope masks and duplicate tracking: {required}"
+            "route frontier validation must keep endpoint-op authority and u8 scope masks: {required}"
         );
     }
 
     let duplicate_reject = seal
-        .find("if frontier.is_invalid() || frontier.has_duplicate_label()")
-        .expect("duplicate-label route rejection must stay present");
+        .find("if frontier.is_invalid() || frontier.has_ambiguous_endpoint_op()")
+        .expect("ambiguous endpoint-op route rejection must stay present");
     let resolver_branch = seal
         .find("let has_dynamic_resolver = scope_has_dynamic_resolver")
         .expect("resolver branch must stay present");
     assert!(
         duplicate_reject < resolver_branch,
-        "duplicate-label rejection must run before resolver authority branching"
+        "ambiguous endpoint-op rejection must run before resolver authority branching"
     );
     let intrinsic_branch = seal
         .find("if !has_dynamic_resolver")
         .expect("intrinsic route branch must stay present");
     let overlap_reject = seal
-        .find("if frontier.has_branch_label_overlap()")
-        .expect("intrinsic branch-label overlap rejection must stay present");
+        .find("if frontier.has_intrinsic_branch_op_overlap()")
+        .expect("intrinsic branch endpoint-op overlap rejection must stay present");
     assert!(
         resolver_branch < intrinsic_branch && intrinsic_branch < overlap_reject,
-        "cross-branch label overlap must be rejected only under intrinsic route authority"
+        "cross-branch endpoint-op overlap must be rejected only under intrinsic route authority"
     );
 
     for forbidden in [
+        "struct LabelMask(",
+        "duplicate_label",
+        "ParallelDuplicateLabel",
+        "has_duplicate_label",
+        "branch_label_overlap",
+        "has_branch_label_overlap",
         "label_words",
         "[u64; 4]",
         "route_scope_ordinals = [0u64",
@@ -463,10 +486,76 @@ fn source_frontier_tracks_labels_with_u8_limb_mask_and_duplicate_flag() {
         "<< 6",
         "/ 64",
         "% 64",
+        "ops: [EndpointOpKey; eff::meta::MAX_EFF_NODES]",
+        "[EndpointOpKey::EMPTY; eff::meta::MAX_EFF_NODES]",
     ] {
         assert!(
             !combined.contains(forbidden),
             "projection frontier masks must not re-grow u64 limb storage: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn direct_recv_commits_only_through_observed_evidence_plan() {
+    let recv = read("src/endpoint/kernel/recv.rs");
+    let recv_evidence = read("src/endpoint/kernel/recv/evidence.rs");
+    let recv_commit_plan = read("src/endpoint/kernel/recv/commit_plan.rs");
+    let core = read("src/endpoint/kernel/core.rs");
+    let surface = [
+        recv.as_str(),
+        recv_evidence.as_str(),
+        recv_commit_plan.as_str(),
+        core.as_str(),
+    ]
+    .join("\n");
+
+    for required in [
+        "struct ObservedInboundKey",
+        "session_raw: u32,",
+        "lane_wire: u8,",
+        "source_role: u8,",
+        "target_role: u8,",
+        "frame_label: u8,",
+        "enum MatchAccumulator",
+        "None,\n    One(RecvCandidate),\n    Ambiguous,",
+        "struct RecvCommitPlan<'a> {\n    pub(super) desc: RecvDescriptor,\n    pub(super) frame: lane_port::ReceivedFrame<'a>,\n    pub(super) delta: PreparedCommitDelta,\n}",
+        "impl<'a> RecvCommitPlan<'a>",
+        "fn prepare_recv_commit_delta(",
+        "frame.discard_uncommitted();",
+        "fn poll_recv_preamble_for_label(",
+        "fn unique_recv_candidate(",
+        "fn accept_observed_recv_frame(",
+        "fn poll_recv_kernel_frame_source(",
+        "fn finish_recv_kernel_frame(",
+        "frame.validated_payload(validate)",
+        "frame.into_payload()",
+    ] {
+        assert!(
+            surface.contains(required),
+            "direct recv must keep observed-evidence commit authority: {required}"
+        );
+    }
+
+    assert!(
+        recv_evidence.contains("struct RecvCandidate {\n    pub(super) desc: RecvDescriptor,\n}"),
+        "RecvCandidate must be identity-only and must not carry references or codec hooks"
+    );
+
+    for forbidden in [
+        "PreparedRecv",
+        "struct RecvRuntimeDesc",
+        "RecvRuntimeDesc::",
+        "prepare_recv_descriptor",
+        "prepare_recv_kernel_descriptor",
+        "poll_recv_kernel_payload_source",
+        "finish_recv_kernel_payload",
+        "payload_validate",
+        "payload: Payload<'a>",
+    ] {
+        assert!(
+            !surface.contains(forbidden),
+            "direct recv must not regain descriptor-first or candidate-codec residue: {forbidden}"
         );
     }
 }
