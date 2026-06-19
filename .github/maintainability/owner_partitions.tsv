@@ -79,6 +79,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_preview_authority.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_preview.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/send_resolver_proof.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types/commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs

@@ -1,8 +1,8 @@
 use super::{
-    CursorEndpoint, CursorInvariantError, Payload, PendingSendIo, Poll, RouteArmToken,
-    SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome, SendMeta,
-    SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep, StagedSendPayload,
-    StateIndex, TapFrameMeta, Transport, ids, lane_port,
+    CursorEndpoint, CursorInvariantError, Payload, PendingSendIo, Poll, ResolverDecisionProofs,
+    RouteArmToken, SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome,
+    SendMeta, SendProgressCommitPlan, SendResult, SendRuntimeDesc, SendTransportStep,
+    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     prepare_route_site_materialization_rows_from_resident_route_commit_range,
 };
@@ -250,6 +250,7 @@ where
         meta: SendMeta,
         descriptor: SendRuntimeDesc,
         preview_cursor_index: Option<StateIndex>,
+        resolver_decisions: ResolverDecisionProofs,
     ) -> SendResult<()> {
         if meta.origin.is_session() {
             return Err(SendError::PhaseInvariant);
@@ -262,7 +263,12 @@ where
             Some(index) => state_index_to_usize(index),
             None => self.cursor.index(),
         };
-        self.decide_dynamic_resolvers_for_send(&meta, descriptor.logical_label(), preview_idx)?;
+        self.verify_dynamic_resolver_send_preview(
+            &meta,
+            descriptor.logical_label(),
+            preview_idx,
+            resolver_decisions,
+        )?;
 
         Ok(())
     }
@@ -326,12 +332,15 @@ where
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
+        resolver_decisions: ResolverDecisionProofs,
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r> {
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
         }
-        if let Err(err) = self.validate_send_payload(meta, descriptor, preview_cursor_index) {
+        if let Err(err) =
+            self.validate_send_payload(meta, descriptor, preview_cursor_index, resolver_decisions)
+        {
             return SendInitOutcome::Ready(Err(err));
         }
         let step = match self.begin_send_transport(preview_cursor_index, meta, payload) {

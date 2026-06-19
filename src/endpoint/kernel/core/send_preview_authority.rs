@@ -1,4 +1,7 @@
-use super::{Arm, CursorEndpoint, ScopeId, SendError, SendResult, Transport};
+use super::{
+    Arm, CursorEndpoint, ResolverDecisionProof, ResolverDecisionProofs, ScopeId, SendError,
+    SendResult, Transport,
+};
 use crate::global::const_dsl::RouteResolver;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -6,25 +9,12 @@ where
     T: Transport + 'r,
 {
     #[inline]
-    fn preview_send_error_from_cluster(
-        err: crate::session::cluster::error::ClusterError,
-    ) -> SendError {
-        match err {
-            crate::session::cluster::error::ClusterError::ResolverReject { resolver_id } => {
-                SendError::ResolverReject { resolver_id }
-            }
-            crate::session::cluster::error::ClusterError::RendezvousMismatch { .. }
-            | crate::session::cluster::error::ClusterError::RendezvousUnregistered { .. }
-            | crate::session::cluster::error::ClusterError::RendezvousBusy { .. }
-            | crate::session::cluster::error::ClusterError::ResourceExhausted { .. }
-            | crate::session::cluster::error::ClusterError::DynamicResolverInvariant { .. } => {
-                SendError::PhaseInvariant
-            }
-        }
-    }
-
-    #[inline]
-    fn preview_dynamic_resolver_arm_for_scope(&self, scope_id: ScopeId) -> SendResult<Option<u8>> {
+    fn preview_dynamic_resolver_arm_for_scope(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        proofs: &mut ResolverDecisionProofs,
+    ) -> SendResult<Option<u8>> {
         let Some((resolver, _)) = self.cursor.route_scope_controller_resolver(scope_id) else {
             return Ok(None);
         };
@@ -38,17 +28,23 @@ where
         if scope_id.is_none() || resolver_scope != scope_id {
             return Err(SendError::PhaseInvariant);
         }
-        self.session
-            .cluster()
-            .resolve_dynamic_resolver(self.rendezvous_id(), scope_id, resolver_id)
-            .map(|arm| Some(arm.index()))
-            .map_err(Self::preview_send_error_from_cluster)
+        let arm = self.resolve_dynamic_resolver_for_send_preview(lane, scope_id, resolver_id)?;
+        let arm_index = arm.index();
+        proofs.push(ResolverDecisionProof::new(
+            scope_id,
+            resolver_id,
+            arm_index,
+            lane,
+        ))?;
+        Ok(Some(arm_index))
     }
 
     #[inline]
     pub(in crate::endpoint::kernel::core) fn preview_controller_send_arm_for_scope(
         &self,
         scope_id: ScopeId,
+        lane: u8,
+        proofs: &mut ResolverDecisionProofs,
     ) -> SendResult<Option<u8>> {
         if scope_id.is_none() {
             return Ok(None);
@@ -56,7 +52,7 @@ where
         if let Some(arm) = self.selected_arm_for_scope(scope_id) {
             return Ok(Some(arm));
         }
-        self.preview_dynamic_resolver_arm_for_scope(scope_id)
+        self.preview_dynamic_resolver_arm_for_scope(scope_id, lane, proofs)
     }
 
     #[inline]

@@ -331,12 +331,15 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         send_preview_authority.contains("fn preview_dynamic_resolver_arm_for_scope(")
             && send_preview_authority.contains("fn preview_controller_send_arm_for_scope(")
             && send_preview_authority
-                .contains(".resolve_dynamic_resolver(self.rendezvous_id(), scope_id, resolver_id)")
+                .contains("resolve_dynamic_resolver_for_send_preview(lane, scope_id, resolver_id)")
+            && send_preview_authority.contains("proofs.push(ResolverDecisionProof::new(")
             && send_preview_authority.contains(
                 ".route_scope_controller_resolver(scope_id)\n            .is_some_and(|(resolver, _)| resolver.is_dynamic())"
             )
             && send_preview.contains("let preview_error = Cell::new(None::<SendError>);")
+            && send_preview.contains("let mut resolver_decisions = ResolverDecisionProofs::empty();")
             && send_preview.contains("preview_error.set(Some(error));")
+            && send_preview.contains("collect_dynamic_resolver_send_preview(")
             && send_preview.contains(
                 "if let Some(error) = preview_error.get() {\n            return Err(error);\n        }"
             ),
@@ -510,6 +513,8 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let route_commit_helpers = read("src/endpoint/kernel/core/route_commit_helpers.rs");
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
+    let send_decision_resolver = read("src/endpoint/kernel/core/decision_resolver/impls/send.rs");
+    let send_resolver_proof = read("src/endpoint/kernel/core/send_resolver_proof.rs");
     let offer_commit = read("src/endpoint/kernel/offer/commit.rs");
     let branch_recv_finish = read("src/endpoint/kernel/branch_recv/finish.rs");
     let runtime_types = runtime_types_source();
@@ -589,7 +594,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         .and_then(|tail| tail.split("fn poll_send_transport(").next())
         .expect("send init must stay visible");
     let validate_send_payload = poll_send_init
-        .find("self.validate_send_payload(meta, descriptor, preview_cursor_index)")
+        .find("self.validate_send_payload(")
         .expect("send init must validate selected-arm descriptor before staging payload");
     let begin_send_transport = poll_send_init
         .find("self.begin_send_transport(preview_cursor_index, meta, payload)")
@@ -598,6 +603,42 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         validate_send_payload < begin_send_transport,
         "payload encode/transport staging must happen only after selected-arm candidate validation"
     );
+    assert!(
+        poll_send_init.contains("resolver_decisions"),
+        "send init validation must receive the preview resolver proof"
+    );
+    let verifier = send_decision_resolver
+        .split("pub(crate) fn verify_dynamic_resolver_send_preview")
+        .nth(1)
+        .and_then(|tail| tail.split("fn send_route_commit_range").next())
+        .expect("send resolver proof verifier must stay visible");
+    let production_source = read_production_rs_tree("src");
+    assert!(
+        !production_source.contains("decide_dynamic_resolvers_for_send")
+            && send_decision_resolver.contains("collect_dynamic_resolver_send_preview")
+            && send_decision_resolver.contains("verify_dynamic_resolver_send_preview")
+            && !verifier.contains("resolve_dynamic_resolver(")
+            && !poll_send_init.contains("resolve_dynamic_resolver("),
+        "send progress must consume preview resolver proof instead of re-evaluating the resolver"
+    );
+    let resolver_proof = send_resolver_proof
+        .split("pub(crate) struct ResolverDecisionProof")
+        .nth(1)
+        .and_then(|tail| tail.split("impl ResolverDecisionProof").next())
+        .expect("send preview resolver proof must stay explicit");
+    assert!(
+        resolver_proof.contains("scope: ScopeId")
+            && resolver_proof.contains("resolver_id: u16")
+            && resolver_proof.contains("arm: u8")
+            && resolver_proof.contains("lane: u8"),
+        "send preview resolver proof must stay a compact copied route-scope fact"
+    );
+    for forbidden in ["&", "Payload", "Codec", "RawSendPayload", "Wire"] {
+        assert!(
+            !resolver_proof.contains(forbidden),
+            "send preview resolver proof must not carry references, payloads, or codec hooks: {forbidden}"
+        );
+    }
     let route_lowering_source =
         role_scope_rows.as_str().to_owned() + &first_recv_dispatch + &passive_child;
     for forbidden in [
