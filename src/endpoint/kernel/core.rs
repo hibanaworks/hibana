@@ -98,7 +98,7 @@ pub(crate) trait SendKernelEndpoint<'r> {
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        resolver_authority: SendResolverAuthority,
+        route_authority: SendRouteAuthority,
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r>;
 
@@ -214,12 +214,12 @@ pub(crate) fn kernel_send<'r>(
                 descriptor,
                 meta,
                 preview_cursor_index,
-                resolver_authority,
+                route_authority,
             } => match endpoint.poll_send_init_kernel(
                 *descriptor,
                 *meta,
                 *preview_cursor_index,
-                *resolver_authority,
+                *route_authority,
                 payload.take(),
             ) {
                 SendInitOutcome::Ready(result) => {
@@ -264,14 +264,14 @@ where
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        resolver_authority: SendResolverAuthority,
+        route_authority: SendRouteAuthority,
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r> {
         self.poll_send_init(
             descriptor,
             meta,
             preview_cursor_index,
-            resolver_authority,
+            route_authority,
             payload,
         )
     }
@@ -336,7 +336,7 @@ mod runtime_types;
 mod send_ops;
 mod send_preview;
 mod send_preview_authority;
-mod send_resolver_proof;
+mod send_route_authority;
 
 pub(crate) use super::decision_state::{
     PreparedRouteCommitRows, SelectedRouteCommitRow, SelectedRouteCommitRowsRef,
@@ -346,7 +346,7 @@ pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
 pub(crate) use public_types::*;
 pub(in crate::endpoint::kernel) use route_preview::IngressEvidenceState;
 pub(crate) use runtime_types::*;
-pub(crate) use send_resolver_proof::*;
+pub(crate) use send_route_authority::*;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where

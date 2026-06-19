@@ -1,7 +1,7 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Port, SendMeta, SendPreview,
-    SendResolverAuthority, SendResult, StateIndex, Transport, lane_port,
+    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Port, SendMeta, SendPreview, SendResult,
+    SendRouteAudit, SendRouteAuthority, StateIndex, Transport, lane_port,
 };
 
 pub(crate) struct StagedSendPayload {
@@ -10,6 +10,7 @@ pub(crate) struct StagedSendPayload {
 
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
     pub(crate) delta: PreparedCommitDelta,
+    pub(crate) route_audit: SendRouteAudit,
 }
 
 mod commit;
@@ -155,7 +156,7 @@ pub(crate) enum SendState<'r> {
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        resolver_authority: SendResolverAuthority,
+        route_authority: SendRouteAuthority,
     },
     Sending {
         pending: PendingSendIo<'r>,

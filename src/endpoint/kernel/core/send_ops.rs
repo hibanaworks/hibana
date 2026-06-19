@@ -1,8 +1,8 @@
 use super::{
     CursorEndpoint, CursorInvariantError, Payload, PendingSendIo, Poll, RouteArmToken,
     SendCommitOutcome, SendCommitPlan, SendCommitProof, SendError, SendInitOutcome, SendMeta,
-    SendProgressCommitPlan, SendResolverAuthority, SendResult, SendRuntimeDesc, SendTransportStep,
-    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
+    SendProgressCommitPlan, SendResult, SendRouteAudit, SendRouteAuthority, SendRuntimeDesc,
+    SendTransportStep, StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     prepare_route_site_materialization_rows_from_resident_route_commit_range,
 };
@@ -158,10 +158,40 @@ where
     }
 
     #[inline(never)]
+    fn publish_send_resolver_success_audits(&self, delta: &super::PreparedCommitDelta) {
+        let routes = delta.selected_routes();
+        let Some(route_lane) = delta.selected_route_lane() else {
+            return;
+        };
+        let mut idx = 0usize;
+        while idx < routes.len() {
+            let Some(route_row) = routes.get(&self.cursor, idx) else {
+                crate::invariant();
+            };
+            let scope_id = route_row.scope();
+            if self.selected_arm_for_scope(scope_id).is_none()
+                && let Some((
+                    crate::global::const_dsl::RouteResolver::Dynamic { resolver_id, .. },
+                    _,
+                )) = self.cursor.route_scope_controller_resolver(scope_id)
+            {
+                let arm = match route_row.selected_arm() {
+                    0 => crate::session::cluster::core::DecisionArm::Left,
+                    1 => crate::session::cluster::core::DecisionArm::Right,
+                    _ => crate::invariant(),
+                };
+                self.emit_dynamic_resolver_success_audit(route_lane, scope_id, resolver_id, arm);
+            }
+            idx += 1;
+        }
+    }
+
+    #[inline(never)]
     fn build_send_progress_commit_plan(
         &mut self,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
+        route_audit: SendRouteAudit,
     ) -> SendResult<SendProgressCommitPlan> {
         let preview_idx = match preview_cursor_index {
             Some(index) => state_index_to_usize(index),
@@ -204,11 +234,15 @@ where
             Ok(delta) => delta,
             Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
         };
-        Ok(SendProgressCommitPlan { delta })
+        Ok(SendProgressCommitPlan { delta, route_audit })
     }
 
     #[inline(never)]
     fn publish_send_progress_commit_plan(&mut self, plan: SendProgressCommitPlan) {
+        match plan.route_audit {
+            SendRouteAudit::DirectPreview => self.publish_send_resolver_success_audits(&plan.delta),
+            SendRouteAudit::None => {}
+        }
         let committed = self.commit_prepared_delta(plan.delta);
         self.publish_send_route_evidence_delta(&committed);
         self.emit_send_after_transport_event(&committed);
@@ -231,8 +265,13 @@ where
         &mut self,
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
+        route_authority: SendRouteAuthority,
     ) -> SendResult<SendCommitPlan<'r>> {
-        let progress = self.build_send_progress_commit_plan(preview_cursor_index, meta)?;
+        let progress = self.build_send_progress_commit_plan(
+            preview_cursor_index,
+            meta,
+            route_authority.route_audit(),
+        )?;
         Ok(SendCommitPlan {
             proof: SendCommitProof {
                 progress,
@@ -247,7 +286,7 @@ where
         meta: SendMeta,
         descriptor: SendRuntimeDesc,
         preview_cursor_index: Option<StateIndex>,
-        resolver_authority: SendResolverAuthority,
+        route_authority: SendRouteAuthority,
     ) -> SendResult<()> {
         if meta.origin.is_session() {
             return Err(SendError::PhaseInvariant);
@@ -260,11 +299,11 @@ where
             Some(index) => state_index_to_usize(index),
             None => self.cursor.index(),
         };
-        self.verify_dynamic_resolver_send_preview(
+        self.verify_send_route_authority(
             &meta,
             descriptor.logical_label(),
             preview_idx,
-            resolver_authority,
+            route_authority,
         )?;
 
         Ok(())
@@ -276,7 +315,10 @@ where
         preview_cursor_index: Option<StateIndex>,
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
+        route_authority: SendRouteAuthority,
     ) -> SendResult<SendTransportStep<'r>> {
+        let commit_plan =
+            self.build_send_commit_plan(preview_cursor_index, meta, route_authority)?;
         let scratch_ptr = {
             let port = self.port_for_lane(meta.lane as usize);
             lane_port::scratch_ptr(port)
@@ -287,7 +329,6 @@ where
             endpoint borrow while staging the payload into that scratch buffer. */ unsafe { &mut *scratch_ptr };
             self.stage_send_payload(payload, scratch)?
         };
-        let commit_plan = self.build_send_commit_plan(preview_cursor_index, meta)?;
         let encoded_len = staged_send.encoded_len;
 
         if meta.peer == ROLE {
@@ -329,21 +370,22 @@ where
         descriptor: SendRuntimeDesc,
         meta: SendMeta,
         preview_cursor_index: Option<StateIndex>,
-        resolver_authority: SendResolverAuthority,
+        route_authority: SendRouteAuthority,
         payload: Option<lane_port::RawSendPayload>,
     ) -> SendInitOutcome<'r> {
         if descriptor.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
             return SendInitOutcome::Ready(Err(SendError::PhaseInvariant));
         }
         if let Err(err) =
-            self.validate_send_payload(meta, descriptor, preview_cursor_index, resolver_authority)
+            self.validate_send_payload(meta, descriptor, preview_cursor_index, route_authority)
         {
             return SendInitOutcome::Ready(Err(err));
         }
-        let step = match self.begin_send_transport(preview_cursor_index, meta, payload) {
-            Ok(step) => step,
-            Err(err) => return SendInitOutcome::Ready(Err(err)),
-        };
+        let step =
+            match self.begin_send_transport(preview_cursor_index, meta, payload, route_authority) {
+                Ok(step) => step,
+                Err(err) => return SendInitOutcome::Ready(Err(err)),
+            };
         match step {
             SendTransportStep::Immediate(commit_plan) => SendInitOutcome::Commit { commit_plan },
             SendTransportStep::Pending(pending) => SendInitOutcome::Pending { pending },

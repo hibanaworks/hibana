@@ -1,154 +1,92 @@
 use super::super::super::{
-    CursorEndpoint, ResolverDecisionProof, ResolverDecisionProofs, SelectedRouteCommitRow,
-    SendError, SendMeta, SendResolverAuthority, SendResult, Transport,
+    CursorEndpoint, SelectedRouteCommitRowsRef, SendError, SendMeta, SendResult,
+    SendRouteAuthority, Transport,
 };
-use crate::global::typestate::PackedEventConflict;
+use crate::{
+    global::{const_dsl::RouteResolver, role_program::PackedLaneRange},
+    global::{const_dsl::ScopeId, typestate::PackedEventConflict},
+};
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(crate) fn collect_dynamic_resolver_send_preview(
+    pub(crate) fn prepare_send_route_authority(
         &self,
         meta: &SendMeta,
         target_label: u8,
         preview_idx: usize,
-        proofs: &mut ResolverDecisionProofs,
-    ) -> SendResult<()> {
+    ) -> SendResult<SendRouteAuthority> {
         if meta.label != target_label {
             return Err(SendError::PhaseInvariant);
         }
-        let Some(range) = self.send_route_commit_range(meta, preview_idx)? else {
-            return Ok(());
-        };
-        let mut idx = 0usize;
-        while idx < range.len() {
-            let route_row = self
-                .cursor
-                .route_commit_row_at(range, idx)
-                .and_then(SelectedRouteCommitRow::from_resident_conflict)
-                .ok_or(SendError::PhaseInvariant)?;
-            let scope_id = route_row.scope();
-            let arm_index = route_row.selected_arm();
-            let resolver = self
-                .cursor
-                .route_scope_controller_resolver(scope_id)
-                .map_or(
-                    crate::global::const_dsl::RouteResolver::Intrinsic,
-                    |(resolver, _)| resolver,
-                );
-            if let crate::global::const_dsl::RouteResolver::Dynamic { .. } = resolver {
-                self.collect_dynamic_route_arm_preview(
-                    meta.lane, scope_id, arm_index, resolver, proofs,
-                )?;
-            }
-            idx += 1;
+        let rows = self.send_selected_route_rows_ref(meta, preview_idx)?;
+        if rows.is_empty() {
+            return Ok(SendRouteAuthority::none());
         }
-        Ok(())
+        self.resolve_send_route_preview_rows(meta, rows)?;
+        Ok(SendRouteAuthority::direct(rows, meta.lane))
     }
 
-    pub(crate) fn verify_dynamic_resolver_send_preview(
-        &mut self,
+    pub(crate) fn verify_send_route_authority(
+        &self,
         meta: &SendMeta,
         target_label: u8,
         preview_idx: usize,
-        authority: SendResolverAuthority,
+        authority: SendRouteAuthority,
     ) -> SendResult<()> {
         if meta.label != target_label {
             return Err(SendError::PhaseInvariant);
         }
-        let Some(range) = self.send_route_commit_range(meta, preview_idx)? else {
-            return match authority {
-                SendResolverAuthority::Direct(proofs) if proofs.is_empty() => Ok(()),
-                SendResolverAuthority::Direct(_) | SendResolverAuthority::MaterializedBranch => {
+        let current = self.send_selected_route_rows_ref(meta, preview_idx)?;
+        match authority {
+            SendRouteAuthority::None => {
+                if current.is_empty() {
+                    Ok(())
+                } else {
                     Err(SendError::PhaseInvariant)
                 }
-            };
-        };
-        let mut consumed = 0u8;
-        let mut idx = 0usize;
-        while idx < range.len() {
-            let route_row = self
-                .cursor
-                .route_commit_row_at(range, idx)
-                .and_then(SelectedRouteCommitRow::from_resident_conflict)
-                .ok_or(SendError::PhaseInvariant)?;
-            let scope_id = route_row.scope();
-            let arm_index = route_row.selected_arm();
-            let resolver = self
-                .cursor
-                .route_scope_controller_resolver(scope_id)
-                .map_or(
-                    crate::global::const_dsl::RouteResolver::Intrinsic,
-                    |(resolver, _)| resolver,
-                );
-            if let crate::global::const_dsl::RouteResolver::Dynamic { .. } = resolver {
-                match authority {
-                    SendResolverAuthority::Direct(proofs) => {
-                        if let Some(proof_index) = self.verify_dynamic_route_arm_preview(
-                            meta.lane, scope_id, arm_index, resolver, proofs,
-                        )? {
-                            if proof_index < u8::BITS as usize {
-                                consumed |= 1u8 << proof_index;
-                            } else {
-                                return Err(SendError::PhaseInvariant);
-                            }
-                        }
-                    }
-                    SendResolverAuthority::MaterializedBranch => {
-                        self.verify_materialized_branch_route_arm(scope_id, arm_index, resolver)?;
-                    }
-                }
             }
-            idx += 1;
-        }
-        let SendResolverAuthority::Direct(proofs) = authority else {
-            return Ok(());
-        };
-        if proofs.len() >= u8::BITS as usize {
-            return Err(SendError::PhaseInvariant);
-        }
-        let expected = if proofs.is_empty() {
-            0
-        } else {
-            (1u8 << proofs.len()) - 1
-        };
-        if consumed == expected {
-            Ok(())
-        } else {
-            Err(SendError::PhaseInvariant)
+            SendRouteAuthority::Direct {
+                selected_routes,
+                lane,
+            } => {
+                if lane != meta.lane
+                    || selected_routes.packed_selected_lane() != Some(lane)
+                    || current.is_empty()
+                    || !self.selected_route_rows_match(current, selected_routes)
+                {
+                    return Err(SendError::PhaseInvariant);
+                }
+                Ok(())
+            }
+            SendRouteAuthority::MaterializedBranch => {
+                if current.is_empty() {
+                    return Err(SendError::PhaseInvariant);
+                }
+                self.verify_materialized_branch_route_rows(current)
+            }
         }
     }
 
-    fn verify_materialized_branch_route_arm(
+    fn send_selected_route_rows_ref(
         &self,
-        scope_id: crate::global::const_dsl::ScopeId,
-        arm_index: u8,
-        resolver: crate::global::const_dsl::RouteResolver,
-    ) -> SendResult<()> {
-        let crate::global::const_dsl::RouteResolver::Dynamic {
-            scope: resolver_scope,
-            ..
-        } = resolver
-        else {
-            return Err(SendError::PhaseInvariant);
+        meta: &SendMeta,
+        preview_idx: usize,
+    ) -> SendResult<SelectedRouteCommitRowsRef> {
+        let Some(range) = self.send_route_commit_range(meta, preview_idx)? else {
+            return Ok(SelectedRouteCommitRowsRef::EMPTY);
         };
-        if scope_id.is_none() || scope_id != resolver_scope {
-            return Err(SendError::PhaseInvariant);
-        }
-        if let Some(selected) = self.selected_arm_for_scope(scope_id)
-            && selected != arm_index
-        {
-            return Err(SendError::PhaseInvariant);
-        }
-        Ok(())
+        Ok(SelectedRouteCommitRowsRef::from_resident_range_for_lane(
+            range, meta.lane,
+        ))
     }
 
     fn send_route_commit_range(
         &self,
         meta: &SendMeta,
         preview_idx: usize,
-    ) -> SendResult<Option<crate::global::role_program::PackedLaneRange>> {
+    ) -> SendResult<Option<PackedLaneRange>> {
         let Some(selected_arm) = meta.selected_route_arm else {
             return Ok(None);
         };
@@ -164,21 +102,71 @@ where
         ))
     }
 
-    fn collect_dynamic_route_arm_preview(
+    fn resolve_send_route_preview_rows(
         &self,
-        lane: u8,
-        scope_id: crate::global::const_dsl::ScopeId,
-        arm_index: u8,
-        resolver: crate::global::const_dsl::RouteResolver,
-        proofs: &mut ResolverDecisionProofs,
+        meta: &SendMeta,
+        rows: SelectedRouteCommitRowsRef,
     ) -> SendResult<()> {
-        let crate::global::const_dsl::RouteResolver::Dynamic {
-            resolver_id,
-            scope: resolver_scope,
-        } = resolver
-        else {
-            return Err(SendError::PhaseInvariant);
-        };
+        let mut idx = 0usize;
+        while idx < rows.len() {
+            let route_row = rows
+                .get(&self.cursor, idx)
+                .ok_or(SendError::PhaseInvariant)?;
+            let scope_id = route_row.scope();
+            let arm_index = route_row.selected_arm();
+            let Some((RouteResolver::Dynamic { resolver_id, scope }, _)) =
+                self.cursor.route_scope_controller_resolver(scope_id)
+            else {
+                idx += 1;
+                continue;
+            };
+            self.resolve_dynamic_route_arm_for_send_preview(
+                meta,
+                scope_id,
+                arm_index,
+                scope,
+                resolver_id,
+            )?;
+            idx += 1;
+        }
+        Ok(())
+    }
+
+    fn selected_route_rows_match(
+        &self,
+        left: SelectedRouteCommitRowsRef,
+        right: SelectedRouteCommitRowsRef,
+    ) -> bool {
+        if left.len() != right.len() || left.packed_selected_lane() != right.packed_selected_lane()
+        {
+            return false;
+        }
+        let mut idx = 0usize;
+        while idx < left.len() {
+            let Some(left_row) = left.get(&self.cursor, idx) else {
+                return false;
+            };
+            let Some(right_row) = right.get(&self.cursor, idx) else {
+                return false;
+            };
+            if left_row.scope() != right_row.scope()
+                || left_row.selected_arm() != right_row.selected_arm()
+            {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    fn resolve_dynamic_route_arm_for_send_preview(
+        &self,
+        meta: &SendMeta,
+        scope_id: ScopeId,
+        arm_index: u8,
+        resolver_scope: ScopeId,
+        resolver_id: u16,
+    ) -> SendResult<()> {
         if scope_id.is_none() || scope_id != resolver_scope {
             return Err(SendError::PhaseInvariant);
         }
@@ -189,71 +177,54 @@ where
                 Err(SendError::ResolverReject { resolver_id })
             };
         }
-        if proofs
-            .match_index(scope_id, resolver_id, arm_index, lane)
-            .is_some()
-        {
-            return Ok(());
-        }
-        if proofs.site_index(scope_id, resolver_id).is_some() {
-            return Err(SendError::PhaseInvariant);
+        if meta.route_scope == scope_id {
+            return if meta.selected_route_arm == Some(arm_index) {
+                Ok(())
+            } else {
+                Err(SendError::PhaseInvariant)
+            };
         }
         let resolution =
-            self.resolve_dynamic_resolver_for_send_preview(lane, scope_id, resolver_id)?;
+            self.resolve_dynamic_resolver_for_send_preview(meta.lane, scope_id, resolver_id)?;
         if resolution.index() == arm_index {
-            proofs.push(ResolverDecisionProof::new(
-                scope_id,
-                resolver_id,
-                arm_index,
-                lane,
-            ))
+            Ok(())
         } else {
             Err(SendError::ResolverReject { resolver_id })
         }
     }
 
-    fn verify_dynamic_route_arm_preview(
-        &mut self,
-        lane: u8,
-        scope_id: crate::global::const_dsl::ScopeId,
-        arm_index: u8,
-        resolver: crate::global::const_dsl::RouteResolver,
-        proofs: ResolverDecisionProofs,
-    ) -> SendResult<Option<usize>> {
-        let crate::global::const_dsl::RouteResolver::Dynamic {
-            resolver_id,
-            scope: resolver_scope,
-        } = resolver
-        else {
-            return Err(SendError::PhaseInvariant);
-        };
-        if scope_id.is_none() || scope_id != resolver_scope {
-            return Err(SendError::PhaseInvariant);
+    fn verify_materialized_branch_route_rows(
+        &self,
+        rows: SelectedRouteCommitRowsRef,
+    ) -> SendResult<()> {
+        let mut idx = 0usize;
+        while idx < rows.len() {
+            let route_row = rows
+                .get(&self.cursor, idx)
+                .ok_or(SendError::PhaseInvariant)?;
+            let scope_id = route_row.scope();
+            let arm_index = route_row.selected_arm();
+            if let Some((RouteResolver::Dynamic { scope, .. }, _)) =
+                self.cursor.route_scope_controller_resolver(scope_id)
+            {
+                if scope_id.is_none() || scope_id != scope {
+                    return Err(SendError::PhaseInvariant);
+                }
+                if let Some(selected) = self.selected_arm_for_scope(scope_id)
+                    && selected != arm_index
+                {
+                    return Err(SendError::PhaseInvariant);
+                }
+            }
+            idx += 1;
         }
-        if let Some(selected) = self.selected_arm_for_scope(scope_id) {
-            return if selected == arm_index {
-                Ok(None)
-            } else {
-                Err(SendError::ResolverReject { resolver_id })
-            };
-        }
-        let proof_index = proofs
-            .match_index(scope_id, resolver_id, arm_index, lane)
-            .ok_or(SendError::PhaseInvariant)?;
-        let proof = proofs.get(proof_index).ok_or(SendError::PhaseInvariant)?;
-        self.emit_dynamic_resolver_success_audit(
-            proof.lane(),
-            proof.scope(),
-            proof.resolver_id(),
-            proof.decision_arm(),
-        );
-        Ok(Some(proof_index))
+        Ok(())
     }
 
     pub(in crate::endpoint::kernel::core) fn resolve_dynamic_resolver_for_send_preview(
         &self,
         lane: u8,
-        scope_id: crate::global::const_dsl::ScopeId,
+        scope_id: ScopeId,
         resolver_id: u16,
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
         let cluster = self.session.cluster();

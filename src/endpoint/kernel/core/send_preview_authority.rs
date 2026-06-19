@@ -1,7 +1,4 @@
-use super::{
-    Arm, CursorEndpoint, ResolverDecisionProof, ResolverDecisionProofs, ScopeId, SendError,
-    SendResult, Transport,
-};
+use super::{Arm, CursorEndpoint, ScopeId, SendError, SendResult, Transport};
 use crate::global::const_dsl::RouteResolver;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -13,7 +10,6 @@ where
         &self,
         scope_id: ScopeId,
         lane: u8,
-        proofs: &mut ResolverDecisionProofs,
     ) -> SendResult<Option<u8>> {
         let Some((resolver, _)) = self.cursor.route_scope_controller_resolver(scope_id) else {
             return Ok(None);
@@ -29,14 +25,7 @@ where
             return Err(SendError::PhaseInvariant);
         }
         let arm = self.resolve_dynamic_resolver_for_send_preview(lane, scope_id, resolver_id)?;
-        let arm_index = arm.index();
-        proofs.push(ResolverDecisionProof::new(
-            scope_id,
-            resolver_id,
-            arm_index,
-            lane,
-        ))?;
-        Ok(Some(arm_index))
+        Ok(Some(arm.index()))
     }
 
     #[inline]
@@ -44,7 +33,6 @@ where
         &self,
         scope_id: ScopeId,
         lane: u8,
-        proofs: &mut ResolverDecisionProofs,
     ) -> SendResult<Option<u8>> {
         if scope_id.is_none() {
             return Ok(None);
@@ -52,7 +40,7 @@ where
         if let Some(arm) = self.selected_arm_for_scope(scope_id) {
             return Ok(Some(arm));
         }
-        self.preview_dynamic_resolver_arm_for_scope(scope_id, lane, proofs)
+        self.preview_dynamic_resolver_arm_for_scope(scope_id, lane)
     }
 
     #[inline]

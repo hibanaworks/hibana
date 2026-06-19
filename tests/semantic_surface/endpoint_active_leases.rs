@@ -8,7 +8,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let public_runtime = format!("{public_ops}\n{public_poll}");
     let endpoint_ops = read("src/endpoint/ops.rs");
     let send = read("src/endpoint/send.rs");
-    let send_resolver_proof = read("src/endpoint/kernel/core/send_resolver_proof.rs");
+    let send_route_authority = read("src/endpoint/kernel/core/send_route_authority.rs");
     let futures = read("src/endpoint/futures.rs");
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let branch = read("src/endpoint/branch.rs");
@@ -184,20 +184,23 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawBranchRecvFuture"),
         "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"
     );
-    let resolver_authority = send_resolver_proof
-        .split("pub(crate) enum SendResolverAuthority")
+    let route_authority = send_route_authority
+        .split("pub(crate) enum SendRouteAuthority")
         .nth(1)
-        .and_then(|tail| tail.split("impl SendResolverAuthority").next())
-        .expect("send resolver authority must stay explicit");
+        .and_then(|tail| tail.split("impl SendRouteAuthority").next())
+        .expect("send route authority must stay explicit");
     assert!(
-        resolver_authority.contains("Direct(ResolverDecisionProofs)")
-            && resolver_authority.contains("MaterializedBranch"),
-        "send resolver authority must distinguish direct preview proofs from materialized route branches"
+        route_authority.contains("None")
+            && route_authority.contains("Direct {")
+            && route_authority.contains("selected_routes: SelectedRouteCommitRowsRef")
+            && route_authority.contains("lane: u8")
+            && route_authority.contains("MaterializedBranch"),
+        "send route authority must distinguish direct route-row preview from materialized route branches"
     );
     for forbidden in ["&", "Payload", "Codec", "RawSendPayload", "Wire"] {
         assert!(
-            !resolver_authority.contains(forbidden),
-            "send resolver authority must not carry references, payloads, or codec hooks: {forbidden}"
+            !route_authority.contains(forbidden),
+            "send route authority must not carry references, payloads, or codec hooks: {forbidden}"
         );
     }
     for required in [

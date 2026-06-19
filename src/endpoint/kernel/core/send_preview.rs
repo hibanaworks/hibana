@@ -1,8 +1,8 @@
 use core::cell::Cell;
 
 use super::{
-    BranchKind, CursorEndpoint, PublicActiveOp, ResolverDecisionProofs, SendError,
-    SendPreviewError, SendResult, Transport, state_index_to_usize,
+    BranchKind, CursorEndpoint, PublicActiveOp, SendError, SendPreviewError, SendResult, Transport,
+    state_index_to_usize,
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -105,17 +105,12 @@ where
             }
         }
         let preview_error = Cell::new(None::<SendError>);
-        let mut resolver_decisions = ResolverDecisionProofs::empty();
         let preview_result = self.cursor.send_preview_meta_for_label::<ROLE>(
             target_label,
             |scope| self.selected_arm_for_scope(scope),
             |scope| {
                 let lane = self.lane_for_label_or_offer(scope, target_label);
-                match self.preview_controller_send_arm_for_scope(
-                    scope,
-                    lane,
-                    &mut resolver_decisions,
-                ) {
+                match self.preview_controller_send_arm_for_scope(scope, lane) {
                     Ok(arm) => arm,
                     Err(error) => {
                         preview_error.set(Some(error));
@@ -136,18 +131,15 @@ where
             return Err(error);
         }
         let (meta, cursor_index) = preview_result.map_err(Self::map_send_preview_error)?;
-        self.collect_dynamic_resolver_send_preview(
+        let route_authority = self.prepare_send_route_authority(
             &meta,
             target_label,
             state_index_to_usize(cursor_index),
-            &mut resolver_decisions,
         )?;
-        Ok(
-            crate::endpoint::kernel::SendPreview::with_resolver_decisions(
-                meta,
-                cursor_index,
-                resolver_decisions,
-            ),
-        )
+        Ok(crate::endpoint::kernel::SendPreview::with_route_authority(
+            meta,
+            cursor_index,
+            route_authority,
+        ))
     }
 }

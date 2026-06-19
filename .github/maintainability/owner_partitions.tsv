@@ -79,7 +79,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_preview.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_preview_authority.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_preview.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/send_resolver_proof.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/send_route_authority.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types/commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
@@ -188,6 +188,7 @@ tests	tests/docs_surface.rs
 tests	tests/huge_choreography_compile.rs
 tests	tests/huge_choreography_runtime.rs
 tests	tests/runtime_surface.rs
+tests	tests/send_route_authority.rs
 tests	tests/tap_resolver_audit.rs
 tests	tests/lane_lifecycle_tap.rs
 tests	tests/local_action.rs
