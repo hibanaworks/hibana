@@ -98,6 +98,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "the resolver belongs to",
         "let inner = g::route(a, b)",
         "Resolver state is the external input owner",
+        "A resolved route uses `ResolverRef::decide()` as branch authority",
+        "intrinsic route derives branch authority from projected first visible endpoint",
         "rv.set_resolver(&role0, ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;",
         "External resolver state uses the same explicit registration path.",
         "decisions come from the typed resolver",
@@ -185,6 +187,10 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "appkit_prefix",
         "build_management_prefix",
         "drive_management_pair",
+        "duplicate labels",
+        "duplicate branch labels",
+        "branch labels must be unique",
+        "duplicate branch labels rejected",
         "MyDemux",
         "EPF",
         "project(&PROGRAM)",
@@ -445,6 +451,10 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "0x0300 + 124",
         "0x0300 + 90",
         "`IngressEvidence`",
+        "duplicate labels",
+        "duplicate branch labels",
+        "branch labels must be unique",
+        "duplicate branch labels rejected",
     ] {
         assert!(
             !readme.contains(forbidden),
@@ -519,6 +529,7 @@ fn crate_root_docs_keep_descriptor_first_control_story() {
         "Branch choice is either an in-band protocol message",
         "Transport evidence is",
         "not route authority",
+        "route controller mismatch",
     ] {
         assert!(
             lib_rs.contains(required),
@@ -528,6 +539,8 @@ fn crate_root_docs_keep_descriptor_first_control_story() {
 
     for forbidden in [
         "cancel pair, checkpoint/restore, splice",
+        "duplicate branch labels",
+        "branch labels must be unique",
         "shot and permissions are embedded in the const metadata",
         "manages local state (lane/gen/cap/splice)",
     ] {

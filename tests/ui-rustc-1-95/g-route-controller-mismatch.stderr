@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: route arms use different first visible controllers
+error[E0080]: evaluation panicked: intrinsic route arms use different first visible controllers
  --> src/g.rs
   |
   |     const { validate_choreography::<Steps>() };
@@ -16,8 +16,8 @@ note: inside `g::panic_choreography_error`
   |
  ::: src/g.rs
   |
-  |             panic!("route arms use different first visible controllers")
-  |             ------------------------------------------------------------ in this macro invocation
+  |             panic!("intrinsic route arms use different first visible controllers")
+  |             ---------------------------------------------------------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/g.rs

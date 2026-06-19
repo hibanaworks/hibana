@@ -61,7 +61,7 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
             panic!("g::route arms must begin with a visible action")
         }
         ProgramSourceError::RouteControllerMismatch => {
-            panic!("route arms use different first visible controllers")
+            panic!("intrinsic route arms use different first visible controllers")
         }
         ProgramSourceError::RollBodyAbsent => panic!("rolled body requires at least one step"),
         ProgramSourceError::ParallelArmAbsent => {
@@ -151,9 +151,10 @@ pub const fn seq<LeftSteps, RightSteps>(
 
 /// Construct a binary route.
 ///
-/// The controller is derived from the sender of the first visible action in
-/// each arm. Arms whose first visible actions do not share a controller are
-/// rejected during projection.
+/// Intrinsic routes derive branch authority from first-visible endpoint
+/// evidence; their arms must agree on the first-visible controller. Resolved
+/// routes use [`ResolverRef::decide`](crate::runtime::ResolverRef::decide) as
+/// branch authority instead.
 pub const fn route<LeftSteps, RightSteps>(
     left: Program<LeftSteps>,
     right: Program<RightSteps>,

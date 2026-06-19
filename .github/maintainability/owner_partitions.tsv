@@ -53,6 +53,7 @@ src/endpoint/kernel	src/endpoint/kernel/public_ops.rs
 src/endpoint/kernel	src/endpoint/kernel/public_poll.rs
 src/endpoint/kernel	src/endpoint/kernel/recv
 src/endpoint/kernel	src/endpoint/kernel/recv.rs
+src/endpoint/kernel	src/endpoint/kernel/recv_commit_plan.rs
 src/endpoint/kernel	src/endpoint/kernel/authority.rs
 src/endpoint/kernel	src/endpoint/kernel/evidence.rs
 src/endpoint/kernel	src/endpoint/kernel/evidence_store.rs

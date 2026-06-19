@@ -88,6 +88,7 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
         desc: BranchRecvRuntimeDesc,
         prepared_meta: Option<RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
 }
 
@@ -141,6 +142,7 @@ pub(crate) fn kernel_recv<'r>(
 pub(crate) fn kernel_branch_recv<'r>(
     endpoint: &mut dyn BranchRecvKernelEndpoint<'r>,
     desc: BranchRecvRuntimeDesc,
+    validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::branch_recv::BranchRecvState<'r>,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
@@ -182,7 +184,7 @@ pub(crate) fn kernel_branch_recv<'r>(
     let prepared_meta = state.prepared_meta();
     let result = {
         let branch = crate::invariant_some(state.branch_mut());
-        endpoint.finish_branch_recv_kernel(desc, prepared_meta, branch)
+        endpoint.finish_branch_recv_kernel(desc, prepared_meta, branch, validate)
     };
     match result {
         Ok(payload) => {

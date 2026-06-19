@@ -149,8 +149,7 @@ fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
 #[test]
 fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
-    let recv = read("src/endpoint/kernel/recv.rs");
-    let finish = read("src/endpoint/kernel/branch_recv/finish.rs");
+    let recv_commit_plan_source = read("src/endpoint/kernel/recv_commit_plan.rs");
     let branch_recv_builder = read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs");
     let select = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
@@ -168,16 +167,11 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
         .nth(1)
         .and_then(|tail| tail.split("fn preflight_send_cursor_after_preview").next())
         .expect("send progress publish must stay factored");
-    let recv_publish = recv
-        .split("fn publish_recv_commit_plan")
+    let recv_publish = recv_commit_plan_source
+        .split("fn publish_recv_commit_plan<F>")
         .nth(1)
-        .and_then(|tail| tail.split("fn finish_recv_payload").next())
+        .and_then(|tail| tail.split("\n    }\n}").next())
         .expect("recv publish must stay factored");
-    let branch_recv_publish = finish
-        .split("fn publish_branch_recv_commit_plan(")
-        .nth(1)
-        .and_then(|tail| tail.split("plan.payload.into_payload()").next())
-        .expect("branch-recv publish function must stay factored");
     let lane_relocation_preflight = commit_delta
         .split("fn preflight_lane_relocation")
         .nth(1)
@@ -367,14 +361,19 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
         commit_pos < emit_pos,
         "passive route materialization must not emit route selection before prepared CommitDelta commit"
     );
-    let branch_recv_commit_pos = branch_recv_publish
+    let branch_recv_arm = recv_publish
+        .split("RecvCommitPlanKind::Branch { branch } =>")
+        .nth(1)
+        .and_then(|tail| tail.split("        }").next())
+        .expect("branch recv arm must stay inside shared recv commit publish");
+    let branch_recv_commit_pos = branch_recv_arm
         .find("self.commit_prepared_delta(delta);")
         .expect("branch-recv publish must commit a prepared delta");
-    let branch_recv_branch_publish_pos = branch_recv_publish
-        .find("self.publish_branch_preview_commit_plan(plan.branch);")
+    let branch_recv_branch_publish_pos = branch_recv_arm
+        .find("self.publish_branch_preview_commit_plan(branch);")
         .expect("branch-recv publish must publish branch preview");
-    let branch_recv_event_publish_pos = branch_recv_publish
-        .find("self.emit_endpoint_event(plan.event.event_id, endpoint_meta, plan.event.lane);")
+    let branch_recv_event_publish_pos = branch_recv_arm
+        .find("self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);")
         .expect("branch-recv publish must publish endpoint event");
     assert!(
         branch_recv_commit_pos < branch_recv_branch_publish_pos
@@ -398,7 +397,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
         ("recv", recv_publish, "self.commit_prepared_delta(delta);"),
         (
             "branch-recv",
-            branch_recv_publish,
+            branch_recv_arm,
             "self.commit_prepared_delta(delta);",
         ),
     ] {
@@ -472,20 +471,11 @@ fn route_stack_depth_cap_is_projection_sealed() {
 #[test]
 fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
     let branch_recv = read("src/endpoint/kernel/branch_recv.rs");
-    let branch_recv_payload = read("src/endpoint/kernel/branch_recv/payload.rs");
     let branch_recv_finish = read("src/endpoint/kernel/branch_recv/finish.rs");
     let branch_recv_builder = read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs");
-    let branch_recv_surface = [
-        branch_recv.as_str(),
-        branch_recv_payload.as_str(),
-        branch_recv_builder.as_str(),
-    ]
-    .join("\n");
-    let wire_progress = branch_recv
-        .split("enum BranchRecvProgressPlan")
-        .nth(1)
-        .and_then(|tail| tail.split("Branch {").next())
-        .expect("BranchRecvProgressPlan::Wire must stay visible");
+    let recv_commit_plan = read("src/endpoint/kernel/recv_commit_plan.rs");
+    let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
+    let branch_recv_surface = [branch_recv.as_str(), branch_recv_builder.as_str()].join("\n");
     let with_builder = branch_recv_finish
         .split("fn with_branch_recv_commit_builder(")
         .nth(1)
@@ -496,37 +486,42 @@ fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
         .expect("branch-recv builder boundary must stay visible");
 
     assert!(
-        wire_progress.contains("delta: CommitDelta")
-            && !wire_progress.contains("branch_scope")
-            && !wire_progress.contains("branch_lane"),
-        "wire branch-recv progress must carry only the semantic commit delta"
-    );
-    assert!(
-        branch_recv.contains("NonWire { delta: CommitDelta }")
-            && branch_recv.contains("enum PreparedBranchRecvProgressPlan")
-            && branch_recv.contains("Wire { delta: PreparedCommitDelta }")
-            && branch_recv.contains("NonWire { delta: PreparedCommitDelta }")
-            && branch_recv.contains("struct RecvCommitPlan<'r>")
-            && branch_recv_payload.contains("enum BranchRecvCommitPayload<'r>")
-            && branch_recv.contains("payload: BranchRecvCommitPayload<'r>")
-            && branch_recv.contains("fn wire<F>(")
-            && branch_recv.contains("fn non_wire<F>(")
-            && branch_recv.contains("frame.validated_payload(validate)")
-            && branch_recv.contains("frame.discard_uncommitted();")
-            && branch_recv_payload.contains("frame.into_payload()")
+        runtime_types.contains(
+            "pub(crate) struct BranchRecvRuntimeDesc {\n    pub(crate) core: MsgCore,\n}"
+        ) && !runtime_types.contains("validate:")
+            && !runtime_types.contains("fn validate_payload(")
+            && recv_commit_plan.contains("pub(super) struct BranchRecvCommitInput<'r>")
+            && recv_commit_plan.contains("pub(super) enum RecvCommitPayload<'r>")
+            && recv_commit_plan.contains("pub(super) struct RecvCommitPlan<'r>")
+            && recv_commit_plan.contains("enum RecvCommitPlanKind")
+            && recv_commit_plan.contains("fn prepare_branch_recv_commit_plan(")
+            && recv_commit_plan.contains("fn publish_recv_commit_plan<F>(")
+            && recv_commit_plan.contains("frame.validated_payload(validate)")
+            && recv_commit_plan.contains("frame.into_payload()")
+            && recv_commit_plan.contains("self.commit_prepared_delta(delta);")
+            && recv_commit_plan.contains("self.publish_branch_preview_commit_plan(branch);")
             && !branch_recv_surface.contains("struct DecodePublishPlan")
             && !branch_recv_surface.contains("committed_payload")
-            && with_builder.contains(") -> RecvResult<PreparedBranchRecvPublishPlan<'r>>")
-            && with_builder.contains("self.prepare_branch_recv_publish_plan(plan)")
-            && branch_recv_builder.contains("RecvResult<RecvCommitPlan<'r>>")
+            && with_builder.contains(") -> RecvResult<RecvCommitPlan<'r>>")
+            && with_builder.contains("self.prepare_branch_recv_commit_plan(input)")
+            && branch_recv_builder.contains("RecvResult<BranchRecvCommitInput<'r>>")
             && branch_recv_builder.contains("struct WireBranchRecvCommitInput<'r>")
             && branch_recv_builder.contains("frame: lane_port::ReceivedFrame<'r>")
+            && branch_recv_builder.contains("RecvCommitPayload::wire(frame)")
+            && branch_recv_builder.contains("RecvCommitPayload::non_wire(payload)")
             && branch_recv_builder.contains("let mut frame = Some(frame);")
             && branch_recv_builder.contains("if result.is_err()")
-            && !branch_recv_builder.contains("fn publish_branch_recv_commit_plan(")
+            && !branch_recv_surface.contains("struct RecvCommitPlan")
+            && !branch_recv_surface.contains("enum BranchRecvCommitPayload")
+            && !branch_recv_surface.contains("BranchRecvProgressPlan")
+            && !branch_recv_surface.contains("PreparedBranchRecvProgressPlan")
+            && !branch_recv_surface.contains("PreparedBranchRecvPublishPlan")
+            && !branch_recv_surface.contains("frame.validated_payload")
+            && !branch_recv_surface.contains("frame.into_payload()")
+            && !branch_recv_finish.contains("fn publish_branch_recv_commit_plan(")
             && !branch_recv_surface.contains("PreparedSyntheticBranchCommitDelta")
             && !branch_recv_surface.contains("PreparedEmptyBranchCommitDelta"),
-        "branch-recv planning may carry CommitDelta only inside the commit builder and must return PreparedBranchRecvPublishPlan across the endpoint boundary"
+        "branch recv must use the shared RecvCommitPlan as its only commit authority"
     );
     let public_types = read("src/endpoint/kernel/core/public_types.rs");
     let offered_frame = public_types
@@ -539,7 +534,7 @@ fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
             && !offered_frame.contains("fn commit(")
             && offered_frame.contains("fn into_frame(")
             && offered_frame.contains("fn discard_terminal("),
-        "staged branch payloads must not expose validation or receipt-consume outside RecvCommitPlan"
+        "offered branch frames must not expose validation or receipt-consume outside RecvCommitPlan"
     );
     for forbidden in ["route_ancestor_arm", "scope_parent("] {
         assert!(

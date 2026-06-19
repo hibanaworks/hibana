@@ -500,7 +500,7 @@ fn source_frontier_tracks_endpoint_ops_without_label_duplicate_authority() {
 fn direct_recv_commits_only_through_observed_evidence_plan() {
     let recv = read("src/endpoint/kernel/recv.rs");
     let recv_evidence = read("src/endpoint/kernel/recv/evidence.rs");
-    let recv_commit_plan = read("src/endpoint/kernel/recv/commit_plan.rs");
+    let recv_commit_plan = read("src/endpoint/kernel/recv_commit_plan.rs");
     let core = read("src/endpoint/kernel/core.rs");
     let surface = [
         recv.as_str(),
@@ -519,8 +519,10 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
         "frame_label: u8,",
         "enum MatchAccumulator",
         "None,\n    One(RecvCandidate),\n    Ambiguous,",
-        "struct RecvCommitPlan<'a> {\n    pub(super) desc: RecvDescriptor,\n    pub(super) frame: lane_port::ReceivedFrame<'a>,\n    pub(super) delta: PreparedCommitDelta,\n}",
-        "impl<'a> RecvCommitPlan<'a>",
+        "pub(super) struct RecvCommitPlan<'r>",
+        "enum RecvCommitPlanKind",
+        "RecvCommitPlanKind::Direct",
+        "RecvCommitPlanKind::Branch { branch }",
         "fn prepare_recv_commit_delta(",
         "frame.discard_uncommitted();",
         "fn poll_recv_preamble_for_label(",
@@ -528,8 +530,9 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
         "fn accept_observed_recv_frame(",
         "fn poll_recv_kernel_frame_source(",
         "fn finish_recv_kernel_frame(",
-        "frame.validated_payload(validate)",
-        "frame.into_payload()",
+        "fn publish_recv_commit_plan<F>(",
+        "Self::Wire(frame) => frame.validated_payload(validate).map(|_| ())",
+        "Self::Wire(frame) => frame.into_payload()",
     ] {
         assert!(
             surface.contains(required),

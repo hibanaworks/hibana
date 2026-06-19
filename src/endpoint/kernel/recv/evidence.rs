@@ -15,7 +15,6 @@ pub(super) struct RecvCandidate {
 pub(super) struct RecvDescriptor {
     pub(super) meta: RecvMeta,
     pub(super) cursor_index: StateIndex,
-    pub(super) sid_raw: u32,
     pub(super) lane_idx: usize,
     pub(super) lane_wire: u8,
 }

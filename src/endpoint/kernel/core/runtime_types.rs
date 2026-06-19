@@ -1,7 +1,7 @@
 use super::commit_delta::PreparedCommitDelta;
 use super::{
-    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Payload, Port, SendMeta, SendPreview,
-    SendResult, StateIndex, Transport, lane_port,
+    CursorEndpoint, EndpointArenaLayout, Lane, LaneGuard, Port, SendMeta, SendPreview, SendResult,
+    StateIndex, Transport, lane_port,
 };
 
 pub(crate) struct StagedSendPayload {
@@ -88,19 +88,13 @@ impl MsgCore {
 #[derive(Clone, Copy)]
 pub(crate) struct BranchRecvRuntimeDesc {
     pub(crate) core: MsgCore,
-    validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
 }
 
 impl BranchRecvRuntimeDesc {
     #[inline]
-    pub(crate) const fn new(
-        logical_label: u8,
-        frame_label: crate::transport::FrameLabel,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
-    ) -> Self {
+    pub(crate) const fn new(logical_label: u8, frame_label: crate::transport::FrameLabel) -> Self {
         Self {
             core: MsgCore::new(logical_label, frame_label),
-            validate,
         }
     }
 
@@ -112,14 +106,6 @@ impl BranchRecvRuntimeDesc {
     #[inline]
     pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
         self.core.frame_label()
-    }
-
-    #[inline]
-    pub(crate) fn validate_payload(
-        self,
-        payload: Payload<'_>,
-    ) -> Result<(), crate::transport::wire::CodecError> {
-        (self.validate)(payload)
     }
 }
 

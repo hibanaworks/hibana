@@ -92,7 +92,7 @@ fn send_future_and_runtime_descriptor_size_gates_hold() {
     );
     assert!(
         size_of::<kernel::BranchRecvRuntimeDesc>() <= 3 * WORD,
-        "BranchRecvRuntimeDesc must be core plus decode metadata only",
+        "BranchRecvRuntimeDesc must stay codec-free message core only",
     );
     assert!(
         size_of::<kernel::SendRuntimeDesc>() <= 6 * WORD,

@@ -1,13 +1,10 @@
 use super::{
     BranchCommitPlan, BranchKind, BranchPreviewView, BranchRecvCommitBuilder,
-    BranchRecvProgressPlan, CursorEndpoint, EndpointRxEventPlan, Payload, RecvCommitPlan,
+    BranchRecvCommitInput, CursorEndpoint, EndpointRxEventPlan, Payload, RecvCommitPayload,
     RecvError, RecvMeta, RecvResult, StateIndex, Transport, branch_recv_phase_invariant, lane_port,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
-use crate::{
-    endpoint::kernel::core::{CommitDelta, CommitRow},
-    transport::wire::CodecError,
-};
+use crate::endpoint::kernel::core::{CommitDelta, CommitRow};
 
 pub(super) struct WireBranchRecvCommitInput<'r> {
     pub(super) branch_plan: BranchCommitPlan,
@@ -22,11 +19,10 @@ impl<'build, 'r, const ROLE: u8, T> BranchRecvCommitBuilder<'build, 'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(super) fn build_branch_recv_commit_plan(
+    pub(super) fn build_wire_branch_recv_commit_input(
         &mut self,
         input: WireBranchRecvCommitInput<'r>,
-        validate: impl FnOnce(Payload<'r>) -> Result<(), CodecError>,
-    ) -> RecvResult<RecvCommitPlan<'r>> {
+    ) -> RecvResult<BranchRecvCommitInput<'r>> {
         let WireBranchRecvCommitInput {
             branch_plan,
             branch,
@@ -86,13 +82,12 @@ where
             )
             .with_lane_relocation(reentry_cursor);
             let frame = crate::invariant_some(frame.take());
-            RecvCommitPlan::wire(
-                branch_plan,
+            Ok(BranchRecvCommitInput {
+                branch: branch_plan,
                 event,
-                BranchRecvProgressPlan::Wire { delta },
-                frame,
-                validate,
-            )
+                delta,
+                payload: RecvCommitPayload::wire(frame),
+            })
         })();
         if result.is_err()
             && let Some(frame) = frame
@@ -102,15 +97,14 @@ where
         result
     }
 
-    pub(super) fn build_non_wire_branch_recv_commit_plan(
+    pub(super) fn build_non_wire_branch_recv_commit_input(
         &mut self,
         branch_plan: BranchCommitPlan,
         event: EndpointRxEventPlan,
         branch: BranchPreviewView,
         kind: BranchKind,
         payload: Payload<'r>,
-        validate: impl FnOnce(Payload<'r>) -> Result<(), CodecError>,
-    ) -> RecvResult<RecvCommitPlan<'r>> {
+    ) -> RecvResult<BranchRecvCommitInput<'r>> {
         let route_rows = self
             .route_rows
             .take()
@@ -142,35 +136,36 @@ where
                         },
                     )
                     .map_err(|_| RecvError::PhaseInvariant)?;
-                BranchRecvProgressPlan::NonWire {
-                    delta: CommitDelta::from_event_row(
-                        branch_meta.eff_index,
-                        branch_meta.label,
-                        branch_meta.origin,
-                        CommitRow::new(
-                            branch_meta.scope_id,
-                            Some(branch_meta.selected_arm),
-                            branch_meta.lane_wire,
-                        ),
-                        route_rows.as_commit_rows(branch_meta.lane_wire),
-                        enabled.cursor_after(),
-                        enabled.progress_step(),
+                CommitDelta::from_event_row(
+                    branch_meta.eff_index,
+                    branch_meta.label,
+                    branch_meta.origin,
+                    CommitRow::new(
+                        branch_meta.scope_id,
+                        Some(branch_meta.selected_arm),
+                        branch_meta.lane_wire,
                     ),
-                }
+                    route_rows.as_commit_rows(branch_meta.lane_wire),
+                    enabled.cursor_after(),
+                    enabled.progress_step(),
+                )
             }
             BranchKind::TerminalArm => {
                 let next_index = StateIndex::from_usize(self.cursor.index());
-                BranchRecvProgressPlan::NonWire {
-                    delta: CommitDelta::route_rows(
-                        route_rows.as_route_only_commit_rows(branch_meta.lane_wire),
-                        next_index,
-                    ),
-                }
+                CommitDelta::route_rows(
+                    route_rows.as_route_only_commit_rows(branch_meta.lane_wire),
+                    next_index,
+                )
             }
             BranchKind::WireRecv | BranchKind::ArmSendHint => {
                 return Err(branch_recv_phase_invariant());
             }
         };
-        RecvCommitPlan::non_wire(branch_plan, event, progress, payload, validate)
+        Ok(BranchRecvCommitInput {
+            branch: branch_plan,
+            event,
+            delta: progress,
+            payload: RecvCommitPayload::non_wire(payload),
+        })
     }
 }

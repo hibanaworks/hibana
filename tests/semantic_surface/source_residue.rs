@@ -615,8 +615,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
 #[test]
 fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
-    let recv = read("src/endpoint/kernel/recv.rs");
-    let finish = read("src/endpoint/kernel/branch_recv/finish.rs");
+    let recv_commit_plan = read("src/endpoint/kernel/recv_commit_plan.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let runtime_types = runtime_types_source();
@@ -677,10 +676,14 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
             send_ops.as_str(),
             "let committed = self.commit_prepared_delta(plan.delta);",
         ),
-        ("recv", recv.as_str(), "self.commit_prepared_delta(delta);"),
         (
-            "decode",
-            finish.as_str(),
+            "recv",
+            recv_commit_plan.as_str(),
+            "self.commit_prepared_delta(delta);",
+        ),
+        (
+            "branch-recv",
+            recv_commit_plan.as_str(),
             "self.commit_prepared_delta(delta);",
         ),
     ] {

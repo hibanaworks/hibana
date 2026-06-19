@@ -1,13 +1,13 @@
 use super::{
     BranchCommitPlan, BranchKind, BranchPreviewView, BranchRecvCommitBuilder,
-    BranchRecvProgressPlan, BranchRecvRuntimeDesc, CursorEndpoint, EndpointRxEventPlan,
-    EventCursor, MaterializedRouteBranch, Payload, Poll, PreparedBranchRecvProgressPlan,
-    PreparedBranchRecvPublishPlan, RecvCommitPlan, RecvError, RecvMeta, RecvResult, RouteState,
-    SelectedRouteCommitRows, StateIndex, Transport, branch_recv_phase_invariant, lane_port,
+    BranchRecvCommitInput, BranchRecvRuntimeDesc, CursorEndpoint, EndpointRxEventPlan, EventCursor,
+    MaterializedRouteBranch, Payload, Poll, RecvCommitPayload, RecvCommitPlan, RecvError, RecvMeta,
+    RecvResult, RouteState, SelectedRouteCommitRows, StateIndex, Transport,
+    branch_recv_phase_invariant, lane_port,
     prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
-use crate::{global::typestate::RelocatableResidentLaneStep, transport::trace::TapFrameMeta};
+use crate::{global::typestate::RelocatableResidentLaneStep, transport::wire::CodecError};
 
 mod commit_builder;
 use commit_builder::WireBranchRecvCommitInput;
@@ -58,6 +58,7 @@ where
         desc: BranchRecvRuntimeDesc,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
         let label = branch.label;
         let branch_meta = branch.branch_meta;
@@ -74,20 +75,20 @@ where
                 let payload = Self::non_wire_branch_payload();
                 let branch_view = BranchPreviewView::from_materialized(branch);
                 let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
-                let event = EndpointRxEventPlan::from_branch(branch_view);
+                let event =
+                    EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
                 let route_seed_rows = branch_plan.route_seed_rows();
-                let publish_plan =
+                let commit_plan =
                     self.with_branch_recv_commit_builder(route_seed_rows, |mut builder| {
-                        builder.build_non_wire_branch_recv_commit_plan(
+                        builder.build_non_wire_branch_recv_commit_input(
                             branch_plan,
                             event,
                             branch_view,
                             branch_meta.kind,
                             payload,
-                            |payload| desc.validate_payload(payload),
                         )
                     })?;
-                let committed_payload = self.publish_branch_recv_commit_plan(publish_plan);
+                let committed_payload = self.publish_recv_commit_plan(commit_plan, validate)?;
                 branch.offered_frame = None;
                 Ok(committed_payload)
             }
@@ -123,24 +124,21 @@ where
                 let branch_recv_meta =
                     branch_plan.meta().ok_or_else(branch_recv_phase_invariant)?;
                 let route_seed_rows = branch_plan.route_seed_rows();
-                let event = EndpointRxEventPlan::from_branch(branch_view);
+                let event =
+                    EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
                 let frame = crate::invariant_some(branch.offered_frame.take()).into_frame();
-                let publish_plan =
+                let commit_plan =
                     self.with_branch_recv_commit_builder(route_seed_rows, |mut builder| {
-                        builder.build_branch_recv_commit_plan(
-                            WireBranchRecvCommitInput {
-                                branch_plan,
-                                branch: branch_view,
-                                meta,
-                                branch_meta: branch_recv_meta,
-                                event,
-                                frame,
-                            },
-                            |payload| desc.validate_payload(payload),
-                        )
+                        builder.build_wire_branch_recv_commit_input(WireBranchRecvCommitInput {
+                            branch_plan,
+                            branch: branch_view,
+                            meta,
+                            branch_meta: branch_recv_meta,
+                            event,
+                            frame,
+                        })
                     })?;
-                let committed_payload = self.publish_branch_recv_commit_plan(publish_plan);
-                Ok(committed_payload)
+                self.publish_recv_commit_plan(commit_plan, validate)
             }
         }
     }
@@ -150,9 +148,9 @@ where
         route_seed_rows: super::SelectedRouteCommitRowsRef,
         f: impl for<'build> FnOnce(
             BranchRecvCommitBuilder<'build, 'r, ROLE, T>,
-        ) -> RecvResult<RecvCommitPlan<'r>>,
-    ) -> RecvResult<PreparedBranchRecvPublishPlan<'r>> {
-        let plan = {
+        ) -> RecvResult<BranchRecvCommitInput<'r>>,
+    ) -> RecvResult<RecvCommitPlan<'r>> {
+        let input = {
             let Self {
                 cursor,
                 decision_state,
@@ -166,7 +164,7 @@ where
                 _role: core::marker::PhantomData,
             })?
         };
-        self.prepare_branch_recv_publish_plan(plan)
+        self.prepare_branch_recv_commit_plan(input)
     }
 
     fn collect_branch_recv_reentry_route_rows_from_parts(
@@ -248,58 +246,6 @@ where
             Self::authorized_route_arm_for_branch_recv(decision_state, cursor, rows, scope)
         })
     }
-
-    fn prepare_branch_recv_publish_plan(
-        &mut self,
-        plan: RecvCommitPlan<'r>,
-    ) -> RecvResult<PreparedBranchRecvPublishPlan<'r>> {
-        let progress = match plan.progress {
-            BranchRecvProgressPlan::Wire { delta } => match self.prepare_commit_delta(delta) {
-                Ok(delta) => PreparedBranchRecvProgressPlan::Wire { delta },
-                Err(_) => {
-                    plan.payload.discard_uncommitted();
-                    return Err(RecvError::PhaseInvariant);
-                }
-            },
-            BranchRecvProgressPlan::NonWire { delta } => match self.prepare_commit_delta(delta) {
-                Ok(delta) => PreparedBranchRecvProgressPlan::NonWire { delta },
-                Err(_) => {
-                    plan.payload.discard_uncommitted();
-                    return Err(RecvError::PhaseInvariant);
-                }
-            },
-        };
-        Ok(PreparedBranchRecvPublishPlan {
-            branch: plan.branch,
-            event: plan.event,
-            progress,
-            payload: plan.payload,
-        })
-    }
-}
-
-impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
-where
-    T: Transport + 'r,
-{
-    fn publish_branch_recv_commit_plan(
-        &mut self,
-        plan: PreparedBranchRecvPublishPlan<'r>,
-    ) -> Payload<'r> {
-        match plan.progress {
-            PreparedBranchRecvProgressPlan::Wire { delta, .. } => {
-                self.commit_prepared_delta(delta);
-            }
-            PreparedBranchRecvProgressPlan::NonWire { delta } => {
-                self.commit_prepared_delta(delta);
-            }
-        }
-        self.publish_branch_preview_commit_plan(plan.branch);
-        let endpoint_meta =
-            TapFrameMeta::new(self.sid.raw(), plan.event.lane, ROLE, plan.event.label);
-        self.emit_endpoint_event(plan.event.event_id, endpoint_meta, plan.event.lane);
-        plan.payload.into_payload()
-    }
 }
 
 impl<'r, const ROLE: u8, T> crate::endpoint::kernel::core::BranchRecvKernelEndpoint<'r>
@@ -344,7 +290,8 @@ where
         desc: BranchRecvRuntimeDesc,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
         branch: &mut MaterializedRouteBranch<'r>,
+        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_route_branch_recv(desc, prepared_meta, branch)
+        self.finish_route_branch_recv(desc, prepared_meta, branch, validate)
     }
 }

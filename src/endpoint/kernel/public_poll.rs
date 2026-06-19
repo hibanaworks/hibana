@@ -145,9 +145,8 @@ where
         let descriptor = BranchRecvRuntimeDesc::new(
             logical_label,
             crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
-            validate,
         );
-        match kernel_branch_recv(self, descriptor, &mut branch_recv_state, cx) {
+        match kernel_branch_recv(self, descriptor, validate, &mut branch_recv_state, cx) {
             Poll::Pending => {
                 self.register_session_waiter(cx.waker());
                 self.public_branch_recv_state = branch_recv_state;

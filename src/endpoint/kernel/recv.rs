@@ -8,22 +8,19 @@ use super::{
         prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
     },
     lane_port,
+    recv_commit_plan::{EndpointRxEventPlan, RecvCommitPlan},
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
     global::typestate::{CursorInvariantError, EventCommitMeta, StateIndex, state_index_to_usize},
-    observe::ids,
     transport::{
         Transport,
-        trace::TapFrameMeta,
         wire::{CodecError, Payload},
     },
 };
 
-mod commit_plan;
 mod evidence;
 
-use commit_plan::RecvCommitPlan;
 pub(crate) use evidence::MatchedRecvFrame;
 use evidence::{MatchAccumulator, MatchOutcome, ObservedInboundKey, RecvCandidate, RecvDescriptor};
 
@@ -134,7 +131,6 @@ where
             desc: RecvDescriptor {
                 meta,
                 cursor_index: StateIndex::from_usize(idx),
-                sid_raw: self.sid.raw(),
                 lane_idx,
                 lane_wire,
             },
@@ -217,7 +213,6 @@ where
         &mut self,
         logical_label: u8,
         matched: MatchedRecvFrame<'r>,
-        validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
         let MatchedRecvFrame { desc, frame } = matched;
         let delta = match self.prepare_recv_commit_delta(logical_label, desc, &frame) {
@@ -227,7 +222,11 @@ where
                 return Err(err);
             }
         };
-        RecvCommitPlan::new(desc, frame, delta, validate)
+        Ok(RecvCommitPlan::direct(
+            EndpointRxEventPlan::direct(desc.lane_wire, desc.meta.label),
+            delta,
+            frame,
+        ))
     }
 
     fn prepare_recv_commit_delta(
@@ -301,30 +300,14 @@ where
         Ok(delta)
     }
 
-    fn publish_recv_commit_plan(&mut self, plan: RecvCommitPlan<'r>) -> Payload<'r> {
-        let RecvCommitPlan { desc, frame, delta } = plan;
-        let meta = desc.meta;
-
-        let logical_meta = TapFrameMeta::new(desc.sid_raw, desc.lane_wire, ROLE, meta.label);
-        let event_id = if meta.origin.is_session() {
-            ids::ENDPOINT_SESSION
-        } else {
-            ids::ENDPOINT_RECV
-        };
-        self.emit_endpoint_event(event_id, logical_meta, meta.lane);
-
-        self.commit_prepared_delta(delta);
-        frame.into_payload()
-    }
-
     fn finish_recv_frame(
         &mut self,
         logical_label: u8,
         frame: MatchedRecvFrame<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        let plan = self.build_recv_commit_plan(logical_label, frame, validate)?;
-        Ok(self.publish_recv_commit_plan(plan))
+        let plan = self.build_recv_commit_plan(logical_label, frame)?;
+        self.publish_recv_commit_plan(plan, validate)
     }
 }
 

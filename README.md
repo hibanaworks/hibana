@@ -188,8 +188,9 @@ shape does not match.
 
 ### Routes
 
-`g::route(left, right)` is binary. Branch labels must be unique within the
-route shape.
+`g::route(left, right)` is binary. Intrinsic routes recover the branch from the
+first visible endpoint operation; resolved routes use the explicit resolver
+decision as branch authority.
 
 ```rust
 use hibana::g;
@@ -643,8 +644,9 @@ position, and carrier-local hints do not select route arms.
 ### Resolvers
 
 Resolvers are installed by the protocol crate for explicit route resolution
-sites. Route choices are otherwise derived from projected first visible branch
-actions. Resolver state is the external input owner: use
+sites. A resolved route uses `ResolverRef::decide()` as branch authority; an
+intrinsic route derives branch authority from projected first visible endpoint
+evidence. Resolver state is the external input owner: use
 `ResolverRef::decision_state(...)` when a resolver needs protocol-specific
 observations. Resolver failure rejects the step; it does not authorize any
 alternate semantic path.
@@ -659,8 +661,9 @@ Core guarantees:
 - Rust 2024 and stable Rust `1.95`;
 - runtime code is `no_std` and no-alloc-oriented;
 - descriptor storage is caller-provided, borrowed, static, or slab-backed;
-- route shape, duplicate labels, malformed choreography paths, and lane ownership
-  errors are rejected before endpoint execution;
+- route shape, ambiguous simultaneous endpoint operations, malformed
+  choreography paths, and lane ownership errors are rejected before endpoint
+  execution;
 - runtime cursor progress is one-way and affine;
 - protocol state is affine endpoint ownership, not shared atomic or shared
   memory state;

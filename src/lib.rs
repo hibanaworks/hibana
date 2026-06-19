@@ -114,8 +114,8 @@
 //! Hibana keeps the public API small because the projection boundary carries the
 //! proof work:
 //!
-//! - route shape, duplicate branch labels, and controller mismatch are rejected
-//!   before runtime;
+//! - route shape, ambiguous simultaneous endpoint operations, and intrinsic
+//!   route controller mismatch are rejected before runtime;
 //! - parallel composition rejects empty arms and overlapping `(role, lane)`
 //!   ownership;
 //! - labels are choreography identities, while transport frame labels are
