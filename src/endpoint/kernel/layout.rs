@@ -4,9 +4,7 @@ use super::decision_state::{RouteCommitRowSetBuilder, RouteScopeSelectedArmSlot,
 use super::evidence::RouteArmState;
 use super::evidence_store::ScopeEvidenceSlot;
 use super::frontier::OfferEntrySlot;
-use super::frontier::{
-    ActiveEntrySlot, FrontierObservationSlot, LaneOfferState, RootFrontierState,
-};
+use super::frontier::{ActiveEntrySlot, LaneOfferState, RootFrontierState};
 use super::frontier_state::FrontierState;
 use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RuntimeRoleFootprint};
 use crate::global::typestate::EventCursorState;
@@ -87,8 +85,6 @@ pub(crate) struct RouteFrontierArenaLayout {
     frontier_state: EndpointArenaSection,
     frontier_root_rows: EndpointArenaSection,
     frontier_root_active_slots: EndpointArenaSection,
-    frontier_root_observed_key_slots: EndpointArenaSection,
-    frontier_root_observed_offer_lanes: EndpointArenaSection,
     frontier_offer_entry_slots: EndpointArenaSection,
     scope_evidence_slots: EndpointArenaSection,
 }
@@ -115,7 +111,6 @@ pub(crate) struct EndpointArenaLayout {
 }
 
 impl EndpointArenaLayout {
-    #[inline(always)]
     pub(crate) const fn from_footprint(footprint: RuntimeRoleFootprint) -> Self {
         let mut offset = 0usize;
         let mut total_align = 1usize;
@@ -211,20 +206,6 @@ impl EndpointArenaLayout {
         offset = frontier_root_active_slots.end_offset();
         total_align = max_usize(total_align, frontier_root_active_slots.align());
 
-        let frontier_root_observed_key_slots = Self::section_array::<FrontierObservationSlot>(
-            offset,
-            footprint.frontier_entry_count(),
-        );
-        offset = frontier_root_observed_key_slots.end_offset();
-        total_align = max_usize(total_align, frontier_root_observed_key_slots.align());
-
-        let frontier_root_observed_offer_lanes = Self::section_array::<LaneWord>(
-            offset,
-            checked_usize_mul(footprint.active_lane_count, footprint.lane_word_count()),
-        );
-        offset = frontier_root_observed_offer_lanes.end_offset();
-        total_align = max_usize(total_align, frontier_root_observed_offer_lanes.align());
-
         let frontier_offer_entry_slots =
             Self::section_array::<OfferEntrySlot>(offset, footprint.frontier_entry_count());
         offset = frontier_offer_entry_slots.end_offset();
@@ -256,8 +237,6 @@ impl EndpointArenaLayout {
                 frontier_state,
                 frontier_root_rows,
                 frontier_root_active_slots,
-                frontier_root_observed_key_slots,
-                frontier_root_observed_offer_lanes,
                 frontier_offer_entry_slots,
                 scope_evidence_slots,
             },
@@ -361,18 +340,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn frontier_root_observed_key_slots(&self) -> EndpointArenaSection {
-        self.frontier.frontier_root_observed_key_slots
-    }
-
-    #[inline(always)]
     pub(crate) const fn frontier_offer_entry_slots(&self) -> EndpointArenaSection {
         self.frontier.frontier_offer_entry_slots
-    }
-
-    #[inline(always)]
-    pub(crate) const fn frontier_root_observed_offer_lanes(&self) -> EndpointArenaSection {
-        self.frontier.frontier_root_observed_offer_lanes
     }
 
     #[inline(always)]
@@ -526,17 +495,6 @@ mod tests {
             footprint.frontier_entry_count()
         );
         assert_eq!(
-            layout.frontier_root_observed_key_slots().count(),
-            footprint.frontier_entry_count()
-        );
-        assert_eq!(
-            layout.frontier_root_observed_offer_lanes().count(),
-            footprint
-                .active_lane_count
-                .checked_mul(footprint.lane_word_count())
-                .expect("layout test overflow")
-        );
-        assert_eq!(
             layout.frontier_offer_entry_slots().count(),
             footprint.frontier_entry_count()
         );
@@ -576,10 +534,6 @@ mod tests {
         assert_eq!(
             scoped_layout.route_state_active_offer_lanes().count(),
             base_layout.route_state_active_offer_lanes().count()
-        );
-        assert_eq!(
-            scoped_layout.frontier_root_observed_offer_lanes().count(),
-            base_layout.frontier_root_observed_offer_lanes().count()
         );
     }
 }

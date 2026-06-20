@@ -3,9 +3,8 @@
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, FirstRecvDispatchSpec, LocalAction, LocalDependency, LocalMeta, LocalNode,
-    MAX_FIRST_RECV_DISPATCH, PackedEventConflict, PassiveArmChildFact, RecvMeta, RouteScopeRows,
-    SendMeta, StateIndex, state_index_to_usize,
+    ARM_SHARED, LocalAction, LocalDependency, LocalMeta, LocalNode, PackedEventConflict,
+    PassiveArmChildFact, RecvMeta, RouteScopeRows, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
@@ -49,20 +48,28 @@ pub(crate) enum SendPreviewError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EnabledEventCommit {
+    event_index: StateIndex,
     progress_step: RelocatableResidentLaneStep,
     cursor_after: StateIndex,
 }
 
 impl EnabledEventCommit {
     #[inline(always)]
-    pub(crate) const fn new(
+    const fn new(
+        event_index: StateIndex,
         progress_step: RelocatableResidentLaneStep,
         cursor_after: StateIndex,
     ) -> Self {
         Self {
+            event_index,
             progress_step,
             cursor_after,
         }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn event_index(self) -> StateIndex {
+        self.event_index
     }
 
     #[inline(always)]
@@ -132,8 +139,8 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn event_program(&self) -> LocalEventProgram {
-        self.event_program
+    fn event_program(&self) -> &LocalEventProgram {
+        &self.event_program
     }
 
     #[inline(always)]
@@ -258,7 +265,6 @@ impl EventCursorMachine {
     fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
         FrontierScratchLayout::new(
             self.max_frontier_entries(),
-            self.logical_lane_count(),
             lane_word_count(self.logical_lane_count()),
         )
     }
@@ -279,6 +285,11 @@ impl EventCursorMachine {
     #[inline(always)]
     fn route_scope_reentry(&self, scope_id: ScopeId) -> bool {
         self.event_program().route_scope_reentry(scope_id)
+    }
+
+    #[inline(always)]
+    fn has_reentry_scopes(&self) -> bool {
+        self.event_program().has_reentry_scopes()
     }
 
     #[inline(always)]
@@ -399,7 +410,6 @@ pub(crate) struct EventCursorState {
 const CURRENT_STEP_UNLABELED_CODE: u16 = u16::MAX;
 
 impl EventCursorState {
-    #[inline(always)]
     pub(crate) unsafe fn init_empty(
         dst: *mut Self,
         lane_cursors: *mut u16,
@@ -505,6 +515,11 @@ impl EventCursor {
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
         self.machine().logical_lane_count()
+    }
+
+    #[inline(always)]
+    fn has_reentry_scopes(&self) -> bool {
+        self.machine().has_reentry_scopes()
     }
 
     #[inline(always)]

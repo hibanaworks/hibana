@@ -136,7 +136,6 @@ pub(crate) unsafe fn endpoint_resident_payload<'a>(payload: Payload<'_>) -> Payl
     Payload::new(bytes)
 }
 
-#[inline(always)]
 pub(super) fn poll_recv_frame<'r, T>(
     pending: &mut PendingRecv,
     port: &Port<'r, T>,
@@ -197,7 +196,6 @@ where
     }
 }
 
-#[inline(always)]
 pub(super) fn poll_recv_frame_preamble<'r, T>(
     pending: &mut PendingRecv,
     port: &Port<'r, T>,
@@ -237,7 +235,6 @@ where
     }
 }
 
-#[inline(always)]
 fn poll_recv_payload<'r, T>(
     pending: &mut PendingRecv,
     port: &Port<'r, T>,

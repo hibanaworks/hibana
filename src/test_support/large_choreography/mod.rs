@@ -4,7 +4,6 @@ pub(crate) mod linear_program;
 pub(crate) mod localside;
 pub(crate) mod route_localside;
 
-#[inline(always)]
 pub(crate) fn drive<F: core::future::Future>(mut future: F) -> F::Output {
     let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
     // SAFETY: the local future is stack-pinned for this polling loop

@@ -1,22 +1,12 @@
 use crate::{
-    eff::{
-        EffAtom, EffKind, EventOrigin,
-        meta::{MAX_SEGMENT_EFFS, MAX_SEGMENTS},
-    },
-    global::const_dsl::{
-        EffList, RouteFrontierSummary, RouteResolver, ScopeEvent, ScopeMarker, SegmentSummary,
-    },
+    eff::EffKind,
+    global::const_dsl::{EffList, RouteResolver, ScopeEvent},
 };
 
-use super::super::images::program::{
-    CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES, RouteResolverSite,
-};
+use super::super::images::program::{CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES};
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);
 const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
-const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES;
-const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES;
-const MAX_COMPILED_ROUTE_RESOLVER_SITES: usize = crate::eff::meta::MAX_EFF_NODES;
 
 mod impls;
 
@@ -37,86 +27,6 @@ const fn increment_compact_count(value: u16) -> u16 {
     value + 1
 }
 
-#[inline(always)]
-const fn decrement_compact_count(value: u16) -> u16 {
-    if value == 0 {
-        panic!("lowering count underflow");
-    }
-    value - 1
-}
-
-#[derive(Clone, Copy)]
-struct ProgramImageSegmentData {
-    atom_mask: u128,
-    summary: SegmentSummary,
-    node_len: u16,
-    atom_row_start: u16,
-    atom_row_len: u16,
-    scope_marker_start: u16,
-    scope_marker_len: u16,
-}
-
-impl ProgramImageSegmentData {
-    const EMPTY: Self = Self {
-        atom_mask: 0,
-        summary: SegmentSummary::EMPTY,
-        node_len: 0,
-        atom_row_start: 0,
-        atom_row_len: 0,
-        scope_marker_start: 0,
-        scope_marker_len: 0,
-    };
-
-    #[inline(always)]
-    const fn compact_count(value: usize) -> u16 {
-        if value > u16::MAX as usize {
-            panic!("lowering segment row count overflow");
-        }
-        value as u16
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ProgramAtomRow {
-    offset: u16,
-    atom: EffAtom,
-}
-
-impl ProgramAtomRow {
-    const EMPTY: Self = Self {
-        offset: u16::MAX,
-        atom: EffAtom {
-            from: 0,
-            to: 0,
-            label: 0,
-            origin: EventOrigin::User,
-            lane: 0,
-        },
-    };
-
-    #[inline(always)]
-    const fn new(offset: usize, atom: EffAtom) -> Self {
-        Self {
-            offset: ProgramImageSegmentData::compact_count(offset),
-            atom,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ProgramImageValidationData {
-    segments: [ProgramImageSegmentData; MAX_SEGMENTS],
-    len: usize,
-    atom_rows: [ProgramAtomRow; MAX_COMPILED_ATOM_ROWS],
-    atom_row_len: usize,
-    scope_markers: [ScopeMarker; MAX_COMPILED_SCOPE_MARKERS],
-    scope_marker_len: usize,
-    route_frontiers: [RouteFrontierSummary; MAX_COMPILED_ROUTE_RESOLVER_SITES],
-    route_frontier_len: usize,
-    route_resolver_sites: [RouteResolverSite; MAX_COMPILED_ROUTE_RESOLVER_SITES],
-    route_resolver_site_len: usize,
-}
-
 #[derive(Clone)]
 struct ProgramImageData {
     compiled_program_counts: CompiledProgramCounts,
@@ -131,7 +41,6 @@ struct ProgramRoleImageData {
 
 #[derive(Clone)]
 pub(crate) struct CompiledProgramImage {
-    validation: ProgramImageValidationData,
     program: ProgramImageData,
     roles: ProgramRoleImageData,
 }
@@ -188,14 +97,4 @@ pub(crate) struct RoleCompiledCounts {
     pub(crate) active_lane_count: usize,
     pub(crate) endpoint_lane_slot_count: usize,
     pub(crate) logical_lane_count: usize,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct CompiledProgramView<'a> {
-    segments: &'a [ProgramImageSegmentData; MAX_SEGMENTS],
-    len: usize,
-    atom_rows: &'a [ProgramAtomRow],
-    scope_markers: &'a [ScopeMarker],
-    route_frontiers: &'a [RouteFrontierSummary],
-    route_resolver_sites: &'a [RouteResolverSite],
 }

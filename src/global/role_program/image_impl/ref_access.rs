@@ -71,35 +71,35 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn lanes(self) -> RoleLaneImage {
-        RoleLaneImage::new(self.columns, self.blob)
+    pub(crate) const fn lanes(&self) -> RoleLaneImage<'_> {
+        RoleLaneImage::new(&self.columns, self.blob)
     }
 
     #[inline(always)]
-    pub(crate) const fn footprint(self) -> RuntimeRoleFootprint {
+    pub(crate) const fn footprint(&self) -> RuntimeRoleFootprint {
         self.facts.footprint()
     }
 
     #[inline(always)]
-    pub(crate) const fn local_step_count(self) -> usize {
+    pub(crate) const fn local_step_count(&self) -> usize {
         self.footprint().local_step_count
     }
 
     #[inline(always)]
-    pub(crate) const fn active_lane_set(self) -> LaneSetView<'static> {
+    pub(crate) const fn active_lane_set(&self) -> LaneSetView<'static> {
         let footprint = self.footprint();
         self.lanes()
             .lane_bit_view(self.active_lane_row, footprint.lane_word_count())
     }
 
     #[inline(always)]
-    pub(crate) const fn resident_row_min_start(self, idx: usize) -> Option<u16> {
+    pub(crate) const fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
         self.lanes().resident_row_min_start(idx)
     }
 
     #[inline(always)]
     pub(crate) const fn resident_row_lane_steps(
-        self,
+        &self,
         idx: usize,
         lane_idx: usize,
     ) -> Option<LaneSteps> {
@@ -107,51 +107,51 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn dependency_for_index(self, current_idx: usize) -> Option<LocalDependency> {
+    pub(crate) const fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
         self.lanes().dependency_for_index(current_idx)
     }
 
     #[inline(always)]
-    pub(crate) const fn event_conflict_for_index(self, current_idx: usize) -> PackedEventConflict {
+    pub(crate) const fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
         self.lanes().event_conflict_for_index(current_idx)
     }
 
     #[inline(always)]
-    pub(crate) const fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
+    pub(crate) const fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
         self.lanes().route_scope_conflict_by_slot(slot)
     }
 
     #[inline(always)]
-    pub(crate) const fn route_commit_range_by_slot(self, slot: usize, arm: u8) -> PackedLaneRange {
+    pub(crate) const fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
         self.lanes().route_commit_range_by_slot(slot, arm)
     }
 
     #[inline(always)]
-    pub(crate) const fn route_commit_row_at(self, idx: usize) -> PackedEventConflict {
+    pub(crate) const fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
         self.lanes().route_commit_row_at(idx)
     }
 
     #[inline(always)]
-    pub(crate) const fn roll_scope_row(self, slot: usize) -> Option<PackedRollScopeRow> {
+    pub(crate) const fn roll_scope_row(&self, slot: usize) -> Option<PackedRollScopeRow> {
         self.lanes().roll_scope_row(slot)
     }
 
     #[inline(always)]
     pub(crate) const fn route_scope_by_slot(
-        self,
+        &self,
         slot: usize,
     ) -> Option<crate::global::const_dsl::ScopeId> {
         self.lanes().route_scope_by_slot(slot)
     }
 
     #[inline(always)]
-    pub(crate) const fn route_scope_reentry_by_slot(self, slot: usize) -> bool {
+    pub(crate) const fn route_scope_reentry_by_slot(&self, slot: usize) -> bool {
         self.lanes().route_scope_reentry_by_slot(slot)
     }
 
     #[inline(always)]
     pub(crate) const fn passive_arm_child_ordinal_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
     ) -> Option<u16> {
@@ -159,17 +159,21 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn route_arm_event_row_by_slot(self, slot: usize, arm: u8) -> PackedLaneRange {
+    pub(crate) const fn route_arm_event_row_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+    ) -> PackedLaneRange {
         self.lanes().route_arm_event_row_by_slot(slot, arm)
     }
 
     #[inline(always)]
-    pub(crate) const fn local_step_lane(self, step_idx: usize) -> Option<u8> {
+    pub(crate) const fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
         self.lanes().local_step_lane(step_idx)
     }
 
     #[inline(always)]
-    pub(crate) const fn local_step_node(self, step_idx: usize) -> Option<LocalNode> {
+    pub(crate) const fn local_step_node(&self, step_idx: usize) -> Option<LocalNode> {
         if step_idx >= self.local_step_count() {
             None
         } else {
@@ -180,7 +184,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn resident_row_lane_step_at(
-        self,
+        &self,
         idx: usize,
         lane_idx: usize,
         ordinal: usize,
@@ -191,7 +195,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn resident_row_lane_step_ordinal(
-        self,
+        &self,
         idx: usize,
         lane_idx: usize,
         step_idx: usize,
@@ -201,7 +205,7 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn first_active_lane(self) -> Option<usize> {
+    pub(crate) const fn first_active_lane(&self) -> Option<usize> {
         if self.first_active_lane == u16::MAX {
             None
         } else {
@@ -211,7 +215,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn route_scope_arm_lane_set_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
     ) -> Option<LaneSetView<'static>> {
@@ -221,7 +225,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn route_scope_offer_lane_set_by_slot(
-        self,
+        &self,
         slot: usize,
     ) -> Option<LaneSetView<'static>> {
         self.lanes()
@@ -230,7 +234,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn route_arm_lane_first_step_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
         lane: u8,
@@ -245,7 +249,7 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn route_arm_lane_last_step_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
         lane: u8,

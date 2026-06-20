@@ -87,31 +87,6 @@ impl MsgCore {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct BranchRecvRuntimeDesc {
-    pub(crate) core: MsgCore,
-}
-
-impl BranchRecvRuntimeDesc {
-    #[inline]
-    pub(crate) const fn new(logical_label: u8, frame_label: crate::transport::FrameLabel) -> Self {
-        Self {
-            core: MsgCore::new(logical_label, frame_label),
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn logical_label(self) -> u8 {
-        self.core.logical_label()
-    }
-
-    #[inline]
-    pub(crate) const fn frame_label(self) -> crate::transport::FrameLabel {
-        self.core.frame_label()
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct SendRuntimeDesc {
     pub(crate) core: MsgCore,
 }

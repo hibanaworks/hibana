@@ -154,15 +154,15 @@ impl<'cfg> ResolverBucket<'cfg> {
         self.capacity = new_capacity;
     }
 
-    pub(crate) fn ensure_capacity<FA, FF>(
+    pub(crate) fn ensure_capacity<FA, FR>(
         &mut self,
         additional_entries: usize,
         allocate: FA,
-        mut free: FF,
+        mut release: FR,
     ) -> Result<(), ClusterError>
     where
         FA: FnOnce(usize, usize) -> Option<Sidecar<u8>>,
-        FF: FnMut(Sidecar<u8>) -> Result<(), ResourceScope>,
+        FR: FnMut(Sidecar<u8>),
     {
         if additional_entries == 0 {
             return Ok(());
@@ -185,18 +185,13 @@ impl<'cfg> ResolverBucket<'cfg> {
         /* SAFETY: the session cluster allocator returned a resolver sidecar
         sized and aligned by `ResolverBucket::{storage_bytes, storage_align}`.
         This bucket commits that sidecar only after initialization succeeds, and
-        frees the old sidecar before replacing the installed pointer. */
+        releases the old sidecar before replacing the installed pointer. */
         unsafe {
             if source_storage.ptr().is_null() {
                 self.bind_from_storage(storage.cast(), required);
             } else {
                 self.init_replacement_storage(storage.cast(), required);
-                if let Err(resource) = free(source_storage.cast()) {
-                    if free(storage).is_err() {
-                        crate::invariant();
-                    }
-                    return Err(ClusterError::resource_exhausted(resource));
-                }
+                release(source_storage.cast());
                 self.commit_storage(storage.cast(), required);
             }
         }

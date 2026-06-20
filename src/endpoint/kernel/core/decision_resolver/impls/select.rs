@@ -1,10 +1,9 @@
 use super::super::super::{
     Arm, CachedRecvMeta, CachedRouteArm, ClusterError, CommitDelta, CursorEndpoint, EffIndex,
     EventSemanticKind, OfferScopeSelection, RecvError, RecvMeta, RecvResult, RendezvousId,
-    ResolvedRouteArm, RouteArmToken, RouteResolveStep, RouteResolver, ScopeArmMaterializationMeta,
-    ScopeId, SendMeta, TapEvent, Transport, checked_state_index, controller_arm_label,
-    controller_arm_semantic_kind, emit, events,
-    prepare_route_site_materialization_rows_from_resident_route_commit_range,
+    ResolvedRouteArm, RouteArmToken, RouteResolveStep, RouteResolver, ScopeId, SendMeta, TapEvent,
+    Transport, checked_state_index, controller_arm_label, controller_arm_semantic_kind, emit,
+    events, prepare_route_site_materialization_rows_from_resident_route_commit_range,
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
 use crate::eff::EventOrigin;
@@ -16,10 +15,14 @@ where
     /// Preview recv metadata from a precomputed route-arm entry table.
     fn select_cached_route_arm_recv_meta(
         &self,
-        materialization_meta: ScopeArmMaterializationMeta,
+        scope_id: ScopeId,
         target_arm: u8,
     ) -> CachedRecvMeta {
-        let Some(recv_entry) = materialization_meta.recv_entry(target_arm) else {
+        let Some(recv_entry) = self
+            .cursor
+            .route_scope_arm_recv_index(scope_id, target_arm)
+            .and_then(checked_state_index)
+        else {
             return CachedRecvMeta::EMPTY;
         };
         let idx = state_index_to_usize(recv_entry);
@@ -181,14 +184,14 @@ where
         )
     }
 
-    fn compute_passive_arm_recv_meta(
+    #[inline(never)]
+    pub(in crate::endpoint::kernel) fn compute_passive_arm_recv_meta(
         &self,
-        materialization_meta: ScopeArmMaterializationMeta,
         scope_id: ScopeId,
         target_arm: u8,
         offer_lane: u8,
     ) -> CachedRecvMeta {
-        let Some(entry) = materialization_meta.passive_arm_entry(target_arm) else {
+        let Some(entry) = self.cursor.passive_observer_arm_entry(scope_id, target_arm) else {
             return CachedRecvMeta::EMPTY;
         };
         let entry_idx = state_index_to_usize(entry);
@@ -221,71 +224,68 @@ where
         CachedRecvMeta::EMPTY
     }
 
-    #[inline]
-    pub(in crate::endpoint::kernel) fn compute_scope_passive_recv_meta(
-        &self,
-        materialization_meta: ScopeArmMaterializationMeta,
-        scope_id: ScopeId,
-        offer_lane: u8,
-    ) -> [CachedRecvMeta; 2] {
-        [
-            self.compute_passive_arm_recv_meta(materialization_meta, scope_id, 0, offer_lane),
-            self.compute_passive_arm_recv_meta(materialization_meta, scope_id, 1, offer_lane),
-        ]
-    }
-
-    #[inline]
+    #[inline(never)]
     pub(in crate::endpoint::kernel) fn selection_arm_requires_materialization_ready_evidence(
         &self,
         selection: OfferScopeSelection,
         is_route_controller: bool,
         arm: u8,
     ) -> bool {
-        let materialization_meta = self.selection_materialization_meta(selection);
+        let scope_id = selection.scope_id;
+        let at_route_entry = selection.entry_position.is_route_entry();
+        let controller_arm_entry = self
+            .cursor
+            .shared_controller_arm_entry_by_arm(scope_id, arm);
         if is_route_controller
-            && selection.entry_position.is_route_entry()
-            && materialization_meta.controller_arm_entry(arm).is_some()
+            && at_route_entry
+            && let Some((entry, _)) = controller_arm_entry
         {
-            return materialization_meta.controller_arm_requires_ready_evidence(arm);
+            return self
+                .cursor
+                .try_recv_meta_at(state_index_to_usize(entry))
+                .is_some_and(|recv_meta| recv_meta.peer != ROLE);
         }
-        if selection.entry_position.is_route_entry()
-            && materialization_meta.passive_arm_entry(arm).is_some()
+        if at_route_entry
+            && self
+                .cursor
+                .passive_observer_arm_entry(scope_id, arm)
+                .is_some()
         {
-            if materialization_meta.arm_has_first_recv_dispatch(arm) {
+            if self.selected_arm_has_first_recv_dispatch(scope_id, arm) {
                 return !self
-                    .selection_arm_dispatch_materializes_without_ready_evidence(selection, arm);
+                    .selection_arm_dispatch_materializes_without_ready_evidence(scope_id, arm);
             }
             return false;
         }
-        let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
-        let Some(passive_meta) = passive_recv_meta.get(arm as usize).copied() else {
-            return materialization_meta.recv_entry(arm).is_some();
-        };
-        if passive_meta.is_recv_step() {
-            if passive_meta.peer == ROLE {
+        if arm as usize >= 2 {
+            return self
+                .cursor
+                .route_scope_arm_recv_index(scope_id, arm)
+                .is_some();
+        }
+        if let Some(passive_recv) = self.selected_passive_arm_recv_ready_meta(scope_id, arm) {
+            if passive_recv.peer == ROLE {
                 return false;
             }
-            if passive_meta.origin.is_session()
-                && materialization_meta
-                    .controller_arm_entry(arm)
-                    .map(|(_, label)| label)
-                    == Some(passive_meta.label)
+            if passive_recv.origin.is_session()
+                && controller_arm_entry.map(|(_, label)| label) == Some(passive_recv.label)
             {
                 return false;
             }
             return true;
         }
-        materialization_meta.recv_entry(arm).is_some()
+        self.cursor
+            .route_scope_arm_recv_index(scope_id, arm)
+            .is_some()
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn selection_arm_dispatch_materializes_without_ready_evidence(
         &self,
-        selection: OfferScopeSelection,
+        scope_id: ScopeId,
         arm: u8,
     ) -> bool {
-        let materialization_meta = self.selection_materialization_meta(selection);
-        let Some(entry) = materialization_meta.passive_arm_entry(arm) else {
+        let Some(entry) = self.cursor.passive_observer_arm_entry(scope_id, arm) else {
             return false;
         };
         let entry_idx = state_index_to_usize(entry);
@@ -295,22 +295,37 @@ where
         {
             return true;
         }
-        materialization_meta
-            .passive_child_scope(arm)
+        self.cursor
+            .passive_child_scope(scope_id, arm)
             .and_then(|scope| self.preview_selected_arm_for_scope(scope))
             .is_some()
     }
 
+    #[inline]
+    fn selected_arm_has_first_recv_dispatch(&self, scope_id: ScopeId, arm: u8) -> bool {
+        self.cursor
+            .route_scope_first_recv_dispatch_arm_mask(scope_id)
+            .is_some_and(|mask| arm < 2 && (mask & (1u8 << arm)) != 0)
+    }
+
+    #[inline(never)]
+    fn selected_passive_arm_recv_ready_meta(&self, scope_id: ScopeId, arm: u8) -> Option<RecvMeta> {
+        let entry_idx = self
+            .cursor
+            .passive_observer_arm_entry_index(scope_id, arm)?;
+        self.cursor.try_recv_meta_at(entry_idx)
+    }
+
+    #[inline(never)]
     pub(in crate::endpoint::kernel) fn preview_selected_arm_meta(
         &self,
         selection: OfferScopeSelection,
         selected_arm: u8,
     ) -> RecvResult<CachedRecvMeta> {
         let scope_id = selection.scope_id;
-        let materialization_meta = self.selection_materialization_meta(selection);
-        let passive_recv_meta = self.selection_passive_recv_meta(selection, materialization_meta);
         let controller_arm_entry = if self.cursor.is_route_controller(scope_id) {
-            materialization_meta.controller_arm_entry(selected_arm)
+            self.cursor
+                .shared_controller_arm_entry_by_arm(scope_id, selected_arm)
         } else {
             None
         };
@@ -332,8 +347,13 @@ where
                     selection.offer_lane,
                 )
             }
-        } else if selected_arm < materialization_meta.arm_count {
-            self.select_cached_route_arm_recv_meta(materialization_meta, selected_arm)
+        } else if selected_arm
+            < self
+                .cursor
+                .route_scope_arm_count(scope_id)
+                .ok_or(RecvError::PhaseInvariant)?
+        {
+            self.select_cached_route_arm_recv_meta(scope_id, selected_arm)
         } else {
             CachedRecvMeta::EMPTY
         };
@@ -341,10 +361,10 @@ where
         let meta = if !direct_meta.is_empty() {
             direct_meta
         } else {
-            passive_recv_meta
-                .get(selected_arm as usize)
-                .copied()
-                .ok_or(RecvError::PhaseInvariant)?
+            if selected_arm as usize >= 2 {
+                return Err(RecvError::PhaseInvariant);
+            }
+            self.compute_passive_arm_recv_meta(scope_id, selected_arm, selection.offer_lane)
         };
 
         Ok(meta)
@@ -504,15 +524,7 @@ where
         let cluster = self.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
         let resolution = match cluster.resolve_dynamic_resolver(rv_id, scope_id, resolver_id) {
-            Ok(resolution) => {
-                self.emit_dynamic_resolver_success_audit(
-                    offer_lane,
-                    scope_id,
-                    resolver_id,
-                    resolution,
-                );
-                resolution
-            }
+            Ok(resolution) => resolution,
             Err(ClusterError::ResolverReject { resolver_id }) => {
                 self.emit_dynamic_resolver_reject_audit(offer_lane, scope_id, resolver_id);
                 return Ok(RouteResolveStep::Reject(resolver_id));
@@ -526,9 +538,6 @@ where
             ) => return Err(RecvError::PhaseInvariant),
         };
         let arm = Arm::new(resolution.index()).ok_or(RecvError::PhaseInvariant)?;
-        self.record_route_arm_selection_for_scope_lanes(scope_id, arm.as_u8(), offer_lane);
-        self.record_scope_ack(scope_id, RouteArmToken::from_resolver(arm));
-        self.emit_route_arm_selection(scope_id, RouteArmToken::from_resolver(arm), offer_lane);
         Ok(RouteResolveStep::Resolved(arm))
     }
 }

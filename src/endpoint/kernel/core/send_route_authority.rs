@@ -1,18 +1,13 @@
-use super::SelectedRouteCommitRowsRef;
-
 #[derive(Clone, Copy)]
 pub(crate) enum SendRouteAudit {
     None,
-    DirectPreview,
+    DirectPreview { start: u16 },
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum SendRouteAuthority {
     None,
-    Direct {
-        selected_routes: SelectedRouteCommitRowsRef,
-        lane: u8,
-    },
+    Direct { lane: u8, audit_start: u16 },
     MaterializedBranch,
 }
 
@@ -23,15 +18,8 @@ impl SendRouteAuthority {
     }
 
     #[inline]
-    pub(crate) const fn direct(selected_routes: SelectedRouteCommitRowsRef, lane: u8) -> Self {
-        if selected_routes.is_empty() {
-            Self::None
-        } else {
-            Self::Direct {
-                selected_routes,
-                lane,
-            }
-        }
+    pub(crate) const fn direct(lane: u8, audit_start: u16) -> Self {
+        Self::Direct { lane, audit_start }
     }
 
     #[inline]
@@ -42,7 +30,10 @@ impl SendRouteAuthority {
     #[inline]
     pub(crate) const fn route_audit(self) -> SendRouteAudit {
         match self {
-            Self::Direct { .. } => SendRouteAudit::DirectPreview,
+            Self::Direct {
+                audit_start,
+                lane: _,
+            } => SendRouteAudit::DirectPreview { start: audit_start },
             Self::None | Self::MaterializedBranch => SendRouteAudit::None,
         }
     }

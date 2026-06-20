@@ -20,13 +20,11 @@ impl ReadyArmEvidence {
 #[derive(Clone, Copy)]
 pub(super) struct ScopeEvidenceSlot {
     evidence: ScopeEvidence,
-    generation: u16,
 }
 
 impl ScopeEvidenceSlot {
     const EMPTY: Self = Self {
         evidence: ScopeEvidence::EMPTY,
-        generation: 0,
     };
 }
 
@@ -101,17 +99,6 @@ impl ScopeEvidenceTable {
         Some(&mut self.slot_mut(slot)?.evidence)
     }
 
-    #[inline]
-    pub(super) fn generation(&self, slot: usize) -> u16 {
-        crate::invariant_some(self.slot(slot)).generation
-    }
-
-    pub(super) fn bump_generation(&mut self, slot: usize) {
-        let generation = &mut crate::invariant_some(self.slot_mut(slot)).generation;
-        let next = generation.wrapping_add(1);
-        *generation = if next == 0 { 1 } else { next };
-    }
-
     pub(super) fn clear(&mut self, slot: usize) -> bool {
         let evidence = &mut self[slot];
         let changed = evidence.ack.is_some()
@@ -143,14 +130,6 @@ impl IndexMut<usize> for ScopeEvidenceTable {
 }
 
 impl ScopeEvidenceTable {
-    #[inline]
-    pub(super) fn generation_for_slot(&self, slot: Option<usize>) -> u16 {
-        match slot {
-            Some(slot) => self.generation(slot),
-            None => 0,
-        }
-    }
-
     #[inline]
     pub(super) fn record_ack(&mut self, slot: usize, token: RouteArmToken) -> bool {
         let evidence = &mut self[slot];

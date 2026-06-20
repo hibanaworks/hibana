@@ -1,22 +1,30 @@
 //! Offer branch commit metadata.
 
 use super::super::authority::RouteArmToken;
-use super::super::core::BranchPreviewView;
 use super::super::decision_state::SelectedRouteCommitRowsRef;
 use super::profile::OfferScopeProfile;
-use super::resolve_types::RouteArmCommitEvidence;
 use crate::eff::{EffIndex, EventOrigin};
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{RecvMeta, StateIndex};
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct BranchCommitPlan {
-    pub(in crate::endpoint::kernel) preview: BranchPreviewView,
-    pub(in crate::endpoint::kernel) meta: Option<RecvMeta>,
-    pub(in crate::endpoint::kernel) route_seed_rows: SelectedRouteCommitRowsRef,
+    meta: Option<RecvMeta>,
+    route_seed_rows: SelectedRouteCommitRowsRef,
 }
 
 impl BranchCommitPlan {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) const fn new(
+        meta: Option<RecvMeta>,
+        route_seed_rows: SelectedRouteCommitRowsRef,
+    ) -> Self {
+        Self {
+            meta,
+            route_seed_rows,
+        }
+    }
+
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn meta(&self) -> Option<RecvMeta> {
         self.meta
@@ -55,7 +63,8 @@ pub(crate) struct BranchMeta {
     pub(in crate::endpoint::kernel) route_token: RouteArmToken,
     /// Evidence controlling whether branch commit emits a route-decision event.
     /// Passive payload/frame-label evidence is demux evidence, not authority.
-    pub(in crate::endpoint::kernel) route_arm_selection_commit_evidence: RouteArmCommitEvidence,
+    pub(in crate::endpoint::kernel) route_arm_selection_commit_evidence:
+        super::resolve_types::RouteArmCommitEvidence,
 }
 
 /// Branch first-step taxonomy.

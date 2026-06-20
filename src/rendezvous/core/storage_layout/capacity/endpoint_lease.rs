@@ -92,9 +92,6 @@ where
         let bytes = Self::endpoint_lease_storage_bytes(required_slots)
             .ok_or(ResourceScope::EndpointLease)?;
         let source_sidecar = self.endpoint_lease_storage;
-        let source_ptr = source_sidecar.ptr();
-        let source_bytes =
-            Self::endpoint_lease_storage_bytes(current).ok_or(ResourceScope::EndpointLease)?;
         let lease = self
             .allocate_external_persistent_sidecar_bytes(
                 bytes,
@@ -117,21 +114,7 @@ where
             }
             idx += 1;
         }
-        if !source_ptr.is_null()
-            && source_bytes != 0
-            && let Err(error) = self.free_external_persistent_sidecar(
-                source_sidecar.cast(),
-                ResourceScope::EndpointLease,
-            )
-        {
-            if self
-                .free_external_persistent_sidecar(lease, ResourceScope::EndpointLease)
-                .is_err()
-            {
-                crate::invariant();
-            }
-            return Err(error);
-        }
+        self.release_external_persistent_sidecar(source_sidecar.cast());
         self.endpoint_lease_storage = lease.cast::<EndpointLeaseSlot>();
         self.endpoint_lease_capacity = endpoint_lease_capacity;
         Ok(())

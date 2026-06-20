@@ -6,6 +6,9 @@ fn cursor_scope_route_source() -> String {
         "src/global/typestate/cursor/scope_route/event_progress.rs",
     ));
     source.push_str(&read(
+        "src/global/typestate/cursor/scope_route/send_preview.rs",
+    ));
+    source.push_str(&read(
         "src/global/typestate/cursor/scope_route/navigation.rs",
     ));
     source.push_str(&read(
@@ -17,6 +20,12 @@ fn cursor_scope_route_source() -> String {
 fn runtime_types_source() -> String {
     let mut source = read("src/endpoint/kernel/core/runtime_types.rs");
     source.push_str(&read("src/endpoint/kernel/core/runtime_types/commit.rs"));
+    source
+}
+
+fn send_ops_source() -> String {
+    let mut source = read("src/endpoint/kernel/core/send_ops.rs");
+    source.push_str(&read("src/endpoint/kernel/core/send_ops/route_evidence.rs"));
     source
 }
 
@@ -57,12 +66,15 @@ fn branch_recv_failure_completion_is_terminal_without_branch_restore() {
 fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let send_preview = read("src/endpoint/kernel/core/send_preview.rs");
     let send_preview_authority = read("src/endpoint/kernel/core/send_preview_authority.rs");
+    let send_ops = send_ops_source();
     let recv = read("src/endpoint/kernel/recv.rs");
     let facts =
         read("src/global/typestate/facts.rs") + &read("src/global/typestate/facts/dependency.rs");
     let event_program = read("src/global/event_program.rs");
     let cursor = read("src/global/typestate/cursor.rs");
     let cursor_scope_route = cursor_scope_route_source();
+    let cursor_scope_route_navigation =
+        read("src/global/typestate/cursor/scope_route/navigation.rs");
     let role_descriptor_ref = read("src/global/compiled/images/image/role_descriptor_ref.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
     let program_ref = read("src/global/compiled/images/image/program_ref.rs");
@@ -81,7 +93,15 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         .nth(1)
         .and_then(|tail| tail.split("pub(crate) fn event_enabled").next())
         .expect("event dependency guard must stay cursor-owned");
-    let event_conflict_guard = cursor_scope_route
+    let dependency_validation_guard = cursor_scope_route
+        .split("fn validate_event_enabled_dependency")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("fn validate_event_enabled_reentry_if_done")
+                .next()
+        })
+        .expect("event dependency validation must stay cursor-owned");
+    let event_conflict_guard = cursor_scope_route_navigation
         .split("pub(crate) fn event_conflict_row_allows")
         .nth(1)
         .and_then(|tail| {
@@ -89,10 +109,10 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
                 .next()
         })
         .expect("event conflict guard must stay cursor-owned");
-    let selected_arm_membership_guard = cursor_scope_route
-        .split("pub(crate) fn node_in_selected_route_arm")
+    let selected_arm_membership_guard = cursor_scope_route_navigation
+        .split("pub(crate) fn event_conflict_row_allows_with_preview")
         .nth(1)
-        .and_then(|tail| tail.split("pub(crate) fn event_conflict_row_allows").next())
+        .and_then(|tail| tail.split("fn preview_conflict_arm").next())
         .expect("selected route-arm membership guard must stay cursor-owned");
     let lane_head_guard = cursor_scope_route
         .split("pub(crate) fn event_lane_head_allows")
@@ -132,11 +152,12 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     );
     assert!(
         event_program.contains("pub(crate) struct LocalEventProgram")
-            && event_program.contains("rows: RoleImageRef")
+            && event_program.contains("rows: &'static RoleImageRef")
             && !local_event_program_struct.contains("role_descriptor")
-            && event_program.contains("pub(crate) const fn from_rows(rows: RoleImageRef) -> Self")
             && event_program
-                .contains("pub(crate) const fn program_ref(self) -> &'static CompiledProgramRef")
+                .contains("pub(crate) const fn from_rows(rows: &'static RoleImageRef) -> Self")
+            && event_program
+                .contains("pub(crate) const fn program_ref(&self) -> &'static CompiledProgramRef")
             && event_program.contains("self.rows().program")
             && !event_program.contains("RoleDescriptorRef")
             && event_program.contains("pub(crate) struct LocalEventRow")
@@ -248,8 +269,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
             && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
             && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
-            && role_program_impl.contains("frame label domain overflow")
-            && !role_program_impl.contains("frame_key_counts[frame_key_idx].wrapping_add")
+            && role_program_impl.contains("FrameLabelAssigner::EMPTY")
+            && role_program_impl.contains("frame_labels.assign(atom)")
             && event_program.contains("self.rows().dependency_for_index(idx)")
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
@@ -272,8 +293,11 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
             && !cursor_scope_route.contains("fn dependency_conflict")
             && !cursor_scope_route.contains("pub(crate) fn scope_events_done")
-            && dependency_guard.contains(".dependency_state_for_index(")
-            && dependency_guard.contains(".allows_event()")
+            && dependency_guard
+                .contains("self.validate_event_enabled_dependency(idx, selected_arm_for_scope)?")
+            && cursor_scope_route.contains("fn dependency_state(")
+            && cursor_scope_route.contains(".dependency_state(dependency, selected_arm_for_scope)")
+            && dependency_validation_guard.contains(".allows_event()")
             && event_conflict_guard.contains("conflict.to_conflict()")
             && event_conflict_guard.contains("self.route_scope_conflict_row(scope)")
             && cursor_scope_route.contains("pub(crate) fn event_enabled")
@@ -287,12 +311,12 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
                 .contains("let preview_conflict = self.machine().event_conflict_for_index(idx);")
             && cursor_scope_route.contains("preview_conflict: PackedEventConflict")
             && selected_arm_membership_guard
-                .contains("self.event_conflict_row_contains_route_arm(")
+                .contains("self.preview_conflict_arm(preview_conflict, scope)")
             && selected_arm_membership_guard
-                .contains("self.machine().event_conflict_for_index(idx)")
+                .contains("conflict = self.route_scope_conflict_row(scope);")
             && lane_head_guard.contains("self.event_conflict_row_allows_with_preview(")
             && cursor_scope_route.contains("pub(crate) fn send_preview_meta_for_label")
-            && cursor_scope_route.contains(".event_enabled(")
+            && send_ops.contains(".event_enabled(")
             && send_preview.contains(".send_preview_meta_for_label::<ROLE>(")
             && recv.contains(".event_enabled(")
             && !recv.contains(".event_dependency_allows(")
@@ -318,12 +342,12 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && cursor_scope_route
                 .contains("fn send_preview_selected_controller_arm_entry_for_label(")
             && cursor_scope_route.contains(
-                "if at_decision && let Some(selected) = preview_controller_arm_for_scope(scope_id)"
+                "if at_decision && let Some(selected) = (ctx.preview_controller_arm_for_scope)(scope_id)"
             )
             && cursor_scope_route.contains(
                 "let entry_idx = self.send_preview_selected_controller_arm_entry_for_label("
             )
-            && cursor_scope_route.contains("preview_route_arm = Some(SendPreviewRouteArm")
+            && cursor_scope_route.contains("*ctx.preview_route_arm = Some(SendPreviewRouteArm")
             && !cursor_scope_route.contains("fn send_preview_controller_arm_entry_for_label("),
         "dynamic route send preview must choose a selected-arm candidate before any intrinsic label-first controller search"
     );
@@ -379,6 +403,10 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         assert!(
             !dependency_guard.contains(forbidden),
             "endpoint dependency guard must not re-grow route ancestry interpretation: {forbidden}"
+        );
+        assert!(
+            !dependency_validation_guard.contains(forbidden),
+            "endpoint dependency validation must not re-grow route ancestry interpretation: {forbidden}"
         );
     }
     for required in [
@@ -507,14 +535,16 @@ fn production_sources_do_not_retain_route_apply_or_resident_settlement_paths() {
 #[test]
 fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let cursor_scope_route = cursor_scope_route_source();
+    let cursor_scope_route_navigation =
+        read("src/global/typestate/cursor/scope_route/navigation.rs");
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let role_scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
-    let event_progress = read("src/global/typestate/cursor/scope_route/event_progress.rs");
-    let first_recv_dispatch = read("src/global/compiled/lowering/seal/first_recv_dispatch.rs");
+    let cursor_send_preview = read("src/global/typestate/cursor/scope_route/send_preview.rs");
+    let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let passive_child = read("src/global/compiled/lowering/seal/passive_child.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let route_commit_helpers = read("src/endpoint/kernel/core/route_commit_helpers.rs");
-    let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
+    let send_ops = send_ops_source();
     let send_decision_resolver = read("src/endpoint/kernel/core/decision_resolver/impls/send.rs");
     let send_route_authority = read("src/endpoint/kernel/core/send_route_authority.rs");
     let offer_commit = read("src/endpoint/kernel/offer/commit.rs");
@@ -529,11 +559,13 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     assert!(
         !cursor_scope_route.contains("pub(crate) fn route_scope_for_selected_child_arm")
             && !cursor_scope_route.contains("pub(crate) fn route_scope_for_event_arm")
-            && cursor_scope_route.contains("pub(crate) fn event_conflict_for_index")
+            && cursor_scope_route_navigation.contains("pub(crate) fn event_conflict_for_index")
             && cursor_scope_route.contains("pub(crate) fn route_commit_range_for_conflict")
             && cursor_scope_route.contains("pub(crate) fn route_commit_row_at")
-            && cursor_scope_route.contains("pub(crate) fn node_in_selected_route_arm")
-            && cursor_scope_route.contains("pub(crate) fn selected_route_label_index")
+            && !cursor_scope_route.contains("node_in_selected_route_arm")
+            && !cursor_scope_route_navigation.contains("node_in_selected_route_arm")
+            && !cursor_scope_route.contains("selected_route_label_index")
+            && !cursor_scope_route_navigation.contains("selected_route_label_index")
             && !runtime_types.contains("pub(crate) struct SelectedRouteCommitRow")
             && decision_state.contains("pub(crate) struct SelectedRouteCommitRow")
             && decision_state.contains("conflict: PackedEventConflict")
@@ -608,7 +640,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let verifier = send_decision_resolver
         .split("pub(crate) fn verify_send_route_authority")
         .nth(1)
-        .and_then(|tail| tail.split("fn send_route_commit_range").next())
+        .and_then(|tail| tail.split("fn send_selected_route_rows_ref").next())
         .expect("send route authority verifier must stay visible");
     let production_source = read_production_rs_tree("src");
     assert!(
@@ -624,13 +656,15 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     assert!(
         send_route_authority.contains("pub(crate) enum SendRouteAuthority")
             && send_route_authority.contains("None")
-            && send_route_authority.contains("Direct {")
-            && send_route_authority.contains("selected_routes: SelectedRouteCommitRowsRef")
+            && send_route_authority.contains("Direct { lane: u8, audit_start: u16 }")
             && send_route_authority.contains("lane: u8")
+            && send_route_authority.contains("DirectPreview { start: u16 }")
             && send_route_authority.contains("MaterializedBranch")
+            && !send_route_authority.contains("selected_routes")
+            && !send_route_authority.contains("SelectedRouteCommitRowsRef")
             && !send_route_authority.contains("ResolverDecisionProof")
             && !send_route_authority.contains("MAX_SEND_RESOLVER_DECISION_PROOFS"),
-        "send preview authority must be the compact selected-route row fact, not a fixed resolver proof array"
+        "send preview authority must be compact lane/audit identity, not stored route rows or a fixed resolver proof array"
     );
     for forbidden in ["&", "Payload", "Codec", "RawSendPayload", "Wire"] {
         assert!(
@@ -655,13 +689,25 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         role_scope_rows.contains("let Some(ranges) = Self::route_arm_ranges(markers, scope_id) else {\n            crate::invariant();\n        };"),
         "route scope dependency bounds must fail closed when binary arm ranges are missing"
     );
+    let send_preview_start = cursor_send_preview
+        .split("fn send_preview_start_index_for_label(")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("fn send_preview_apply_controller_route_decision_for_label")
+                .next()
+        })
+        .expect("send preview start lookup must stay visible");
     assert!(
-        event_progress.contains("fn send_preview_start_index_for_label(")
-            && event_progress.contains("selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>")
-            && event_progress
+        cursor_send_preview.contains("fn send_preview_route_start_index(")
+            && cursor_send_preview
                 .contains("if self.enclosing_route_scope_rows_at(self.index()).is_some()")
-            && !event_progress.contains(".unwrap_or_else(|| self.index())"),
-        "send preview label lookup must enter current route completion explicitly instead of hiding cursor resume behind cursor resume shortcut"
+            && send_preview_start.contains(") -> Option<usize>")
+            && send_preview_start.contains("self.first_pending_step_index(usize::MAX)")
+            && send_preview_start.contains("Some(self.index())")
+            && cursor_send_preview.contains("self.relocatable_step_done(progress_step)")
+            && cursor_send_preview
+                .contains("*idx = state_index_to_usize(self.node_next_index_at(*idx));"),
+        "send preview label lookup must enter current route completion explicitly and use cursor-index join continuation only through event proof"
     );
     for (name, body) in [
         ("route-preview", route_preview.as_str()),
@@ -699,7 +745,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
 
 #[test]
 fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
-    let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
+    let send_ops = send_ops_source();
     let recv_commit_plan = read("src/endpoint/kernel/recv_commit_plan.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");

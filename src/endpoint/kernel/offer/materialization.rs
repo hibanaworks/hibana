@@ -1,10 +1,8 @@
 //! Route-branch materialization for `offer()`.
 
-use core::marker::PhantomData;
-
 use super::{
     BranchKind, BranchMeta, CursorEndpoint, OfferScopeProfile, OfferScopeSelection,
-    ResolvedRouteArm,
+    OfferStagedIngress, ResolvedRouteArm,
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
@@ -13,7 +11,7 @@ use crate::{
 };
 
 use crate::endpoint::kernel::{
-    core::{OfferedFrame, RouteBranch},
+    core::{MaterializedRouteBranch, OfferedFrame},
     lane_port,
 };
 
@@ -22,43 +20,36 @@ where
     T: Transport + 'r,
 {
     #[inline(never)]
-    pub(in crate::endpoint::kernel) fn produce_branch(
+    pub(super) fn produce_branch(
         &mut self,
         selection: OfferScopeSelection,
         resolved: ResolvedRouteArm,
         profile: OfferScopeProfile,
-        transport_payload: Option<lane_port::PreambleFrame<'r>>,
-    ) -> RecvResult<RouteBranch<'r, ROLE, T>> {
-        let mut transport_payload = transport_payload;
+        ingress: &mut OfferStagedIngress<'r>,
+    ) -> RecvResult<u8> {
         let scope_id = selection.scope_id;
         let route_token = resolved.route_token;
         let selected_arm = resolved.selected_arm;
         let preview_meta = match self.preview_selected_arm_meta(selection, selected_arm) {
             Ok(meta) => meta,
             Err(err) => {
-                if let Some(payload) = transport_payload.take() {
-                    payload.discard_uncommitted();
-                }
+                ingress.discard_terminal();
                 return Err(err);
             }
         };
-        let (_, meta) = match preview_meta.recv_meta() {
-            Some(meta) => meta,
-            None => {
-                if let Some(payload) = transport_payload.take() {
-                    payload.discard_uncommitted();
-                }
-                return Err(RecvError::PhaseInvariant);
-            }
-        };
+        if preview_meta.is_empty() {
+            ingress.discard_terminal();
+            return Err(RecvError::PhaseInvariant);
+        }
 
-        let lane_wire = meta.lane;
-        let branch_kind = self.materialized_branch_kind(preview_meta);
+        let lane_wire = preview_meta.lane;
+        let transport_payload = ingress.take_transport();
+        let branch_kind = self.materialized_branch_kind(&preview_meta);
         let transport_payload_for_branch = self.resolve_materialized_transport(
             branch_kind,
             lane_wire,
-            meta.peer,
-            meta.frame_label,
+            preview_meta.peer,
+            preview_meta.frame_label,
             transport_payload,
         )?;
         let branch_meta = BranchMeta {
@@ -66,24 +57,30 @@ where
             selected_arm,
             lane_wire,
             cursor_index: preview_meta.cursor_index,
-            eff_index: meta.eff_index,
-            label: meta.label,
-            origin: meta.origin,
-            frame_label: meta.frame_label,
+            eff_index: preview_meta.eff_index,
+            label: preview_meta.label,
+            origin: preview_meta.origin,
+            frame_label: preview_meta.frame_label,
             kind: branch_kind,
             profile,
             route_token,
             route_arm_selection_commit_evidence: resolved.route_arm_selection_commit_evidence,
         };
-        Ok(RouteBranch {
-            label: meta.label,
-            offered_frame: transport_payload_for_branch.map(OfferedFrame::new),
+        let offered_frame = transport_payload_for_branch.map(OfferedFrame::new);
+        if self.public_route_branch.is_some() {
+            if let Some(payload) = offered_frame {
+                payload.discard_terminal();
+            }
+            crate::invariant();
+        }
+        self.public_route_branch = Some(MaterializedRouteBranch {
+            offered_frame,
             branch_meta,
-            _cfg: PhantomData,
-        })
+        });
+        Ok(preview_meta.label)
     }
 
-    fn materialized_branch_kind(&self, preview_meta: super::CachedRecvMeta) -> BranchKind {
+    fn materialized_branch_kind(&self, preview_meta: &super::CachedRecvMeta) -> BranchKind {
         let cursor_index = state_index_to_usize(preview_meta.cursor_index);
         if preview_meta.is_recv_step() {
             BranchKind::WireRecv
@@ -96,6 +93,7 @@ where
         }
     }
 
+    #[inline(never)]
     fn resolve_materialized_transport(
         &mut self,
         branch_kind: BranchKind,

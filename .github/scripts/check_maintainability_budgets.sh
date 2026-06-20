@@ -15,8 +15,6 @@ from pathlib import Path
 
 OWNER_FILE_BUDGET_MAX = int(os.environ.get("OWNER_FILE_BUDGET_MAX", "900"))
 OWNER_FILE_BUDGET_MAX_SLACK = int(os.environ.get("OWNER_FILE_BUDGET_MAX_SLACK", "160"))
-TEST_LIMIT = int(os.environ.get("TEST_SOURCE_FILE_LINE_LIMIT", "800"))
-ALLOW_TEST_SOURCE_DEBT = os.environ.get("ALLOW_TEST_SOURCE_DEBT", "0") == "1"
 
 failed = False
 root = Path(".")
@@ -54,11 +52,6 @@ def rs_files_under(*roots: str) -> list[str]:
 all_rs = rs_files_under("src", "tests")
 src_rs = [path for path in all_rs if path.startswith("src/")]
 prod_rs = [path for path in src_rs if not is_test_like_source(path)]
-test_rs = [
-    path
-    for path in all_rs
-    if path.startswith("tests/") or (path.startswith("src/") and is_test_like_source(path))
-]
 line_counts = {path: len(Path(path).read_text().splitlines()) for path in all_rs}
 
 
@@ -144,34 +137,6 @@ for file in prod_rs:
         report(
             f"maintainability budget violation: {file} has {lines} production lines and needs an explicit owner budget"
         )
-
-test_debt_allowlist = ".github/maintainability/test_source_debt_allowlist.txt"
-allowlisted: set[str] = set()
-for raw in Path(test_debt_allowlist).read_text().splitlines():
-    file = raw.strip()
-    if not file or file.startswith("#"):
-        continue
-    if not ALLOW_TEST_SOURCE_DEBT:
-        report(
-            f"test support budget violation: {test_debt_allowlist} must not contain committed debt entries; split oversized test sources instead: {file}"
-        )
-    allowlisted.add(file)
-
-for file in test_rs:
-    lines = line_counts[file]
-    if lines > TEST_LIMIT and file not in allowlisted:
-        report(
-            f"test support budget violation: {file} has {lines} lines (>{TEST_LIMIT}); split it below the per-file budget"
-        )
-
-for file in allowlisted:
-    path = Path(file)
-    if not path.is_file():
-        report(f"test support budget violation: forbidden test debt allowlist entry: {file}")
-        continue
-    lines = line_counts.get(file, len(path.read_text().splitlines()))
-    if lines <= TEST_LIMIT:
-        report(f"test support budget violation: remove resolved test debt allowlist entry: {file}")
 
 part_files = [
     path

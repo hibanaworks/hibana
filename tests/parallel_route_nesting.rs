@@ -628,3 +628,55 @@ fn nested_parallel_join_requires_every_dependency_before_post() {
         });
     });
 }
+
+#[test]
+fn nested_parallel_join_commits_post_after_sibling_first_completion() {
+    with_runtime_workspace(|slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let transport = TestTransport::new();
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let sid = SessionId::new(94);
+
+            let mut local = rv
+                .enter(sid, &nested_parallel_join_program::<LOCAL_ROLE>())
+                .expect("attach local role");
+            let mut worker = rv
+                .enter(sid, &nested_parallel_join_program::<WORKER_ROLE>())
+                .expect("attach worker role");
+            let mut side = rv
+                .enter(sid, &nested_parallel_join_program::<SIDE_ROLE>())
+                .expect("attach side role");
+            let mut observer = rv
+                .enter(sid, &nested_parallel_join_program::<OBSERVER_ROLE>())
+                .expect("attach observer role");
+
+            futures::executor::block_on(async {
+                local
+                    .send::<Msg<PAR_E, u8>>(&4)
+                    .await
+                    .expect("send E before nested left branch completes");
+                local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
+                local.send::<Msg<PAR_B, u8>>(&2).await.expect("send B");
+                local.send::<Msg<PAR_D, u8>>(&3).await.expect("send D");
+                local
+                    .send::<Msg<PAR_POST, u8>>(&5)
+                    .await
+                    .expect("send Post");
+
+                assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
+                assert_eq!(side.recv::<Msg<PAR_B, u8>>().await.expect("recv B"), 2);
+                assert_eq!(worker.recv::<Msg<PAR_D, u8>>().await.expect("recv D"), 3);
+                assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
+                assert_eq!(
+                    observer
+                        .recv::<Msg<PAR_POST, u8>>()
+                        .await
+                        .expect("recv Post"),
+                    5
+                );
+            });
+        });
+    });
+}

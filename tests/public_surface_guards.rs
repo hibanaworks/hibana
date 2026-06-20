@@ -55,8 +55,8 @@ fn sidecar_owner_single_authority() {
         storage_layout.contains("pub(crate) struct Sidecar<T>")
             && storage_layout.contains("ptr: *mut T")
             && storage_layout.contains("bytes: usize")
-            && storage_layout.contains("reclaim_delta: usize"),
-        "storage layout must keep the single sidecar owner for ptr/bytes/reclaim_delta"
+            && !storage_layout.contains("reclaim_delta"),
+        "storage layout must keep the single sidecar owner as ptr/bytes only"
     );
 
     for path in [
@@ -75,6 +75,9 @@ fn sidecar_owner_single_authority() {
             "encode_entries_ptr",
             "endpoint_lease_reclaim_delta",
             "reclaim_delta:",
+            "FreeRegion",
+            "FREE_REGION_CAPACITY",
+            "free_regions",
         ] {
             assert!(
                 !source.contains(forbidden),
@@ -94,7 +97,7 @@ fn resolver_sidecar_replacement_publishes_after_release() {
         .find("self.init_replacement_storage(storage.cast(), required);")
         .expect("resolver replacement must stage entries before release");
     let release_pos = resolver_bucket
-        .find("free(source_storage.cast())")
+        .find("release(source_storage.cast())")
         .expect("resolver replacement must release the source sidecar");
     let commit_pos = resolver_bucket
         .find("self.commit_storage(storage.cast(), required);")
@@ -120,7 +123,7 @@ fn assoc_and_route_sidecar_replacement_stage_before_release() {
         .find(".init_replacement_storage(\n                    lease.ptr(),\n                    lane_base,\n                    target_lane_slots,\n                    target_assoc_slots,\n                );")
         .expect("assoc replacement must stage entries before release");
     let assoc_release_pos = capacity
-        .find("self.release_sidecar(source_assoc, ResourceScope::LaneStorage)")
+        .find("self.release_sidecar(source_assoc);")
         .expect("assoc replacement must release the source sidecar");
     let assoc_commit_pos = capacity
         .find(".commit_storage(\n                    lease.ptr(),\n                    lane_base,\n                    target_lane_slots,\n                    target_assoc_slots,\n                );")
@@ -134,7 +137,7 @@ fn assoc_and_route_sidecar_replacement_stage_before_release() {
         .find("self.routes.migrate_from_storage(")
         .expect("route replacement must stage entries before release");
     let route_release_pos = capacity
-        .find("self.release_sidecar(source_route, ResourceScope::RouteTable)")
+        .find("self.release_sidecar(source_route);")
         .expect("route replacement must release the source sidecar");
     let route_commit_pos = capacity
         .find("self.routes.rebind_from_storage(")

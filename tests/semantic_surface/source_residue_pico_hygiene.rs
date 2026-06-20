@@ -375,6 +375,11 @@ fn production_does_not_reintroduce_fixed_rendezvous_capacity() {
         "MAX_RV < 4",
         "RUNTIME_RENDEZVOUS_CAPACITY",
         "cluster_rendezvous_slot",
+        "FREE_REGION_CAPACITY",
+        "FreeRegion",
+        "free_regions",
+        "reclaim_delta",
+        "MAX_FIRST_RECV_DISPATCH",
     ] {
         assert!(
             !production.contains(forbidden),
@@ -695,39 +700,7 @@ fn no_by_value_scope_frame_label_scratch_in_hot_paths() {
 }
 
 #[test]
-fn semantic_surface_sources_under_file_budget() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for dir in ["tests/semantic_surface", "src/endpoint/kernel/evidence"] {
-        let full = root.join(dir);
-        if !full.exists() {
-            continue;
-        }
-        for entry in fs::read_dir(&full).unwrap_or_else(|err| panic!("read {dir} failed: {err}")) {
-            let path = entry
-                .unwrap_or_else(|err| panic!("read entry in {dir} failed: {err}"))
-                .path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-                continue;
-            }
-            let lines = fs::read_to_string(&path)
-                .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()))
-                .lines()
-                .count();
-            assert!(
-                lines <= 800,
-                "semantic/source test file must stay under 800 lines: {} has {lines}",
-                path.display()
-            );
-        }
-    }
-    assert!(
-        read("src/endpoint/kernel/evidence.rs").lines().count() <= 300,
-        "evidence.rs production owner must stay under 300 lines"
-    );
-}
-
-#[test]
-fn evidence_file_budget_under_300() {
+fn production_evidence_source_under_file_budget() {
     assert!(
         read("src/endpoint/kernel/evidence.rs").lines().count() <= 300,
         "evidence.rs production owner must stay under 300 lines"

@@ -59,7 +59,7 @@ where
     pub(in crate::endpoint) public_offer_state: OfferState<'r>,
     pub(in crate::endpoint) public_route_branch: Option<MaterializedRouteBranch<'r>>,
     pub(in crate::endpoint) public_recv_state: recv::RecvState,
-    pub(in crate::endpoint) public_branch_recv_state: branch_recv::BranchRecvState<'r>,
+    pub(in crate::endpoint) public_branch_recv_state: branch_recv::BranchRecvState,
     pub(in crate::endpoint) public_send_state: SendState<'r>,
     pub(crate) session: SessionCtx<'r, T>,
     pub(in crate::endpoint::kernel) decision_state: LeasedState<RouteState>,
@@ -67,50 +67,17 @@ where
     pub(in crate::endpoint::kernel) frontier_state: LeasedState<FrontierState>,
 }
 
-pub(crate) struct RouteBranch<'r, const ROLE: u8, T: Transport + 'r> {
-    pub(crate) label: u8,
-    pub(crate) offered_frame: Option<OfferedFrame<'r>>,
-    pub(crate) branch_meta: BranchMeta,
-    pub(crate) _cfg: core::marker::PhantomData<fn() -> &'r T>,
-}
-
 pub(crate) struct MaterializedRouteBranch<'r> {
-    pub(crate) label: u8,
     pub(crate) offered_frame: Option<OfferedFrame<'r>>,
     pub(crate) branch_meta: BranchMeta,
 }
 
-impl<'r> MaterializedRouteBranch<'r> {
-    #[inline]
-    pub(crate) const fn label(&self) -> u8 {
-        self.label
-    }
-
+impl MaterializedRouteBranch<'_> {
     #[inline]
     pub(crate) fn discard_terminal(mut self) {
         if let Some(payload) = self.offered_frame.take() {
             payload.discard_terminal();
         }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel) struct BranchPreviewView {
-    pub(in crate::endpoint::kernel) label: u8,
-    pub(in crate::endpoint::kernel) branch_meta: BranchMeta,
-}
-
-impl BranchPreviewView {
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn new(label: u8, branch_meta: BranchMeta) -> Self {
-        Self { label, branch_meta }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn from_materialized(
-        branch: &MaterializedRouteBranch<'_>,
-    ) -> Self {
-        Self::new(branch.label, branch.branch_meta)
     }
 }
 
@@ -183,19 +150,5 @@ impl SendPreview {
     #[inline]
     pub(crate) const fn into_parts(self) -> (SendMeta, StateIndex, SendRouteAuthority) {
         (self.meta, self.cursor_index, self.route_authority)
-    }
-}
-
-impl<'r, const ROLE: u8, T> From<RouteBranch<'r, ROLE, T>> for MaterializedRouteBranch<'r>
-where
-    T: Transport + 'r,
-{
-    #[inline]
-    fn from(branch: RouteBranch<'r, ROLE, T>) -> Self {
-        Self {
-            label: branch.label,
-            offered_frame: branch.offered_frame,
-            branch_meta: branch.branch_meta,
-        }
     }
 }

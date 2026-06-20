@@ -1,24 +1,25 @@
 use crate::endpoint::{RecvError, RecvResult};
+use crate::global::const_dsl::RouteResolver;
 use crate::global::typestate::{ARM_SHARED, state_index_to_usize};
+use crate::session::cluster::core::DecisionArm;
 use crate::transport::Transport;
 
 use super::super::authority::{Arm, RouteArmToken};
 use super::super::core::{
-    BranchPreviewView, CursorEndpoint,
-    prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
+    CursorEndpoint, prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
 };
-use super::{BranchCommitPlan, BranchKind};
+use super::{BranchCommitPlan, BranchKind, BranchMeta};
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
     pub(in crate::endpoint::kernel) fn preflight_branch_preview_commit_plan(
         &mut self,
-        preview: BranchPreviewView,
+        branch: BranchMeta,
     ) -> RecvResult<BranchCommitPlan> {
-        let scope_id = preview.branch_meta.scope_id;
-        let selected_arm = preview.branch_meta.selected_arm;
-        let lane_wire = preview.branch_meta.lane_wire;
+        let scope_id = branch.scope_id;
+        let selected_arm = branch.selected_arm;
+        let lane_wire = branch.lane_wire;
         let lane_idx = lane_wire as usize;
         if lane_idx >= self.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
@@ -35,7 +36,7 @@ where
                 decision_state,
                 cursor,
                 lane_wire,
-                state_index_to_usize(preview.branch_meta.cursor_index),
+                state_index_to_usize(branch.cursor_index),
                 selected_arm,
                 &mut rows,
             )?;
@@ -44,30 +45,32 @@ where
         if route_seed_rows.is_empty() {
             return Err(RecvError::PhaseInvariant);
         }
-        if preview.branch_meta.route_token.is_poll()
-            && preview.branch_meta.kind == BranchKind::WireRecv
-        {
-            if preview
-                .branch_meta
-                .profile
-                .poll_wire_commit_requires_event()
-            {
-                if !preview
-                    .branch_meta
+        if branch.route_token.is_resolver() {
+            let Some((RouteResolver::Dynamic { scope, .. }, _)) =
+                self.cursor.route_scope_controller_resolver(scope_id)
+            else {
+                return Err(RecvError::PhaseInvariant);
+            };
+            if scope != scope_id {
+                return Err(RecvError::PhaseInvariant);
+            }
+        }
+        if branch.route_token.is_poll() && branch.kind == BranchKind::WireRecv {
+            if branch.profile.poll_wire_commit_requires_event() {
+                if !branch
                     .route_arm_selection_commit_evidence
                     .emits_route_arm_selection_event()
                 {
                     return Err(RecvError::PhaseInvariant);
                 }
-            } else if preview
-                .branch_meta
+            } else if branch
                 .profile
                 .poll_wire_commit_requires_intrinsic_observation()
             {
                 let Some((arm, _)) = self.cursor.observed_recv_target_for_lane_frame_label(
                     scope_id,
                     lane_wire,
-                    preview.branch_meta.frame_label,
+                    branch.frame_label,
                 ) else {
                     return Err(RecvError::PhaseInvariant);
                 };
@@ -78,10 +81,10 @@ where
             }
         }
 
-        let meta = if preview.branch_meta.kind == BranchKind::WireRecv {
+        let meta = if branch.kind == BranchKind::WireRecv {
             let mut meta = if let Some(meta) = self
                 .cursor
-                .try_recv_meta_at(state_index_to_usize(preview.branch_meta.cursor_index))
+                .try_recv_meta_at(state_index_to_usize(branch.cursor_index))
             {
                 meta
             } else {
@@ -90,41 +93,45 @@ where
             if meta.route_arm.is_none() {
                 meta.route_arm = Some(selected_arm);
             }
-            if meta.label != preview.label {
-                meta.label = preview.label;
-            }
             Some(meta)
         } else {
             None
         };
 
-        Ok(BranchCommitPlan {
-            preview,
-            meta,
-            route_seed_rows,
-        })
+        Ok(BranchCommitPlan::new(meta, route_seed_rows))
     }
 
     pub(in crate::endpoint::kernel) fn publish_branch_preview_commit_plan(
         &mut self,
-        plan: BranchCommitPlan,
+        branch: BranchMeta,
     ) {
-        let preview = plan.preview;
-        let scope_id = preview.branch_meta.scope_id;
-        let selected_arm = preview.branch_meta.selected_arm;
-        let lane_wire = preview.branch_meta.lane_wire;
+        let scope_id = branch.scope_id;
+        let selected_arm = branch.selected_arm;
+        let lane_wire = branch.lane_wire;
+        let route_token = branch.route_token;
 
-        if preview.branch_meta.route_token.is_ack()
-            && preview
-                .branch_meta
-                .profile
-                .publishes_controller_ack_decision()
-        {
+        if route_token.is_resolver() {
+            let Some((RouteResolver::Dynamic { resolver_id, .. }, _)) =
+                self.cursor.route_scope_controller_resolver(scope_id)
+            else {
+                crate::invariant();
+            };
+            let decision_lane = self.offer_lane_for_scope(scope_id);
+            let arm = match selected_arm {
+                0 => DecisionArm::Left,
+                1 => DecisionArm::Right,
+                _ => crate::invariant(),
+            };
+            self.emit_dynamic_resolver_success_audit(decision_lane, scope_id, resolver_id, arm);
+            self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, decision_lane);
+            self.record_scope_ack(scope_id, route_token);
+            self.emit_route_arm_selection(scope_id, route_token, decision_lane);
+        } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
             let Some(arm) = Arm::new(selected_arm) else {
                 return;
             };
             let token = RouteArmToken::from_ack(arm);
-            if matches!(preview.branch_meta.kind, BranchKind::ArmSendHint) {
+            if matches!(branch.kind, BranchKind::ArmSendHint) {
                 let lane = lane_wire;
                 self.record_route_arm_selection_for_lane(lane as usize, scope_id, selected_arm);
                 self.emit_route_arm_selection(scope_id, token, lane);
@@ -149,10 +156,10 @@ where
                     }
                 }
             }
-        } else if preview.branch_meta.route_token.is_poll() {
+        } else if route_token.is_poll() {
             self.emit_route_arm_selection(
                 scope_id,
-                preview.branch_meta.route_token,
+                route_token,
                 self.offer_lane_for_scope(scope_id),
             );
         }

@@ -146,6 +146,130 @@ fn direct_recv_same_label_parallel_frames_commit_by_observed_evidence() {
 }
 
 #[test]
+fn rolled_same_label_recv_commits_reentry_or_exit_by_observed_evidence() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let body = g::send::<1, 0, Msg<56, u32>>().roll();
+            let program = g::seq(body, g::send::<2, 0, Msg<56, u32>>());
+            let target_program: RoleProgram<0> = project(&program);
+            let body_source_program: RoleProgram<1> = project(&program);
+            let exit_source_program: RoleProgram<2> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(56);
+            let mut target = rv.enter(sid, &target_program).expect("target endpoint");
+            let mut body_source = rv
+                .enter(sid, &body_source_program)
+                .expect("body source endpoint");
+            let mut exit_source = rv
+                .enter(sid, &exit_source_program)
+                .expect("exit source endpoint");
+
+            futures::executor::block_on(async {
+                body_source
+                    .send::<Msg<56, u32>>(&101)
+                    .await
+                    .expect("body sends first");
+                assert_eq!(
+                    target
+                        .recv::<Msg<56, u32>>()
+                        .await
+                        .expect("recv commits body frame"),
+                    101
+                );
+
+                body_source
+                    .send::<Msg<56, u32>>(&202)
+                    .await
+                    .expect("body sends reentry");
+                assert_eq!(
+                    target
+                        .recv::<Msg<56, u32>>()
+                        .await
+                        .expect("recv commits reentered body frame"),
+                    202
+                );
+
+                exit_source
+                    .send::<Msg<56, u32>>(&303)
+                    .await
+                    .expect("exit sends same logical label");
+                assert_eq!(
+                    target
+                        .recv::<Msg<56, u32>>()
+                        .await
+                        .expect("recv commits exit frame"),
+                    303
+                );
+            });
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn intrinsic_route_passive_same_label_recv_commits_by_frame_evidence() {
+    fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
+        let left = g::seq(
+            g::send::<0, 2, Msg<61, u32>>(),
+            g::send::<1, 3, Msg<63, u32>>(),
+        );
+        let right = g::seq(
+            g::send::<0, 2, Msg<62, u32>>(),
+            g::send::<1, 3, Msg<63, u32>>(),
+        );
+        project(&g::route(left, right))
+    }
+
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let sid = SessionId::new(63);
+            let mut controller = rv.enter(sid, &program::<0>()).expect("controller endpoint");
+            let mut shared_sender = rv
+                .enter(sid, &program::<1>())
+                .expect("shared sender endpoint");
+            let mut observer = rv.enter(sid, &program::<2>()).expect("observer endpoint");
+            let mut passive = rv.enter(sid, &program::<3>()).expect("passive endpoint");
+
+            futures::executor::block_on(async {
+                controller
+                    .send::<Msg<62, u32>>(&808)
+                    .await
+                    .expect("controller selects right arm");
+                assert_eq!(
+                    observer
+                        .recv::<Msg<62, u32>>()
+                        .await
+                        .expect("observer commits controller frame"),
+                    808
+                );
+
+                shared_sender
+                    .send::<Msg<63, u32>>(&909)
+                    .await
+                    .expect("same-label shared sender sends selected arm");
+                assert_eq!(
+                    passive
+                        .recv::<Msg<63, u32>>()
+                        .await
+                        .expect("passive recv commits by observed frame label"),
+                    909
+                );
+            });
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
 fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();

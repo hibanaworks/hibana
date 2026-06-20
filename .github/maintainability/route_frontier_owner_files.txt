@@ -1,8 +1,6 @@
 # Route frontier authority files. Keep this manifest data-only so the script
 # checks ownership boundaries instead of hard-coding implementation shape.
 src/endpoint/kernel/offer.rs
-src/endpoint/kernel/offer/cache.rs
-src/endpoint/kernel/offer/cache_rebuild.rs
 src/endpoint/kernel/offer/cache_refresh.rs
 src/endpoint/kernel/offer/commit.rs
 src/endpoint/kernel/offer/commit_types.rs

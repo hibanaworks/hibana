@@ -2,7 +2,10 @@ pub(super) mod image;
 pub(super) mod program;
 
 pub(crate) use self::{
-    image::{CompiledProgramRef, ProgramImageBytes, RoleDescriptorRef, RoleImageSlice},
+    image::{
+        CompiledProgramRef, ProgramImageBytes, ProgramImageColumns, ProgramImagePlan,
+        RoleDescriptorRef, RoleImageSlice,
+    },
     program::{EventSemanticKind, RouteResolverSite},
 };
 

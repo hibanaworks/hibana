@@ -13,6 +13,7 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
+    #[inline(never)]
     pub(super) fn ensure_materialization_ready(
         &mut self,
         state: &mut OfferResolveState<'r>,
@@ -54,6 +55,7 @@ where
         })))
     }
 
+    #[inline(never)]
     fn selected_arm_missing_materialization_evidence(
         &self,
         state: &OfferResolveState<'r>,
@@ -71,6 +73,7 @@ where
         !self.staged_transport_can_materialize_selected_arm(state, selected_arm, token)
     }
 
+    #[inline(never)]
     fn staged_transport_can_materialize_selected_arm(
         &self,
         state: &OfferResolveState<'r>,
@@ -88,6 +91,7 @@ where
             .is_some_and(|lanes| lanes.contains(lane as usize))
     }
 
+    #[inline(never)]
     fn poll_unready_resolver_authority(
         &mut self,
         state: &OfferResolveState<'r>,
@@ -103,6 +107,7 @@ where
             .map(RouteArmToken::from_poll)
     }
 
+    #[inline(never)]
     fn requeue_and_defer_unready_materialization(
         &mut self,
         state: &mut OfferResolveState<'r>,

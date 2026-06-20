@@ -142,7 +142,6 @@ fn endpoint_hot_paths_do_not_emit_resolver_audit_replay() {
         read("src/endpoint/kernel/recv.rs"),
         read("src/endpoint/kernel/branch_recv.rs"),
         read("src/endpoint/kernel/branch_recv/finish.rs"),
-        read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs"),
         read("src/endpoint/kernel/core/route_preview.rs"),
     ]
     .join("\n");
@@ -752,14 +751,15 @@ fn package_artifact_ships_self_contained_tests_and_excludes_repo_gates() {
         package_gate
             .contains("run_package_with_repo_test_exclusions \"cargo package --no-verify\"")
             && package_gate.contains("packaged tests must include their module tree")
-            && package_gate.contains("package UI test")
+            && package_gate.contains("package UI harness")
             && package_gate.contains("--test ui")
+            && package_gate.contains("-- --list")
             && package_gate.contains("package behavior test")
             && package_gate.contains("--test lane_lifecycle_tap")
             && package_gate.contains("repo-only gate source shipped in crate package")
             && package_gate.contains(".github/measurement_snapshots/")
             && package_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path"),
-        "package artifact gate must reject package warnings and execute self-contained packaged tests"
+        "package artifact gate must reject package warnings, list the packaged UI harness, and execute self-contained packaged behavior tests"
     );
 }
 #[test]

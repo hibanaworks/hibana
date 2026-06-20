@@ -8,7 +8,9 @@ mod role_descriptor_ref;
 mod route_resolvers;
 
 pub(crate) use self::{
-    blob_storage::ProgramImageBytes, program_ref::CompiledProgramRef,
+    blob_storage::ProgramImageBytes,
+    columns::{ProgramImageColumns, ProgramImagePlan},
+    program_ref::CompiledProgramRef,
     role_descriptor_ref::RoleDescriptorRef,
 };
 

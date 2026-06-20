@@ -342,25 +342,6 @@ impl AssocTable {
         }
     }
 
-    pub(in crate::rendezvous) unsafe fn clear_waiters_in_storage(
-        storage: *mut u8,
-        assoc_slots: usize,
-    ) {
-        let parts = /* SAFETY: the caller passes an initialized assoc-table arena. */ unsafe {
-            Self::storage_parts(storage, assoc_slots)
-        };
-        let mut idx = 0usize;
-        while idx < Self::overflow_waiter_slots(assoc_slots) {
-            /* SAFETY: overflow waiter storage is owned by the assoc-table
-            arena, `idx` is inside its initialized range, and this cleanup path
-            has the only mutable alias to the staged waiter slots. */
-            unsafe {
-                (*parts.waiters.add(idx)).clear();
-            }
-            idx += 1;
-        }
-    }
-
     pub(in crate::rendezvous) fn clear_current_overflow_waiters(&self) {
         let waiters = self.waiters_ptr();
         let mut idx = 0usize;

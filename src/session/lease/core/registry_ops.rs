@@ -162,12 +162,7 @@ where
             },
             |sidecar| {
                 /* SAFETY: rv_ptr comes from the selected registry entry and remains pinned for the duration of this capacity update. */
-                unsafe {
-                    (&mut *rv_ptr).free_external_persistent_sidecar(
-                        sidecar,
-                        crate::session::cluster::error::ResourceScope::ResolverTable,
-                    )
-                }
+                unsafe { (&mut *rv_ptr).release_external_persistent_sidecar(sidecar) }
             },
         )
     }

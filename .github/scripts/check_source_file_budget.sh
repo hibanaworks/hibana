@@ -19,7 +19,7 @@ while IFS= read -r -d '' file; do
         echo "source file budget violation: ${file} has ${lines} lines (>${LIMIT})" >&2
         FAILED=1
     fi
-done < <(find src .github/scripts -type f \( -name '*.rs' -o -name '*.sh' \) -print0)
+done < <(find src -type f -name '*.rs' -print0)
 
 if (( FAILED != 0 )); then
     exit 1

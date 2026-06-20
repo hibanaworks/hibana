@@ -1,0 +1,10 @@
+# Compile-pressure guardrails are local observations plus explicit headroom.
+# Limit = observed + headroom. This is not a runtime capacity or public contract.
+label	observed_seconds	observed_rss_mib	seconds_headroom	rss_headroom_mib
+final_form_gate	134	903	46	57
+cold_parallel_route_nesting	9	834	31	190
+offer_branch_recv_evidence	2	228	30	256
+parallel_route_nesting	2	228	30	256
+parallel_route_alternating	2	228	30	256
+lane_set_view_iterates_set_bits_without_empty_lane_scan	2	228	30	256
+huge_choreography_runtime	2	228	30	256

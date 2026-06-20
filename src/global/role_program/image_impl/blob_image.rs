@@ -3,121 +3,30 @@ use super::super::{
     ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
     ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
     ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
-    ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBytes, RoleImageColumns,
-    RoleImageRef, RoleLaneScratch, RouteArmLaneStepRow, RuntimeRoleFacts,
+    ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBuild, RoleImageBytes,
+    RoleImageColumns, RoleImageRef, RoleLaneScratch, RouteArmLaneStepRow, RuntimeRoleFacts,
 };
+use super::plan::RoleImageColumnCounts;
 use crate::global::compiled::images::CompiledProgramRef;
-use crate::global::const_dsl::ScopeId;
+use crate::global::const_dsl::{EffList, ScopeId};
 use crate::global::typestate::{PackedEventConflict, PackedLocalDependency};
 
-impl<const N: usize> RoleImageBytes<N> {
+impl<const N: usize> RoleImageBuild<N> {
     #[inline(always)]
-    const fn empty() -> Self {
-        Self { bytes: [0; N] }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn projected_len(scratch: RoleLaneScratch, facts: RuntimeRoleFacts) -> usize {
-        let footprint = facts.footprint();
-        let local_len = footprint.local_step_count;
-        let dependency_len = scratch.dependency_row_len();
-        let conflict_len = scratch.conflict_row_len();
-        let route_scope_len = footprint.route_scope_count;
-        let route_arm_len = route_scope_len * 2;
-        let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
-        let resident_boundary_len = scratch.resident_boundary_count();
-        let lane_bit_len = scratch.lane_bit_row_len();
-        let route_commit_len = scratch.route_commit_row_len();
-        let roll_scope_len = scratch.roll_scope_row_len();
-
-        (local_len * ROLE_IMAGE_EVENT_STRIDE)
-            + (local_len * ROLE_IMAGE_LANE_STRIDE)
-            + (dependency_len * ROLE_IMAGE_DEPENDENCY_STRIDE)
-            + (conflict_len * ROLE_IMAGE_CONFLICT_STRIDE)
-            + (route_scope_len * ROLE_IMAGE_ROUTE_SCOPE_STRIDE)
-            + (route_scope_len * ROLE_IMAGE_CONFLICT_STRIDE)
-            + (route_arm_len * ROLE_IMAGE_ROUTE_ARM_STRIDE)
-            + (resident_boundary_len * ROLE_IMAGE_U16_STRIDE)
-            + (lane_bit_len * ROLE_IMAGE_LANE_STRIDE)
-            + (route_arm_len * ROLE_IMAGE_LANE_RANGE_STRIDE)
-            + (route_scope_len * ROLE_IMAGE_LANE_RANGE_STRIDE)
-            + (route_arm_lane_step_row_len * ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE)
-            + (route_arm_len * ROLE_IMAGE_LANE_RANGE_STRIDE)
-            + (route_commit_len * ROLE_IMAGE_CONFLICT_STRIDE)
-            + (roll_scope_len * ROLE_IMAGE_ROLL_SCOPE_STRIDE)
-    }
-
-    #[inline(always)]
-    const fn column_at(offset: usize, len: usize, stride: usize) -> (ColumnRange, usize) {
-        let column = ColumnRange::new(offset, len, stride);
-        (column, column.end_offset(stride))
-    }
-
-    #[inline(always)]
-    pub(crate) const fn columns(
-        scratch: RoleLaneScratch,
+    pub(crate) const fn from_program_bucket(
+        eff_list: &EffList,
         facts: RuntimeRoleFacts,
-    ) -> RoleImageColumns {
-        let footprint = facts.footprint();
-        let local_len = footprint.local_step_count;
-        let dependency_len = scratch.dependency_row_len();
-        let conflict_len = scratch.conflict_row_len();
-        let route_scope_len = footprint.route_scope_count;
-        let route_arm_len = route_scope_len * 2;
-        let route_arm_lane_step_row_len = scratch.route_arm_lane_step_row_len as usize;
-        let resident_boundary_len = scratch.resident_boundary_count();
-        let lane_bit_len = scratch.lane_bit_row_len();
-        let route_commit_len = scratch.route_commit_row_len();
-        let roll_scope_len = scratch.roll_scope_row_len();
-
-        let (events, offset) = Self::column_at(0, local_len, ROLE_IMAGE_EVENT_STRIDE);
-        let (lanes, offset) = Self::column_at(offset, local_len, ROLE_IMAGE_LANE_STRIDE);
-        let (dependencies, offset) =
-            Self::column_at(offset, dependency_len, ROLE_IMAGE_DEPENDENCY_STRIDE);
-        let (conflicts, offset) = Self::column_at(offset, conflict_len, ROLE_IMAGE_CONFLICT_STRIDE);
-        let (route_scopes, offset) =
-            Self::column_at(offset, route_scope_len, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
-        let (route_scope_conflicts, offset) =
-            Self::column_at(offset, route_scope_len, ROLE_IMAGE_CONFLICT_STRIDE);
-        let (route_arms, offset) =
-            Self::column_at(offset, route_arm_len, ROLE_IMAGE_ROUTE_ARM_STRIDE);
-        let (resident_boundaries, offset) =
-            Self::column_at(offset, resident_boundary_len, ROLE_IMAGE_U16_STRIDE);
-        let (lane_bits, offset) = Self::column_at(offset, lane_bit_len, ROLE_IMAGE_LANE_STRIDE);
-        let (route_arm_lane_rows, offset) =
-            Self::column_at(offset, route_arm_len, ROLE_IMAGE_LANE_RANGE_STRIDE);
-        let (route_offer_lane_rows, offset) =
-            Self::column_at(offset, route_scope_len, ROLE_IMAGE_LANE_RANGE_STRIDE);
-        let (route_arm_lane_step_rows, offset) = Self::column_at(
-            offset,
-            route_arm_lane_step_row_len,
-            ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
-        );
-        let (route_commit_ranges, offset) =
-            Self::column_at(offset, route_arm_len, ROLE_IMAGE_LANE_RANGE_STRIDE);
-        let (route_commit_rows, _) =
-            Self::column_at(offset, route_commit_len, ROLE_IMAGE_CONFLICT_STRIDE);
-        let (roll_scopes, _) = Self::column_at(
-            route_commit_rows.end_offset(ROLE_IMAGE_CONFLICT_STRIDE),
-            roll_scope_len,
-            ROLE_IMAGE_ROLL_SCOPE_STRIDE,
-        );
-        RoleImageColumns {
-            events,
-            lanes,
-            dependencies,
-            conflicts,
-            route_scopes,
-            route_scope_conflicts,
-            route_arms,
-            resident_boundaries,
-            lane_bits,
-            route_arm_lane_rows,
-            route_offer_lane_rows,
-            route_arm_lane_step_rows,
-            route_commit_ranges,
-            route_commit_rows,
-            roll_scopes,
+        role: u8,
+    ) -> Self {
+        let scratch =
+            RoleLaneScratch::from_program(eff_list, facts.footprint().logical_lane_count, role);
+        let columns = RoleImageBytes::<0>::columns(&scratch, facts);
+        let bytes = RoleImageBytes::<N>::from_capacity_bucket(&scratch, facts, columns);
+        Self {
+            bytes,
+            columns,
+            active_lane_row: scratch.active_lane_row,
+            first_active_lane: scratch.first_active_lane,
         }
     }
 
@@ -126,18 +35,50 @@ impl<const N: usize> RoleImageBytes<N> {
         &'static self,
         program: &'static CompiledProgramRef,
         role: u8,
-        scratch: RoleLaneScratch,
         facts: RuntimeRoleFacts,
     ) -> RoleImageRef {
-        let columns = Self::columns(scratch, facts);
+        self.bytes.image_ref(
+            program,
+            role,
+            facts,
+            self.columns,
+            self.active_lane_row,
+            self.first_active_lane,
+        )
+    }
+}
+
+impl<const N: usize> RoleImageBytes<N> {
+    #[inline(always)]
+    const fn empty() -> Self {
+        Self { bytes: [0; N] }
+    }
+
+    pub(crate) const fn columns(
+        scratch: &RoleLaneScratch,
+        facts: RuntimeRoleFacts,
+    ) -> RoleImageColumns {
+        RoleImageColumnCounts::from_scratch(scratch).columns(facts)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn image_ref(
+        &'static self,
+        program: &'static CompiledProgramRef,
+        role: u8,
+        facts: RuntimeRoleFacts,
+        columns: RoleImageColumns,
+        active_lane_row: PackedLaneRange,
+        first_active_lane: u16,
+    ) -> RoleImageRef {
         RoleImageRef::new(
             program,
             role,
             facts,
             columns,
             &self.bytes,
-            scratch.active_lane_row,
-            scratch.first_active_lane,
+            active_lane_row,
+            first_active_lane,
         )
     }
 
@@ -262,9 +203,8 @@ impl<const N: usize> RoleImageBytes<N> {
         None
     }
 
-    #[inline(always)]
     const fn collect_route_arm_lane_steps(
-        scratch: RoleLaneScratch,
+        scratch: &RoleLaneScratch,
         local_row: PackedLaneRange,
     ) -> ([RouteArmLaneStepRow; LANE_DOMAIN_SIZE], usize) {
         let mut rows = [RouteArmLaneStepRow::EMPTY; LANE_DOMAIN_SIZE];
@@ -295,7 +235,7 @@ impl<const N: usize> RoleImageBytes<N> {
         &mut self,
         column: ColumnRange,
         row_start: usize,
-        scratch: RoleLaneScratch,
+        scratch: &RoleLaneScratch,
         local_row: PackedLaneRange,
     ) -> usize {
         let (rows, len) = Self::collect_route_arm_lane_steps(scratch, local_row);
@@ -428,17 +368,21 @@ impl<const N: usize> RoleImageBytes<N> {
 
     #[inline(always)]
     pub(crate) const fn from_capacity_bucket(
-        scratch: RoleLaneScratch,
+        scratch: &RoleLaneScratch,
         facts: RuntimeRoleFacts,
+        columns: RoleImageColumns,
     ) -> Self {
-        if Self::projected_len(scratch, facts) > N {
+        if columns.blob_len() > N {
             return Self::empty();
         }
-        Self::from_scratch(scratch, facts)
+        Self::from_scratch(scratch, facts, columns)
     }
 
-    #[inline(always)]
-    pub(crate) const fn from_scratch(scratch: RoleLaneScratch, facts: RuntimeRoleFacts) -> Self {
+    pub(crate) const fn from_scratch(
+        scratch: &RoleLaneScratch,
+        facts: RuntimeRoleFacts,
+        columns: RoleImageColumns,
+    ) -> Self {
         let footprint = facts.footprint();
         let local_len = footprint.local_step_count;
         let dependency_len = scratch.dependency_row_len();
@@ -449,13 +393,12 @@ impl<const N: usize> RoleImageBytes<N> {
         let resident_boundary_len = scratch.resident_boundary_count();
         let lane_bit_len = scratch.lane_bit_row_len();
         let roll_scope_len = scratch.roll_scope_row_len();
-        let projected_len = Self::projected_len(scratch, facts);
+        let projected_len = columns.blob_len();
         if projected_len > N {
             panic!("role image");
         }
 
         let mut out = Self::empty();
-        let columns = Self::columns(scratch, facts);
 
         out.write_event_rows(columns.events, local_len, &scratch.local_step_events);
         out.write_u8_rows(

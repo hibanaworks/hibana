@@ -67,11 +67,6 @@ impl<'a> OfferStagedIngress<'a> {
             payload.discard_uncommitted();
         }
     }
-
-    #[inline]
-    pub(super) fn into_transport(self) -> Option<lane_port::PreambleFrame<'a>> {
-        self.transport_payload
-    }
 }
 
 pub(super) struct OfferCollectState<'a> {
@@ -187,18 +182,19 @@ impl<'r> OfferState<'r> {
     pub(in crate::endpoint::kernel) fn take_detached_ingress(
         &mut self,
     ) -> OfferDetachedIngress<'r> {
-        let carried_transport_payload = self.take_carried_ingress().into_transport();
         let mut items = OfferDetachedIngress {
-            carried_transport_payload,
+            carried_transport_payload: self.carried_ingress.take_transport(),
             stage_transport_payload: None,
         };
         match core::mem::replace(&mut self.execution, OfferExecution::Uninitialized) {
             OfferExecution::Uninitialized | OfferExecution::Selecting { .. } => return items,
             OfferExecution::Collecting { stage, .. } => {
-                items.stage_transport_payload = stage.ingress.into_transport();
+                let mut ingress = stage.ingress;
+                items.stage_transport_payload = ingress.take_transport();
             }
             OfferExecution::Resolving { stage, .. } => {
-                items.stage_transport_payload = stage.ingress.into_transport();
+                let mut ingress = stage.ingress;
+                items.stage_transport_payload = ingress.take_transport();
             }
         }
         items

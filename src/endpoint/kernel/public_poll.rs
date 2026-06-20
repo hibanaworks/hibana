@@ -4,8 +4,8 @@ use core::task::Poll;
 
 use super::{
     core::{
-        BranchRecvRuntimeDesc, CursorEndpoint, PublicActiveOp, SendCommitOutcome, SendState,
-        kernel_branch_recv, kernel_recv, kernel_send,
+        CursorEndpoint, PublicActiveOp, SendCommitOutcome, SendState, kernel_branch_recv,
+        kernel_recv, kernel_send,
     },
     lane_port,
     offer::OfferState,
@@ -22,7 +22,7 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    #[inline(never)]
+    #[inline]
     pub(in crate::endpoint) fn poll_public_offer(
         &mut self,
         cx: &mut core::task::Context<'_>,
@@ -51,17 +51,14 @@ where
                 self.public_offer_state = offer_state;
                 Poll::Pending
             }
-            Poll::Ready(Ok(branch)) => {
+            Poll::Ready(Ok(label)) => {
                 self.clear_session_waiter();
                 self.public_offer_state = OfferState::new();
-                if self.public_route_branch.is_some() {
+                if self.public_route_branch.is_none() {
                     crate::invariant();
-                } else {
-                    let label = branch.label();
-                    self.public_route_branch = Some(branch);
-                    self.public_active_op = PublicActiveOp::RouteBranch;
-                    Poll::Ready(Ok(label))
                 }
+                self.public_active_op = PublicActiveOp::RouteBranch;
+                Poll::Ready(Ok(label))
             }
             Poll::Ready(Err(err)) => {
                 offer_state.discard_terminal();
@@ -114,7 +111,7 @@ where
         }
     }
 
-    #[inline(never)]
+    #[inline]
     pub(in crate::endpoint) fn poll_public_branch_recv(
         &mut self,
         logical_label: u8,
@@ -135,18 +132,14 @@ where
             &mut self.public_branch_recv_state,
             super::branch_recv::BranchRecvState::empty(),
         );
-        let Some(branch) = branch_recv_state.branch() else {
+        if self.public_route_branch.is_none() {
             self.clear_session_waiter();
             self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
             return Poll::Ready(Err(err));
-        };
-        let descriptor = BranchRecvRuntimeDesc::new(
-            logical_label,
-            crate::transport::FrameLabel::new(branch.branch_meta.frame_label),
-        );
-        match kernel_branch_recv(self, descriptor, validate, &mut branch_recv_state, cx) {
+        }
+        match kernel_branch_recv(self, logical_label, validate, &mut branch_recv_state, cx) {
             Poll::Pending => {
                 self.register_session_waiter(cx.waker());
                 self.public_branch_recv_state = branch_recv_state;
@@ -157,10 +150,16 @@ where
                     self.clear_session_waiter();
                     self.finish_public_op(PublicActiveOp::BranchRecv);
                     self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+                    let branch = crate::invariant_some(self.public_route_branch.take());
+                    if branch.offered_frame.is_some() {
+                        crate::invariant();
+                    }
                     Poll::Ready(Ok(payload))
                 }
                 Err(err) => {
-                    branch_recv_state.discard_terminal();
+                    if let Some(branch) = self.public_route_branch.take() {
+                        branch.discard_terminal();
+                    }
                     self.clear_session_waiter();
                     self.finish_public_op(PublicActiveOp::BranchRecv);
                     self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();

@@ -284,16 +284,6 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
                         arena_storage,
                         arena_layout.frontier_root_active_slots(),
                     ),
-                    observed_key_slots: section_ptr::<
-                        crate::endpoint::kernel::frontier::FrontierObservationSlot,
-                    >(
-                        arena_storage,
-                        arena_layout.frontier_root_observed_key_slots(),
-                    ),
-                    observed_key_offer_lanes: section_ptr::<crate::global::role_program::LaneWord>(
-                        arena_storage,
-                        arena_layout.frontier_root_observed_offer_lanes(),
-                    ),
                 },
                 offer_entry_slots: section_ptr::<crate::endpoint::kernel::frontier::OfferEntrySlot>(
                     arena_storage,
@@ -304,10 +294,6 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
                 root: RootFrontierCapacity {
                     row_count: arena_layout.frontier_root_rows().count(),
                     pool_capacity: arena_layout.frontier_root_active_slots().count(),
-                    observed_key_lane_word_count: arena_layout
-                        .frontier_root_observed_offer_lanes()
-                        .count()
-                        / arena_layout.frontier_root_rows().count().max(1),
                 },
                 max_offer_entries: arena_layout.frontier_offer_entry_slots().count(),
             },

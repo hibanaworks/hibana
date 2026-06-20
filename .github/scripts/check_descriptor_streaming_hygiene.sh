@@ -95,8 +95,9 @@ if [[ "${FAILED}" -ne 0 ]]; then
 fi
 
 for required in \
-  'src/global/compiled/lowering/driver:segment_len(' \
-  'src/global/compiled/lowering/driver:node_at(' \
+  'src/global/const_dsl/eff_list.rs:pub(crate) const fn node_at' \
+  'src/global/compiled/lowering/driver/impls/image.rs:scan_const(eff_list' \
+  'src/g.rs:SOURCE_EFF_LIST' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
   'src/global/compiled/images/image/role_descriptor_ref.rs:pub(crate) const fn from_resident(image:' \
   'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \

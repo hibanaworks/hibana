@@ -24,8 +24,8 @@ where
         if rows.is_empty() {
             return Ok(SendRouteAuthority::none());
         }
-        self.resolve_send_route_preview_rows(meta, rows)?;
-        Ok(SendRouteAuthority::direct(rows, meta.lane))
+        let audit_start = self.resolve_send_route_preview_rows(meta, rows)?;
+        Ok(SendRouteAuthority::direct(meta.lane, audit_start))
     }
 
     pub(crate) fn verify_send_route_authority(
@@ -48,13 +48,12 @@ where
                 }
             }
             SendRouteAuthority::Direct {
-                selected_routes,
                 lane,
+                audit_start: _,
             } => {
                 if lane != meta.lane
-                    || selected_routes.packed_selected_lane() != Some(lane)
                     || current.is_empty()
-                    || !self.selected_route_rows_match(current, selected_routes)
+                    || current.packed_selected_lane() != Some(lane)
                 {
                     return Err(SendError::PhaseInvariant);
                 }
@@ -106,7 +105,11 @@ where
         &self,
         meta: &SendMeta,
         rows: SelectedRouteCommitRowsRef,
-    ) -> SendResult<()> {
+    ) -> SendResult<u16> {
+        if rows.len() > u16::MAX as usize {
+            return Err(SendError::PhaseInvariant);
+        }
+        let mut audit_start = rows.len() as u16;
         let mut idx = 0usize;
         while idx < rows.len() {
             let route_row = rows
@@ -120,6 +123,10 @@ where
                 idx += 1;
                 continue;
             };
+            if self.selected_arm_for_scope(scope_id).is_none() && audit_start as usize == rows.len()
+            {
+                audit_start = idx as u16;
+            }
             self.resolve_dynamic_route_arm_for_send_preview(
                 meta,
                 scope_id,
@@ -129,34 +136,7 @@ where
             )?;
             idx += 1;
         }
-        Ok(())
-    }
-
-    fn selected_route_rows_match(
-        &self,
-        left: SelectedRouteCommitRowsRef,
-        right: SelectedRouteCommitRowsRef,
-    ) -> bool {
-        if left.len() != right.len() || left.packed_selected_lane() != right.packed_selected_lane()
-        {
-            return false;
-        }
-        let mut idx = 0usize;
-        while idx < left.len() {
-            let Some(left_row) = left.get(&self.cursor, idx) else {
-                return false;
-            };
-            let Some(right_row) = right.get(&self.cursor, idx) else {
-                return false;
-            };
-            if left_row.scope() != right_row.scope()
-                || left_row.selected_arm() != right_row.selected_arm()
-            {
-                return false;
-            }
-            idx += 1;
-        }
-        true
+        Ok(audit_start)
     }
 
     fn resolve_dynamic_route_arm_for_send_preview(

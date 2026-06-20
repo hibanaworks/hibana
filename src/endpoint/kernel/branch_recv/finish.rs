@@ -1,16 +1,15 @@
 use super::{
-    BranchCommitPlan, BranchKind, BranchPreviewView, BranchRecvCommitBuilder,
-    BranchRecvCommitInput, BranchRecvRuntimeDesc, CursorEndpoint, EndpointRxEventPlan, EventCursor,
-    MaterializedRouteBranch, Payload, Poll, RecvCommitPayload, RecvCommitPlan, RecvError, RecvMeta,
-    RecvResult, RouteState, SelectedRouteCommitRows, StateIndex, Transport,
-    branch_recv_phase_invariant, lane_port,
+    BranchKind, CursorEndpoint, EndpointRxEventPlan, EventCursor, Payload, Poll, RecvCommitPayload,
+    RecvCommitPlan, RecvError, RecvMeta, RecvResult, RouteState, SelectedRouteCommitRows,
+    StateIndex, Transport, branch_recv_phase_invariant, lane_port,
     prepare_descriptor_checked_recv_reentry_rows_from_resident_route_commit_range,
     scope_slot_for_route_from_cursor, state_index_to_usize,
 };
-use crate::{global::typestate::RelocatableResidentLaneStep, transport::wire::CodecError};
-
-mod commit_builder;
-use commit_builder::WireBranchRecvCommitInput;
+use crate::{
+    endpoint::kernel::core::{CommitDelta, CommitRow, OfferedFrame},
+    global::typestate::RelocatableResidentLaneStep,
+    transport::wire::CodecError,
+};
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -18,18 +17,17 @@ where
 {
     fn prepare_branch_recv_transport_wait(
         &mut self,
-        branch: &MaterializedRouteBranch<'r>,
-        desc: BranchRecvRuntimeDesc,
+        logical_label: u8,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
-        let expected = desc.logical_label();
-        if branch.label != expected {
+        let Some(branch) = self.public_route_branch.as_ref() else {
+            return Err(branch_recv_phase_invariant());
+        };
+        let expected = logical_label;
+        if branch.branch_meta.label != expected {
             return Err(RecvError::LabelMismatch {
                 expected,
-                actual: branch.label,
+                actual: branch.branch_meta.label,
             });
-        }
-        if desc.frame_label() != crate::transport::FrameLabel::new(branch.branch_meta.frame_label) {
-            return Err(branch_recv_phase_invariant());
         }
         if !matches!(branch.branch_meta.kind, BranchKind::WireRecv)
             || branch.offered_frame.is_some()
@@ -43,7 +41,7 @@ where
         if meta.origin.is_session() {
             return Err(branch_recv_phase_invariant());
         }
-        if desc.frame_label() != crate::transport::FrameLabel::new(meta.frame_label) {
+        if branch.branch_meta.frame_label != meta.frame_label {
             return Err(branch_recv_phase_invariant());
         }
         Ok(Some(meta))
@@ -55,15 +53,17 @@ where
 
     fn finish_route_branch_recv(
         &mut self,
-        desc: BranchRecvRuntimeDesc,
+        logical_label: u8,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
-        branch: &mut MaterializedRouteBranch<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        let label = branch.label;
+        let Some(branch) = self.public_route_branch.as_ref() else {
+            return Err(branch_recv_phase_invariant());
+        };
         let branch_meta = branch.branch_meta;
+        let label = branch_meta.label;
 
-        let expected = desc.logical_label();
+        let expected = logical_label;
         if label != expected {
             return Err(RecvError::LabelMismatch {
                 expected,
@@ -73,24 +73,17 @@ where
         match branch_meta.kind {
             BranchKind::LocalAction | BranchKind::TerminalArm => {
                 let payload = Self::non_wire_branch_payload();
-                let branch_view = BranchPreviewView::from_materialized(branch);
-                let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
+                let branch_plan = self.preflight_branch_preview_commit_plan(branch_meta)?;
                 let event =
                     EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
                 let route_seed_rows = branch_plan.route_seed_rows();
-                let commit_plan =
-                    self.with_branch_recv_commit_builder(route_seed_rows, |mut builder| {
-                        builder.build_non_wire_branch_recv_commit_input(
-                            branch_plan,
-                            event,
-                            branch_view,
-                            branch_meta.kind,
-                            payload,
-                        )
-                    })?;
-                let committed_payload = self.publish_recv_commit_plan(commit_plan, validate)?;
-                branch.offered_frame = None;
-                Ok(committed_payload)
+                let commit_plan = self.build_non_wire_branch_recv_commit_plan(
+                    route_seed_rows,
+                    branch_meta,
+                    event,
+                    payload,
+                )?;
+                self.publish_recv_commit_plan(commit_plan, validate)
             }
 
             BranchKind::ArmSendHint => Err(branch_recv_phase_invariant()),
@@ -109,62 +102,192 @@ where
                     return Err(branch_recv_phase_invariant());
                 }
 
-                let Some(offered_frame) = branch.offered_frame.as_ref() else {
-                    return Err(branch_recv_phase_invariant());
-                };
-                if offered_frame.lane() != meta.lane {
-                    return Err(branch_recv_phase_invariant());
+                {
+                    let Some(branch) = self.public_route_branch.as_ref() else {
+                        return Err(branch_recv_phase_invariant());
+                    };
+                    let Some(offered_frame) = branch.offered_frame.as_ref() else {
+                        return Err(branch_recv_phase_invariant());
+                    };
+                    if offered_frame.lane() != meta.lane {
+                        return Err(branch_recv_phase_invariant());
+                    }
+                    if offered_frame.transport_frame_label() != meta.frame_label {
+                        return Err(branch_recv_phase_invariant());
+                    }
                 }
-                if offered_frame.transport_frame_label() != meta.frame_label {
-                    return Err(branch_recv_phase_invariant());
-                }
-                let branch_view = BranchPreviewView::from_materialized(branch);
-
-                let branch_plan = self.preflight_branch_preview_commit_plan(branch_view)?;
+                let branch_plan = self.preflight_branch_preview_commit_plan(branch_meta)?;
                 let branch_recv_meta =
                     branch_plan.meta().ok_or_else(branch_recv_phase_invariant)?;
                 let route_seed_rows = branch_plan.route_seed_rows();
                 let event =
                     EndpointRxEventPlan::branch(branch_meta.lane_wire, label, branch_meta.origin);
-                let frame = crate::invariant_some(branch.offered_frame.take()).into_frame();
-                let commit_plan =
-                    self.with_branch_recv_commit_builder(route_seed_rows, |mut builder| {
-                        builder.build_wire_branch_recv_commit_input(WireBranchRecvCommitInput {
-                            branch_plan,
-                            branch: branch_view,
-                            meta,
-                            branch_meta: branch_recv_meta,
-                            event,
-                            frame,
-                        })
-                    })?;
+                let frame = {
+                    let Some(branch) = self.public_route_branch.as_mut() else {
+                        return Err(branch_recv_phase_invariant());
+                    };
+                    crate::invariant_some(branch.offered_frame.take()).into_frame()
+                };
+                let commit_plan = self.build_wire_branch_recv_commit_plan(
+                    route_seed_rows,
+                    meta,
+                    branch_recv_meta,
+                    branch_meta,
+                    event,
+                    frame,
+                )?;
                 self.publish_recv_commit_plan(commit_plan, validate)
             }
         }
     }
 
-    fn with_branch_recv_commit_builder(
+    fn build_wire_branch_recv_commit_plan(
         &mut self,
         route_seed_rows: super::SelectedRouteCommitRowsRef,
-        f: impl for<'build> FnOnce(
-            BranchRecvCommitBuilder<'build, 'r, ROLE, T>,
-        ) -> RecvResult<BranchRecvCommitInput<'r>>,
+        meta: RecvMeta,
+        branch_meta: RecvMeta,
+        publish_branch: super::BranchMeta,
+        event: EndpointRxEventPlan,
+        frame: lane_port::ReceivedFrame<'r>,
     ) -> RecvResult<RecvCommitPlan<'r>> {
-        let input = {
+        let branch_scope = publish_branch.scope_id;
+        let cursor_index = publish_branch.cursor_index;
+        let mut frame = Some(frame);
+        let result = (|| {
             let Self {
                 cursor,
                 decision_state,
                 ..
             } = self;
             let route_rows = SelectedRouteCommitRows::from_seed(route_seed_rows)?;
-            f(BranchRecvCommitBuilder {
+            let mut route_rows = route_rows;
+            Self::collect_branch_recv_reentry_route_rows_from_parts(
                 cursor,
                 decision_state,
-                route_rows: Some(route_rows),
-                _role: core::marker::PhantomData,
-            })?
+                meta,
+                branch_scope,
+                &mut route_rows,
+            )?;
+            let mut selected_arm = |candidate| {
+                Self::authorized_route_arm_for_branch_recv(
+                    decision_state,
+                    cursor,
+                    &route_rows,
+                    candidate,
+                )
+            };
+            let enabled = cursor
+                .event_enabled(
+                    state_index_to_usize(cursor_index),
+                    crate::global::typestate::EventCommitMeta::new(
+                        branch_meta.eff_index,
+                        branch_meta.label,
+                        branch_meta.origin,
+                        branch_meta.scope,
+                        branch_meta.route_arm,
+                        branch_meta.lane,
+                    ),
+                    &mut selected_arm,
+                )
+                .map_err(|_| branch_recv_phase_invariant())?;
+            let reentry_cursor = Self::branch_recv_reentry_cursor_step_from_parts(
+                cursor,
+                decision_state,
+                &route_rows,
+                meta,
+                enabled.cursor_after(),
+            );
+            let delta = CommitDelta::from_recv_meta(
+                branch_meta,
+                route_rows.as_commit_rows(branch_meta.lane),
+                enabled.cursor_after(),
+                enabled.progress_step(),
+            )
+            .with_lane_relocation(reentry_cursor);
+            let delta = self
+                .prepare_enabled_event_commit_delta(delta, enabled)
+                .map_err(|_| branch_recv_phase_invariant())?;
+            let frame = crate::invariant_some(frame.take());
+            Ok(RecvCommitPlan::branch(
+                publish_branch,
+                event,
+                delta,
+                RecvCommitPayload::wire(frame),
+            ))
+        })();
+        if result.is_err()
+            && let Some(frame) = frame
+        {
+            frame.discard_uncommitted();
+        }
+        result
+    }
+
+    fn build_non_wire_branch_recv_commit_plan(
+        &mut self,
+        route_seed_rows: super::SelectedRouteCommitRowsRef,
+        publish_branch: super::BranchMeta,
+        event: EndpointRxEventPlan,
+        payload: Payload<'r>,
+    ) -> RecvResult<RecvCommitPlan<'r>> {
+        let route_rows = SelectedRouteCommitRows::from_seed(route_seed_rows)?;
+        let kind = publish_branch.kind;
+        let event_commit = crate::global::typestate::EventCommitMeta::new(
+            publish_branch.eff_index,
+            publish_branch.label,
+            publish_branch.origin,
+            publish_branch.scope_id,
+            Some(publish_branch.selected_arm),
+            publish_branch.lane_wire,
+        );
+        let cursor_index = publish_branch.cursor_index;
+        let lane_wire = event_commit.lane;
+        let branch_scope = event_commit.scope;
+        let delta = match kind {
+            BranchKind::LocalAction => {
+                let idx = state_index_to_usize(cursor_index);
+                let mut selected_arm = |candidate| {
+                    if let Some(slot) = scope_slot_for_route_from_cursor(&self.cursor, candidate) {
+                        self.decision_state.selected_arm_for_scope_slot(slot)
+                    } else {
+                        None
+                    }
+                };
+                let enabled = self
+                    .cursor
+                    .event_enabled(idx, event_commit, &mut selected_arm)
+                    .map_err(|_| RecvError::PhaseInvariant)?;
+                let delta = CommitDelta::from_event_row(
+                    event_commit.eff_index,
+                    event_commit.label,
+                    event_commit.origin,
+                    CommitRow::new(branch_scope, event_commit.route_arm, lane_wire),
+                    route_rows.as_commit_rows(lane_wire),
+                    enabled.cursor_after(),
+                    enabled.progress_step(),
+                );
+                self.prepare_enabled_event_commit_delta(delta, enabled)
+                    .map_err(|_| RecvError::PhaseInvariant)?
+            }
+            BranchKind::TerminalArm => {
+                let next_index = StateIndex::from_usize(self.cursor.index());
+                let delta = CommitDelta::route_rows(
+                    route_rows.as_route_only_commit_rows(lane_wire),
+                    next_index,
+                );
+                self.prepare_commit_delta(delta)
+                    .map_err(|_| RecvError::PhaseInvariant)?
+            }
+            BranchKind::WireRecv | BranchKind::ArmSendHint => {
+                return Err(branch_recv_phase_invariant());
+            }
         };
-        self.prepare_branch_recv_commit_plan(input)
+        Ok(RecvCommitPlan::branch(
+            publish_branch,
+            event,
+            delta,
+            RecvCommitPayload::non_wire(payload),
+        ))
     }
 
     fn collect_branch_recv_reentry_route_rows_from_parts(
@@ -254,12 +377,16 @@ where
     T: Transport + 'r,
 {
     #[inline]
+    fn has_branch_recv_kernel_branch(&self) -> bool {
+        self.public_route_branch.is_some()
+    }
+
+    #[inline]
     fn prepare_branch_recv_kernel_transport_wait(
         &mut self,
-        desc: BranchRecvRuntimeDesc,
-        branch: &MaterializedRouteBranch<'r>,
+        logical_label: u8,
     ) -> RecvResult<Option<crate::global::typestate::RecvMeta>> {
-        self.prepare_branch_recv_transport_wait(branch, desc)
+        self.prepare_branch_recv_transport_wait(logical_label)
     }
 
     #[inline]
@@ -285,13 +412,29 @@ where
     }
 
     #[inline]
+    fn stage_branch_recv_kernel_transport_payload(
+        &mut self,
+        frame: lane_port::ReceivedFrame<'r>,
+    ) -> RecvResult<()> {
+        let Some(branch) = self.public_route_branch.as_mut() else {
+            frame.discard_uncommitted();
+            return Err(branch_recv_phase_invariant());
+        };
+        if branch.offered_frame.is_some() {
+            frame.discard_uncommitted();
+            return Err(branch_recv_phase_invariant());
+        }
+        branch.offered_frame = Some(OfferedFrame::new(frame));
+        Ok(())
+    }
+
+    #[inline]
     fn finish_branch_recv_kernel(
         &mut self,
-        desc: BranchRecvRuntimeDesc,
+        logical_label: u8,
         prepared_meta: Option<crate::global::typestate::RecvMeta>,
-        branch: &mut MaterializedRouteBranch<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>> {
-        self.finish_route_branch_recv(desc, prepared_meta, branch, validate)
+        self.finish_route_branch_recv(logical_label, prepared_meta, validate)
     }
 }

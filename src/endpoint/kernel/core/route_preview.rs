@@ -64,9 +64,15 @@ where
 
     #[inline]
     pub(crate) fn current_offer_scope_id(&self) -> ScopeId {
+        let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
+        let mut preview_selected_arm_for_scope = |scope| {
+            self.preview_route_arm_selection_non_consuming(scope)
+                .map(Arm::as_u8)
+                .or_else(|| self.poll_arm_from_ready_mask(scope).map(Arm::as_u8))
+        };
         self.cursor.current_offer_scope_id(
-            |scope| self.selected_arm_for_scope(scope),
-            |scope| self.preview_selected_arm_for_scope(scope),
+            &mut selected_arm_for_scope,
+            &mut preview_selected_arm_for_scope,
         )
     }
 

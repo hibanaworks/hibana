@@ -1,8 +1,7 @@
-use super::super::{
-    CompiledProgramImage, PackedLocalEventRow, RoleLaneImage, RoleLaneScratch, ScopeEvent, ScopeId,
-};
+use super::super::{PackedLocalEventRow, RoleLaneImage, RoleLaneScratch, ScopeEvent, ScopeId};
 use crate::global::{
     compiled::images::{CompiledProgramRef, EventSemanticKind},
+    const_dsl::EffList,
     typestate::{
         LocalAtomFacts, LocalConflict, LocalNode, LocalNodeMeta, PackedEventConflict,
         RouteChoiceMark, StateIndex,
@@ -106,7 +105,6 @@ impl PackedLocalEventRow {
         }
     }
 
-    #[inline(always)]
     pub(crate) const fn to_node(
         self,
         role: u8,
@@ -153,7 +151,7 @@ impl PackedLocalEventRow {
     }
 }
 
-impl RoleLaneImage {
+impl<'a> RoleLaneImage<'a> {
     #[inline(always)]
     pub(crate) const fn local_step_node(
         &self,
@@ -174,22 +172,20 @@ impl RoleLaneImage {
 }
 
 impl RoleLaneScratch {
-    #[inline(always)]
-    const fn scope_at(program: &CompiledProgramImage, eff_idx: usize) -> ScopeId {
-        let view = program.view();
-        let markers = view.scope_markers();
+    const fn scope_at(eff_list: &EffList, eff_idx: usize) -> ScopeId {
+        let markers = eff_list.scope_markers();
         let mut best = ScopeId::none();
         let mut best_start = 0usize;
         let mut best_span = usize::MAX;
         let mut idx = 0usize;
         while idx < markers.len() {
             let marker = markers[idx];
-            if marker.offset > eff_idx {
+            if marker.offset() > eff_idx {
                 break;
             }
             if matches!(marker.event, ScopeEvent::Enter) {
-                let start = marker.offset;
-                let end = Self::scope_segment_end(markers, idx, view.len());
+                let start = marker.offset();
+                let end = Self::scope_segment_end(markers, idx, eff_list.len());
                 if eff_idx >= end {
                     idx += 1;
                     continue;
@@ -213,11 +209,8 @@ impl RoleLaneScratch {
     }
 
     #[inline(always)]
-    const fn route_scope_and_arm_at(
-        program: &CompiledProgramImage,
-        eff_idx: usize,
-    ) -> Option<(ScopeId, u8)> {
-        match Self::route_conflict_for_eff(program.view().scope_markers(), eff_idx).to_conflict() {
+    const fn route_scope_and_arm_at(eff_list: &EffList, eff_idx: usize) -> Option<(ScopeId, u8)> {
+        match Self::route_conflict_for_eff(eff_list.scope_markers(), eff_idx).to_conflict() {
             Some(crate::global::typestate::LocalConflict::RouteArm { scope, arm }) => {
                 Some((scope, arm))
             }
@@ -229,27 +222,27 @@ impl RoleLaneScratch {
         }
     }
 
-    #[inline(always)]
-    const fn first_recv_eff_for_route_arm<const ROLE: u8>(
-        program: &CompiledProgramImage,
+    const fn first_recv_eff_for_route_arm(
+        eff_list: &EffList,
         route: ScopeId,
         arm: u8,
+        role: u8,
     ) -> Option<usize> {
         if arm >= 2 {
             return None;
         }
-        let markers = program.view().scope_markers();
+        let markers = eff_list.scope_markers();
         let Some(ranges) = Self::route_arm_ranges(markers, route) else {
             return None;
         };
         let (start, end) = ranges[arm as usize];
-        let view = program.view();
         let mut idx = start;
-        while idx < end && idx < view.len() {
-            if let Some(atom) = view.atom_at(idx)
-                && atom.to == ROLE
-                && atom.from != ROLE
-            {
+        while idx < end && idx < eff_list.len() {
+            let node = eff_list.node_at(idx);
+            if matches!(node.kind, crate::eff::EffKind::Atom) && {
+                let atom = node.atom_data();
+                atom.to == role && atom.from != role
+            } {
                 return Some(idx);
             }
             idx += 1;
@@ -258,16 +251,17 @@ impl RoleLaneScratch {
     }
 
     #[inline(always)]
-    pub(super) const fn local_event_row_for_eff<const ROLE: u8>(
-        program: &CompiledProgramImage,
+    pub(super) const fn local_event_row_for_eff(
+        eff_list: &EffList,
         eff_idx: usize,
         frame_label: u8,
+        role: u8,
     ) -> PackedLocalEventRow {
-        let scope = Self::scope_at(program, eff_idx);
-        let route_scope_and_arm = Self::route_scope_and_arm_at(program, eff_idx);
+        let scope = Self::scope_at(eff_list, eff_idx);
+        let route_scope_and_arm = Self::route_scope_and_arm_at(eff_list, eff_idx);
         let choice = match route_scope_and_arm {
             Some((route_scope, arm)) => {
-                match Self::first_recv_eff_for_route_arm::<ROLE>(program, route_scope, arm) {
+                match Self::first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
                     Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
                     Some(_) | None => RouteChoiceMark::Ordinary,
                 }

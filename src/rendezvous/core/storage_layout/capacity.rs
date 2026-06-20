@@ -1,6 +1,4 @@
-use super::{
-    AssocTable, FREE_REGION_CAPACITY, FreeRegion, Rendezvous, RouteTable, Sidecar, Transport,
-};
+use super::{AssocTable, Rendezvous, RouteTable, Sidecar, Transport};
 use crate::session::cluster::error::ResourceScope;
 mod endpoint_lease;
 #[cfg(all(test, hibana_repo_tests))]
@@ -8,183 +6,23 @@ mod tests;
 
 // # Unsafe Owner Contract
 //
-// This file owns rendezvous sidecar capacity growth, persistent region release,
-// and resident table rebinding after storage has been allocated by the parent
-// storage layout owner. Raw endpoint-lease and sidecar pointers are always
-// range-checked against the pinned rendezvous slab metadata before use, and
-// migration copies initialized entries into freshly allocated owner storage
-// before publishing the new table ingress.
+// This file owns rendezvous sidecar capacity growth and resident table rebinding
+// after storage has been allocated by the parent storage layout owner. Raw
+// endpoint-lease and sidecar pointers are always range-checked against the
+// pinned rendezvous slab metadata before use, and migration copies initialized
+// entries into freshly allocated owner storage before publishing the new table
+// ingress.
 
 impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
     #[inline]
-    fn free_region_empty_slots(&self) -> usize {
-        let mut empty = 0usize;
-        let mut idx = 0usize;
-        while idx < FREE_REGION_CAPACITY {
-            if !self.free_regions[idx].is_recorded() {
-                empty += 1;
-            }
-            idx += 1;
-        }
-        empty
-    }
-
-    #[inline]
-    fn first_empty_free_region_slot(&self) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < FREE_REGION_CAPACITY {
-            if !self.free_regions[idx].is_recorded() {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    fn clear_free_region(&mut self, idx: usize) {
-        if idx < FREE_REGION_CAPACITY {
-            self.free_regions[idx] = FreeRegion::EMPTY;
-        }
-    }
-
-    #[inline]
-    fn record_free_region_fragment(&mut self, offset: u32, len: u32) {
-        if len == 0 {
-            return;
-        }
-        let Some(idx) = self.first_empty_free_region_slot() else {
-            crate::invariant();
-        };
-        self.free_regions[idx] = FreeRegion::recorded(offset, len);
-    }
-
-    fn release_persistent_region(&mut self, offset: u32, len: u32) -> Result<(), ()> {
-        if len == 0 {
-            return Ok(());
-        }
-        let mut start = offset;
-        let mut end = crate::invariant_some(offset.checked_add(len));
-        let mut idx = 0usize;
-        while idx < FREE_REGION_CAPACITY {
-            let region = self.free_regions[idx];
-            if !region.is_recorded() {
-                idx += 1;
-                continue;
-            }
-            let region_start = region.offset;
-            let region_end = crate::invariant_some(region.offset.checked_add(region.len));
-            if region_end < start || region_start > end {
-                idx += 1;
-                continue;
-            }
-            start = core::cmp::min(start, region_start);
-            end = core::cmp::max(end, region_end);
-            self.clear_free_region(idx);
-            idx = 0;
-        }
-
-        if end == self.image_frontier {
-            self.set_image_frontier(start);
-            loop {
-                let mut trimmed = false;
-                let mut free_idx = 0usize;
-                while free_idx < FREE_REGION_CAPACITY {
-                    let region = self.free_regions[free_idx];
-                    if region.is_recorded()
-                        && crate::invariant_some(region.offset.checked_add(region.len))
-                            == self.image_frontier
-                    {
-                        self.set_image_frontier(region.offset);
-                        self.clear_free_region(free_idx);
-                        trimmed = true;
-                        break;
-                    }
-                    free_idx += 1;
-                }
-                if !trimmed {
-                    break;
-                }
-            }
-            return Ok(());
-        }
-
-        if let Some(idx) = self.first_empty_free_region_slot() {
-            self.free_regions[idx] =
-                FreeRegion::recorded(start, crate::invariant_some(end.checked_sub(start)));
-            return Ok(());
-        }
-        Err(())
-    }
-
-    unsafe fn allocate_from_free_regions(
-        &mut self,
-        bytes: usize,
-        align: usize,
-    ) -> Option<(*mut u8, u32)> {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let base = slab_ptr as usize;
-        let mut idx = 0usize;
-        while idx < FREE_REGION_CAPACITY {
-            let region = self.free_regions[idx];
-            if !region.is_recorded() {
-                idx += 1;
-                continue;
-            }
-            let region_start = region.offset as usize;
-            let region_end = region.offset as usize + region.len as usize;
-            let alloc_start = Self::align_up(base + region_start, align).checked_sub(base)?;
-            let alloc_end = alloc_start.checked_add(bytes)?;
-            if alloc_end > region_end {
-                idx += 1;
-                continue;
-            }
-            let prefix_len = crate::invariant_some(alloc_start.checked_sub(region_start));
-            let suffix_len = crate::invariant_some(region_end.checked_sub(alloc_end));
-            let fragments = usize::from(prefix_len != 0) + usize::from(suffix_len != 0);
-            if self.free_region_empty_slots() + 1 < fragments {
-                idx += 1;
-                continue;
-            }
-            self.clear_free_region(idx);
-            if prefix_len != 0 {
-                let prefix_len = crate::invariant_ok(u32::try_from(prefix_len));
-                self.record_free_region_fragment(region.offset, prefix_len);
-            }
-            if suffix_len != 0 {
-                let alloc_end = crate::invariant_ok(u32::try_from(alloc_end));
-                let suffix_len = crate::invariant_ok(u32::try_from(suffix_len));
-                self.record_free_region_fragment(alloc_end, suffix_len);
-            }
-            let alloc_start_u32 = crate::invariant_ok(u32::try_from(alloc_start));
-            return Some((
-                /* SAFETY: `alloc_start..alloc_end` was carved from a recorded
-                free region inside this rendezvous slab and split before the
-                pointer is returned. */
-                unsafe { slab_ptr.add(alloc_start) },
-                alloc_start_u32,
-            ));
-        }
-        None
-    }
-
-    #[inline]
     unsafe fn allocate_persistent_sidecar_bytes(
         &mut self,
         bytes: usize,
         align: usize,
-    ) -> Option<(*mut u8, u32)> {
-        if let Some(region) =
-            /* SAFETY: the rendezvous free-region table owns the resident slab
-            fragments; allocation checks requested size/alignment before
-            returning a sidecar range. */
-            unsafe { self.allocate_from_free_regions(bytes, align) }
-        {
-            return Some(region);
-        }
+    ) -> Option<*mut u8> {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
         let start = Self::align_up(base + self.image_frontier as usize, align).checked_sub(base)?;
@@ -196,15 +34,13 @@ where
             return None;
         }
         let end_u32 = crate::invariant_ok(u32::try_from(end));
-        let start_u32 = crate::invariant_ok(u32::try_from(start));
         self.set_image_frontier(end_u32);
-        Some((
+        Some(
             /* SAFETY: `start..end` is below `endpoint_storage_floor` and the
             image frontier was advanced before returning this persistent
             sidecar pointer. */
             unsafe { slab_ptr.add(start) },
-            start_u32,
-        ))
+        )
     }
 
     #[inline]
@@ -213,57 +49,26 @@ where
         bytes: usize,
         align: usize,
     ) -> Option<Sidecar<u8>> {
-        let source_frontier = self.image_frontier;
-        let (ptr, offset) = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe { self.allocate_persistent_sidecar_bytes(bytes, align) }?;
-        let reclaim_delta = if offset > source_frontier {
-            (offset - source_frontier) as usize
-        } else {
-            0
-        };
-        Some(Sidecar::from_raw_parts(ptr, bytes, reclaim_delta))
+        let ptr = /* SAFETY: rendezvous core owns the resident slab slot and has checked lane/session generation before raw access. */ unsafe { self.allocate_persistent_sidecar_bytes(bytes, align) }?;
+        Some(Sidecar::from_raw_parts(ptr, bytes))
     }
 
     #[inline]
-    fn reclaim_offset_for_sidecar<S>(&self, sidecar: Sidecar<S>) -> u32 {
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let base = slab_ptr.addr();
-        let payload_start = crate::invariant_some(sidecar.ptr().addr().checked_sub(base));
-        let reclaim_start =
-            crate::invariant_some(payload_start.checked_sub(sidecar.reclaim_delta()));
-        crate::invariant_ok(u32::try_from(reclaim_start))
-    }
-
-    #[inline]
-    fn free_bound_persistent_region<S>(
-        &mut self,
-        reclaim_offset: u32,
-        sidecar: Sidecar<S>,
-    ) -> Result<(), ()> {
+    pub(crate) fn release_external_persistent_sidecar(&mut self, sidecar: Sidecar<u8>) {
         if sidecar.is_empty() {
-            return Ok(());
+            return;
         }
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
         let payload_start = crate::invariant_some(sidecar.ptr().addr().checked_sub(base));
-        let reclaim_start = reclaim_offset as usize;
         let payload_end = crate::invariant_some(payload_start.checked_add(sidecar.bytes()));
-        let release_len = crate::invariant_some(payload_end.checked_sub(reclaim_start));
-        let release_len = crate::invariant_ok(u32::try_from(release_len));
-        self.release_persistent_region(reclaim_offset, release_len)
-    }
-
-    #[inline]
-    pub(crate) fn free_external_persistent_sidecar(
-        &mut self,
-        sidecar: Sidecar<u8>,
-        failure_scope: ResourceScope,
-    ) -> Result<(), ResourceScope> {
-        if sidecar.is_empty() {
-            return Ok(());
+        if payload_end > self.image_frontier as usize {
+            crate::invariant();
         }
-        let reclaim_offset = self.reclaim_offset_for_sidecar(sidecar);
-        self.free_bound_persistent_region(reclaim_offset, sidecar)
-            .map_err(|()| failure_scope)
+        if payload_end == self.image_frontier as usize {
+            let payload_start = crate::invariant_ok(u32::try_from(payload_start));
+            self.set_image_frontier(payload_start);
+        }
     }
 
     #[inline]
@@ -304,26 +109,8 @@ where
     }
 
     #[inline]
-    fn release_sidecar<S>(
-        &mut self,
-        sidecar: Sidecar<S>,
-        failure_scope: ResourceScope,
-    ) -> Result<(), ResourceScope> {
-        self.free_external_persistent_sidecar(sidecar.cast::<u8>(), failure_scope)
-    }
-
-    #[inline]
-    fn release_new_sidecar_or_invariant<S>(
-        &mut self,
-        sidecar: Sidecar<S>,
-        failure_scope: ResourceScope,
-    ) {
-        if self
-            .free_external_persistent_sidecar(sidecar.cast::<u8>(), failure_scope)
-            .is_err()
-        {
-            crate::invariant();
-        }
+    fn release_sidecar<S>(&mut self, sidecar: Sidecar<S>) {
+        self.release_external_persistent_sidecar(sidecar.cast::<u8>());
     }
 
     fn ensure_lane_storage(
@@ -381,16 +168,9 @@ where
             }
         }
         if assoc_was_bound {
-            if let Err(error) = self.release_sidecar(source_assoc, ResourceScope::LaneStorage) {
-                /* SAFETY: the replacement assoc arena was initialized above but not published. */
-                unsafe {
-                    AssocTable::clear_waiters_in_storage(lease.ptr(), target_assoc_slots);
-                }
-                self.release_new_sidecar_or_invariant(lease, ResourceScope::LaneStorage);
-                return Err(error);
-            }
+            self.release_sidecar(source_assoc);
             self.assoc.clear_current_overflow_waiters();
-            /* SAFETY: the replacement assoc arena was staged before source release succeeded. */
+            /* SAFETY: the replacement assoc arena was staged before the owner pointer is published. */
             unsafe {
                 self.assoc.commit_storage(
                     lease.ptr(),
@@ -458,22 +238,10 @@ where
                 required_lane_slots,
             );
         }
-        if let Err(error) = self.release_sidecar(source_route, ResourceScope::RouteTable) {
-            /* SAFETY: the replacement route arena was initialized above but not published. */
-            unsafe {
-                RouteTable::clear_waiters_in_storage(
-                    lease.ptr(),
-                    required_frame_slots,
-                    required_lane_slots,
-                );
-            }
-            self.release_new_sidecar_or_invariant(lease, ResourceScope::RouteTable);
-            return Err(error);
-        }
+        self.release_sidecar(source_route);
         self.routes.clear_current_waiters();
-        /* SAFETY: migration succeeded and the old sidecar has been released.
-        Rebinding publishes the replacement route-table columns for the same
-        rendezvous lane range. */
+        /* SAFETY: migration populated the replacement route-table columns before
+        rebinding publishes them for the same rendezvous lane range. */
         unsafe {
             self.routes.rebind_from_storage(
                 lease.ptr(),

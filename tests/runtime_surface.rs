@@ -340,6 +340,7 @@ fn role_program_handle_is_resident_compiled_image_backed() {
         source
     };
     let g = read("src/g.rs");
+    let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
     let role_projection_source = read("src/g/role_projection.rs");
     let role_program_struct = role_program
         .split("pub struct RoleProgram<const ROLE: u8> {")
@@ -367,7 +368,9 @@ fn role_program_handle_is_resident_compiled_image_backed() {
                 .contains("const IMAGE_REF: crate::global::role_program::RoleImageRef")
             && role_projection.contains("ProgramImageBytes")
             && role_projection.contains("ProgramProjection::<Steps>::PROGRAM_REF")
-            && role_projection.contains("bytes.image_ref("),
+            && role_projection.contains("RoleImageBuild<N>")
+            && role_projection.contains("Self::image_ref(build)")
+            && role_blob.contains("self.bytes.image_ref("),
         "RoleProgram must stay a direct compact resident RoleImageRef handle"
     );
 }
@@ -679,14 +682,14 @@ fn crate_package_artifact_is_a_first_class_gate() {
         "run_package_clean \"cargo package --list\"",
         "run_package_with_repo_test_exclusions \"cargo package --no-verify\"",
         "package lib check",
-        "package lib test build",
+        "package lib test",
         "packaged tests must include their module tree",
-        "package UI test",
+        "package UI harness",
         "--test ui",
         "package behavior test",
         "--test lane_lifecycle_tap",
         "package lib check --no-default-features",
-        "package lib test build --no-default-features",
+        "package lib test --no-default-features",
         "package docs --no-default-features",
         "RUSTFLAGS=\"-Dwarnings\"",
         "RUSTDOCFLAGS=\"-Dwarnings\"",

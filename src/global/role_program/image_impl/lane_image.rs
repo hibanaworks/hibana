@@ -9,9 +9,9 @@ use super::super::{
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
 
-impl RoleLaneImage {
+impl<'a> RoleLaneImage<'a> {
     #[inline(always)]
-    pub(crate) const fn new(columns: super::super::RoleImageColumns, blob: BlobPtr) -> Self {
+    pub(crate) const fn new(columns: &'a super::super::RoleImageColumns, blob: BlobPtr) -> Self {
         Self { columns, blob }
     }
 
@@ -138,7 +138,6 @@ impl RoleLaneImage {
         }
     }
 
-    #[inline(always)]
     pub(crate) const fn resident_row_lane_steps(
         &self,
         idx: usize,
@@ -356,7 +355,6 @@ impl RoleLaneImage {
         self.route_arm_row(row_idx).event_row()
     }
 
-    #[inline(always)]
     pub(crate) const fn resident_row_lane_step_at(
         &self,
         idx: usize,
@@ -388,7 +386,6 @@ impl RoleLaneImage {
         None
     }
 
-    #[inline(always)]
     pub(super) const fn resident_row_lane_step_ordinal(
         &self,
         idx: usize,
@@ -499,7 +496,6 @@ impl RoleLaneImage {
         }
     }
 
-    #[inline(always)]
     const fn route_arm_lane_step_row(
         &self,
         slot: usize,

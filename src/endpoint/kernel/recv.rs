@@ -210,10 +210,12 @@ where
         if frame.frame_label_raw() != meta.frame_label || frame.lane_wire() != desc.lane_wire {
             return Err(RecvError::PhaseInvariant);
         }
+        let cursor_index = state_index_to_usize(desc.cursor_index);
+        let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
         let enabled = match self.cursor.event_enabled(
-            state_index_to_usize(desc.cursor_index),
+            cursor_index,
             EventCommitMeta::from(meta),
-            |scope| self.selected_arm_for_scope(scope),
+            &mut selected_arm,
         ) {
             Ok(enabled) => enabled,
             Err(CursorInvariantError::INVARIANT) => {
@@ -233,7 +235,7 @@ where
                     decision_state,
                     cursor,
                     meta.lane,
-                    state_index_to_usize(desc.cursor_index),
+                    cursor_index,
                     arm,
                     &mut rows,
                 )?;
@@ -252,7 +254,7 @@ where
             enabled.cursor_after(),
             enabled.progress_step(),
         );
-        let delta = match self.prepare_commit_delta(delta) {
+        let delta = match self.prepare_enabled_event_commit_delta(delta, enabled) {
             Ok(delta) => delta,
             Err(CursorInvariantError::INVARIANT) => {
                 return Err(RecvError::PhaseInvariant);

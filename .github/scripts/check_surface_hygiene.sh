@@ -646,6 +646,9 @@ check_absent "pub[[:space:]]+struct[[:space:]]+SessionKit(Storage)?<'cfg,[[:spac
 check_absent "\\b(MAX_RV|RUNTIME_RENDEZVOUS_CAPACITY|cluster_rendezvous_slot|ArrayMap)\\b" \
   "fixed rendezvous-capacity registry residue must not be detected" \
   src/endpoint src/session src/runtime src/runtime_core
+check_absent "\\b(MAX_FIRST_RECV_DISPATCH|FREE_REGION_CAPACITY|FreeRegion|free_regions|reclaim_delta)\\b" \
+  "arbitrary fixed internal capacity residue must not be detected" \
+  src
 check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Arm|Decision)[A-Za-z0-9_]*[[:space:]]*=" \
   "step/composition alias residue in production source" \
   src/global/steps.rs
@@ -789,11 +792,8 @@ check_absent "\\b(${payload_validator}|${zero_payload_provider_alias}|${stage_se
 check_absent "\\b(SlotArena|SlotStorage|SlotBundleHandle|SlotStageRecord|FACET_SLOTS|facets_slots|requires_slots|slot_arena)\\b" \
   "test-only resolver slot allocator residue in production source" \
   src/rendezvous.rs src/rendezvous src/session/lease src/session/cluster/core.rs
-check_absent "std::env::var_os\\(" \
-  "env lookup in hibana core" \
-  src
-check_absent "eprintln!\\(" \
-  "stderr debug trace in hibana core" \
+check_absent "std::env::var_os\\(|eprintln!\\(" \
+  "env lookup or stderr debug trace in hibana core" \
   src
 check_absent "WireFirst" \
   "WireFirst token" \
@@ -815,16 +815,7 @@ check_absent "duplicate route label" \
 check_absent "\\b(RouteLabelBits|BitEq|BitsEqual|BitsCons|BitsNil|Bit0|Bit1)\\b" \
   "route label bit-table forbidden path" \
   src/global.rs
-check_absent "\\bRouteControllerArm\\b|\\bParallelLaneShape\\b" \
-  "route/par forbidden witness name" \
-  src/global.rs
-check_absent "\\bParallelFragment\\b" \
-  "parallel empty-arm forbidden semantic witness name" \
-  src/global.rs \
-  src/global/program.rs
-check_absent "\\bStepNonEmpty\\b" \
-  "parallel empty-arm witness forbidden path" \
-  src/global/steps.rs
+bash ./.github/scripts/check_projection_surface_hygiene.sh
 check_absent "(?i)\\b(quic|h3|hq|qpack|alpn)\\b|http/3" \
   "protocol-specific vocabulary in hibana/src" \
   src
@@ -852,8 +843,6 @@ check_absent "ScopeFrameLabelMasks::EMPTY|frame_label_masks|frame_label_meta:[[:
   src/endpoint/kernel/offer/facts.rs \
   src/endpoint/kernel/offer/passive.rs \
   src/endpoint/kernel/offer/select.rs
-
-
 bash ./.github/scripts/check_endpoint_surface_owner.sh
 
 HIDDEN_SRC_FILES="$(find src -type f | awk '$0 ~ "/_[^/]+$"')"

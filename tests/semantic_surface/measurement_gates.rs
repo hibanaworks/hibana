@@ -12,7 +12,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let warning_free_gate = read(".github/scripts/check_warning_free.sh");
     let direct_projection_gate = read(".github/scripts/check_direct_projection_binary.sh");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
-    let huge_gate = read(".github/scripts/check_huge_choreography_budget.sh");
+    let compile_pressure_guard = read(".github/scripts/lib/compile_pressure_guard.sh");
+    let compile_pressure_budget_helper = read(".github/scripts/lib/compile_pressure_budget.py");
+    let compile_pressure_budget =
+        read(".github/measurement_snapshots/hibana-compile-pressure-budget.tsv");
     let thumb_header_gate = read(".github/scripts/check_thumbv6m_frame_header_codegen.sh");
     let thumb_mask_gate = read(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
     let final_gate_with_helpers =
@@ -49,12 +52,54 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
         "bash ./.github/scripts/check_no_split_guard_literals.sh",
         "python3 .github/scripts/check_public_api_allowlists.py --self-test",
+        "compile_pressure_guard.sh",
+        "run_with_compile_pressure_guard",
+        "HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE",
+        "HIBANA_COMPILE_PRESSURE_LABEL=final_form_gate",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
     ] {
         assert!(
             final_gate_with_helpers.contains(required),
             "final-form snapshot gate missing required guard: {required}"
+        );
+    }
+
+    for required in [
+        "local max_mib=\"${HIBANA_COMPILE_PRESSURE_MAX_RSS_MIB:-}\"",
+        "HIBANA_COMPILE_PRESSURE_BUDGETS:-$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/../..\" && pwd)/measurement_snapshots/hibana-compile-pressure-budget.tsv",
+        "budget_label=\"${HIBANA_COMPILE_PRESSURE_LABEL:-}\"",
+        "compile_pressure_budget.py",
+        "limit \"${budget_path}\" \"${budget_label}\" rss_mib",
+        "compile_pressure_guard_limit_seconds",
+        "HIBANA_COMPILE_PRESSURE_MAX_SECONDS",
+        "limit \"${budget_path}\" \"${budget_label}\" seconds",
+        "max-rss",
+        "{\"cargo\", \"rustc\", \"rustdoc\"}",
+        "if name == \"rustup\":",
+        "total_rss += rss",
+        "descendants = {root}",
+        "aggregate total_rss_mib=",
+        "ok total_rss_mib=",
+        "max_observed_mib",
+        "elapsed=${elapsed_seconds}s seconds_budget=${max_seconds}s max_rss=${max_observed_mib}MiB rss_budget=$((max_kib / 1024))MiB",
+        "HIBANA_COMPILE_PRESSURE_POLL_SECONDS:-1",
+        "sys.exit(7)",
+        "if [[ \"${status}\" -eq 7 ]]; then",
+        "compile_pressure_guard_stop_tree",
+        "return 137",
+        "return 124",
+    ] {
+        assert!(
+            compile_pressure_guard.contains(required),
+            "compile pressure guard must enforce a snapshot-derived aggregate rust-tool emergency stop: {required}"
+        );
+    }
+
+    for forbidden in ["5242880", "10485760", "5120", "10240"] {
+        assert!(
+            !format!("{run_final_gate}\n{compile_pressure_guard}").contains(forbidden),
+            "final-form compile pressure guard must not drift back to 5GiB/10GiB ceilings: {forbidden}"
         );
     }
 
@@ -191,10 +236,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "final-form gates must not override Rust test harness parallelism"
     );
     assert!(
-        !format!(
-            "{rust_1_95_gate}\n{warning_free_gate}\n{direct_projection_gate}\n{package_gate}\n{huge_gate}"
-        )
-        .contains("--no-run")
+        !format!("{rust_1_95_gate}\n{warning_free_gate}\n{direct_projection_gate}\n{package_gate}")
+            .contains("--no-run")
             && !warning_free_gate.contains("check --all-targets")
             && !warning_free_gate.contains("cargo +\"${TOOLCHAIN}\" test -p hibana")
             && rust_1_95_gate.contains("cargo +1.95.0 test -p hibana --test semantic_surface")
@@ -270,6 +313,186 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "must not rebuild lane sets by effect-list or full-view scans",
         "endpoint arena must not contain route-scope lane-word caches",
         "cargo test filter matched no tests",
+        "assert_runtime_test_targets_are_unique",
+        "cargo test target must be run once per script",
+        "hibana-compile-pressure-budget.tsv",
+        "compile_pressure_guard.sh",
+        "run_with_compile_pressure_guard",
+        "missing aggregate compile pressure observation",
+        "runtime compile pressure label=",
+        "max_rss=",
+        "seconds_budget=",
+        "rss_budget=",
+        "HIBANA_RUNTIME_TEST_TARGET_DIR",
+        "CARGO_TARGET_DIR",
+        "== runtime cold compile-pressure test ==",
+        "cold_parallel_route_nesting",
+        "--test offer_branch_recv_evidence",
+        "--test parallel_route_nesting",
+        "--test parallel_route_alternating",
+        "--test huge_choreography_runtime",
+        "lane_set_view_iterates_set_bits_without_empty_lane_scan",
+    ] {
+        assert!(
+            performance_gate.contains(required),
+            "runtime performance hygiene gate missing required operation-count/source guard: {required}"
+        );
+    }
+
+    for required in [
+        "FIELDS = (",
+        "\"observed_seconds\"",
+        "\"observed_rss_mib\"",
+        "\"seconds_headroom\"",
+        "\"rss_headroom_mib\"",
+        "def limit_for",
+        "observed_seconds",
+        "seconds_headroom",
+        "observed_rss_mib",
+        "rss_headroom_mib",
+        "max-rss",
+    ] {
+        assert!(
+            compile_pressure_budget_helper.contains(required),
+            "compile pressure budget helper must be the single parser for snapshot-derived limits: {required}"
+        );
+    }
+
+    let compile_pressure_scripts =
+        format!("{performance_gate}\n{compile_pressure_guard}\n{compile_pressure_budget_helper}");
+    for forbidden in ["9216", "8704", "8448", "5632", "  420", "  300"] {
+        assert!(
+            !compile_pressure_scripts.contains(forbidden),
+            "compile-pressure scripts must not keep rough inline budgets: {forbidden}"
+        );
+    }
+    for forbidden in ["max_seconds", "max_rss_mib"] {
+        assert!(
+            !compile_pressure_budget.contains(forbidden),
+            "compile-pressure snapshot must store observations and headroom, not direct max budgets: {forbidden}"
+        );
+    }
+
+    for required in [
+        "Limit = observed + headroom",
+        "label\tobserved_seconds\tobserved_rss_mib\tseconds_headroom\trss_headroom_mib",
+    ] {
+        assert!(
+            compile_pressure_budget.contains(required),
+            "compile pressure budget snapshot missing required header: {required}"
+        );
+    }
+
+    for label in [
+        "final_form_gate",
+        "cold_parallel_route_nesting",
+        "offer_branch_recv_evidence",
+        "parallel_route_nesting",
+        "parallel_route_alternating",
+        "lane_set_view_iterates_set_bits_without_empty_lane_scan",
+        "huge_choreography_runtime",
+    ] {
+        assert_eq!(
+            compile_pressure_budget
+                .lines()
+                .filter(|line| line.starts_with(&format!("{label}\t")))
+                .count(),
+            1,
+            "compile pressure budget snapshot must contain exactly one row for {label}"
+        );
+    }
+
+    for line in compile_pressure_budget
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with("label\t") && !line.is_empty())
+    {
+        let columns: Vec<_> = line.split('\t').collect();
+        assert_eq!(
+            columns.len(),
+            5,
+            "compile pressure budget rows must be label/observed/headroom fields: {line}"
+        );
+        for value in &columns[1..] {
+            let parsed = value.parse::<u32>().unwrap_or_else(|err| {
+                panic!("compile pressure budget must be numeric: {line}: {err}")
+            });
+            assert!(
+                parsed > 0,
+                "compile pressure budget must be positive: {line}"
+            );
+        }
+        let observed_seconds = columns[1]
+            .parse::<u32>()
+            .expect("observed seconds checked numeric");
+        let observed_rss = columns[2]
+            .parse::<u32>()
+            .expect("observed rss checked numeric");
+        let seconds_headroom = columns[3]
+            .parse::<u32>()
+            .expect("seconds headroom checked numeric");
+        let rss_headroom = columns[4]
+            .parse::<u32>()
+            .expect("rss headroom checked numeric");
+        assert!(
+            seconds_headroom <= 60 || seconds_headroom <= observed_seconds.saturating_mul(2),
+            "compile pressure seconds headroom must stay close to observation: {line}"
+        );
+        assert!(
+            rss_headroom <= 512 || rss_headroom <= observed_rss / 2,
+            "compile pressure RSS headroom must stay close to observation: {line}"
+        );
+    }
+
+    assert!(
+        !run_final_gate.contains("check_huge_choreography_budget.sh")
+            && !performance_gate.contains("huge_choreography_compile")
+            && !compile_pressure_budget.contains("huge_choreography_compile"),
+        "huge choreography compile proof must stay in the runtime integration target, not a second target"
+    );
+
+    let hot_runtime_section = performance_gate
+        .rsplit("echo \"== runtime performance operation-count tests ==\"")
+        .next()
+        .expect("runtime performance hot section start")
+        .split("echo \"== runtime cold compile-pressure test ==\"")
+        .next()
+        .expect("runtime performance hot section end");
+    let cold_runtime_section = performance_gate
+        .rsplit("echo \"== runtime cold compile-pressure test ==\"")
+        .next()
+        .expect("runtime performance cold section start")
+        .split("echo \"runtime performance hygiene check passed\"")
+        .next()
+        .expect("runtime performance cold section end");
+
+    for target in [
+        "--test offer_branch_recv_evidence",
+        "--test parallel_route_nesting",
+        "--test parallel_route_alternating",
+        "--test huge_choreography_runtime",
+    ] {
+        assert_eq!(
+            hot_runtime_section.matches(target).count(),
+            1,
+            "runtime performance hygiene gate must run each cargo test target once: {target}"
+        );
+    }
+    assert_eq!(
+        cold_runtime_section
+            .matches("--test parallel_route_nesting")
+            .count(),
+        1,
+        "runtime cold compile-pressure gate must run the representative heavy target once"
+    );
+    assert!(
+        cold_runtime_section.contains("mktemp -d")
+            && cold_runtime_section.contains("cleanup_cold_target_dir")
+            && cold_runtime_section
+                .contains("HIBANA_RUNTIME_TEST_TARGET_DIR=\"${cold_target_dir}\""),
+        "runtime cold compile-pressure gate must use and clean a fresh target dir"
+    );
+
+    for stale_filter in [
         "offer_requires_framed_receive_evidence_for_branch_demux",
         "branch_recv_transport_consumes_frame_once",
         "forgotten_route_branch_leaves_endpoint_fail_closed",
@@ -279,11 +502,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "unselected_route_arm_parallel_events_are_dead_and_not_join_obligations",
         "unselected_route_arm_parallel_events_do_not_block_parallel_join",
         "outer_left_selection_kills_nested_right_route_and_parallel_body",
-        "lane_set_view_iterates_set_bits_without_empty_lane_scan",
     ] {
         assert!(
-            performance_gate.contains(required),
-            "runtime performance hygiene gate missing required operation-count/source guard: {required}"
+            !performance_gate.contains(stale_filter),
+            "runtime performance hygiene gate must not reintroduce filter-by-filter cargo runs: {stale_filter}"
         );
     }
 }

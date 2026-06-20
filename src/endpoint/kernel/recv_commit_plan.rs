@@ -1,7 +1,7 @@
 use super::{
-    core::{CommitDelta, CursorEndpoint, PreparedCommitDelta},
+    core::{CursorEndpoint, PreparedCommitDelta},
     lane_port,
-    offer::BranchCommitPlan,
+    offer::BranchMeta,
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
@@ -20,13 +20,6 @@ pub(super) struct EndpointRxEventPlan {
     event_id: u16,
 }
 
-pub(super) struct BranchRecvCommitInput<'r> {
-    pub(super) branch: BranchCommitPlan,
-    pub(super) event: EndpointRxEventPlan,
-    pub(super) delta: CommitDelta,
-    pub(super) payload: RecvCommitPayload<'r>,
-}
-
 pub(super) enum RecvCommitPayload<'r> {
     Wire(lane_port::ReceivedFrame<'r>),
     NonWire(Payload<'r>),
@@ -41,7 +34,7 @@ pub(super) struct RecvCommitPlan<'r> {
 
 enum RecvCommitPlanKind {
     Direct,
-    Branch { branch: BranchCommitPlan },
+    Branch { branch: BranchMeta },
 }
 
 impl EndpointRxEventPlan {
@@ -121,7 +114,7 @@ impl<'r> RecvCommitPlan<'r> {
 
     #[inline]
     pub(super) const fn branch(
-        branch: BranchCommitPlan,
+        branch: BranchMeta,
         event: EndpointRxEventPlan,
         delta: PreparedCommitDelta,
         payload: RecvCommitPayload<'r>,
@@ -139,25 +132,6 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(super) fn prepare_branch_recv_commit_plan(
-        &mut self,
-        input: BranchRecvCommitInput<'r>,
-    ) -> RecvResult<RecvCommitPlan<'r>> {
-        let delta = match self.prepare_commit_delta(input.delta) {
-            Ok(delta) => delta,
-            Err(_) => {
-                input.payload.discard_uncommitted();
-                return Err(RecvError::PhaseInvariant);
-            }
-        };
-        Ok(RecvCommitPlan::branch(
-            input.branch,
-            input.event,
-            delta,
-            input.payload,
-        ))
-    }
-
     pub(super) fn publish_recv_commit_plan<F>(
         &mut self,
         plan: RecvCommitPlan<'r>,

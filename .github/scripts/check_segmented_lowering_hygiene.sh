@@ -68,21 +68,18 @@ check_absent 'pub\(crate\)[[:space:]]+const[[:space:]]+MAX:' \
 check_required_regex 'segments:\s*\[\[EffStruct;\s*MAX_SEGMENT_EFFS\];\s*MAX_SEGMENTS\]' \
   "segmented lowering hygiene violation: EffList must use fixed segment storage" \
   src/global/const_dsl.rs
-check_required_regex 'struct SegmentSummary' \
-  "segmented lowering hygiene violation: segment-local summaries must be explicit" \
-  src/global/const_dsl.rs
-check_required_regex 'segment_summaries:\s*\[SegmentSummary;\s*MAX_SEGMENTS\]' \
-  "segmented lowering hygiene violation: EffList must carry segment-local summaries" \
-  src/global/const_dsl.rs
-check_required_regex 'struct ProgramImageSegmentData' \
-  "segmented lowering hygiene violation: CompiledProgramImage must use segment-local lowering rows" \
-  src/global/compiled/lowering/driver.rs
+check_absent 'struct[[:space:]]+SegmentSummary|segment_summaries:|segment_summary\(|segment_count\(|segment_len\(' \
+  "segmented lowering hygiene violation: unused EffList segment summary residue detected" \
+  src/global/const_dsl.rs src/global/const_dsl/eff_list.rs
+check_absent 'struct[[:space:]]+ProgramImageSegmentData|struct[[:space:]]+ProgramImageValidationData|struct[[:space:]]+ProgramAtomRow|CompiledProgramView|atom_rows:|scope_markers:|route_resolver_sites:' \
+  "segmented lowering hygiene violation: compiled lowering must not rebuild EffList atom/scope/resolver storage" \
+  src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver
 check_absent 'nodes:\s*\[EffStruct;\s*MAX_COMPILED_IMAGE_NODES\]|policies:\s*\[RouteResolver;\s*MAX_COMPILED_IMAGE_NODES\]' \
   "segmented lowering hygiene violation: flat lowering validation rows detected" \
   src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver
-check_required_regex 'segment_at\(|node_at\(|resolver_at_local' \
-  "segmented lowering hygiene violation: segment-local lowering view accessors are missing" \
-  src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver
+check_required_regex 'node_at\(|resolver_for_scope\(' \
+  "segmented lowering hygiene violation: compact lowering must read EffList as the single source" \
+  src/global/const_dsl/eff_list.rs
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

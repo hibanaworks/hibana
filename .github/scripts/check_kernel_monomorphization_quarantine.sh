@@ -73,10 +73,12 @@ send = read("src/endpoint/send.rs")
 for required in [
     "pub(crate) struct MsgCore",
     "pub(crate) struct SendRuntimeDesc",
-    "pub(crate) struct BranchRecvRuntimeDesc",
 ]:
     if required not in runtime_types:
         fail(f"missing non-generic runtime descriptor owner: {required}")
+
+if "BranchRecvRuntimeDesc" in runtime_types + public_runtime + core + read("src/endpoint/kernel/branch_recv.rs") + read_tree("src/endpoint/kernel/branch_recv"):
+    fail("branch recv must use materialized branch identity directly, not a duplicate runtime descriptor")
 
 for required in [
     "pub(crate) trait RecvKernelEndpoint",
@@ -133,12 +135,8 @@ if not poll_public_recv or not all(
     ]
 ):
     fail("generic poll_public_recv must delegate to non-generic kernel_recv with label and validation evidence")
-if "kernel_branch_recv(self, descriptor, validate, &mut branch_recv_state, cx)" not in public_runtime:
+if "kernel_branch_recv(self, logical_label, validate, &mut branch_recv_state, cx)" not in public_runtime:
     fail("generic poll_public_branch_recv must delegate to non-generic kernel_branch_recv")
-
-branch_recv_desc = runtime_types.split("pub(crate) struct BranchRecvRuntimeDesc", 1)[1].split("impl BranchRecvRuntimeDesc", 1)[0]
-if "validate" in branch_recv_desc:
-    fail("BranchRecvRuntimeDesc must stay codec-free and must not carry validation callbacks")
 
 if re.search(
     r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",

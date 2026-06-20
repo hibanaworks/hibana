@@ -490,7 +490,6 @@ impl<'r> PreambleFrame<'r> {
         }
     }
 
-    #[inline(always)]
     pub(crate) fn accept_parts(
         self,
         expected_session_raw: u32,

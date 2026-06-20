@@ -1,6 +1,5 @@
 use super::{
-    FrontierCandidate, FrontierKind, ObservedEntrySet, OfferEntryObservedState, OfferEntrySummary,
-    ScopeId, TryFrom,
+    FrontierCandidate, FrontierKind, OfferEntryObservedState, OfferEntrySummary, ScopeId, TryFrom,
 };
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OfferSelectPriority {
@@ -118,35 +117,5 @@ pub(crate) fn offer_entry_frontier_candidate(
         parallel_root,
         frontier,
         flags: FrontierCandidate::flags_from_observed(observed),
-    }
-}
-
-#[inline]
-pub(crate) fn cached_offer_entry_observed_state(
-    scope_id: ScopeId,
-    summary: OfferEntrySummary,
-    observed_entries: ObservedEntrySet,
-    observed_bit: u8,
-) -> OfferEntryObservedState {
-    let mut flags = 0u8;
-    if summary.is_controller() {
-        flags |= OfferEntryObservedState::FLAG_CONTROLLER;
-    }
-    if summary.is_dynamic() {
-        flags |= OfferEntryObservedState::FLAG_DYNAMIC;
-    }
-    if (observed_entries.progress_mask & observed_bit) != 0 {
-        flags |= OfferEntryObservedState::FLAG_PROGRESS;
-    }
-    if (observed_entries.ready_arm_mask & observed_bit) != 0 {
-        flags |= OfferEntryObservedState::FLAG_READY_ARM;
-    }
-    if (observed_entries.ready_mask & observed_bit) != 0 {
-        flags |= OfferEntryObservedState::FLAG_READY;
-    }
-    OfferEntryObservedState {
-        scope_id,
-        frontier_mask: summary.frontier_mask,
-        flags,
     }
 }

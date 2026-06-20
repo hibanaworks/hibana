@@ -67,7 +67,6 @@ impl RouteTable {
             lane_heads: UnsafeCell::new(core::ptr::null_mut()),
             free_head: UnsafeCell::new(core::ptr::null_mut()),
             pending_frame_hint_masks: UnsafeCell::new(core::ptr::null_mut()),
-            change_generation: UnsafeCell::new(0),
             waiters: UnsafeCell::new(core::ptr::null_mut()),
             _no_send_sync: PhantomData,
         }
@@ -87,9 +86,6 @@ impl RouteTable {
             core::ptr::addr_of_mut!((*dst).free_head).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).pending_frame_hint_masks)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
-            core::ptr::addr_of_mut!((*dst).change_generation)
-                .cast::<u16>()
-                .write(0);
             core::ptr::addr_of_mut!((*dst).waiters).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
@@ -231,7 +227,6 @@ impl RouteTable {
         *self.lane_heads.get_mut() = parts.lane_heads;
         *self.free_head.get_mut() = parts.free_head;
         *self.pending_frame_hint_masks.get_mut() = parts.pending_frame_hint_masks;
-        *self.change_generation.get_mut() = 0;
         *self.waiters.get_mut() = parts.waiters;
     }
 
@@ -490,27 +485,6 @@ impl RouteTable {
                     lane_slots,
                 },
             });
-        }
-    }
-
-    pub(crate) unsafe fn clear_waiters_in_storage(
-        storage: *mut u8,
-        route_slots: usize,
-        lane_slots: usize,
-    ) {
-        let parts = /* SAFETY: the route-table owner passes initialized storage
-        with `route_slots`/`lane_slots`; this helper only derives column
-        pointers for clearing waiter slots and does not create live aliases. */ unsafe {
-            Self::storage_parts(storage, route_slots, lane_slots)
-        };
-        let waiter_count = checked_mul_usize(lane_slots, MAX_TRACKED_ROLES);
-        let mut waiter_idx = 0usize;
-        while waiter_idx < waiter_count {
-            /* SAFETY: the waiter column was initialized during route-table staging or binding. */
-            unsafe {
-                (*parts.waiters.add(waiter_idx)).clear();
-            }
-            waiter_idx += 1;
         }
     }
 

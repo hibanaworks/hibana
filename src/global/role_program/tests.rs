@@ -38,9 +38,6 @@ const fn over_local_step_capacity_atom_program() -> EffList {
 
 static OVER_LOCAL_STEP_CAPACITY_ATOMS: EffList = over_local_step_capacity_atom_program();
 
-static OVER_LOCAL_STEP_CAPACITY_IMAGE: CompiledProgramImage =
-    CompiledProgramImage::scan_const(&OVER_LOCAL_STEP_CAPACITY_ATOMS);
-
 fn with_role_descriptor<const ROLE: u8, R>(
     program: &RoleProgram<ROLE>,
     f: impl FnOnce(RoleDescriptorRef) -> R,
@@ -70,7 +67,7 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
     assert_eq!(program_ref.route_controller_role(scope), Some(0));
     assert!(program_ref.route_controller(scope).is_some());
 
-    let events = LocalEventProgram::from_rows(*role0.role_image_ref());
+    let events = LocalEventProgram::from_rows(role0.role_image_ref());
     let slot = events.route_scope_slot(scope).expect("route slot");
     let left = events
         .route_arm_event_row_by_slot(slot, 0)
@@ -97,7 +94,7 @@ fn simple_controller_route_arm_event_rows_are_exact() {
     );
     let program = g::seq(route, g::send::<0, 1, Msg<73, u32>>());
     let role0: RoleProgram<0> = project(&program);
-    let events = LocalEventProgram::from_rows(*role0.role_image_ref());
+    let events = LocalEventProgram::from_rows(role0.role_image_ref());
     let region = events
         .route_scope_rows_by_slot(0)
         .expect("simple route scope row");
@@ -250,7 +247,7 @@ fn resident_lane_view_and_route_caps_stay_compact() {
         core::mem::size_of::<BlobPtr>() == word
             && core::mem::size_of::<CompiledProgramRef>() <= 4 * word
             && core::mem::size_of::<RoleImageRef>() <= 12 * word
-            && core::mem::size_of::<RoleLaneImage>() <= 9 * word,
+            && core::mem::size_of::<RoleLaneImage<'static>>() <= 2 * word,
         "resident refs must stay thin blob column views without fat-slice lengths"
     );
     assert_eq!(
@@ -340,8 +337,7 @@ fn minimal_send_descriptor_has_exact_resident_footprint() {
 #[test]
 fn resident_local_step_capacity_uses_effect_node_budget() {
     assert!(OVER_LOCAL_STEP_CAPACITY_ATOMS.len() > LOCAL_STEP_STRESS_ROW_BUDGET);
-    let lanes =
-        RoleLaneScratch::from_program::<0>(&OVER_LOCAL_STEP_CAPACITY_IMAGE, LANE_DOMAIN_SIZE);
+    let lanes = RoleLaneScratch::from_program(&OVER_LOCAL_STEP_CAPACITY_ATOMS, LANE_DOMAIN_SIZE, 0);
 
     fn row_range(lanes: &RoleLaneScratch, idx: usize) -> Option<(usize, usize)> {
         if idx >= lanes.resident_row_len as usize {

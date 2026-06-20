@@ -1,16 +1,19 @@
 use super::{
-    CompiledProgramImage, LANE_DOMAIN_BYTES, MAX_LOCAL_STEP_LANES, MAX_RESIDENT_LANE_BIT_BYTES,
+    LANE_DOMAIN_BYTES, MAX_LOCAL_STEP_LANES, MAX_RESIDENT_LANE_BIT_BYTES,
     MAX_RESIDENT_ROW_BOUNDARY_ROWS, MAX_RESIDENT_ROW_LANE_ROWS, MAX_ROUTE_ARM_LANE_ROWS,
     MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
     PackedRouteArmRow, RoleLaneScratch, ScopeEvent, ScopeId, ScopeKind, lane_byte_count,
     lane_byte_index,
 };
+use crate::global::const_dsl::EffList;
+use crate::global::frame_labels::FrameLabelAssigner;
 use crate::global::typestate::{
     LocalConflict, LocalDependency, PackedEventConflict, PackedLocalDependency,
 };
 mod blob_image;
 mod event_rows;
 mod lane_image;
+mod plan;
 mod ref_access;
 mod roll_rows;
 mod scope_rows;
@@ -33,93 +36,48 @@ impl RoleLaneScratch {
         false
     }
 
-    #[inline(always)]
-    const fn fill_dependency_rows<const ROLE: u8>(
-        &mut self,
-        program: &CompiledProgramImage,
-        local_step_effs: &[usize; MAX_LOCAL_STEP_LANES],
-        local_step_count: usize,
-    ) {
-        let view = program.view();
-        let markers = view.scope_markers();
-        let mut dependency_ends = [0usize; MAX_LOCAL_STEP_LANES];
-
-        let mut parallel_scopes = [ScopeId::none(); MAX_LOCAL_STEP_LANES];
-        let mut parallel_starts = [0usize; MAX_LOCAL_STEP_LANES];
-        let mut parallel_ends = [usize::MAX; MAX_LOCAL_STEP_LANES];
-        let mut parallel_parents = [usize::MAX; MAX_LOCAL_STEP_LANES];
-        let mut parallel_stack = [usize::MAX; MAX_LOCAL_STEP_LANES];
-        let mut parallel_len = 0usize;
-        let mut parallel_depth = 0usize;
-        let mut has_route = false;
-
+    pub(super) const fn scope_markers_contain_kind(
+        markers: &[crate::global::const_dsl::ScopeMarker],
+        kind: ScopeKind,
+    ) -> bool {
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
             let marker = markers[marker_idx];
-            if matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel)) {
-                match marker.event {
-                    ScopeEvent::Enter => {
-                        if parallel_len >= MAX_LOCAL_STEP_LANES
-                            || parallel_depth >= MAX_LOCAL_STEP_LANES
-                        {
-                            panic!("parallel dependency table overflow");
-                        }
-                        let parent = if parallel_depth == 0 {
-                            usize::MAX
-                        } else {
-                            parallel_stack[parallel_depth - 1]
-                        };
-                        parallel_scopes[parallel_len] = marker.scope_id;
-                        parallel_starts[parallel_len] = marker.offset;
-                        parallel_parents[parallel_len] = parent;
-                        parallel_stack[parallel_depth] = parallel_len;
-                        parallel_len += 1;
-                        parallel_depth += 1;
-                    }
-                    ScopeEvent::Exit => {
-                        if parallel_depth == 0 {
-                            panic!("parallel scope exit without enter");
-                        }
-                        parallel_depth -= 1;
-                        let parallel_idx = parallel_stack[parallel_depth];
-                        if parallel_idx >= parallel_len
-                            || !Self::same_scope(parallel_scopes[parallel_idx], marker.scope_id)
-                        {
-                            panic!("parallel scope markers are not well nested");
-                        }
-                        parallel_ends[parallel_idx] = marker.offset;
-                    }
-                }
-            } else if matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
-                has_route = true;
+            if let Some(candidate) = marker.scope_id.kind()
+                && candidate as u16 == kind as u16
+            {
+                return true;
             }
             marker_idx += 1;
         }
-        if parallel_depth != 0 {
-            panic!("parallel scope enter without exit");
-        }
+        false
+    }
 
-        let mut parallel_idx = 0usize;
-        while parallel_idx < parallel_len {
-            let exit_eff = parallel_ends[parallel_idx];
-            if exit_eff != usize::MAX {
-                let row = Self::local_step_range_for_eff_range::<ROLE>(
-                    program,
-                    parallel_starts[parallel_idx],
-                    exit_eff,
-                );
+    const fn fill_dependency_rows(
+        &mut self,
+        eff_list: &EffList,
+        local_step_count: usize,
+        role: u8,
+        has_route: bool,
+    ) {
+        let markers = eff_list.scope_markers();
+        let mut marker_idx = 0usize;
+        while marker_idx < markers.len() {
+            let marker = markers[marker_idx];
+            if matches!(marker.event, ScopeEvent::Enter)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
+            {
+                let exit_eff = Self::parallel_exit_for_enter(markers, marker_idx);
+                let row =
+                    Self::local_step_range_for_eff_range(eff_list, marker.offset(), exit_eff, role);
                 let start = row.start();
                 let end = row.end();
                 if start < end {
-                    let parent_idx = parallel_parents[parallel_idx];
-                    let parent_parallel_end = if parent_idx == usize::MAX {
-                        exit_eff
-                    } else {
-                        parallel_ends[parent_idx]
-                    };
-                    let scope = parallel_scopes[parallel_idx];
+                    let parent_parallel_end =
+                        Self::nearest_parent_parallel_end(markers, marker_idx, exit_eff);
+                    let scope = marker.scope_id;
                     let conflict = if has_route {
-                        Self::dependency_conflict_for_scope(markers, view.len(), scope)
+                        Self::dependency_conflict_for_scope(markers, eff_list.len(), scope)
                     } else {
                         LocalConflict::Unconditional
                     };
@@ -128,47 +86,106 @@ impl RoleLaneScratch {
                     let dependency = PackedLocalDependency::from_dependency(dependency);
                     let mut step = end;
                     while step < local_step_count && step < MAX_LOCAL_STEP_LANES {
-                        let current_eff = local_step_effs[step];
+                        let current_eff = self.local_step_events[step].eff_index as usize;
                         let current_lane = self.local_step_lanes[step];
                         let dependency_applies = self.local_row_has_lane(row, current_lane)
                             || current_eff >= parent_parallel_end;
-                        if dependency_applies && end >= dependency_ends[step] {
+                        let current_dependency = self.local_step_dependencies[step];
+                        let replaces_current = current_dependency.is_none()
+                            || end >= current_dependency.end() as usize;
+                        if dependency_applies && replaces_current {
                             self.local_step_dependencies[step] = dependency;
-                            dependency_ends[step] = end;
                         }
                         step += 1;
                     }
                 }
             }
-            parallel_idx += 1;
+            marker_idx += 1;
         }
     }
 
-    #[inline(always)]
-    const fn local_step_range_for_eff_range<const ROLE: u8>(
-        program: &CompiledProgramImage,
+    const fn parallel_exit_for_enter(
+        markers: &[crate::global::const_dsl::ScopeMarker],
+        enter_idx: usize,
+    ) -> usize {
+        let marker = markers[enter_idx];
+        if !matches!(marker.event, ScopeEvent::Enter)
+            || !matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
+        {
+            panic!("parallel scope enter expected");
+        }
+        let mut depth = 0usize;
+        let mut scan = enter_idx + 1;
+        while scan < markers.len() {
+            let candidate = markers[scan];
+            match candidate.event {
+                ScopeEvent::Enter => depth += 1,
+                ScopeEvent::Exit => {
+                    if depth == 0 {
+                        return candidate.offset();
+                    }
+                    depth -= 1;
+                }
+                ScopeEvent::Split => {}
+            }
+            scan += 1;
+        }
+        panic!("parallel scope exit missing");
+    }
+
+    const fn nearest_parent_parallel_end(
+        markers: &[crate::global::const_dsl::ScopeMarker],
+        enter_idx: usize,
+        exit_eff: usize,
+    ) -> usize {
+        let mut depth = 0usize;
+        let mut scan = enter_idx;
+        while scan > 0 {
+            scan -= 1;
+            let candidate = markers[scan];
+            match candidate.event {
+                ScopeEvent::Exit => depth += 1,
+                ScopeEvent::Enter => {
+                    if depth == 0 {
+                        if matches!(candidate.scope_id.kind(), Some(ScopeKind::Parallel)) {
+                            return Self::parallel_exit_for_enter(markers, scan);
+                        }
+                    } else {
+                        depth -= 1;
+                    }
+                }
+                ScopeEvent::Split => {}
+            }
+        }
+        exit_eff
+    }
+
+    const fn local_step_range_for_eff_range(
+        eff_list: &EffList,
         start_eff: usize,
         end_eff: usize,
+        role: u8,
     ) -> PackedLaneRange {
         if start_eff >= end_eff {
             return PackedLaneRange::new(0, 0);
         }
-        let view = program.view();
         let mut local_step = 0usize;
         let mut local_start = usize::MAX;
         let mut local_len = 0usize;
         let mut eff_idx = 0usize;
-        while eff_idx < view.len() {
-            if let Some(atom) = view.atom_at(eff_idx)
-                && (atom.from == ROLE || atom.to == ROLE)
-            {
-                if eff_idx >= start_eff && eff_idx < end_eff {
-                    if local_start == usize::MAX {
-                        local_start = local_step;
+        while eff_idx < eff_list.len() {
+            let node = eff_list.node_at(eff_idx);
+            if matches!(node.kind, crate::eff::EffKind::Atom) {
+                let atom = node.atom_data();
+                if atom.from == role || atom.to == role {
+                    if eff_idx >= start_eff && eff_idx < end_eff {
+                        if local_start == usize::MAX {
+                            local_start = local_step;
+                        }
+                        local_len += 1;
                     }
-                    local_len += 1;
+                    local_step += 1;
                 }
-                local_step += 1;
             }
             eff_idx += 1;
         }
@@ -202,7 +219,6 @@ impl RoleLaneScratch {
         self.resident_row_len += 1;
     }
 
-    #[inline(always)]
     const fn append_lane_bit_row_for_local_range(
         &mut self,
         row: PackedLaneRange,
@@ -261,7 +277,6 @@ impl RoleLaneScratch {
         }
     }
 
-    #[inline(always)]
     const fn append_lane_bit_union_row(
         &mut self,
         left: PackedLaneRange,
@@ -290,10 +305,8 @@ impl RoleLaneScratch {
         PackedLaneRange::new(start, byte_len)
     }
 
-    #[inline(always)]
-    const fn push_resident_rows<const ROLE: u8>(&mut self, program: &CompiledProgramImage) {
-        let view = program.view();
-        let markers = view.scope_markers();
+    const fn push_resident_rows(&mut self, eff_list: &EffList, role: u8) {
+        let markers = eff_list.scope_markers();
         let mut current_eff = 0usize;
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
@@ -308,7 +321,7 @@ impl RoleLaneScratch {
                     if Self::same_scope(candidate.scope_id, marker.scope_id)
                         && matches!(candidate.event, ScopeEvent::Exit)
                     {
-                        exit_eff = candidate.offset;
+                        exit_eff = candidate.offset();
                         break;
                     }
                     scan += 1;
@@ -316,20 +329,22 @@ impl RoleLaneScratch {
                 if exit_eff == usize::MAX {
                     panic!("parallel scope exit missing");
                 }
-                self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
-                    program,
+                self.push_resident_row(Self::local_step_range_for_eff_range(
+                    eff_list,
                     current_eff,
-                    marker.offset,
+                    marker.offset(),
+                    role,
                 ));
-                let parallel_start = if marker.offset > current_eff {
-                    marker.offset
+                let parallel_start = if marker.offset() > current_eff {
+                    marker.offset()
                 } else {
                     current_eff
                 };
-                self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
-                    program,
+                self.push_resident_row(Self::local_step_range_for_eff_range(
+                    eff_list,
                     parallel_start,
                     exit_eff,
+                    role,
                 ));
                 current_eff = if exit_eff > current_eff {
                     exit_eff
@@ -339,34 +354,37 @@ impl RoleLaneScratch {
             }
             marker_idx += 1;
         }
-        self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
-            program,
+        self.push_resident_row(Self::local_step_range_for_eff_range(
+            eff_list,
             current_eff,
-            view.len(),
+            eff_list.len(),
+            role,
         ));
         if self.resident_row_len == 0 {
-            self.push_resident_row(Self::local_step_range_for_eff_range::<ROLE>(
-                program,
+            self.push_resident_row(Self::local_step_range_for_eff_range(
+                eff_list,
                 0,
-                view.len(),
+                eff_list.len(),
+                role,
             ));
         }
     }
 
     #[inline(always)]
-    const fn append_route_arm_lane_row<const ROLE: u8>(
+    const fn append_route_arm_lane_row(
         &mut self,
-        program: &CompiledProgramImage,
+        eff_list: &EffList,
         slot: usize,
         arm: usize,
         start_eff: usize,
         end_eff: usize,
+        role: u8,
     ) -> (PackedLaneRange, PackedLaneRange) {
         let row_idx = slot * 2 + arm;
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route arm lane row overflow");
         }
-        let local_row = Self::local_step_range_for_eff_range::<ROLE>(program, start_eff, end_eff);
+        let local_row = Self::local_step_range_for_eff_range(eff_list, start_eff, end_eff, role);
         self.route_arm_lane_rows[row_idx] = self.append_lane_bit_row_for_local_range(local_row);
         let lane_step_row = self.append_route_arm_lane_step_range(local_row);
         (local_row, lane_step_row)
@@ -457,7 +475,6 @@ impl RoleLaneScratch {
         }
     }
 
-    #[inline(always)]
     pub(crate) const fn route_commit_row_count(&self, slot: usize, arm: u8) -> usize {
         if arm >= 2 {
             panic!("route commit arm overflow");
@@ -485,7 +502,6 @@ impl RoleLaneScratch {
         len
     }
 
-    #[inline(always)]
     pub(crate) const fn route_commit_conflict_at(
         &self,
         slot: usize,
@@ -535,10 +551,11 @@ impl RoleLaneScratch {
         self.route_commit_ranges[row_idx] = PackedLaneRange::new(start, len);
     }
 
-    #[inline(always)]
-    const fn push_route_arm_lane_rows<const ROLE: u8>(&mut self, program: &CompiledProgramImage) {
-        let view = program.view();
-        let markers = view.scope_markers();
+    const fn push_route_arm_lane_rows(&mut self, eff_list: &EffList, role: u8) {
+        let markers = eff_list.scope_markers();
+        if !Self::scope_markers_contain_kind(markers, ScopeKind::Route) {
+            return;
+        }
         let mut route_slot = 0usize;
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
@@ -547,7 +564,7 @@ impl RoleLaneScratch {
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 let scope = marker.scope_id;
-                let view_len = view.len();
+                let view_len = eff_list.len();
                 let Some(ranges) = Self::route_arm_ranges(markers, scope) else {
                     panic!("route scope missing binary arm ranges");
                 };
@@ -561,8 +578,8 @@ impl RoleLaneScratch {
                 let mut arm = 0usize;
                 while arm < 2 {
                     let (start, end) = ranges[arm];
-                    let (local_row, lane_step_row) = self
-                        .append_route_arm_lane_row::<ROLE>(program, route_slot, arm, start, end);
+                    let (local_row, lane_step_row) =
+                        self.append_route_arm_lane_row(eff_list, route_slot, arm, start, end, role);
                     self.push_route_arm_projection_row(RouteArmProjectionRowInput {
                         markers,
                         view_len,
@@ -591,7 +608,6 @@ impl RoleLaneScratch {
         }
     }
 
-    #[inline(always)]
     const fn compact_event_fact_rows(&mut self, local_step_count: usize) {
         let mut dependency_len = 0usize;
         let mut conflict_len = 0usize;
@@ -621,10 +637,10 @@ impl RoleLaneScratch {
         self.conflict_row_len = conflict_len as u16;
     }
 
-    #[inline(always)]
-    pub(crate) const fn from_program<const ROLE: u8>(
-        program: &CompiledProgramImage,
+    pub(crate) const fn from_program(
+        eff_list: &EffList,
         logical_lane_count: usize,
+        role: u8,
     ) -> Self {
         let mut lanes = Self {
             local_step_events: [PackedLocalEventRow::EMPTY; MAX_LOCAL_STEP_LANES],
@@ -650,45 +666,17 @@ impl RoleLaneScratch {
             roll_scope_row_len: 0,
             first_active_lane: Self::ACTIVE_LANE_NONE,
         };
-        let view = program.view();
-        let markers = view.scope_markers();
-        let mut local_step_effs = [usize::MAX; MAX_LOCAL_STEP_LANES];
-        let mut frame_key_targets = [0u8; MAX_LOCAL_STEP_LANES];
-        let mut frame_key_lanes = [0u8; MAX_LOCAL_STEP_LANES];
-        let mut frame_key_counts = [0u16; MAX_LOCAL_STEP_LANES];
-        let mut frame_key_len = 0usize;
+        let markers = eff_list.scope_markers();
+        let has_route = Self::scope_markers_contain_kind(markers, ScopeKind::Route);
+        let mut frame_labels = FrameLabelAssigner::EMPTY;
         let mut step = 0usize;
         let mut idx = 0usize;
-        while idx < view.len() {
-            if let Some(atom) = view.atom_at(idx) {
-                let mut frame_key_idx = 0usize;
-                let mut frame_label = 0u8;
-                let mut frame_key_found = false;
-                while frame_key_idx < frame_key_len {
-                    if frame_key_targets[frame_key_idx] == atom.to
-                        && frame_key_lanes[frame_key_idx] == atom.lane
-                    {
-                        let frame_count = frame_key_counts[frame_key_idx];
-                        if frame_count > u8::MAX as u16 {
-                            panic!("frame label domain overflow");
-                        }
-                        frame_label = frame_count as u8;
-                        frame_key_counts[frame_key_idx] = frame_count + 1;
-                        frame_key_found = true;
-                        break;
-                    }
-                    frame_key_idx += 1;
-                }
-                if !frame_key_found {
-                    if frame_key_len >= MAX_LOCAL_STEP_LANES {
-                        panic!("frame label key table overflow");
-                    }
-                    frame_key_targets[frame_key_len] = atom.to;
-                    frame_key_lanes[frame_key_len] = atom.lane;
-                    frame_key_counts[frame_key_len] = 1;
-                    frame_key_len += 1;
-                }
-                if atom.from == ROLE || atom.to == ROLE {
+        while idx < eff_list.len() {
+            let node = eff_list.node_at(idx);
+            if matches!(node.kind, crate::eff::EffKind::Atom) {
+                let atom = node.atom_data();
+                let frame_label = frame_labels.assign(atom);
+                if atom.from == role || atom.to == role {
                     let lane = atom.lane as usize;
                     if lane < logical_lane_count {
                         if lane < lanes.first_active_lane as usize {
@@ -698,24 +686,26 @@ impl RoleLaneScratch {
                             panic!("role local lane table overflow");
                         }
                         lanes.local_step_events[step] =
-                            Self::local_event_row_for_eff::<ROLE>(program, idx, frame_label);
+                            Self::local_event_row_for_eff(eff_list, idx, frame_label, role);
                         lanes.local_step_lanes[step] = atom.lane;
-                        local_step_effs[step] = idx;
-                        lanes.local_step_conflicts[step] =
-                            Self::route_conflict_for_eff(markers, idx);
+                        lanes.local_step_conflicts[step] = if has_route {
+                            Self::route_conflict_for_eff(markers, idx)
+                        } else {
+                            PackedEventConflict::none()
+                        };
                     }
                     step += 1;
                 }
             }
             idx += 1;
         }
-        lanes.fill_dependency_rows::<ROLE>(program, &local_step_effs, step);
+        lanes.fill_dependency_rows(eff_list, step, role, has_route);
         lanes.compact_event_fact_rows(step);
         lanes.active_lane_row =
             lanes.append_lane_bit_row_for_local_range(PackedLaneRange::new(0, step));
-        lanes.push_resident_rows::<ROLE>(program);
-        lanes.push_route_arm_lane_rows::<ROLE>(program);
-        lanes.push_roll_scope_rows::<ROLE>(program);
+        lanes.push_resident_rows(eff_list, role);
+        lanes.push_route_arm_lane_rows(eff_list, role);
+        lanes.push_roll_scope_rows(eff_list, role);
         lanes
     }
 }

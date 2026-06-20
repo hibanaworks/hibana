@@ -150,7 +150,7 @@ fn production_sources_do_not_contain_route_apply_or_settlement_vocabularies() {
 fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
     let send_ops = read("src/endpoint/kernel/core/send_ops.rs");
     let recv_commit_plan_source = read("src/endpoint/kernel/recv_commit_plan.rs");
-    let branch_recv_builder = read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs");
+    let branch_recv_builder = read("src/endpoint/kernel/branch_recv/finish.rs");
     let select = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
     let select_alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
@@ -431,7 +431,7 @@ fn route_stack_depth_cap_is_projection_sealed() {
     let lowering_driver = lowering_driver_source();
     let lowering_seal = read("src/global/compiled/lowering/seal.rs");
     let passive_child_seal = read("src/global/compiled/lowering/seal/passive_child.rs");
-    let first_recv_dispatch_seal = read("src/global/compiled/lowering/seal/first_recv_dispatch.rs");
+    let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let projection_error = lowering_seal
         .split("pub(crate) const fn projection_error_all_roles")
@@ -455,16 +455,15 @@ fn route_stack_depth_cap_is_projection_sealed() {
         "route stack depth must be rejected by projection seal before endpoint runtime init; runtime u8 guards are defensive only"
     );
     assert!(
-        lowering_seal.contains("validate_first_recv_dispatch_capacity::<ROLE>(view, eff_list)")
-            && first_recv_dispatch_seal.contains("MAX_FIRST_RECV_DISPATCH")
-            && first_recv_dispatch_seal.contains("FirstRecvDispatchVisit")
-            && first_recv_dispatch_seal.contains("FirstRecvDispatchSpecSeal")
-            && first_recv_dispatch_seal
-                .contains("ProgramSourceError::ProjectionRouteUnprojectable")
-            && first_recv_dispatch_seal.contains("first_recv_dispatch_spec_for_arm")
-            && first_recv_dispatch_seal.contains("passive_child_route_enter_index")
+        !lowering_seal.contains("validate_first_recv_dispatch_capacity")
+            && !first_recv_dispatch.contains("MAX_FIRST_RECV_DISPATCH")
+            && !first_recv_dispatch.contains("FirstRecvDispatchSpec")
+            && !first_recv_dispatch.contains("[FirstRecvDispatch")
+            && first_recv_dispatch.contains("visit_first_recv_dispatch(")
+            && first_recv_dispatch.contains("footprint().route_scope_count")
+            && first_recv_dispatch.contains("passive_arm_child_fact_by_slot")
             && passive_child_seal.contains("passive_child_route_scope("),
-        "passive first-recv dispatch overflow must be rejected by projection seal on PackedRouteArmRow child-slot authority"
+        "passive first-recv dispatch must stream from descriptor route-scope child-slot authority without an arbitrary fixed table"
     );
 }
 
@@ -472,45 +471,39 @@ fn route_stack_depth_cap_is_projection_sealed() {
 fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
     let branch_recv = read("src/endpoint/kernel/branch_recv.rs");
     let branch_recv_finish = read("src/endpoint/kernel/branch_recv/finish.rs");
-    let branch_recv_builder = read("src/endpoint/kernel/branch_recv/finish/commit_builder.rs");
     let recv_commit_plan = read("src/endpoint/kernel/recv_commit_plan.rs");
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
-    let branch_recv_surface = [branch_recv.as_str(), branch_recv_builder.as_str()].join("\n");
-    let with_builder = branch_recv_finish
-        .split("fn with_branch_recv_commit_builder(")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split("    fn collect_branch_recv_reentry_route_rows_from_parts")
-                .next()
-        })
-        .expect("branch-recv builder boundary must stay visible");
+    let branch_recv_surface = [branch_recv.as_str(), branch_recv_finish.as_str()].join("\n");
 
     assert!(
-        runtime_types.contains(
-            "pub(crate) struct BranchRecvRuntimeDesc {\n    pub(crate) core: MsgCore,\n}"
-        ) && !runtime_types.contains("validate:")
+        !repo_file_exists("src/endpoint/kernel/branch_recv/finish/commit_builder.rs")
+            && !runtime_types.contains("BranchRecvRuntimeDesc")
+            && !branch_recv_finish.contains("BranchRecvRuntimeDesc")
+            && !branch_recv.contains("BranchRecvRuntimeDesc")
+            && !runtime_types.contains("validate:")
             && !runtime_types.contains("fn validate_payload(")
-            && recv_commit_plan.contains("pub(super) struct BranchRecvCommitInput<'r>")
+            && !recv_commit_plan.contains("pub(super) struct BranchRecvCommitInput<'r>")
+            && !recv_commit_plan.contains("pub(super) enum BranchRecvCommitDelta")
             && recv_commit_plan.contains("pub(super) enum RecvCommitPayload<'r>")
             && recv_commit_plan.contains("pub(super) struct RecvCommitPlan<'r>")
             && recv_commit_plan.contains("enum RecvCommitPlanKind")
-            && recv_commit_plan.contains("fn prepare_branch_recv_commit_plan(")
+            && !recv_commit_plan.contains("fn prepare_branch_recv_commit_plan(")
             && recv_commit_plan.contains("fn publish_recv_commit_plan<F>(")
             && recv_commit_plan.contains("frame.validated_payload(validate)")
             && recv_commit_plan.contains("frame.into_payload()")
             && recv_commit_plan.contains("self.commit_prepared_delta(delta);")
             && recv_commit_plan.contains("self.publish_branch_preview_commit_plan(branch);")
             && !branch_recv_surface.contains("struct DecodePublishPlan")
-            && !branch_recv_surface.contains("committed_payload")
-            && with_builder.contains(") -> RecvResult<RecvCommitPlan<'r>>")
-            && with_builder.contains("self.prepare_branch_recv_commit_plan(input)")
-            && branch_recv_builder.contains("RecvResult<BranchRecvCommitInput<'r>>")
-            && branch_recv_builder.contains("struct WireBranchRecvCommitInput<'r>")
-            && branch_recv_builder.contains("frame: lane_port::ReceivedFrame<'r>")
-            && branch_recv_builder.contains("RecvCommitPayload::wire(frame)")
-            && branch_recv_builder.contains("RecvCommitPayload::non_wire(payload)")
-            && branch_recv_builder.contains("let mut frame = Some(frame);")
-            && branch_recv_builder.contains("if result.is_err()")
+            && branch_recv_finish.contains("fn build_wire_branch_recv_commit_plan(")
+            && branch_recv_finish.contains("fn build_non_wire_branch_recv_commit_plan(")
+            && branch_recv_finish.contains("RecvCommitPlan::branch(")
+            && branch_recv_finish.contains("RecvCommitPayload::wire(frame)")
+            && branch_recv_finish.contains("RecvCommitPayload::non_wire(payload)")
+            && branch_recv_finish.contains("let mut frame = Some(frame);")
+            && branch_recv_finish.contains("if result.is_err()")
+            && !branch_recv_surface.contains("with_branch_recv_commit_builder")
+            && !branch_recv_surface.contains("BranchRecvCommitBuilder")
+            && !branch_recv_surface.contains("WireBranchRecvCommitInput")
             && !branch_recv_surface.contains("struct RecvCommitPlan")
             && !branch_recv_surface.contains("enum BranchRecvCommitPayload")
             && !branch_recv_surface.contains("BranchRecvProgressPlan")
@@ -553,6 +546,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
     let cursor = read("src/global/typestate/cursor.rs");
     let cursor_scope_route = read("src/global/typestate/cursor/scope_route.rs");
     let cursor_route_navigation = read("src/global/typestate/cursor/scope_route/navigation.rs");
+    let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let cursor_lane_progress = read("src/global/typestate/cursor/lane_progress.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
     let mut role_program_impl = read("src/global/role_program/image_impl.rs");
@@ -646,12 +640,15 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
         );
     }
     assert!(
-        passive_dispatch.contains(".route_scope_first_recv_dispatch_table(scope_id)")
-            && passive_dispatch.contains("entry.lane() == lane")
-            && passive_dispatch.contains("entry.frame_label() == frame_label")
-            && !passive_dispatch.contains(".route_scope_rows_by_slot(")
-            && !passive_dispatch.contains("footprint().route_scope_count"),
-        "passive dispatch must use projection-baked first-recv rows instead of route-scope scan"
+        passive_dispatch.contains(".first_recv_descendant_target_for_lane_frame_label(")
+            && first_recv_dispatch.contains("visit_first_recv_dispatch(")
+            && first_recv_dispatch.contains("first_recv_dispatch_root_arm")
+            && first_recv_dispatch.contains("passive_arm_child_fact_by_slot")
+            && first_recv_dispatch.contains("route_scope_rows_by_slot")
+            && first_recv_dispatch.contains("footprint().route_scope_count")
+            && !first_recv_dispatch.contains("MAX_FIRST_RECV_DISPATCH")
+            && !first_recv_dispatch.contains("FirstRecvDispatchSpec"),
+        "passive dispatch must derive first-recv rows from descriptor route-scope child-slot authority without a fixed dispatch table"
     );
     for forbidden in [
         "MAX_PASSIVE_DISPATCH_ROW_WALK",

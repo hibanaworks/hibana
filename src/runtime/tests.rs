@@ -320,7 +320,6 @@ impl Transport for LargeChoreographyTransport {
         core::task::Poll::Ready(Ok(()))
     }
 
-    #[inline(always)]
     fn poll_recv<'a>(
         &'a self,
         rx: &'a mut Self::Rx<'a>,

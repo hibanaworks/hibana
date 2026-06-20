@@ -1,9 +1,6 @@
 use core::marker::PhantomData;
 
-use super::{
-    AssocTable, EndpointLeaseId, EndpointLeaseSlot, FREE_REGION_CAPACITY, FreeRegion, Rendezvous,
-    RouteTable, Transport,
-};
+use super::{AssocTable, EndpointLeaseId, EndpointLeaseSlot, Rendezvous, RouteTable, Transport};
 mod capacity;
 
 // # Unsafe Owner Contract
@@ -12,15 +9,13 @@ mod capacity;
 // resident table ingress. The slab pointer and endpoint-lease table are created
 // by the rendezvous constructor and remain pinned for the rendezvous lifetime.
 // Every raw allocation returned here is aligned, range-checked against the
-// current slab frontier, and recorded in rendezvous-owned metadata before typed
-// owners bind to it. Migration paths copy initialized table entries into newly
-// allocated sidecar storage before rebinding, and source regions are tracked only
-// as rendezvous-local free regions for later resident allocation.
+// current slab frontier, and recorded by advancing the rendezvous image frontier
+// before typed owners bind to it. Migration paths copy initialized table entries
+// into freshly allocated sidecar storage before rebinding.
 
 pub(crate) struct Sidecar<T> {
     ptr: *mut T,
     bytes: usize,
-    reclaim_delta: usize,
     _marker: PhantomData<T>,
 }
 
@@ -37,16 +32,14 @@ impl<T> Sidecar<T> {
     pub(crate) const EMPTY: Self = Self {
         ptr: core::ptr::null_mut(),
         bytes: 0,
-        reclaim_delta: 0,
         _marker: PhantomData,
     };
 
     #[inline]
-    pub(crate) const fn from_raw_parts(ptr: *mut T, bytes: usize, reclaim_delta: usize) -> Self {
+    pub(crate) const fn from_raw_parts(ptr: *mut T, bytes: usize) -> Self {
         Self {
             ptr,
             bytes,
-            reclaim_delta,
             _marker: PhantomData,
         }
     }
@@ -62,11 +55,6 @@ impl<T> Sidecar<T> {
     }
 
     #[inline]
-    pub(crate) const fn reclaim_delta(self) -> usize {
-        self.reclaim_delta
-    }
-
-    #[inline]
     pub(crate) fn is_empty(self) -> bool {
         self.ptr.is_null() || self.bytes == 0
     }
@@ -76,7 +64,6 @@ impl<T> Sidecar<T> {
         Sidecar {
             ptr: self.ptr.cast::<U>(),
             bytes: self.bytes,
-            reclaim_delta: self.reclaim_delta,
             _marker: PhantomData,
         }
     }

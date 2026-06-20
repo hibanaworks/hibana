@@ -215,7 +215,8 @@ impl EventCursor {
     ) -> CursorRefresh {
         let target = target.0;
         let lane_idx = target.lane as usize;
-        let roll_reentry = if self.local_event_done(target.step_idx as usize)
+        let roll_reentry = if self.has_reentry_scopes()
+            && self.local_event_done(target.step_idx as usize)
             && let Some(scope) =
                 self.roll_reentry_scope_for_step(RelocatableResidentLaneStep(target))
         {

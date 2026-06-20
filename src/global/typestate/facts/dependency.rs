@@ -147,7 +147,6 @@ impl PackedLocalDependency {
         }
     }
 
-    #[inline(always)]
     pub(crate) const fn from_dependency(dependency: LocalDependency) -> Self {
         let scope = dependency.scope();
         if scope.is_none() {
@@ -193,7 +192,6 @@ impl PackedLocalDependency {
         }
     }
 
-    #[inline(always)]
     pub(crate) const fn to_dependency(self) -> Option<LocalDependency> {
         if self.is_none() {
             return None;

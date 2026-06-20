@@ -2,8 +2,7 @@ use super::{
     ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, FrontierCandidate,
     FrontierKind, LaneOfferState, ObservedEntrySet, OfferEntryEvidence, OfferEntryObservedState,
     OfferEntryState, OfferEntrySummary, ScopeArmMaterializationMeta, ScopeId, Transport,
-    checked_state_index, offer_entry_frontier_candidate, offer_entry_observed_state,
-    state_index_to_usize,
+    offer_entry_frontier_candidate, offer_entry_observed_state, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -269,33 +268,13 @@ where
         &self,
         scope_id: ScopeId,
     ) -> ScopeArmMaterializationMeta {
-        let Some(arm_count) = self.cursor.route_scope_arm_count(scope_id) else {
+        if self.cursor.route_scope_arm_count(scope_id).is_none() {
             crate::invariant();
-        };
-        let mut meta = ScopeArmMaterializationMeta {
-            arm_count,
-            ..ScopeArmMaterializationMeta::EMPTY
-        };
+        }
+        let mut meta = ScopeArmMaterializationMeta::EMPTY;
         let mut arm = 0u8;
         while arm <= 1 {
             let arm_idx = arm as usize;
-            if let Some((entry, label)) = self
-                .cursor
-                .shared_controller_arm_entry_by_arm(scope_id, arm)
-            {
-                meta.controller_arm_entry[arm_idx] = entry;
-                meta.controller_arm_label[arm_idx] = label;
-                if let Some(recv_meta) = self.cursor.try_recv_meta_at(state_index_to_usize(entry))
-                    && recv_meta.peer != ROLE
-                {
-                    meta.controller_cross_role_recv_mask |= 1u8 << arm_idx;
-                }
-            }
-            if let Some(entry) = self.cursor.route_scope_arm_recv_index(scope_id, arm)
-                && let Some(entry) = checked_state_index(entry)
-            {
-                meta.recv_entry[arm_idx] = entry;
-            }
             if let Some(entry) = self.cursor.passive_observer_arm_entry(scope_id, arm) {
                 meta.passive_arm_entry[arm_idx] = entry;
             }
@@ -307,18 +286,10 @@ where
             }
             arm += 1;
         }
-        if let Some((dispatch, dispatch_len)) =
-            self.cursor.route_scope_first_recv_dispatch_table(scope_id)
+        if let Some(arm_mask) = self
+            .cursor
+            .route_scope_first_recv_dispatch_arm_mask(scope_id)
         {
-            let mut arm_mask = 0u8;
-            let mut idx = 0usize;
-            while idx < dispatch_len as usize {
-                let entry = dispatch[idx];
-                if entry.arm() < 2 && !entry.target().is_absent() {
-                    arm_mask |= 1u8 << entry.arm();
-                }
-                idx += 1;
-            }
             meta.record_first_recv_dispatch(arm_mask);
         }
         meta

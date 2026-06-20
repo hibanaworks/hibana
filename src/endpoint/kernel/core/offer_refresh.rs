@@ -98,18 +98,6 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_frontier_mask_for_entry(
-        &self,
-        entry_idx: usize,
-    ) -> Option<u8> {
-        self.offer_entry_state_snapshot(entry_idx)?;
-        if !self.offer_entry_has_active_lanes(entry_idx) {
-            return None;
-        }
-        Some(self.offer_entry_frontier_mask(entry_idx))
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn refresh_after_cursor_move(
         &mut self,
         refresh: CursorRefresh,

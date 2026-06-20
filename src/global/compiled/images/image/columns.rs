@@ -1,9 +1,34 @@
-use crate::global::compiled::lowering::CompiledProgramImage;
+use crate::{
+    eff::EffKind,
+    global::{
+        compiled::lowering::CompiledProgramImage,
+        const_dsl::{EffList, ScopeEvent, ScopeKind},
+    },
+};
 
 pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 7;
 pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6;
 pub(crate) const PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE: u8 = u8::MAX;
 pub(crate) const PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG: u8 = 0;
+pub(super) const ROUTE_ORDINAL_BYTES: usize = crate::eff::meta::MAX_EFF_NODES.div_ceil(8);
+
+#[inline(always)]
+pub(super) const fn insert_route_ordinal(
+    words: &mut [u8; ROUTE_ORDINAL_BYTES],
+    ordinal: usize,
+) -> bool {
+    let byte = ordinal >> 3;
+    let bit = ordinal & 7;
+    if byte >= words.len() {
+        crate::invariant();
+    }
+    let mask = 1u8 << bit;
+    let seen = (words[byte] & mask) != 0;
+    if !seen {
+        words[byte] |= mask;
+    }
+    !seen
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -63,6 +88,77 @@ impl ProgramImageColumns {
         }
         len
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ProgramImagePlan {
+    columns: ProgramImageColumns,
+}
+
+impl ProgramImagePlan {
+    #[inline(always)]
+    pub(crate) const fn from_program(eff_list: &EffList) -> Self {
+        Self {
+            columns: program_image_columns(eff_list),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn columns(self) -> ProgramImageColumns {
+        self.columns
+    }
+
+    #[inline(always)]
+    pub(crate) const fn blob_len(self) -> usize {
+        self.columns.blob_len()
+    }
+}
+
+#[inline]
+const fn program_image_columns(eff_list: &EffList) -> ProgramImageColumns {
+    let mut atom_len = 0usize;
+    let mut idx = 0usize;
+    while idx < eff_list.len() {
+        let node = eff_list.node_at(idx);
+        if matches!(node.kind, EffKind::Atom) {
+            atom_len += 1;
+        }
+        idx += 1;
+    }
+
+    let markers = eff_list.scope_markers();
+    let mut seen_route_ordinals = [0u8; ROUTE_ORDINAL_BYTES];
+    let mut route_resolver_len = 0usize;
+    idx = 0;
+    while idx < markers.len() {
+        let marker = markers[idx];
+        if matches!(marker.event, ScopeEvent::Enter)
+            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+        {
+            let ordinal = marker.scope_id.local_ordinal() as usize;
+            if insert_route_ordinal(&mut seen_route_ordinals, ordinal) {
+                route_resolver_len += 1;
+            }
+        }
+        idx += 1;
+    }
+
+    let mut offset = 0usize;
+    let atoms = ProgramColumnRange::new(offset, atom_len, PROGRAM_IMAGE_ATOM_STRIDE);
+    offset = atoms.end_offset(PROGRAM_IMAGE_ATOM_STRIDE);
+    let route_resolvers = ProgramColumnRange::new(
+        offset,
+        route_resolver_len,
+        PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    );
+    let columns = ProgramImageColumns {
+        atoms,
+        route_resolvers,
+    };
+    if offset > columns.blob_len() {
+        crate::invariant();
+    }
+    columns
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

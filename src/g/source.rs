@@ -1,24 +1,18 @@
 use crate::global::const_dsl::{
-    EffList, INTRINSIC_ROUTE_RESOLVER_ID, ScopeEvent, ScopeId, ScopeKind,
+    EffList, INTRINSIC_ROUTE_RESOLVER_ID, ScopeEvent, ScopeId, ScopeKind, ScopeRebase,
 };
 use crate::global::steps::RoleLaneMask;
 
 use super::ProgramSourceError;
 
-mod frontier;
-
-use frontier::EndpointOpFrontier;
-
 pub(crate) trait ProgramTerm {
     const PROGRAM_SOURCE: ProgramSourceData;
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct ProgramSourceData {
     eff: EffList,
     role_lane_mask: RoleLaneMask,
     lane_span: u16,
-    frontier: EndpointOpFrontier,
     error: Option<ProgramSourceError>,
 }
 
@@ -32,7 +26,6 @@ impl ProgramSourceData {
             eff,
             role_lane_mask,
             lane_span,
-            frontier: EndpointOpFrontier::from_eff(&eff),
             error: None,
         }
     }
@@ -54,55 +47,42 @@ impl ProgramSourceData {
         self.error
     }
 
-    #[inline(always)]
-    const fn scope_budget(&self) -> u16 {
-        self.eff.scope_budget()
-    }
-
-    #[inline(always)]
-    const fn into_eff(self) -> EffList {
-        self.eff
-    }
-
-    pub(crate) const fn seq(self, next: Self) -> Self {
-        let error = Self::merge_error(self.error, next.error);
-        let rebased = next.eff.rebase_scopes(self.scope_budget());
-        let eff = self.eff.extend_list(rebased);
-        add_scope_budget(self.scope_budget(), next.scope_budget());
+    pub(crate) const fn seq(left: Self, next: Self) -> Self {
+        let error = Self::merge_error(left.error, next.error);
+        let left_budget = left.eff.scope_budget();
+        let right_budget = next.eff.scope_budget();
+        let mut eff = left.eff;
+        eff.append_rebased_from(&next.eff, 0, left_budget, ScopeRebase::Preserve);
+        add_scope_budget(left_budget, right_budget);
+        let lane_span = max_lane_span(left.lane_span, next.lane_span);
         Self {
             eff,
-            role_lane_mask: self.role_lane_mask.union(
-                next.role_lane_mask,
-                max_lane_span(self.lane_span, next.lane_span),
-            ),
-            lane_span: max_lane_span(self.lane_span, next.lane_span),
-            frontier: self.frontier.seq(next.frontier),
+            role_lane_mask: left.role_lane_mask.union(next.role_lane_mask, lane_span),
+            lane_span,
             error,
         }
     }
 
-    pub(crate) const fn resolve_route(self, resolver_id: u16) -> Self {
-        let mut error = self.error;
+    pub(crate) const fn resolve_route(source: Self, resolver_id: u16) -> Self {
+        let mut eff = source.eff;
+        let mut error = source.error;
         if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
             error = Self::merge_error(error, Some(ProgramSourceError::ResolverIdOutOfDomain));
         }
-        let eff = if self.eff.is_empty() {
+        if eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
-            self.eff
         } else {
             let scope = ScopeId::route(0);
-            let mut eff = self.eff;
             let mut found = false;
-            let markers = self.eff.scope_markers();
             let mut marker_idx = 0usize;
-            while marker_idx < markers.len() {
-                let marker = markers[marker_idx];
+            while marker_idx < eff.scope_marker_count() {
+                let marker = eff.scope_marker_at(marker_idx);
                 if matches!(marker.event, ScopeEvent::Enter)
                     && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                     && marker.scope_id.same(scope)
                     && !found
                 {
-                    eff = eff.push_route_resolver(scope, resolver_id);
+                    eff.push_route_resolver_mut(scope, resolver_id);
                     found = true;
                 }
                 marker_idx += 1;
@@ -110,103 +90,94 @@ impl ProgramSourceData {
             if !found {
                 error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
             }
-            eff
-        };
+        }
         Self {
             eff,
-            role_lane_mask: self.role_lane_mask,
-            lane_span: self.lane_span,
-            frontier: self.frontier,
+            role_lane_mask: source.role_lane_mask,
+            lane_span: source.lane_span,
             error,
         }
     }
 
-    pub(crate) const fn roll(self) -> Self {
-        let mut error = self.error;
-        if self.eff.is_empty() {
+    pub(crate) const fn roll(source: Self) -> Self {
+        let mut error = source.error;
+        if source.eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::RollBodyAbsent));
         }
         let roll_scope = ScopeId::roll_scope(0);
-        let eff = self
-            .into_eff()
-            .rebase_scopes(1)
-            .mark_route_scopes_reentry()
-            .with_scope(roll_scope);
+        let mut eff = source.eff;
+        eff.rebase_scopes_mut(1, ScopeRebase::MarkRouteEnters);
+        let len = eff.len();
+        eff.push_scope_around(0, len, roll_scope);
         Self {
             eff,
-            role_lane_mask: self.role_lane_mask,
-            lane_span: self.lane_span,
-            frontier: self.frontier,
+            role_lane_mask: source.role_lane_mask,
+            lane_span: source.lane_span,
             error,
         }
     }
 
-    pub(crate) const fn route(self, right: Self) -> Self {
-        let mut error = Self::merge_error(self.error, right.error);
-        if self.eff.is_empty() || right.eff.is_empty() {
+    pub(crate) const fn route(left: Self, right: Self) -> Self {
+        let mut error = Self::merge_error(left.error, right.error);
+        if left.eff.is_empty() || right.eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::RouteArmAbsent));
         }
         let scope = ScopeId::route(0);
-        let left_budget = self.scope_budget();
-        let left_frontier = self.frontier;
-        let right_frontier = right.frontier;
-        let left_arm = self.into_eff();
-        let right_arm = right.into_eff();
+        let left_budget = left.eff.scope_budget();
         let right_offset = add_scope_budget(1, left_budget);
-        let left_eff = left_arm.rebase_scopes(1).with_scope(scope);
-        let right_eff = right_arm.rebase_scopes(right_offset).with_scope(scope);
-        let route_summary =
-            EndpointOpFrontier::route_summary(scope, &left_arm, left_frontier, right_frontier);
+        let mut eff = left.eff;
+        eff.rebase_scopes_mut(1, ScopeRebase::Preserve);
+        let left_start = 0usize;
+        let left_end = eff.len();
+        eff.push_scope_around(left_start, left_end, scope);
+        let right_start = eff.len();
+        eff.push_scope_enter_at_boundary(right_start, scope);
+        eff.append_rebased_from(&right.eff, 0, right_offset, ScopeRebase::Preserve);
+        let right_end = eff.len();
+        eff.push_scope_exit_at_boundary(right_end, scope);
+        let lane_span = max_lane_span(left.lane_span, right.lane_span);
         Self {
-            eff: left_eff
-                .extend_list(right_eff)
-                .push_route_frontier(route_summary),
-            role_lane_mask: self.role_lane_mask.union(
-                right.role_lane_mask,
-                max_lane_span(self.lane_span, right.lane_span),
-            ),
-            lane_span: max_lane_span(self.lane_span, right.lane_span),
-            frontier: left_frontier.route_choice(right_frontier, &left_arm),
+            eff,
+            role_lane_mask: left.role_lane_mask.union(right.role_lane_mask, lane_span),
+            lane_span,
             error,
         }
     }
 
-    pub(crate) const fn par(self, right: Self) -> Self {
-        let mut error = Self::merge_error(self.error, right.error);
-        if self.eff.is_empty() || right.eff.is_empty() {
+    pub(crate) const fn par(left: Self, right: Self) -> Self {
+        let mut error = Self::merge_error(left.error, right.error);
+        if left.eff.is_empty() || right.eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelArmAbsent));
         }
         let right_role_lane_mask = right
             .role_lane_mask
-            .shift_lanes(self.lane_span, right.lane_span);
-        let combined_lane_span = add_lane_span(self.lane_span, right.lane_span);
-        if self
+            .shift_lanes(left.lane_span, right.lane_span);
+        let combined_lane_span = add_lane_span(left.lane_span, right.lane_span);
+        if left
             .role_lane_mask
             .intersects(&right_role_lane_mask, combined_lane_span)
         {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelConflict));
         }
-        let frontier = self
-            .frontier
-            .concurrent_union(right.frontier.rebase_parallel_inbound_lanes(self.lane_span));
-        if frontier.ambiguous_endpoint_op {
-            error = Self::merge_error(error, Some(ProgramSourceError::ParallelAmbiguousEndpointOp));
-        }
         let parallel_scope = ScopeId::parallel(0);
-        let left_budget = self.scope_budget();
+        let left_budget = left.eff.scope_budget();
         let right_offset = add_scope_budget(1, left_budget);
-        let left_eff = self.into_eff().rebase_scopes(1);
-        let right_eff = right
-            .into_eff()
-            .rebase_lanes(self.lane_span)
-            .rebase_scopes(right_offset);
+        let mut eff = left.eff;
+        eff.rebase_scopes_mut(1, ScopeRebase::Preserve);
+        let left_len = eff.len();
+        eff.append_rebased_from(
+            &right.eff,
+            left.lane_span,
+            right_offset,
+            ScopeRebase::Preserve,
+        );
+        eff.push_parallel_scope_split(parallel_scope, left_len);
         Self {
-            eff: left_eff.extend_list(right_eff).with_scope(parallel_scope),
-            role_lane_mask: self
+            eff,
+            role_lane_mask: left
                 .role_lane_mask
                 .union(right_role_lane_mask, combined_lane_span),
             lane_span: combined_lane_span,
-            frontier,
             error,
         }
     }

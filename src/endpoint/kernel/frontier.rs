@@ -15,7 +15,6 @@ use core::{
 };
 
 use crate::global::const_dsl::ScopeId;
-use crate::global::role_program::{LaneSet, LaneSetView, LaneWord};
 use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
 
 const FRONTIER_SLOT_MASK_BITS: usize = u8::BITS as usize;

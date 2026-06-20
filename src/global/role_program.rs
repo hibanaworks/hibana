@@ -3,7 +3,7 @@
 //! `RoleProgram` is the typed entry point for a role projection witness.
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
-use super::compiled::lowering::{CompiledProgramImage, RoleCompiledCounts};
+use super::compiled::lowering::RoleCompiledCounts;
 use crate::global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
 use core::marker::PhantomData;
 

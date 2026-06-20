@@ -9,36 +9,11 @@ where
     T: Transport + 'r,
 {
     #[inline]
-    pub(in crate::endpoint::kernel) fn bump_scope_evidence_generation(&mut self, slot: usize) {
-        self.decision_state.scope_evidence.bump_generation(slot);
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn bump_scope_evidence_generation_for_scope(
-        &mut self,
-        scope_id: ScopeId,
-        slot: usize,
-    ) {
-        self.bump_scope_evidence_generation(slot);
-        self.refresh_frontier_observation_cache_for_scope(scope_id);
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn scope_slot_for_route(
         &self,
         scope_id: ScopeId,
     ) -> Option<usize> {
         self.cursor.route_scope_slot(scope_id)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn scope_evidence_generation_for_scope(
-        &self,
-        scope_id: ScopeId,
-    ) -> u16 {
-        self.decision_state
-            .scope_evidence
-            .generation_for_slot(self.scope_slot_for_route(scope_id))
     }
 
     #[inline]
@@ -55,9 +30,7 @@ where
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return;
         };
-        if self.decision_state.scope_evidence.take_ack(slot).is_some() {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
-        }
+        self.decision_state.scope_evidence.take_ack(slot);
     }
 
     #[inline]
@@ -67,13 +40,10 @@ where
         lane: u8,
         frame_label: u8,
     ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self
-                .decision_state
+        if let Some(slot) = self.scope_slot_for_route(scope_id) {
+            self.decision_state
                 .scope_evidence
-                .record_frame_hint(slot, lane, frame_label)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
+                .record_frame_hint(slot, lane, frame_label);
         }
     }
 
@@ -84,13 +54,10 @@ where
         lane: u8,
         frame_label: u8,
     ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self
-                .decision_state
+        if let Some(slot) = self.scope_slot_for_route(scope_id) {
+            self.decision_state
                 .scope_evidence
-                .record_dynamic_frame_hint(slot, lane, frame_label)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
+                .record_dynamic_frame_hint(slot, lane, frame_label);
         }
     }
 
@@ -101,13 +68,10 @@ where
         arm: u8,
         evidence_kind: ReadyArmEvidence,
     ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self
-                .decision_state
+        if let Some(slot) = self.scope_slot_for_route(scope_id) {
+            self.decision_state
                 .scope_evidence
-                .mark_ready_arm(slot, arm, evidence_kind)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
+                .mark_ready_arm(slot, arm, evidence_kind);
         }
     }
 
@@ -159,13 +123,10 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self
-                .decision_state
+        if let Some(slot) = self.scope_slot_for_route(scope_id) {
+            self.decision_state
                 .scope_evidence
-                .consume_ready_arm(slot, arm)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
+                .consume_ready_arm(slot, arm);
         }
     }
 
@@ -191,10 +152,8 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn clear_scope_evidence(&mut self, scope_id: ScopeId) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.decision_state.scope_evidence.clear(slot)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
+        if let Some(slot) = self.scope_slot_for_route(scope_id) {
+            self.decision_state.scope_evidence.clear(slot);
         }
     }
 
@@ -344,22 +303,13 @@ where
         lane_idx: usize,
         frame_label_meta: &ScopeFrameLabelView<'_>,
     ) -> Option<u8> {
-        let (taken, captured_change_generation) = {
-            let port = self.port_for_lane(lane_idx);
-            let captured_change_generation = port.route_change_generation();
-            let frame_hint_mask = frame_label_meta.frame_hint_mask();
-            let taken = if !port.has_route_hint_for_frame_label_mask(frame_hint_mask) {
-                None
-            } else {
-                port.take_route_hint_for_frame_label_mask(frame_hint_mask)
-            };
-            (taken, captured_change_generation)
-        };
-        self.refresh_frontier_observation_cache_for_route_lane(
-            lane_idx,
-            captured_change_generation,
-        );
-        taken
+        let port = self.port_for_lane(lane_idx);
+        let frame_hint_mask = frame_label_meta.frame_hint_mask();
+        if !port.has_route_hint_for_frame_label_mask(frame_hint_mask) {
+            None
+        } else {
+            port.take_route_hint_for_frame_label_mask(frame_hint_mask)
+        }
     }
 
     #[inline]
@@ -387,22 +337,13 @@ where
         lane_idx: usize,
         frame_label_meta: &ScopeFrameLabelView<'_>,
     ) -> bool {
-        let (pending, captured_change_generation) = {
-            let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
-                return false;
-            };
-            let captured_change_generation = port.route_change_generation();
-            let pending = port.has_pending_route_hint_for_lane(
-                frame_label_meta.frame_hint_mask(),
-                Lane::new(lane_idx as u32),
-            );
-            (pending, captured_change_generation)
+        let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
+            return false;
         };
-        self.refresh_frontier_observation_cache_for_route_lane(
-            lane_idx,
-            captured_change_generation,
-        );
-        pending
+        port.has_pending_route_hint_for_lane(
+            frame_label_meta.frame_hint_mask(),
+            Lane::new(lane_idx as u32),
+        )
     }
 
     #[inline]
@@ -478,17 +419,8 @@ where
         scope_id: ScopeId,
         role: u8,
     ) -> Option<u8> {
-        let (arm, captured_change_generation) = {
-            let port = self.port_for_lane(lane_idx);
-            let captured_change_generation = port.route_change_generation();
-            let arm = port.ack_route_arm_selection(scope_id, role);
-            (arm, captured_change_generation)
-        };
-        self.refresh_frontier_observation_cache_for_route_lane(
-            lane_idx,
-            captured_change_generation,
-        );
-        arm
+        self.port_for_lane(lane_idx)
+            .ack_route_arm_selection(scope_id, role)
     }
 
     #[inline]
@@ -498,16 +430,8 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) {
-        let captured_change_generation = {
-            let port = self.port_for_lane(lane_idx);
-            let captured_change_generation = port.route_change_generation();
-            port.record_route_arm_selection(scope_id, arm);
-            captured_change_generation
-        };
-        self.refresh_frontier_observation_cache_for_route_lane(
-            lane_idx,
-            captured_change_generation,
-        );
+        self.port_for_lane(lane_idx)
+            .record_route_arm_selection(scope_id, arm);
     }
 
     pub(in crate::endpoint::kernel) fn arm_has_recv(&self, scope_id: ScopeId, arm: u8) -> bool {

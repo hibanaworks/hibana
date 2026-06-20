@@ -23,12 +23,12 @@ where
                 && meta.label == target_label
                 && meta.lane as usize == lane_idx
                 && !meta.origin.is_session()
-                && self
-                    .cursor
-                    .event_enabled(idx, EventCommitMeta::from(meta), |scope| {
-                        self.selected_arm_for_scope(scope)
-                    })
-                    .is_ok()
+                && {
+                    let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
+                    self.cursor
+                        .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm)
+                        .is_ok()
+                }
             {
                 return true;
             }
@@ -37,7 +37,7 @@ where
         false
     }
 
-    fn recv_candidate_for_observed_key(
+    fn recv_candidate_for_observed_evidence(
         &self,
         idx: usize,
         target_label: u8,
@@ -60,11 +60,10 @@ where
         if !observed.matches_recv_meta(self.sid.raw(), lane_wire, ROLE, meta) {
             return Ok(None);
         }
-        let enabled = self
-            .cursor
-            .event_enabled(idx, EventCommitMeta::from(meta), |scope| {
-                self.selected_arm_for_scope(scope)
-            });
+        let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
+        let enabled =
+            self.cursor
+                .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
         if enabled.is_err() {
             return Ok(None);
         }
@@ -102,11 +101,10 @@ where
         if candidate_lane_wire != lane_wire {
             return Ok(None);
         }
-        let enabled = self
-            .cursor
-            .event_enabled(idx, EventCommitMeta::from(meta), |scope| {
-                self.selected_arm_for_scope(scope)
-            });
+        let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
+        let enabled =
+            self.cursor
+                .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
         if enabled.is_err() {
             return Ok(None);
         }
@@ -130,7 +128,7 @@ where
         let mut idx = 0usize;
         while idx < self.cursor.local_steps_len() {
             if let Some(candidate) =
-                self.recv_candidate_for_observed_key(idx, target_label, observed)?
+                self.recv_candidate_for_observed_evidence(idx, target_label, observed)?
             {
                 accumulator = accumulator.add(candidate);
                 if matches!(accumulator, MatchAccumulator::Ambiguous) {

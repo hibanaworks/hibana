@@ -1,7 +1,7 @@
 use super::{
-    CachedRecvMeta, CursorEndpoint, EventCursor, FrameLabelMask, FrontierFacts, FrontierKind,
-    FrontierReadiness, OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta,
-    ScopeFrameLabelScratch, ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
+    CursorEndpoint, EventCursor, FrameLabelMask, FrontierFacts, FrontierKind, FrontierReadiness,
+    OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeFrameLabelScratch,
+    ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -129,30 +129,17 @@ where
                 out.record_arm_frame_label(1, label);
             }
         }
-        if let Some((dispatch, len)) = cursor.route_scope_first_recv_dispatch_table(scope_id) {
-            let mut dispatch_arm_masks = [FrameLabelMask::EMPTY; 2];
-            let mut dispatch_idx = 0usize;
-            while dispatch_idx < len as usize {
-                let entry = dispatch[dispatch_idx];
-                if entry.arm() < 2 && !entry.target().is_absent() {
-                    if cursor
-                        .try_recv_meta_at(state_index_to_usize(entry.target()))
-                        .is_some()
-                    {
-                        out.record_dispatch_arm_frame_label_mask(
-                            entry.arm(),
-                            FrameLabelMask::from_frame_label(entry.frame_label()),
-                        );
-                    } else {
-                        dispatch_arm_masks[entry.arm() as usize]
-                            .insert_frame_label(entry.frame_label());
-                    }
-                }
-                dispatch_idx += 1;
+        let mut dispatch_arm_masks = [FrameLabelMask::EMPTY; 2];
+        let _ = cursor.visit_route_scope_first_recv_dispatch(scope_id, |arm, target| {
+            if arm < 2
+                && !target.is_absent()
+                && let Some(recv) = cursor.try_recv_meta_at(state_index_to_usize(target))
+            {
+                dispatch_arm_masks[arm as usize].insert_frame_label(recv.frame_label);
             }
-            out.record_dispatch_arm_frame_label_mask(0, dispatch_arm_masks[0]);
-            out.record_dispatch_arm_frame_label_mask(1, dispatch_arm_masks[1]);
-        }
+        });
+        out.record_dispatch_arm_frame_label_mask(0, dispatch_arm_masks[0]);
+        out.record_dispatch_arm_frame_label_mask(1, dispatch_arm_masks[1]);
     }
 
     #[inline]
@@ -250,19 +237,6 @@ where
         selection: OfferScopeSelection,
     ) -> ScopeArmMaterializationMeta {
         self.offer_scope_materialization_meta(selection.scope_id, selection.offer_lane as usize)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn selection_passive_recv_meta(
-        &self,
-        selection: OfferScopeSelection,
-        materialization_meta: ScopeArmMaterializationMeta,
-    ) -> [CachedRecvMeta; 2] {
-        self.compute_scope_passive_recv_meta(
-            materialization_meta,
-            selection.scope_id,
-            selection.offer_lane,
-        )
     }
 
     pub(in crate::endpoint::kernel) fn frontier_facts_at(

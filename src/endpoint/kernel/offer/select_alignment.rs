@@ -1,4 +1,4 @@
-use super::{CursorEndpoint, FrontierObservationDomain, RecvError, RecvResult, Transport};
+use super::{CursorEndpoint, RecvError, RecvResult, Transport};
 
 mod candidates;
 mod model;
@@ -10,7 +10,9 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(in crate::endpoint::kernel) fn align_cursor_to_selected_scope(&mut self) -> RecvResult<()> {
+    pub(in crate::endpoint::kernel) fn align_cursor_to_selected_scope(
+        &mut self,
+    ) -> RecvResult<crate::global::const_dsl::ScopeId> {
         let node_scope = self.cursor.node_scope_id();
         let current_scope = self.current_offer_scope_id();
         if current_scope != node_scope
@@ -22,63 +24,41 @@ where
             self.sync_lane_offer_state();
             return self.align_cursor_to_selected_scope();
         }
-        let node_scope = self.current_offer_scope_id();
+        let node_scope = current_scope;
         let current_idx = self.cursor.index();
         let mut current_frontier_state =
             self.current_frontier_selection_state(node_scope, current_idx);
         let current_frontier = current_frontier_state.frontier;
         let current_parallel = current_frontier_state.parallel();
+        let current_scope_meta =
+            self.current_scope_selection_meta(node_scope, current_idx, current_frontier_state);
         let current_scope_selected = self.selected_arm_for_scope(node_scope).is_some();
-        if current_scope_selected
-            && self
-                .current_scope_selection_meta(node_scope, current_idx, current_frontier_state)
-                .is_some_and(|meta| meta.is_route_entry())
-        {
-            return Ok(());
+        if current_scope_selected && current_scope_meta.is_some_and(|meta| meta.is_route_entry()) {
+            return Ok(node_scope);
         }
-        let observation_domain = FrontierObservationDomain::from_parallel(current_parallel);
         let active_entries = self.active_frontier_entries(current_parallel);
         if active_entries.contains_only(current_idx) {
-            let Some(current_scope_meta) =
-                self.current_scope_selection_meta(node_scope, current_idx, current_frontier_state)
-            else {
-                return Ok(());
+            let Some(meta) = current_scope_meta else {
+                return Ok(node_scope);
             };
-            if current_scope_meta.is_route_entry() && current_scope_meta.has_offer_lanes() {
-                return Ok(());
+            if meta.is_route_entry() && meta.has_offer_lanes() {
+                return Ok(node_scope);
             }
         }
-        let observation_key = Self::frontier_observation_key(self, observation_domain);
-        let mut observed_entries = self.frontier_observed_entries(observation_domain);
-        let cached_entries =
-            self.cached_frontier_observed_entries(observation_domain, observation_key);
-        if cached_entries.is_none() && observed_entries.len() != 0 {
-            Self::refresh_frontier_observation_cache(self, observation_domain);
-            observed_entries = self.frontier_observed_entries(observation_domain);
-        }
+        let observed_entries = self.compose_frontier_observed_entries(active_entries);
         let reentry_ready_entry_idx =
             self.observed_ready_reentry_entry_idx(observed_entries, current_idx);
         let reentry_controller_evidence = current_frontier_state.reentry_controller_evidence();
         let progress_sibling_presence = ProgressSiblingPresence::from_observed_progress_sibling(
-            if !observation_domain.uses_root_entries() {
-                self.global_frontier_progress_sibling_exists(
-                    current_idx,
-                    current_frontier,
-                    reentry_controller_evidence,
-                )
-            } else {
-                self.root_frontier_progress_sibling_exists(
-                    observation_domain.root_scope(),
-                    current_idx,
-                    current_frontier,
-                    reentry_controller_evidence,
-                )
-            },
+            self.observed_frontier_progress_sibling_exists(
+                observed_entries,
+                current_idx,
+                current_frontier,
+                reentry_controller_evidence,
+            ),
         );
-        let Some(current_scope_meta) =
-            self.current_scope_selection_meta(node_scope, current_idx, current_frontier_state)
-        else {
-            return Ok(());
+        let Some(current_scope_meta) = current_scope_meta else {
+            return Ok(node_scope);
         };
         let current_entry = if current_scope_meta.is_route_entry() {
             if current_scope_meta.has_offer_lanes() {
@@ -113,13 +93,13 @@ where
                 self.sync_lane_offer_state();
                 return self.align_cursor_to_selected_scope();
             }
-            return Ok(());
+            return Ok(node_scope);
         }
         if self.current_route_arm_authorized()? {
-            return Ok(());
+            return Ok(node_scope);
         }
         if candidates.current_can_remain_after_alignment(current_frontier_state) {
-            return Ok(());
+            return Ok(node_scope);
         }
         if !current_entry.is_route_entry()
             && let Some(entry_idx) = reentry_ready_entry_idx
@@ -130,7 +110,7 @@ where
                 self.sync_lane_offer_state();
                 return self.align_cursor_to_selected_scope();
             }
-            return Ok(());
+            return Ok(node_scope);
         }
         Err(RecvError::PhaseInvariant)
     }

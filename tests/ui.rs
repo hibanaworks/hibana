@@ -73,7 +73,8 @@ const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-project-role-out-of-range.rs",
     "tests/ui/g-role-out-of-range.rs",
     "tests/ui/g-roleprogram-witness-mismatch.rs",
-    "tests/ui/g-par-ambiguous-outbound-op.rs",
+    "tests/ui/g-par-ambiguous-endpoint-op.rs",
+    "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs",
     "tests/ui/g-route-passive-first-visible-ambiguous.rs",
     "tests/ui/g-route-controller-mismatch.rs",
     "tests/ui/g-route-roll-before-resolve.rs",
@@ -135,7 +136,8 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-resolver-data-send.rs");
     compile_fail(&t, "tests/ui/g-role-out-of-range.rs");
     compile_fail(&t, "tests/ui/g-roleprogram-witness-mismatch.rs");
-    compile_fail(&t, "tests/ui/g-par-ambiguous-outbound-op.rs");
+    compile_fail(&t, "tests/ui/g-par-ambiguous-endpoint-op.rs");
+    compile_fail(&t, "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs");
     compile_fail(&t, "tests/ui/g-route-passive-first-visible-ambiguous.rs");
     compile_fail(&t, "tests/ui/g-route-controller-mismatch.rs");
     compile_fail(&t, "tests/ui/g-route-roll-before-resolve.rs");
@@ -145,7 +147,10 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-par-same-role-auto-lanes.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-local-endpoints.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-evidence.rs");
+    t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-same-endpoint.rs");
+    t.pass("tests/ui-pass/g-roll-same-label-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
+    t.pass("tests/ui-pass/g-route-intrinsic-passive-same-label-frame-evidence.rs");
     t.pass("tests/ui-pass/g-route-merged.rs");
     t.pass("tests/ui-pass/g-route-resolver-scope-nested-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-label.rs");

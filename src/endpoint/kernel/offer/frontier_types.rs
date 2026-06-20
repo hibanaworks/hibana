@@ -5,44 +5,7 @@ use super::first_recv_dispatch::FirstRecvDispatchCache;
 use crate::eff::{EffIndex, EventOrigin};
 use crate::global::compiled::images::EventSemanticKind;
 use crate::global::const_dsl::ScopeId;
-use crate::global::typestate::{RecvMeta, RouteChoiceMark, StateIndex, state_index_to_usize};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::endpoint::kernel) struct FrontierObservationDomain {
-    root: ScopeId,
-}
-
-impl FrontierObservationDomain {
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn global() -> Self {
-        Self {
-            root: ScopeId::none(),
-        }
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn root(root: ScopeId) -> Self {
-        Self { root }
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) fn from_parallel(root: Option<ScopeId>) -> Self {
-        match root {
-            Some(root) => Self::root(root),
-            None => Self::global(),
-        }
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn root_scope(self) -> ScopeId {
-        self.root
-    }
-
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn uses_root_entries(self) -> bool {
-        !self.root.is_none()
-    }
-}
+use crate::global::typestate::{RouteChoiceMark, StateIndex};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
@@ -69,15 +32,6 @@ impl CachedRouteArm {
         match arm {
             Some(arm) => Self::some(arm),
             None => Self::none(),
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) const fn as_option(self) -> Option<u8> {
-        if self.0 == Self::ABSENT_RAW {
-            None
-        } else {
-            Some(self.0)
         }
     }
 }
@@ -124,30 +78,6 @@ impl CachedRecvMeta {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn recv_meta(&self) -> Option<(usize, RecvMeta)> {
-        if self.is_empty() {
-            return None;
-        }
-        Some((
-            state_index_to_usize(self.cursor_index),
-            RecvMeta {
-                eff_index: self.eff_index,
-                peer: self.peer,
-                label: self.label,
-                frame_label: self.frame_label,
-                semantic: self.semantic,
-                origin: self.origin,
-                next: state_index_to_usize(self.next),
-                scope: self.scope,
-                route_scope: self.scope,
-                route_arm: self.route_arm.as_option(),
-                choice: self.choice,
-                lane: self.lane,
-            },
-        ))
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn is_recv_step(&self) -> bool {
         (self.flags & Self::FLAG_RECV_STEP) != 0
     }
@@ -155,11 +85,6 @@ impl CachedRecvMeta {
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel) struct ScopeArmMaterializationMeta {
-    pub(in crate::endpoint::kernel) arm_count: u8,
-    pub(in crate::endpoint::kernel) controller_arm_entry: [StateIndex; 2],
-    pub(in crate::endpoint::kernel) controller_arm_label: [u8; 2],
-    pub(in crate::endpoint::kernel) controller_cross_role_recv_mask: u8,
-    pub(in crate::endpoint::kernel) recv_entry: [StateIndex; 2],
     pub(in crate::endpoint::kernel) passive_arm_entry: [StateIndex; 2],
     pub(in crate::endpoint::kernel) passive_child_scope: [ScopeId; 2],
     pub(in crate::endpoint::kernel) first_recv_dispatch: FirstRecvDispatchCache,
@@ -167,38 +92,10 @@ pub(in crate::endpoint::kernel) struct ScopeArmMaterializationMeta {
 
 impl ScopeArmMaterializationMeta {
     pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
-        arm_count: 0,
-        controller_arm_entry: [StateIndex::ABSENT; 2],
-        controller_arm_label: [0; 2],
-        controller_cross_role_recv_mask: 0,
-        recv_entry: [StateIndex::ABSENT; 2],
         passive_arm_entry: [StateIndex::ABSENT; 2],
         passive_child_scope: [ScopeId::none(); 2],
         first_recv_dispatch: FirstRecvDispatchCache::EMPTY,
     };
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn controller_arm_entry(
-        &self,
-        arm: u8,
-    ) -> Option<(StateIndex, u8)> {
-        let arm = arm as usize;
-        if arm >= 2 {
-            return None;
-        }
-        let entry = self.controller_arm_entry[arm];
-        (!entry.is_absent()).then_some((entry, self.controller_arm_label[arm]))
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn recv_entry(&self, arm: u8) -> Option<StateIndex> {
-        let arm = arm as usize;
-        if arm >= 2 {
-            return None;
-        }
-        let entry = self.recv_entry[arm];
-        (!entry.is_absent()).then_some(entry)
-    }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn passive_arm_entry(&self, arm: u8) -> Option<StateIndex> {
@@ -228,14 +125,6 @@ impl ScopeArmMaterializationMeta {
     #[inline]
     pub(in crate::endpoint::kernel) fn arm_has_first_recv_dispatch(&self, arm: u8) -> bool {
         self.first_recv_dispatch.arm_has_dispatch(arm)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn controller_arm_requires_ready_evidence(
-        &self,
-        arm: u8,
-    ) -> bool {
-        arm < 2 && (self.controller_cross_role_recv_mask & (1u8 << arm)) != 0
     }
 }
 

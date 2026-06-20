@@ -179,10 +179,7 @@ where
                 live_idx += 1;
             }
             if required_route_frames == 0 {
-                self.free_external_persistent_sidecar(
-                    self.route_storage.cast::<u8>(),
-                    ResourceScope::RouteTable,
-                )?;
+                self.release_external_persistent_sidecar(self.route_storage.cast::<u8>());
                 self.routes = RouteTable::empty();
                 self.route_storage = Sidecar::EMPTY;
             }

@@ -2,13 +2,13 @@ mod event_progress;
 mod navigation;
 mod roll;
 mod row_completion;
+mod send_preview;
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
-    CursorInvariantError, EffIndex, EventCursor, EventSemanticKind, FirstRecvDispatchSpec,
-    LaneSetView, LocalAction, LocalDependency, MAX_FIRST_RECV_DISPATCH, RecvMeta,
-    RelocatableResidentLaneStep, ResidentLaneStep, RouteOfferCursorState, RouteResolver, ScopeId,
-    SendMeta, StateIndex, state_index_to_usize,
+    CursorInvariantError, EffIndex, EventCursor, EventSemanticKind, LaneSetView, LocalAction,
+    LocalDependency, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
+    RouteOfferCursorState, RouteResolver, ScopeId, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::global::role_program::PackedLaneRange;
 
@@ -38,24 +38,7 @@ impl RouteOfferEntryCursorPosition {
 }
 
 impl EventCursor {
-    #[inline(always)]
-    pub(crate) fn pending_event_progress_step(
-        &self,
-        idx: usize,
-        lane: u8,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> Result<Option<RelocatableResidentLaneStep>, CursorInvariantError> {
-        let progress_step = self.relocatable_resident_lane_step_at_index(idx, lane as usize)?;
-        if self.relocatable_step_done(progress_step)
-            && !self.roll_reentry_event_allows_index(idx, lane, selected_arm_for_scope)
-        {
-            Ok(None)
-        } else {
-            Ok(Some(progress_step))
-        }
-    }
-
-    #[inline(always)]
+    #[inline]
     pub(crate) fn event_lane_head_allows(
         &self,
         progress_step: RelocatableResidentLaneStep,
@@ -64,12 +47,14 @@ impl EventCursor {
     ) -> bool {
         let target = progress_step.0;
         if self.relocatable_step_done(progress_step) {
+            if !self.has_reentry_scopes() {
+                return false;
+            }
             let Some(idx) = self.node_index_for_relocatable_step(progress_step) else {
                 return false;
             };
-            if !self.roll_reentry_event_allows_index(idx, target.lane, |scope| {
-                selected_arm_for_scope(scope)
-            }) {
+            if !self.roll_reentry_event_allows_index(idx, target.lane, &mut selected_arm_for_scope)
+            {
                 return false;
             }
         }
@@ -99,7 +84,7 @@ impl EventCursor {
         true
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn selected_enclosing_route_scope_end_at(
         &self,
         idx: usize,
@@ -112,9 +97,11 @@ impl EventCursor {
             if idx >= region.start() && idx < region.end() {
                 let scope = region.scope();
                 if let Some(arm) = selected_arm_for_scope(scope)
-                    && self.selected_route_arm_completes_scope(scope, arm, |candidate| {
-                        selected_arm_for_scope(candidate)
-                    })
+                    && self.selected_route_arm_completes_scope(
+                        scope,
+                        arm,
+                        &mut selected_arm_for_scope,
+                    )
                 {
                     let len = region.end() - region.start();
                     if len < selected_len {
@@ -142,9 +129,11 @@ impl EventCursor {
                 return true;
             }
             if reentry_scope != branch_scope && self.route_scope_reentry(reentry_scope) {
-                let selected = self
-                    .route_scope_conflict_arm_for_scope(branch_scope, reentry_scope)
-                    .or_else(|| self.route_scope_conflict_arm_for_scope(meta_scope, reentry_scope));
+                let selected =
+                    match self.route_scope_conflict_arm_for_scope(branch_scope, reentry_scope) {
+                        Some(arm) => Some(arm),
+                        None => self.route_scope_conflict_arm_for_scope(meta_scope, reentry_scope),
+                    };
                 if !visit(reentry_scope, selected) {
                     return false;
                 }
@@ -340,11 +329,16 @@ impl EventCursor {
         self.machine().route_scope_dense_ordinal(scope_id)
     }
 
-    fn first_recv_dispatch_table_inner(
+    fn visit_first_recv_dispatch_inner(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
-        self.machine().first_recv_dispatch_table(scope_id)
+        visitor: impl FnMut(u8, StateIndex),
+    ) -> Option<()> {
+        self.machine().visit_first_recv_dispatch(scope_id, visitor)
+    }
+
+    fn first_recv_dispatch_arm_mask_inner(&self, scope_id: ScopeId) -> Option<u8> {
+        self.machine().first_recv_dispatch_arm_mask(scope_id)
     }
 
     fn route_arm_lane_first_step_inner(
@@ -668,11 +662,16 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn route_scope_first_recv_dispatch_table(
+    pub(crate) fn visit_route_scope_first_recv_dispatch(
         &self,
         scope_id: ScopeId,
-    ) -> Option<([FirstRecvDispatchSpec; MAX_FIRST_RECV_DISPATCH], u8)> {
-        self.first_recv_dispatch_table_inner(scope_id)
+        visitor: impl FnMut(u8, StateIndex),
+    ) -> Option<()> {
+        self.visit_first_recv_dispatch_inner(scope_id, visitor)
+    }
+
+    pub(crate) fn route_scope_first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> Option<u8> {
+        self.first_recv_dispatch_arm_mask_inner(scope_id)
     }
 
     pub(crate) fn route_arm_lane_first_step(

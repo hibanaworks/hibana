@@ -18,8 +18,10 @@
 //! Msg<LOGICAL_LABEL, Payload>
 //! ```
 //!
-//! Labels identify choreography messages and route branches. They do not encode
-//! transport demux or hidden runtime semantics.
+//! Labels identify choreography messages. Intrinsic routes derive branch
+//! authority from first-visible endpoint evidence; resolved routes derive it
+//! from [`ResolverRef::decide`](crate::runtime::resolver::ResolverRef::decide).
+//! Labels do not encode transport demux or hidden runtime semantics.
 //!
 //! Dynamic branch resolver is supplied by runtime resolvers. Runtime hints or
 //! payload contents do not create route authority by themselves.
@@ -49,7 +51,8 @@ pub(crate) enum ProgramSourceError {
     RollBodyAbsent,
     ParallelArmAbsent,
     ParallelConflict,
-    ParallelAmbiguousEndpointOp,
+    ParallelAmbiguousEndpointSelector,
+    ReentryAmbiguousEndpointSelector,
     ResolverIdOutOfDomain,
     ResolverTargetNotRoute,
     ProjectionRouteUnprojectable,
@@ -70,8 +73,11 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         ProgramSourceError::ParallelConflict => {
             panic!("parallel lanes must use disjoint (role, lane) pairs")
         }
-        ProgramSourceError::ParallelAmbiguousEndpointOp => {
-            panic!("parallel frontier endpoint operations must be unambiguous")
+        ProgramSourceError::ParallelAmbiguousEndpointSelector => {
+            panic!("parallel endpoint operations must be unambiguous")
+        }
+        ProgramSourceError::ReentryAmbiguousEndpointSelector => {
+            panic!("rolled reentry endpoint operations must be unambiguous")
         }
         ProgramSourceError::ResolverIdOutOfDomain => {
             panic!("route resolver id must be < u16::MAX")
@@ -195,29 +201,27 @@ impl<Steps> ProgramProjection<Steps>
 where
     Steps: ProgramTerm,
 {
+    const SOURCE: ProgramSourceData = <Steps as ProgramTerm>::PROGRAM_SOURCE;
+    pub(super) const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList =
+        Self::SOURCE.eff_list();
+
     const IMAGE: crate::global::compiled::lowering::CompiledProgramImage = {
-        let source_data = <Steps as ProgramTerm>::PROGRAM_SOURCE;
-        let source = source_data.eff_list();
+        let source = Self::SOURCE_EFF_LIST;
         crate::global::compiled::lowering::CompiledProgramImage::scan_const(source)
     };
-}
 
-const fn validate_choreography<Steps>()
-where
-    Steps: ProgramTerm,
-{
-    let source_data = <Steps as ProgramTerm>::PROGRAM_SOURCE;
-    if let Some(error) = source_data.error() {
-        panic_choreography_error(error);
-    }
-    let source = source_data.eff_list();
-    ProgramProjection::<Steps>::IMAGE.validate_projection_program();
-    if let Some(error) = crate::global::compiled::lowering::projection_error_all_roles(
-        &ProgramProjection::<Steps>::IMAGE,
-        source,
-    ) {
-        panic_choreography_error(error);
-    }
+    const VALIDATION: () = {
+        if let Some(error) = Self::SOURCE.error() {
+            panic_choreography_error(error);
+        }
+        let source = Self::SOURCE_EFF_LIST;
+        Self::IMAGE.validate_projection_program();
+        if let Some(error) =
+            crate::global::compiled::lowering::projection_error_all_roles(&Self::IMAGE, source)
+        {
+            panic_choreography_error(error);
+        }
+    };
 }
 
 /// Single global send witness.
@@ -245,7 +249,6 @@ where
     Steps: ProgramTerm,
 {
     let _ = program;
-    const { validate_choreography::<Steps>() };
     let image = const {
         if ROLE >= ROLE_DOMAIN_SIZE {
             panic!("{}", ROLE_INDEX_ERROR);

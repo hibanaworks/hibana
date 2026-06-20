@@ -1,14 +1,10 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
-    ActiveEntrySet, Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta,
-    CursorEndpoint, FrontierDeferOutcome, FrontierObservationDomain, FrontierObservationKey,
-    FrontierVisitSet, IngressEvidenceState, LaneSetView, ObservedEntrySet, OfferEntryObservedState,
-    OfferEntryPosition, OfferEvidenceOutcome, OfferLaneEntrySlotMasks, OfferProgressState,
-    OfferScopeSelection, OfferStagedIngress, Poll, Port, RecvError, RecvResult, RouteArmToken,
-    ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId, Transport,
-    frontier_observation_key_view_from_storage,
-    frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
-    lane_port, state_index_to_usize,
+    Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
+    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, LaneSetView, OfferEntryPosition,
+    OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll,
+    RecvError, RecvResult, RouteArmToken, ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId,
+    Transport, frontier_snapshot_from_scratch, lane_port, state_index_to_usize,
 };
 use crate::global::typestate::PackedEventConflict;
 
@@ -65,195 +61,14 @@ where
     }
 
     #[inline]
-    pub(super) fn for_each_set_lane(
-        lane_set: LaneSetView,
-        lane_limit: usize,
-        mut f: impl FnMut(usize),
-    ) {
-        let mut next = lane_set.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            f(lane_idx);
-            next = lane_set.next_set_from(lane_idx + 1, lane_limit);
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn frontier_observation_active_entries(
-        endpoint: &CursorEndpoint<'r, ROLE, T>,
-        domain: FrontierObservationDomain,
-    ) -> ActiveEntrySet {
-        if domain.uses_root_entries() {
-            endpoint.root_frontier_active_entries(domain.root_scope())
-        } else {
-            endpoint.global_active_entries()
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn frontier_observation_offer_lane_entry_slot_masks(
-        endpoint: &CursorEndpoint<'r, ROLE, T>,
-        domain: FrontierObservationDomain,
-    ) -> OfferLaneEntrySlotMasks {
-        let active_entries = Self::frontier_observation_active_entries(endpoint, domain);
-        let port = endpoint.port_for_lane(endpoint.primary_lane);
-        let scratch_ptr = lane_port::frontier_scratch_ptr(port);
-        let layout = endpoint.cursor.frontier_scratch_layout();
-        let mut slot_masks =
-            frontier_offer_lane_entry_slot_masks_view_from_storage(scratch_ptr, layout);
-        let mut remaining_slots = active_entries.occupancy_mask();
-        while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T>::next_slot_in_mask(&mut remaining_slots)
-        {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                continue;
-            };
-            if endpoint.offer_entry_state_snapshot(entry_idx).is_none() {
-                continue;
-            }
-            if !endpoint.offer_entry_has_active_lanes(entry_idx) {
-                continue;
-            }
-            let logical_lane_count = endpoint.cursor.logical_lane_count();
-            let active_offer_lanes = endpoint.decision_state.active_offer_lanes();
-            Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
-                if state_index_to_usize(endpoint.decision_state.lane_offer_state(lane_idx).entry)
-                    == entry_idx
-                {
-                    slot_masks.set_logical_mask(lane_idx, slot_masks[lane_idx] | (1u8 << slot_idx));
-                }
-            });
-        }
-        slot_masks
-    }
-
-    pub(in crate::endpoint::kernel) fn frontier_observation_key(
-        endpoint: &CursorEndpoint<'r, ROLE, T>,
-        domain: FrontierObservationDomain,
-    ) -> FrontierObservationKey {
-        let active_entries = Self::frontier_observation_active_entries(endpoint, domain);
-        let port = endpoint.port_for_lane(endpoint.primary_lane);
-        let scratch_ptr = lane_port::frontier_scratch_ptr(port);
-        let layout = endpoint.cursor.frontier_scratch_layout();
-        let mut key = frontier_observation_key_view_from_storage(
-            scratch_ptr,
-            layout,
-            endpoint.cursor.max_frontier_entries(),
-        );
-        key.clear();
-        key.set_active_entries_from(active_entries);
-        let mut remaining_entries = active_entries.occupancy_mask();
-        while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T>::next_slot_in_mask(&mut remaining_entries)
-        {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                continue;
-            };
-            let scope_id = match endpoint
-                .offer_entry_representative_lane_from_route_state(entry_idx)
-                .map(|pair| pair.1.scope)
-                .or_else(|| {
-                    endpoint
-                        .frontier_state
-                        .offer_entry_state
-                        .get(entry_idx)
-                        .copied()
-                        .map(|state| state.scope_id)
-                }) {
-                Some(scope_id) => scope_id,
-                None => ScopeId::none(),
-            };
-            let summary = endpoint.compute_offer_entry_summary(entry_idx);
-            let slot = key.slot_mut(slot_idx);
-            slot.entry_summary_fingerprint = summary.observation_fingerprint();
-            slot.scope_generation = endpoint.scope_evidence_generation_for_scope(scope_id);
-        }
-        let mut remaining_entries = active_entries.occupancy_mask();
-        while let Some(slot_idx) =
-            CursorEndpoint::<ROLE, T>::next_slot_in_mask(&mut remaining_entries)
-        {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                continue;
-            };
-            let Some(pair) = endpoint.offer_entry_representative_lane_from_route_state(entry_idx)
-            else {
-                continue;
-            };
-            let Some(route_change_generation) = endpoint
-                .ports
-                .get(pair.0)
-                .and_then(Option::as_ref)
-                .map(Port::route_change_generation)
-            else {
-                crate::invariant();
-            };
-            key.slot_mut(slot_idx).route_change_generation = route_change_generation;
-        }
-        let logical_lane_count = endpoint.cursor.logical_lane_count();
-        let active_offer_lanes = endpoint.decision_state.active_offer_lanes();
-        Self::for_each_set_lane(active_offer_lanes, logical_lane_count, |lane_idx| {
-            let info = endpoint.decision_state.lane_offer_state(lane_idx);
-            if !info.entry.is_absent()
-                && active_entries
-                    .slot_for_entry(state_index_to_usize(info.entry))
-                    .is_some()
-            {
-                key.insert_offer_lane(lane_idx);
-            }
-        });
-        key
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn ensure_global_frontier_scratch_ready(
         endpoint: &mut CursorEndpoint<'r, ROLE, T>,
     ) {
         endpoint.init_global_frontier_scratch_if_needed();
     }
 
-    #[inline]
-    pub(in crate::endpoint::kernel) fn frontier_observation_cache(
-        endpoint: &CursorEndpoint<'r, ROLE, T>,
-        domain: FrontierObservationDomain,
-    ) -> (FrontierObservationKey, ObservedEntrySet) {
-        endpoint.frontier_observation_cache_snapshot(domain)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn store_frontier_observation(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T>,
-        domain: FrontierObservationDomain,
-        key: FrontierObservationKey,
-        observed_entries: ObservedEntrySet,
-    ) {
-        endpoint.write_frontier_observation_snapshot(domain, key, observed_entries);
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn cached_offer_entry_observed_state_for_rebuild(
-        endpoint: &CursorEndpoint<'r, ROLE, T>,
-        entry_idx: usize,
-        observation_key: FrontierObservationKey,
-        cached_key: FrontierObservationKey,
-        cached_observed_entries: ObservedEntrySet,
-    ) -> Option<OfferEntryObservedState> {
-        endpoint.reusable_cached_offer_entry_observed_state(
-            entry_idx,
-            observation_key,
-            cached_key,
-            cached_observed_entries,
-        )
-    }
-
-    pub(in crate::endpoint::kernel) fn refresh_frontier_observation_cache(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T>,
-        domain: FrontierObservationDomain,
-    ) {
-        endpoint.refresh_frontier_observation_cache_impl(domain)
-    }
-
     pub(in crate::endpoint::kernel) fn select_scope(&mut self) -> RecvResult<OfferScopeSelection> {
-        self.align_cursor_to_selected_scope()?;
-        let node_scope = self.current_offer_scope_id();
+        let node_scope = self.align_cursor_to_selected_scope()?;
         let Some(scope_id) = self.cursor.route_scope_for_offer_node(node_scope) else {
             return Err(RecvError::PhaseInvariant);
         };
@@ -307,10 +122,8 @@ where
         scope_id: ScopeId,
         token: RouteArmToken,
     ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id)
-            && self.decision_state.scope_evidence.record_ack(slot, token)
-        {
-            self.bump_scope_evidence_generation_for_scope(scope_id, slot);
+        if let Some(slot) = self.scope_slot_for_route(scope_id) {
+            self.decision_state.scope_evidence.record_ack(slot, token);
         }
     }
 

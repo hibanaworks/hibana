@@ -143,7 +143,6 @@ impl PackedRouteArmRow {
     const FIELD_MASK: u32 = 0x0fff;
     const CHILD_ABSENT_DELTA: u32 = 0;
 
-    #[inline(always)]
     pub(crate) const fn new(
         event_row: PackedLaneRange,
         child_slot_delta: Option<usize>,
@@ -430,8 +429,7 @@ impl RoleImageColumns {
         len
     }
 
-    #[inline(always)]
-    pub(crate) const fn blob_len(self) -> usize {
+    pub(crate) const fn blob_len(&self) -> usize {
         let mut len = Self::max_end(0, self.events, ROLE_IMAGE_EVENT_STRIDE);
         len = Self::max_end(len, self.lanes, ROLE_IMAGE_LANE_STRIDE);
         len = Self::max_end(len, self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE);
@@ -459,12 +457,21 @@ impl RoleImageColumns {
     }
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct RoleImageBytes<const N: usize> {
     pub(super) bytes: [u8; N],
 }
 
-#[derive(Clone, Copy)]
+pub(crate) struct RoleImagePlan {
+    pub(super) columns: RoleImageColumns,
+}
+
+pub(crate) struct RoleImageBuild<const N: usize> {
+    pub(super) bytes: RoleImageBytes<N>,
+    pub(super) columns: RoleImageColumns,
+    pub(super) active_lane_row: PackedLaneRange,
+    pub(super) first_active_lane: u16,
+}
+
 pub(crate) struct RoleLaneScratch {
     pub(crate) local_step_events: [PackedLocalEventRow; MAX_LOCAL_STEP_LANES],
     pub(crate) local_step_lanes: [u8; MAX_LOCAL_STEP_LANES],
@@ -490,7 +497,6 @@ pub(crate) struct RoleLaneScratch {
     pub(crate) first_active_lane: u16,
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct RoleImageRef {
     pub(crate) program: &'static CompiledProgramRef,
     pub(crate) role: u8,
@@ -502,8 +508,8 @@ pub(crate) struct RoleImageRef {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RoleLaneImage {
-    pub(crate) columns: RoleImageColumns,
+pub(crate) struct RoleLaneImage<'a> {
+    pub(crate) columns: &'a RoleImageColumns,
     pub(crate) blob: BlobPtr,
 }
 

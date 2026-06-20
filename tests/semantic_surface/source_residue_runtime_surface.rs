@@ -16,6 +16,50 @@ fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{name} struct body must stay visible"))
 }
 
+fn inline_always_function_span(source: &str, attr_start: usize) -> Option<usize> {
+    let tail = &source[attr_start..];
+    let brace_rel = tail.find('{')?;
+    let body_start = attr_start + brace_rel;
+    let mut depth = 0usize;
+    let mut started = false;
+    for (idx, ch) in source[body_start..].char_indices() {
+        match ch {
+            '{' => {
+                depth += 1;
+                started = true;
+            }
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if started && depth == 0 {
+                    return Some(source[attr_start..=body_start + idx].lines().count());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[test]
+fn production_large_functions_do_not_force_inline_always() {
+    const MAX_FORCED_INLINE_SPAN: usize = 24;
+    for path in production_rs_files("src") {
+        let source = read(&path);
+        let mut offset = 0usize;
+        while let Some(rel) = source[offset..].find("#[inline(always)]") {
+            let attr_start = offset + rel;
+            let span = inline_always_function_span(&source, attr_start)
+                .unwrap_or_else(|| panic!("inline(always) function must parse in {path}"));
+            assert!(
+                span <= MAX_FORCED_INLINE_SPAN,
+                "large production functions must not force inline(always): {path}:{line} spans {span} lines",
+                line = source[..attr_start].lines().count() + 1
+            );
+            offset = attr_start + "#[inline(always)]".len();
+        }
+    }
+}
+
 #[test]
 fn production_and_gates_do_not_reintroduce_std_feature_branches() {
     let production = read_production_rs_tree("src");
@@ -323,12 +367,8 @@ fn route_resolver_authority_is_scope_keyed() {
         "let site_scope = site.scope();",
         "DynamicResolverKey::new(",
         "site_scope)",
-        "view.resolver_for_scope(route_scope)",
+        "eff_list.resolver_for_scope(route_scope)",
         "resolver_for_scope(&self, scope: ScopeId)",
-        "pub(crate) struct RouteFrontierSummary",
-        "push_route_frontier(route_summary)",
-        "route_frontier_summaries(&self)",
-        "view.route_frontier_summary(route_scope)",
     ] {
         assert!(
             production_scope.contains(required),
@@ -346,7 +386,6 @@ fn route_resolver_authority_is_scope_keyed() {
         "ProgramResolverRow",
         "resident_resolver_at",
         "first_visible_frontier",
-        "first_visible_controller_mask",
         "collect_first_visible_frontier",
         "seen_lane_words",
         "first_route_head_decision_resolver_id",
@@ -367,6 +406,10 @@ fn route_resolver_authority_is_scope_keyed() {
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 12",
         "read_u32_at",
         "write_u32",
+        "pub(crate) struct RouteFrontierSummary",
+        "push_route_frontier(route_summary)",
+        "route_frontier_summaries(&self)",
+        "view.route_frontier_summary(route_scope)",
     ] {
         assert!(
             !production_scope.contains(forbidden),
@@ -385,90 +428,116 @@ fn route_resolver_authority_is_scope_keyed() {
 }
 
 #[test]
-fn source_frontier_tracks_endpoint_ops_without_label_duplicate_authority() {
+fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries() {
+    let g_core = read("src/g.rs");
     let source = read("src/g/source.rs");
-    let source_frontier = read("src/g/source/frontier.rs");
+    let const_dsl = read("src/global/const_dsl.rs");
+    let endpoint_selectors = read("src/global/const_dsl/endpoint_selectors.rs");
+    let frame_labels = read("src/global/frame_labels.rs");
+    let scope_ranges = read("src/global/const_dsl/scope_ranges.rs");
+    let eff_list = read("src/global/const_dsl/eff_list.rs");
     let route = read("src/global/const_dsl/route.rs");
     let seal = read("src/global/compiled/lowering/seal.rs");
     let lowering_driver = read("src/global/compiled/lowering/driver.rs");
     let lowering_image = read("src/global/compiled/lowering/driver/impls/image.rs");
+    let role_image_impl = read("src/global/role_program/image_impl.rs");
+    let role_event_rows = read("src/global/role_program/image_impl/event_rows.rs");
+    let role_roll_rows = read("src/global/role_program/image_impl/roll_rows.rs");
+    let role_projection = read("src/g/role_projection.rs");
     let combined = [
+        g_core.as_str(),
         source.as_str(),
-        source_frontier.as_str(),
+        const_dsl.as_str(),
+        endpoint_selectors.as_str(),
+        frame_labels.as_str(),
+        scope_ranges.as_str(),
+        eff_list.as_str(),
         route.as_str(),
         seal.as_str(),
         lowering_driver.as_str(),
         lowering_image.as_str(),
+        role_image_impl.as_str(),
+        role_event_rows.as_str(),
+        role_roll_rows.as_str(),
+        role_projection.as_str(),
     ]
     .join("\n");
 
     for required in [
-        "struct EndpointOpFrontier",
-        "const ENDPOINT_OP_FRONTIER_CAPACITY: usize = crate::global::role_program::LANE_DOMAIN_SIZE * 2;",
-        "struct EndpointOpKey(u32);",
-        "struct OutboundOpKey(u16);",
-        "struct ProjectedInboundKey(u32);",
-        "ops: [EndpointOpKey; ENDPOINT_OP_FRONTIER_CAPACITY]",
-        "const KIND_OUTBOUND: u32 = 1 << 31;",
-        "const KIND_INBOUND: u32 = 1 << 30;",
-        "const PAYLOAD_MASK: u32 = 0x00ff_ffff;",
-        "const fn new(local_role: u8, logical_label: u8) -> Self",
-        "const fn new(local_role: u8, lane: u8, source_role: u8, frame_label: u8) -> Self",
-        "enum EndpointOpKind",
-        "EndpointOpKind::Outbound",
-        "EndpointOpKind::Inbound",
-        "ambiguous_endpoint_op: bool",
-        "const fn concurrent_union(self, other: Self) -> Self",
-        "const fn rebase_parallel_inbound_lanes(mut self, delta: u16) -> Self",
-        "rebase_inbound_lane(delta)",
-        "ambiguous_endpoint_op: self.ambiguous_endpoint_op\n                || other.ambiguous_endpoint_op\n                || self.intersects(other),",
-        "const fn route_choice(self, other: Self, left_arm: &EffList) -> Self",
-        "rebase_right_route_arm_inbound_frame_labels(left_arm)",
-        "const fn count_frame_labels_before_right_arm(left_arm: &EffList, target: u8, lane: u8) -> u8",
-        "ambiguous_endpoint_op: self.ambiguous_endpoint_op || other.ambiguous_endpoint_op,",
-        "left.ambiguous_endpoint_op || right.ambiguous_endpoint_op",
-        "left.intersects(right)",
-        "ProgramSourceError::ParallelAmbiguousEndpointOp",
-        "if frontier.ambiguous_endpoint_op",
-        "right.frontier.rebase_parallel_inbound_lanes(self.lane_span)",
-        "frontier: left_frontier.route_choice(right_frontier, &left_arm),",
-        "const FLAG_AMBIGUOUS_ENDPOINT_OP: u8 = 1 << 1;",
-        "const FLAG_INTRINSIC_BRANCH_OP_OVERLAP: u8 = 1 << 2;",
-        "pub(crate) const fn has_ambiguous_endpoint_op(self) -> bool",
-        "pub(crate) const fn has_intrinsic_branch_op_overlap(self) -> bool",
-        "if frontier.is_invalid() || frontier.has_ambiguous_endpoint_op()",
-        "if frontier.has_intrinsic_branch_op_overlap()",
+        "ScopeEvent::Split",
+        "let left_len = eff.len();",
+        "push_parallel_scope_split(parallel_scope, left_len)",
+        "pub(crate) const fn validate_parallel_endpoint_selectors(eff_list: &EffList) -> bool",
+        "pub(crate) const fn validate_roll_reentry_endpoint_selectors(eff_list: &EffList) -> bool",
+        "const fn parallel_endpoint_selector_conflicts(",
+        "struct EndpointSelector(u32);",
+        "EndpointSelector::inbound_evidence(",
+        "const fn inbound_selector_at(",
+        "atom_idx as u32",
+        "pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers(",
+        "pub(crate) const fn local_route_observer_paths_mergeable",
+        "ProgramSourceError::ParallelAmbiguousEndpointSelector",
+        "ProgramSourceError::ReentryAmbiguousEndpointSelector",
+        "if !validate_parallel_endpoint_selectors(eff_list)",
+        "if !validate_roll_reentry_endpoint_selectors(eff_list)",
+        "if first_visible_endpoint_selector_conflicts_from_markers(",
+        "if local_route_observer_paths_mergeable(",
+        "while role < crate::g::ROLE_DOMAIN_SIZE",
+        "validate_compiled_layout(role, eff_list)",
+        "pub(crate) const fn parallel_arm_ranges_from_enter(",
         "const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);",
         "let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];",
         "let byte = ordinal >> 3;",
         "let bit = ordinal & 7;",
         "let mask = 1u8 << bit;",
+        "const SOURCE: ProgramSourceData = <Steps as ProgramTerm>::PROGRAM_SOURCE;",
+        "const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList =",
+        "let source = Self::SOURCE_EFF_LIST;",
     ] {
         assert!(
             combined.contains(required),
-            "route frontier validation must keep endpoint-op authority and u8 scope masks: {required}"
+            "endpoint selector validation must keep public operation authority and u8 scope masks: {required}"
+        );
+    }
+    for forbidden in [
+        "validate_compiled_layout::<0>",
+        "validate_compiled_layout::<1>",
+        "validate_compiled_layout::<15>",
+        "local_route_observer_paths_mergeable::<ROLE>",
+        "const fn validate_compiled_layout<const ROLE: u8>",
+        "RoleLaneScratch::from_program::<ROLE>",
+        "local_step_range_for_eff_range::<ROLE>",
+        "fill_dependency_rows::<ROLE>",
+        "push_resident_rows::<ROLE>",
+        "push_route_arm_lane_rows::<ROLE>",
+        "push_roll_scope_rows::<ROLE>",
+        "local_event_row_for_eff::<ROLE>",
+        "role_lowering_counts::<ROLE>",
+        "exact_resident_row_count_for_role",
+        "validate_resident_row_capacity",
+        "let source_data = <Steps as ProgramTerm>::PROGRAM_SOURCE;",
+        "recv_frame_label_at(eff_list, atom_idx, atom)",
+        "const fn recv_frame_label_at(",
+        "frame_label_from_prior_count(count)",
+    ] {
+        assert!(
+            !combined.contains(forbidden),
+            "projection validation must not reintroduce const-generic all-role expansion: {forbidden}"
         );
     }
 
-    let duplicate_reject = seal
-        .find("if frontier.is_invalid() || frontier.has_ambiguous_endpoint_op()")
-        .expect("ambiguous endpoint-op route rejection must stay present");
     let resolver_branch = seal
         .find("let has_dynamic_resolver = scope_has_dynamic_resolver")
         .expect("resolver branch must stay present");
-    assert!(
-        duplicate_reject < resolver_branch,
-        "ambiguous endpoint-op rejection must run before resolver authority branching"
-    );
     let intrinsic_branch = seal
         .find("if !has_dynamic_resolver")
         .expect("intrinsic route branch must stay present");
     let overlap_reject = seal
-        .find("if frontier.has_intrinsic_branch_op_overlap()")
-        .expect("intrinsic branch endpoint-op overlap rejection must stay present");
+        .find("if first_visible_endpoint_selector_conflicts_from_markers(")
+        .expect("intrinsic branch endpoint selector overlap rejection must stay present");
     assert!(
         resolver_branch < intrinsic_branch && intrinsic_branch < overlap_reject,
-        "cross-branch endpoint-op overlap must be rejected only under intrinsic route authority"
+        "cross-branch endpoint selector overlap must be rejected only under intrinsic route authority"
     );
 
     for forbidden in [
@@ -488,10 +557,48 @@ fn source_frontier_tracks_endpoint_ops_without_label_duplicate_authority() {
         "% 64",
         "ops: [EndpointOpKey; eff::meta::MAX_EFF_NODES]",
         "[EndpointOpKey::EMPTY; eff::meta::MAX_EFF_NODES]",
+        "struct EndpointOpFrontier",
+        "EndpointOpKey",
+        "OutboundOpMask",
+        "ProjectedInboundKey",
+        "LocalSig",
+        "[LocalSig",
+        "collect_local_sigs",
+        "local_sequences_equal",
+        "frontier: EndpointOpFrontier",
+        "src/g/source/frontier.rs",
+        "src/global/const_dsl/endpoint_ops.rs",
+        "pub(crate) struct RouteFrontierSummary",
+        "route_frontier_summaries",
+        "push_route_frontier",
+        "route_frontier_summary(",
+        "has_ambiguous_endpoint_op",
+        "has_intrinsic_branch_op_overlap",
+        "struct EndpointOp(",
+        "first_visible_endpoint_op_conflicts_from_markers",
+        "nth_local_endpoint_op",
+        "local_endpoint_op_count",
+        "validate_parallel_endpoint_ops",
+        "ParallelAmbiguousEndpointOp",
+        "ReentryAmbiguousEndpointOp",
+        "PublicEndpointSelector",
+        "pub(crate) const fn nth_local_endpoint_selector",
+        "pub(crate) const fn local_endpoint_selector_count",
+        "previous.to == atom.to && previous.lane == atom.lane",
+        "frame_key_targets",
+        "frame_key_lanes",
+        "frame_key_counts",
+        "#[derive(Clone, Copy)]\npub(crate) struct ProgramSourceData",
+        "#[derive(Clone, Copy)]\npub(crate) struct EffList",
+        "#[derive(Clone, Copy)]\npub(crate) struct RoleLaneScratch",
+        "#[derive(Clone, Copy)]\npub(crate) struct RoleImageBytes",
+        "#[derive(Clone, Copy)]\npub(crate) struct ProgramImageBytes",
+        "#[derive(Clone, Copy)]\npub(crate) struct FrameLabelAssigner",
+        "pub(crate) struct FrameLabelScratch",
     ] {
         assert!(
             !combined.contains(forbidden),
-            "projection frontier masks must not re-grow u64 limb storage: {forbidden}"
+            "projection selector validation must not re-grow stored frontier summaries: {forbidden}"
         );
     }
 }
@@ -529,7 +636,7 @@ fn role_lane_mask_stays_lane_indexed_projection_only() {
 
     let source = read("src/g/source.rs");
     for required in [
-        "shift_lanes(self.lane_span, right.lane_span)",
+        "shift_lanes(left.lane_span, right.lane_span)",
         "intersects(&right_role_lane_mask, combined_lane_span)",
         "union(right_role_lane_mask, combined_lane_span)",
     ] {

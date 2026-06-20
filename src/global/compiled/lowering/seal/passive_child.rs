@@ -1,16 +1,11 @@
 use crate::{
     g::ProgramSourceError,
-    global::{
-        compiled::lowering::CompiledProgramView,
-        const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
-    },
+    global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
 };
 
-#[inline(always)]
 pub(super) const fn validate_passive_child_projection_guarantees(
-    view: &CompiledProgramView<'_>,
+    scope_markers: &[ScopeMarker],
 ) -> Option<ProgramSourceError> {
-    let scope_markers = view.scope_markers();
     let mut route_slot = 0usize;
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
@@ -109,7 +104,7 @@ const fn passive_child_route_enter_index(
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(route)
-            && marker.offset == arm_start
+            && marker.offset() == arm_start
         {
             let (_, _, left_end, _, _, right_end) =
                 route_arm_ranges(scope_markers, marker.scope_id);
@@ -204,7 +199,7 @@ const fn scope_first_enter_offset(scope_markers: &[ScopeMarker], scope: ScopeId)
     let Some(idx) = scope_first_enter_index(scope_markers, scope) else {
         return None;
     };
-    Some(scope_markers[idx].offset)
+    Some(scope_markers[idx].offset())
 }
 
 const fn scope_first_enter_index(scope_markers: &[ScopeMarker], scope: ScopeId) -> Option<usize> {
@@ -229,7 +224,7 @@ const fn scope_segment_end(
     while scan < scope_markers.len() {
         let candidate = scope_markers[scan];
         if matches!(candidate.event, ScopeEvent::Exit) && candidate.scope_id.same(marker.scope_id) {
-            return candidate.offset;
+            return candidate.offset();
         }
         scan += 1;
     }
@@ -293,16 +288,17 @@ const fn route_arm_ranges(
                 ScopeEvent::Enter => {
                     if enter_len < 2 {
                         enter_marker_indices[enter_len] = idx;
-                        enter_offsets[enter_len] = marker.offset;
+                        enter_offsets[enter_len] = marker.offset();
                     }
                     enter_len += 1;
                 }
                 ScopeEvent::Exit => {
                     if exit_len < 2 {
-                        exit_offsets[exit_len] = marker.offset;
+                        exit_offsets[exit_len] = marker.offset();
                     }
                     exit_len += 1;
                 }
+                ScopeEvent::Split => {}
             }
         }
         idx += 1;

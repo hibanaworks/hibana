@@ -137,12 +137,17 @@ for required in [
     "struct RoleProjection<const ROLE: u8, Steps>",
     "impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>",
     "const IMAGE_REF: crate::global::role_program::RoleImageRef",
+    "ProgramImagePlan::from_program",
     "ProgramImageBytes",
     "ProgramProjection::<Steps>::PROGRAM_REF",
-    "bytes.image_ref(",
+    "RoleImageBuild<N>",
+    "Self::image_ref(build)",
 ]:
     if required not in role_projection_surface:
         fail(f"g projection boundary does not own a resident RoleImageRef before attach: {required}")
+
+if "self.bytes.image_ref(" not in role_program:
+    fail("RoleImageBuild must publish resident RoleImageRef through its selected byte bucket")
 
 program_bytes = program_blob.split("pub(crate) struct ProgramImageBytes<const N: usize> {", 1)[-1].split("}", 1)[0]
 if "bytes: [u8; N]," not in program_bytes or any(term in program_bytes for term in ["facts", "columns", "len"]):

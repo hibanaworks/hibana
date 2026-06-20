@@ -1,6 +1,6 @@
 use super::{
-    Deref, DerefMut, FRONTIER_SLOT_MASK_BITS, FrontierKind, FrontierObservationMetaSlot,
-    FrontierObservationSlot, Index, IndexMut, MAX_STATES, OfferEntryObservedState, StateIndex,
+    Deref, DerefMut, FRONTIER_SLOT_MASK_BITS, FrontierKind, FrontierObservationSlot, Index,
+    IndexMut, MAX_STATES, OfferEntryObservedState, StateIndex,
     cached_frontier_observation_slots_len, checked_state_index, slice, state_index_to_usize,
 };
 #[derive(Clone, Copy)]
@@ -143,14 +143,6 @@ impl ActiveEntrySet {
 
     #[cfg(all(test, hibana_repo_tests))]
     #[inline]
-    pub(crate) const fn from_parts(slots: *mut ActiveEntrySlot, capacity: usize) -> Self {
-        Self {
-            slots: EntryBuffer::from_parts(slots, capacity),
-        }
-    }
-
-    #[cfg(all(test, hibana_repo_tests))]
-    #[inline]
     pub(crate) unsafe fn init_from_parts(
         dst: *mut Self,
         slots: *mut ActiveEntrySlot,
@@ -211,14 +203,6 @@ impl ActiveEntrySet {
             return None;
         }
         Some(state_index_to_usize(self.slots[slot_idx].entry))
-    }
-
-    #[inline]
-    pub(crate) fn entry_state(self, slot_idx: usize) -> StateIndex {
-        if slot_idx >= self.len() {
-            return StateIndex::ABSENT;
-        }
-        self.slots[slot_idx].entry
     }
 
     #[inline]
@@ -304,71 +288,16 @@ pub(crate) struct ObservedEntrySet {
     pub(crate) ready_mask: u8,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ObservedEntrySummary {
-    pub(crate) controller_mask: u8,
-    pub(crate) dynamic_controller_mask: u8,
-    pub(crate) progress_mask: u8,
-    pub(crate) ready_arm_mask: u8,
-    pub(crate) ready_mask: u8,
-}
-
-impl ObservedEntrySummary {
-    pub(crate) const EMPTY: Self = Self {
-        controller_mask: 0,
-        dynamic_controller_mask: 0,
-        progress_mask: 0,
-        ready_arm_mask: 0,
-        ready_mask: 0,
-    };
-
-    #[inline]
-    pub(crate) fn clear(&mut self) {
-        *self = Self::EMPTY;
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GlobalFrontierObservedState {
-    pub(crate) summary: ObservedEntrySummary,
-    pub(crate) observation_generation: u16,
-}
-
-impl GlobalFrontierObservedState {
-    pub(crate) const EMPTY: Self = Self {
-        summary: ObservedEntrySummary::EMPTY,
-        observation_generation: 0,
-    };
-}
-
 impl ObservedEntrySet {
-    pub(crate) const EMPTY: Self = Self {
-        slots: EntryBuffer::EMPTY,
-        controller_mask: 0,
-        dynamic_controller_mask: 0,
-        progress_mask: 0,
-        ready_arm_mask: 0,
-        ready_mask: 0,
-    };
-
     #[inline]
     pub(crate) const fn from_parts(slots: *mut FrontierObservationSlot, capacity: usize) -> Self {
-        Self::from_parts_with_summary(slots, capacity, ObservedEntrySummary::EMPTY)
-    }
-
-    #[inline]
-    pub(crate) const fn from_parts_with_summary(
-        slots: *mut FrontierObservationSlot,
-        capacity: usize,
-        summary: ObservedEntrySummary,
-    ) -> Self {
         Self {
             slots: EntryBuffer::from_parts(slots, capacity),
-            controller_mask: summary.controller_mask,
-            dynamic_controller_mask: summary.dynamic_controller_mask,
-            progress_mask: summary.progress_mask,
-            ready_arm_mask: summary.ready_arm_mask,
-            ready_mask: summary.ready_mask,
+            controller_mask: 0,
+            dynamic_controller_mask: 0,
+            progress_mask: 0,
+            ready_arm_mask: 0,
+            ready_mask: 0,
         }
     }
 
@@ -384,33 +313,6 @@ impl ObservedEntrySet {
         self.progress_mask = 0;
         self.ready_arm_mask = 0;
         self.ready_mask = 0;
-    }
-
-    #[inline]
-    pub(crate) const fn summary(self) -> ObservedEntrySummary {
-        ObservedEntrySummary {
-            controller_mask: self.controller_mask,
-            dynamic_controller_mask: self.dynamic_controller_mask,
-            progress_mask: self.progress_mask,
-            ready_arm_mask: self.ready_arm_mask,
-            ready_mask: self.ready_mask,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn copy_from(&mut self, src: Self) {
-        self.clear();
-        let len = src.len();
-        let mut idx = 0usize;
-        while idx < len {
-            self.slots[idx] = src.slots[idx];
-            idx += 1;
-        }
-        self.controller_mask = src.controller_mask;
-        self.dynamic_controller_mask = src.dynamic_controller_mask;
-        self.progress_mask = src.progress_mask;
-        self.ready_arm_mask = src.ready_arm_mask;
-        self.ready_mask = src.ready_mask;
     }
 
     #[inline]
@@ -434,7 +336,7 @@ impl ObservedEntrySet {
         let mut slot_idx = 0usize;
         let len = self.len();
         while slot_idx < len {
-            if (self.slots[slot_idx].meta.entry_summary_fingerprint & frontier.bit()) != 0 {
+            if (self.slots[slot_idx].frontier_mask & frontier.bit()) != 0 {
                 mask |= 1u8 << slot_idx;
             }
             slot_idx += 1;
@@ -470,7 +372,7 @@ impl ObservedEntrySet {
         }
         self.slots[observed_idx] = FrontierObservationSlot {
             entry,
-            meta: FrontierObservationMetaSlot::EMPTY,
+            frontier_mask: 0,
         };
         Some((1u8 << observed_idx, true))
     }
@@ -528,257 +430,9 @@ impl ObservedEntrySet {
         if observed_bit != 0 {
             let slot_idx = observed_bit.trailing_zeros() as usize;
             if slot_idx < self.len() {
-                let summary_bits = &mut self.slots[slot_idx].meta.entry_summary_fingerprint;
+                let summary_bits = &mut self.slots[slot_idx].frontier_mask;
                 *summary_bits = (*summary_bits & !0x0f) | (frontier_mask & 0x0f);
             }
         }
-    }
-
-    #[inline]
-    pub(crate) fn replace_observation_with_frontier_mask(
-        &mut self,
-        entry_idx: usize,
-        observed: OfferEntryObservedState,
-        frontier_mask: u8,
-    ) -> bool {
-        let observed_bit = self.entry_bit(entry_idx);
-        if observed_bit == 0 {
-            return false;
-        }
-        self.controller_mask &= !observed_bit;
-        self.dynamic_controller_mask &= !observed_bit;
-        self.progress_mask &= !observed_bit;
-        self.ready_arm_mask &= !observed_bit;
-        self.ready_mask &= !observed_bit;
-        self.observe_with_frontier_mask(observed_bit, observed, frontier_mask);
-        true
-    }
-
-    pub(crate) fn move_entry_slot(&mut self, entry_idx: usize, new_slot_idx: usize) -> bool {
-        let Some(source_slot_idx) = self.slot_for_entry(entry_idx) else {
-            return false;
-        };
-        let len = self.len();
-        if source_slot_idx >= len || new_slot_idx >= len {
-            return false;
-        }
-        if source_slot_idx == new_slot_idx {
-            return true;
-        }
-        let entry = self.slots[source_slot_idx];
-        if source_slot_idx < new_slot_idx {
-            let mut slot_idx = source_slot_idx;
-            while slot_idx < new_slot_idx {
-                self.slots[slot_idx] = self.slots[slot_idx + 1];
-                slot_idx += 1;
-            }
-        } else {
-            let mut slot_idx = source_slot_idx;
-            while slot_idx > new_slot_idx {
-                self.slots[slot_idx] = self.slots[slot_idx - 1];
-                slot_idx -= 1;
-            }
-        }
-        self.slots[new_slot_idx] = entry;
-        self.controller_mask =
-            Self::move_slot_mask(self.controller_mask, len, source_slot_idx, new_slot_idx);
-        self.dynamic_controller_mask = Self::move_slot_mask(
-            self.dynamic_controller_mask,
-            len,
-            source_slot_idx,
-            new_slot_idx,
-        );
-        self.progress_mask =
-            Self::move_slot_mask(self.progress_mask, len, source_slot_idx, new_slot_idx);
-        self.ready_arm_mask =
-            Self::move_slot_mask(self.ready_arm_mask, len, source_slot_idx, new_slot_idx);
-        self.ready_mask = Self::move_slot_mask(self.ready_mask, len, source_slot_idx, new_slot_idx);
-        true
-    }
-
-    pub(crate) fn insert_observation_at_slot_with_frontier_mask(
-        &mut self,
-        entry_idx: usize,
-        slot_idx: usize,
-        slot: FrontierObservationSlot,
-        observed: OfferEntryObservedState,
-        frontier_mask: u8,
-    ) -> bool {
-        if entry_idx >= MAX_STATES {
-            return false;
-        }
-        let len = self.len();
-        if len >= self.slots.capacity() || len >= FRONTIER_SLOT_MASK_BITS || slot_idx > len {
-            return false;
-        }
-        let Some(entry) = checked_state_index(entry_idx) else {
-            return false;
-        };
-        if self.slot_for_entry(entry_idx).is_some() {
-            return false;
-        }
-        let mut shift_idx = len;
-        while shift_idx > slot_idx {
-            self.slots[shift_idx] = self.slots[shift_idx - 1];
-            shift_idx -= 1;
-        }
-        if slot.entry != entry {
-            crate::invariant();
-        }
-        self.slots[slot_idx] = slot;
-        self.controller_mask = Self::insert_slot_mask(self.controller_mask, len, slot_idx);
-        self.dynamic_controller_mask =
-            Self::insert_slot_mask(self.dynamic_controller_mask, len, slot_idx);
-        self.progress_mask = Self::insert_slot_mask(self.progress_mask, len, slot_idx);
-        self.ready_arm_mask = Self::insert_slot_mask(self.ready_arm_mask, len, slot_idx);
-        self.ready_mask = Self::insert_slot_mask(self.ready_mask, len, slot_idx);
-        self.observe_with_frontier_mask(1u8 << slot_idx, observed, frontier_mask);
-        true
-    }
-
-    pub(crate) fn remove_observation(&mut self, entry_idx: usize) -> bool {
-        let Some(slot_idx) = self.slot_for_entry(entry_idx) else {
-            return false;
-        };
-        let len = self.len();
-        if slot_idx >= len {
-            return false;
-        }
-        let Some(entry) = checked_state_index(entry_idx) else {
-            return false;
-        };
-        if self.slots[slot_idx].entry != entry {
-            return false;
-        }
-        let mut shift_idx = slot_idx;
-        while shift_idx + 1 < len {
-            self.slots[shift_idx] = self.slots[shift_idx + 1];
-            shift_idx += 1;
-        }
-        self.slots[len - 1] = FrontierObservationSlot::EMPTY;
-        self.controller_mask = Self::remove_slot_mask(self.controller_mask, len, slot_idx);
-        self.dynamic_controller_mask =
-            Self::remove_slot_mask(self.dynamic_controller_mask, len, slot_idx);
-        self.progress_mask = Self::remove_slot_mask(self.progress_mask, len, slot_idx);
-        self.ready_arm_mask = Self::remove_slot_mask(self.ready_arm_mask, len, slot_idx);
-        self.ready_mask = Self::remove_slot_mask(self.ready_mask, len, slot_idx);
-        true
-    }
-
-    pub(crate) fn replace_entry_at_slot_with_frontier_mask(
-        &mut self,
-        source_entry_idx: usize,
-        new_entry_idx: usize,
-        slot: FrontierObservationSlot,
-        observed: OfferEntryObservedState,
-        frontier_mask: u8,
-    ) -> bool {
-        if source_entry_idx >= MAX_STATES || new_entry_idx >= MAX_STATES {
-            return false;
-        }
-        let Some(slot_idx) = self.slot_for_entry(source_entry_idx) else {
-            return false;
-        };
-        let len = self.len();
-        if slot_idx >= len {
-            return false;
-        }
-        let Some(source_entry) = checked_state_index(source_entry_idx) else {
-            return false;
-        };
-        let Some(new_entry) = checked_state_index(new_entry_idx) else {
-            return false;
-        };
-        if self.slots[slot_idx].entry != source_entry {
-            return false;
-        }
-        if self.slot_for_entry(new_entry_idx).is_some() {
-            return false;
-        }
-        let observed_bit = 1u8 << slot_idx;
-        if slot.entry != new_entry {
-            crate::invariant();
-        }
-        self.slots[slot_idx] = slot;
-        self.controller_mask &= !observed_bit;
-        self.dynamic_controller_mask &= !observed_bit;
-        self.progress_mask &= !observed_bit;
-        self.ready_arm_mask &= !observed_bit;
-        self.ready_mask &= !observed_bit;
-        self.observe_with_frontier_mask(observed_bit, observed, frontier_mask);
-        true
-    }
-
-    pub(crate) fn move_slot_mask(
-        mask: u8,
-        len: usize,
-        source_slot_idx: usize,
-        new_slot_idx: usize,
-    ) -> u8 {
-        let mut remapped = 0u8;
-        let mut slot_idx = 0usize;
-        while slot_idx < len {
-            let source_slot = if source_slot_idx < new_slot_idx {
-                if slot_idx < source_slot_idx || slot_idx > new_slot_idx {
-                    slot_idx
-                } else if slot_idx == new_slot_idx {
-                    source_slot_idx
-                } else {
-                    slot_idx + 1
-                }
-            } else if slot_idx < new_slot_idx || slot_idx > source_slot_idx {
-                slot_idx
-            } else if slot_idx == new_slot_idx {
-                source_slot_idx
-            } else {
-                slot_idx - 1
-            };
-            if ((mask >> source_slot) & 1) != 0 {
-                remapped |= 1u8 << slot_idx;
-            }
-            slot_idx += 1;
-        }
-        remapped
-    }
-
-    pub(crate) fn insert_slot_mask(mask: u8, len: usize, slot_idx: usize) -> u8 {
-        let mut remapped = 0u8;
-        let mut new_slot_idx = 0usize;
-        while new_slot_idx <= len {
-            if new_slot_idx == slot_idx {
-                new_slot_idx += 1;
-                continue;
-            }
-            let source_slot = if new_slot_idx < slot_idx {
-                new_slot_idx
-            } else {
-                new_slot_idx - 1
-            };
-            if source_slot < len && ((mask >> source_slot) & 1) != 0 {
-                remapped |= 1u8 << new_slot_idx;
-            }
-            new_slot_idx += 1;
-        }
-        remapped
-    }
-
-    pub(crate) fn remove_slot_mask(mask: u8, len: usize, slot_idx: usize) -> u8 {
-        if len == 0 || slot_idx >= len {
-            return 0;
-        }
-        let mut remapped = 0u8;
-        let mut new_slot_idx = 0usize;
-        while new_slot_idx + 1 < len {
-            let source_slot = if new_slot_idx < slot_idx {
-                new_slot_idx
-            } else {
-                new_slot_idx + 1
-            };
-            if ((mask >> source_slot) & 1) != 0 {
-                remapped |= 1u8 << new_slot_idx;
-            }
-            new_slot_idx += 1;
-        }
-        remapped
     }
 }

@@ -42,7 +42,6 @@ impl RoleLaneScratch {
         true
     }
 
-    #[inline(always)]
     pub(super) const fn route_arm_ranges(
         markers: &[ScopeMarker],
         route: ScopeId,
@@ -63,19 +62,20 @@ impl RoleLaneScratch {
                 match marker.event {
                     ScopeEvent::Enter => {
                         if enter_len < 2 {
-                            starts[enter_len] = marker.offset;
+                            starts[enter_len] = marker.offset();
                         }
                         enter_len += 1;
                     }
                     ScopeEvent::Exit => {
                         if exit_len < 2 {
-                            ends[exit_len] = marker.offset;
+                            ends[exit_len] = marker.offset();
                         }
                         exit_len += 1;
                         if enter_len >= 2 && exit_len >= 2 {
                             break;
                         }
                     }
+                    ScopeEvent::Split => {}
                 }
             }
             idx += 1;
@@ -125,14 +125,13 @@ impl RoleLaneScratch {
             if Self::same_scope(candidate.scope_id, marker.scope_id)
                 && matches!(candidate.event, ScopeEvent::Exit)
             {
-                return candidate.offset;
+                return candidate.offset();
             }
             scan += 1;
         }
         segment_limit
     }
 
-    #[inline(always)]
     pub(super) const fn first_scope_segment_bounds(
         markers: &[ScopeMarker],
         segment_limit: usize,
@@ -152,7 +151,7 @@ impl RoleLaneScratch {
                         Some(kind) => kind,
                         None => return None,
                     },
-                    marker.offset,
+                    marker.offset(),
                     Self::scope_segment_end(markers, idx, segment_limit),
                 ));
             }
@@ -205,7 +204,6 @@ impl RoleLaneScratch {
         None
     }
 
-    #[inline(always)]
     const fn route_arm_for_enter(markers: &[ScopeMarker], enter_idx: usize) -> Option<u8> {
         let marker = markers[enter_idx];
         if !matches!(marker.event, ScopeEvent::Enter)
@@ -231,7 +229,6 @@ impl RoleLaneScratch {
         if arm <= 1 { Some(arm) } else { None }
     }
 
-    #[inline(always)]
     pub(super) const fn nearest_route_for_scope(
         markers: &[ScopeMarker],
         segment_limit: usize,
@@ -252,7 +249,7 @@ impl RoleLaneScratch {
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                 && !Self::same_scope(marker.scope_id, scope_id)
             {
-                let start = marker.offset;
+                let start = marker.offset();
                 let end = match Self::route_arm_ranges(markers, marker.scope_id) {
                     Some(ranges) => {
                         let left_end = ranges[0].1;
@@ -282,7 +279,6 @@ impl RoleLaneScratch {
         if best.is_none() { None } else { Some(best) }
     }
 
-    #[inline(always)]
     pub(super) const fn route_conflict_for_eff(
         markers: &[ScopeMarker],
         eff_idx: usize,
@@ -294,14 +290,14 @@ impl RoleLaneScratch {
         let mut idx = 0usize;
         while idx < markers.len() {
             let marker = markers[idx];
-            if marker.offset > eff_idx {
+            if marker.offset() > eff_idx {
                 break;
             }
             if matches!(marker.event, ScopeEvent::Enter)
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                 && let Some(arm) = Self::route_arm_for_enter(markers, idx)
             {
-                let start = marker.offset;
+                let start = marker.offset();
                 let end = Self::scope_segment_end(markers, idx, usize::MAX);
                 if start <= eff_idx && eff_idx < end {
                     let span = end - start;
@@ -325,7 +321,6 @@ impl RoleLaneScratch {
         }
     }
 
-    #[inline(always)]
     pub(super) const fn passive_arm_child_scope(
         markers: &[ScopeMarker],
         view_len: usize,
@@ -345,7 +340,7 @@ impl RoleLaneScratch {
             if matches!(marker.event, ScopeEvent::Enter)
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
                 && !Self::same_scope(marker.scope_id, route)
-                && marker.offset == arm_start
+                && marker.offset() == arm_start
             {
                 let end = match Self::route_arm_ranges(markers, marker.scope_id) {
                     Some(ranges) => {
@@ -386,7 +381,6 @@ impl RoleLaneScratch {
         }
     }
 
-    #[inline(always)]
     pub(super) const fn push_route_arm_projection_row(
         &mut self,
         input: RouteArmProjectionRowInput<'_>,

@@ -15,9 +15,8 @@ use crate::global::{
     },
 };
 
-#[derive(Clone, Copy)]
 pub(crate) struct LocalEventProgram {
-    rows: RoleImageRef,
+    rows: &'static RoleImageRef,
 }
 
 impl core::fmt::Debug for LocalEventProgram {
@@ -28,39 +27,39 @@ impl core::fmt::Debug for LocalEventProgram {
 
 impl LocalEventProgram {
     #[inline(always)]
-    pub(crate) const fn from_rows(rows: RoleImageRef) -> Self {
+    pub(crate) const fn from_rows(rows: &'static RoleImageRef) -> Self {
         Self { rows }
     }
 
     #[inline(always)]
-    const fn rows(self) -> RoleImageRef {
+    const fn rows(&self) -> &'static RoleImageRef {
         self.rows
     }
 
     #[inline(always)]
-    pub(crate) const fn program_ref(self) -> &'static CompiledProgramRef {
+    pub(crate) const fn program_ref(&self) -> &'static CompiledProgramRef {
         self.rows().program
     }
 }
 
 impl LocalEventProgram {
     #[inline(always)]
-    pub(crate) const fn footprint(self) -> crate::global::role_program::RuntimeRoleFootprint {
+    pub(crate) const fn footprint(&self) -> crate::global::role_program::RuntimeRoleFootprint {
         self.rows().footprint()
     }
 
     #[inline(always)]
-    fn logical_lane_count(self) -> usize {
+    fn logical_lane_count(&self) -> usize {
         self.rows().footprint().logical_lane_count
     }
 
     #[inline(always)]
-    pub(crate) fn resident_row_min_start(self, idx: usize) -> Option<u16> {
+    pub(crate) fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
         self.rows().resident_row_min_start(idx)
     }
 
     #[inline(always)]
-    pub(crate) fn resident_row_lane_steps(self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
+    pub(crate) fn resident_row_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
         if lane_idx >= self.logical_lane_count() {
             return None;
         }
@@ -69,7 +68,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn resident_row_lane_step_at(
-        self,
+        &self,
         idx: usize,
         lane_idx: usize,
         ordinal: usize,
@@ -83,7 +82,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn resident_row_lane_step_ordinal(
-        self,
+        &self,
         idx: usize,
         lane_idx: usize,
         step_idx: usize,
@@ -97,7 +96,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn route_scope_offer_lane_set_by_slot(
-        self,
+        &self,
         slot: usize,
     ) -> Option<LaneSetView<'static>> {
         self.rows().route_scope_offer_lane_set_by_slot(slot)
@@ -105,7 +104,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn route_scope_arm_lane_set_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
     ) -> Option<LaneSetView<'static>> {
@@ -114,7 +113,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn route_arm_lane_first_step_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
         lane: u8,
@@ -125,7 +124,7 @@ impl LocalEventProgram {
 
     #[inline(always)]
     pub(crate) fn route_arm_lane_last_step_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
         lane: u8,
@@ -135,17 +134,17 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn local_len(self) -> usize {
+    pub(crate) fn local_len(&self) -> usize {
         self.rows().local_step_count()
     }
 
     #[inline(always)]
-    pub(crate) fn node_len(self) -> usize {
+    pub(crate) fn node_len(&self) -> usize {
         self.local_len() + 1
     }
 
     #[inline(always)]
-    pub(crate) fn checked_node(self, idx: usize) -> Option<LocalNode> {
+    pub(crate) fn checked_node(&self, idx: usize) -> Option<LocalNode> {
         if idx >= self.node_len() {
             None
         } else {
@@ -154,7 +153,7 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn node(self, idx: usize) -> LocalNode {
+    pub(crate) fn node(&self, idx: usize) -> LocalNode {
         match self.rows().local_step_node(idx) {
             Some(node) => node,
             None if idx == self.local_len() => {
@@ -165,12 +164,12 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn state_for_step_index(self, step_idx: usize) -> Option<StateIndex> {
+    pub(crate) fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
         (step_idx < self.local_len()).then(|| StateIndex::from_usize(step_idx))
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_slot(self, scope_id: ScopeId) -> Option<usize> {
+    pub(crate) fn route_scope_slot(&self, scope_id: ScopeId) -> Option<usize> {
         if scope_id.is_none() || !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
             return None;
         }
@@ -190,13 +189,32 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_reentry(self, scope_id: ScopeId) -> bool {
+    pub(crate) fn route_scope_reentry(&self, scope_id: ScopeId) -> bool {
         self.route_scope_slot(scope_id)
             .is_some_and(|slot| self.rows().route_scope_reentry_by_slot(slot))
     }
 
+    #[inline(never)]
+    pub(crate) fn has_reentry_scopes(&self) -> bool {
+        if self.rows().roll_scope_row(0).is_some() {
+            return true;
+        }
+        let mut slot = 0usize;
+        let limit = self.footprint().route_scope_count;
+        while slot < limit {
+            if self.rows().route_scope_reentry_by_slot(slot) {
+                return true;
+            }
+            slot += 1;
+        }
+        false
+    }
+
     #[inline(always)]
-    pub(crate) fn roll_scope_row_by_slot(self, slot: usize) -> Option<(ScopeId, LocalEventRowSet)> {
+    pub(crate) fn roll_scope_row_by_slot(
+        &self,
+        slot: usize,
+    ) -> Option<(ScopeId, LocalEventRowSet)> {
         let row = self.rows().roll_scope_row(slot)?;
         let scope = row.scope()?;
         let events = LocalEventRowSet::from_packed(row.event_row())?;
@@ -204,7 +222,7 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn roll_scope_row(self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
+    pub(crate) fn roll_scope_row(&self, scope_id: ScopeId) -> Option<LocalEventRowSet> {
         if scope_id.is_none() || !matches!(scope_id.kind(), Some(ScopeKind::Roll)) {
             return None;
         }
@@ -220,13 +238,12 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_rows(self, scope_id: ScopeId) -> Option<RouteScopeRows> {
+    pub(crate) fn route_scope_rows(&self, scope_id: ScopeId) -> Option<RouteScopeRows> {
         let slot = self.route_scope_slot(scope_id)?;
         self.route_scope_rows_by_slot(slot)
     }
 
-    #[inline(always)]
-    pub(crate) fn route_scope_rows_by_slot(self, slot: usize) -> Option<RouteScopeRows> {
+    pub(crate) fn route_scope_rows_by_slot(&self, slot: usize) -> Option<RouteScopeRows> {
         let scope_id = self.rows().route_scope_by_slot(slot)?;
         let mut start = usize::MAX;
         let mut end = 0usize;
@@ -254,7 +271,7 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn local_step_lane(self, step_idx: usize) -> Option<u8> {
+    pub(crate) fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
         if step_idx >= self.local_len() {
             None
         } else {
@@ -263,12 +280,12 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn dependency_for_index(self, idx: usize) -> Option<LocalDependency> {
+    pub(crate) fn dependency_for_index(&self, idx: usize) -> Option<LocalDependency> {
         self.event_row_at(idx).and_then(LocalEventRow::dependency)
     }
 
     #[inline(always)]
-    pub(crate) fn event_conflict_for_index(self, idx: usize) -> PackedEventConflict {
+    pub(crate) fn event_conflict_for_index(&self, idx: usize) -> PackedEventConflict {
         if idx == self.local_len() {
             return PackedEventConflict::none();
         }
@@ -279,23 +296,23 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_conflict_by_slot(self, slot: usize) -> PackedEventConflict {
+    pub(crate) fn route_scope_conflict_by_slot(&self, slot: usize) -> PackedEventConflict {
         self.rows().route_scope_conflict_by_slot(slot)
     }
 
     #[inline(always)]
-    pub(crate) fn route_commit_range_by_slot(self, slot: usize, arm: u8) -> PackedLaneRange {
+    pub(crate) fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
         self.rows().route_commit_range_by_slot(slot, arm)
     }
 
     #[inline(always)]
-    pub(crate) fn route_commit_row_at(self, idx: usize) -> PackedEventConflict {
+    pub(crate) fn route_commit_row_at(&self, idx: usize) -> PackedEventConflict {
         self.rows().route_commit_row_at(idx)
     }
 
     #[inline(always)]
     pub(crate) fn passive_arm_child_fact_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
     ) -> Option<PassiveArmChildFact> {
@@ -308,13 +325,13 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn dependency_row_set(self, dependency: LocalDependency) -> LocalEventRowSet {
+    pub(crate) fn dependency_row_set(&self, dependency: LocalDependency) -> LocalEventRowSet {
         LocalEventRowSet::new(dependency.start(), dependency.end())
     }
 
     #[inline(always)]
     pub(crate) fn route_arm_event_row_by_slot(
-        self,
+        &self,
         slot: usize,
         arm: u8,
     ) -> Option<LocalEventRowSet> {
@@ -322,7 +339,7 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn event_row_at(self, idx: usize) -> Option<LocalEventRow> {
+    pub(crate) fn event_row_at(&self, idx: usize) -> Option<LocalEventRow> {
         if idx >= self.local_len() {
             return None;
         }
@@ -406,7 +423,6 @@ impl LocalEventRow {
         self.conflict
     }
 
-    #[inline(always)]
     pub(crate) fn matches_commit(
         self,
         eff_index: EffIndex,

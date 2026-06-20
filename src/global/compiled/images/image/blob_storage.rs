@@ -1,17 +1,17 @@
 use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
     PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts,
+    ProgramImageColumns, ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
 };
 use crate::{
-    eff::EffAtom,
-    global::compiled::lowering::{CompiledProgramImage, CompiledProgramView},
+    eff::{EffAtom, EffKind},
+    global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
-        INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
+        EffList, INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
+        parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
     },
 };
 
-#[derive(Clone, Copy)]
 pub(crate) struct ProgramImageBytes<const N: usize> {
     bytes: [u8; N],
 }
@@ -23,67 +23,12 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    pub(crate) const fn projected_len(image: &CompiledProgramImage) -> usize {
-        Self::columns(image).blob_len()
-    }
-
-    #[inline(always)]
-    pub(crate) const fn columns(image: &CompiledProgramImage) -> ProgramImageColumns {
-        let view = image.view();
-        let mut atom_len = 0usize;
-        let mut idx = 0usize;
-        while idx < view.len() {
-            if view.atom_at(idx).is_some() {
-                atom_len += 1;
-            }
-            idx += 1;
-        }
-        let markers = view.scope_markers();
-        let mut seen_route_ordinals = [false; crate::eff::meta::MAX_EFF_NODES];
-        let mut route_resolver_len = 0usize;
-        idx = 0;
-        while idx < markers.len() {
-            let marker = markers[idx];
-            if matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-            {
-                let ordinal = marker.scope_id.local_ordinal() as usize;
-                if ordinal >= seen_route_ordinals.len() {
-                    crate::invariant();
-                }
-                if !seen_route_ordinals[ordinal] {
-                    seen_route_ordinals[ordinal] = true;
-                    route_resolver_len += 1;
-                }
-            }
-            idx += 1;
-        }
-
-        let mut offset = 0usize;
-        let atoms = ProgramColumnRange::new(offset, atom_len, PROGRAM_IMAGE_ATOM_STRIDE);
-        offset = atoms.end_offset(PROGRAM_IMAGE_ATOM_STRIDE);
-        let route_resolvers = ProgramColumnRange::new(
-            offset,
-            route_resolver_len,
-            PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-        );
-        let columns = ProgramImageColumns {
-            atoms,
-            route_resolvers,
-        };
-        if offset > columns.blob_len() {
-            crate::invariant();
-        }
-        columns
-    }
-
-    #[inline(always)]
     pub(crate) const fn compiled_ref(
         &'static self,
         image: &CompiledProgramImage,
+        columns: ProgramImageColumns,
     ) -> super::CompiledProgramRef {
         let facts = ProgramImageFacts::from_image(image);
-        let columns = Self::columns(image);
         super::CompiledProgramRef::compact(facts, columns, &self.bytes)
     }
 
@@ -129,7 +74,6 @@ impl<const N: usize> ProgramImageBytes<N> {
         self.write_u8(out + 6, atom.lane);
     }
 
-    #[inline(always)]
     const fn write_route_resolver(
         &mut self,
         column: ProgramColumnRange,
@@ -166,11 +110,11 @@ impl<const N: usize> ProgramImageBytes<N> {
 
     #[inline(always)]
     const fn route_resolver_decision(
-        view: &CompiledProgramView<'_>,
+        eff_list: &EffList,
         route_scope: ScopeId,
         route_enter_marker_idx: usize,
     ) -> Option<(RouteResolver, u8)> {
-        let scope_markers = view.scope_markers();
+        let scope_markers = eff_list.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
             return None;
         }
@@ -181,7 +125,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         {
             return None;
         }
-        match view.resolver_for_scope(route_scope) {
+        match eff_list.resolver_for_scope(route_scope) {
             Some(resolver @ RouteResolver::Dynamic { .. }) => Some((resolver, 0)),
             Some(RouteResolver::Intrinsic) | None => None,
         }
@@ -204,39 +148,144 @@ impl<const N: usize> ProgramImageBytes<N> {
 
     #[inline(always)]
     const fn route_controller_role(
-        view: &CompiledProgramView<'_>,
+        eff_list: &EffList,
         route_enter_marker_idx: usize,
     ) -> Option<u8> {
-        let scope_markers = view.scope_markers();
+        let scope_markers = eff_list.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
             return None;
         }
-        let route_scope = scope_markers[route_enter_marker_idx].scope_id;
-        match view.route_frontier_summary(route_scope) {
-            Some(summary) if !summary.is_invalid() => {
-                Self::unique_controller_role(summary.controller_mask())
+        let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
+            route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
+        let mask = Self::first_visible_controller_mask(eff_list, arm0_start, arm0_end)
+            | Self::first_visible_controller_mask(eff_list, arm1_start, arm1_end);
+        Self::unique_controller_role(mask)
+    }
+
+    const fn first_visible_controller_mask(eff_list: &EffList, start: usize, end: usize) -> u16 {
+        let markers = eff_list.scope_markers();
+        let mut idx = start;
+        while idx < end && idx < eff_list.len() {
+            if let Some(route_enter) = Self::route_enter_at(markers, idx, end) {
+                let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
+                    route_arm_ranges_from_first_enter(markers, route_enter);
+                return Self::first_visible_controller_mask(eff_list, arm0_start, arm0_end)
+                    | Self::first_visible_controller_mask(eff_list, arm1_start, arm1_end);
             }
-            Some(_) | None => None,
+            if let Some(par_enter) = Self::parallel_enter_at(markers, idx, end) {
+                let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
+                    parallel_arm_ranges_from_enter(markers, par_enter)
+                else {
+                    return 0;
+                };
+                return Self::first_visible_controller_mask(eff_list, arm0_start, arm0_end)
+                    | Self::first_visible_controller_mask(eff_list, arm1_start, arm1_end);
+            }
+            if let Some(atom) = Self::atom_at(eff_list, idx) {
+                if atom.from >= crate::g::ROLE_DOMAIN_SIZE {
+                    return 0;
+                }
+                return 1u16 << atom.from;
+            }
+            idx += 1;
         }
+        0
     }
 
     #[inline(always)]
-    pub(crate) const fn from_capacity_bucket(image: &CompiledProgramImage) -> Self {
-        if Self::projected_len(image) > N {
+    const fn atom_at(eff_list: &EffList, idx: usize) -> Option<EffAtom> {
+        if idx >= eff_list.len() {
+            return None;
+        }
+        let node = eff_list.node_at(idx);
+        if matches!(node.kind, EffKind::Atom) {
+            Some(node.atom_data())
+        } else {
+            None
+        }
+    }
+
+    const fn route_enter_at(
+        markers: &[crate::global::const_dsl::ScopeMarker],
+        start: usize,
+        end: usize,
+    ) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if marker.offset() == start
+                && matches!(marker.event, ScopeEvent::Enter)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+                && Self::first_enter_for_scope(markers, idx)
+            {
+                let (_, _, _, _, _, arm1_end) = route_arm_ranges_from_first_enter(markers, idx);
+                if arm1_end <= end {
+                    return Some(idx);
+                }
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    const fn first_enter_for_scope(
+        markers: &[crate::global::const_dsl::ScopeMarker],
+        marker_idx: usize,
+    ) -> bool {
+        let marker = markers[marker_idx];
+        let mut idx = 0usize;
+        while idx < marker_idx {
+            let candidate = markers[idx];
+            if matches!(candidate.event, ScopeEvent::Enter)
+                && candidate.scope_id.same(marker.scope_id)
+            {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    const fn parallel_enter_at(
+        markers: &[crate::global::const_dsl::ScopeMarker],
+        start: usize,
+        end: usize,
+    ) -> Option<usize> {
+        let mut idx = 0usize;
+        while idx < markers.len() {
+            let marker = markers[idx];
+            if marker.offset() == start
+                && matches!(marker.event, ScopeEvent::Enter)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
+                && matches!(
+                    parallel_arm_ranges_from_enter(markers, idx),
+                    Some((_, _, _, right_end)) if right_end <= end
+                )
+            {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline(always)]
+    pub(crate) const fn from_capacity_bucket(
+        eff_list: &EffList,
+        columns: ProgramImageColumns,
+    ) -> Self {
+        if columns.blob_len() > N {
             return Self::empty();
         }
-        Self::from_image(image)
+        Self::from_image(eff_list, columns)
     }
 
-    #[inline(always)]
-    pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {
-        let columns = Self::columns(image);
+    pub(crate) const fn from_image(eff_list: &EffList, columns: ProgramImageColumns) -> Self {
         let projected_len = columns.blob_len();
         if projected_len > N {
             crate::invariant();
         }
-        let view = image.view();
-        let markers = view.scope_markers();
+        let markers = eff_list.scope_markers();
         if projected_len > u16::MAX as usize {
             crate::invariant();
         }
@@ -244,8 +293,8 @@ impl<const N: usize> ProgramImageBytes<N> {
         let mut out = Self::empty();
         let mut atom_row = 0usize;
         let mut idx = 0usize;
-        while idx < view.len() {
-            if let Some(atom) = view.atom_at(idx) {
+        while idx < eff_list.len() {
+            if let Some(atom) = Self::atom_at(eff_list, idx) {
                 out.write_atom(columns.atoms, atom_row, idx, atom);
                 atom_row += 1;
             }
@@ -253,7 +302,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
 
         let mut route_row = 0usize;
-        let mut seen_route_ordinals = [false; crate::eff::meta::MAX_EFF_NODES];
+        let mut seen_route_ordinals = [0u8; ROUTE_ORDINAL_BYTES];
         idx = 0;
         while idx < markers.len() {
             let marker = markers[idx];
@@ -261,16 +310,12 @@ impl<const N: usize> ProgramImageBytes<N> {
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 let ordinal = marker.scope_id.local_ordinal() as usize;
-                if ordinal >= seen_route_ordinals.len() {
-                    crate::invariant();
-                }
-                if seen_route_ordinals[ordinal] {
+                if !insert_route_ordinal(&mut seen_route_ordinals, ordinal) {
                     idx += 1;
                     continue;
                 }
-                seen_route_ordinals[ordinal] = true;
-                let controller = Self::route_controller_role(&view, idx);
-                let decision = Self::route_resolver_decision(&view, marker.scope_id, idx);
+                let controller = Self::route_controller_role(eff_list, idx);
+                let decision = Self::route_resolver_decision(eff_list, marker.scope_id, idx);
                 out.write_route_resolver(
                     columns.route_resolvers,
                     route_row,

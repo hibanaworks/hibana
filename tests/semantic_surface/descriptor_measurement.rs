@@ -436,7 +436,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_program.contains("route_arm_lane_step_len")
             && !role_program.contains("route_arm_lane_step_bounds")
             && role_program.contains("struct BlobPtr")
-            && role_lane_image.contains("columns: RoleImageColumns")
+            && role_lane_image.contains("columns: &'a RoleImageColumns")
             && role_lane_image.contains("blob: BlobPtr")
             && !role_lane_image.contains("blob: &'static [u8]")
             && !role_lane_image.contains("local_step_events: &'static [PackedLocalEventRow]")
@@ -490,7 +490,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_image
                 .contains("[DENSE_LANE_NONE; crate::global::role_program::LANE_DOMAIN_SIZE]")
             && !role_image.contains("[DENSE_LANE_NONE; LANE_DOMAIN_SIZE]")
-            && role_image.contains("self.image().active_lane_set()")
+            && role_image.contains("self.resident.active_lane_set()")
             && !role_image.contains(".phase_lane_set(idx)")
             && !read("src/endpoint/kernel/decision_state.rs").contains("route_scope_lane_words")
             && !read("src/endpoint/kernel/endpoint_init.rs")
@@ -532,49 +532,35 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
 #[test]
 fn resident_descriptor_metadata_stays_columnar() {
     let lowering = lowering_driver_source();
-    let segment = lowering
-        .split("struct ProgramImageSegmentData {")
-        .nth(1)
-        .and_then(|tail| tail.split("impl ProgramImageSegmentData").next())
-        .expect("ProgramImageSegmentData section");
+    let const_dsl = read("src/global/const_dsl.rs");
+    let eff_list = read("src/global/const_dsl/eff_list.rs");
+    let program_blob = read("src/global/compiled/images/image/blob_storage.rs");
     assert!(
-        segment.contains("atom_mask: u128")
-            && !segment.contains("nodes: [EffStruct; MAX_SEGMENT_EFFS]")
-            && !segment.contains("steps: [ProgramStepRow; MAX_SEGMENT_EFFS]")
-            && !segment.contains("policies: [RouteResolver; MAX_SEGMENT_EFFS]")
-            && segment.contains("atom_row_start: u16")
-            && segment.contains("atom_row_len: u16")
-            && !segment.contains("resolver_row_start: u16")
-            && !segment.contains("resolver_row_len: u16")
-            && !segment.contains("route_scope_row_start: u16")
-            && !segment.contains("route_scope_row_len: u16")
-            && !lowering.contains("struct ProgramRouteScopeRow")
-            && lowering.contains("struct ProgramAtomRow")
-            && !lowering.contains("struct ProgramResolverRow")
-            && lowering
-                .contains("const MAX_COMPILED_ATOM_ROWS: usize = crate::eff::meta::MAX_EFF_NODES")
-            && lowering.contains(
-                "const MAX_COMPILED_ROUTE_RESOLVER_SITES: usize = crate::eff::meta::MAX_EFF_NODES"
-            )
-            && !lowering.contains("resolver_rows_complete: bool")
-            && !lowering.contains("ProgramSourceLookup")
-            && !lowering.contains("self.source_lookup.resolver_at(offset)")
-            && lowering
-                .contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_COMPILED_PROGRAM_SCOPES")
-            && !lowering.contains("const MAX_COMPILED_SCOPE_MARKERS: usize = MAX_SEGMENTS * 4")
-            && lowering.contains("atom_rows: [ProgramAtomRow; MAX_COMPILED_ATOM_ROWS]")
+        !lowering.contains("struct ProgramImageSegmentData")
+            && !lowering.contains("struct ProgramImageValidationData")
+            && !lowering.contains("struct ProgramAtomRow")
+            && !lowering.contains("CompiledProgramView")
+            && !lowering.contains("atom_rows:")
+            && !lowering.contains("scope_markers:")
+            && !lowering.contains("route_resolver_sites:")
+            && !lowering.contains("MAX_COMPILED_ATOM_ROWS")
+            && !lowering.contains("MAX_COMPILED_ROUTE_RESOLVER_SITES")
+            && !const_dsl.contains("struct SegmentSummary")
+            && !const_dsl.contains("segment_summaries:")
+            && !eff_list.contains("segment_summary(")
+            && !eff_list.contains("segment_count(")
+            && !eff_list.contains("segment_len(")
             && !lowering.contains("pub(crate) type ProgramNodeAt")
             && !lowering.contains("source_node_at: ProgramNodeAt")
             && !lowering.contains("atom_rows: [EffAtom;")
             && !lowering.contains("atom_rows: [EffAtom; MAX_COMPILED_IMAGE_NODES]")
-            && lowering.contains("offset_is_atom")
             && !lowering.contains("message_atoms")
             && !lowering.contains("self.atom_rows[offset]")
             && !lowering.contains("route_scope_rows: [ProgramRouteScopeRow")
-            && lowering.contains(
-                "route_resolver_sites: [RouteResolverSite; MAX_COMPILED_ROUTE_RESOLVER_SITES]"
-            ),
-        "resident descriptor metadata must stay columnar: segment rows own atoms and route resolver sites without per-offset resolver side tables"
+            && program_blob.contains("eff_list: &EffList")
+            && program_blob.contains("Self::atom_at(eff_list, idx)")
+            && program_blob.contains("eff_list.resolver_for_scope(route_scope)"),
+        "resident descriptor metadata must not rebuild a compiled validation image; EffList remains the single atom/scope/resolver source for compact blobs"
     );
 }
 
@@ -586,9 +572,16 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
     let role_ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let projection = read("src/g/role_projection.rs");
     let program_from_image = program_blob
-        .split("pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {")
+        .split(
+            "pub(crate) const fn from_image(\n        image: &CompiledProgramImage,\n        columns: ProgramImageColumns,\n    ) -> Self {",
+        )
         .nth(1)
-        .and_then(|tail| tail.split("let view = image.view();").next())
+        .or_else(|| {
+            program_blob
+                .split("pub(crate) const fn from_image(eff_list: &EffList, columns: ProgramImageColumns) -> Self {")
+                .nth(1)
+        })
+        .and_then(|tail| tail.split("let markers = eff_list.scope_markers();").next())
         .expect("program image fail-closed constructor");
     assert!(
         program_from_image
@@ -598,7 +591,9 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
     );
 
     let role_from_scratch = role_blob
-        .split("pub(crate) const fn from_scratch(scratch: RoleLaneScratch, facts: RuntimeRoleFacts) -> Self {")
+        .split(
+            "pub(crate) const fn from_scratch(\n        scratch: &RoleLaneScratch,\n        facts: RuntimeRoleFacts,\n        columns: RoleImageColumns,\n    ) -> Self {",
+        )
         .nth(1)
         .and_then(|tail| tail.split("let mut out = Self::empty();").next())
         .expect("role image fail-closed constructor");
@@ -622,7 +617,19 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             )
             && program_ref.contains("BlobPtr::from_array(bytes, columns.blob_len())")
             && role_ref_access.contains("BlobPtr::from_array(bytes, columns.blob_len())")
-            && projection.contains("from_capacity_bucket")
+            && projection.contains("ProgramImagePlan::from_program")
+            && projection.contains("RoleImagePlan::from_program")
+            && projection.contains("RoleImageBuild::<N>::from_program_bucket")
+            && projection.contains("const PROGRAM_PLAN:")
+            && projection.contains("const PROGRAM_COLUMNS:")
+            && projection.contains("Self::PROGRAM_PLAN.blob_len()")
+            && projection.contains("const PLAN:")
+            && projection.contains("Self::PLAN.blob_len()")
+            && !projection.contains("ProgramImageBytes::<0>::columns")
+            && !projection.contains("RoleImageBuild::<0>::from_program_bucket")
+            && !projection.contains("projected_len(")
+            && !projection.contains("const SCRATCH:")
+            && !projection.contains("&RoleProjection::<ROLE, Steps>::SCRATCH")
             && !projection.contains("ROLE_IMAGE_BLOB_CAPACITY")
             && !projection.contains("PROGRAM_IMAGE_BLOB_CAPACITY")
             && !projection.contains("CompiledProgramRef { image: &'static CompiledProgramImage }"),

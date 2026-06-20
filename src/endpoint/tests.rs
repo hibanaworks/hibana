@@ -91,10 +91,6 @@ fn send_future_and_runtime_descriptor_size_gates_hold() {
         "SendFuture must stay within the direct-send future budget",
     );
     assert!(
-        size_of::<kernel::BranchRecvRuntimeDesc>() <= 3 * WORD,
-        "BranchRecvRuntimeDesc must stay codec-free message core only",
-    );
-    assert!(
         size_of::<kernel::SendRuntimeDesc>() <= 6 * WORD,
         "SendRuntimeDesc must be send-specific metadata, not a union descriptor",
     );

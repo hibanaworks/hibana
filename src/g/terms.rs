@@ -19,8 +19,10 @@ where
     Left: ProgramTerm,
     Right: ProgramTerm,
 {
-    const PROGRAM_SOURCE: ProgramSourceData =
-        <Left as ProgramTerm>::PROGRAM_SOURCE.seq(<Right as ProgramTerm>::PROGRAM_SOURCE);
+    const PROGRAM_SOURCE: ProgramSourceData = ProgramSourceData::seq(
+        <Left as ProgramTerm>::PROGRAM_SOURCE,
+        <Right as ProgramTerm>::PROGRAM_SOURCE,
+    );
 }
 
 impl<Left, Right> ProgramTerm for Route<Left, Right>
@@ -28,11 +30,10 @@ where
     Left: ProgramTerm,
     Right: ProgramTerm,
 {
-    const PROGRAM_SOURCE: ProgramSourceData = {
-        let left = <Left as ProgramTerm>::PROGRAM_SOURCE;
-        let right = <Right as ProgramTerm>::PROGRAM_SOURCE;
-        left.route(right)
-    };
+    const PROGRAM_SOURCE: ProgramSourceData = ProgramSourceData::route(
+        <Left as ProgramTerm>::PROGRAM_SOURCE,
+        <Right as ProgramTerm>::PROGRAM_SOURCE,
+    );
 }
 
 impl<Left, Right> ProgramTerm for Par<Left, Right>
@@ -40,8 +41,10 @@ where
     Left: ProgramTerm,
     Right: ProgramTerm,
 {
-    const PROGRAM_SOURCE: ProgramSourceData =
-        { <Left as ProgramTerm>::PROGRAM_SOURCE.par(<Right as ProgramTerm>::PROGRAM_SOURCE) };
+    const PROGRAM_SOURCE: ProgramSourceData = ProgramSourceData::par(
+        <Left as ProgramTerm>::PROGRAM_SOURCE,
+        <Right as ProgramTerm>::PROGRAM_SOURCE,
+    );
 }
 
 impl<Left, Right, const RESOLVER_ID: u16> ProgramTerm for Resolve<Route<Left, Right>, RESOLVER_ID>
@@ -49,13 +52,16 @@ where
     Left: ProgramTerm,
     Right: ProgramTerm,
 {
-    const PROGRAM_SOURCE: ProgramSourceData =
-        <Route<Left, Right> as ProgramTerm>::PROGRAM_SOURCE.resolve_route(RESOLVER_ID);
+    const PROGRAM_SOURCE: ProgramSourceData = ProgramSourceData::resolve_route(
+        <Route<Left, Right> as ProgramTerm>::PROGRAM_SOURCE,
+        RESOLVER_ID,
+    );
 }
 
 impl<Inner> ProgramTerm for Roll<Inner>
 where
     Inner: ProgramTerm,
 {
-    const PROGRAM_SOURCE: ProgramSourceData = <Inner as ProgramTerm>::PROGRAM_SOURCE.roll();
+    const PROGRAM_SOURCE: ProgramSourceData =
+        ProgramSourceData::roll(<Inner as ProgramTerm>::PROGRAM_SOURCE);
 }

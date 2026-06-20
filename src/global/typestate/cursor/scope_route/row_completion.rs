@@ -33,6 +33,7 @@ impl EventCursor {
         self.selected_route_arm_event_row_done(scope_id, arm, selected_arm_for_scope)
     }
 
+    #[inline(never)]
     pub(super) fn dependency_row_live_events_done(
         &self,
         dependency: LocalDependency,
@@ -45,6 +46,7 @@ impl EventCursor {
         self.event_row_set_live_events_done(row_set, selected_arm_for_scope)
     }
 
+    #[inline(never)]
     fn event_row_set_live_events_done(
         &self,
         row_set: LocalEventRowSet,

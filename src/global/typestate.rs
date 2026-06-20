@@ -12,13 +12,13 @@ pub(crate) use self::facts::LocalAction;
 pub(crate) use self::facts::StateIndex;
 pub(crate) use self::{
     cursor::{
-        CursorInvariantError, CursorRefresh, EventCursor, EventCursorState,
+        CursorInvariantError, CursorRefresh, EnabledEventCommit, EventCursor, EventCursorState,
         RelocatableResidentLaneStep, SendPreviewError,
     },
     facts::{
         ARM_SHARED, EventCommitMeta, LocalAtomFacts, LocalConflict, LocalDependency, LocalMeta,
-        LocalNode, LocalNodeMeta, MAX_FIRST_RECV_DISPATCH, MAX_STATES, PackedEventConflict,
-        PackedLocalDependency, PassiveArmChildFact, RecvMeta, RouteChoiceMark, RouteScopeRows,
-        SendMeta, state_index_to_usize,
+        LocalNode, LocalNodeMeta, MAX_STATES, PackedEventConflict, PackedLocalDependency,
+        PassiveArmChildFact, RecvMeta, RouteChoiceMark, RouteScopeRows, SendMeta,
+        state_index_to_usize,
     },
 };

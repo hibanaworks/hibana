@@ -111,7 +111,7 @@ pub(crate) struct PortInit<'r, 'tap, T: Transport> {
 impl<'r, T: Transport + 'r> Port<'r, T> {
     #[inline(always)]
     const fn frontier_scratch_align() -> usize {
-        FrontierScratchLayout::new(0, 0, 0).total_align()
+        FrontierScratchLayout::new(0, 0).total_align()
     }
 
     #[inline]
@@ -283,11 +283,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             scope,
             target_lane,
         )
-    }
-
-    #[inline]
-    pub(crate) fn route_change_generation(&self) -> u16 {
-        self.route_table().change_generation()
     }
 
     #[inline]

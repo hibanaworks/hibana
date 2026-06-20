@@ -1,5 +1,5 @@
 use super::super::{
-    ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, RouteScopeRows, ScopeId, StateIndex,
+    ARM_SHARED, EventCursor, PackedEventConflict, RouteScopeRows, ScopeId, StateIndex,
     state_index_to_usize,
 };
 use crate::global::typestate::LocalConflict;
@@ -187,25 +187,8 @@ impl EventCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        let (dispatch, len) = self.route_scope_first_recv_dispatch_table(scope_id)?;
-        let mut matched = None;
-        let mut idx = 0usize;
-        while idx < len as usize {
-            let entry = dispatch[idx];
-            if entry.lane() == lane
-                && entry.frame_label() == frame_label
-                && entry.arm() < 2
-                && !entry.target().is_absent()
-            {
-                let target = (entry.arm(), entry.target());
-                if matched.is_some_and(|prev| prev != target) {
-                    return None;
-                }
-                matched = Some(target);
-            }
-            idx += 1;
-        }
-        matched
+        self.machine()
+            .first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
     }
 
     /// Check if this role is the controller for the given route scope.
@@ -243,29 +226,13 @@ impl EventCursor {
         self.machine().event_conflict_for_index(idx)
     }
 
-    #[inline(always)]
-    pub(crate) fn node_in_selected_route_arm(
-        &self,
-        idx: usize,
-        scope: ScopeId,
-        arm: u8,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
-        self.event_conflict_row_contains_route_arm(
-            self.machine().event_conflict_for_index(idx),
-            scope,
-            arm,
-            selected_arm_for_scope,
-        )
-    }
-
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn event_conflict_row_allows(
         &self,
         mut conflict: PackedEventConflict,
         preview_scope: ScopeId,
         preview_arm: Option<u8>,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let mut depth = 0usize;
         let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
@@ -276,13 +243,11 @@ impl EventCursor {
             let LocalConflict::RouteArm { scope, arm } = row else {
                 return true;
             };
-            let selected = selected_arm_for_scope(scope).or_else(|| {
-                if scope == preview_scope && preview_arm.is_some() {
-                    preview_arm
-                } else {
-                    None
-                }
-            });
+            let selected = match selected_arm_for_scope(scope) {
+                Some(arm) => Some(arm),
+                None if scope == preview_scope && preview_arm.is_some() => preview_arm,
+                None => None,
+            };
             if let Some(selected) = selected
                 && selected != arm
             {
@@ -294,12 +259,12 @@ impl EventCursor {
         false
     }
 
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn event_conflict_row_allows_with_preview(
         &self,
         mut conflict: PackedEventConflict,
         preview_conflict: PackedEventConflict,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let mut depth = 0usize;
         let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
@@ -310,8 +275,10 @@ impl EventCursor {
             let LocalConflict::RouteArm { scope, arm } = row else {
                 return true;
             };
-            let selected = selected_arm_for_scope(scope)
-                .or_else(|| self.preview_conflict_arm(preview_conflict, scope));
+            let selected = match selected_arm_for_scope(scope) {
+                Some(arm) => Some(arm),
+                None => self.preview_conflict_arm(preview_conflict, scope),
+            };
             if let Some(selected) = selected
                 && selected != arm
             {
@@ -323,7 +290,7 @@ impl EventCursor {
         false
     }
 
-    #[inline(always)]
+    #[inline(never)]
     fn preview_conflict_arm(
         &self,
         mut conflict: PackedEventConflict,
@@ -348,43 +315,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    fn event_conflict_row_contains_route_arm(
-        &self,
-        mut conflict: PackedEventConflict,
-        target_scope: ScopeId,
-        target_arm: u8,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> bool {
-        if target_scope.is_none() {
-            return false;
-        }
-        let mut matched = false;
-        let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
-        while depth < depth_bound {
-            let Some(row) = conflict.to_conflict() else {
-                return matched;
-            };
-            let LocalConflict::RouteArm { scope, arm } = row else {
-                return matched;
-            };
-            if scope == target_scope {
-                if arm != target_arm {
-                    return false;
-                }
-                matched = true;
-            } else if let Some(selected) = selected_arm_for_scope(scope)
-                && selected != arm
-            {
-                return false;
-            }
-            conflict = self.route_scope_conflict_row(scope);
-            depth += 1;
-        }
-        false
-    }
-
-    #[inline(always)]
     fn route_scope_conflict_row(&self, scope_id: ScopeId) -> PackedEventConflict {
         let Some(slot) = self.route_scope_slot_inner(scope_id) else {
             return PackedEventConflict::none();
@@ -392,47 +322,10 @@ impl EventCursor {
         self.machine().route_scope_conflict_by_slot(slot)
     }
 
-    pub(crate) fn selected_route_label_index(
-        &self,
-        scope_id: ScopeId,
-        target_label: u8,
-        selected_arm: u8,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
-        let lane_limit = self.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            let Some(idx) = self.index_for_lane_step(lane_idx) else {
-                lane_idx += 1;
-                continue;
-            };
-            let node = self.typestate_node(idx);
-            let label = match node.action() {
-                LocalAction::Send { label, .. }
-                | LocalAction::Recv { label, .. }
-                | LocalAction::Local { label, .. } => label,
-                LocalAction::Terminate => {
-                    lane_idx += 1;
-                    continue;
-                }
-            };
-            if label == target_label
-                && self.node_in_selected_route_arm(idx, scope_id, selected_arm, |candidate| {
-                    selected_arm_for_scope(candidate)
-                })
-            {
-                return Some(idx);
-            }
-            lane_idx += 1;
-        }
-        None
-    }
-
-    #[inline(always)]
     pub(crate) fn current_offer_scope_id(
         &self,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
-        mut preview_selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        preview_selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> ScopeId {
         let node_scope = self.node_scope_id();
         if node_scope.is_none() {
@@ -454,9 +347,11 @@ impl EventCursor {
             let LocalConflict::RouteArm { scope, arm } = row else {
                 break;
             };
-            let Some(selected) =
-                selected_arm_for_scope(scope).or_else(|| preview_selected_arm_for_scope(scope))
-            else {
+            let selected = match selected_arm_for_scope(scope) {
+                Some(arm) => Some(arm),
+                None => preview_selected_arm_for_scope(scope),
+            };
+            let Some(selected) = selected else {
                 if first_unresolved.is_none() {
                     first_unresolved = scope;
                 }
@@ -476,7 +371,6 @@ impl EventCursor {
         node_scope
     }
 
-    #[inline(always)]
     pub(crate) fn rebase_passive_descendant_scope(
         &self,
         stop_scope: ScopeId,

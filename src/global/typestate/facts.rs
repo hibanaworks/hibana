@@ -159,9 +159,6 @@ impl LocalDependencyState {
     }
 }
 
-/// Maximum first-receive dispatch entries stored for a route scope.
-pub(crate) const MAX_FIRST_RECV_DISPATCH: usize = 16;
-
 /// Dense event-row interval occupied by a compiled route scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RouteScopeRows {
@@ -250,54 +247,6 @@ impl StateIndex {
     #[inline(always)]
     pub(crate) const fn is_absent(self) -> bool {
         self.0 == u16::MAX
-    }
-}
-
-/// Compiled first-recv dispatch fact for a route arm.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct FirstRecvDispatchSpec {
-    lane: u8,
-    frame_label: u8,
-    arm: u8,
-    target: StateIndex,
-}
-
-impl FirstRecvDispatchSpec {
-    pub(crate) const EMPTY: Self = Self {
-        lane: 0,
-        frame_label: 0,
-        arm: 0,
-        target: StateIndex::ABSENT,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn new(lane: u8, frame_label: u8, arm: u8, target: StateIndex) -> Self {
-        Self {
-            lane,
-            frame_label,
-            arm,
-            target,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn lane(self) -> u8 {
-        self.lane
-    }
-
-    #[inline(always)]
-    pub(crate) const fn frame_label(self) -> u8 {
-        self.frame_label
-    }
-
-    #[inline(always)]
-    pub(crate) const fn arm(self) -> u8 {
-        self.arm
-    }
-
-    #[inline(always)]
-    pub(crate) const fn target(self) -> StateIndex {
-        self.target
     }
 }
 
@@ -549,7 +498,6 @@ impl LocalNode {
     }
 
     /// Action associated with the node.
-    #[inline(always)]
     pub(crate) const fn action(&self) -> LocalAction {
         match self.action {
             PackedLocalAction::Send {

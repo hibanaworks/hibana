@@ -30,13 +30,10 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    const fn image(&self) -> RoleImageRef {
-        *self.resident
-    }
-
-    #[inline(always)]
-    pub(crate) const fn local_event_rows(&self) -> crate::global::role_program::RoleImageRef {
-        self.image()
+    pub(crate) const fn local_event_rows(
+        &self,
+    ) -> &'static crate::global::role_program::RoleImageRef {
+        self.resident
     }
 
     #[inline(always)]
@@ -64,12 +61,12 @@ impl RoleDescriptorRef {
         if lane_idx >= self.logical_lane_count() {
             return false;
         }
-        self.image().active_lane_set().contains(lane_idx)
+        self.resident.active_lane_set().contains(lane_idx)
     }
 
     #[inline(always)]
     pub(crate) fn first_active_lane(&self) -> Option<usize> {
-        self.image().first_active_lane()
+        self.resident.first_active_lane()
     }
 
     #[inline(always)]
@@ -88,7 +85,6 @@ impl RoleDescriptorRef {
     pub(crate) fn frontier_scratch_layout(&self) -> crate::endpoint::kernel::FrontierScratchLayout {
         crate::endpoint::kernel::FrontierScratchLayout::new(
             self.max_frontier_entries(),
-            self.logical_lane_count(),
             lane_word_count(self.logical_lane_count()),
         )
     }
@@ -133,7 +129,7 @@ impl RoleDescriptorRef {
     #[inline(always)]
     pub(crate) fn fill_active_lane_dense_by_lane(&self, dst: &mut [DenseLaneOrdinal]) -> usize {
         dst.fill(DENSE_LANE_ABSENT);
-        let active = self.image().active_lane_set();
+        let active = self.resident.active_lane_set();
         let mut dense = 0usize;
         let mut next = active.first_set(dst.len());
         while let Some(lane_idx) = next {

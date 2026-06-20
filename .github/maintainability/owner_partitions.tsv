@@ -67,7 +67,6 @@ src/endpoint/kernel	src/endpoint/kernel/offer
 src/endpoint/kernel	src/endpoint/kernel/offer.rs
 src/endpoint/kernel	src/endpoint/kernel/decision_state.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_select.rs
@@ -83,9 +82,8 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/send_route_authority.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/runtime_types/commit.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/scope_evidence_logic.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/send_ops
 src/endpoint/kernel/core	src/endpoint/kernel/core/send_ops.rs
-src/endpoint/kernel/offer	src/endpoint/kernel/offer/cache.rs
-src/endpoint/kernel/offer	src/endpoint/kernel/offer/cache_rebuild.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/cache_refresh.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/commit.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/commit_types.rs
@@ -112,16 +110,11 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/pool.
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/selection.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/set.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/state.rs
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/entry_sets.rs
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/kind.rs
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/offer_entries.rs
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/scratch.rs
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/select.rs
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot.rs
 src/global	src/global/compiled
 src/global	src/global/const_dsl
 src/global	src/global/const_dsl.rs
 src/global	src/global/event_program.rs
+src/global	src/global/frame_labels.rs
 src/global	src/global/message.rs
 src/global	src/global/program
 src/global	src/global/program.rs
@@ -134,12 +127,6 @@ src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
-src/global/compiled/lowering	src/global/compiled/lowering/driver
-src/global/compiled/lowering	src/global/compiled/lowering/driver.rs
-src/global/compiled/lowering	src/global/compiled/lowering/mod.rs
-src/global/compiled/lowering	src/global/compiled/lowering/seal.rs
-src/global/compiled/lowering	src/global/compiled/lowering/seal/first_recv_dispatch.rs
-src/global/compiled/lowering	src/global/compiled/lowering/seal/passive_child.rs
 src/global/role_program	src/global/role_program/image_impl
 src/global/role_program	src/global/role_program/image_impl.rs
 src/global/role_program	src/global/role_program/image_types.rs
@@ -148,6 +135,7 @@ src/global/role_program	src/global/role_program/program.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/blob_image.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/event_rows.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/lane_image.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/plan.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/roll_rows.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/ref_access.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/scope_rows.rs
@@ -185,7 +173,6 @@ tests	tests/cursor_send_recv_session_forget_send.rs
 tests	tests/cursor_send_recv_session_progress.rs
 tests	tests/dynamic_route_scope_resolver.rs
 tests	tests/docs_surface.rs
-tests	tests/huge_choreography_compile.rs
 tests	tests/huge_choreography_runtime.rs
 tests	tests/runtime_surface.rs
 tests	tests/send_route_authority.rs

@@ -260,13 +260,13 @@ where
                 return lease;
             }
         }
-        if let Some(branch) = self.public_route_branch.take() {
-            self.public_branch_recv_state = super::branch_recv::BranchRecvState::new(branch);
-            lease
-        } else {
+        if self.public_route_branch.is_none() {
             self.public_op_busy_fault();
             self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             super::core::PublicOpLease::Rejected
+        } else {
+            self.public_branch_recv_state = super::branch_recv::BranchRecvState::armed();
+            lease
         }
     }
 
@@ -274,10 +274,7 @@ where
     pub(in crate::endpoint) fn reset_public_branch_recv_state(&mut self) {
         self.clear_session_waiter();
         self.finish_public_op(PublicActiveOp::BranchRecv);
-        if self.public_branch_recv_state.restore_on_drop()
-            == super::branch_recv::BranchRecvRestore::Armed
-            && let Some(branch) = self.public_branch_recv_state.branch.take()
-        {
+        if let Some(branch) = self.public_route_branch.take() {
             self.restore_materialized_route_branch(branch);
         }
         self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
@@ -287,11 +284,10 @@ where
     pub(in crate::endpoint) fn terminal_clear_public_branch_recv_state(&mut self) {
         self.clear_session_waiter();
         self.clear_public_op_if_current(PublicActiveOp::BranchRecv);
-        let mut state = core::mem::replace(
-            &mut self.public_branch_recv_state,
-            super::branch_recv::BranchRecvState::empty(),
-        );
-        state.discard_terminal();
+        if let Some(branch) = self.public_route_branch.take() {
+            branch.discard_terminal();
+        }
+        self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
 
     #[inline]

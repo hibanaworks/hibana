@@ -95,6 +95,40 @@ pub(crate) fn read_production_rs_tree(path: &str) -> String {
     read_rs_tree_filtered(path, false)
 }
 
+pub(crate) fn production_rs_files(path: &str) -> Vec<String> {
+    fn collect_rs_files(dir: &Path, parts: &mut Vec<PathBuf>) {
+        let entries =
+            fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()));
+        for entry in entries {
+            let path = entry
+                .unwrap_or_else(|err| panic!("read dir entry in {} failed: {err}", dir.display()))
+                .path();
+            if path.is_dir() {
+                collect_rs_files(&path, parts);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+                && !is_test_source(&path)
+            {
+                parts.push(path);
+            }
+        }
+    }
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.join(path);
+    let mut parts = Vec::new();
+    collect_rs_files(&root, &mut parts);
+    parts.sort();
+    parts
+        .into_iter()
+        .map(|part| {
+            part.strip_prefix(&manifest)
+                .expect("test path must stay under manifest dir")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect()
+}
+
 pub(crate) fn read_all_rs_tree(path: &str) -> String {
     read_rs_tree_filtered(path, true)
 }

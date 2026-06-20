@@ -1,7 +1,6 @@
 use super::{
-    AssocTable, Cell, EndpointLeaseId, FREE_REGION_CAPACITY, FreeRegion, Lane, LaneRelease,
-    PhantomData, Rendezvous, RendezvousId, RouteTable, RuntimeResources, SessionId, Sidecar,
-    TapRing, Transport, Waker, emit, events,
+    AssocTable, Cell, EndpointLeaseId, Lane, LaneRelease, PhantomData, Rendezvous, RendezvousId,
+    RouteTable, RuntimeResources, SessionId, Sidecar, TapRing, Transport, Waker, emit, events,
 };
 use crate::{observe::core::TapEvent, runtime_core::consts::TAP_EVENTS};
 
@@ -99,8 +98,6 @@ where
             core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(0);
             core::ptr::addr_of_mut!((*dst).endpoint_lease_storage).write(Sidecar::EMPTY);
             core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(EndpointLeaseId::ZERO);
-            core::ptr::addr_of_mut!((*dst).free_regions)
-                .write([FreeRegion::EMPTY; FREE_REGION_CAPACITY]);
             core::ptr::addr_of_mut!((*dst).lane_range)
                 .write((lane_range.start as u32)..(lane_range.end as u32));
             core::ptr::addr_of_mut!((*dst).transport).write(transport);

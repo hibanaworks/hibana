@@ -1,7 +1,5 @@
 //! Offer-path helpers for scope selection and branch materialization.
 
-mod cache;
-mod cache_rebuild;
 mod cache_refresh;
 mod commit;
 mod commit_types;
@@ -25,23 +23,17 @@ use core::{
 };
 
 use super::authority::{Arm, RouteArmToken, RouteResolveStep};
-use super::core::{CursorEndpoint, MaterializedRouteBranch};
+use super::core::CursorEndpoint;
 use super::evidence::{ScopeFrameLabelScratch, ScopeFrameLabelView};
 use super::frontier::{
-    ActiveEntrySet, FrontierDeferOutcome, FrontierObservationKey, FrontierObservationSlot,
-    FrontierVisitSet, LaneOfferState, ObservedEntrySet, OfferEntryObservedState,
-    OfferEvidenceOutcome, OfferLaneEntrySlotMasks, OfferProgressState, OfferSelectPriority,
-    checked_state_index, frontier_observation_key_view_from_storage,
-    frontier_observed_entries_view_from_storage,
-    frontier_offer_lane_entry_slot_masks_view_from_storage, frontier_snapshot_from_scratch,
-    frontier_working_observation_key_view_from_storage,
+    ActiveEntrySet, FrontierDeferOutcome, FrontierVisitSet, LaneOfferState, ObservedEntrySet,
+    OfferEvidenceOutcome, OfferProgressState, OfferSelectPriority, frontier_snapshot_from_scratch,
 };
 use super::lane_port;
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::{ReentryMark, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::state_index_to_usize;
-use crate::rendezvous::port::Port;
 use crate::transport::Transport;
 
 pub(in crate::endpoint::kernel) use self::commit_types::{
@@ -49,8 +41,8 @@ pub(in crate::endpoint::kernel) use self::commit_types::{
 };
 pub(in crate::endpoint::kernel) use self::frontier_types::{
     CachedRecvMeta, CachedRouteArm, CurrentFrontierSelectionState,
-    CurrentReentryControllerEvidence, CurrentScopeSelectionMeta, FrontierFacts,
-    FrontierObservationDomain, FrontierReadiness, ScopeArmMaterializationMeta,
+    CurrentReentryControllerEvidence, CurrentScopeSelectionMeta, FrontierFacts, FrontierReadiness,
+    ScopeArmMaterializationMeta,
 };
 use self::ingress::OfferFrontierFacts;
 pub(in crate::endpoint::kernel) use self::ingress_types::{
@@ -163,22 +155,7 @@ where
 
     fn refresh_offer_entry_state(&mut self, entry_idx: usize) {
         if !self.offer_entry_has_active_lanes(entry_idx) {
-            let detached_root = match self
-                .frontier_state
-                .offer_entry_state
-                .get(entry_idx)
-                .copied()
-                .map(|state| state.parallel_root)
-            {
-                Some(root) => root,
-                None => ScopeId::none(),
-            };
             self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.refresh_frontier_observation_caches_for_entry(
-                entry_idx,
-                detached_root,
-                ScopeId::none(),
-            );
             return;
         }
         let detached_root = match self
@@ -205,11 +182,6 @@ where
         }
         let Some(lane_idx) = representative_lane_idx else {
             self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.refresh_frontier_observation_caches_for_entry(
-                entry_idx,
-                detached_root,
-                ScopeId::none(),
-            );
             return;
         };
         self.detach_offer_entry_from_root_frontier(entry_idx, detached_root);
@@ -219,11 +191,6 @@ where
         let info = self.decision_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
             self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.refresh_frontier_observation_caches_for_entry(
-                entry_idx,
-                detached_root,
-                ScopeId::none(),
-            );
             return;
         }
         let selection_meta = self.compute_offer_entry_selection_meta(
@@ -244,11 +211,6 @@ where
         let mut global_active_entries = self.global_active_entries();
         global_active_entries.insert_entry(entry_idx, lane_idx as u8);
         self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
-        self.refresh_frontier_observation_caches_for_entry(
-            entry_idx,
-            detached_root,
-            info.parallel_root,
-        );
     }
 
     fn detach_lane_from_offer_entry(&mut self, lane_idx: usize, info: LaneOfferState) {
@@ -274,11 +236,6 @@ where
             let mut global_active_entries = self.global_active_entries();
             global_active_entries.remove_entry(entry_idx);
             self.frontier_state.clear_offer_entry_state(entry_idx);
-            self.refresh_frontier_observation_caches_for_entry(
-                entry_idx,
-                parallel_root,
-                ScopeId::none(),
-            );
             return;
         }
         if self.offer_entry_state_snapshot(entry_idx).is_none() {
@@ -394,7 +351,7 @@ where
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<MaterializedRouteBranch<'r>>> {
+    ) -> Poll<RecvResult<u8>> {
         loop {
             let step = match state.execution.kind() {
                 OfferExecutionKind::Uninitialized => self.poll_offer_uninitialized(state),
@@ -415,7 +372,7 @@ where
     fn poll_offer_uninitialized(
         &mut self,
         state: &mut OfferState<'r>,
-    ) -> Poll<RecvResult<Option<MaterializedRouteBranch<'r>>>> {
+    ) -> Poll<RecvResult<Option<u8>>> {
         let mut frontier_scratch = self.frontier_scratch_view();
         state.execution = OfferExecution::Selecting {
             frontier_visited: super::frontier::frontier_visit_set_from_scratch(
@@ -426,16 +383,7 @@ where
     }
 
     #[inline(never)]
-    fn poll_offer_selecting(
-        &mut self,
-        state: &mut OfferState<'r>,
-    ) -> Poll<RecvResult<Option<MaterializedRouteBranch<'r>>>> {
-        let OfferExecution::Selecting {
-            mut frontier_visited,
-        } = core::mem::replace(&mut state.execution, OfferExecution::Uninitialized)
-        else {
-            crate::invariant();
-        };
+    fn poll_offer_selecting(&mut self, state: &mut OfferState<'r>) -> Poll<RecvResult<Option<u8>>> {
         let selection = match self.select_scope() {
             Ok(selection) => selection,
             Err(err) => {
@@ -443,7 +391,13 @@ where
                 return Poll::Ready(Err(err));
             }
         };
-        let facts = self.prepare_frontier_facts(selection, &mut frontier_visited);
+        let (frontier_visited, facts) = {
+            let OfferExecution::Selecting { frontier_visited } = &mut state.execution else {
+                crate::invariant();
+            };
+            let facts = self.prepare_frontier_facts(selection, frontier_visited);
+            (*frontier_visited, facts)
+        };
         state.execution = OfferExecution::Collecting {
             frontier_visited,
             stage: OfferCollectState {
@@ -459,56 +413,58 @@ where
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Option<MaterializedRouteBranch<'r>>>> {
-        let OfferExecution::Collecting {
-            frontier_visited,
-            mut stage,
-        } = core::mem::replace(&mut state.execution, OfferExecution::Uninitialized)
-        else {
-            crate::invariant();
-        };
-        match self.poll_collect_offer_evidence(&mut state.pending_recv, &mut stage, cx) {
-            Poll::Pending => {
-                state.execution = OfferExecution::Collecting {
-                    frontier_visited,
-                    stage,
-                };
-                Poll::Pending
-            }
-            Poll::Ready(Err(err)) => {
-                stage.discard_terminal();
-                Poll::Ready(Err(err))
-            }
-            Poll::Ready(Ok(())) => {
-                let scope_id = stage.facts.scope_id();
-                let frame_hint_ingestion = stage.facts.profile.frame_hint_ingestion();
-                let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
-                self.write_selection_frame_label_meta(
-                    stage.facts.selection,
-                    &mut frame_label_scratch,
-                );
-                self.ingest_scope_evidence_for_offer(
-                    scope_id,
-                    self.offer_lane_set_for_scope(scope_id),
-                    frame_hint_ingestion,
-                    &frame_label_scratch.view(),
-                );
-                if self.scope_evidence_conflicted(scope_id) {
+    ) -> Poll<RecvResult<Option<u8>>> {
+        let (frontier_visited, resolve_stage) = {
+            let OfferExecution::Collecting {
+                frontier_visited,
+                stage,
+            } = &mut state.execution
+            else {
+                crate::invariant();
+            };
+            match self.poll_collect_offer_evidence(&mut state.pending_recv, stage, cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(err)) => {
                     stage.discard_terminal();
-                    return Poll::Ready(Err(RecvError::PhaseInvariant));
+                    return Poll::Ready(Err(err));
                 }
-                state.execution = OfferExecution::Resolving {
-                    frontier_visited,
-                    stage: OfferResolveState {
-                        facts: stage.facts,
-                        ingress: stage.ingress,
-                        progress: OfferProgressState::new(),
-                        pending: ResolvePendingState::ready(),
-                    },
-                };
-                Poll::Ready(Ok(None))
+                Poll::Ready(Ok(())) => {
+                    let scope_id = stage.facts.scope_id();
+                    let frame_hint_ingestion = stage.facts.profile.frame_hint_ingestion();
+                    let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
+                    self.write_selection_frame_label_meta(
+                        stage.facts.selection,
+                        &mut frame_label_scratch,
+                    );
+                    self.ingest_scope_evidence_for_offer(
+                        scope_id,
+                        self.offer_lane_set_for_scope(scope_id),
+                        frame_hint_ingestion,
+                        &frame_label_scratch.view(),
+                    );
+                    if self.scope_evidence_conflicted(scope_id) {
+                        stage.discard_terminal();
+                        return Poll::Ready(Err(RecvError::PhaseInvariant));
+                    }
+                    let ingress =
+                        core::mem::replace(&mut stage.ingress, OfferStagedIngress::empty());
+                    (
+                        *frontier_visited,
+                        OfferResolveState {
+                            facts: stage.facts,
+                            ingress,
+                            progress: OfferProgressState::new(),
+                            pending: ResolvePendingState::ready(),
+                        },
+                    )
+                }
             }
-        }
+        };
+        state.execution = OfferExecution::Resolving {
+            frontier_visited,
+            stage: resolve_stage,
+        };
+        Poll::Ready(Ok(None))
     }
 
     #[inline(never)]
@@ -516,67 +472,72 @@ where
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<Option<MaterializedRouteBranch<'r>>>> {
-        let OfferExecution::Resolving {
-            mut frontier_visited,
-            mut stage,
-        } = core::mem::replace(&mut state.execution, OfferExecution::Uninitialized)
-        else {
-            crate::invariant();
-        };
-        let resolved = match self.resolve_token(
-            &mut stage,
-            &mut state.pending_recv,
-            &mut frontier_visited,
-            cx,
-        ) {
-            Poll::Pending => {
-                state.execution = OfferExecution::Resolving {
-                    frontier_visited,
-                    stage,
+    ) -> Poll<RecvResult<Option<u8>>> {
+        let mut restart = None;
+        let mut branch_label = None;
+        {
+            let OfferExecution::Resolving {
+                frontier_visited,
+                stage,
+            } = &mut state.execution
+            else {
+                crate::invariant();
+            };
+            let resolved =
+                match self.resolve_token(stage, &mut state.pending_recv, frontier_visited, cx) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Err(err)) => {
+                        stage.discard_terminal();
+                        return Poll::Ready(Err(err));
+                    }
+                    Poll::Ready(Ok(resolved)) => resolved,
                 };
-                return Poll::Pending;
-            }
-            Poll::Ready(Err(err)) => {
-                stage.discard_terminal();
-                return Poll::Ready(Err(err));
-            }
-            Poll::Ready(Ok(resolved)) => resolved,
-        };
-        match resolved {
-            ResolveTokenOutcome::RestartFrontier => {
-                state.carry_ingress(stage.ingress);
-                state.execution = OfferExecution::Selecting { frontier_visited };
-                Poll::Ready(Ok(None))
-            }
-            ResolveTokenOutcome::Resolved(resolved) => {
-                if stage.facts.profile.is_passive() {
-                    let descended =
-                        match self.descend_selected_passive_route(stage.selection(), resolved) {
+            match resolved {
+                ResolveTokenOutcome::RestartFrontier => {
+                    restart = Some((
+                        *frontier_visited,
+                        core::mem::replace(&mut stage.ingress, OfferStagedIngress::empty()),
+                    ));
+                }
+                ResolveTokenOutcome::Resolved(resolved) => {
+                    if stage.facts.profile.is_passive() {
+                        let descended = match self
+                            .descend_selected_passive_route(stage.selection(), resolved)
+                        {
                             Ok(descended) => descended,
                             Err(err) => {
                                 stage.discard_terminal();
                                 return Poll::Ready(Err(err));
                             }
                         };
-                    if descended {
-                        state.carry_ingress(stage.ingress);
-                        state.execution = OfferExecution::Selecting { frontier_visited };
-                        return Poll::Ready(Ok(None));
+                        if descended {
+                            restart = Some((
+                                *frontier_visited,
+                                core::mem::replace(&mut stage.ingress, OfferStagedIngress::empty()),
+                            ));
+                        }
                     }
-                }
-                let selection = stage.selection();
-                let transport_payload = stage.ingress.into_transport();
-                match self.produce_branch(
-                    selection,
-                    resolved,
-                    stage.facts.profile,
-                    transport_payload,
-                ) {
-                    Ok(branch) => Poll::Ready(Ok(Some(branch.into()))),
-                    Err(err) => Poll::Ready(Err(err)),
+                    if restart.is_none() {
+                        let selection = stage.selection();
+                        match self.produce_branch(
+                            selection,
+                            resolved,
+                            stage.facts.profile,
+                            &mut stage.ingress,
+                        ) {
+                            Ok(label) => branch_label = Some(label),
+                            Err(err) => return Poll::Ready(Err(err)),
+                        }
+                    }
                 }
             }
         }
+        if let Some((frontier_visited, ingress)) = restart {
+            state.carry_ingress(ingress);
+            state.execution = OfferExecution::Selecting { frontier_visited };
+            return Poll::Ready(Ok(None));
+        }
+        let label = crate::invariant_some(branch_label);
+        Poll::Ready(Ok(Some(label)))
     }
 }

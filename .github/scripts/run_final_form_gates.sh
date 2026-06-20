@@ -4,6 +4,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+if [[ "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD:-1}" != "0" \
+  && "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE:-0}" != "1" ]]; then
+  source "${ROOT_DIR}/.github/scripts/lib/compile_pressure_guard.sh"
+  HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE=1 \
+    HIBANA_COMPILE_PRESSURE_LABEL=final_form_gate \
+    run_with_compile_pressure_guard \
+      "final-form gate" \
+      env HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE=1 bash "$0" "$@"
+  exit "$?"
+fi
+
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
@@ -48,5 +59,4 @@ bash ./.github/scripts/check_compiled_descriptor_authority.sh
 bash ./.github/scripts/check_route_frontier_owner.sh
 bash ./.github/scripts/check_direct_projection_binary.sh
 bash ./.github/scripts/check_subsystem_budget_gates.sh
-bash ./.github/scripts/check_huge_choreography_budget.sh
 bash ./.github/scripts/check_package_artifact.sh

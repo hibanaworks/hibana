@@ -176,7 +176,6 @@ impl<'a> LaneSetView<'a> {
         true
     }
 
-    #[inline(always)]
     pub(crate) fn word_at(self, word_idx: usize) -> LaneWord {
         if word_idx >= self.word_len() || self.ptr.is_null() {
             return 0;
@@ -218,7 +217,6 @@ impl<'a> LaneSetView<'a> {
         self.next_set_from(0, lane_limit)
     }
 
-    #[inline(always)]
     pub(crate) fn next_set_from(self, start: usize, lane_limit: usize) -> Option<usize> {
         if start >= lane_limit {
             return None;
@@ -278,22 +276,6 @@ pub(crate) struct LaneSet {
 }
 
 impl LaneSet {
-    pub(crate) const EMPTY: Self = Self {
-        ptr: core::ptr::null_mut(),
-        word_len: 0,
-    };
-
-    #[inline(always)]
-    pub(crate) const fn from_parts(ptr: *mut LaneWord, word_len: usize) -> Self {
-        if word_len > u16::MAX as usize {
-            crate::invariant();
-        }
-        Self {
-            ptr,
-            word_len: word_len as u16,
-        }
-    }
-
     #[inline(always)]
     pub(crate) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut LaneWord, word_len: usize) {
         if word_len > u16::MAX as usize {
@@ -329,19 +311,6 @@ impl LaneSet {
     }
 
     #[inline(always)]
-    pub(crate) fn clear(&mut self) {
-        let mut idx = 0usize;
-        while idx < self.word_len() {
-            /* SAFETY: `idx < word_len` bounds this lane-set's word slice, and
-            `&mut self` owns the clear operation. */
-            unsafe {
-                self.ptr.add(idx).write(0);
-            }
-            idx += 1;
-        }
-    }
-
-    #[inline(always)]
     pub(crate) fn insert(&mut self, lane: usize) {
         let (word_idx, bit) = lane_word_index(lane);
         if word_idx >= self.word_len() {
@@ -366,25 +335,6 @@ impl LaneSet {
         unsafe {
             let word = self.ptr.add(word_idx);
             word.write(word.read() & !bit);
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn copy_from(&mut self, src: LaneSetView<'_>) {
-        self.clear();
-        let len = if self.word_len() < src.word_len() {
-            self.word_len()
-        } else {
-            src.word_len()
-        };
-        let mut idx = 0usize;
-        while idx < len {
-            /* SAFETY: `idx < len` is inside both initialized destination and source
-            lane-word views; `&mut self` owns the destination copy. */
-            unsafe {
-                self.ptr.add(idx).write(src.word_at(idx));
-            }
-            idx += 1;
         }
     }
 }

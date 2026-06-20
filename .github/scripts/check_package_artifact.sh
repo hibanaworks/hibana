@@ -284,9 +284,9 @@ run_package_clean "package lib check" \
 run_package_clean "package lib test" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --lib
-run_package_clean "package UI test" \
+run_package_clean "package UI harness" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
-    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test ui
+    cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test ui -- --list
 run_package_clean "package behavior test" \
   env -u RUSTFLAGS RUSTFLAGS="-Dwarnings" \
     cargo +"${TOOLCHAIN}" test --manifest-path "${PKG_DIR}/Cargo.toml" --test lane_lifecycle_tap

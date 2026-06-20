@@ -39,7 +39,6 @@ where
         crate::observe::core::emit(port.tap(), event);
     }
 
-    #[inline(always)]
     pub(in crate::endpoint::kernel) fn poll_received_transport_frame_for_lane(
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
@@ -66,7 +65,6 @@ where
         }
     }
 
-    #[inline(always)]
     pub(in crate::endpoint::kernel) fn poll_received_framed_transport_frame_for_lane(
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
@@ -117,7 +115,6 @@ where
         }
     }
 
-    #[inline(always)]
     pub(in crate::endpoint::kernel) fn accept_materialized_transport_frame(
         &self,
         lane_idx: usize,

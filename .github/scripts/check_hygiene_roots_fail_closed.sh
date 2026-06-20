@@ -11,56 +11,70 @@ trap 'rm -rf "${tmp}"' EXIT
 
 printf 'pub fn fixture_violation() {}\n' >"${tmp}/violation.rs"
 printf 'RUSTC_BOOTSTRAP=1\n' >"${tmp}/Cargo.toml"
+selftest_log="${tmp}/selftest.log"
 
 FAILED=0
-check_absent "fixture_violation" \
-  "missing root fixture" \
-  "${tmp}/missing-root" "${tmp}/violation.rs"
+{
+  check_absent "fixture_violation" \
+    "missing root fixture" \
+    "${tmp}/missing-root" "${tmp}/violation.rs"
+} >"${selftest_log}" 2>&1
 if [[ "${FAILED}" -eq 0 ]]; then
   echo "hygiene root self-test violation: missing root was treated as success" >&2
   exit 1
 fi
 
 FAILED=0
-check_absent "RUSTC_BOOTSTRAP" \
-  "optional root fixture" \
-  "${tmp}/Cargo.toml" --optional "${tmp}/.cargo"
+{
+  check_absent "RUSTC_BOOTSTRAP" \
+    "optional root fixture" \
+    "${tmp}/Cargo.toml" --optional "${tmp}/.cargo"
+} >"${selftest_log}" 2>&1
 if [[ "${FAILED}" -eq 0 ]]; then
   echo "hygiene root self-test violation: absent optional root hid an existing violation" >&2
   exit 1
 fi
 
 FAILED=0
-check_absent "fixture_violation" \
-  "violation fixture" \
-  "${tmp}/violation.rs"
+{
+  check_absent "fixture_violation" \
+    "violation fixture" \
+    "${tmp}/violation.rs"
+} >"${selftest_log}" 2>&1
 if [[ "${FAILED}" -eq 0 ]]; then
   echo "hygiene root self-test violation: existing violation was not detected" >&2
   exit 1
 fi
 
 FAILED=0
-check_absent "fixture_clean" \
-  "clean fixture" \
-  "${tmp}/violation.rs"
+{
+  check_absent "fixture_clean" \
+    "clean fixture" \
+    "${tmp}/violation.rs"
+} >"${selftest_log}" 2>&1
 if [[ "${FAILED}" -ne 0 ]]; then
+  cat "${selftest_log}" >&2
   echo "hygiene root self-test violation: clean search failed" >&2
   exit 1
 fi
 
 FAILED=0
-check_absent "[" \
-  "rg exit 2 fixture" \
-  "${tmp}/violation.rs"
+{
+  check_absent "[" \
+    "rg exit 2 fixture" \
+    "${tmp}/violation.rs"
+} >"${selftest_log}" 2>&1
 if [[ "${FAILED}" -eq 0 ]]; then
   echo "hygiene root self-test violation: rg exit 2 was treated as success" >&2
   exit 1
 fi
 
 FAILED=0
-check_required "fixture_violation" \
-  "missing required file fixture" \
-  "${tmp}/missing-file.rs"
+{
+  check_required "fixture_violation" \
+    "missing required file fixture" \
+    "${tmp}/missing-file.rs"
+} >"${selftest_log}" 2>&1
 if [[ "${FAILED}" -eq 0 ]]; then
   echo "hygiene root self-test violation: missing required file was treated as success" >&2
   exit 1
@@ -80,7 +94,7 @@ if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 SH
-if bash "${representative_script}" "${ROOT_DIR}" "${tmp}/violation.rs"; then
+if bash "${representative_script}" "${ROOT_DIR}" "${tmp}/violation.rs" >"${selftest_log}" 2>&1; then
   echo "hygiene root self-test violation: representative migrated script accepted rg exit 2" >&2
   exit 1
 fi

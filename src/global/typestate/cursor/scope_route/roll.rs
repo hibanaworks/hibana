@@ -22,6 +22,7 @@ impl EventCursor {
         }
     }
 
+    #[inline(never)]
     fn roll_scope_contains_index(&self, scope: ScopeId, idx: usize) -> bool {
         if matches!(
             scope.kind(),
@@ -48,6 +49,7 @@ impl EventCursor {
         }
     }
 
+    #[inline(never)]
     fn first_roll_lane_event_index(&self, scope: ScopeId, lane: u8) -> Option<usize> {
         if let Some(row) = self.machine().roll_scope_row(scope) {
             let mut idx = row.start();
@@ -74,10 +76,11 @@ impl EventCursor {
         None
     }
 
+    #[inline(never)]
     fn roll_scope_events_complete(
         &self,
         scope: ScopeId,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let mut found = false;
         let (mut idx, end) = if let Some(row) = self.machine().roll_scope_row(scope) {
@@ -89,9 +92,11 @@ impl EventCursor {
             if self.roll_scope_contains_index(scope, idx) && self.event_label_lane_at(idx).is_some()
             {
                 let conflict = self.machine().event_conflict_for_index(idx);
-                if !self.event_conflict_row_allows_with_preview(conflict, conflict, |scope| {
-                    selected_arm_for_scope(scope)
-                }) {
+                if !self.event_conflict_row_allows_with_preview(
+                    conflict,
+                    conflict,
+                    &mut *selected_arm_for_scope,
+                ) {
                     idx += 1;
                     continue;
                 }
@@ -105,10 +110,11 @@ impl EventCursor {
         found
     }
 
+    #[inline(never)]
     fn complete_roll_body_scope_for_index(
         &self,
         idx: usize,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<ScopeId> {
         let mut slot = 0usize;
         let mut best = ScopeId::none();
@@ -117,7 +123,7 @@ impl EventCursor {
             if row.start() <= idx
                 && idx < row.end()
                 && row.len() >= best_len
-                && self.roll_scope_events_complete(scope, &mut selected_arm_for_scope)
+                && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
             {
                 best = scope;
                 best_len = row.len();
@@ -127,31 +133,38 @@ impl EventCursor {
         if best.is_none() { None } else { Some(best) }
     }
 
+    #[inline(never)]
     fn complete_roll_scope_for_index(
         &self,
         idx: usize,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<ScopeId> {
-        self.complete_roll_body_scope_for_index(idx, &mut selected_arm_for_scope)
-            .or_else(|| {
-                let scope = self.route_reentry_scope_for_index(idx)?;
-                self.roll_scope_events_complete(scope, selected_arm_for_scope)
-                    .then_some(scope)
-            })
+        if let Some(scope) =
+            self.complete_roll_body_scope_for_index(idx, &mut *selected_arm_for_scope)
+        {
+            return Some(scope);
+        }
+        let scope = self.route_reentry_scope_for_index(idx)?;
+        self.roll_scope_events_complete(scope, selected_arm_for_scope)
+            .then_some(scope)
     }
 
+    #[inline(never)]
     pub(crate) fn roll_reentry_index_for_label(
         &self,
         target_label: u8,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
+        if !self.has_reentry_scopes() {
+            return None;
+        }
         let mut idx = 0usize;
         while idx < self.local_steps_len() {
             let Some((label, lane)) = self.event_label_lane_at(idx) else {
                 idx += 1;
                 continue;
             };
-            let Some(scope) = self.complete_roll_scope_for_index(idx, &mut selected_arm_for_scope)
+            let Some(scope) = self.complete_roll_scope_for_index(idx, &mut *selected_arm_for_scope)
             else {
                 idx += 1;
                 continue;
@@ -164,34 +177,49 @@ impl EventCursor {
         None
     }
 
+    #[inline(never)]
     pub(crate) fn roll_reentry_event_allows_index(
         &self,
         idx: usize,
         lane: u8,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
+        if !self.has_reentry_scopes() {
+            return false;
+        }
         let Some(scope) = self.complete_roll_scope_for_index(idx, selected_arm_for_scope) else {
             return false;
         };
         self.first_roll_lane_event_index(scope, lane) == Some(idx)
     }
 
+    #[inline(never)]
     pub(crate) fn roll_reentry_scope_for_step(
         &self,
         target: RelocatableResidentLaneStep,
     ) -> Option<ScopeId> {
+        if !self.has_reentry_scopes() {
+            return None;
+        }
         let idx = self.node_index_for_relocatable_step(target)?;
         let lane = self
             .machine()
             .event_program()
             .local_step_lane(target.0.step_idx as usize)?;
-        let scope = self
-            .complete_roll_body_scope_for_index(idx, |_| None)
-            .or_else(|| self.route_reentry_scope_for_index(idx))?;
+        let mut selected_arm_for_scope = |_| None;
+        let scope = match self.complete_roll_body_scope_for_index(idx, &mut selected_arm_for_scope)
+        {
+            Some(scope) => scope,
+            None => self.route_reentry_scope_for_index(idx)?,
+        };
         (self.first_roll_lane_event_index(scope, lane) == Some(idx)).then_some(scope)
     }
 
+    #[inline(never)]
     pub(crate) fn clear_roll_scope_events_for_reentry(&mut self, scope: ScopeId) {
+        if !self.has_reentry_scopes() {
+            return;
+        }
         let (mut idx, end) = if let Some(row) = self.machine().roll_scope_row(scope) {
             (row.start(), row.end())
         } else {

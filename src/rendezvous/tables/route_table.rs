@@ -94,7 +94,6 @@ pub(crate) struct RouteTable {
     lane_heads: UnsafeCell<*mut u16>,
     free_head: UnsafeCell<*mut u16>,
     pending_frame_hint_masks: UnsafeCell<*mut FrameLabelMask>,
-    change_generation: UnsafeCell<u16>,
     waiters: UnsafeCell<*mut WaiterSlot>,
     _no_send_sync: PhantomData<*mut ()>,
 }
@@ -323,22 +322,6 @@ impl RouteTable {
         1u16 << (role_idx as u32)
     }
 
-    #[inline]
-    fn bump_change_generation(&self) {
-        /* SAFETY: `change_generation` is an initialized `UnsafeCell<u16>`
-        owned by this table; route-table mutation methods update it after their
-        own slot/list changes and do not expose the mutable reference. */
-        let generation = unsafe { &mut *self.change_generation.get() };
-        let next = generation.wrapping_add(1);
-        *generation = if next == 0 { 1 } else { next };
-    }
-
-    #[inline]
-    pub(crate) fn change_generation(&self) -> u16 {
-        /* SAFETY: the rendezvous table owns initialized slots behind explicit presence state before raw access. */
-        unsafe { *self.change_generation.get() }
-    }
-
     pub(crate) fn record_with_role_count(
         &self,
         lane: Lane,
@@ -357,7 +340,6 @@ impl RouteTable {
         };
         let role_slots = Self::role_slot_count(role_count);
         let generation = self.record_frame_entry(slot_idx, role_slots, role_from, arm);
-        self.bump_change_generation();
 
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
@@ -389,7 +371,6 @@ impl RouteTable {
         let arm = self.mark_unseen_role(slot_idx, role_bit);
         if let Some(arm) = arm {
             self.reclaim_completed_route_slot(lane_idx, slot_idx, role_count);
-            self.bump_change_generation();
             return Poll::Ready(arm);
         }
 
@@ -415,7 +396,6 @@ impl RouteTable {
         let arm = self.mark_unseen_role(slot_idx, role_bit);
         let arm = arm?;
         self.reclaim_completed_route_slot(lane_idx, slot_idx, role_count);
-        self.bump_change_generation();
         Some(arm)
     }
 
@@ -482,7 +462,6 @@ impl RouteTable {
         }
         let lane_idx = self.lane_slot(lane);
         self.set_pending_hint(lane_idx, after);
-        self.bump_change_generation();
     }
 
     pub(crate) fn has_pending_frame_hint_for_lane(
@@ -516,7 +495,6 @@ impl RouteTable {
             self.with_waiter_mut(lane_idx, role_idx, |waiter| waiter.clear());
             role_idx += 1;
         }
-        self.bump_change_generation();
     }
 
     pub(crate) fn wake_lane_waiters(&self, lane: Lane) {

@@ -86,7 +86,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchRecv)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchSend)")
             && public_runtime.contains("if self.public_route_branch.is_some() {\n            self.clear_session_waiter();\n            self.public_op_busy_fault();")
-            && public_runtime.contains("let Some(branch) = branch_recv_state.branch() else {\n            self.clear_session_waiter();\n            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();\n            self.public_op_busy_fault();"),
+            && public_runtime.contains("if self.public_route_branch.is_none() {\n            self.clear_session_waiter();\n            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();\n            self.public_op_busy_fault();"),
         "endpoint API calls must start only from Idle, checked completion must poison on wrong active-op order, and terminal sweep must use an explicit lenient clear path"
     );
     assert!(
@@ -191,11 +191,13 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         .expect("send route authority must stay explicit");
     assert!(
         route_authority.contains("None")
-            && route_authority.contains("Direct {")
-            && route_authority.contains("selected_routes: SelectedRouteCommitRowsRef")
+            && route_authority.contains("Direct { lane: u8, audit_start: u16 }")
             && route_authority.contains("lane: u8")
+            && route_authority.contains("audit_start: u16")
+            && !route_authority.contains("selected_routes")
+            && !route_authority.contains("SelectedRouteCommitRowsRef")
             && route_authority.contains("MaterializedBranch"),
-        "send route authority must distinguish direct route-row preview from materialized route branches"
+        "send route authority must distinguish direct route preview identity from materialized route branches without storing route rows"
     );
     for forbidden in ["&", "Payload", "Codec", "RawSendPayload", "Wire"] {
         assert!(

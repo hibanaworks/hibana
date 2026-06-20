@@ -49,15 +49,14 @@ where
             return Err(SendError::PhaseInvariant);
         };
         let branch_meta = branch.branch_meta;
-        let branch_label = branch.label;
         let has_offered_frame = branch.offered_frame.is_some();
 
         if branch_meta.kind != BranchKind::ArmSendHint || has_offered_frame {
             return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
         }
-        if target_label != branch_label {
+        if target_label != branch_meta.label {
             return Err(self.fail_branch_send_preview(SendError::LabelMismatch {
-                expected: branch_label,
+                expected: branch_meta.label,
                 actual: target_label,
             }));
         }
@@ -88,6 +87,7 @@ where
     }
 
     /// Preview the current send transition without mutating endpoint state.
+    #[inline(never)]
     pub(crate) fn preview_send_meta(
         &mut self,
         target_label: u8,
@@ -105,28 +105,37 @@ where
             }
         }
         let preview_error = Cell::new(None::<SendError>);
-        let preview_result = self.cursor.send_preview_meta_for_label::<ROLE>(
-            target_label,
-            |scope| self.selected_arm_for_scope(scope),
-            |scope| {
-                let lane = self.lane_for_label_or_offer(scope, target_label);
-                match self.preview_controller_send_arm_for_scope(scope, lane) {
+        let preview_result = {
+            let endpoint = &*self;
+            let mut committed_arm_for_scope = |scope| endpoint.selected_arm_for_scope(scope);
+            let mut preview_controller_arm_for_scope = |scope| {
+                let lane = endpoint.lane_for_label_or_offer(scope, target_label);
+                match endpoint.preview_controller_send_arm_for_scope(scope, lane) {
                     Ok(arm) => arm,
                     Err(error) => {
                         preview_error.set(Some(error));
                         None
                     }
                 }
-            },
-            |scope| match self.preview_send_arm_for_scope(scope) {
-                Ok(arm) => arm,
-                Err(error) => {
-                    preview_error.set(Some(error));
-                    None
-                }
-            },
-            |scope, label| self.lane_for_label_or_offer(scope, label),
-        );
+            };
+            let mut selected_arm_for_scope =
+                |scope| match endpoint.preview_send_arm_for_scope(scope) {
+                    Ok(arm) => arm,
+                    Err(error) => {
+                        preview_error.set(Some(error));
+                        None
+                    }
+                };
+            let mut lane_for_label_or_offer =
+                |scope, label| endpoint.lane_for_label_or_offer(scope, label);
+            endpoint.cursor.send_preview_meta_for_label::<ROLE>(
+                target_label,
+                &mut committed_arm_for_scope,
+                &mut preview_controller_arm_for_scope,
+                &mut selected_arm_for_scope,
+                &mut lane_for_label_or_offer,
+            )
+        };
         if let Some(error) = preview_error.get() {
             return Err(error);
         }

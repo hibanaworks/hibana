@@ -3,7 +3,7 @@ use super::{
     RelocatableResidentLaneStep, SelectedRouteCommitRow, Transport, state_index_to_usize,
 };
 use crate::global::const_dsl::ReentryMark;
-use crate::global::typestate::StateIndex;
+use crate::global::typestate::{EnabledEventCommit, StateIndex};
 
 pub(crate) struct PreparedCommitDelta {
     event: Option<CommitEventRow>,
@@ -90,7 +90,6 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    #[inline(always)]
     pub(in crate::endpoint::kernel) fn preflight_commit_delta(
         &self,
         delta: &CommitDelta,
@@ -100,6 +99,13 @@ where
                 .cursor
                 .node_index_for_relocatable_step(event.progress_step())
                 .ok_or(CursorInvariantError::INVARIANT)?;
+            let mut selected_arm = |scope| {
+                if scope == event.scope() {
+                    event.route_arm()
+                } else {
+                    self.selected_arm_for_scope(scope)
+                }
+            };
             let enabled = self.cursor.event_enabled(
                 idx,
                 crate::global::typestate::EventCommitMeta::new(
@@ -110,13 +116,7 @@ where
                     event.route_arm(),
                     event.lane(),
                 ),
-                |scope| {
-                    if scope == event.scope() {
-                        event.route_arm()
-                    } else {
-                        self.selected_arm_for_scope(scope)
-                    }
-                },
+                &mut selected_arm,
             )?;
             if enabled.progress_step() != event.progress_step()
                 || enabled.cursor_after() != delta.cursor_after()
@@ -324,6 +324,32 @@ where
         ))
     }
 
+    #[inline]
+    pub(in crate::endpoint::kernel) fn prepare_enabled_event_commit_delta(
+        &mut self,
+        delta: CommitDelta,
+        enabled: EnabledEventCommit,
+    ) -> Result<PreparedCommitDelta, CursorInvariantError> {
+        let event = delta.event().ok_or(CursorInvariantError::INVARIANT)?;
+        if event.progress_step() != enabled.progress_step()
+            || delta.cursor_after() != enabled.cursor_after()
+        {
+            return Err(CursorInvariantError::INVARIANT);
+        }
+        let idx = enabled.event_index().as_usize();
+        self.preflight_event_selected_route_chain(idx, event.route_arm(), &delta)?;
+        self.preflight_selected_route_rows(&delta)?;
+        self.preflight_lane_relocation(delta.lane_relocation())?;
+        let selected_routes = self
+            .route_commit_rows
+            .seal(delta.selected_route_rows_ref())
+            .map_err(|_| CursorInvariantError::INVARIANT)?;
+        Ok(PreparedCommitDelta::from_preflighted(
+            delta,
+            selected_routes,
+        ))
+    }
+
     #[inline(always)]
     pub(in crate::endpoint::kernel) fn commit_cursor_realign_index(
         &mut self,
@@ -338,7 +364,6 @@ where
         Ok(())
     }
 
-    #[inline(always)]
     pub(in crate::endpoint::kernel) fn commit_prepared_delta(
         &mut self,
         mut delta: PreparedCommitDelta,

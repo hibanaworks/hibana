@@ -1,77 +1,11 @@
 use super::{
-    ActiveEntrySet, CurrentScopeSelectionMeta, EntryBuffer, FrontierKind, Index, IndexMut,
-    LaneOfferState, LaneSet, LaneSetView, LaneWord, ObservedEntrySet, ObservedEntrySummary,
-    ScopeId, StateIndex, checked_state_index,
+    CurrentScopeSelectionMeta, EntryBuffer, FrontierKind, Index, IndexMut, LaneOfferState, ScopeId,
+    StateIndex, checked_state_index,
 };
-pub(crate) struct OfferLaneEntrySlotMasks {
-    pub(crate) ptr: *mut u8,
-    len: u16,
-}
-
-impl OfferLaneEntrySlotMasks {
-    #[inline]
-    pub(crate) const fn from_parts(ptr: *mut u8, len: usize) -> Self {
-        if len > u16::MAX as usize {
-            crate::invariant();
-        }
-        Self {
-            ptr,
-            len: len as u16,
-        }
-    }
-
-    #[inline]
-    pub(crate) const fn len(&self) -> usize {
-        self.len as usize
-    }
-
-    #[inline]
-    pub(crate) fn clear(&mut self) {
-        let mut idx = 0usize;
-        while idx < self.len() {
-            /* SAFETY: `idx < len` bounds the lane-mask column owned by this
-            offer-entry view, and `&mut self` owns the mask reset. */
-            unsafe {
-                self.ptr.add(idx).write(0);
-            }
-            idx += 1;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn set_logical_mask(&mut self, logical_lane: usize, value: u8) {
-        if logical_lane < self.len() {
-            /* SAFETY: `logical_lane < len` bounds the lane-mask column, and
-            this mutable view owns the single mask write for that logical lane. */
-            unsafe {
-                self.ptr.add(logical_lane).write(value);
-            }
-        }
-    }
-}
-
-static ZERO_LANE_MASK: u8 = 0;
-
-impl Index<usize> for OfferLaneEntrySlotMasks {
-    type Output = u8;
-
-    #[inline]
-    fn index(&self, index: usize) -> &Self::Output {
-        if index < self.len() {
-            /* SAFETY: `index < len` bounds the lane-mask column installed in
-            this offer-entry mask view; shared indexing only reads one byte. */
-            unsafe { &*self.ptr.add(index) }
-        } else {
-            &ZERO_LANE_MASK
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(crate) struct RootFrontierState {
     pub(crate) root: ScopeId,
-    pub(crate) observed_entries: ObservedEntrySummary,
-    pub(crate) observed_key_state: ObservedKeyState,
     pub(crate) active_start: u8,
     pub(crate) active_len: u8,
 }
@@ -79,251 +13,23 @@ pub(crate) struct RootFrontierState {
 impl RootFrontierState {
     pub(crate) const EMPTY: Self = Self {
         root: ScopeId::none(),
-        observed_entries: ObservedEntrySummary::EMPTY,
-        observed_key_state: ObservedKeyState::Absent,
         active_start: 0,
         active_len: 0,
-    };
-
-    #[inline]
-    pub(crate) fn observed_key_valid(self) -> bool {
-        self.observed_key_state.is_present()
-    }
-
-    #[inline]
-    pub(crate) fn clear_observed_key_cache(&mut self) {
-        self.observed_entries = ObservedEntrySummary::EMPTY;
-        self.observed_key_state = ObservedKeyState::Absent;
-    }
-
-    #[inline]
-    pub(crate) fn mark_observed_key_cached(&mut self) {
-        self.observed_key_state = ObservedKeyState::Present;
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ObservedKeyState {
-    Absent = 0,
-    Present = 1,
-}
-
-impl ObservedKeyState {
-    #[inline]
-    pub(crate) const fn is_present(self) -> bool {
-        matches!(self, Self::Present)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FrontierObservationMetaSlot {
-    pub(crate) entry_summary_fingerprint: u8,
-    pub(crate) scope_generation: u16,
-    pub(crate) route_change_generation: u16,
-}
-
-impl FrontierObservationMetaSlot {
-    pub(crate) const EMPTY: Self = Self {
-        entry_summary_fingerprint: 0,
-        scope_generation: 0,
-        route_change_generation: 0,
     };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FrontierObservationSlot {
     pub(crate) entry: StateIndex,
-    pub(crate) meta: FrontierObservationMetaSlot,
+    pub(crate) frontier_mask: u8,
 }
 
 impl FrontierObservationSlot {
     pub(crate) const EMPTY: Self = Self {
         entry: StateIndex::ABSENT,
-        meta: FrontierObservationMetaSlot::EMPTY,
+        frontier_mask: 0,
     };
 }
-
-#[derive(Clone, Copy)]
-pub(crate) struct FrontierObservationKey {
-    pub(crate) slots: EntryBuffer<FrontierObservationSlot>,
-    offer_lanes: LaneSet,
-}
-
-impl FrontierObservationKey {
-    pub(crate) const EMPTY: Self = Self {
-        slots: EntryBuffer::EMPTY,
-        offer_lanes: LaneSet::EMPTY,
-    };
-
-    #[inline]
-    pub(crate) const fn from_parts(
-        slots: *mut FrontierObservationSlot,
-        capacity: usize,
-        offer_lane_words: *mut LaneWord,
-        lane_word_len: usize,
-    ) -> Self {
-        Self {
-            slots: EntryBuffer::from_parts(slots, capacity),
-            offer_lanes: LaneSet::from_parts(offer_lane_words, lane_word_len),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn clear(&mut self) {
-        let mut idx = 0usize;
-        while idx < self.slots.capacity() {
-            self.slots[idx] = FrontierObservationSlot::EMPTY;
-            idx += 1;
-        }
-        self.offer_lanes.clear();
-    }
-
-    #[inline]
-    pub(crate) fn observed_entries(self, summary: ObservedEntrySummary) -> ObservedEntrySet {
-        ObservedEntrySet::from_parts_with_summary(self.slots.ptr, self.slots.capacity(), summary)
-    }
-
-    #[inline]
-    pub(crate) fn copy_from(&mut self, src: Self) {
-        self.clear();
-        let len = cached_frontier_observation_slots_len(src.slots);
-        let mut idx = 0usize;
-        while idx < len {
-            self.slots[idx] = src.slots[idx];
-            idx += 1;
-        }
-        self.offer_lanes.copy_from(src.offer_lanes());
-    }
-
-    #[inline]
-    pub(crate) fn set_active_entries_from(&mut self, src: ActiveEntrySet) {
-        let mut idx = 0usize;
-        while idx < self.slots.capacity() {
-            self.slots[idx] = FrontierObservationSlot::EMPTY;
-            idx += 1;
-        }
-        let len = src.len();
-        let mut idx = 0usize;
-        while idx < len {
-            self.slots[idx].entry = src.entry_state(idx);
-            idx += 1;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn len(&self) -> usize {
-        cached_frontier_observation_slots_len(self.slots)
-    }
-
-    #[inline]
-    pub(crate) fn entry_state(&self, idx: usize) -> StateIndex {
-        if idx >= self.slots.capacity() {
-            return StateIndex::ABSENT;
-        }
-        self.slots[idx].entry
-    }
-
-    pub(crate) fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
-        let entry = checked_state_index(entry_idx)?;
-        let len = self.len();
-        let mut slot_idx = 0usize;
-        while slot_idx < len {
-            if self.slots[slot_idx].entry == entry {
-                return Some(slot_idx);
-            }
-            slot_idx += 1;
-        }
-        None
-    }
-
-    #[inline]
-    pub(crate) fn contains_entry(&self, entry_idx: usize) -> bool {
-        self.slot_for_entry(entry_idx).is_some()
-    }
-
-    #[inline]
-    pub(crate) fn entries_equal(&self, other: &Self) -> bool {
-        let len = self.len();
-        if len != other.len() {
-            return false;
-        }
-        let mut idx = 0usize;
-        while idx < len {
-            if self.entry_state(idx) != other.entry_state(idx) {
-                return false;
-            }
-            idx += 1;
-        }
-        true
-    }
-
-    #[inline]
-    pub(crate) fn exact_entries_match(&self, active_entries: ActiveEntrySet) -> bool {
-        let len = active_entries.len();
-        if self.len() != len {
-            return false;
-        }
-        let mut idx = 0usize;
-        while idx < len {
-            if self.entry_state(idx) != active_entries.entry_state(idx) {
-                return false;
-            }
-            idx += 1;
-        }
-        true
-    }
-
-    #[inline]
-    pub(crate) fn slot(&self, idx: usize) -> FrontierObservationMetaSlot {
-        self.slots[idx].meta
-    }
-
-    #[inline]
-    pub(crate) fn slot_mut(&mut self, idx: usize) -> &mut FrontierObservationMetaSlot {
-        &mut self.slots[idx].meta
-    }
-
-    #[inline]
-    pub(crate) fn offer_lanes(&self) -> LaneSetView<'_> {
-        self.offer_lanes.view()
-    }
-
-    #[inline]
-    pub(crate) fn lane_sets_equal(&self, other: &Self) -> bool {
-        self.offer_lanes().equals(other.offer_lanes())
-    }
-
-    pub(crate) fn set_offer_lanes(&mut self, lanes: LaneSetView) {
-        self.offer_lanes.copy_from(lanes);
-    }
-
-    #[inline]
-    pub(crate) fn insert_offer_lane(&mut self, lane_idx: usize) {
-        self.offer_lanes.insert(lane_idx);
-    }
-}
-
-impl PartialEq for FrontierObservationKey {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        let len = self.len();
-        if len != other.len() || !self.lane_sets_equal(other) {
-            return false;
-        }
-        let mut idx = 0usize;
-        while idx < len {
-            if self.entry_state(idx) != other.entry_state(idx) || self.slot(idx) != other.slot(idx)
-            {
-                return false;
-            }
-            idx += 1;
-        }
-        true
-    }
-}
-
-impl Eq for FrontierObservationKey {}
 
 #[inline]
 pub(crate) fn cached_frontier_observation_slots_len(
@@ -382,11 +88,6 @@ impl OfferEntrySummary {
     #[inline]
     pub(crate) fn intrinsic_ready(self) -> bool {
         (self.flags & Self::FLAG_INTRINSIC_READY) != 0
-    }
-
-    #[inline]
-    pub(crate) fn observation_fingerprint(self) -> u8 {
-        self.frontier_mask | (self.flags << 4)
     }
 }
 

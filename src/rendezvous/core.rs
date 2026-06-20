@@ -192,51 +192,6 @@ impl EndpointLeaseState {
     }
 }
 
-const FREE_REGION_CAPACITY: usize = 16;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct FreeRegion {
-    offset: u32,
-    len: u32,
-    state: FreeRegionState,
-}
-
-impl FreeRegion {
-    const EMPTY: Self = Self {
-        offset: 0,
-        len: 0,
-        state: FreeRegionState::Vacant,
-    };
-
-    #[inline]
-    const fn recorded(offset: u32, len: u32) -> Self {
-        Self {
-            offset,
-            len,
-            state: FreeRegionState::Recorded,
-        }
-    }
-
-    #[inline]
-    const fn is_recorded(&self) -> bool {
-        self.state.is_recorded()
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FreeRegionState {
-    Vacant = 0,
-    Recorded = 1,
-}
-
-impl FreeRegionState {
-    #[inline]
-    const fn is_recorded(self) -> bool {
-        matches!(self, Self::Recorded)
-    }
-}
-
 pub(crate) struct Rendezvous<'rv, 'cfg, T: Transport>
 where
     'cfg: 'rv,
@@ -251,7 +206,6 @@ where
     frontier_workspace_bytes: u32,
     endpoint_lease_storage: Sidecar<EndpointLeaseSlot>,
     endpoint_lease_capacity: EndpointLeaseId,
-    free_regions: [FreeRegion; FREE_REGION_CAPACITY],
     lane_range: Range<u32>,
     transport: T,
     assoc_storage: Sidecar<u8>,

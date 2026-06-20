@@ -1,14 +1,9 @@
 error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or non-deterministic first-visible route frontier
  --> src/g.rs
   |
-  |     const { validate_choreography::<Steps>() };
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::project::<1, hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<118, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<119, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<42, ()>>, hibana::g::Seq<hibana::g::Send<0, 1, hibana::g::Msg<99, ()>>, hibana::g::Send<0, 1, hibana::g::Msg<77, ()>>>>>>>::{constant#0}` failed inside this call
+  |             panic_choreography_error(error);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 3, hibana::g::Msg<118, ()>>, hibana::g::Send<1, 2, hibana::g::Msg<42, ()>>>, hibana::g::Seq<hibana::g::Send<0, 3, hibana::g::Msg<119, ()>>, hibana::g::Seq<hibana::g::Send<1, 2, hibana::g::Msg<42, ()>>, hibana::g::Send<1, 2, hibana::g::Msg<77, ()>>>>>>::VALIDATION` failed inside this call
   |
-note: inside `g::validate_choreography::<Route<Seq<hibana::g::Send<0, 2, Msg<118, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 2, Msg<119, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
- --> src/g.rs
-  |
-  |         panic_choreography_error(error);
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
   |
@@ -24,12 +19,35 @@ note: inside `g::panic_choreography_error`
   | |__________- in this macro invocation
 
 note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |         let () = Self::VALIDATION;
+  |                  ^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |             &ProgramProjection::<Steps>::PROGRAM_REF,
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     &RoleProjection::<ROLE, Steps>::IMAGE_REF
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
  --> src/g.rs
   |
-  |     const { validate_choreography::<Steps>() };
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |       let image = const {
+  |  _________________^
+  | |         if ROLE >= ROLE_DOMAIN_SIZE {
+  | |             panic!("{}", ROLE_INDEX_ERROR);
+... |
+  | |     };
+  | |_____^
 
-note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 2, Msg<118, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, hibana::g::Send<0, 1, Msg<99, ()>>>>, Seq<hibana::g::Send<0, 2, Msg<119, ()>>, Seq<hibana::g::Send<0, 1, Msg<42, ()>>, Seq<hibana::g::Send<0, 1, Msg<99, ()>>, hibana::g::Send<0, 1, Msg<77, ()>>>>>>>`
+note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 3, Msg<118, ()>>, hibana::g::Send<1, 2, Msg<42, ()>>>, Seq<hibana::g::Send<0, 3, Msg<119, ()>>, Seq<hibana::g::Send<1, 2, Msg<42, ()>>, hibana::g::Send<1, 2, Msg<77, ()>>>>>>`
  --> src/global/program.rs
   |
   |         crate::g::project(self)

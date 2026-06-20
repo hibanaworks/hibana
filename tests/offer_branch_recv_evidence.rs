@@ -203,7 +203,7 @@ impl Transport for LabelRewriteTransport {
     }
 }
 
-fn controller_program() -> RoleProgram<0> {
+fn route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left_arm = g::send::<0, 1, Msg<71, u32>>();
     let right_arm = g::send::<0, 1, Msg<72, u32>>();
     let route = g::route(left_arm, right_arm);
@@ -211,23 +211,7 @@ fn controller_program() -> RoleProgram<0> {
     project(&program)
 }
 
-fn worker_program() -> RoleProgram<1> {
-    let left_arm = g::send::<0, 1, Msg<71, u32>>();
-    let right_arm = g::send::<0, 1, Msg<72, u32>>();
-    let route = g::route(left_arm, right_arm);
-    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>>());
-    project(&program)
-}
-
-fn resolved_controller_program() -> RoleProgram<0> {
-    let left_arm = g::send::<0, 1, Msg<71, u32>>();
-    let right_arm = g::send::<0, 1, Msg<72, u32>>();
-    let route = g::route(left_arm, right_arm).resolve::<MATERIALIZED_MISMATCH_RESOLVER>();
-    let program = g::seq(route, g::send::<0, 1, Msg<73, u32>>());
-    project(&program)
-}
-
-fn resolved_worker_program() -> RoleProgram<1> {
+fn resolved_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left_arm = g::send::<0, 1, Msg<71, u32>>();
     let right_arm = g::send::<0, 1, Msg<72, u32>>();
     let route = g::route(left_arm, right_arm).resolve::<MATERIALIZED_MISMATCH_RESOLVER>();
@@ -266,8 +250,8 @@ fn with_route_workspace(
                 .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let sid = SessionId::new(901);
-            let controller_program = controller_program();
-            let worker_program = worker_program();
+            let controller_program = route_program::<0>();
+            let worker_program = route_program::<1>();
             let mut controller = rv
                 .enter(sid, &controller_program)
                 .expect("attach controller");
@@ -291,8 +275,8 @@ fn with_deterministic_route_workspace(
                 .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
             let sid = SessionId::new(902);
-            let controller_program = controller_program();
-            let worker_program = worker_program();
+            let controller_program = route_program::<0>();
+            let worker_program = route_program::<1>();
             let mut controller = rv
                 .enter(sid, &controller_program)
                 .expect("attach controller");
@@ -539,8 +523,8 @@ fn offer_materialized_label_mismatch_fails_closed() {
                 .expect("register rendezvous");
             let mut tap = rv.tap();
             let sid = SessionId::new(903);
-            let controller_program = resolved_controller_program();
-            let worker_program = resolved_worker_program();
+            let controller_program = resolved_route_program::<0>();
+            let worker_program = resolved_route_program::<1>();
             rv.set_resolver(
                 &controller_program,
                 ResolverRef::<MATERIALIZED_MISMATCH_RESOLVER>::decision_state(

@@ -1,0 +1,633 @@
+use super::super::{
+    EventCursor, PackedEventConflict, ScopeId, SendMeta, SendPreviewError, StateIndex,
+    state_index_to_usize,
+};
+use crate::global::typestate::EventCommitMeta;
+
+#[derive(Clone, Copy)]
+struct SendPreviewRouteArm {
+    lane: u8,
+    scope: ScopeId,
+    arm: u8,
+}
+
+struct SendPreviewDecisionContext<'a> {
+    target_label: u8,
+    preview_route_arm: &'a mut Option<SendPreviewRouteArm>,
+    committed_arm_for_scope: &'a mut dyn FnMut(ScopeId) -> Option<u8>,
+    preview_controller_arm_for_scope: &'a mut dyn FnMut(ScopeId) -> Option<u8>,
+    selected_arm_for_scope: &'a mut dyn FnMut(ScopeId) -> Option<u8>,
+    lane_for_label_or_offer: &'a mut dyn FnMut(ScopeId, u8) -> u8,
+}
+
+impl EventCursor {
+    fn send_preview_local_label_at(&self, idx: usize) -> Option<u8> {
+        if let Some(meta) = self.try_recv_meta_at(idx) {
+            return Some(meta.label);
+        }
+        if let Some(meta) = self.try_send_meta_at(idx) {
+            return Some(meta.label);
+        }
+        if let Some(meta) = self.try_local_meta_at(idx) {
+            return Some(meta.label);
+        }
+        None
+    }
+
+    #[inline(never)]
+    fn send_preview_route_arm_label_index(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        target_label: u8,
+    ) -> Option<usize> {
+        let slot = self.route_scope_slot(scope_id)?;
+        let row = self
+            .machine()
+            .event_program()
+            .route_arm_event_row_by_slot(slot, arm)?;
+        let mut idx = row.start();
+        while idx < row.end() {
+            if self.send_preview_local_label_at(idx) == Some(target_label) {
+                return Some(idx);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    #[inline]
+    fn send_preview_is_at_controller_arm_entry(&self, scope_id: ScopeId, idx: usize) -> bool {
+        let mut arm = 0u8;
+        while arm <= 1 {
+            if self
+                .controller_arm_entry_by_arm(scope_id, arm)
+                .is_some_and(|(entry, _)| state_index_to_usize(entry) == idx)
+                || self.route_arm_for_index(scope_id, idx) == Some(arm)
+            {
+                return true;
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        false
+    }
+
+    #[inline(never)]
+    fn send_preview_controller_scope_at(&self, idx: usize) -> Option<ScopeId> {
+        let mut selected = None;
+        let mut selected_len = 0usize;
+        let mut slot = 0usize;
+        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+            if idx >= region.start() && idx < region.end() {
+                let scope = region.scope();
+                let len = region.end() - region.start();
+                if len >= selected_len && self.is_route_controller(scope) {
+                    selected = Some(scope);
+                    selected_len = len;
+                }
+            }
+            slot += 1;
+        }
+        selected
+    }
+
+    #[inline]
+    fn intrinsic_send_preview_controller_arm_entry_for_label(
+        &self,
+        scope_id: ScopeId,
+        target_label: u8,
+    ) -> Option<(u8, usize)> {
+        let mut arm = 0u8;
+        while arm <= 1 {
+            if let Some((entry, label)) = self.controller_arm_entry_by_arm(scope_id, arm)
+                && label == target_label
+            {
+                return Some((arm, state_index_to_usize(entry)));
+            }
+            if let Some(idx) = self.send_preview_route_arm_label_index(scope_id, arm, target_label)
+            {
+                return Some((arm, idx));
+            }
+            if arm == 1 {
+                break;
+            }
+            arm += 1;
+        }
+        None
+    }
+
+    #[inline(never)]
+    fn send_preview_selected_controller_arm_entry_for_label(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        target_label: u8,
+    ) -> Result<usize, SendPreviewError> {
+        if let Some((entry, label)) = self.controller_arm_entry_by_arm(scope_id, arm) {
+            if label == target_label {
+                return Ok(state_index_to_usize(entry));
+            }
+            if let Some(idx) = self.send_preview_route_arm_label_index(scope_id, arm, target_label)
+            {
+                return Ok(idx);
+            }
+            return Err(SendPreviewError::LabelMismatch {
+                expected: label,
+                actual: target_label,
+            });
+        }
+        self.send_preview_route_arm_label_index(scope_id, arm, target_label)
+            .ok_or(SendPreviewError::Invariant)
+    }
+
+    #[inline]
+    fn send_preview_lane_at(&self, idx: usize) -> Option<u8> {
+        if let Some(meta) = self.try_send_meta_at(idx) {
+            Some(meta.lane)
+        } else {
+            self.try_local_meta_at(idx).map(|meta| meta.lane)
+        }
+    }
+
+    #[inline]
+    fn send_preview_selected_arm_for_scope_with_route(
+        &self,
+        scope_id: ScopeId,
+        preview_route_arm: Option<SendPreviewRouteArm>,
+        arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<u8> {
+        if scope_id.is_none() {
+            return None;
+        }
+        if let Some(preview) = preview_route_arm
+            && preview.scope == scope_id
+            && (preview.lane as usize) < self.logical_lane_count()
+        {
+            return Some(preview.arm);
+        }
+        arm_for_scope(scope_id)
+    }
+
+    #[inline(never)]
+    fn send_preview_route_scope_end_if_complete(
+        &self,
+        scope_id: ScopeId,
+        preview_route_arm: Option<SendPreviewRouteArm>,
+        arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        let arm = self.send_preview_selected_arm_for_scope_with_route(
+            scope_id,
+            preview_route_arm,
+            arm_for_scope,
+        )?;
+        if !self.selected_route_arm_completes_scope(scope_id, arm, |scope| {
+            self.send_preview_selected_arm_for_scope_with_route(
+                scope,
+                preview_route_arm,
+                arm_for_scope,
+            )
+        }) {
+            return None;
+        }
+        self.route_scope_end_by_id(scope_id)
+    }
+
+    #[inline(never)]
+    fn send_preview_pending_label_index(&self, target_label: u8) -> Option<usize> {
+        let idx = self.index();
+        if let Some(meta) = self.try_recv_meta_at(idx)
+            && meta.label == target_label
+            && self.index_for_lane_step(meta.lane as usize) == Some(idx)
+        {
+            return Some(idx);
+        }
+        if let Some(meta) = self.try_send_meta_at(idx)
+            && meta.label == target_label
+        {
+            return Some(idx);
+        }
+        if let Some(meta) = self.try_local_meta_at(idx)
+            && meta.label == target_label
+        {
+            return Some(idx);
+        }
+        None
+    }
+
+    fn send_preview_label_at_index(&self, idx: usize) -> Option<u8> {
+        if let Some(meta) = self.try_recv_meta_at(idx) {
+            return Some(meta.label);
+        }
+        if let Some(meta) = self.try_send_meta_at(idx) {
+            return Some(meta.label);
+        }
+        if let Some(meta) = self.try_local_meta_at(idx) {
+            return Some(meta.label);
+        }
+        None
+    }
+
+    fn send_preview_missing_start_error(&self, target_label: u8) -> SendPreviewError {
+        if let Some(idx) = self.first_pending_step_index(usize::MAX)
+            && let Some(expected) = self.send_preview_label_at_index(idx)
+        {
+            return SendPreviewError::LabelMismatch {
+                expected,
+                actual: target_label,
+            };
+        }
+        SendPreviewError::Invariant
+    }
+
+    #[inline(never)]
+    fn send_preview_local_start_index_for_label(&self, target_label: u8) -> Option<usize> {
+        if let Some(idx) = self.send_preview_pending_label_index(target_label) {
+            return Some(idx);
+        }
+        if let Some((lane_idx, _)) = self.pending_step_for_label(target_label)
+            && let Some(idx) = self.index_for_lane_step(lane_idx)
+        {
+            return Some(idx);
+        }
+        None
+    }
+
+    #[inline(never)]
+    fn send_preview_route_start_index(&self) -> Option<usize> {
+        if self
+            .send_preview_controller_scope_at(self.index())
+            .is_some()
+        {
+            return Some(self.index());
+        }
+        if self.enclosing_route_scope_rows_at(self.index()).is_some() {
+            return Some(self.index());
+        }
+        None
+    }
+
+    #[inline(never)]
+    fn send_preview_start_index_for_label(
+        &self,
+        target_label: u8,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        if self.has_reentry_scopes()
+            && let Some(idx) =
+                self.roll_reentry_index_for_label(target_label, &mut *selected_arm_for_scope)
+        {
+            return Some(idx);
+        }
+        if let Some(idx) = self.send_preview_local_start_index_for_label(target_label) {
+            return Some(idx);
+        }
+        if let Some(idx) = self.send_preview_route_start_index() {
+            return Some(idx);
+        }
+        if let Some(idx) = self.first_pending_step_index(usize::MAX) {
+            return Some(idx);
+        }
+        Some(self.index())
+    }
+
+    #[inline(never)]
+    fn send_preview_apply_controller_route_decision_for_label(
+        &self,
+        idx: &mut usize,
+        scope_id: ScopeId,
+        at_decision: bool,
+        ctx: &mut SendPreviewDecisionContext<'_>,
+    ) -> Result<(), SendPreviewError> {
+        let at_arm_entry = self.send_preview_is_at_controller_arm_entry(scope_id, *idx);
+        let at_decision = at_arm_entry || at_decision;
+        if at_decision && let Some(selected) = (ctx.preview_controller_arm_for_scope)(scope_id) {
+            let entry_idx = self.send_preview_selected_controller_arm_entry_for_label(
+                scope_id,
+                selected,
+                ctx.target_label,
+            )?;
+            if let Some(committed) = (ctx.committed_arm_for_scope)(scope_id)
+                && committed != selected
+                && !self.route_scope_reentry(scope_id)
+            {
+                return Err(SendPreviewError::Invariant);
+            }
+            *idx = entry_idx;
+            if let Some(lane) = self.send_preview_lane_at(*idx) {
+                *ctx.preview_route_arm = Some(SendPreviewRouteArm {
+                    lane,
+                    scope: scope_id,
+                    arm: selected,
+                });
+            }
+        }
+        if at_decision
+            && ctx.preview_route_arm.is_none()
+            && let Some((arm, entry_idx)) = self
+                .intrinsic_send_preview_controller_arm_entry_for_label(scope_id, ctx.target_label)
+        {
+            if let Some(committed) = (ctx.committed_arm_for_scope)(scope_id)
+                && committed != arm
+                && !self.route_scope_reentry(scope_id)
+            {
+                return Err(SendPreviewError::Invariant);
+            }
+            *idx = entry_idx;
+            if let Some(lane) = self.send_preview_lane_at(*idx) {
+                *ctx.preview_route_arm = Some(SendPreviewRouteArm {
+                    lane,
+                    scope: scope_id,
+                    arm,
+                });
+            }
+        }
+        if at_decision
+            && ctx.preview_route_arm.is_none()
+            && let Some(arm) = self.route_arm_for_index(scope_id, *idx)
+            && let Some(lane) = self.send_preview_lane_at(*idx)
+        {
+            *ctx.preview_route_arm = Some(SendPreviewRouteArm {
+                lane,
+                scope: scope_id,
+                arm,
+            });
+        }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn send_preview_apply_observer_route_decision_for_label(
+        &self,
+        idx: &mut usize,
+        scope_id: ScopeId,
+        at_decision: bool,
+        ctx: &mut SendPreviewDecisionContext<'_>,
+    ) {
+        if !at_decision {
+            return;
+        }
+        let lane_wire = (ctx.lane_for_label_or_offer)(scope_id, ctx.target_label);
+        let selected_arm = match (ctx.selected_arm_for_scope)(scope_id) {
+            Some(arm) => Some(arm),
+            None => (*ctx.preview_route_arm).and_then(|preview| {
+                (preview.lane == lane_wire && preview.scope == scope_id).then_some(preview.arm)
+            }),
+        };
+        if let Some(selected_arm) = selected_arm {
+            *ctx.preview_route_arm = Some(SendPreviewRouteArm {
+                lane: lane_wire,
+                scope: scope_id,
+                arm: selected_arm,
+            });
+            if let Some(entry_idx) = self.passive_observer_arm_entry_index(scope_id, selected_arm) {
+                *idx = entry_idx;
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn send_preview_apply_route_decision_for_label(
+        &self,
+        idx: &mut usize,
+        ctx: &mut SendPreviewDecisionContext<'_>,
+    ) -> Result<(), SendPreviewError> {
+        let scope_id = match self.send_preview_controller_scope_at(*idx) {
+            Some(scope_id) => Some(scope_id),
+            None => self
+                .enclosing_route_scope_rows_at(*idx)
+                .map(|region| region.scope()),
+        };
+        let Some(scope_id) = scope_id else {
+            return Ok(());
+        };
+
+        let at_route_start = self
+            .route_scope_rows(scope_id)
+            .is_some_and(|region| *idx == region.start());
+        let unlabeled =
+            !self.is_send_at(*idx) && !self.is_recv_at(*idx) && !self.is_local_action_at(*idx);
+        let at_decision = at_route_start || unlabeled;
+
+        if self.is_route_controller(scope_id) {
+            return self.send_preview_apply_controller_route_decision_for_label(
+                idx,
+                scope_id,
+                at_decision,
+                ctx,
+            );
+        }
+        self.send_preview_apply_observer_route_decision_for_label(idx, scope_id, at_decision, ctx);
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn send_preview_skip_non_sender_index(
+        &self,
+        idx: &mut usize,
+        preview_route_arm: Option<SendPreviewRouteArm>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Result<bool, SendPreviewError> {
+        if self.is_send_at(*idx) || self.is_local_action_at(*idx) {
+            return Ok(false);
+        }
+        if let Some(recv_meta) = self.try_recv_meta_at(*idx)
+            && let Ok(progress_step) =
+                self.relocatable_resident_lane_step_at_index(*idx, recv_meta.lane as usize)
+            && self.relocatable_step_done(progress_step)
+        {
+            *idx = state_index_to_usize(self.node_next_index_at(*idx));
+            return Ok(true);
+        }
+        if let Some(region) = self.enclosing_route_scope_rows_at(*idx)
+            && let Some(end) = self.send_preview_route_scope_end_if_complete(
+                region.scope(),
+                preview_route_arm,
+                selected_arm_for_scope,
+            )
+        {
+            *idx = end;
+            return Ok(true);
+        }
+        Err(SendPreviewError::Invariant)
+    }
+
+    #[inline(never)]
+    fn send_preview_meta_at_index<const ROLE: u8>(
+        &self,
+        idx: usize,
+        preview_route_arm: Option<SendPreviewRouteArm>,
+    ) -> Result<SendMeta, SendPreviewError> {
+        let mut current_meta = if self.is_local_action_at(idx) {
+            let local = self
+                .try_local_meta_at(idx)
+                .ok_or(SendPreviewError::Invariant)?;
+            SendMeta {
+                eff_index: local.eff_index,
+                peer: ROLE,
+                label: local.label,
+                frame_label: local.frame_label,
+                semantic: local.semantic,
+                origin: local.origin,
+                next: local.next,
+                scope: local.scope,
+                route_scope: local.route_scope,
+                route_arm: local.route_arm,
+                selected_route_arm: local.route_arm,
+                lane: local.lane,
+            }
+        } else {
+            self.try_send_meta_at(idx)
+                .ok_or(SendPreviewError::Invariant)?
+        };
+        if let Some(preview) = preview_route_arm {
+            if current_meta.route_scope.is_none() {
+                current_meta.route_scope = preview.scope;
+            }
+            if current_meta.route_scope == preview.scope {
+                current_meta.selected_route_arm = Some(preview.arm);
+            }
+        }
+        Ok(current_meta)
+    }
+
+    #[inline(never)]
+    fn send_preview_conflict_allows(
+        &self,
+        idx: usize,
+        preview_route_arm: Option<SendPreviewRouteArm>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        let preview_conflict = self.machine().event_conflict_for_index(idx);
+        let mut arm_for_scope = |scope| {
+            self.send_preview_selected_arm_for_scope_with_route(
+                scope,
+                preview_route_arm,
+                selected_arm_for_scope,
+            )
+        };
+        self.event_conflict_row_allows_with_preview(
+            preview_conflict,
+            preview_conflict,
+            &mut arm_for_scope,
+        )
+    }
+
+    #[inline(never)]
+    fn send_preview_step_for_label<const ROLE: u8>(
+        &self,
+        idx: &mut usize,
+        target_label: u8,
+        preview_route_arm: Option<SendPreviewRouteArm>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Result<Option<(SendMeta, StateIndex)>, SendPreviewError> {
+        if !self.send_preview_conflict_allows(*idx, preview_route_arm, selected_arm_for_scope) {
+            *idx = state_index_to_usize(self.node_next_index_at(*idx));
+            return Ok(None);
+        }
+
+        if self.send_preview_skip_non_sender_index(
+            idx,
+            preview_route_arm,
+            selected_arm_for_scope,
+        )? {
+            return Ok(None);
+        }
+
+        let current_meta = self.send_preview_meta_at_index::<ROLE>(*idx, preview_route_arm)?;
+        let progress_step = self
+            .relocatable_resident_lane_step_at_index(*idx, current_meta.lane as usize)
+            .map_err(|_| SendPreviewError::Invariant)?;
+        if current_meta.label != target_label && self.relocatable_step_done(progress_step) {
+            *idx = state_index_to_usize(self.node_next_index_at(*idx));
+            return Ok(None);
+        }
+
+        if current_meta.label == target_label {
+            let mut arm_for_scope = |scope| {
+                self.send_preview_selected_arm_for_scope_with_route(
+                    scope,
+                    preview_route_arm,
+                    selected_arm_for_scope,
+                )
+            };
+            self.event_enabled(
+                *idx,
+                EventCommitMeta::from(current_meta),
+                &mut arm_for_scope,
+            )
+            .map_err(|_| SendPreviewError::Invariant)?;
+            return Ok(Some((current_meta, StateIndex::from_usize(*idx))));
+        }
+
+        if let Some(region) = self.enclosing_route_scope_rows_at(*idx)
+            && let Some(end) = self.send_preview_route_scope_end_if_complete(
+                region.scope(),
+                preview_route_arm,
+                selected_arm_for_scope,
+            )
+        {
+            *idx = end;
+            return Ok(None);
+        }
+
+        Err(SendPreviewError::LabelMismatch {
+            expected: current_meta.label,
+            actual: target_label,
+        })
+    }
+
+    pub(crate) fn send_preview_meta_for_label<const ROLE: u8>(
+        &self,
+        target_label: u8,
+        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        preview_controller_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        lane_for_label_or_offer: &mut dyn FnMut(ScopeId, u8) -> u8,
+    ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
+        let roll_reentry = if self.has_reentry_scopes() {
+            self.roll_reentry_index_for_label(target_label, &mut *committed_arm_for_scope)
+        } else {
+            None
+        };
+        let mut idx = match roll_reentry {
+            Some(idx) => idx,
+            None => self
+                .send_preview_start_index_for_label(target_label, committed_arm_for_scope)
+                .ok_or_else(|| self.send_preview_missing_start_error(target_label))?,
+        };
+        let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
+
+        {
+            let mut route_decision = SendPreviewDecisionContext {
+                target_label,
+                preview_route_arm: &mut preview_route_arm,
+                committed_arm_for_scope,
+                preview_controller_arm_for_scope,
+                selected_arm_for_scope,
+                lane_for_label_or_offer,
+            };
+            self.send_preview_apply_route_decision_for_label(&mut idx, &mut route_decision)?;
+        }
+
+        let mut iter = 0usize;
+        let bound = self.local_steps_len() + PackedEventConflict::MAX_CHAIN_DEPTH;
+        loop {
+            iter += 1;
+            if iter > bound {
+                return Err(SendPreviewError::Invariant);
+            }
+
+            if let Some(result) = self.send_preview_step_for_label::<ROLE>(
+                &mut idx,
+                target_label,
+                preview_route_arm,
+                selected_arm_for_scope,
+            )? {
+                return Ok(result);
+            }
+        }
+    }
+}

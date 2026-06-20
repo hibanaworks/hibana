@@ -70,10 +70,11 @@ pub(crate) trait RecvKernelEndpoint<'r> {
 }
 
 pub(crate) trait BranchRecvKernelEndpoint<'r> {
+    fn has_branch_recv_kernel_branch(&self) -> bool;
+
     fn prepare_branch_recv_kernel_transport_wait(
         &mut self,
-        desc: BranchRecvRuntimeDesc,
-        branch: &MaterializedRouteBranch<'r>,
+        logical_label: u8,
     ) -> RecvResult<Option<RecvMeta>>;
 
     fn poll_branch_recv_kernel_transport_payload(
@@ -83,11 +84,15 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>>;
 
+    fn stage_branch_recv_kernel_transport_payload(
+        &mut self,
+        frame: lane_port::ReceivedFrame<'r>,
+    ) -> RecvResult<()>;
+
     fn finish_branch_recv_kernel(
         &mut self,
-        desc: BranchRecvRuntimeDesc,
+        logical_label: u8,
         prepared_meta: Option<RecvMeta>,
-        branch: &mut MaterializedRouteBranch<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
 }
@@ -142,61 +147,47 @@ pub(crate) fn kernel_recv<'r>(
 #[inline(never)]
 pub(crate) fn kernel_branch_recv<'r>(
     endpoint: &mut dyn BranchRecvKernelEndpoint<'r>,
-    desc: BranchRecvRuntimeDesc,
+    logical_label: u8,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
-    state: &mut super::branch_recv::BranchRecvState<'r>,
+    state: &mut super::branch_recv::BranchRecvState,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
-    if state.branch().is_none() {
+    if !endpoint.has_branch_recv_kernel_branch() {
         return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
     if state.prepared_meta().is_none() {
-        let prepared = {
-            let branch = crate::invariant_some(state.branch());
-            match endpoint.prepare_branch_recv_kernel_transport_wait(desc, branch) {
-                Ok(meta) => meta,
-                Err(err) => return Poll::Ready(Err(err)),
-            }
+        let prepared = match endpoint.prepare_branch_recv_kernel_transport_wait(logical_label) {
+            Ok(meta) => meta,
+            Err(err) => return Poll::Ready(Err(err)),
         };
         state.set_prepared_meta(prepared);
     }
     if let Some(meta) = state.prepared_meta() {
-        let needs_transport = {
-            let branch = crate::invariant_some(state.branch());
-            branch.offered_frame.is_none()
+        let frame = match endpoint.poll_branch_recv_kernel_transport_payload(
+            meta,
+            state.pending_recv_mut(),
+            cx,
+        ) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Ok(payload)) => payload,
+            Poll::Ready(Err(err)) => {
+                state.set_prepared_meta(None);
+                return Poll::Ready(Err(err));
+            }
         };
-        if needs_transport {
-            let frame = match endpoint.poll_branch_recv_kernel_transport_payload(
-                meta,
-                state.pending_recv_mut(),
-                cx,
-            ) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(payload)) => payload,
-                Poll::Ready(Err(err)) => {
-                    state.set_prepared_meta(None);
-                    return Poll::Ready(Err(err));
-                }
-            };
-            let branch = crate::invariant_some(state.branch_mut());
-            branch.offered_frame = Some(OfferedFrame::new(frame));
+        if let Err(err) = endpoint.stage_branch_recv_kernel_transport_payload(frame) {
+            state.set_prepared_meta(None);
+            return Poll::Ready(Err(err));
         }
     }
     let prepared_meta = state.prepared_meta();
-    let result = {
-        let branch = crate::invariant_some(state.branch_mut());
-        endpoint.finish_branch_recv_kernel(desc, prepared_meta, branch, validate)
-    };
+    let result = endpoint.finish_branch_recv_kernel(logical_label, prepared_meta, validate);
     match result {
-        Ok(payload) => {
-            drop(state.take_branch());
-            state.disarm_restore();
-            Poll::Ready(Ok(unsafe {
-                // SAFETY: committed decode payloads are staged in endpoint-resident
-                // transport/ingress storage or the static empty local payload.
-                lane_port::endpoint_resident_payload(payload)
-            }))
-        }
+        Ok(payload) => Poll::Ready(Ok(unsafe {
+            // SAFETY: committed decode payloads are staged in endpoint-resident
+            // transport/ingress storage or the static empty local payload.
+            lane_port::endpoint_resident_payload(payload)
+        })),
         Err(err) => Poll::Ready(Err(err)),
     }
 }
