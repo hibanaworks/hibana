@@ -224,7 +224,9 @@ run_with_compile_pressure_guard() {
   local observed_mib
   local max_observed_mib
   local start_seconds
-  local observed_start_seconds
+  local now_seconds
+  local active_observed_seconds
+  local active_window_start_seconds
   local elapsed_seconds
   local status
   local child
@@ -232,28 +234,12 @@ run_with_compile_pressure_guard() {
   max_seconds="$(compile_pressure_guard_limit_seconds)"
   max_observed_mib=0
   start_seconds="$(date +%s)"
-  observed_start_seconds="${start_seconds}"
-  if [[ -n "${HIBANA_COMPILE_PRESSURE_CRATE_NAME:-}" ]]; then
-    observed_start_seconds=""
-  fi
+  active_observed_seconds=0
+  active_window_start_seconds=""
   "$@" &
   child="$!"
   while kill -0 "${child}" 2>/dev/null; do
-    if [[ -n "${observed_start_seconds}" ]]; then
-      elapsed_seconds="$(($(date +%s) - observed_start_seconds))"
-    else
-      elapsed_seconds=0
-    fi
-    if (( max_seconds > 0 && elapsed_seconds > max_seconds )); then
-      echo "compile pressure guard violation: ${label} exceeded ${max_seconds}s elapsed time" >&2
-      if ! compile_pressure_guard_stop_tree "${child}"; then
-        return 2
-      fi
-      set +e
-      wait "${child}" 2>/dev/null
-      set -e
-      return 124
-    fi
+    now_seconds="$(date +%s)"
     set +e
     offender="$(compile_pressure_guard_offender "${child}" "${max_kib}")"
     status="$?"
@@ -274,8 +260,21 @@ run_with_compile_pressure_guard() {
         max_observed_mib="${observed_mib}"
       fi
     fi
-    if [[ -z "${observed_start_seconds}" && "${offender}" =~ matched=1 ]]; then
-      observed_start_seconds="$(date +%s)"
+    if [[ -n "${HIBANA_COMPILE_PRESSURE_CRATE_NAME:-}" ]]; then
+      if [[ "${offender}" =~ matched=1 ]]; then
+        if [[ -z "${active_window_start_seconds}" ]]; then
+          active_window_start_seconds="${now_seconds}"
+        fi
+      elif [[ -n "${active_window_start_seconds}" ]]; then
+        active_observed_seconds="$((active_observed_seconds + now_seconds - active_window_start_seconds))"
+        active_window_start_seconds=""
+      fi
+      elapsed_seconds="${active_observed_seconds}"
+      if [[ -n "${active_window_start_seconds}" ]]; then
+        elapsed_seconds="$((elapsed_seconds + now_seconds - active_window_start_seconds))"
+      fi
+    else
+      elapsed_seconds="$((now_seconds - start_seconds))"
     fi
     if [[ "${status}" -eq 0 && -n "${offender}" ]]; then
       echo "compile pressure guard violation: ${label} exceeded $((max_kib / 1024))MiB RSS: ${offender}" >&2
@@ -287,16 +286,30 @@ run_with_compile_pressure_guard() {
       set -e
       return 137
     fi
+    if (( max_seconds > 0 && elapsed_seconds > max_seconds )); then
+      echo "compile pressure guard violation: ${label} exceeded ${max_seconds}s elapsed time" >&2
+      if ! compile_pressure_guard_stop_tree "${child}"; then
+        return 2
+      fi
+      set +e
+      wait "${child}" 2>/dev/null
+      set -e
+      return 124
+    fi
     sleep "${HIBANA_COMPILE_PRESSURE_POLL_SECONDS:-1}"
   done
   set +e
   wait "${child}"
   status="$?"
   set -e
-  if [[ -n "${observed_start_seconds}" ]]; then
-    elapsed_seconds="$(($(date +%s) - observed_start_seconds))"
+  now_seconds="$(date +%s)"
+  if [[ -n "${HIBANA_COMPILE_PRESSURE_CRATE_NAME:-}" ]]; then
+    elapsed_seconds="${active_observed_seconds}"
+    if [[ -n "${active_window_start_seconds}" ]]; then
+      elapsed_seconds="$((elapsed_seconds + now_seconds - active_window_start_seconds))"
+    fi
   else
-    elapsed_seconds=0
+    elapsed_seconds="$((now_seconds - start_seconds))"
   fi
   echo "compile pressure observed: ${label} elapsed=${elapsed_seconds}s seconds_budget=${max_seconds}s max_rss=${max_observed_mib}MiB rss_budget=$((max_kib / 1024))MiB"
   return "${status}"
