@@ -6,7 +6,8 @@ fn read_plain(path: &Path) -> String {
 }
 
 fn read_dir_rs(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join(path);
     let mut parts = fs::read_dir(&root)
         .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
         .map(|entry| {
@@ -30,55 +31,63 @@ fn read_dir_rs(path: &str) -> String {
 }
 
 fn lib_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/lib.rs");
     read_plain(&path)
 }
 
 fn endpoint_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/endpoint.rs");
     read_plain(&path)
 }
 
 fn endpoint_ops_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/ops.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/endpoint/ops.rs");
     read_plain(&path)
 }
 
 fn global_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/global.rs");
     read_plain(&path)
 }
 
 fn runtime_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/runtime.rs");
     let mut source = read_plain(&path);
     source.push_str(&read_dir_rs("src/runtime"));
     source
 }
 
 fn g_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/g.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/g.rs");
     read_plain(&path)
 }
 
 fn send_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/send.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/endpoint/send.rs");
     read_plain(&path)
 }
 
 fn role_program_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/global/role_program.rs");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("src/global/role_program.rs");
     read_plain(&path)
 }
 
 fn public_api_script_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
         .join(".github/scripts/check_hibana_public_api.sh");
     read_plain(&path)
 }
 
 fn public_surface_budget_script_rs() -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
         .join(".github/scripts/check_public_surface_budget.sh");
     read_plain(&path)
 }
@@ -343,10 +352,10 @@ fn public_api_gate_tracks_g_and_runtime_surfaces() {
         "export TOOLCHAIN=\"${TOOLCHAIN:-1.95.0}\"",
         "check_public_surface_budget.sh",
         "check_surface_hygiene.sh",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test root_surface",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test runtime_surface",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test public_surface_guards",
-        "cargo +\"${TOOLCHAIN}\" test -p hibana --test docs_surface",
+        "cargo +\"${TOOLCHAIN}\" test --manifest-path \"${ROOT_DIR}/.github/repo-tests/Cargo.toml\" --test root_surface",
+        "cargo +\"${TOOLCHAIN}\" test --manifest-path \"${ROOT_DIR}/.github/repo-tests/Cargo.toml\" --test runtime_surface",
+        "cargo +\"${TOOLCHAIN}\" test --manifest-path \"${ROOT_DIR}/.github/repo-tests/Cargo.toml\" --test public_surface_guards",
+        "cargo +\"${TOOLCHAIN}\" test --manifest-path \"${ROOT_DIR}/.github/repo-tests/Cargo.toml\" --test docs_surface",
         "stable public API check passed",
     ] {
         assert!(

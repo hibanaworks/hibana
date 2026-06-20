@@ -22,7 +22,7 @@ fn walk_rs_files(root: &Path, files: &mut Vec<PathBuf>) {
 
 #[test]
 fn local_cell_helper_stays_forbidden() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     assert!(
         !root.join("tests/support/local_only.rs").exists(),
         "tests must not regrow a generic LocalCell helper"
@@ -31,7 +31,7 @@ fn local_cell_helper_stays_forbidden() {
 
 #[test]
 fn tests_do_not_define_static_local_cell_state() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let tests_root = root.join("tests");
     let mut files = Vec::new();
     walk_rs_files(&tests_root, &mut files);
@@ -53,7 +53,7 @@ fn tests_do_not_define_static_local_cell_state() {
 
 #[test]
 fn huge_runtime_helpers_do_not_use_generic_sync_cells() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     {
         let relative = "tests/huge_choreography_runtime.rs";
         let source = read(&root.join(relative));

@@ -41,6 +41,8 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[workspace]
+
 [lib]
 path = "src/lib.rs"
 EOF

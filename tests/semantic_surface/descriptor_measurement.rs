@@ -639,7 +639,9 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
 
 #[test]
 fn compiled_image_sources_stay_split_below_one_thousand_lines() {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(
+        option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")),
+    );
     let image = read("src/global/compiled/images/image.rs");
     for required in [
         "mod blob_storage;",

@@ -1,7 +1,7 @@
 use super::common::*;
 
 fn repo_file_exists(path: &str) -> bool {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    std::path::PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
         .join(path)
         .exists()
 }

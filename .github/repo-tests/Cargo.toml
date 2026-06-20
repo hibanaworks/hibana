@@ -1,0 +1,49 @@
+[package]
+name = "hibana-repo-tests"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+autotests = false
+
+[dependencies]
+hibana = { path = "../.." }
+
+[dev-dependencies]
+futures = "0.3"
+libc = "0.2"
+static_assertions = "1.1"
+trybuild = "1.0"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "io-util"] }
+
+[[test]]
+name = "docs_surface"
+path = "../../tests/docs_surface.rs"
+
+[[test]]
+name = "local_only_hygiene"
+path = "../../tests/local_only_hygiene.rs"
+
+[[test]]
+name = "no_default_rodata"
+path = "../../tests/no_default_rodata.rs"
+
+[[test]]
+name = "public_surface_guards"
+path = "../../tests/public_surface_guards.rs"
+
+[[test]]
+name = "root_surface"
+path = "../../tests/root_surface.rs"
+
+[[test]]
+name = "runtime_surface"
+path = "../../tests/runtime_surface.rs"
+
+[[test]]
+name = "semantic_surface"
+path = "../../tests/semantic_surface.rs"
+
+[[test]]
+name = "transport_resolver_signal_surface"
+path = "../../tests/transport_resolver_signal_surface.rs"

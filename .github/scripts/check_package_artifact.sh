@@ -30,48 +30,6 @@ run_package_clean() {
   trap - RETURN
 }
 
-run_package_with_repo_test_exclusions() {
-  local label="$1"
-  shift
-
-  local log
-  log="$(mktemp)"
-  trap 'rm -f "${log}"' RETURN
-
-  if ! "$@" >"${log}" 2>&1; then
-    cat "${log}" >&2
-    echo "package artifact check failed while running: ${label}" >&2
-    exit 1
-  fi
-  python3 - "${log}" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-log = Path(sys.argv[1]).read_text(encoding="utf-8")
-allowed = re.compile(
-    r"^warning: ignoring test `(docs_surface|local_only_hygiene|no_default_rodata|"
-    r"public_surface_guards|root_surface|runtime_surface|semantic_surface|"
-    r"transport_resolver_signal_surface)` as `tests/[^`]+\.rs` is not included "
-    r"in the published package$"
-)
-unexpected = [
-    line for line in log.splitlines()
-    if "warning:" in line and not allowed.match(line)
-]
-if unexpected:
-    print(log, file=sys.stderr, end="")
-    print("package artifact check detected unexpected warnings", file=sys.stderr)
-    for line in unexpected:
-        print(line, file=sys.stderr)
-    sys.exit(1)
-PY
-
-  cat "${log}"
-  rm -f "${log}"
-  trap - RETURN
-}
-
 PACKAGE_LIST="$(run_package_clean "cargo package --list" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --list --allow-dirty)"
 
@@ -102,6 +60,48 @@ do
     exit 1
   fi
 done
+
+PACKAGE_LIST_TEXT="${PACKAGE_LIST}" python3 - <<'PY'
+from pathlib import Path
+import os
+import re
+import sys
+
+PACKAGE_FILES = set(os.environ["PACKAGE_LIST_TEXT"].splitlines())
+ROOT_TEST_RE = re.compile(r"^tests/[^/]+\.rs$")
+TEST_TABLE_RE = re.compile(r"(?m)^\[\[test\]\]\s*$")
+NAME_RE = re.compile(r'(?m)^\s*name\s*=\s*"([^"]+)"\s*$')
+PATH_RE = re.compile(r'(?m)^\s*path\s*=\s*"([^"]+)"\s*$')
+
+declared: dict[str, str] = {}
+for block in TEST_TABLE_RE.split(Path("Cargo.toml").read_text(encoding="utf-8"))[1:]:
+    name = NAME_RE.search(block)
+    path = PATH_RE.search(block)
+    if name is None or path is None:
+        print(
+            "package artifact check failed: package integration test tables must declare name and path",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    declared[path.group(1)] = name.group(1)
+
+packaged_root_tests = sorted(path for path in PACKAGE_FILES if ROOT_TEST_RE.match(path))
+declared_paths = set(declared)
+
+missing_declaration = [path for path in packaged_root_tests if path not in declared_paths]
+missing_package_file = sorted(path for path in declared_paths if path not in PACKAGE_FILES)
+
+if missing_declaration or missing_package_file:
+    print(
+        "package artifact check failed: package test target declaration drift",
+        file=sys.stderr,
+    )
+    for path in missing_declaration:
+        print(f"packaged integration test lacks [[test]] entry: {path}", file=sys.stderr)
+    for path in missing_package_file:
+        print(f"declared package integration test missing from package: {path}", file=sys.stderr)
+    sys.exit(1)
+PY
 
 if rg -n 'tests/support/' src; then
   echo "package artifact check failed: src must not depend on tests/support" >&2
@@ -268,7 +268,7 @@ if missing:
     sys.exit(1)
 PY
 
-run_package_with_repo_test_exclusions "cargo package --no-verify" \
+run_package_clean "cargo package --no-verify" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --allow-dirty --no-verify
 
 TMP_DIR="$(mktemp -d)"

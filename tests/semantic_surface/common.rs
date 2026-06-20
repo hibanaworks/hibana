@@ -4,13 +4,13 @@ use std::{
 };
 
 pub(crate) fn read(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let full = root.join(path);
     read_plain(&full)
 }
 
 pub(crate) fn repo_file_exists(path: &str) -> bool {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
         .join(path)
         .exists()
 }
@@ -36,7 +36,8 @@ fn is_test_source(path: &Path) -> bool {
 }
 
 pub(crate) fn read_production_dir_rs(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join(path);
     let mut parts = fs::read_dir(&root)
         .unwrap_or_else(|err| panic!("read {} failed: {err}", root.display()))
         .map(|entry| {
@@ -77,7 +78,8 @@ fn read_rs_tree_filtered(path: &str, include_tests: bool) -> String {
         }
     }
 
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join(path);
     let mut parts = Vec::new();
     collect_rs_files(&root, include_tests, &mut parts);
     parts.sort();
@@ -113,7 +115,8 @@ pub(crate) fn production_rs_files(path: &str) -> Vec<String> {
         }
     }
 
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest =
+        PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let root = manifest.join(path);
     let mut parts = Vec::new();
     collect_rs_files(&root, &mut parts);
@@ -149,7 +152,8 @@ pub(crate) fn read_all_rs_tree_except(path: &str, excluded: &[&str]) -> String {
         }
     }
 
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest =
+        PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let root = manifest.join(path);
     let mut parts = Vec::new();
     collect_rs_files(&root, &mut parts);
@@ -188,7 +192,8 @@ pub(crate) fn read_tree_except(path: &str, excluded: &[&str]) -> String {
         }
     }
 
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest =
+        PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let root = manifest.join(path);
     let mut parts = Vec::new();
     collect_files(&root, &mut parts);

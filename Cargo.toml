@@ -1,8 +1,13 @@
+[workspace]
+members = [".", ".github/repo-tests"]
+resolver = "3"
+
 [package]
 name          = "hibana"
-version       = "0.8.0"
+version       = "0.9.0"
 edition       = "2024"
 rust-version  = "1.95"
+autotests     = false
 description   = "Const-projected Affine Multiparty Session Types for choreography-first Rust protocols"
 license       = "MIT OR Apache-2.0"
 repository    = "https://github.com/hibanaworks/hibana"
@@ -56,6 +61,114 @@ libc = "0.2"
 static_assertions = "1.1"
 trybuild = "1.0"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "io-util"] }
+
+[[test]]
+name = "affine_progression"
+path = "tests/affine_progression.rs"
+
+[[test]]
+name = "callsite_regression"
+path = "tests/callsite_regression.rs"
+
+[[test]]
+name = "cursor_send_recv_codec_demux"
+path = "tests/cursor_send_recv_codec_demux.rs"
+
+[[test]]
+name = "cursor_send_recv_direct_recv"
+path = "tests/cursor_send_recv_direct_recv.rs"
+
+[[test]]
+name = "cursor_send_recv_send_recv"
+path = "tests/cursor_send_recv_send_recv.rs"
+
+[[test]]
+name = "cursor_send_recv_session_drop_wake"
+path = "tests/cursor_send_recv_session_drop_wake.rs"
+
+[[test]]
+name = "cursor_send_recv_session_fault_cancel"
+path = "tests/cursor_send_recv_session_fault_cancel.rs"
+
+[[test]]
+name = "cursor_send_recv_session_forget_recv"
+path = "tests/cursor_send_recv_session_forget_recv.rs"
+
+[[test]]
+name = "cursor_send_recv_session_forget_send"
+path = "tests/cursor_send_recv_session_forget_send.rs"
+
+[[test]]
+name = "cursor_send_recv_session_progress"
+path = "tests/cursor_send_recv_session_progress.rs"
+
+[[test]]
+name = "dynamic_route_scope_resolver"
+path = "tests/dynamic_route_scope_resolver.rs"
+
+[[test]]
+name = "huge_choreography_runtime"
+path = "tests/huge_choreography_runtime.rs"
+
+[[test]]
+name = "lane_lifecycle_tap"
+path = "tests/lane_lifecycle_tap.rs"
+
+[[test]]
+name = "local_action"
+path = "tests/local_action.rs"
+
+[[test]]
+name = "nested_route_runtime"
+path = "tests/nested_route_runtime.rs"
+
+[[test]]
+name = "offer_branch_recv_evidence"
+path = "tests/offer_branch_recv_evidence.rs"
+
+[[test]]
+name = "parallel_route_alternating"
+path = "tests/parallel_route_alternating.rs"
+
+[[test]]
+name = "parallel_route_nesting"
+path = "tests/parallel_route_nesting.rs"
+
+[[test]]
+name = "program_capacity_regression"
+path = "tests/program_capacity_regression.rs"
+
+[[test]]
+name = "route_branch_send"
+path = "tests/route_branch_send.rs"
+
+[[test]]
+name = "route_multiphase_progress_arm"
+path = "tests/route_multiphase_progress_arm.rs"
+
+[[test]]
+name = "route_multiphase_progress_inner"
+path = "tests/route_multiphase_progress_inner.rs"
+
+[[test]]
+name = "route_with_internal_parallel"
+path = "tests/route_with_internal_parallel.rs"
+
+[[test]]
+name = "send_route_authority"
+path = "tests/send_route_authority.rs"
+
+[[test]]
+name = "tap_resolver_audit"
+path = "tests/tap_resolver_audit.rs"
+
+[[test]]
+name = "ui"
+path = "tests/ui.rs"
+
+[[test]]
+name = "visible_route_reentry"
+path = "tests/visible_route_reentry.rs"
 
 [badges]
 maintenance = { status = "actively-developed" }

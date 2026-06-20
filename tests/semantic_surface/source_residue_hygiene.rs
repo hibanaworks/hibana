@@ -733,8 +733,10 @@ fn package_artifact_ships_self_contained_tests_and_excludes_repo_gates() {
     let cargo = read("Cargo.toml");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
     assert!(
-        !cargo.contains("autotests")
-            && !cargo.contains("[[test]]")
+        cargo.contains("autotests     = false")
+            && cargo.contains("[[test]]")
+            && cargo.contains("name = \"ui\"")
+            && cargo.contains("name = \"lane_lifecycle_tap\"")
             && cargo.contains("\"/tests/**\"")
             && cargo.contains("\"!/tests/semantic_surface.rs\"")
             && cargo.contains("\"!/tests/semantic_surface/**\"")
@@ -742,14 +744,14 @@ fn package_artifact_ships_self_contained_tests_and_excludes_repo_gates() {
             && cargo.contains("\"!/tests/runtime_surface.rs\"")
             && !package_gate.contains("repo repository tests must not ship")
             && !package_gate.contains("run_package_clean_with_omitted_repo_tests")
-            && package_gate.contains("run_package_with_repo_test_exclusions")
-            && package_gate.contains("warning: ignoring test `")
-            && package_gate.contains("package artifact check detected unexpected warnings"),
-        "package tests must stay Cargo-auto-discovered while repo-only gates stay outside the crate package"
+            && !package_gate.contains("run_package_with_repo_test_exclusions")
+            && !package_gate.contains("warning: ignoring test `")
+            && package_gate.contains("package test target declaration drift")
+            && package_gate.contains("package artifact check detected warnings in:"),
+        "package tests must be explicit so repo-only gates stay outside the crate package without Cargo package warnings"
     );
     assert!(
-        package_gate
-            .contains("run_package_with_repo_test_exclusions \"cargo package --no-verify\"")
+        package_gate.contains("run_package_clean \"cargo package --no-verify\"")
             && package_gate.contains("packaged tests must include their module tree")
             && package_gate.contains("package UI harness")
             && package_gate.contains("--test ui")

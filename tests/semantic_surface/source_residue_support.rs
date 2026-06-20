@@ -17,7 +17,9 @@ fn collect_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) 
 
 #[test]
 fn repo_test_support_modules_are_not_orphaned() {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(
+        option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")),
+    );
     let tests_root = root.join("tests");
     let support_root = tests_root.join("support");
     let tests_source = read_all_rs_tree("tests");

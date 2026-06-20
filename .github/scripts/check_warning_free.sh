@@ -37,7 +37,7 @@ run_warning_free() {
 
 run_warning_free "cargo +${TOOLCHAIN} check --lib -p hibana" \
   cargo +"${TOOLCHAIN}" check --lib -p hibana
-run_warning_free "cargo +${TOOLCHAIN} check --test semantic_surface -p hibana" \
-  cargo +"${TOOLCHAIN}" check --test semantic_surface -p hibana
+run_warning_free "cargo +${TOOLCHAIN} check --manifest-path .github/repo-tests/Cargo.toml --test semantic_surface" \
+  cargo +"${TOOLCHAIN}" check --manifest-path "${ROOT_DIR}/.github/repo-tests/Cargo.toml" --test semantic_surface
 run_warning_free "cargo +${TOOLCHAIN} check --no-default-features --lib -p hibana" \
   cargo +"${TOOLCHAIN}" check --no-default-features --lib -p hibana

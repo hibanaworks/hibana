@@ -2,14 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn read(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let full = root.join(path);
     fs::read_to_string(&full)
         .unwrap_or_else(|err| panic!("read {} failed: {}", full.display(), err))
 }
 
 fn read_dir_rs(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join(path);
     let mut parts = fs::read_dir(&root)
         .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
         .map(|entry| {
@@ -341,7 +342,7 @@ fn transport_docs_do_not_reference_private_runtime_storage() {
 
 #[test]
 fn canonical_docs_are_readme_and_crate_docs_only() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     assert!(
         !root.join("docs").exists(),
         "docs/ must not regrow as a second canonical documentation tree"
@@ -401,7 +402,7 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
 
 #[test]
 fn projection_constructor_stays_on_canonical_call_shape() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let forbidden = "project::<";
     let mut files = vec![
         root.join("README.md"),
@@ -512,7 +513,8 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
 
 #[test]
 fn core_repo_keeps_cross_repo_harness_outside_tree() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("runtime/cross-repo");
+    let path = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join("runtime/cross-repo");
     assert!(
         !path.exists(),
         "cross-repo smoke must stay outside the hibana repo: {}",

@@ -240,7 +240,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             .contains("--no-run")
             && !warning_free_gate.contains("check --all-targets")
             && !warning_free_gate.contains("cargo +\"${TOOLCHAIN}\" test -p hibana")
-            && rust_1_95_gate.contains("cargo +1.95.0 test -p hibana --test semantic_surface")
+            && rust_1_95_gate.contains(
+                "cargo +1.95.0 test --manifest-path \"${ROOT_DIR}/.github/repo-tests/Cargo.toml\" --test semantic_surface"
+            )
             && rust_1_95_gate
                 .contains("cargo +1.95.0 test -p hibana --test dynamic_route_scope_resolver"),
         "final-form gates must not use no-run, all-integration, all-target, or all-test Cargo builds"
@@ -512,7 +514,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
 
 #[test]
 fn thumbv6m_frame_header_codegen_has_no_aeabi_u64_helpers() {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(
+        option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")),
+    );
     let script = root.join(".github/scripts/check_thumbv6m_frame_header_codegen.sh");
     let output = std::process::Command::new("bash")
         .arg(&script)
@@ -533,7 +537,9 @@ fn thumbv6m_frame_header_codegen_has_no_aeabi_u64_helpers() {
 
 #[test]
 fn thumbv6m_mask_codegen_has_no_aeabi_u64_helpers() {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(
+        option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")),
+    );
     let script = root.join(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
     let output = std::process::Command::new("bash")
         .arg(&script)

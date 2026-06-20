@@ -24,14 +24,15 @@ fn test_transport_support_constructs_explicitly() {
 }
 
 fn read(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let full = root.join(path);
     fs::read_to_string(&full)
         .unwrap_or_else(|err| panic!("read {} failed: {}", full.display(), err))
 }
 
 fn read_dir_rs(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join(path);
     let mut parts = fs::read_dir(&root)
         .unwrap_or_else(|err| panic!("read {} failed: {err}", root.display()))
         .map(|entry| {
@@ -261,7 +262,7 @@ fn single_slab_config_is_runtime_resource_authority() {
 
 #[test]
 fn docs_and_tests_do_not_teach_session_kit_new() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let mut files = vec![root.join("README.md"), root.join("src/lib.rs")];
     collect_source_files(&root.join("tests"), &mut files);
     let forbidden = "SessionKit::new";
@@ -636,10 +637,12 @@ fn crate_package_artifact_is_a_first_class_gate() {
         "crate package must exclude source-tree test support from the production package"
     );
     assert!(
-        !cargo.contains("autotests")
-            && !cargo.contains("[[test]]")
+        cargo.contains("autotests     = false")
+            && cargo.contains("[[test]]")
+            && cargo.contains("name = \"ui\"")
+            && cargo.contains("name = \"lane_lifecycle_tap\"")
             && cargo.contains("\"/tests/**\""),
-        "package tests must remain Cargo-auto-discovered while repo-only gates stay outside the crate package"
+        "package tests must be explicit so repo-only gates stay outside the crate package without Cargo package warnings"
     );
     for excluded in [
         "\"!/tests/docs_surface.rs\"",
@@ -677,10 +680,13 @@ fn crate_package_artifact_is_a_first_class_gate() {
     for required in [
         "src must not depend on tests/support",
         "source-tree test support must not ship in the production crate package",
+        "package test target declaration drift",
+        "packaged integration test lacks [[test]] entry",
+        "declared package integration test missing from package",
         "SOURCE_TEST_SUPPORT_PATTERN",
         "^src/.*/tests/",
         "run_package_clean \"cargo package --list\"",
-        "run_package_with_repo_test_exclusions \"cargo package --no-verify\"",
+        "run_package_clean \"cargo package --no-verify\"",
         "package lib check",
         "package lib test",
         "packaged tests must include their module tree",

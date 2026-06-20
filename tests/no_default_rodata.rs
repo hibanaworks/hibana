@@ -65,7 +65,8 @@ pub extern "C" fn _start() -> ! {
 
 #[test]
 fn no_default_no_source_path_rodata() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let target = "thumbv6m-none-eabi";
     let installed_targets = Command::new("rustup")
         .args(["target", "list", "--installed"])

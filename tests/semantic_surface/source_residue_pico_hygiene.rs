@@ -57,7 +57,7 @@ fn g_project_body(source: &str) -> &str {
 }
 
 fn run_script(script: &str) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let output = Command::new("bash")
         .arg(root.join(script))
         .output()
@@ -138,12 +138,18 @@ fn production_sources_do_not_reintroduce_static_hygiene_residue() {
 
 #[test]
 fn long_running_const_eval_allow_stays_capacity_regression_only() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let token = "allow(long_running_const_eval)";
     let allowed = root.join("tests/program_capacity_regression.rs");
     let mut offenders = Vec::new();
 
     fn collect_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        if dir
+            .file_name()
+            .is_some_and(|name| name == "target" || name == ".git")
+        {
+            return;
+        }
         for entry in
             fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()))
         {
@@ -152,7 +158,12 @@ fn long_running_const_eval_allow_stays_capacity_regression_only() {
                 .path();
             if path.is_dir() {
                 collect_files(&path, out);
-            } else {
+            } else if path.extension().is_some_and(|ext| {
+                matches!(
+                    ext.to_str(),
+                    Some("rs" | "sh" | "py" | "md" | "toml" | "yml" | "yaml")
+                )
+            }) {
                 out.push(path);
             }
         }

@@ -40,6 +40,8 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[workspace]
+
 [dependencies]
 hibana = { path = "${ROOT_DIR}", default-features = false }
 

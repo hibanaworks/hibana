@@ -2,14 +2,15 @@ use std::fs;
 use std::path::PathBuf;
 
 fn read(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
     let full = root.join(path);
     fs::read_to_string(&full)
         .unwrap_or_else(|err| panic!("read {} failed: {}", full.display(), err))
 }
 
 fn read_dir_rs(path: &str) -> String {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
+        .join(path);
     let mut parts = fs::read_dir(&root)
         .unwrap_or_else(|err| panic!("read {} failed: {}", root.display(), err))
         .map(|entry| {

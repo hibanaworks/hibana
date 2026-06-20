@@ -18,7 +18,7 @@ TOOLCHAIN=1.95.0 ./.github/scripts/ensure_rust_toolchain.sh thumbv6m-none-eabi
 cargo +1.95.0 check --no-default-features --lib -p hibana
 cargo +1.95.0 check --target thumbv6m-none-eabi --no-default-features --lib -p hibana
 cargo +1.95.0 test -p hibana --lib
-cargo +1.95.0 test -p hibana --test semantic_surface
+cargo +1.95.0 test --manifest-path "${ROOT_DIR}/.github/repo-tests/Cargo.toml" --test semantic_surface
 cargo +1.95.0 test -p hibana --test dynamic_route_scope_resolver
 
 echo "Rust 1.95 stable check passed"
