@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or non-deterministic first-visible route frontier
+error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation
  --> src/g.rs
   |
   |             panic_choreography_error(error);
@@ -14,7 +14,7 @@ note: inside `g::panic_choreography_error`
   |           ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
   |  _____________________________________________________________-
   | |             "Route unprojectable for this role: invalid, ambiguous endpoint operation, ",
-  | |             "or non-deterministic first-visible route frontier",
+  | |             "or ambiguous first-visible endpoint operation",
   | |         )),
   | |__________- in this macro invocation
 
@@ -27,8 +27,8 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/g/role_projection.rs
   |
-  |             &ProgramProjection::<Steps>::PROGRAM_REF,
-  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g/role_projection.rs

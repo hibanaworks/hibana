@@ -12,8 +12,8 @@
     <a href="#what-hibana-is">What Hibana Is</a> •
     <a href="#quick-start">Quick Start</a> •
     <a href="#application-guide">Application Guide</a> •
-    <a href="#runtime">Protocol Runtime</a> •
-    <a href="#guarantees">Guarantees</a>
+    <a href="#protocol-runtime">Protocol Runtime</a> •
+    <a href="#build-and-test">Build And Test</a>
   </p>
 </div>
 
@@ -113,6 +113,28 @@ transport frames, descriptor-checked ingress evidence, or route resolver inputs
 at explicit resolver sites. They never replace `send()`, `recv()`,
 `offer()`, or route branch first-step operations.
 
+### Boundary Contract
+
+Hibana keeps the public API small because the projection boundary carries the
+proof work:
+
+- runtime code is `no_std` and no-alloc-oriented;
+- descriptor storage is caller-provided, borrowed, static, or slab-backed;
+- route shape, ambiguous simultaneous endpoint operations, malformed
+  choreography paths, and lane ownership errors are rejected before endpoint
+  execution;
+- runtime cursor progress is one-way and affine;
+- failed endpoint and route branch operations do not authorize hidden progress;
+- payload decode is exact;
+- message logical labels and transport frame labels are separate concepts;
+- route-decision semantics are descriptor metadata, first visible branch
+  actions, or explicit resolver decisions, not protocol label numbers.
+
+Application code should not call transport APIs directly from localside logic,
+choose route arms by parsing payloads, model resolver decisions as driver-side
+branching, treat carrier hints as protocol authority, or match endpoint errors
+to continue the same session generation on a hidden alternate path.
+
 ## Quick Start
 
 Application code usually sees an endpoint that a protocol crate has already
@@ -139,16 +161,20 @@ continuation.
 
 ## Application Guide
 
-Application authors only need these names:
+### Endpoint Surface
 
-- `hibana::g::{Msg, Program, send, seq, route, par}`
+Everyday application endpoint code uses these names:
+
+- `hibana::g::{Msg, send, seq, route, par}`
 - `Endpoint`
 - `RouteBranch`
 - `EndpointError`
 
-Protocol crates use the same surface. Runtime resolver and transport authority
-stay inside Hibana; choreography authors describe visible protocol traffic with
-`g::Msg` and the structural combinators.
+Choreography authors also use the `Program` value returned by the structural
+combinators, plus `.roll()` for repeated regions and `.resolve::<ID>()` for
+routes whose branch authority is an explicit resolver. Runtime resolver and
+transport authority stay inside Hibana; choreography authors describe visible
+protocol traffic with `g::Msg` and the structural combinators.
 
 The normal choreography language is:
 
@@ -165,152 +191,11 @@ project them immediately. `Program<S>` is the unprojected typed choreography
 term; `RoleProgram<ROLE>` is the projected runtime descriptor. Neither is a
 transport handle, heap object, or reusable runtime object.
 
-### Sending And Receiving
+### Messages And Payloads
 
-Use `send()` when the next local step is a send known from the
-choreography:
-
-```rust,ignore
-endpoint
-    .send::<g::Msg<10, [u8; 4]>>(&[1, 2, 3, 4])
-    .await?;
-```
-
-Use `recv()` when the next local step is a deterministic receive:
-
-```rust,ignore
-let value = endpoint.recv::<g::Msg<11, u16>>().await?;
-```
-
-The message type carries the choreography label and payload type. The runtime
-checks the projected descriptor and fails closed if the label, lane, or payload
-shape does not match.
-
-### Routes
-
-`g::route(left, right)` is binary. Intrinsic routes recover the branch from the
-first visible endpoint operation; resolved routes use the explicit resolver
-decision as branch authority.
-
-```rust
-use hibana::g;
-
-let accepted = g::send::<0, 1, g::Msg<31, u32>>();
-let rejected = g::send::<0, 1, g::Msg<33, ()>>();
-let routed = g::route(accepted, rejected);
-```
-
-When the endpoint reaches a route decision, call `offer()`:
-
-```rust,ignore
-let branch = endpoint.offer().await?;
-
-match branch.label() {
-    31 => {
-        let value = branch.recv::<g::Msg<31, u32>>().await?;
-        handle_accept(value);
-    }
-    33 => {
-        let () = branch.recv::<g::Msg<33, ()>>().await?;
-        handle_reject();
-    }
-    label => panic!("unexpected route label {label}"),
-}
-```
-
-`RouteBranch::label()` reports the selected arm's first logical message label.
-For resolved routes this label is not branch authority; `ResolverRef::decide()`
-is. For intrinsic routes the first visible endpoint operation is branch
-authority.
-
-If the chosen route arm begins with a send, send the first message through the
-branch:
-
-```rust,ignore
-let branch = endpoint.offer().await?;
-
-match branch.label() {
-    40 => {
-        branch.send::<g::Msg<40, ()>>(&()).await?;
-    }
-    41 => {
-        let bytes = branch.recv::<g::Msg<41, [u8; 8]>>().await?;
-        use_bytes(bytes);
-    }
-    label => panic!("unexpected route label {label}"),
-}
-```
-
-The route is never selected by parsing payload bytes. Route authority comes
-from the projected descriptor and the first visible branch action. Transport
-observation may only supply ingress evidence that is checked against descriptor
-metadata; a frame label, payload shape, queue position, or carrier hint is never
-an independent route decision.
-
-### Failure And Cancellation
-
-Endpoint operations return `core::result::Result<T, EndpointError>`, so
-application code should use ordinary `?`:
-
-```rust,ignore
-endpoint.send::<g::Msg<1, u32>>(&7).await?;
-let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
-let branch = endpoint.offer().await?;
-let payload = branch.recv::<g::Msg<3, [u8; 4]>>().await?;
-```
-
-This shape has only two committed outcomes:
-
-```text
-Ok(progress)          next choreography state exists
-Err(domain evidence)  current session generation is terminal
-```
-
-Errors are not route arms. Transport close, decode failure, or protocol
-invariant failure poisons the affected session generation and returns
-diagnostic evidence. It does not authorize reconnect or a different
-branch in the same generation.
-
-There is intentionally no `recv_timeout`, `send_timeout`, public `cancel`, or
-same-generation retry/reselection API. If time should select a branch, model
-time in the choreography itself: use a timer or clock role whose first visible
-route action carries the decision.
-
-Protocol-invisible liveness detection belongs inside the transport implementation. A
-UDP, serial, or custom carrier that decides an I/O wait is terminal must return
-`TransportError` from `poll_send(...)` or `poll_recv(...)`; Hibana converts that
-transport failure into terminal session evidence. Such watchdogs do not create
-hidden route authority or an alternate branch inside the current generation.
-
-The public evidence envelopes are domain-specific:
-
-- `EndpointError` for endpoint and route branch progress;
-- `ResolverError` for resolver registration and resolver decisions;
-- `AttachError` for rendezvous and endpoint attach.
-
-There is no public wide `HibanaError`, and public error-kind enums are not part
-of the application decision surface. Error values travel as their domain type;
-runtime evidence uses tap, and host `Debug` output records the compact boundary
-name. Pico-facing code does not need string accessors or source-path accessors.
-
-### Parallel Composition
-
-`g::par(left, right)` combines independent local flows. Arms without protocol steps and
-overlapping `(role, lane)` ownership are rejected by projection.
-
-```rust
-use hibana::g;
-
-let left = g::send::<0, 1, g::Msg<50, u32>>();
-let right = g::send::<0, 2, g::Msg<51, u32>>();
-let parallel = g::par(left, right);
-```
-
-Lanes are projection-owned separation units. Application code describes role and
-message structure; Hibana assigns the internal lanes needed to preserve affine
-parallel progress.
-
-### Payloads
+`g::Msg<L, P>` names one logical protocol message: `L` is the choreography
+label and `P` is the payload type. The label describes visible protocol traffic;
+it is not a transport frame label and it is not resolved-route branch authority.
 
 Built-in exact codecs cover `()`, `bool`, integers, borrowed byte slices, and
 fixed byte arrays. Fixed-width decoders reject trailing bytes.
@@ -359,21 +244,116 @@ Decoded values may borrow from the received frame:
 // transport frame currently owned by the endpoint.
 ```
 
-### Branching, Resolvers, And Receive Evidence
+### Sending And Receiving
 
-Route choice is a protocol fact, not a transport guess. Prefer in-band choice:
-put the real branch-selecting message at the head of each route arm.
+Use `send()` when the next local step is a send known from the
+choreography:
 
-```rust
-let program = g::route(
-    g::seq(g::send::<0, 1, g::Msg<10, Approved>>(), approve_body),
-    g::seq(g::send::<0, 1, g::Msg<20, Denied>>(), deny_body),
-);
+```rust,ignore
+endpoint
+    .send::<g::Msg<10, [u8; 4]>>(&[1, 2, 3, 4])
+    .await?;
 ```
 
-When a branch is decided by a local timer, device readiness, budget, or another
-non-message signal, use an explicit resolver attached through
-`Program<Route<...>>::resolve` and `runtime::resolver`.
+Use `recv()` when the next local receive can be uniquely committed from the
+observed transport evidence and the projected descriptor:
+
+```rust,ignore
+let value = endpoint.recv::<g::Msg<11, u16>>().await?;
+```
+
+The message type carries the choreography label and payload type. The runtime
+checks the projected descriptor and fails closed if the label, lane, or payload
+shape does not match.
+
+### Parallel Composition
+
+`g::par(left, right)` combines independent local flows. Projection rejects empty
+arms and overlapping endpoint operations that cannot be selected unambiguously.
+It does not require message labels to be globally unique.
+
+```rust
+use hibana::g;
+
+let left = g::send::<0, 1, g::Msg<50, u32>>();
+let right = g::send::<2, 3, g::Msg<50, u32>>();
+let parallel = g::par(left, right);
+```
+
+Lanes are projection-owned separation units. Application code describes role and
+message structure; Hibana assigns the internal lanes needed to preserve affine
+parallel progress.
+
+### Routes
+
+`g::route(left, right)` is binary. Intrinsic routes recover the branch from the
+first visible endpoint operation; resolved routes use the explicit resolver
+decision as branch authority.
+
+```rust
+use hibana::g;
+
+let accepted = g::send::<0, 1, g::Msg<31, u32>>();
+let rejected = g::send::<0, 1, g::Msg<33, ()>>();
+let routed = g::route(accepted, rejected);
+```
+
+Route choice is a protocol fact, not a transport guess. Prefer in-band choice:
+put the real branch-selecting message at the head of each route arm. When a
+branch is decided by a local timer, device readiness, budget, or another
+non-message signal, mark the route with `.resolve::<ID>()` and install a
+resolver through `runtime::resolver`.
+
+When the endpoint reaches a route decision, call `offer()`:
+
+```rust,ignore
+let branch = endpoint.offer().await?;
+
+match branch.label() {
+    31 => {
+        let value = branch.recv::<g::Msg<31, u32>>().await?;
+        handle_accept(value);
+    }
+    33 => {
+        let () = branch.recv::<g::Msg<33, ()>>().await?;
+        handle_reject();
+    }
+    label => panic!("unexpected route label {label}"),
+}
+```
+
+`RouteBranch::label()` reports the selected arm's first logical message label.
+For resolved routes this label is not branch authority; `ResolverRef::decide()`
+is. For intrinsic routes the first visible endpoint operation is branch
+authority. Do not treat `label()` as an exhaustive discriminator for resolved
+route authority; resolved route arms may reuse a logical message label when the
+resolver decision has already selected the arm.
+
+If the chosen route arm begins with a send, send the first message through the
+branch:
+
+```rust,ignore
+let branch = endpoint.offer().await?;
+
+match branch.label() {
+    40 => {
+        branch.send::<g::Msg<40, ()>>(&()).await?;
+    }
+    41 => {
+        let bytes = branch.recv::<g::Msg<41, [u8; 8]>>().await?;
+        use_bytes(bytes);
+    }
+    label => panic!("unexpected route label {label}"),
+}
+```
+
+The route is never selected by parsing payload bytes. Route authority comes
+from the projected descriptor and the first visible branch action. Transport
+observation may only supply ingress evidence that is checked against descriptor
+metadata; a frame label, payload shape, queue position, or carrier hint is never
+an independent route decision.
+
+### Repeated Regions
 
 Repeated protocol regions are structural. Put the re-enterable region in
 `seq`, `route`, or `par`, then call `.roll()` on that region.
@@ -428,6 +408,219 @@ let inner = g::route(a, b)
 
 let outer = g::seq(prefix, inner).roll();
 ```
+
+### Failure And Cancellation
+
+Endpoint operations return `core::result::Result<T, EndpointError>`, so
+application code should use ordinary `?`:
+
+```rust,ignore
+endpoint.send::<g::Msg<1, u32>>(&7).await?;
+let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
+let branch = endpoint.offer().await?;
+let payload = branch.recv::<g::Msg<3, [u8; 4]>>().await?;
+```
+
+This shape has only two committed outcomes:
+
+```text
+Ok(progress)          next choreography state exists
+Err(domain evidence)  current session generation is terminal
+```
+
+Errors are not route arms. Transport close, decode failure, or protocol
+invariant failure poisons the affected session generation and returns
+diagnostic evidence. It does not authorize reconnect or a different
+branch in the same generation.
+
+There is intentionally no `recv_timeout`, `send_timeout`, public `cancel`, or
+same-generation retry/reselection API. If time should select a branch, model
+time in the choreography itself: use a timer or clock role whose first visible
+route action carries the decision.
+
+Protocol-invisible liveness detection belongs inside the transport
+implementation. A UDP, serial, or custom carrier that decides an I/O wait is
+terminal must return `TransportError` from `poll_send(...)` or `poll_recv(...)`;
+Hibana converts that transport failure into terminal session evidence. Such
+watchdogs do not create hidden route authority or an alternate branch inside the
+current generation.
+
+The public evidence envelopes are domain-specific: `EndpointError` for endpoint
+and route branch progress, `ResolverError` for resolver registration and
+resolver decisions, and `AttachError` for rendezvous and endpoint attach. There
+is no public wide `HibanaError`, and public error-kind enums are not part of the
+application decision surface. Error values travel as their domain type; runtime
+evidence uses tap, and host `Debug` output records the compact boundary name.
+Pico-facing code does not need string accessors or source-path accessors.
+
+## Protocol Runtime
+
+Protocol crates use the same `hibana::g` language as applications. There is
+no second composition language.
+
+### Compose And Project
+
+A protocol crate may place transport or runtime prefixes before the application
+choreography, then project each role.
+
+```rust
+use hibana::g;
+use hibana::runtime::program::{project, RoleProgram};
+
+let prefix = g::seq(
+    g::send::<0, 1, g::Msg<1, ()>>(),
+    g::send::<1, 0, g::Msg<2, ()>>(),
+);
+
+let app = g::seq(
+    g::send::<0, 1, g::Msg<10, u32>>(),
+    g::send::<1, 0, g::Msg<11, u32>>(),
+);
+
+let program = g::seq(prefix, app);
+
+let client: RoleProgram<0> = project(&program);
+let server: RoleProgram<1> = project(&program);
+```
+
+`project(&program)` is the projection boundary. Runtime code consumes the
+projected descriptor; it does not rediscover protocol shape.
+
+Generated protocol packages and composition facades may hide the concrete
+`Program<_>` step-list type when returning an unnamed choreography value. They
+return `impl runtime::program::Projectable`, and callers still use the same
+`project(&program)` entry. `Projectable` is a sealed choreography bound, not a
+second choreography language and not a runtime authority. It has no runtime
+storage parameter; facade runtimes keep storage and configuration on their own
+types, not on the choreography projection bound.
+
+### Attach An Endpoint
+
+The canonical runtime path is borrowed and caller-provided:
+
+```rust,ignore
+use hibana::runtime;
+use hibana::runtime::ids::SessionId;
+
+let mut slab = [0u8; 64 * 1024];
+
+let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
+let kit = kit_storage.init();
+
+let rv = kit.rendezvous(&mut slab, transport)?;
+let endpoint = rv.enter(SessionId::new(1), &client)?;
+```
+
+`SessionKitStorage::init()` is the only public construction path. It writes the
+kit in place into caller-owned storage, returns the stable borrow used
+by endpoint attach, and drops the initialized kit exactly once. The raw unsafe
+initializer and `MaybeUninit` protocol are not part of the public surface.
+
+`SessionKit::rendezvous` borrows the caller-owned runtime slab directly. A
+fresh rendezvous carves its runtime prefix from that slab and starts with no
+materialized lane storage and no endpoint lease table. Role attach reads the
+projected descriptor, grows exactly the lane tables and endpoint lease entries it
+needs, and preserves existing session state if a later projected role needs a
+wider lane span. Runtime code obtains all runtime resources from that one slab;
+lane windows, endpoint counts, and diagnostics capacity stay descriptor- or
+runtime-derived.
+
+Endpoint ownership is exclusive at the live `(rendezvous, SessionId, role)`
+identity. A second `enter()` for the same live session-role fails at the attach
+boundary; dropping the endpoint releases that lease. Different sessions for the
+same role, and different roles in the same session, may coexist when the slab has
+the descriptor-derived storage for their endpoint leases.
+
+The protocol crate owns concrete `MyTransport` and any ingress demux state. The
+application receives only `Endpoint`.
+
+Useful runtime owners:
+
+- `runtime::program::{project, RoleProgram}`
+- `runtime::SessionKit`
+- `runtime::ids::SessionId`
+- `runtime::transport::{Transport, TransportError, PortOpen, Outgoing, ReceivedFrame, FrameHeader, FrameLabel}`
+- `runtime::resolver::{ResolverError, ResolverRef, DecisionArm}`
+- `runtime::wire::{Payload, WireEncode, WirePayload}`
+- `runtime::tap::{TapEvent, TapPort}` and `runtime::tap::Evidence`
+
+### Transport
+
+Implement `runtime::transport::Transport` to connect Hibana to an I/O
+system. The transport sees bytes, frame labels, and readiness; it does not own
+choreography meaning, route authority, resolver inputs, telemetry, or application
+cancellation semantics.
+
+Protocol-invisible carrier watchdogs belong inside `poll_send(...)` and
+`poll_recv(...)`: if the transport concludes that progress is impossible, it
+returns `TransportError` and Hibana terminates the current session generation.
+
+The transport owns:
+
+- `open(port)` for the descriptor-derived role/session/lane port witness;
+- `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `ReceivedFrame`
+  view from transport-managed receive storage, carrying payload bytes and
+  carrier observation as one receive value;
+- `cancel_send(...)` for transport cleanup when a send future is dropped after
+  staging carrier state;
+- `requeue(...)` as the required return path for an accepted staged frame
+  that descriptor checks cannot commit.
+
+`PortOpen` exposes the descriptor-derived `local_role`, `session_id`, and
+`lane` for the returned Tx/Rx handles. `Outgoing` exposes the projected
+`frame_label`, `target_role`, `lane`, and borrowed payload for a send. A
+transport may map those facts to carrier-specific headers or queues, but it must
+not invent route authority or mutate Hibana's endpoint state.
+
+`open(port)` returns Tx/Rx handles whose lifetime is bound to the transport
+borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
+inside the transport owner without allocating or exporting a separate context.
+
+The canonical receive-side observation is the `ReceivedFrame` returned by
+`poll_recv(...)`. Payload and carrier observation cross the transport boundary
+together; there is no separate receive-observation hook.
+`ReceivedFrame::deterministic(...)` is valid only for a single deterministic
+direct receive or an already materialized route branch receive descriptor.
+Route offer and unresolved route demux require
+`ReceivedFrame::framed(FrameHeader::from_bytes(header_bytes), payload)`, where
+the transport supplies one carrier-owned eight-byte observation and Hibana
+performs the session/lane/role/label comparison internally before any endpoint
+progress can consume the payload. Route/session/progress authority remains in
+Hibana.
+
+### Ingress Demux
+
+Ingress demux state belongs inside the transport owner. `poll_recv(...)`
+returns payload bytes and descriptor-checked ingress evidence as one receive
+value, so endpoint progress can verify the frame against the projected
+descriptor before previewing an `offer()` or committing a `recv()` or
+route branch first-step operation.
+
+Headerless receive is only valid when direct `recv()` can select one live
+descriptor from the observed lane, or when `RouteBranch::recv()` already owns a
+materialized receive descriptor. Branch observation and unresolved route demux
+require framed, descriptor-checked evidence. Payload shape, frame label, queue
+position, and carrier-local hints do not select route arms.
+
+### Receive Evidence
+
+Receive evidence is checked against the projected descriptor. `ReceivedFrame`
+has two construction paths: headerless deterministic frame construction is valid
+only for direct `recv()` or for `RouteBranch::recv()` after `offer()` has already
+materialized a unique receive descriptor. `offer()` and unresolved route demux
+require `ReceivedFrame::framed(...)` with descriptor-checked frame metadata.
+Payload shape, queue position, carrier id, and driver observations are never
+branch authority.
+
+### Resolvers
+
+Resolvers are installed by the protocol crate for explicit route resolution
+sites. A resolved route uses `ResolverRef::decide()` as branch authority; an
+intrinsic route derives branch authority from projected first visible endpoint
+evidence. Resolver state is the external input owner: use
+`ResolverRef::decision_state(...)` when a resolver needs protocol-specific
+observations. Resolver failure rejects the step; it does not authorize any
+alternate semantic path.
 
 ```rust,ignore
 use hibana::g;
@@ -504,195 +697,24 @@ rv.set_resolver(&role0, ResolverRef::<ROUTE_RESOLVER>::decision_state(
     ))?;
 ```
 
-Receive evidence is checked against the projected descriptor. `ReceivedFrame`
-has two construction paths: deterministic receive is valid only for direct
-`recv()` or for `RouteBranch::recv()` after `offer()` has already materialized a
-unique receive descriptor. `offer()` and unresolved route demux require `ReceivedFrame::framed(...)` with descriptor-checked frame metadata. Payload shape, queue position, carrier id, and driver observations are never branch authority.
+### Tap Evidence
 
-## Protocol Runtime
+`RendezvousKit::tap()` returns a read-only `TapPort` over Hibana's retained
+runtime evidence ring. Tap is not a logger and not a user telemetry channel; it
+is the minimal postmortem surface for endpoint send/recv, transport frame and
+fault evidence, lane acquire/release, route arm selection, and resolver audit.
 
-Protocol crates use the same `hibana::g` language as applications. There is
-no second composition language.
+Each `TapEvent` is an immutable 16-byte record. Public code can read `ts()`,
+`id()`, `causal_key()`, `arg0()`, `arg1()`, and `evidence()`, but cannot
+construct or push tap events. `Evidence` exposes only `kind()`, `reason()`, and
+`input()`. Canonical event ids and reasons live in `runtime::tap`; code should
+compare against those constants rather than hard-coded numbers.
 
-### Compose And Project
+The ring retains the latest 32 events. A new `rv.tap()` created after a failure
+starts at the oldest retained event and then reads forward in event order, so
+postmortem inspection does not need a previously-open port.
 
-A protocol crate may place transport or runtime prefixes before the application
-choreography, then project each role.
-
-```rust
-use hibana::g;
-use hibana::runtime::program::{project, RoleProgram};
-
-let prefix = g::seq(
-    g::send::<0, 1, g::Msg<1, ()>>(),
-    g::send::<1, 0, g::Msg<2, ()>>(),
-);
-
-let app = g::seq(
-    g::send::<0, 1, g::Msg<10, u32>>(),
-    g::send::<1, 0, g::Msg<11, u32>>(),
-);
-
-let program = g::seq(prefix, app);
-
-let client: RoleProgram<0> = project(&program);
-let server: RoleProgram<1> = project(&program);
-```
-
-`project(&program)` is the projection boundary. Runtime code consumes the
-projected descriptor; it does not rediscover protocol shape.
-
-Generated protocol packages and composition facades may hide the concrete
-`Program<_>` step-list type when returning an unnamed choreography value. They
-return `impl runtime::program::Projectable`, and callers still use the same
-`project(&program)` entry. `Projectable` is a sealed choreography bound, not a
-second choreography language and not a runtime authority. It has no runtime
-storage parameter; facade runtimes keep storage and configuration on their own
-types, not on the choreography projection bound.
-
-### Attach An Endpoint
-
-The canonical runtime path is borrowed and caller-provided:
-
-```rust,ignore
-use hibana::runtime;
-use hibana::runtime::ids::SessionId;
-
-let mut slab = [0u8; 64 * 1024];
-
-let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
-let kit = kit_storage.init();
-
-let rv = kit.rendezvous(&mut slab, transport)?;
-let endpoint = rv.enter(SessionId::new(1), &client)?;
-```
-
-`SessionKitStorage::init()` is the only public construction path. It writes the
-kit in place into caller-owned storage, returns the stable borrow used
-by endpoint attach, and drops the initialized kit exactly once. The raw unsafe
-initializer and `MaybeUninit` protocol are not part of the public surface.
-
-`SessionKit::rendezvous` borrows the caller-owned runtime slab directly. A
-fresh rendezvous carves its runtime prefix from that slab and starts with no
-materialized lane storage and no endpoint lease table. Role attach reads the
-projected descriptor, grows exactly the lane tables and endpoint lease entries it
-needs, and preserves existing session state if a later projected role needs a
-wider lane span. Runtime code obtains all runtime resources from that one slab;
-lane windows, endpoint counts, and diagnostics capacity stay descriptor- or
-runtime-derived.
-
-The protocol crate owns concrete `MyTransport` and any ingress demux state. The
-application receives only `Endpoint`.
-
-Useful runtime owners:
-
-- `runtime::program::{project, RoleProgram}`
-- `runtime::SessionKit`
-- `runtime::ids::SessionId`
-- `runtime::transport::Transport`
-- `runtime::resolver::{ResolverError, ResolverRef, DecisionArm}`
-- `runtime::wire::{Payload, WireEncode, WirePayload}`
-- `runtime::tap::{TapEvent, TapPort}`
-
-### Transport
-
-Implement `runtime::transport::Transport` to connect Hibana to an I/O
-system. The transport sees bytes, frame labels, and readiness; it does not own
-choreography meaning, route authority, resolver inputs, telemetry, or application
-cancellation semantics.
-
-Protocol-invisible carrier watchdogs belong inside `poll_send(...)` and
-`poll_recv(...)`: if the transport concludes that progress is impossible, it
-returns `TransportError` and Hibana terminates the current session generation.
-
-The transport owns:
-
-- `open(port)` for the descriptor-derived role/session/lane port witness;
-- `poll_send(...)` and `poll_recv(...)`; receive returns a borrowed `ReceivedFrame`
-  view from transport-managed receive storage, carrying payload bytes and
-  carrier observation as one receive value;
-- `cancel_send(...)` for transport cleanup when a send future is dropped after
-  staging carrier state;
-- `requeue(...)` as the required return path for an accepted staged frame
-  that descriptor checks cannot commit.
-
-`open(port)` returns Tx/Rx handles whose lifetime is bound to the transport
-borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
-inside the transport owner without allocating or exporting a separate context.
-
-The canonical receive-side observation is the `ReceivedFrame` returned by
-`poll_recv(...)`. Payload and carrier observation cross the transport boundary
-together; there is no separate receive-observation hook.
-`ReceivedFrame::deterministic(...)` is valid only for a single deterministic
-direct receive or an already materialized route branch receive descriptor.
-Route offer and unresolved route demux require
-`ReceivedFrame::framed(FrameHeader::from_bytes(header_bytes), payload)`, where
-the transport supplies one carrier-owned eight-byte observation and Hibana
-performs the session/lane/role/label comparison internally before any endpoint
-progress can consume the payload. Route/session/progress authority remains in
-Hibana.
-
-### Ingress Demux
-
-Ingress demux state belongs inside the transport owner. `poll_recv(...)`
-returns payload bytes and descriptor-checked ingress evidence as one receive
-value, so endpoint progress can verify the frame against the projected
-descriptor before previewing an `offer()` or committing a `recv()` or
-route branch first-step operation.
-
-Headerless receive is only valid when direct `recv()` can select one live
-descriptor from the observed lane, or when `RouteBranch::recv()` already owns a
-materialized receive descriptor. Branch observation and unresolved route demux
-require framed, descriptor-checked evidence. Payload shape, frame label, queue
-position, and carrier-local hints do not select route arms.
-
-### Resolvers
-
-Resolvers are installed by the protocol crate for explicit route resolution
-sites. A resolved route uses `ResolverRef::decide()` as branch authority; an
-intrinsic route derives branch authority from projected first visible endpoint
-evidence. Resolver state is the external input owner: use
-`ResolverRef::decision_state(...)` when a resolver needs protocol-specific
-observations. Resolver failure rejects the step; it does not authorize any
-alternate semantic path.
-
-## Guarantees
-
-Hibana keeps the public API small because the projection boundary carries the
-proof work.
-
-Core guarantees:
-
-- Rust 2024 and stable Rust `1.95`;
-- runtime code is `no_std` and no-alloc-oriented;
-- descriptor storage is caller-provided, borrowed, static, or slab-backed;
-- route shape, ambiguous simultaneous endpoint operations, malformed
-  choreography paths, and lane ownership errors are rejected before endpoint
-  execution;
-- runtime cursor progress is one-way and affine;
-- protocol state is affine endpoint ownership, not shared atomic or shared
-  memory state;
-- failed endpoint and route branch operations do not authorize hidden progress;
-- payload decode is exact;
-- message logical labels and transport frame labels are separate concepts;
-- route-decision semantics are descriptor metadata, not protocol label numbers;
-- route authority is limited to projected facts, first visible branch actions,
-  and explicit resolver decisions; descriptor-checked transport observation may
-  only confirm or demux projected facts.
-
-What application code should not do:
-
-- call transport APIs directly from localside logic;
-- choose route arms by parsing payloads;
-- model resolver decisions as driver-side branching;
-- treat carrier hints, queue position, payload shape, or frame labels as route
-  authority;
-- match endpoint errors to continue the same generation on a hidden alternate path;
-- use shared memory, shared atomics, global flags, or side-channel state as
-  route readiness, rolled reentry, or protocol-progress authority;
-- expose protocol-specific APIs through the `hibana` crate root.
-
-## Validation
+## Build And Test
 
 For a published crate consumer, the useful checks are ordinary Cargo commands:
 

@@ -113,7 +113,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         .split("pub fn send<'a, 'e, M>(")
         .nth(1)
         .and_then(|tail| {
-            tail.split("/// Receive the next deterministic message")
+            tail.split("/// Receive the next message as `M` after descriptor evidence matches")
                 .next()
         })
         .expect("direct send constructor must stay visible");

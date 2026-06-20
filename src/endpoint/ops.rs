@@ -268,7 +268,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    /// Send the next deterministic message as `M`.
+    /// Send the next projected message as `M`.
     ///
     /// The endpoint previews the projected send descriptor on first poll.
     /// Dropping the future before completion leaves the endpoint on the same
@@ -292,7 +292,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    /// Receive the next deterministic message as `M`.
+    /// Receive the next message as `M` after descriptor evidence matches.
     ///
     /// The projected descriptor must expect the same choreography label and
     /// payload family as `M`. Payload decoding is exact: fixed-size payloads reject

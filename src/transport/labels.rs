@@ -3,7 +3,7 @@ use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not};
 /// Choreography-facing message / branch identity.
 ///
 /// This is intentionally crate-private. Application code expresses logical
-/// labels through `g::Msg<L, P, K>` and observes them through `RouteBranch`.
+/// labels through `g::Msg<L, P>` and observes them through `RouteBranch`.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct LogicalLabel(u8);

@@ -41,8 +41,8 @@
 //!
 //! The localside API is deliberately small:
 //!
-//! - [`Endpoint::send`] sends the next deterministic message;
-//! - [`Endpoint::recv`] receives a deterministic message;
+//! - [`Endpoint::send`] sends the next projected message;
+//! - [`Endpoint::recv`] receives a message after descriptor evidence matches;
 //! - [`Endpoint::offer`] observes a route branch;
 //! - [`RouteBranch::label`] reports the selected arm's first logical label;
 //! - [`RouteBranch::recv`] receives the first payload in a selected receive arm;
@@ -104,20 +104,21 @@
 //! the received frame. Built-in exact codecs cover `()`, integers, `bool`,
 //! byte slices, and fixed byte arrays.
 //!
-//! Branch choice is either an in-band protocol message, a descriptor-checked
-//! received frame, or an explicit resolver decision. Transport evidence is
-//! descriptor evidence only; it is not route authority and it does not create a
-//! public branch-authority catalogue.
+//! Branch choice is either an in-band protocol message, a projected first
+//! visible endpoint operation confirmed by descriptor-checked receive evidence,
+//! or an explicit resolver decision. Transport evidence is descriptor evidence
+//! only; it is not route authority and it does not create a public
+//! branch-authority catalogue.
 //!
-//! ## Guarantees
+//! ## Boundary contract
 //!
 //! Hibana keeps the public API small because the projection boundary carries the
 //! proof work:
 //!
 //! - route shape, ambiguous simultaneous endpoint operations, and intrinsic
 //!   route controller mismatch are rejected before runtime;
-//! - parallel composition rejects empty arms and overlapping `(role, lane)`
-//!   ownership;
+//! - parallel composition rejects empty arms and ambiguous simultaneous endpoint
+//!   operations;
 //! - labels are choreography identities, while transport frame labels are
 //!   descriptor facts;
 //! - endpoint progress is affine: successful sends, receives, and route branch

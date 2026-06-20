@@ -71,7 +71,7 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
             panic!("g::par(left, right) arms require protocol steps")
         }
         ProgramSourceError::ParallelConflict => {
-            panic!("parallel lanes must use disjoint (role, lane) pairs")
+            panic!("parallel lane ownership must be structurally disjoint")
         }
         ProgramSourceError::ParallelAmbiguousEndpointSelector => {
             panic!("parallel endpoint operations must be unambiguous")
@@ -87,7 +87,7 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         }
         ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
             "Route unprojectable for this role: invalid, ambiguous endpoint operation, ",
-            "or non-deterministic first-visible route frontier",
+            "or ambiguous first-visible endpoint operation",
         )),
     }
 }

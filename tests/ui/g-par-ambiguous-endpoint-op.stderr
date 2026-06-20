@@ -24,8 +24,8 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/g/role_projection.rs
   |
-  |             &ProgramProjection::<Steps>::PROGRAM_REF,
-  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g/role_projection.rs
