@@ -44,6 +44,7 @@ compile_pressure_guard_limit_seconds() {
 compile_pressure_guard_offender() {
   local root_pid="$1"
   local max_kib="$2"
+  local crate_name="${HIBANA_COMPILE_PRESSURE_CRATE_NAME:-}"
   local process_rows
   if ! process_rows="$(ps -axo pid=,ppid=,rss=,command=)"; then
     echo "compile pressure guard violation: failed to read process table" >&2
@@ -52,7 +53,7 @@ compile_pressure_guard_offender() {
   local scan
   local status
   set +e
-  scan="$(PROCESS_ROWS="${process_rows}" python3 - "${root_pid}" "${max_kib}" <<'PY'
+  scan="$(PROCESS_ROWS="${process_rows}" python3 - "${root_pid}" "${max_kib}" "${crate_name}" <<'PY'
 import collections
 import os
 import sys
@@ -60,6 +61,7 @@ import sys
 try:
     root = int(sys.argv[1])
     max_kib = int(sys.argv[2])
+    crate_name = sys.argv[3]
     children: dict[int, list[int]] = collections.defaultdict(list)
     rows: dict[int, tuple[int, str]] = {}
     for line in os.environ["PROCESS_ROWS"].splitlines():
@@ -97,17 +99,32 @@ try:
                     return "rustup"
         return None
 
+    def crate_arg_matches(command: str) -> bool:
+        if not crate_name:
+            return True
+        tokens = command.split()
+        for idx, token in enumerate(tokens):
+            if token == "--crate-name" and idx + 1 < len(tokens):
+                return tokens[idx + 1] == crate_name
+            if token.startswith("--crate-name="):
+                return token.split("=", 1)[1] == crate_name
+        return False
+
+    matched_process = False
     for pid in sorted(descendants):
         rss, command = rows.get(pid, (0, ""))
         tool_name = rust_tool_name(command)
         if tool_name is not None:
+            if crate_name and not crate_arg_matches(command):
+                continue
+            matched_process = True
             total_rss += rss
             if peak is None or rss > peak[1]:
                 peak = (pid, rss, tool_name)
             if rss > max_kib:
                 print(
                     f"process pid={pid} rss_mib={(rss + 1023) // 1024} "
-                    f"total_rss_mib={(total_rss + 1023) // 1024} comm={tool_name}"
+                    f"total_rss_mib={(total_rss + 1023) // 1024} comm={tool_name} matched=1"
                 )
                 sys.exit(0)
     if total_rss > max_kib:
@@ -116,9 +133,10 @@ try:
         else:
             pid, rss, comm = peak
             peak_text = f"peak_pid={pid} peak_rss_mib={(rss + 1023) // 1024} peak_comm={comm}"
-        print(f"aggregate total_rss_mib={(total_rss + 1023) // 1024} {peak_text}")
+        print(f"aggregate total_rss_mib={(total_rss + 1023) // 1024} {peak_text} matched=1")
         sys.exit(0)
-    print(f"ok total_rss_mib={(total_rss + 1023) // 1024}")
+    matched = 1 if matched_process else 0
+    print(f"ok total_rss_mib={(total_rss + 1023) // 1024} matched={matched}")
     sys.exit(7)
 except Exception as exc:
     print(f"compile pressure guard scan failed: {exc}", file=sys.stderr)
@@ -206,6 +224,7 @@ run_with_compile_pressure_guard() {
   local observed_mib
   local max_observed_mib
   local start_seconds
+  local observed_start_seconds
   local elapsed_seconds
   local status
   local child
@@ -213,10 +232,18 @@ run_with_compile_pressure_guard() {
   max_seconds="$(compile_pressure_guard_limit_seconds)"
   max_observed_mib=0
   start_seconds="$(date +%s)"
+  observed_start_seconds="${start_seconds}"
+  if [[ -n "${HIBANA_COMPILE_PRESSURE_CRATE_NAME:-}" ]]; then
+    observed_start_seconds=""
+  fi
   "$@" &
   child="$!"
   while kill -0 "${child}" 2>/dev/null; do
-    elapsed_seconds="$(($(date +%s) - start_seconds))"
+    if [[ -n "${observed_start_seconds}" ]]; then
+      elapsed_seconds="$(($(date +%s) - observed_start_seconds))"
+    else
+      elapsed_seconds=0
+    fi
     if (( max_seconds > 0 && elapsed_seconds > max_seconds )); then
       echo "compile pressure guard violation: ${label} exceeded ${max_seconds}s elapsed time" >&2
       if ! compile_pressure_guard_stop_tree "${child}"; then
@@ -247,6 +274,9 @@ run_with_compile_pressure_guard() {
         max_observed_mib="${observed_mib}"
       fi
     fi
+    if [[ -z "${observed_start_seconds}" && "${offender}" =~ matched=1 ]]; then
+      observed_start_seconds="$(date +%s)"
+    fi
     if [[ "${status}" -eq 0 && -n "${offender}" ]]; then
       echo "compile pressure guard violation: ${label} exceeded $((max_kib / 1024))MiB RSS: ${offender}" >&2
       if ! compile_pressure_guard_stop_tree "${child}"; then
@@ -263,7 +293,11 @@ run_with_compile_pressure_guard() {
   wait "${child}"
   status="$?"
   set -e
-  elapsed_seconds="$(($(date +%s) - start_seconds))"
+  if [[ -n "${observed_start_seconds}" ]]; then
+    elapsed_seconds="$(($(date +%s) - observed_start_seconds))"
+  else
+    elapsed_seconds=0
+  fi
   echo "compile pressure observed: ${label} elapsed=${elapsed_seconds}s seconds_budget=${max_seconds}s max_rss=${max_observed_mib}MiB rss_budget=$((max_kib / 1024))MiB"
   return "${status}"
 }

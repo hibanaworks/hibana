@@ -67,6 +67,8 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[workspace]
+
 [dependencies]
 hibana = { path = "../..", default-features = false }
 EOF

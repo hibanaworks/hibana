@@ -9,6 +9,7 @@ if [[ "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD:-1}" != "0" \
   source "${ROOT_DIR}/.github/scripts/lib/compile_pressure_guard.sh"
   HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE=1 \
     HIBANA_COMPILE_PRESSURE_LABEL=final_form_gate \
+    HIBANA_COMPILE_PRESSURE_CRATE_NAME=hibana \
     run_with_compile_pressure_guard \
       "final-form gate" \
       env HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD_ACTIVE=1 bash "$0" "$@"
