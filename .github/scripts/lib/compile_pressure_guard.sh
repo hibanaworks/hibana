@@ -225,8 +225,8 @@ run_with_compile_pressure_guard() {
   local max_observed_mib
   local start_seconds
   local now_seconds
-  local active_observed_seconds
   local active_window_start_seconds
+  local active_window_seconds
   local elapsed_seconds
   local status
   local child
@@ -234,8 +234,8 @@ run_with_compile_pressure_guard() {
   max_seconds="$(compile_pressure_guard_limit_seconds)"
   max_observed_mib=0
   start_seconds="$(date +%s)"
-  active_observed_seconds=0
   active_window_start_seconds=""
+  elapsed_seconds=0
   "$@" &
   child="$!"
   while kill -0 "${child}" 2>/dev/null; do
@@ -265,13 +265,12 @@ run_with_compile_pressure_guard() {
         if [[ -z "${active_window_start_seconds}" ]]; then
           active_window_start_seconds="${now_seconds}"
         fi
-      elif [[ -n "${active_window_start_seconds}" ]]; then
-        active_observed_seconds="$((active_observed_seconds + now_seconds - active_window_start_seconds))"
+        active_window_seconds="$((now_seconds - active_window_start_seconds))"
+        if (( active_window_seconds > elapsed_seconds )); then
+          elapsed_seconds="${active_window_seconds}"
+        fi
+      else
         active_window_start_seconds=""
-      fi
-      elapsed_seconds="${active_observed_seconds}"
-      if [[ -n "${active_window_start_seconds}" ]]; then
-        elapsed_seconds="$((elapsed_seconds + now_seconds - active_window_start_seconds))"
       fi
     else
       elapsed_seconds="$((now_seconds - start_seconds))"
@@ -304,9 +303,11 @@ run_with_compile_pressure_guard() {
   set -e
   now_seconds="$(date +%s)"
   if [[ -n "${HIBANA_COMPILE_PRESSURE_CRATE_NAME:-}" ]]; then
-    elapsed_seconds="${active_observed_seconds}"
     if [[ -n "${active_window_start_seconds}" ]]; then
-      elapsed_seconds="$((elapsed_seconds + now_seconds - active_window_start_seconds))"
+      active_window_seconds="$((now_seconds - active_window_start_seconds))"
+      if (( active_window_seconds > elapsed_seconds )); then
+        elapsed_seconds="${active_window_seconds}"
+      fi
     fi
   else
     elapsed_seconds="$((now_seconds - start_seconds))"
