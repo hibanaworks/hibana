@@ -375,16 +375,20 @@ where
         &mut self,
         selection: OfferScopeSelection,
         resolved: ResolvedRouteArm,
+        observed_frame_label: Option<u8>,
     ) -> RecvResult<bool> {
-        if resolved.frame_hint.is_resolved() {
-            return Ok(false);
-        }
         let scope_id = selection.scope_id;
         let selected_arm = resolved.selected_arm;
         let materialization_meta = self.selection_materialization_meta(selection);
         let Some(nested_scope) = materialization_meta.passive_child_scope(selected_arm) else {
             return Ok(false);
         };
+        if let Some(observed_label) = observed_frame_label {
+            let meta = self.preview_selected_arm_meta(selection, selected_arm)?;
+            if !meta.is_empty() && meta.frame_label == observed_label {
+                return Ok(false);
+            }
+        }
         let nested_scope = self.rebase_passive_descendant_scope(scope_id, nested_scope);
         let (target_index, route_rows) = {
             let Self {

@@ -4,14 +4,13 @@ use super::passive::{
     PassiveRouteEvidenceContext, PassiveRouteEvidenceInput, PassiveRouteEvidenceOutcome,
 };
 use super::{
-    CursorEndpoint, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
+    Arm, CursorEndpoint, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
     FrontierVisitSet, IngressEvidenceState, OfferAuthorityPath, OfferResolveState, RecvError,
     RecvResult, ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
     RouteResolveStep, Transport,
 };
 pub(super) struct RouteAuthorityResolution {
     pub(super) route_token: RouteArmToken,
-    pub(super) frame_hint: FrameHintResolution,
     pub(super) commit_evidence: RouteArmCommitEvidence,
 }
 
@@ -31,7 +30,7 @@ enum RouteResolveOutcome {
 }
 
 enum PassiveRouteAuthorityOutcome {
-    Authority(RouteArmToken, FrameHintResolution),
+    Authority(RouteArmToken),
     EvidenceOnly(FrameHintResolution),
     RestartFrontier,
 }
@@ -97,11 +96,20 @@ where
         } else {
             FrameHintResolution::unresolved()
         };
+        if profile.frame_evidence_is_branch_authority()
+            && let Some(route_token) = self.staged_transport_passive_route_token(state, scope_id)
+        {
+            return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
+                RouteAuthorityResolution {
+                    route_token,
+                    commit_evidence: RouteArmCommitEvidence::PollFrame,
+                },
+            )));
+        }
         if let Some(route_token) = self.peek_scope_ack(scope_id) {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                 RouteAuthorityResolution {
                     route_token,
-                    frame_hint,
                     commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                 },
             )));
@@ -114,7 +122,6 @@ where
                     Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
                         RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                             route_token,
-                            frame_hint,
                             commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                         }),
                     )),
@@ -142,6 +149,21 @@ where
         }
     }
 
+    fn staged_transport_passive_route_token(
+        &mut self,
+        state: &OfferResolveState<'r>,
+        scope_id: crate::global::const_dsl::ScopeId,
+    ) -> Option<RouteArmToken> {
+        let lane = state.ingress.transport_lane_wire()?;
+        let frame_label = state.ingress.transport_frame_label_raw()?;
+        let arm = self
+            .cursor
+            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)?;
+        self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
+        self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
+        Arm::new(arm).map(RouteArmToken::from_poll)
+    }
+
     fn collect_passive_route_authority_after_ack_miss(
         &mut self,
         state: &mut OfferResolveState<'r>,
@@ -156,15 +178,12 @@ where
             Poll::Ready(Ok(PassiveRouteAuthorityOutcome::RestartFrontier)) => {
                 Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
             }
-            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(route_token, frame_hint))) => {
-                Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
-                    RouteAuthorityResolution {
-                        route_token,
-                        frame_hint,
-                        commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
-                    },
-                )))
-            }
+            Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(route_token))) => Poll::Ready(
+                Ok(RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
+                    route_token,
+                    commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
+                })),
+            ),
             Poll::Ready(Ok(PassiveRouteAuthorityOutcome::EvidenceOnly(frame_hint))) => self
                 .collect_route_authority_after_passive_evidence_only(
                     state,
@@ -200,7 +219,6 @@ where
             Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
                 RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                     route_token,
-                    frame_hint,
                     commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
                 }),
             )),
@@ -245,7 +263,6 @@ where
             Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
                 RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
                     route_token,
-                    frame_hint,
                     commit_evidence: RouteArmCommitEvidence::PollFrame,
                 }),
             )),
@@ -303,13 +320,9 @@ where
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::RestartFrontier)) => {
                 Poll::Ready(Ok(PassiveRouteAuthorityOutcome::RestartFrontier))
             }
-            Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
-                route_token,
-                frame_hint,
-            })) => Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(
-                route_token,
-                frame_hint,
-            ))),
+            Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority { route_token, .. })) => {
+                Poll::Ready(Ok(PassiveRouteAuthorityOutcome::Authority(route_token)))
+            }
             Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly { frame_hint })) => {
                 Poll::Ready(Ok(PassiveRouteAuthorityOutcome::EvidenceOnly(frame_hint)))
             }

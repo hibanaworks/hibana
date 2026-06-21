@@ -91,6 +91,33 @@ where
         Poll::Ready(Ok(Some(frame)))
     }
 
+    pub(super) fn poll_any_active_offer_transport_frame(
+        &mut self,
+        pending_recv: &mut lane_port::PendingRecv,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<Option<lane_port::PreambleFrame<'r>>>> {
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut start = 0usize;
+        while let Some(lane_idx) = {
+            self.decision_state
+                .active_offer_lanes()
+                .next_set_from(start, lane_limit)
+        } {
+            match self.poll_received_framed_transport_frame_for_lane(
+                pending_recv,
+                lane_idx,
+                lane_idx as u8,
+                cx,
+            ) {
+                Poll::Ready(Ok(frame)) => return Poll::Ready(Ok(Some(frame))),
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {}
+            }
+            start = lane_idx + 1;
+        }
+        Poll::Ready(Ok(None))
+    }
+
     fn poll_received_transport_frame_for_offer(
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,

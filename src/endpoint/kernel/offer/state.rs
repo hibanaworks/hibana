@@ -174,6 +174,16 @@ impl<'r> OfferState<'r> {
     }
 
     #[inline]
+    pub(super) fn carried_transport_lane_wire(&self) -> Option<u8> {
+        self.carried_ingress.transport_lane_wire()
+    }
+
+    #[inline]
+    pub(super) fn carried_transport_frame_label_raw(&self) -> Option<u8> {
+        self.carried_ingress.transport_frame_label_raw()
+    }
+
+    #[inline]
     pub(super) fn carry_ingress(&mut self, ingress: OfferStagedIngress<'r>) {
         self.carried_ingress = ingress;
     }

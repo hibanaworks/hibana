@@ -23,11 +23,17 @@ where
             Some(index) => state_index_to_usize(index),
             None => self.cursor.index(),
         };
+        let preview_conflict = self.cursor.event_conflict_for_index(preview_idx);
         let mut selected_arm = |scope| {
             if scope == meta.route_scope {
                 meta.selected_route_arm
             } else {
-                self.selected_arm_for_scope(scope)
+                let mut committed = |candidate| self.selected_arm_for_scope(candidate);
+                self.cursor.selected_arm_for_reentry_preview_conflict(
+                    scope,
+                    preview_conflict,
+                    &mut committed,
+                )
             }
         };
         let enabled = match self.cursor.event_enabled(
@@ -59,11 +65,24 @@ where
         let reentry_cursor =
             self.cursor
                 .send_reentry_cursor_step(meta, enabled.cursor_after(), |scope| {
-                    if scope == current_route_scope {
-                        current_route_arm
-                    } else {
-                        self.selected_arm_for_scope(scope)
+                    let mut row_idx = 0usize;
+                    while row_idx < route_rows.len() {
+                        if let Some(row) = route_rows.get(&self.cursor, row_idx)
+                            && row.scope() == scope
+                        {
+                            return Some(row.selected_arm());
+                        }
+                        row_idx += 1;
                     }
+                    if scope == current_route_scope {
+                        return current_route_arm;
+                    }
+                    let mut committed = |candidate| self.selected_arm_for_scope(candidate);
+                    self.cursor.selected_arm_for_reentry_preview_conflict(
+                        scope,
+                        preview_conflict,
+                        &mut committed,
+                    )
                 });
         let delta = super::CommitDelta::from_meta(
             meta,

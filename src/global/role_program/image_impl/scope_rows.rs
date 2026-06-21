@@ -332,8 +332,6 @@ impl RoleLaneScratch {
         if route.is_none() || arm > 1 || arm_start >= arm_end {
             return None;
         }
-        let mut child = ScopeId::none();
-        let mut child_span = usize::MAX;
         let mut idx = 0usize;
         while idx < markers.len() {
             let marker = markers[idx];
@@ -342,6 +340,18 @@ impl RoleLaneScratch {
                 && !Self::same_scope(marker.scope_id, route)
                 && marker.offset() == arm_start
             {
+                let LocalConflict::RouteArm {
+                    scope: parent,
+                    arm: parent_arm,
+                } = Self::dependency_conflict_for_scope(markers, view_len, marker.scope_id)
+                else {
+                    idx += 1;
+                    continue;
+                };
+                if !Self::same_scope(parent, route) || parent_arm != arm {
+                    idx += 1;
+                    continue;
+                }
                 let end = match Self::route_arm_ranges(markers, marker.scope_id) {
                     Some(ranges) => {
                         let left_end = ranges[0].1;
@@ -355,30 +365,12 @@ impl RoleLaneScratch {
                     None => crate::invariant(),
                 };
                 if end <= arm_end {
-                    let span = end - arm_start;
-                    if child.is_none() || span > child_span {
-                        child = marker.scope_id;
-                        child_span = span;
-                    }
+                    return Some(marker.scope_id);
                 }
             }
             idx += 1;
         }
-        if child.is_none() {
-            None
-        } else {
-            let LocalConflict::RouteArm {
-                scope: parent,
-                arm: parent_arm,
-            } = Self::dependency_conflict_for_scope(markers, view_len, child)
-            else {
-                panic!("passive child route has no parent conflict row");
-            };
-            if !Self::same_scope(parent, route) || parent_arm != arm {
-                panic!("passive child row does not match conflict chain");
-            }
-            Some(child)
-        }
+        None
     }
 
     pub(super) const fn push_route_arm_projection_row(

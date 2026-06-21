@@ -14,6 +14,15 @@ where
         &mut self,
     ) -> RecvResult<crate::global::const_dsl::ScopeId> {
         let node_scope = self.cursor.node_scope_id();
+        if node_scope.is_none()
+            && let Some(entry_idx) = self.cursor.first_pending_step_index(usize::MAX)
+            && entry_idx != self.cursor.index()
+        {
+            self.commit_cursor_realign_index(entry_idx)
+                .map_err(|_| RecvError::PhaseInvariant)?;
+            self.sync_lane_offer_state();
+            return self.align_cursor_to_selected_scope();
+        }
         let current_scope = self.current_offer_scope_id();
         if current_scope != node_scope
             && let Some(entry_idx) = self.route_scope_offer_entry_index(current_scope)

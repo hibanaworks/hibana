@@ -213,14 +213,12 @@ where
     }
 
     fn passive_recv_evidence(&self, input: &OfferIngressPlannerInput) -> OfferPassiveRecvEvidence {
-        if self.arm_has_recv_with_materialization(
-            input.selection.scope_id,
-            0,
-            input.materialization,
-        ) || self.arm_has_recv_with_materialization(
-            input.selection.scope_id,
-            1,
-            input.materialization,
+        if matches!(
+            self.arm_recv_evidence(input, 0),
+            OfferArmRecvEvidence::HasRecv
+        ) || matches!(
+            self.arm_recv_evidence(input, 1),
+            OfferArmRecvEvidence::HasRecv
         ) {
             OfferPassiveRecvEvidence::HasRecv
         } else {
@@ -236,7 +234,7 @@ where
         if self.scope_has_ready_arm(input.selection.scope_id, arm) {
             return OfferPassiveAckEvidence::Materializable;
         }
-        match self.arm_recv_evidence(input.selection.scope_id, arm, input.materialization) {
+        match self.arm_recv_evidence(input, arm) {
             OfferArmRecvEvidence::Recvless => OfferPassiveAckEvidence::Materializable,
             OfferArmRecvEvidence::HasRecv => OfferPassiveAckEvidence::NotMaterializable,
         }
@@ -256,11 +254,7 @@ where
         let Some(token) = input.preview_route_arm_selection else {
             return self.arm_decision_readiness(input, None);
         };
-        let decision = match self.arm_recv_evidence(
-            input.selection.scope_id,
-            token.arm().as_u8(),
-            input.materialization,
-        ) {
+        let decision = match self.arm_recv_evidence(input, token.arm().as_u8()) {
             OfferArmRecvEvidence::Recvless => Some(token),
             OfferArmRecvEvidence::HasRecv => None,
         };
@@ -272,22 +266,18 @@ where
         input: &OfferIngressPlannerInput,
         decision: Option<RouteArmToken>,
     ) -> OfferEarlyDecisionReadiness {
-        OfferEarlyDecisionReadiness::from_arm_evidence(decision.map(|token| {
-            self.arm_recv_evidence(
-                input.selection.scope_id,
-                token.arm().as_u8(),
-                input.materialization,
-            )
-        }))
+        OfferEarlyDecisionReadiness::from_arm_evidence(
+            decision.map(|token| self.arm_recv_evidence(input, token.arm().as_u8())),
+        )
     }
 
-    fn arm_recv_evidence(
-        &self,
-        scope_id: crate::global::const_dsl::ScopeId,
-        arm: u8,
-        materialization: ScopeArmMaterializationMeta,
-    ) -> OfferArmRecvEvidence {
-        if self.arm_has_recv_with_materialization(scope_id, arm, materialization) {
+    fn arm_recv_evidence(&self, input: &OfferIngressPlannerInput, arm: u8) -> OfferArmRecvEvidence {
+        let scope_id = input.selection.scope_id;
+        if self.arm_has_recv_with_materialization(scope_id, arm, input.materialization)
+            || self
+                .compute_passive_arm_recv_meta(scope_id, arm, input.selection.offer_lane)
+                .is_recv_step()
+        {
             OfferArmRecvEvidence::HasRecv
         } else {
             OfferArmRecvEvidence::Recvless

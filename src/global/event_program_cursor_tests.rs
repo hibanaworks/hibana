@@ -191,6 +191,111 @@ fn production_cursor_reenters_rolled_route_scope_inside_sequence() {
 }
 
 #[test]
+fn production_cursor_reenters_rolled_route_from_completed_outer_arm_to_nested_arm() {
+    let a = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<181, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<182, ()>>(),
+    );
+    let b = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<183, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<184, ()>>(),
+    );
+    let c = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<185, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<186, ()>>(),
+    );
+    let program = crate::g::route(a, crate::g::route(b, c)).roll();
+
+    let mut runtime = ProductionCursorTrace::new::<0>(&program);
+    runtime.commit_label(181);
+    runtime.commit_label(182);
+
+    let (meta, cursor_index) = runtime
+        .preview_send_meta_for_label::<0>(183)
+        .expect("rolled outer route should reenter nested right-left arm after left arm completes");
+    assert_eq!(meta.label, 183);
+    assert_eq!(state_index_to_usize(cursor_index), 2);
+}
+
+#[test]
+fn production_cursor_resolves_deep_left_spine_first_recv_dispatch_from_root() {
+    let a = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<201, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<202, ()>>(),
+    );
+    let b = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<203, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<204, ()>>(),
+    );
+    let c = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<205, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<206, ()>>(),
+    );
+    let d = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<207, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<208, ()>>(),
+    );
+    let e = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<209, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<210, ()>>(),
+    );
+    let f = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<211, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<212, ()>>(),
+    );
+    let g = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<213, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<214, ()>>(),
+    );
+    let h = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<215, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<216, ()>>(),
+    );
+    let program = crate::g::route(
+        crate::g::route(
+            crate::g::route(
+                crate::g::route(
+                    crate::g::route(crate::g::route(crate::g::route(a, b), c), d),
+                    e,
+                ),
+                f,
+            ),
+            g,
+        ),
+        h,
+    )
+    .roll();
+    let trace = ProductionCursorTrace::new::<1>(&program);
+
+    assert_eq!(trace.event_program.footprint().route_scope_count, 7);
+    let root_scope = (0..trace.event_program.footprint().route_scope_count)
+        .find_map(|slot| {
+            trace
+                .event_program
+                .route_scope_conflict_by_slot(slot)
+                .to_conflict()
+                .is_none()
+                .then(|| {
+                    trace
+                        .event_program
+                        .route_scope_rows_by_slot(slot)
+                        .expect("root route scope rows")
+                        .scope()
+                })
+        })
+        .expect("root route scope");
+    let lane_h = trace.lane_for_label(215);
+    let frame_h = trace.frame_label_for_label(215);
+
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(root_scope, lane_h, frame_h),
+        Some(1)
+    );
+}
+
+#[test]
 fn production_cursor_enabled_frontier_matches_reference_for_route_inside_join() {
     type Choice = crate::g::Route<A, B>;
     type Program = crate::g::Seq<crate::g::Par<Choice, C>, Post>;
@@ -681,6 +786,24 @@ impl ProductionCursorTrace {
             idx += 1;
         }
         panic!("recv label {target_label} missing from event rows");
+    }
+
+    fn preview_send_meta_for_label<const ROLE: u8>(
+        &self,
+        target_label: u8,
+    ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
+        let selected = &self.selected;
+        let mut committed_arm_for_scope = |scope| selected_arm(selected, scope);
+        let mut preview_controller_arm_for_scope = |_scope| None;
+        let mut selected_arm_for_scope = |scope| selected_arm(selected, scope);
+        let mut lane_for_label_or_offer = |_scope: ScopeId, label| self.lane_for_label(label);
+        self.cursor().send_preview_meta_for_label::<ROLE>(
+            target_label,
+            &mut committed_arm_for_scope,
+            &mut preview_controller_arm_for_scope,
+            &mut selected_arm_for_scope,
+            &mut lane_for_label_or_offer,
+        )
     }
 
     fn commit_label(&mut self, label: u8) {

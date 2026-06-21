@@ -31,18 +31,40 @@ where
                 route_commit_rows,
                 ..
             } = self;
+            let event_idx = state_index_to_usize(branch.cursor_index);
+            let Some(event_meta) = cursor.try_recv_meta_at(event_idx) else {
+                return Err(RecvError::PhaseInvariant);
+            };
+            let event_arm = match event_meta.route_arm {
+                Some(arm) => arm,
+                None => selected_arm,
+            };
             let mut rows = route_commit_rows.begin();
             prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
                 decision_state,
                 cursor,
                 lane_wire,
-                state_index_to_usize(branch.cursor_index),
-                selected_arm,
+                event_idx,
+                event_arm,
                 &mut rows,
             )?;
             rows.as_commit_rows(lane_wire)
         };
         if route_seed_rows.is_empty() {
+            return Err(RecvError::PhaseInvariant);
+        }
+        let mut branch_scope_arm = None;
+        let mut row_idx = 0usize;
+        while row_idx < route_seed_rows.len() {
+            if let Some(row) = route_seed_rows.get(&self.cursor, row_idx)
+                && row.scope() == scope_id
+            {
+                branch_scope_arm = Some(row.selected_arm());
+                break;
+            }
+            row_idx += 1;
+        }
+        if branch_scope_arm != Some(selected_arm) {
             return Err(RecvError::PhaseInvariant);
         }
         if branch.route_token.is_resolver() {

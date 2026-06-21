@@ -192,6 +192,11 @@ impl OfferScopeProfile {
     }
 
     #[inline]
+    pub(super) const fn frame_evidence_is_branch_authority(self) -> bool {
+        matches!(self, Self::PassiveIntrinsic)
+    }
+
+    #[inline]
     pub(super) const fn keeps_current_scope_for_unready_resolver(
         self,
         selection: OfferScopeSelection,

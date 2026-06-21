@@ -24,7 +24,6 @@ where
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let RouteAuthorityResolution {
             mut route_token,
-            frame_hint,
             mut commit_evidence,
         } = authority;
 
@@ -39,6 +38,18 @@ where
                 commit_evidence = RouteArmCommitEvidence::PollFrame;
                 continue;
             }
+            match self.poll_selected_arm_materialization_frame(
+                state,
+                pending_recv,
+                selected_arm,
+                route_token,
+                cx,
+            ) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Ready(Ok(true)) => continue,
+                Poll::Ready(Ok(false)) => {}
+            }
             return self.requeue_and_defer_unready_materialization(
                 state,
                 pending_recv,
@@ -50,9 +61,47 @@ where
         Poll::Ready(Ok(MaterializationReadyOutcome::Ready(ResolvedRouteArm {
             route_token,
             selected_arm,
-            frame_hint,
             route_arm_selection_commit_evidence: commit_evidence,
         })))
+    }
+
+    #[inline(never)]
+    fn poll_selected_arm_materialization_frame(
+        &mut self,
+        state: &mut OfferResolveState<'r>,
+        pending_recv: &mut super::lane_port::PendingRecv,
+        selected_arm: u8,
+        token: RouteArmToken,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<bool>> {
+        if state.ingress.has_transport()
+            || !state.facts.profile.transport_marks_ready_from_source(token)
+        {
+            return Poll::Ready(Ok(false));
+        }
+        let scope_id = state.selection().scope_id;
+        let Some(lanes) = self.route_scope_arm_lane_set_for_scope(scope_id, selected_arm) else {
+            return Poll::Ready(Ok(false));
+        };
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut next = lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            match self.poll_received_framed_transport_frame_for_lane(
+                pending_recv,
+                lane_idx,
+                lane_idx as u8,
+                cx,
+            ) {
+                Poll::Ready(Ok(frame)) => {
+                    state.ingress.stage_transport(frame);
+                    return Poll::Ready(Ok(true));
+                }
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {}
+            }
+            next = lanes.next_set_from(lane_idx + 1, lane_limit);
+        }
+        Poll::Pending
     }
 
     #[inline(never)]

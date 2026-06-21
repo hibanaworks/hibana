@@ -1,25 +1,10 @@
-use super::super::super::facts::{LocalAction, LocalConflict};
+use super::super::super::facts::LocalAction;
 use super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
 
 impl EventCursor {
     #[inline(always)]
     fn same_scope(left: ScopeId, right: ScopeId) -> bool {
         !left.is_none() && left == right
-    }
-
-    #[inline(always)]
-    fn route_reentry_scope_for_index(&self, idx: usize) -> Option<ScopeId> {
-        let scope = self.node_scope_id_at(idx);
-        if self.route_scope_reentry(scope) {
-            Some(scope)
-        } else if let Some(LocalConflict::RouteArm { scope, .. }) =
-            self.machine().event_conflict_for_index(idx).to_conflict()
-            && self.route_scope_reentry(scope)
-        {
-            Some(scope)
-        } else {
-            None
-        }
     }
 
     #[inline(never)]
@@ -32,9 +17,10 @@ impl EventCursor {
             return row.start() <= idx && idx < row.end();
         }
         if self.route_scope_reentry(scope) {
-            return self
-                .route_reentry_scope_for_index(idx)
-                .is_some_and(|candidate| Self::same_scope(candidate, scope));
+            return Self::same_scope(self.node_scope_id_at(idx), scope)
+                || self
+                    .preview_conflict_arm(self.machine().event_conflict_for_index(idx), scope)
+                    .is_some();
         }
         false
     }
@@ -49,31 +35,14 @@ impl EventCursor {
         }
     }
 
-    #[inline(never)]
-    fn first_roll_lane_event_index(&self, scope: ScopeId, lane: u8) -> Option<usize> {
-        if let Some(row) = self.machine().roll_scope_row(scope) {
-            let mut idx = row.start();
-            while idx < row.end() && idx < self.local_steps_len() {
-                if let Some((_event, candidate_lane)) = self.event_label_lane_at(idx)
-                    && candidate_lane == lane
-                {
-                    return Some(idx);
-                }
-                idx += 1;
-            }
-            return None;
+    #[inline(always)]
+    fn event_lane_at(&self, idx: usize) -> Option<u8> {
+        match self.machine().node(idx).action() {
+            LocalAction::Send { lane, .. }
+            | LocalAction::Recv { lane, .. }
+            | LocalAction::Local { lane, .. } => Some(lane),
+            LocalAction::Terminate => None,
         }
-        let mut idx = 0usize;
-        while idx < self.local_steps_len() {
-            if self.roll_scope_contains_index(scope, idx)
-                && let Some((_event, candidate_lane)) = self.event_label_lane_at(idx)
-                && candidate_lane == lane
-            {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
     }
 
     #[inline(never)]
@@ -144,9 +113,88 @@ impl EventCursor {
         {
             return Some(scope);
         }
-        let scope = self.route_reentry_scope_for_index(idx)?;
-        self.roll_scope_events_complete(scope, selected_arm_for_scope)
-            .then_some(scope)
+        self.complete_reentrant_route_containing_index(idx, selected_arm_for_scope)
+    }
+
+    #[inline(never)]
+    fn complete_reentrant_route_containing_index(
+        &self,
+        idx: usize,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<ScopeId> {
+        let mut selected = None;
+        let mut selected_len = usize::MAX;
+        let mut slot = 0usize;
+        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+            let scope = region.scope();
+            let len = region.end() - region.start();
+            if region.start() <= idx
+                && idx < region.end()
+                && len < selected_len
+                && self.route_scope_reentry(scope)
+                && self.roll_scope_contains_index(scope, idx)
+                && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
+            {
+                selected = Some(scope);
+                selected_len = len;
+            }
+            slot += 1;
+        }
+        selected
+    }
+
+    #[inline(never)]
+    fn roll_scope_lane_head_allows_index(&self, scope: ScopeId, idx: usize, lane: u8) -> bool {
+        if !self.roll_scope_contains_index(scope, idx) {
+            return false;
+        }
+        let Some(candidate_lane) = self.event_lane_at(idx) else {
+            return false;
+        };
+        if candidate_lane != lane {
+            return false;
+        }
+        let preview_conflict = self.machine().event_conflict_for_index(idx);
+        let (mut scan, end) = if let Some(row) = self.machine().roll_scope_row(scope) {
+            (row.start(), row.end())
+        } else {
+            (0, self.local_steps_len())
+        };
+        while scan < idx && scan < end && scan < self.local_steps_len() {
+            if self.roll_scope_contains_index(scope, scan)
+                && let Some(prior_lane) = self.event_lane_at(scan)
+                && prior_lane == lane
+            {
+                let prior_conflict = self.machine().event_conflict_for_index(scan);
+                let mut selected_arm_for_scope = |_scope| None;
+                if self.event_conflict_row_allows_with_preview(
+                    prior_conflict,
+                    preview_conflict,
+                    &mut selected_arm_for_scope,
+                ) {
+                    return false;
+                }
+            }
+            scan += 1;
+        }
+        true
+    }
+
+    #[inline(never)]
+    fn roll_scope_lane_progress_allows_index(&self, scope: ScopeId, idx: usize, lane: u8) -> bool {
+        if !self.roll_scope_contains_index(scope, idx) {
+            return false;
+        }
+        let Some(candidate_lane) = self.event_lane_at(idx) else {
+            return false;
+        };
+        if candidate_lane != lane {
+            return false;
+        }
+        if self.index() == idx || self.index_for_lane_step(lane as usize) == Some(idx) {
+            return true;
+        }
+        self.roll_scope_lane_head_allows_index(scope, idx, lane)
     }
 
     #[inline(never)]
@@ -169,7 +217,7 @@ impl EventCursor {
                 idx += 1;
                 continue;
             };
-            if label == target_label && self.first_roll_lane_event_index(scope, lane) == Some(idx) {
+            if label == target_label && self.roll_scope_lane_head_allows_index(scope, idx, lane) {
                 return Some(idx);
             }
             idx += 1;
@@ -190,7 +238,7 @@ impl EventCursor {
         let Some(scope) = self.complete_roll_scope_for_index(idx, selected_arm_for_scope) else {
             return false;
         };
-        self.first_roll_lane_event_index(scope, lane) == Some(idx)
+        self.roll_scope_lane_progress_allows_index(scope, idx, lane)
     }
 
     #[inline(never)]
@@ -207,12 +255,14 @@ impl EventCursor {
             .event_program()
             .local_step_lane(target.0.step_idx as usize)?;
         let mut selected_arm_for_scope = |_| None;
-        let scope = match self.complete_roll_body_scope_for_index(idx, &mut selected_arm_for_scope)
-        {
-            Some(scope) => scope,
-            None => self.route_reentry_scope_for_index(idx)?,
-        };
-        (self.first_roll_lane_event_index(scope, lane) == Some(idx)).then_some(scope)
+        let scope =
+            match self.complete_roll_body_scope_for_index(idx, &mut selected_arm_for_scope) {
+                Some(scope) => scope,
+                None => self
+                    .complete_reentrant_route_containing_index(idx, &mut selected_arm_for_scope)?,
+            };
+        self.roll_scope_lane_head_allows_index(scope, idx, lane)
+            .then_some(scope)
     }
 
     #[inline(never)]

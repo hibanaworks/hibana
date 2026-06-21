@@ -176,6 +176,9 @@ impl EventCursor {
                     depth += 1;
                     continue;
                 }
+                return self
+                    .route_scope_arm_recv_index(target_scope, arm)
+                    .or_else(|| self.passive_observer_arm_entry_index(target_scope, arm));
             }
             return self.route_scope_materialization_index(target_scope);
         }
@@ -203,7 +206,6 @@ impl EventCursor {
         loop {
             if self.route_scope_reentry(reentry_scope)
                 && let Some(arm) = authorized_arm_for_scope(reentry_scope)
-                && arm == 0
                 && let Some(last_eff) = self.route_arm_lane_last_eff(reentry_scope, arm, lane)
                 && last_eff == eff_index
                 && let Some(first_step) = self.route_arm_lane_first_step(reentry_scope, arm, lane)
@@ -221,7 +223,6 @@ impl EventCursor {
             && region.reentry()
             && next_usize == region.start()
             && let Some(arm) = authorized_arm_for_scope(region.scope())
-            && arm == 0
             && let Some(first_step) = self.route_arm_lane_first_step(region.scope(), arm, lane)
         {
             return Some(first_step);
@@ -229,7 +230,7 @@ impl EventCursor {
         None
     }
 
-    pub(crate) fn branch_recv_reentry_cursor_step(
+    pub(crate) fn recv_reentry_cursor_step(
         &self,
         meta: RecvMeta,
         next_index: StateIndex,
@@ -465,8 +466,16 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn route_scope_for_offer_node(&self, node_scope: ScopeId) -> Option<ScopeId> {
-        self.route_scope_rows(node_scope)
+    pub(crate) fn route_scope_for_offer_node(
+        &self,
+        node_scope: ScopeId,
+        current_idx: usize,
+    ) -> Option<ScopeId> {
+        if let Some(region) = self.route_scope_rows(node_scope) {
+            return Some(region.scope());
+        }
+        self.node_route_arm_at(current_idx)?;
+        self.enclosing_route_scope_rows_at(current_idx)
             .map(|region| region.scope())
     }
 

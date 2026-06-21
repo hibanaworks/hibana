@@ -24,7 +24,9 @@ where
                 && meta.lane as usize == lane_idx
                 && !meta.origin.is_session()
                 && {
-                    let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
+                    let preview_conflict = self.cursor.event_conflict_for_index(idx);
+                    let mut selected_arm =
+                        |scope| self.selected_arm_for_recv_event(preview_conflict, scope);
                     self.cursor
                         .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm)
                         .is_ok()
@@ -60,7 +62,8 @@ where
         if !observed.matches_recv_meta(self.sid.raw(), lane_wire, ROLE, meta) {
             return Ok(None);
         }
-        let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
+        let preview_conflict = self.cursor.event_conflict_for_index(idx);
+        let mut selected_arm = |scope| self.selected_arm_for_recv_event(preview_conflict, scope);
         let enabled =
             self.cursor
                 .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
@@ -101,7 +104,8 @@ where
         if candidate_lane_wire != lane_wire {
             return Ok(None);
         }
-        let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
+        let preview_conflict = self.cursor.event_conflict_for_index(idx);
+        let mut selected_arm = |scope| self.selected_arm_for_recv_event(preview_conflict, scope);
         let enabled =
             self.cursor
                 .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);

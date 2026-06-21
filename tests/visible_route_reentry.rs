@@ -34,6 +34,38 @@ const NESTED_OTHER: u8 = 172;
 const NESTED_TAIL: u8 = 173;
 const NESTED_EXIT: u8 = 174;
 
+const NESTED_ROUTE_A_REQ: u8 = 181;
+const NESTED_ROUTE_A_ACK: u8 = 182;
+const NESTED_ROUTE_B_REQ: u8 = 183;
+const NESTED_ROUTE_B_ACK: u8 = 184;
+const NESTED_ROUTE_C_REQ: u8 = 185;
+const NESTED_ROUTE_C_ACK: u8 = 186;
+const DEEP_ROUTE_A_REQ: u8 = 187;
+const DEEP_ROUTE_A_ACK: u8 = 188;
+const DEEP_ROUTE_B_REQ: u8 = 189;
+const DEEP_ROUTE_B_ACK: u8 = 190;
+const DEEP_ROUTE_C_REQ: u8 = 191;
+const DEEP_ROUTE_C_ACK: u8 = 192;
+const DEEP_ROUTE_D_REQ: u8 = 193;
+const DEEP_ROUTE_D_ACK: u8 = 194;
+
+const SPINE_A_REQ: u8 = 201;
+const SPINE_A_ACK: u8 = 202;
+const SPINE_B_REQ: u8 = 203;
+const SPINE_B_ACK: u8 = 204;
+const SPINE_C_REQ: u8 = 205;
+const SPINE_C_ACK: u8 = 206;
+const SPINE_D_REQ: u8 = 207;
+const SPINE_D_ACK: u8 = 208;
+const SPINE_E_REQ: u8 = 209;
+const SPINE_E_ACK: u8 = 210;
+const SPINE_F_REQ: u8 = 211;
+const SPINE_F_ACK: u8 = 212;
+const SPINE_G_REQ: u8 = 213;
+const SPINE_G_ACK: u8 = 214;
+const SPINE_H_REQ: u8 = 215;
+const SPINE_H_ACK: u8 = 216;
+
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
@@ -81,6 +113,132 @@ fn nested_seq_roll_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::seq(outer, g::send::<0, 1, Msg<NESTED_EXIT, u8>>()))
 }
 
+fn rolled_nested_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let a = g::seq(
+        g::send::<0, 1, Msg<NESTED_ROUTE_A_REQ, u8>>(),
+        g::send::<1, 0, Msg<NESTED_ROUTE_A_ACK, u8>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<NESTED_ROUTE_B_REQ, u8>>(),
+        g::send::<1, 0, Msg<NESTED_ROUTE_B_ACK, u8>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<NESTED_ROUTE_C_REQ, u8>>(),
+        g::send::<1, 0, Msg<NESTED_ROUTE_C_ACK, u8>>(),
+    );
+    project(&g::route(a, g::route(b, c)).roll())
+}
+
+fn rolled_deep_nested_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let a = g::seq(
+        g::send::<0, 1, Msg<DEEP_ROUTE_A_REQ, u8>>(),
+        g::send::<1, 0, Msg<DEEP_ROUTE_A_ACK, u8>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<DEEP_ROUTE_B_REQ, u8>>(),
+        g::send::<1, 0, Msg<DEEP_ROUTE_B_ACK, u8>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<DEEP_ROUTE_C_REQ, u8>>(),
+        g::send::<1, 0, Msg<DEEP_ROUTE_C_ACK, u8>>(),
+    );
+    let d = g::seq(
+        g::send::<0, 1, Msg<DEEP_ROUTE_D_REQ, u8>>(),
+        g::send::<1, 0, Msg<DEEP_ROUTE_D_ACK, u8>>(),
+    );
+    project(&g::route(a, g::route(g::route(b, c), d)).roll())
+}
+
+fn rolled_right_spine_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let a = g::seq(
+        g::send::<0, 1, Msg<SPINE_A_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_A_ACK, u8>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<SPINE_B_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_B_ACK, u8>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<SPINE_C_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_C_ACK, u8>>(),
+    );
+    let d = g::seq(
+        g::send::<0, 1, Msg<SPINE_D_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_D_ACK, u8>>(),
+    );
+    let e = g::seq(
+        g::send::<0, 1, Msg<SPINE_E_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_E_ACK, u8>>(),
+    );
+    let f = g::seq(
+        g::send::<0, 1, Msg<SPINE_F_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_F_ACK, u8>>(),
+    );
+    let g = g::seq(
+        g::send::<0, 1, Msg<SPINE_G_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_G_ACK, u8>>(),
+    );
+    let h = g::seq(
+        g::send::<0, 1, Msg<SPINE_H_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_H_ACK, u8>>(),
+    );
+    project(
+        &g::route(
+            a,
+            g::route(
+                b,
+                g::route(c, g::route(d, g::route(e, g::route(f, g::route(g, h))))),
+            ),
+        )
+        .roll(),
+    )
+}
+
+fn rolled_left_spine_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let a = g::seq(
+        g::send::<0, 1, Msg<SPINE_A_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_A_ACK, u8>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<SPINE_B_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_B_ACK, u8>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<SPINE_C_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_C_ACK, u8>>(),
+    );
+    let d = g::seq(
+        g::send::<0, 1, Msg<SPINE_D_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_D_ACK, u8>>(),
+    );
+    let e = g::seq(
+        g::send::<0, 1, Msg<SPINE_E_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_E_ACK, u8>>(),
+    );
+    let f = g::seq(
+        g::send::<0, 1, Msg<SPINE_F_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_F_ACK, u8>>(),
+    );
+    let g = g::seq(
+        g::send::<0, 1, Msg<SPINE_G_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_G_ACK, u8>>(),
+    );
+    let h = g::seq(
+        g::send::<0, 1, Msg<SPINE_H_REQ, u8>>(),
+        g::send::<1, 0, Msg<SPINE_H_ACK, u8>>(),
+    );
+    project(
+        &g::route(
+            g::route(
+                g::route(g::route(g::route(g::route(g::route(a, b), c), d), e), f),
+                g,
+            ),
+            h,
+        )
+        .roll(),
+    )
+}
+
 fn with_visible_reentry_workspace(
     sid: u32,
     controller_program: RoleProgram<0>,
@@ -117,24 +275,58 @@ async fn send_from_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 
     worker
         .send::<Msg<MSG, u8>>(&value)
         .await
-        .expect("worker send");
+        .unwrap_or_else(|err| panic!("worker send label {MSG}: {err:?}"));
 }
 
 async fn offer_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) -> u8 {
-    let branch = worker.offer().await.expect("worker offer");
+    let branch = worker
+        .offer()
+        .await
+        .unwrap_or_else(|err| panic!("worker offer for label {MSG}: {err:?}"));
     assert_eq!(branch.label(), <Msg<MSG, u8> as Message>::LOGICAL_LABEL);
     branch.recv::<Msg<MSG, u8>>().await.expect("worker recv")
 }
 
 async fn recv_worker<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) -> u8 {
-    worker.recv::<Msg<MSG, u8>>().await.expect("worker recv")
+    worker
+        .recv::<Msg<MSG, u8>>()
+        .await
+        .unwrap_or_else(|err| panic!("worker recv label {MSG}: {err:?}"))
 }
 
 async fn recv_controller<const MSG: u8>(controller: &mut hibana::Endpoint<'static, 0>) -> u8 {
     controller
         .recv::<Msg<MSG, u8>>()
         .await
-        .expect("controller recv")
+        .unwrap_or_else(|err| panic!("controller recv label {MSG}: {err:?}"))
+}
+
+async fn direct_request_response<const REQ: u8, const ACK: u8>(
+    controller: &mut hibana::Endpoint<'static, 0>,
+    worker: &mut hibana::Endpoint<'static, 1>,
+    value: u8,
+) {
+    send_from_controller::<REQ>(controller, value).await;
+    assert_eq!(recv_worker::<REQ>(worker).await, value);
+    send_from_worker::<ACK>(worker, value.wrapping_add(1)).await;
+    assert_eq!(
+        recv_controller::<ACK>(controller).await,
+        value.wrapping_add(1)
+    );
+}
+
+async fn offer_request_response<const REQ: u8, const ACK: u8>(
+    controller: &mut hibana::Endpoint<'static, 0>,
+    worker: &mut hibana::Endpoint<'static, 1>,
+    value: u8,
+) {
+    send_from_controller::<REQ>(controller, value).await;
+    assert_eq!(offer_worker::<REQ>(worker).await, value);
+    send_from_worker::<ACK>(worker, value.wrapping_add(1)).await;
+    assert_eq!(
+        recv_controller::<ACK>(controller).await,
+        value.wrapping_add(1)
+    );
 }
 
 async fn assert_controller_send_blocked<const MSG: u8>(
@@ -148,6 +340,18 @@ async fn assert_controller_send_blocked<const MSG: u8>(
     assert!(
         rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
         "controller send label {MSG} must remain blocked by roll/par progress: {rendered}"
+    );
+}
+
+async fn assert_worker_send_blocked<const MSG: u8>(worker: &mut hibana::Endpoint<'static, 1>) {
+    let err = match worker.send::<Msg<MSG, u8>>(&0).await {
+        Ok(()) => panic!("worker send label {MSG} must be blocked"),
+        Err(err) => err,
+    };
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
+        "worker send label {MSG} must remain blocked by roll progress: {rendered}"
     );
 }
 
@@ -284,6 +488,225 @@ fn nested_roll_scopes_reenter_inner_until_outer_scope_completes() {
                 assert_eq!(recv_worker::<NESTED_TAIL>(worker).await, 50);
                 send_from_controller::<NESTED_EXIT>(controller, 60).await;
                 assert_eq!(recv_worker::<NESTED_EXIT>(worker).await, 60);
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_nested_route_reenters_to_sibling_nested_arm() {
+    with_visible_reentry_workspace(
+        964,
+        rolled_nested_route_program::<0>(),
+        rolled_nested_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                send_from_controller::<NESTED_ROUTE_B_REQ>(controller, 10).await;
+                assert_eq!(offer_worker::<NESTED_ROUTE_B_REQ>(worker).await, 10);
+                send_from_worker::<NESTED_ROUTE_B_ACK>(worker, 11).await;
+                assert_eq!(recv_controller::<NESTED_ROUTE_B_ACK>(controller).await, 11);
+
+                send_from_controller::<NESTED_ROUTE_C_REQ>(controller, 20).await;
+                assert_eq!(offer_worker::<NESTED_ROUTE_C_REQ>(worker).await, 20);
+                send_from_worker::<NESTED_ROUTE_C_ACK>(worker, 21).await;
+                assert_eq!(recv_controller::<NESTED_ROUTE_C_ACK>(controller).await, 21);
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_reenters_from_left_arm_to_nested_right_arm() {
+    with_visible_reentry_workspace(
+        965,
+        rolled_nested_route_program::<0>(),
+        rolled_nested_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                send_from_controller::<NESTED_ROUTE_A_REQ>(controller, 10).await;
+                assert_eq!(offer_worker::<NESTED_ROUTE_A_REQ>(worker).await, 10);
+                send_from_worker::<NESTED_ROUTE_A_ACK>(worker, 11).await;
+                assert_eq!(recv_controller::<NESTED_ROUTE_A_ACK>(controller).await, 11);
+
+                send_from_controller::<NESTED_ROUTE_B_REQ>(controller, 20).await;
+                assert_eq!(offer_worker::<NESTED_ROUTE_B_REQ>(worker).await, 20);
+                send_from_worker::<NESTED_ROUTE_B_ACK>(worker, 21).await;
+                assert_eq!(recv_controller::<NESTED_ROUTE_B_ACK>(controller).await, 21);
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_reenters_from_completed_outer_arm_to_deep_nested_arm() {
+    with_visible_reentry_workspace(
+        966,
+        rolled_deep_nested_route_program::<0>(),
+        rolled_deep_nested_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                send_from_controller::<DEEP_ROUTE_A_REQ>(controller, 10).await;
+                assert_eq!(offer_worker::<DEEP_ROUTE_A_REQ>(worker).await, 10);
+                send_from_worker::<DEEP_ROUTE_A_ACK>(worker, 11).await;
+                assert_eq!(recv_controller::<DEEP_ROUTE_A_ACK>(controller).await, 11);
+
+                send_from_controller::<DEEP_ROUTE_B_REQ>(controller, 20).await;
+                assert_eq!(offer_worker::<DEEP_ROUTE_B_REQ>(worker).await, 20);
+                send_from_worker::<DEEP_ROUTE_B_ACK>(worker, 21).await;
+                assert_eq!(recv_controller::<DEEP_ROUTE_B_ACK>(controller).await, 21);
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_right_spine_reenters_repeated_deep_rightmost_arm() {
+    with_visible_reentry_workspace(
+        967,
+        rolled_right_spine_route_program::<0>(),
+        rolled_right_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
+                direct_request_response::<SPINE_B_REQ, SPINE_B_ACK>(controller, worker, 20).await;
+                direct_request_response::<SPINE_C_REQ, SPINE_C_ACK>(controller, worker, 30).await;
+                direct_request_response::<SPINE_D_REQ, SPINE_D_ACK>(controller, worker, 40).await;
+                direct_request_response::<SPINE_E_REQ, SPINE_E_ACK>(controller, worker, 50).await;
+                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 60).await;
+                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 70).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_right_spine_rejects_deep_response_without_reentered_request() {
+    with_visible_reentry_workspace(
+        970,
+        rolled_right_spine_route_program::<0>(),
+        rolled_right_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
+                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 20).await;
+                assert_worker_send_blocked::<SPINE_H_ACK>(worker).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_right_spine_offer_reenters_through_left_chain() {
+    with_visible_reentry_workspace(
+        968,
+        rolled_right_spine_route_program::<0>(),
+        rolled_right_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
+                offer_request_response::<SPINE_B_REQ, SPINE_B_ACK>(controller, worker, 20).await;
+                offer_request_response::<SPINE_C_REQ, SPINE_C_ACK>(controller, worker, 30).await;
+                offer_request_response::<SPINE_D_REQ, SPINE_D_ACK>(controller, worker, 40).await;
+                offer_request_response::<SPINE_E_REQ, SPINE_E_ACK>(controller, worker, 50).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_right_spine_offer_reenters_repeated_deep_rightmost_arm() {
+    with_visible_reentry_workspace(
+        971,
+        rolled_right_spine_route_program::<0>(),
+        rolled_right_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 10).await;
+                offer_request_response::<SPINE_B_REQ, SPINE_B_ACK>(controller, worker, 20).await;
+                offer_request_response::<SPINE_C_REQ, SPINE_C_ACK>(controller, worker, 30).await;
+                offer_request_response::<SPINE_D_REQ, SPINE_D_ACK>(controller, worker, 40).await;
+                offer_request_response::<SPINE_E_REQ, SPINE_E_ACK>(controller, worker, 50).await;
+                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 60).await;
+                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 70).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_left_spine_reenters_repeated_deep_leftmost_arm() {
+    with_visible_reentry_workspace(
+        969,
+        rolled_left_spine_route_program::<0>(),
+        rolled_left_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                direct_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
+                direct_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
+                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 30).await;
+                direct_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 40).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_left_spine_offer_enters_rightmost_arm() {
+    with_visible_reentry_workspace(
+        973,
+        rolled_left_spine_route_program::<0>(),
+        rolled_left_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_left_spine_offer_reenters_inner_right_arm() {
+    with_visible_reentry_workspace(
+        974,
+        rolled_left_spine_route_program::<0>(),
+        rolled_left_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
+                offer_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_left_spine_offer_reenters_deep_left_arm_once() {
+    with_visible_reentry_workspace(
+        975,
+        rolled_left_spine_route_program::<0>(),
+        rolled_left_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
+                offer_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
+                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 30).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_left_spine_offer_reenters_repeated_deep_leftmost_arm() {
+    with_visible_reentry_workspace(
+        972,
+        rolled_left_spine_route_program::<0>(),
+        rolled_left_spine_route_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SPINE_H_REQ, SPINE_H_ACK>(controller, worker, 10).await;
+                offer_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
+                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 30).await;
+                offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 40).await;
             });
         },
     );

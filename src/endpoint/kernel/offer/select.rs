@@ -1,7 +1,7 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
-    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, LaneSetView, OfferEntryPosition,
+    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, LaneSetView,
     OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll,
     RecvError, RecvResult, RouteArmToken, ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId,
     Transport, frontier_snapshot_from_scratch, lane_port, state_index_to_usize,
@@ -67,9 +67,30 @@ where
         endpoint.init_global_frontier_scratch_if_needed();
     }
 
-    pub(in crate::endpoint::kernel) fn select_scope(&mut self) -> RecvResult<OfferScopeSelection> {
+    pub(in crate::endpoint::kernel) fn select_scope(
+        &mut self,
+        carried_lane: Option<u8>,
+        carried_frame_label: Option<u8>,
+    ) -> RecvResult<OfferScopeSelection> {
+        if let Some(selection) =
+            self.select_current_materialized_ingress_scope(carried_lane, carried_frame_label)?
+        {
+            return Ok(selection);
+        }
+        if let Some(selection) =
+            self.select_observed_ingress_route_scope(carried_lane, carried_frame_label)?
+        {
+            return Ok(selection);
+        }
+        if let Some(selection) = self.select_carried_ingress_scope(carried_lane)? {
+            return Ok(selection);
+        }
         let node_scope = self.align_cursor_to_selected_scope()?;
-        let Some(scope_id) = self.cursor.route_scope_for_offer_node(node_scope) else {
+        let current_idx = self.cursor.index();
+        let Some(scope_id) = self
+            .cursor
+            .route_scope_for_offer_node(node_scope, current_idx)
+        else {
             return Err(RecvError::PhaseInvariant);
         };
         if !self.cursor.route_offer_entry_allows_current(
@@ -79,41 +100,31 @@ where
         ) {
             return Err(RecvError::PhaseInvariant);
         }
-        let current_idx = self.cursor.index();
         let cached_entry_state = self.offer_entry_state_snapshot(current_idx).filter(|_| {
             self.offer_entry_has_active_lanes(current_idx)
                 && self.offer_entry_scope_id(current_idx) == scope_id
         });
         // Route hints are offer-scoped; preview only inspects them here.
-        let offer_lane = if cached_entry_state.is_some() {
+        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+        let lane_limit = self.cursor.logical_lane_count();
+        let carried_offer_lane = carried_lane
+            .map(usize::from)
+            .filter(|&lane_idx| lane_idx < lane_limit && offer_lanes.contains(lane_idx))
+            .map(|lane_idx| lane_idx as u8);
+        let offer_lane = if let Some(lane) = carried_offer_lane {
+            Some(lane)
+        } else if cached_entry_state.is_some() {
             self.offer_entry_representative_lane_idx(current_idx)
                 .map(|lane_idx| lane_idx as u8)
         } else {
-            self.offer_lane_set_for_scope(scope_id)
-                .first_set(self.cursor.logical_lane_count())
+            offer_lanes
+                .first_set(lane_limit)
                 .map(|lane_idx| lane_idx as u8)
         };
         let Some(offer_lane) = offer_lane else {
             return Err(RecvError::PhaseInvariant);
         };
-        let route_offer_entry_matches = crate::invariant_some(
-            self.cursor
-                .route_offer_entry_cursor_position(scope_id, current_idx),
-        )
-        .is_at_entry();
-        let entry_position = if route_offer_entry_matches {
-            OfferEntryPosition::RouteEntry
-        } else {
-            OfferEntryPosition::AfterRouteEntry
-        };
-        let frontier_parallel_root =
-            CursorEndpoint::<ROLE, T>::parallel_scope_root(&self.cursor, scope_id);
-        Ok(OfferScopeSelection {
-            scope_id,
-            frontier_parallel_root,
-            offer_lane,
-            entry_position,
-        })
+        self.offer_scope_selection_for_scope_lane(scope_id, current_idx, offer_lane)
     }
 
     #[inline]
@@ -151,14 +162,23 @@ where
         let arm = exact_passive_arm
             .or_else(|| frame_label_meta.evidence_arm_for_frame_label(frame_label));
         if let Some(arm) = arm {
-            if self.intrinsic_passive_scope_evidence_materializes_poll(scope_id) {
-                self.mark_scope_ready_arm(scope_id, arm);
-            } else {
-                self.mark_scope_materialization_ready_arm(scope_id, arm);
-            }
+            self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
             if exact_passive_arm.is_some() {
                 self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
             }
+        }
+    }
+
+    #[inline]
+    pub(super) fn mark_scope_ready_arm_from_exact_passive_arm(
+        &mut self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) {
+        if self.intrinsic_passive_scope_evidence_materializes_poll(scope_id) {
+            self.mark_scope_ready_arm(scope_id, arm);
+        } else {
+            self.mark_scope_materialization_ready_arm(scope_id, arm);
         }
     }
 

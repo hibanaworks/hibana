@@ -5,7 +5,7 @@ use crate::global::compiled::images::{CompiledProgramRef, ProgramColumnRange, Ro
 use crate::global::const_dsl::{EffList, ScopeKind};
 use crate::global::event_program::LocalEventProgram;
 use crate::global::program::Projectable;
-use crate::global::typestate::LocalConflict;
+use crate::global::typestate::{LocalAction, LocalConflict};
 
 #[macro_use]
 #[path = "tests/final_form_protocol_matrix.rs"]
@@ -624,6 +624,55 @@ fn roll_projection_marks_seq_body_with_roll_scope() {
         assert_eq!(first.scope().kind(), Some(ScopeKind::Roll));
         assert_eq!(second.scope().kind(), Some(ScopeKind::Roll));
         assert_eq!(first.scope(), second.scope());
+    });
+}
+
+#[test]
+fn rolled_nested_route_keeps_inner_arm_conflicts() {
+    let a = g::seq(
+        g::send::<0, 1, Msg<181, ()>>(),
+        g::send::<1, 0, Msg<182, ()>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<183, ()>>(),
+        g::send::<1, 0, Msg<184, ()>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<185, ()>>(),
+        g::send::<1, 0, Msg<186, ()>>(),
+    );
+    let program: RoleProgram<0> = project(&g::route(a, g::route(b, c)).roll());
+    with_role_descriptor(&program, |descriptor| {
+        let rows = descriptor.local_event_rows();
+        let mut b_scope = None;
+        let mut c_scope = None;
+        let mut idx = 0usize;
+        while idx < rows.local_step_count() {
+            let Some(node) = rows.local_step_node(idx) else {
+                break;
+            };
+            let label = match node.action() {
+                LocalAction::Send { label, .. } | LocalAction::Recv { label, .. } => label,
+                LocalAction::Local { label, .. } => label,
+                LocalAction::Terminate => {
+                    idx += 1;
+                    continue;
+                }
+            };
+            match (label, rows.event_conflict_for_index(idx).to_conflict()) {
+                (183, Some(LocalConflict::RouteArm { scope, arm })) => {
+                    b_scope = Some(scope);
+                    assert_eq!(arm, 0);
+                }
+                (185, Some(LocalConflict::RouteArm { scope, arm })) => {
+                    c_scope = Some(scope);
+                    assert_eq!(arm, 1);
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+        assert_eq!(b_scope, c_scope);
     });
 }
 

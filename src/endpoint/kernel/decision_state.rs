@@ -801,7 +801,7 @@ impl RouteState {
             idx -= 1;
             let slot = self.lane_route_arms.get(lane_idx, idx);
             let scope = slot.scope;
-            if scope.is_none() || slot.arm != 0 {
+            if scope.is_none() {
                 continue;
             }
             if is_reentry_route(scope) {

@@ -314,6 +314,7 @@ const fn controller_arm_semantic_from_node(kind: EventSemanticKind) -> EventSema
 }
 
 mod commit_delta;
+mod commit_delta_route_only;
 mod frontier_observation;
 mod frontier_select;
 mod offer_refresh;

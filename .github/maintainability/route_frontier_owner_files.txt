@@ -14,6 +14,7 @@ src/endpoint/kernel/offer/materialization.rs
 src/endpoint/kernel/offer/profile.rs
 src/endpoint/kernel/offer/resolve.rs
 src/endpoint/kernel/offer/select.rs
+src/endpoint/kernel/offer/select_observed.rs
 src/endpoint/kernel/offer/select_alignment.rs
 src/endpoint/kernel/offer/state.rs
 src/endpoint/kernel/offer/resolve_types.rs

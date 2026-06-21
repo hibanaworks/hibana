@@ -171,6 +171,48 @@ impl EventCursor {
         arm_for_scope(scope_id)
     }
 
+    fn route_scope_has_dynamic_resolver(&self, scope_id: ScopeId) -> bool {
+        self.route_scope_controller_resolver(scope_id)
+            .is_some_and(|(resolver, _)| resolver.is_dynamic())
+    }
+
+    #[inline(never)]
+    fn reentry_committed_arm_complete(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        self.route_scope_reentry(scope_id)
+            && self.selected_route_arm_event_row_done(scope_id, arm, arm_for_scope)
+    }
+
+    fn send_preview_arm_for_scope_with_reentry_path(
+        &self,
+        scope: ScopeId,
+        preview_route_arm: Option<SendPreviewRouteArm>,
+        preview_conflict: PackedEventConflict,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<u8> {
+        let committed = self.send_preview_selected_arm_for_scope_with_route(
+            scope,
+            preview_route_arm,
+            selected_arm_for_scope,
+        );
+        let committed_arm = committed?;
+        if preview_route_arm.is_some_and(|preview| preview.scope == scope) {
+            return Some(committed_arm);
+        }
+        if self
+            .preview_conflict_arm(preview_conflict, scope)
+            .is_some_and(|preview_arm| preview_arm != committed_arm)
+            && self.reentry_committed_arm_complete(scope, committed_arm, selected_arm_for_scope)
+        {
+            return None;
+        }
+        Some(committed_arm)
+    }
+
     #[inline(never)]
     fn send_preview_route_scope_end_if_complete(
         &self,
@@ -303,6 +345,25 @@ impl EventCursor {
     ) -> Result<(), SendPreviewError> {
         let at_arm_entry = self.send_preview_is_at_controller_arm_entry(scope_id, *idx);
         let at_decision = at_arm_entry || at_decision;
+        if at_decision
+            && self.route_scope_reentry(scope_id)
+            && !self.route_scope_has_dynamic_resolver(scope_id)
+            && let Some((arm, entry_idx)) = self
+                .intrinsic_send_preview_controller_arm_entry_for_label(scope_id, ctx.target_label)
+            && let Some(committed) = (ctx.committed_arm_for_scope)(scope_id)
+            && committed != arm
+            && self.reentry_committed_arm_complete(scope_id, committed, ctx.committed_arm_for_scope)
+        {
+            *idx = entry_idx;
+            if let Some(lane) = self.send_preview_lane_at(*idx) {
+                *ctx.preview_route_arm = Some(SendPreviewRouteArm {
+                    lane,
+                    scope: scope_id,
+                    arm,
+                });
+            }
+            return Ok(());
+        }
         if at_decision && let Some(selected) = (ctx.preview_controller_arm_for_scope)(scope_id) {
             let entry_idx = self.send_preview_selected_controller_arm_entry_for_label(
                 scope_id,
@@ -502,9 +563,10 @@ impl EventCursor {
     ) -> bool {
         let preview_conflict = self.machine().event_conflict_for_index(idx);
         let mut arm_for_scope = |scope| {
-            self.send_preview_selected_arm_for_scope_with_route(
+            self.send_preview_arm_for_scope_with_reentry_path(
                 scope,
                 preview_route_arm,
+                preview_conflict,
                 selected_arm_for_scope,
             )
         };
@@ -546,10 +608,12 @@ impl EventCursor {
         }
 
         if current_meta.label == target_label {
+            let preview_conflict = self.machine().event_conflict_for_index(*idx);
             let mut arm_for_scope = |scope| {
-                self.send_preview_selected_arm_for_scope_with_route(
+                self.send_preview_arm_for_scope_with_reentry_path(
                     scope,
                     preview_route_arm,
+                    preview_conflict,
                     selected_arm_for_scope,
                 )
             };

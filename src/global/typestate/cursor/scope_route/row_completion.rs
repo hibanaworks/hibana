@@ -27,10 +27,28 @@ impl EventCursor {
         arm: u8,
         selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
-        if self.route_scope_reentry(scope_id) && arm == 0 {
+        if self.route_scope_reentry(scope_id) {
             return false;
         }
         self.selected_route_arm_event_row_done(scope_id, arm, selected_arm_for_scope)
+    }
+
+    pub(crate) fn selected_arm_for_reentry_preview_conflict(
+        &self,
+        scope_id: ScopeId,
+        preview_conflict: crate::global::typestate::PackedEventConflict,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<u8> {
+        let selected = selected_arm_for_scope(scope_id)?;
+        if self
+            .preview_conflict_arm(preview_conflict, scope_id)
+            .is_some_and(|preview| preview != selected)
+            && self.route_scope_reentry(scope_id)
+            && self.selected_route_arm_event_row_done(scope_id, selected, selected_arm_for_scope)
+        {
+            return None;
+        }
+        Some(selected)
     }
 
     #[inline(never)]

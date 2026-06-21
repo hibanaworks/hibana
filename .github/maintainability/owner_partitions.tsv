@@ -67,6 +67,7 @@ src/endpoint/kernel	src/endpoint/kernel/offer
 src/endpoint/kernel	src/endpoint/kernel/offer.rs
 src/endpoint/kernel	src/endpoint/kernel/decision_state.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta_route_only.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_select.rs
@@ -102,6 +103,7 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_materialization.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_types.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select.rs
+src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_observed.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/candidates.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model.rs

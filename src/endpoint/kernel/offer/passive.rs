@@ -19,13 +19,8 @@ pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
 }
 
 pub(super) enum PassiveRouteEvidenceOutcome {
-    Authority {
-        route_token: RouteArmToken,
-        frame_hint: FrameHintResolution,
-    },
-    EvidenceOnly {
-        frame_hint: FrameHintResolution,
-    },
+    Authority { route_token: RouteArmToken },
+    EvidenceOnly { frame_hint: FrameHintResolution },
     RestartFrontier,
 }
 
@@ -148,7 +143,6 @@ where
             if let Some(token) = self.peek_scope_ack(scope_id) {
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
                     route_token: token,
-                    frame_hint,
                 }));
             }
 

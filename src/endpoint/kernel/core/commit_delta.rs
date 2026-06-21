@@ -189,24 +189,6 @@ where
     }
 
     #[inline]
-    fn preflight_route_only_cursor_after(
-        &self,
-        delta: &CommitDelta,
-    ) -> Result<(), CursorInvariantError> {
-        let routes = delta.selected_routes();
-        if routes.is_empty() {
-            return Err(CursorInvariantError::INVARIANT);
-        }
-        if delta.selected_route_lane().is_none() {
-            return Err(CursorInvariantError::INVARIANT);
-        }
-        let expected_after = StateIndex::from_usize(self.cursor.index());
-        (expected_after == delta.cursor_after())
-            .then_some(())
-            .ok_or(CursorInvariantError::INVARIANT)
-    }
-
-    #[inline]
     fn preflight_selected_route_rows(
         &self,
         delta: &CommitDelta,
@@ -368,6 +350,8 @@ where
         &mut self,
         mut delta: PreparedCommitDelta,
     ) -> CommittedCommitDelta {
+        let applies_route_completion =
+            delta.event().is_some() || delta.selected_routes().len() != 0;
         let route_lane = delta.selected_route_lane();
         let mut idx = 0usize;
         while idx < delta.selected_routes().len() {
@@ -387,7 +371,9 @@ where
         if let Some(step) = delta.lane_relocation() {
             self.apply_prepared_lane_relocation(step);
         }
-        self.apply_prepared_route_completion_cursor(delta.selected_routes());
+        if applies_route_completion {
+            self.apply_prepared_route_completion_cursor(delta.selected_routes());
+        }
         CommittedCommitDelta {
             event: delta.event(),
             selected_routes: delta.take_selected_routes(),

@@ -12,7 +12,9 @@ use super::{
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
-    global::typestate::{CursorInvariantError, EventCommitMeta, state_index_to_usize},
+    global::typestate::{
+        CursorInvariantError, EventCommitMeta, PackedEventConflict, state_index_to_usize,
+    },
     transport::{
         Transport,
         wire::{CodecError, Payload},
@@ -42,6 +44,19 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
+    fn selected_arm_for_recv_event(
+        &self,
+        preview_conflict: PackedEventConflict,
+        scope: crate::global::const_dsl::ScopeId,
+    ) -> Option<u8> {
+        let mut selected_arm = |candidate| self.selected_arm_for_scope(candidate);
+        self.cursor.selected_arm_for_reentry_preview_conflict(
+            scope,
+            preview_conflict,
+            &mut selected_arm,
+        )
+    }
+
     fn poll_recv_preamble_for_label(
         &mut self,
         target_label: u8,
@@ -211,7 +226,8 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let cursor_index = state_index_to_usize(desc.cursor_index);
-        let mut selected_arm = |scope| self.selected_arm_for_scope(scope);
+        let preview_conflict = self.cursor.event_conflict_for_index(cursor_index);
+        let mut selected_arm = |scope| self.selected_arm_for_recv_event(preview_conflict, scope);
         let enabled = match self.cursor.event_enabled(
             cursor_index,
             EventCommitMeta::from(meta),
@@ -253,7 +269,23 @@ where
             route_rows,
             enabled.cursor_after(),
             enabled.progress_step(),
-        );
+        )
+        .with_lane_relocation(self.cursor.recv_reentry_cursor_step(
+            meta,
+            enabled.cursor_after(),
+            |scope| {
+                let mut row_idx = 0usize;
+                while row_idx < route_rows.len() {
+                    if let Some(row) = route_rows.get(&self.cursor, row_idx)
+                        && row.scope() == scope
+                    {
+                        return Some(row.selected_arm());
+                    }
+                    row_idx += 1;
+                }
+                self.selected_arm_for_recv_event(preview_conflict, scope)
+            },
+        ));
         let delta = match self.prepare_enabled_event_commit_delta(delta, enabled) {
             Ok(delta) => delta,
             Err(CursorInvariantError::INVARIANT) => {

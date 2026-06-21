@@ -181,6 +181,34 @@ impl EventCursor {
             .and_then(|(dispatch_arm, _)| (dispatch_arm != ARM_SHARED).then_some(dispatch_arm))
     }
 
+    pub(crate) fn enclosing_passive_route_scope_for_exact_frame_label(
+        &self,
+        idx: usize,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<ScopeId> {
+        let mut selected = None;
+        let mut selected_len = usize::MAX;
+        let mut slot = 0usize;
+        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+            if region.start() <= idx && idx < region.end() {
+                let scope = region.scope();
+                if self
+                    .first_recv_descendant_target_for_lane_frame_label(scope, lane, frame_label)
+                    .is_some_and(|(dispatch_arm, _)| dispatch_arm != ARM_SHARED)
+                {
+                    let len = region.end() - region.start();
+                    if len < selected_len {
+                        selected = Some(scope);
+                        selected_len = len;
+                    }
+                }
+            }
+            slot += 1;
+        }
+        selected
+    }
+
     fn first_recv_descendant_target_for_lane_frame_label(
         &self,
         scope_id: ScopeId,
@@ -291,7 +319,7 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn preview_conflict_arm(
+    pub(super) fn preview_conflict_arm(
         &self,
         mut conflict: PackedEventConflict,
         target_scope: ScopeId,

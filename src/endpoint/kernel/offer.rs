@@ -16,6 +16,7 @@ mod resolve_materialization;
 mod resolve_types;
 mod select;
 mod select_alignment;
+mod select_observed;
 mod state;
 use core::{
     ops::ControlFlow,
@@ -106,6 +107,12 @@ where
                 if let Some(frame_label) = self.take_frame_hint_for_lane(lane_idx, frame_label_meta)
                 {
                     self.record_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
+                    self.mark_scope_ready_arm_from_frame_label(
+                        scope_id,
+                        lane_idx as u8,
+                        frame_label,
+                        frame_label_meta,
+                    );
                 }
             }
         }
@@ -355,7 +362,7 @@ where
         loop {
             let step = match state.execution.kind() {
                 OfferExecutionKind::Uninitialized => self.poll_offer_uninitialized(state),
-                OfferExecutionKind::Selecting => self.poll_offer_selecting(state),
+                OfferExecutionKind::Selecting => self.poll_offer_selecting(state, cx),
                 OfferExecutionKind::Collecting => self.poll_offer_collecting(state, cx),
                 OfferExecutionKind::Resolving => self.poll_offer_resolving(state, cx),
             };
@@ -383,8 +390,30 @@ where
     }
 
     #[inline(never)]
-    fn poll_offer_selecting(&mut self, state: &mut OfferState<'r>) -> Poll<RecvResult<Option<u8>>> {
-        let selection = match self.select_scope() {
+    fn poll_offer_selecting(
+        &mut self,
+        state: &mut OfferState<'r>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Poll<RecvResult<Option<u8>>> {
+        if state.carried_transport_lane_wire().is_none() {
+            match self.poll_any_active_offer_transport_frame(&mut state.pending_recv, cx) {
+                Poll::Pending => {}
+                Poll::Ready(Ok(Some(frame))) => {
+                    let mut ingress = OfferStagedIngress::empty();
+                    ingress.stage_transport(frame);
+                    state.carry_ingress(ingress);
+                }
+                Poll::Ready(Ok(None)) => {}
+                Poll::Ready(Err(err)) => {
+                    state.discard_terminal();
+                    return Poll::Ready(Err(err));
+                }
+            }
+        }
+        let selection = match self.select_scope(
+            state.carried_transport_lane_wire(),
+            state.carried_transport_frame_label_raw(),
+        ) {
             Ok(selection) => selection,
             Err(err) => {
                 state.discard_terminal();
@@ -501,9 +530,11 @@ where
                 }
                 ResolveTokenOutcome::Resolved(resolved) => {
                     if stage.facts.profile.is_passive() {
-                        let descended = match self
-                            .descend_selected_passive_route(stage.selection(), resolved)
-                        {
+                        let descended = match self.descend_selected_passive_route(
+                            stage.selection(),
+                            resolved,
+                            stage.ingress.transport_frame_label_raw(),
+                        ) {
                             Ok(descended) => descended,
                             Err(err) => {
                                 stage.discard_terminal();
@@ -526,7 +557,9 @@ where
                             &mut stage.ingress,
                         ) {
                             Ok(label) => branch_label = Some(label),
-                            Err(err) => return Poll::Ready(Err(err)),
+                            Err(err) => {
+                                return Poll::Ready(Err(err));
+                            }
                         }
                     }
                 }

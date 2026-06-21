@@ -116,11 +116,12 @@ impl EventCursorMachine {
         if candidate_scope.same(root_scope) {
             return None;
         }
+        self.route_scope_dense_ordinal(candidate_scope)?;
         let route_count = self.event_program().footprint().route_scope_count;
         let mut current = candidate_scope;
         let mut hops = 0usize;
         while hops < route_count {
-            let (parent, arm) = self.passive_parent_route(current)?;
+            let (parent, arm) = self.passive_child_parent_route(current)?;
             if parent.same(root_scope) {
                 return Some(arm);
             }
@@ -130,36 +131,23 @@ impl EventCursorMachine {
         crate::invariant();
     }
 
-    fn passive_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
+    fn passive_child_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
         let route_count = self.event_program().footprint().route_scope_count;
-        let mut found = None;
         let mut slot = 0usize;
         while slot < route_count {
-            if let Some(parent) = self
-                .route_scope_rows_by_slot(slot)
-                .map(|region| region.scope())
-            {
-                let mut arm = 0u8;
-                while arm <= 1 {
-                    if self
-                        .passive_arm_child_fact_by_slot(slot, arm)
-                        .and_then(|fact| fact.child_route_scope())
-                        .is_some_and(|scope| scope.same(child_scope))
-                    {
-                        let candidate = (parent, arm);
-                        if found.is_some_and(|prev| prev != candidate) {
-                            crate::invariant();
-                        }
-                        found = Some(candidate);
-                    }
-                    if arm == 1 {
-                        break;
-                    }
-                    arm += 1;
+            let mut arm = 0u8;
+            while arm < 2 {
+                if let Some(row) = self.passive_arm_child_fact_by_slot(slot, arm)
+                    && row
+                        .child_route_scope()
+                        .is_some_and(|child| child.same(child_scope))
+                {
+                    return Some((row.route_scope(), row.arm()));
                 }
+                arm += 1;
             }
             slot += 1;
         }
-        found
+        None
     }
 }

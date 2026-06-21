@@ -7,6 +7,7 @@ use super::{
 };
 use crate::{
     endpoint::kernel::core::{CommitDelta, CommitRow, OfferedFrame},
+    global::typestate::PackedEventConflict,
     global::typestate::RelocatableResidentLaneStep,
     transport::wire::CodecError,
 };
@@ -168,11 +169,14 @@ where
                 branch_scope,
                 &mut route_rows,
             )?;
+            let preview_conflict =
+                cursor.event_conflict_for_index(state_index_to_usize(cursor_index));
             let mut selected_arm = |candidate| {
                 Self::authorized_route_arm_for_branch_recv(
                     decision_state,
                     cursor,
                     &route_rows,
+                    preview_conflict,
                     candidate,
                 )
             };
@@ -190,7 +194,7 @@ where
                     &mut selected_arm,
                 )
                 .map_err(|_| branch_recv_phase_invariant())?;
-            let reentry_cursor = Self::branch_recv_reentry_cursor_step_from_parts(
+            let reentry_cursor = Self::recv_reentry_cursor_step_from_parts(
                 cursor,
                 decision_state,
                 &route_rows,
@@ -246,12 +250,14 @@ where
         let delta = match kind {
             BranchKind::LocalAction => {
                 let idx = state_index_to_usize(cursor_index);
+                let preview_conflict = self.cursor.event_conflict_for_index(idx);
                 let mut selected_arm = |candidate| {
-                    if let Some(slot) = scope_slot_for_route_from_cursor(&self.cursor, candidate) {
-                        self.decision_state.selected_arm_for_scope_slot(slot)
-                    } else {
-                        None
-                    }
+                    Self::selected_route_arm_from_parts_with_preview(
+                        &self.decision_state,
+                        &self.cursor,
+                        preview_conflict,
+                        candidate,
+                    )
                 };
                 let enabled = self
                     .cursor
@@ -346,27 +352,50 @@ where
         None
     }
 
+    fn selected_route_arm_from_parts_with_preview(
+        decision_state: &RouteState,
+        cursor: &EventCursor,
+        preview_conflict: PackedEventConflict,
+        scope: crate::global::const_dsl::ScopeId,
+    ) -> Option<u8> {
+        let mut selected_arm =
+            |candidate| Self::selected_route_arm_from_parts(decision_state, cursor, candidate);
+        cursor.selected_arm_for_reentry_preview_conflict(scope, preview_conflict, &mut selected_arm)
+    }
+
     fn authorized_route_arm_for_branch_recv(
         decision_state: &RouteState,
         cursor: &EventCursor,
         rows: &SelectedRouteCommitRows,
+        preview_conflict: PackedEventConflict,
         scope: crate::global::const_dsl::ScopeId,
     ) -> Option<u8> {
         if let Some(arm) = rows.arm_for_scope(cursor, scope) {
             return Some(arm);
         }
-        Self::selected_route_arm_from_parts(decision_state, cursor, scope)
+        Self::selected_route_arm_from_parts_with_preview(
+            decision_state,
+            cursor,
+            preview_conflict,
+            scope,
+        )
     }
 
-    fn branch_recv_reentry_cursor_step_from_parts(
+    fn recv_reentry_cursor_step_from_parts(
         cursor: &EventCursor,
         decision_state: &RouteState,
         rows: &SelectedRouteCommitRows,
         meta: RecvMeta,
         next_index: StateIndex,
     ) -> Option<RelocatableResidentLaneStep> {
-        cursor.branch_recv_reentry_cursor_step(meta, next_index, |scope| {
-            Self::authorized_route_arm_for_branch_recv(decision_state, cursor, rows, scope)
+        cursor.recv_reentry_cursor_step(meta, next_index, |scope| {
+            Self::authorized_route_arm_for_branch_recv(
+                decision_state,
+                cursor,
+                rows,
+                PackedEventConflict::none(),
+                scope,
+            )
         })
     }
 }
