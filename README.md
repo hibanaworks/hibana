@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="hibana-header.svg" width="600" alt="HIBANA - Affine Multiparty Session Types for Rust" />
+  <img src="hibana-header.svg" width="600" alt="HIBANA - Session-Typed Choreographic Programming for Rust" />
 
   <p>
     <img src="https://img.shields.io/badge/rust-2024-orange.svg" alt="Rust 2024" />
@@ -20,11 +20,13 @@
 # HIBANA
 
 `hibana` is a Rust 2024, `#![no_std]`, no-alloc-oriented runtime for
-affine multiparty session types.
+session-typed choreographic programming, inspired by affine multiparty session
+types (AMPST).
 
-It lets a protocol crate describe communication once as a global choreography,
-project each participant into a compact local program, attach transport and
-storage, and hand application code a small affine `Endpoint`.
+Hibana's concrete model is direct: a protocol crate describes communication
+once as a global choreography, projects each participant into a compact local
+program, attaches transport and storage, and hands application code a small
+affine `Endpoint`.
 
 The complete path is:
 
@@ -61,7 +63,7 @@ Or write the dependency explicitly:
 
 ```toml
 [dependencies]
-hibana = "0.9.0"
+hibana = "0.9.1"
 ```
 
 Hibana is `#![no_std]` and no-alloc-oriented.

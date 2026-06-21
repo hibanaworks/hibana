@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="220" viewBox="0 0 800 220" role="img" aria-label="HIBANA - Affine Multiparty Session Types for Rust">
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="220" viewBox="0 0 800 220" role="img" aria-label="HIBANA - Session-Typed Choreographic Programming for Rust">
   <defs>
     <style>
       .bg-flame {
@@ -109,7 +109,7 @@
   </g>
   <g>
     <text class="title" x="400" y="118" text-anchor="middle">HIBANA</text>
-    <text class="subtitle" x="400" y="160" text-anchor="middle">Affine Multiparty Session Types for Rust</text>
+    <text class="subtitle" x="400" y="160" text-anchor="middle">Session-Typed Choreographic Programming for Rust</text>
     <text class="features" x="400" y="192" text-anchor="middle">Const projection • Affine endpoints • no_std core • Descriptor runtime</text>
   </g>
 </svg>

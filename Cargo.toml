@@ -4,17 +4,17 @@ resolver = "3"
 
 [package]
 name          = "hibana"
-version       = "0.9.0"
+version       = "0.9.1"
 edition       = "2024"
 rust-version  = "1.95"
 autotests     = false
-description   = "Const-projected Affine Multiparty Session Types for choreography-first Rust protocols"
+description   = "Session-typed choreographic programming for no_std Rust protocols, inspired by affine MPST"
 license       = "MIT OR Apache-2.0"
 repository    = "https://github.com/hibanaworks/hibana"
 homepage      = "https://github.com/hibanaworks/hibana"
 documentation = "https://docs.rs/hibana"
 readme        = "README.md"
-keywords      = ["mpst", "session-types", "no-std", "affine", "choreography"]
+keywords      = ["mpst", "session-types", "no-std", "no-alloc", "choreography"]
 categories    = ["asynchronous", "concurrency", "embedded", "network-programming"]
 include       = [
     "/Cargo.toml",
