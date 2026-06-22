@@ -21,23 +21,6 @@ type E = crate::g::Send<0, 1, crate::g::Msg<5, ()>>;
 type R = crate::g::Send<0, 1, crate::g::Msg<6, ()>>;
 type Post = crate::g::Send<0, 1, crate::g::Msg<7, ()>>;
 
-fn preview_send_meta_for_label<const ROLE: u8>(
-    cursor: &EventCursor,
-    target_label: u8,
-) -> Result<(SendMeta, StateIndex), SendPreviewError> {
-    let mut committed_arm_for_scope = |_scope: ScopeId| None;
-    let mut preview_controller_arm_for_scope = |_scope: ScopeId| None;
-    let mut selected_arm_for_scope = |_scope: ScopeId| None;
-    let mut lane_for_label_or_offer = |_scope: ScopeId, _label: u8| 0;
-    cursor.send_preview_meta_for_label::<ROLE>(
-        target_label,
-        &mut committed_arm_for_scope,
-        &mut preview_controller_arm_for_scope,
-        &mut selected_arm_for_scope,
-        &mut lane_for_label_or_offer,
-    )
-}
-
 #[test]
 fn resident_descriptor_local_labels_match_event_program_witness_for_nested_parallel_join() {
     type InnerJoin = crate::g::Par<A, B>;
@@ -163,7 +146,8 @@ fn production_cursor_reenters_completed_rolled_seq_head() {
         runtime.enabled_commit_at(0).is_some(),
         "rolled head should be event-enabled after its scope completed"
     );
-    let (meta, cursor_index) = preview_send_meta_for_label::<0>(runtime.cursor(), 91)
+    let (meta, cursor_index) = runtime
+        .preview_send_meta_for_label::<0>(91)
         .expect("rolled head should be send-previewable");
     assert_eq!(meta.label, 91);
     assert_eq!(state_index_to_usize(cursor_index), 0);
@@ -183,10 +167,12 @@ fn production_cursor_reenters_rolled_route_scope_inside_sequence() {
 
     let mut runtime = ProductionCursorTrace::new::<0>(&program);
     runtime.commit_label(161);
-    preview_send_meta_for_label::<0>(runtime.cursor(), 162)
+    runtime
+        .preview_send_meta_for_label::<0>(162)
         .expect("rolled route head should be send-previewable after prefix");
     runtime.commit_label(162);
-    preview_send_meta_for_label::<0>(runtime.cursor(), 162)
+    runtime
+        .preview_send_meta_for_label::<0>(162)
         .expect("rolled route head should be send-previewable after selected arm completes");
 }
 
@@ -292,6 +278,47 @@ fn production_cursor_resolves_deep_left_spine_first_recv_dispatch_from_root() {
             .cursor()
             .passive_descendant_dispatch_arm_from_exact_frame_label(root_scope, lane_h, frame_h),
         Some(1)
+    );
+}
+
+#[test]
+fn production_cursor_previews_repeated_label_continuation_inside_rolled_route_arm() {
+    let prompt = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<85, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<86, ()>>(),
+    );
+    let read = || {
+        crate::g::seq(
+            crate::g::send::<0, 1, crate::g::Msg<87, ()>>(),
+            crate::g::send::<1, 0, crate::g::Msg<88, ()>>(),
+        )
+    };
+    let close = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<91, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<92, ()>>(),
+    );
+    let runtime =
+        crate::g::route(prompt, crate::g::seq(read(), crate::g::seq(read(), close))).roll();
+    let mut trace = ProductionCursorTrace::new::<0>(&runtime);
+    let region = trace
+        .event_program
+        .route_scope_rows_by_slot(0)
+        .expect("route row");
+    let slot = trace
+        .event_program
+        .route_scope_slot(region.scope())
+        .expect("route slot");
+    let right = trace
+        .event_program
+        .route_arm_event_row_by_slot(slot, 1)
+        .expect("right arm row");
+    assert_eq!((right.start(), right.end()), (2, 8));
+
+    trace.commit_label(87);
+    trace.commit_label(88);
+    assert!(
+        trace.preview_send_meta_for_label::<0>(87).is_ok(),
+        "second same-label send in selected rolled route arm must remain previewable"
     );
 }
 

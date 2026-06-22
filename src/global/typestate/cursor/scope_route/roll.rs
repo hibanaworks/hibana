@@ -1,6 +1,13 @@
 use super::super::super::facts::LocalAction;
 use super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
 
+#[derive(Clone, Copy)]
+enum ReentrantRouteCompletion {
+    Outside,
+    Incomplete,
+    Complete(ScopeId),
+}
+
 impl EventCursor {
     #[inline(always)]
     fn same_scope(left: ScopeId, right: ScopeId) -> bool {
@@ -108,21 +115,23 @@ impl EventCursor {
         idx: usize,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<ScopeId> {
-        if let Some(scope) =
-            self.complete_roll_body_scope_for_index(idx, &mut *selected_arm_for_scope)
-        {
-            return Some(scope);
+        match self.reentrant_route_completion_for_index(idx, &mut *selected_arm_for_scope) {
+            ReentrantRouteCompletion::Complete(scope) => Some(scope),
+            ReentrantRouteCompletion::Incomplete => None,
+            ReentrantRouteCompletion::Outside => {
+                self.complete_roll_body_scope_for_index(idx, &mut *selected_arm_for_scope)
+            }
         }
-        self.complete_reentrant_route_containing_index(idx, selected_arm_for_scope)
     }
 
     #[inline(never)]
-    fn complete_reentrant_route_containing_index(
+    fn reentrant_route_completion_for_index(
         &self,
         idx: usize,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<ScopeId> {
-        let mut selected = None;
+    ) -> ReentrantRouteCompletion {
+        let mut contains_reentrant_route = false;
+        let mut selected = ScopeId::none();
         let mut selected_len = usize::MAX;
         let mut slot = 0usize;
         while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
@@ -130,17 +139,32 @@ impl EventCursor {
             let len = region.end() - region.start();
             if region.start() <= idx
                 && idx < region.end()
-                && len < selected_len
                 && self.route_scope_reentry(scope)
                 && self.roll_scope_contains_index(scope, idx)
-                && self.roll_scope_events_complete(scope, &mut *selected_arm_for_scope)
             {
-                selected = Some(scope);
-                selected_len = len;
+                contains_reentrant_route = true;
+                if len < selected_len
+                    && selected_arm_for_scope(scope).is_some_and(|arm| {
+                        self.selected_route_arm_event_row_done(
+                            scope,
+                            arm,
+                            &mut *selected_arm_for_scope,
+                        )
+                    })
+                {
+                    selected = scope;
+                    selected_len = len;
+                }
             }
             slot += 1;
         }
-        selected
+        if !selected.is_none() {
+            ReentrantRouteCompletion::Complete(selected)
+        } else if contains_reentrant_route {
+            ReentrantRouteCompletion::Incomplete
+        } else {
+            ReentrantRouteCompletion::Outside
+        }
     }
 
     #[inline(never)]
@@ -256,10 +280,12 @@ impl EventCursor {
             .local_step_lane(target.0.step_idx as usize)?;
         let mut selected_arm_for_scope = |_| None;
         let scope =
-            match self.complete_roll_body_scope_for_index(idx, &mut selected_arm_for_scope) {
-                Some(scope) => scope,
-                None => self
-                    .complete_reentrant_route_containing_index(idx, &mut selected_arm_for_scope)?,
+            match self.reentrant_route_completion_for_index(idx, &mut selected_arm_for_scope) {
+                ReentrantRouteCompletion::Complete(scope) => scope,
+                ReentrantRouteCompletion::Incomplete => return None,
+                ReentrantRouteCompletion::Outside => {
+                    self.complete_roll_body_scope_for_index(idx, &mut selected_arm_for_scope)?
+                }
             };
         self.roll_scope_lane_head_allows_index(scope, idx, lane)
             .then_some(scope)

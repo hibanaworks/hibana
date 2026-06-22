@@ -66,9 +66,60 @@ const SPINE_G_ACK: u8 = 214;
 const SPINE_H_REQ: u8 = 215;
 const SPINE_H_ACK: u8 = 216;
 
+const SEQ_ARM_A_REQ: u8 = 221;
+const SEQ_ARM_A_ACK: u8 = 222;
+const SEQ_ARM_B_REQ: u8 = 223;
+const SEQ_ARM_B_ACK: u8 = 224;
+const SEQ_ARM_C_REQ: u8 = 225;
+const SEQ_ARM_C_ACK: u8 = 226;
+const SEQ_ARM_D_REQ: u8 = 227;
+const SEQ_ARM_D_ACK: u8 = 228;
+
+const WASI_FD_WRITE_REQ: u8 = 85;
+const WASI_FD_WRITE_ACK: u8 = 86;
+const WASI_FD_READ_REQ: u8 = 87;
+const WASI_FD_READ_ACK: u8 = 88;
+const WASI_FD_FDSTAT_REQ: u8 = 89;
+const WASI_FD_FDSTAT_ACK: u8 = 90;
+const WASI_FD_CLOSE_REQ: u8 = 91;
+const WASI_FD_CLOSE_ACK: u8 = 92;
+const WASI_PATH_OPEN_REQ: u8 = 127;
+const WASI_PATH_OPEN_ACK: u8 = 128;
+const WASI_FD_WRITE_REFINED_REQ: u8 = 151;
+const WASI_FD_WRITE_REFINED_ACK: u8 = 152;
+const WASI_FD_PRESTAT_REQ: u8 = 153;
+const WASI_FD_PRESTAT_ACK: u8 = 154;
+const WASI_FD_PRESTAT_DIR_REQ: u8 = 155;
+const WASI_FD_PRESTAT_DIR_ACK: u8 = 156;
+const WASI_FD_FILESTAT_REQ: u8 = 157;
+const WASI_FD_FILESTAT_ACK: u8 = 158;
+const WASI_PATH_FILESTAT_REQ: u8 = 159;
+const WASI_PATH_FILESTAT_ACK: u8 = 160;
+
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
         UnsafeCell::new(SessionKitStorage::uninit())
+    };
+}
+
+macro_rules! request_response_row {
+    ($req:ident, $ack:ident) => {
+        g::seq(
+            g::send::<0, 1, Msg<$req, u8>>(),
+            g::send::<1, 0, Msg<$ack, u8>>(),
+        )
+    };
+}
+
+macro_rules! repeated_read_flow {
+    () => {
+        g::seq(
+            request_response_row!(WASI_FD_READ_REQ, WASI_FD_READ_ACK),
+            g::seq(
+                request_response_row!(WASI_FD_READ_REQ, WASI_FD_READ_ACK),
+                request_response_row!(WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK),
+            ),
+        )
     };
 }
 
@@ -234,6 +285,173 @@ fn rolled_left_spine_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
                 g,
             ),
             h,
+        )
+        .roll(),
+    )
+}
+
+fn rolled_right_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let a = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_A_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_A_ACK, u8>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_B_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_B_ACK, u8>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_C_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_C_ACK, u8>>(),
+    );
+    project(&g::route(a, g::seq(b, c)).roll())
+}
+
+fn rolled_left_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let a = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_A_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_A_ACK, u8>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_B_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_B_ACK, u8>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_C_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_C_ACK, u8>>(),
+    );
+    project(&g::route(g::seq(a, b), c).roll())
+}
+
+fn rolled_nested_right_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let a = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_A_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_A_ACK, u8>>(),
+    );
+    let b = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_B_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_B_ACK, u8>>(),
+    );
+    let c = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_C_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_C_ACK, u8>>(),
+    );
+    let d = g::seq(
+        g::send::<0, 1, Msg<SEQ_ARM_D_REQ, u8>>(),
+        g::send::<1, 0, Msg<SEQ_ARM_D_ACK, u8>>(),
+    );
+    project(&g::route(a, g::route(b, g::seq(c, d))).roll())
+}
+
+fn wasi_shape_rolled_route_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let open_selector_flow = g::seq(
+        request_response_row!(WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK),
+        request_response_row!(WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK),
+    );
+    let evidence_read_flow = g::seq(
+        request_response_row!(WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK),
+        g::seq(
+            request_response_row!(WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK),
+            g::seq(
+                request_response_row!(WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK),
+                g::seq(
+                    request_response_row!(WASI_PATH_FILESTAT_REQ, WASI_PATH_FILESTAT_ACK),
+                    g::seq(
+                        request_response_row!(WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK),
+                        g::seq(
+                            request_response_row!(WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK),
+                            g::seq(
+                                request_response_row!(WASI_FD_FILESTAT_REQ, WASI_FD_FILESTAT_ACK),
+                                g::seq(
+                                    request_response_row!(WASI_FD_READ_REQ, WASI_FD_READ_ACK),
+                                    g::seq(
+                                        request_response_row!(WASI_FD_READ_REQ, WASI_FD_READ_ACK),
+                                        request_response_row!(WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let device_write_flow = g::seq(
+        request_response_row!(WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK),
+        g::seq(
+            request_response_row!(WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK),
+            g::seq(
+                request_response_row!(WASI_FD_WRITE_REFINED_REQ, WASI_FD_WRITE_REFINED_ACK),
+                g::seq(
+                    request_response_row!(WASI_FD_WRITE_REFINED_REQ, WASI_FD_WRITE_REFINED_ACK),
+                    g::seq(
+                        request_response_row!(WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK),
+                        request_response_row!(WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK),
+                    ),
+                ),
+            ),
+        ),
+    );
+    let commit_flow = g::seq(evidence_read_flow, device_write_flow);
+
+    project(
+        &g::route(
+            request_response_row!(WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK),
+            g::route(
+                request_response_row!(WASI_FD_READ_REQ, WASI_FD_READ_ACK),
+                g::route(open_selector_flow, commit_flow),
+            ),
+        )
+        .roll(),
+    )
+}
+
+fn rolled_left_repeated_label_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            repeated_read_flow!(),
+            request_response_row!(WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK),
+        )
+        .roll(),
+    )
+}
+
+fn rolled_nested_right_repeated_label_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            request_response_row!(WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK),
+            g::route(
+                request_response_row!(WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK),
+                repeated_read_flow!(),
+            ),
+        )
+        .roll(),
+    )
+}
+
+fn rolled_nested_left_repeated_label_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            g::route(
+                repeated_read_flow!(),
+                request_response_row!(WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK),
+            ),
+            request_response_row!(WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK),
+        )
+        .roll(),
+    )
+}
+
+fn rolled_balanced_repeated_label_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            g::route(
+                request_response_row!(WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK),
+                repeated_read_flow!(),
+            ),
+            g::route(
+                request_response_row!(WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK),
+                request_response_row!(WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK),
+            ),
         )
         .roll(),
     )
@@ -707,6 +925,292 @@ fn rolled_left_spine_offer_reenters_repeated_deep_leftmost_arm() {
                 offer_request_response::<SPINE_G_REQ, SPINE_G_ACK>(controller, worker, 20).await;
                 offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 30).await;
                 offer_request_response::<SPINE_A_REQ, SPINE_A_ACK>(controller, worker, 40).await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_right_seq_arm_keeps_send_authority_for_continuation() {
+    with_visible_reentry_workspace(
+        976,
+        rolled_right_seq_arm_program::<0>(),
+        rolled_right_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SEQ_ARM_B_REQ, SEQ_ARM_B_ACK>(controller, worker, 10)
+                    .await;
+                direct_request_response::<SEQ_ARM_C_REQ, SEQ_ARM_C_ACK>(controller, worker, 20)
+                    .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_left_seq_arm_keeps_send_authority_for_continuation() {
+    with_visible_reentry_workspace(
+        977,
+        rolled_left_seq_arm_program::<0>(),
+        rolled_left_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SEQ_ARM_A_REQ, SEQ_ARM_A_ACK>(controller, worker, 10)
+                    .await;
+                direct_request_response::<SEQ_ARM_B_REQ, SEQ_ARM_B_ACK>(controller, worker, 20)
+                    .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_nested_right_route_seq_arm_keeps_send_authority_for_continuation() {
+    with_visible_reentry_workspace(
+        978,
+        rolled_nested_right_seq_arm_program::<0>(),
+        rolled_nested_right_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SEQ_ARM_C_REQ, SEQ_ARM_C_ACK>(controller, worker, 10)
+                    .await;
+                direct_request_response::<SEQ_ARM_D_REQ, SEQ_ARM_D_ACK>(controller, worker, 20)
+                    .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn wasi_shape_rolled_route_seq_arm_keeps_send_authority_for_continuation() {
+    with_visible_reentry_workspace(
+        979,
+        wasi_shape_rolled_route_seq_arm_program::<0>(),
+        wasi_shape_rolled_route_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+                direct_request_response::<WASI_PATH_FILESTAT_REQ, WASI_PATH_FILESTAT_ACK>(
+                    controller, worker, 40,
+                )
+                .await;
+                direct_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(
+                    controller, worker, 50,
+                )
+                .await;
+                direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(
+                    controller, worker, 60,
+                )
+                .await;
+                direct_request_response::<WASI_FD_FILESTAT_REQ, WASI_FD_FILESTAT_ACK>(
+                    controller, worker, 70,
+                )
+                .await;
+                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 80,
+                )
+                .await;
+                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 90,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn wasi_shape_rolled_route_seq_arm_survives_prior_sibling_arms() {
+    with_visible_reentry_workspace(
+        980,
+        wasi_shape_rolled_route_seq_arm_program::<0>(),
+        wasi_shape_rolled_route_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
+                    controller, worker, 1,
+                )
+                .await;
+                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 2)
+                    .await;
+                offer_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(
+                    controller, worker, 3,
+                )
+                .await;
+                direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(
+                    controller, worker, 4,
+                )
+                .await;
+
+                offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn wasi_shape_rolled_route_seq_arm_survives_prompt_read_after_open_selector() {
+    with_visible_reentry_workspace(
+        981,
+        wasi_shape_rolled_route_seq_arm_program::<0>(),
+        wasi_shape_rolled_route_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
+                    controller, worker, 1,
+                )
+                .await;
+                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 2)
+                    .await;
+                offer_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(
+                    controller, worker, 3,
+                )
+                .await;
+                direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(
+                    controller, worker, 4,
+                )
+                .await;
+                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
+                    controller, worker, 5,
+                )
+                .await;
+                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 6)
+                    .await;
+
+                offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_left_repeated_label_seq_arm_keeps_continuation() {
+    with_visible_reentry_workspace(
+        982,
+        rolled_left_repeated_label_seq_arm_program::<0>(),
+        rolled_left_repeated_label_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_nested_right_route_repeated_label_seq_arm_keeps_continuation() {
+    with_visible_reentry_workspace(
+        983,
+        rolled_nested_right_repeated_label_seq_arm_program::<0>(),
+        rolled_nested_right_repeated_label_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_nested_left_route_repeated_label_seq_arm_keeps_continuation() {
+    with_visible_reentry_workspace(
+        984,
+        rolled_nested_left_repeated_label_seq_arm_program::<0>(),
+        rolled_nested_left_repeated_label_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_balanced_route_repeated_label_seq_arm_keeps_continuation() {
+    with_visible_reentry_workspace(
+        985,
+        rolled_balanced_repeated_label_seq_arm_program::<0>(),
+        rolled_balanced_repeated_label_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
             });
         },
     );

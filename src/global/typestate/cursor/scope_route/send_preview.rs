@@ -46,14 +46,20 @@ impl EventCursor {
             .machine()
             .event_program()
             .route_arm_event_row_by_slot(slot, arm)?;
+        let mut completed = None;
         let mut idx = row.start();
         while idx < row.end() {
             if self.send_preview_local_label_at(idx) == Some(target_label) {
-                return Some(idx);
+                if !self.local_event_done(idx) {
+                    return Some(idx);
+                }
+                if completed.is_none() {
+                    completed = Some(idx);
+                }
             }
             idx += 1;
         }
-        None
+        completed
     }
 
     #[inline]
@@ -243,16 +249,19 @@ impl EventCursor {
         if let Some(meta) = self.try_recv_meta_at(idx)
             && meta.label == target_label
             && self.index_for_lane_step(meta.lane as usize) == Some(idx)
+            && !self.local_event_done(idx)
         {
             return Some(idx);
         }
         if let Some(meta) = self.try_send_meta_at(idx)
             && meta.label == target_label
+            && !self.local_event_done(idx)
         {
             return Some(idx);
         }
         if let Some(meta) = self.try_local_meta_at(idx)
             && meta.label == target_label
+            && !self.local_event_done(idx)
         {
             return Some(idx);
         }
@@ -291,6 +300,7 @@ impl EventCursor {
         }
         if let Some((lane_idx, _)) = self.pending_step_for_label(target_label)
             && let Some(idx) = self.index_for_lane_step(lane_idx)
+            && !self.local_event_done(idx)
         {
             return Some(idx);
         }
@@ -317,16 +327,16 @@ impl EventCursor {
         target_label: u8,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
-        if self.has_reentry_scopes()
-            && let Some(idx) =
-                self.roll_reentry_index_for_label(target_label, &mut *selected_arm_for_scope)
-        {
-            return Some(idx);
-        }
         if let Some(idx) = self.send_preview_local_start_index_for_label(target_label) {
             return Some(idx);
         }
         if let Some(idx) = self.send_preview_route_start_index() {
+            return Some(idx);
+        }
+        if self.has_reentry_scopes()
+            && let Some(idx) =
+                self.roll_reentry_index_for_label(target_label, &mut *selected_arm_for_scope)
+        {
             return Some(idx);
         }
         if let Some(idx) = self.first_pending_step_index(usize::MAX) {
@@ -608,6 +618,16 @@ impl EventCursor {
         }
 
         if current_meta.label == target_label {
+            if self.relocatable_step_done(progress_step)
+                && !self.roll_reentry_event_allows_index(
+                    *idx,
+                    current_meta.lane,
+                    &mut *selected_arm_for_scope,
+                )
+            {
+                *idx = state_index_to_usize(self.node_next_index_at(*idx));
+                return Ok(None);
+            }
             let preview_conflict = self.machine().event_conflict_for_index(*idx);
             let mut arm_for_scope = |scope| {
                 self.send_preview_arm_for_scope_with_reentry_path(
@@ -651,17 +671,9 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         lane_for_label_or_offer: &mut dyn FnMut(ScopeId, u8) -> u8,
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
-        let roll_reentry = if self.has_reentry_scopes() {
-            self.roll_reentry_index_for_label(target_label, &mut *committed_arm_for_scope)
-        } else {
-            None
-        };
-        let mut idx = match roll_reentry {
-            Some(idx) => idx,
-            None => self
-                .send_preview_start_index_for_label(target_label, committed_arm_for_scope)
-                .ok_or_else(|| self.send_preview_missing_start_error(target_label))?,
-        };
+        let mut idx = self
+            .send_preview_start_index_for_label(target_label, committed_arm_for_scope)
+            .ok_or_else(|| self.send_preview_missing_start_error(target_label))?;
         let mut preview_route_arm: Option<SendPreviewRouteArm> = None;
 
         {
