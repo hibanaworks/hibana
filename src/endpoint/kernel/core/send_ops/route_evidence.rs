@@ -2,7 +2,6 @@ use super::super::{
     Arm, CommittedCommitDelta, CursorEndpoint, RouteArmToken, SelectedRouteCommitRow,
     SelectedRouteCommitRowsRef, SendError, SendMeta, SendResult, Transport,
     prepare_event_selected_route_commit_rows_from_resident_route_commit_range,
-    prepare_route_site_materialization_rows_from_resident_route_commit_range,
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -15,9 +14,9 @@ where
         event_idx: usize,
         meta: SendMeta,
     ) -> SendResult<SelectedRouteCommitRowsRef> {
-        let Some(selected_arm) = meta.selected_route_arm else {
+        if meta.selected_route_arm.is_none() {
             return Ok(SelectedRouteCommitRowsRef::EMPTY);
-        };
+        }
         let Self {
             cursor,
             decision_state,
@@ -25,25 +24,13 @@ where
             ..
         } = self;
         let mut rows = route_commit_rows.begin();
-        if meta.route_scope.is_none() {
-            prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
-                decision_state,
-                cursor,
-                meta.lane,
-                event_idx,
-                selected_arm,
-                &mut rows,
-            )
-        } else {
-            prepare_route_site_materialization_rows_from_resident_route_commit_range(
-                decision_state,
-                cursor,
-                meta.lane,
-                meta.route_scope,
-                selected_arm,
-                &mut rows,
-            )
-        }
+        prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
+            decision_state,
+            cursor,
+            meta.lane,
+            event_idx,
+            &mut rows,
+        )
         .map_err(|_| SendError::PhaseInvariant)?;
         Ok(rows.as_commit_rows(meta.lane))
     }
@@ -56,7 +43,7 @@ where
     ) {
         let scope_id = route_row.scope();
         let selected_arm = route_row.selected_arm();
-        let route_token = self.peek_scope_ack(scope_id);
+        let route_token = self.peek_live_scope_ack(scope_id);
         match route_token {
             Some(RouteArmToken::Ack(_)) => {
                 let Some(arm) = Arm::new(selected_arm) else {
@@ -73,6 +60,7 @@ where
                 let Some(arm) = Arm::new(selected_arm) else {
                     crate::invariant();
                 };
+                self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, lane_wire);
                 self.emit_route_arm_selection(
                     scope_id,
                     RouteArmToken::from_poll(arm),
@@ -80,11 +68,7 @@ where
                 );
             }
             Some(RouteArmToken::Resolver(arm)) => {
-                self.record_route_arm_selection_for_lane(
-                    lane_wire as usize,
-                    scope_id,
-                    selected_arm,
-                );
+                self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, lane_wire);
                 self.emit_route_arm_selection(
                     scope_id,
                     RouteArmToken::from_resolver(arm),
@@ -105,11 +89,7 @@ where
                 let Some(arm) = Arm::new(selected_arm) else {
                     crate::invariant();
                 };
-                self.record_route_arm_selection_for_lane(
-                    lane_wire as usize,
-                    scope_id,
-                    selected_arm,
-                );
+                self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, lane_wire);
                 self.emit_route_arm_selection(
                     scope_id,
                     RouteArmToken::from_resolver(arm),

@@ -140,7 +140,14 @@ where
                 profile,
                 &mut state,
             )?);
-            if let Some(token) = self.peek_scope_ack(scope_id) {
+            if let Some(arm) =
+                self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes, cx)
+            {
+                return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
+                    route_token: RouteArmToken::from_ack(arm),
+                }));
+            }
+            if let Some(token) = self.peek_live_scope_ack(scope_id) {
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
                     route_token: token,
                 }));

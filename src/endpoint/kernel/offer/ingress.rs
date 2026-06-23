@@ -149,7 +149,7 @@ where
         &self,
         facts: OfferFrontierFacts,
     ) -> crate::global::role_program::LaneSetView<'static> {
-        if let Some(token) = self.peek_scope_ack(facts.scope_id())
+        if let Some(token) = self.peek_live_scope_ack(facts.scope_id())
             && let Some(lanes) =
                 self.route_scope_arm_lane_set_for_scope(facts.scope_id(), token.arm().as_u8())
         {
@@ -170,7 +170,7 @@ where
                 return lane_idx;
             }
         }
-        if let Some(token) = self.peek_scope_ack(facts.scope_id())
+        if let Some(token) = self.peek_live_scope_ack(facts.scope_id())
             && let Some(arm_lanes) =
                 self.route_scope_arm_lane_set_for_scope(facts.scope_id(), token.arm().as_u8())
             && let Some(lane_idx) = arm_lanes.first_set(lane_limit)

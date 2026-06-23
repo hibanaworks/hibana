@@ -26,6 +26,19 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint::kernel) fn peek_live_scope_ack(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<RouteArmToken> {
+        let token = self.peek_scope_ack(scope_id)?;
+        if self.reentrant_selected_arm_complete(scope_id, token.arm().as_u8()) {
+            None
+        } else {
+            Some(token)
+        }
+    }
+
+    #[inline]
     pub(in crate::endpoint::kernel) fn clear_scope_ack(&mut self, scope_id: ScopeId) {
         let Some(slot) = self.scope_slot_for_route(scope_id) else {
             return;
@@ -185,7 +198,7 @@ where
         ingress: IngressEvidenceState,
     ) -> EvidenceFingerprint {
         let mut evidence = OfferEntryEvidence::empty();
-        if self.peek_scope_ack(scope_id).is_some() {
+        if self.peek_live_scope_ack(scope_id).is_some() {
             evidence = evidence.with_ack();
         }
         if self.scope_has_ready_arm_evidence(scope_id) {
@@ -352,7 +365,7 @@ where
         scope_id: ScopeId,
         offer_lanes: crate::global::role_program::LaneSetView,
     ) -> Option<RouteArmToken> {
-        if let Some(token) = self.peek_scope_ack(scope_id) {
+        if let Some(token) = self.peek_live_scope_ack(scope_id) {
             return Some(token);
         }
         let lane_limit = self.cursor.logical_lane_count();
@@ -378,11 +391,11 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn preview_route_arm_selection_non_consuming(
+    pub(in crate::endpoint::kernel) fn preview_live_route_arm_selection_non_consuming(
         &self,
         scope_id: ScopeId,
     ) -> Option<Arm> {
-        if let Some(token) = self.peek_scope_ack(scope_id) {
+        if let Some(token) = self.peek_live_scope_ack(scope_id) {
             return Some(token.arm());
         }
         let lane_limit = self.cursor.logical_lane_count();
@@ -410,17 +423,6 @@ where
         let slot_idx = slot_mask.trailing_zeros() as usize;
         *slot_mask &= !(1u8 << slot_idx);
         Some(slot_idx)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn ack_route_arm_selection_for_lane(
-        &mut self,
-        lane_idx: usize,
-        scope_id: ScopeId,
-        role: u8,
-    ) -> Option<u8> {
-        self.port_for_lane(lane_idx)
-            .ack_route_arm_selection(scope_id, role)
     }
 
     #[inline]

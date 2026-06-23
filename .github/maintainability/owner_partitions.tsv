@@ -65,8 +65,10 @@ src/endpoint/kernel	src/endpoint/kernel/layout.rs
 src/endpoint/kernel	src/endpoint/kernel/observe.rs
 src/endpoint/kernel	src/endpoint/kernel/offer
 src/endpoint/kernel	src/endpoint/kernel/offer.rs
+src/endpoint/kernel	src/endpoint/kernel/decision_state
 src/endpoint/kernel	src/endpoint/kernel/decision_state.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta_apply.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta_route_only.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_helpers.rs
@@ -104,6 +106,7 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_materialization.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_types.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_observed.rs
+src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_scope_selection.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/candidates.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model.rs
@@ -194,6 +197,7 @@ tests	tests/route_branch_send.rs
 tests	tests/route_multiphase_progress_arm.rs
 tests	tests/route_multiphase_progress_inner.rs
 tests	tests/route_with_internal_parallel.rs
+tests	tests/rolled_resolver_reentry.rs
 tests	tests/transport_resolver_signal_surface.rs
 tests	tests/visible_route_reentry.rs
 tests	tests/semantic_surface

@@ -353,6 +353,31 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
 }
 
 #[test]
+fn route_arm_selection_consumes_only_at_resolve_authority() {
+    let production = read_production_rs_tree("src");
+    for forbidden in [
+        "ack_route_arm_selection",
+        "acknowledge_with_role_count",
+        "record_scope_ack(scope_id, RouteArmToken::from_ack",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "route arm selection must not regain a generationless ack-consume side path: {forbidden}"
+        );
+    }
+
+    let resolve = read("src/endpoint/kernel/offer/resolve.rs");
+    assert!(
+        resolve.contains("fn poll_route_authority_from_offer_lanes(")
+            && resolve.contains("RouteArmToken::from_ack(arm)")
+            && resolve.contains("RouteArmCommitEvidence::CachedOrDemux")
+            && resolve.contains("RouteArmToken::from_poll(arm)")
+            && resolve.contains("RouteArmCommitEvidence::PollFrame"),
+        "offer resolve must keep route-table ack and local poll authority/evidence distinct"
+    );
+}
+
+#[test]
 fn production_sources_keep_absence_codes_named_by_meaning() {
     let production = read_production_rs_tree("src");
     for forbidden in [

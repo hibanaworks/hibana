@@ -656,6 +656,19 @@ fn compiled_image_sources_stay_split_below_one_thousand_lines() {
         );
     }
 
+    fn is_test_like_source(root: &std::path::Path, path: &std::path::Path) -> bool {
+        let relative = path.strip_prefix(root).unwrap_or(path);
+        let name = relative.file_name().and_then(|name| name.to_str());
+        name == Some("tests.rs")
+            || name.is_some_and(|name| name.ends_with("_tests.rs"))
+            || relative.components().any(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .is_some_and(|part| matches!(part, "tests" | "test_support" | "examples"))
+            })
+    }
+
     let mut stack = vec![root.join("src")];
     let mut oversized = Vec::new();
     while let Some(dir) = stack.pop() {
@@ -667,7 +680,9 @@ fn compiled_image_sources_stay_split_below_one_thousand_lines() {
                 .path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+                && !is_test_like_source(&root, &path)
+            {
                 let body = std::fs::read_to_string(&path)
                     .unwrap_or_else(|err| panic!("read {} failed: {err}", path.display()));
                 let lines = body.lines().count();

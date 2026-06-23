@@ -6,7 +6,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
         arm: u8,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let Some(slot) = self.route_scope_slot_inner(scope_id) else {
             return false;
@@ -21,11 +21,21 @@ impl EventCursor {
         self.event_row_set_live_events_done(row_set, selected_arm_for_scope)
     }
 
+    pub(crate) fn reentrant_route_arm_event_row_done(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> bool {
+        self.route_scope_reentry(scope_id)
+            && self.selected_route_arm_event_row_done(scope_id, arm, selected_arm_for_scope)
+    }
+
     pub(super) fn selected_route_arm_completes_scope(
         &self,
         scope_id: ScopeId,
         arm: u8,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         if self.route_scope_reentry(scope_id) {
             return false;
@@ -55,7 +65,7 @@ impl EventCursor {
     pub(super) fn dependency_row_live_events_done(
         &self,
         dependency: LocalDependency,
-        selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let row_set = self
             .machine()
@@ -65,10 +75,10 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    fn event_row_set_live_events_done(
+    pub(super) fn event_row_set_live_events_done(
         &self,
         row_set: LocalEventRowSet,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let local_len = self.local_steps_len();
         if row_set.start() > local_len || row_set.end() > local_len {
@@ -123,7 +133,7 @@ impl EventCursor {
                         row.conflict(),
                         ScopeId::none(),
                         None,
-                        &mut selected_arm_for_scope,
+                        selected_arm_for_scope,
                     )
                 {
                     return false;

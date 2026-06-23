@@ -63,7 +63,7 @@ Or write the dependency explicitly:
 
 ```toml
 [dependencies]
-hibana = "0.9.3"
+hibana = "0.9.4"
 ```
 
 Hibana is `#![no_std]` and no-alloc-oriented.

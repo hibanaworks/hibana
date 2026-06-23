@@ -16,9 +16,8 @@ pub(crate) use self::{
         RelocatableResidentLaneStep, SendPreviewError,
     },
     facts::{
-        ARM_SHARED, EventCommitMeta, LocalAtomFacts, LocalConflict, LocalDependency, LocalMeta,
-        LocalNode, LocalNodeMeta, MAX_STATES, PackedEventConflict, PackedLocalDependency,
-        PassiveArmChildFact, RecvMeta, RouteChoiceMark, RouteScopeRows, SendMeta,
-        state_index_to_usize,
+        EventCommitMeta, LocalAtomFacts, LocalConflict, LocalDependency, LocalMeta, LocalNode,
+        LocalNodeMeta, MAX_STATES, PackedEventConflict, PackedLocalDependency, PassiveArmChildFact,
+        RecvMeta, RouteChoiceMark, RouteScopeRows, SendMeta, state_index_to_usize,
     },
 };

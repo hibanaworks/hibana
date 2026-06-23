@@ -17,13 +17,15 @@ mod resolve_types;
 mod select;
 mod select_alignment;
 mod select_observed;
+mod select_scope_selection;
 mod state;
 use core::{
     ops::ControlFlow,
     task::{Poll, ready},
 };
 
-use super::authority::{Arm, RouteArmToken, RouteResolveStep};
+use super::authority::RouteResolveStep;
+pub(in crate::endpoint::kernel) use super::authority::{Arm, RouteArmToken};
 use super::core::CursorEndpoint;
 use super::evidence::{ScopeFrameLabelScratch, ScopeFrameLabelView};
 use super::frontier::{
@@ -91,19 +93,8 @@ where
                         frame_label_meta,
                     );
                 }
-
-                if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
-                    && let Some(arm) = Arm::new(arm)
-                {
-                    self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
-                }
             }
             FrameHintIngestion::Scope => {
-                if let Some(arm) = self.ack_route_arm_selection_for_lane(lane_idx, scope_id, ROLE)
-                    && let Some(arm) = Arm::new(arm)
-                {
-                    self.record_scope_ack(scope_id, RouteArmToken::from_ack(arm));
-                }
                 if let Some(frame_label) = self.take_frame_hint_for_lane(lane_idx, frame_label_meta)
                 {
                     self.record_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
@@ -533,7 +524,10 @@ where
                         let descended = match self.descend_selected_passive_route(
                             stage.selection(),
                             resolved,
-                            stage.ingress.transport_frame_label_raw(),
+                            stage
+                                .ingress
+                                .transport_frame_label_raw()
+                                .map(|label| (stage.selection().offer_lane, label)),
                         ) {
                             Ok(descended) => descended,
                             Err(err) => {
@@ -557,9 +551,7 @@ where
                             &mut stage.ingress,
                         ) {
                             Ok(label) => branch_label = Some(label),
-                            Err(err) => {
-                                return Poll::Ready(Err(err));
-                            }
+                            Err(err) => return Poll::Ready(Err(err)),
                         }
                     }
                 }

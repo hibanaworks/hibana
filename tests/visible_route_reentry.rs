@@ -74,6 +74,44 @@ const SEQ_ARM_C_REQ: u8 = 225;
 const SEQ_ARM_C_ACK: u8 = 226;
 const SEQ_ARM_D_REQ: u8 = 227;
 const SEQ_ARM_D_ACK: u8 = 228;
+const ROUTE_SEQ_ROLL_BODY_REQ: u8 = 229;
+const ROUTE_SEQ_ROLL_BODY_ACK: u8 = 230;
+const ROUTE_SEQ_ROLL_TAIL_REQ: u8 = 231;
+const ROUTE_SEQ_ROLL_TAIL_ACK: u8 = 232;
+const ROUTE_SEQ_ROLL_OTHER_REQ: u8 = 233;
+const ROUTE_SEQ_ROLL_OTHER_ACK: u8 = 234;
+const ROUTE_PAR_ROLL_LEFT_REQ: u8 = 235;
+const ROUTE_PAR_ROLL_RIGHT_REQ: u8 = 236;
+const ROUTE_PAR_ROLL_OTHER_REQ: u8 = 237;
+const ROUTE_PAR_ROLL_OTHER_ACK: u8 = 238;
+const PAR_ROUTE_ROLL_A_REQ: u8 = 239;
+const PAR_ROUTE_ROLL_A_ACK: u8 = 240;
+const PAR_ROUTE_ROLL_B_REQ: u8 = 241;
+const PAR_ROUTE_ROLL_B_ACK: u8 = 242;
+const PAR_ROUTE_ROLL_SIBLING_REQ: u8 = 243;
+const PAR_ROUTE_ROLL_SIBLING_ACK: u8 = 244;
+const PAR_ROUTE_ROLL_EXIT_REQ: u8 = 245;
+const PAR_ROUTE_ROLL_EXIT_ACK: u8 = 246;
+const SEQ_ROUTE_ROLL_A_REQ: u8 = 247;
+const SEQ_ROUTE_ROLL_A_ACK: u8 = 248;
+const SEQ_ROUTE_ROLL_B_REQ: u8 = 249;
+const SEQ_ROUTE_ROLL_B_ACK: u8 = 250;
+const SEQ_ROUTE_ROLL_TAIL_REQ: u8 = 251;
+const SEQ_ROUTE_ROLL_TAIL_ACK: u8 = 252;
+const SEQ_ROUTE_ROLL_EXIT_REQ: u8 = 253;
+const SEQ_ROUTE_ROLL_EXIT_ACK: u8 = 254;
+const MIX_OUTER_LEFT_REQ: u8 = 101;
+const MIX_OUTER_LEFT_ACK: u8 = 102;
+const MIX_INNER_LEFT_REQ: u8 = 103;
+const MIX_INNER_LEFT_ACK: u8 = 104;
+const MIX_DEEP_A_REQ: u8 = 105;
+const MIX_DEEP_A_ACK: u8 = 106;
+const MIX_DEEP_B_REQ: u8 = 107;
+const MIX_DEEP_B_ACK: u8 = 108;
+const MIX_SEQ_TAIL_REQ: u8 = 109;
+const MIX_SEQ_TAIL_ACK: u8 = 110;
+const MIX_PAR_SIBLING_REQ: u8 = 111;
+const MIX_PAR_SIBLING_ACK: u8 = 112;
 
 const WASI_FD_WRITE_REQ: u8 = 85;
 const WASI_FD_WRITE_ACK: u8 = 86;
@@ -340,6 +378,172 @@ fn rolled_nested_right_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
         g::send::<1, 0, Msg<SEQ_ARM_D_ACK, u8>>(),
     );
     project(&g::route(a, g::route(b, g::seq(c, d))).roll())
+}
+
+fn rolled_route_left_seq_roll_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let inner = request_response_row!(ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK).roll();
+    let rolled_left = g::seq(
+        inner,
+        request_response_row!(ROUTE_SEQ_ROLL_TAIL_REQ, ROUTE_SEQ_ROLL_TAIL_ACK),
+    );
+    project(
+        &g::route(
+            rolled_left,
+            request_response_row!(ROUTE_SEQ_ROLL_OTHER_REQ, ROUTE_SEQ_ROLL_OTHER_ACK),
+        )
+        .roll(),
+    )
+}
+
+fn rolled_route_right_seq_roll_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let inner = request_response_row!(ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK).roll();
+    let rolled_right = g::seq(
+        inner,
+        request_response_row!(ROUTE_SEQ_ROLL_TAIL_REQ, ROUTE_SEQ_ROLL_TAIL_ACK),
+    );
+    project(
+        &g::route(
+            request_response_row!(ROUTE_SEQ_ROLL_OTHER_REQ, ROUTE_SEQ_ROLL_OTHER_ACK),
+            rolled_right,
+        )
+        .roll(),
+    )
+}
+
+fn rolled_route_left_par_roll_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let rolled_left = g::par(
+        g::send::<0, 1, Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(),
+        g::send::<0, 1, Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(),
+    )
+    .roll();
+    project(
+        &g::route(
+            rolled_left,
+            request_response_row!(ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK),
+        )
+        .roll(),
+    )
+}
+
+fn rolled_route_right_par_roll_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let rolled_right = g::par(
+        g::send::<0, 1, Msg<ROUTE_PAR_ROLL_LEFT_REQ, u8>>(),
+        g::send::<0, 1, Msg<ROUTE_PAR_ROLL_RIGHT_REQ, u8>>(),
+    )
+    .roll();
+    project(
+        &g::route(
+            request_response_row!(ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK),
+            rolled_right,
+        )
+        .roll(),
+    )
+}
+
+fn rolled_par_left_route_roll_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let route = g::route(
+        request_response_row!(PAR_ROUTE_ROLL_A_REQ, PAR_ROUTE_ROLL_A_ACK),
+        request_response_row!(PAR_ROUTE_ROLL_B_REQ, PAR_ROUTE_ROLL_B_ACK),
+    )
+    .roll();
+    let sibling = request_response_row!(PAR_ROUTE_ROLL_SIBLING_REQ, PAR_ROUTE_ROLL_SIBLING_ACK);
+    let body = g::par(route, sibling).roll();
+    project(&g::seq(
+        body,
+        request_response_row!(PAR_ROUTE_ROLL_EXIT_REQ, PAR_ROUTE_ROLL_EXIT_ACK),
+    ))
+}
+
+fn rolled_par_right_route_roll_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let route = g::route(
+        request_response_row!(PAR_ROUTE_ROLL_A_REQ, PAR_ROUTE_ROLL_A_ACK),
+        request_response_row!(PAR_ROUTE_ROLL_B_REQ, PAR_ROUTE_ROLL_B_ACK),
+    )
+    .roll();
+    let sibling = request_response_row!(PAR_ROUTE_ROLL_SIBLING_REQ, PAR_ROUTE_ROLL_SIBLING_ACK);
+    let body = g::par(sibling, route).roll();
+    project(&g::seq(
+        body,
+        request_response_row!(PAR_ROUTE_ROLL_EXIT_REQ, PAR_ROUTE_ROLL_EXIT_ACK),
+    ))
+}
+
+fn rolled_seq_route_roll_head_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let route = g::route(
+        request_response_row!(SEQ_ROUTE_ROLL_A_REQ, SEQ_ROUTE_ROLL_A_ACK),
+        request_response_row!(SEQ_ROUTE_ROLL_B_REQ, SEQ_ROUTE_ROLL_B_ACK),
+    )
+    .roll();
+    let body = g::seq(
+        route,
+        request_response_row!(SEQ_ROUTE_ROLL_TAIL_REQ, SEQ_ROUTE_ROLL_TAIL_ACK),
+    )
+    .roll();
+    project(&g::seq(
+        body,
+        request_response_row!(SEQ_ROUTE_ROLL_EXIT_REQ, SEQ_ROUTE_ROLL_EXIT_ACK),
+    ))
+}
+
+fn rolled_route_route_par_seq_route_roll_mixed_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let deep_route = g::route(
+        request_response_row!(MIX_DEEP_A_REQ, MIX_DEEP_A_ACK),
+        request_response_row!(MIX_DEEP_B_REQ, MIX_DEEP_B_ACK),
+    )
+    .roll();
+    let seq_roll = g::seq(
+        deep_route,
+        request_response_row!(MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK),
+    )
+    .roll();
+    let par_roll = g::par(
+        seq_roll,
+        request_response_row!(MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK),
+    )
+    .roll();
+    let inner_route = g::route(
+        request_response_row!(MIX_INNER_LEFT_REQ, MIX_INNER_LEFT_ACK),
+        par_roll,
+    )
+    .roll();
+    project(
+        &g::route(
+            request_response_row!(MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK),
+            inner_route,
+        )
+        .roll(),
+    )
+}
+
+fn rolled_left_route_left_route_par_seq_route_roll_mixed_program<const ROLE: u8>()
+-> RoleProgram<ROLE> {
+    let deep_route = g::route(
+        request_response_row!(MIX_DEEP_A_REQ, MIX_DEEP_A_ACK),
+        request_response_row!(MIX_DEEP_B_REQ, MIX_DEEP_B_ACK),
+    )
+    .roll();
+    let seq_roll = g::seq(
+        deep_route,
+        request_response_row!(MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK),
+    )
+    .roll();
+    let par_roll = g::par(
+        request_response_row!(MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK),
+        seq_roll,
+    )
+    .roll();
+    let inner_route = g::route(
+        par_roll,
+        request_response_row!(MIX_INNER_LEFT_REQ, MIX_INNER_LEFT_ACK),
+    )
+    .roll();
+    project(
+        &g::route(
+            inner_route,
+            request_response_row!(MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK),
+        )
+        .roll(),
+    )
 }
 
 fn wasi_shape_rolled_route_seq_arm_program<const ROLE: u8>() -> RoleProgram<ROLE> {
@@ -976,6 +1180,345 @@ fn rolled_nested_right_route_seq_arm_keeps_send_authority_for_continuation() {
                     .await;
                 direct_request_response::<SEQ_ARM_D_REQ, SEQ_ARM_D_ACK>(controller, worker, 20)
                     .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_left_seq_roll_arm_reenters_inner_before_tail() {
+    with_visible_reentry_workspace(
+        986,
+        rolled_route_left_seq_roll_arm_program::<0>(),
+        rolled_route_left_seq_roll_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<ROUTE_SEQ_ROLL_TAIL_REQ, ROUTE_SEQ_ROLL_TAIL_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+                offer_request_response::<ROUTE_SEQ_ROLL_OTHER_REQ, ROUTE_SEQ_ROLL_OTHER_ACK>(
+                    controller, worker, 40,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_right_seq_roll_arm_reenters_inner_before_tail() {
+    with_visible_reentry_workspace(
+        987,
+        rolled_route_right_seq_roll_arm_program::<0>(),
+        rolled_route_right_seq_roll_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<ROUTE_SEQ_ROLL_OTHER_REQ, ROUTE_SEQ_ROLL_OTHER_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                offer_request_response::<ROUTE_SEQ_ROLL_BODY_REQ, ROUTE_SEQ_ROLL_BODY_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+                direct_request_response::<ROUTE_SEQ_ROLL_TAIL_REQ, ROUTE_SEQ_ROLL_TAIL_ACK>(
+                    controller, worker, 40,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_left_par_roll_arm_reenters_only_after_parallel_settles() {
+    with_visible_reentry_workspace(
+        988,
+        rolled_route_left_par_roll_arm_program::<0>(),
+        rolled_route_left_par_roll_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 10).await;
+                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 10);
+                assert_controller_send_blocked::<ROUTE_PAR_ROLL_OTHER_REQ>(controller).await;
+
+                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 20).await;
+                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 20);
+
+                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 30).await;
+                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 30);
+                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 40).await;
+                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 40);
+
+                offer_request_response::<ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK>(
+                    controller, worker, 50,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_left_par_roll_arm_exits_after_parallel_settles_without_probe() {
+    with_visible_reentry_workspace(
+        993,
+        rolled_route_left_par_roll_arm_program::<0>(),
+        rolled_route_left_par_roll_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 10).await;
+                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 10);
+                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 20).await;
+                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 20);
+
+                offer_request_response::<ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_right_par_roll_arm_reenters_only_after_parallel_settles() {
+    with_visible_reentry_workspace(
+        989,
+        rolled_route_right_par_roll_arm_program::<0>(),
+        rolled_route_right_par_roll_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<ROUTE_PAR_ROLL_OTHER_REQ, ROUTE_PAR_ROLL_OTHER_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+
+                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 20).await;
+                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 20);
+                assert_controller_send_blocked::<ROUTE_PAR_ROLL_OTHER_REQ>(controller).await;
+
+                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 30).await;
+                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 30);
+                send_from_controller::<ROUTE_PAR_ROLL_RIGHT_REQ>(controller, 40).await;
+                assert_eq!(offer_worker::<ROUTE_PAR_ROLL_RIGHT_REQ>(worker).await, 40);
+                send_from_controller::<ROUTE_PAR_ROLL_LEFT_REQ>(controller, 50).await;
+                assert_eq!(recv_worker::<ROUTE_PAR_ROLL_LEFT_REQ>(worker).await, 50);
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_par_left_route_roll_arm_reenters_before_parallel_sibling_settles() {
+    with_visible_reentry_workspace(
+        990,
+        rolled_par_left_route_roll_arm_program::<0>(),
+        rolled_par_left_route_roll_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<PAR_ROUTE_ROLL_A_REQ, PAR_ROUTE_ROLL_A_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                offer_request_response::<PAR_ROUTE_ROLL_B_REQ, PAR_ROUTE_ROLL_B_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                assert_controller_send_blocked::<PAR_ROUTE_ROLL_EXIT_REQ>(controller).await;
+
+                direct_request_response::<PAR_ROUTE_ROLL_SIBLING_REQ, PAR_ROUTE_ROLL_SIBLING_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+                direct_request_response::<PAR_ROUTE_ROLL_EXIT_REQ, PAR_ROUTE_ROLL_EXIT_ACK>(
+                    controller, worker, 40,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_par_right_route_roll_arm_reenters_before_parallel_sibling_settles() {
+    with_visible_reentry_workspace(
+        991,
+        rolled_par_right_route_roll_arm_program::<0>(),
+        rolled_par_right_route_roll_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                direct_request_response::<PAR_ROUTE_ROLL_SIBLING_REQ, PAR_ROUTE_ROLL_SIBLING_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                offer_request_response::<PAR_ROUTE_ROLL_B_REQ, PAR_ROUTE_ROLL_B_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                offer_request_response::<PAR_ROUTE_ROLL_A_REQ, PAR_ROUTE_ROLL_A_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+                direct_request_response::<PAR_ROUTE_ROLL_EXIT_REQ, PAR_ROUTE_ROLL_EXIT_ACK>(
+                    controller, worker, 40,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_seq_route_roll_head_reenters_before_seq_tail_and_outer_exit() {
+    with_visible_reentry_workspace(
+        992,
+        rolled_seq_route_roll_head_program::<0>(),
+        rolled_seq_route_roll_head_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<SEQ_ROUTE_ROLL_A_REQ, SEQ_ROUTE_ROLL_A_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                offer_request_response::<SEQ_ROUTE_ROLL_B_REQ, SEQ_ROUTE_ROLL_B_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+                direct_request_response::<SEQ_ROUTE_ROLL_TAIL_REQ, SEQ_ROUTE_ROLL_TAIL_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+
+                offer_request_response::<SEQ_ROUTE_ROLL_A_REQ, SEQ_ROUTE_ROLL_A_ACK>(
+                    controller, worker, 40,
+                )
+                .await;
+                direct_request_response::<SEQ_ROUTE_ROLL_TAIL_REQ, SEQ_ROUTE_ROLL_TAIL_ACK>(
+                    controller, worker, 50,
+                )
+                .await;
+                direct_request_response::<SEQ_ROUTE_ROLL_EXIT_REQ, SEQ_ROUTE_ROLL_EXIT_ACK>(
+                    controller, worker, 60,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_route_route_par_seq_route_roll_mixed_reentry_keeps_single_authority() {
+    with_visible_reentry_workspace(
+        994,
+        rolled_route_route_par_seq_route_roll_mixed_program::<0>(),
+        rolled_route_route_par_seq_route_roll_mixed_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                offer_request_response::<MIX_INNER_LEFT_REQ, MIX_INNER_LEFT_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+
+                offer_request_response::<MIX_DEEP_A_REQ, MIX_DEEP_A_ACK>(controller, worker, 30)
+                    .await;
+                offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 40)
+                    .await;
+                assert_controller_send_blocked::<MIX_OUTER_LEFT_REQ>(controller).await;
+
+                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
+                    controller, worker, 50,
+                )
+                .await;
+                assert_controller_send_blocked::<MIX_OUTER_LEFT_REQ>(controller).await;
+
+                direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(
+                    controller, worker, 60,
+                )
+                .await;
+                offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 70)
+                    .await;
+                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
+                    controller, worker, 80,
+                )
+                .await;
+                direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(
+                    controller, worker, 90,
+                )
+                .await;
+
+                offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(
+                    controller, worker, 100,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn rolled_left_route_left_route_par_seq_route_roll_mixed_reentry_keeps_single_authority() {
+    with_visible_reentry_workspace(
+        995,
+        rolled_left_route_left_route_par_seq_route_roll_mixed_program::<0>(),
+        rolled_left_route_left_route_par_seq_route_roll_mixed_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(
+                    controller, worker, 10,
+                )
+                .await;
+                offer_request_response::<MIX_INNER_LEFT_REQ, MIX_INNER_LEFT_ACK>(
+                    controller, worker, 20,
+                )
+                .await;
+
+                direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(
+                    controller, worker, 30,
+                )
+                .await;
+                offer_request_response::<MIX_DEEP_A_REQ, MIX_DEEP_A_ACK>(controller, worker, 40)
+                    .await;
+                offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 50)
+                    .await;
+                assert_controller_send_blocked::<MIX_OUTER_LEFT_REQ>(controller).await;
+
+                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
+                    controller, worker, 60,
+                )
+                .await;
+                offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 70)
+                    .await;
+                direct_request_response::<MIX_SEQ_TAIL_REQ, MIX_SEQ_TAIL_ACK>(
+                    controller, worker, 80,
+                )
+                .await;
+                direct_request_response::<MIX_PAR_SIBLING_REQ, MIX_PAR_SIBLING_ACK>(
+                    controller, worker, 90,
+                )
+                .await;
+
+                offer_request_response::<MIX_OUTER_LEFT_REQ, MIX_OUTER_LEFT_ACK>(
+                    controller, worker, 100,
+                )
+                .await;
             });
         },
     );

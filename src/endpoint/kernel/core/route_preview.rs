@@ -33,6 +33,28 @@ where
         self.decision_state.selected_arm_for_scope_slot(scope_slot)
     }
 
+    pub(in crate::endpoint::kernel) fn selected_live_arm_for_scope(
+        &self,
+        scope: ScopeId,
+    ) -> Option<u8> {
+        let arm = self.selected_arm_for_scope(scope)?;
+        if self.reentrant_selected_arm_complete(scope, arm) {
+            None
+        } else {
+            Some(arm)
+        }
+    }
+
+    pub(in crate::endpoint::kernel::core) fn reentrant_selected_arm_complete(
+        &self,
+        scope_id: ScopeId,
+        arm: u8,
+    ) -> bool {
+        let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
+        self.cursor
+            .reentrant_route_arm_event_row_done(scope_id, arm, &mut selected_arm_for_scope)
+    }
+
     pub(crate) fn route_scope_offer_entry_index(&self, scope_id: ScopeId) -> Option<usize> {
         let offer_entry = self.cursor.route_scope_offer_entry(scope_id)?;
         Some(if offer_entry.is_absent() {
@@ -49,24 +71,27 @@ where
     ) -> Option<usize> {
         self.cursor
             .passive_materialization_index_for_selected_arm(scope_id, arm, |scope| {
-                self.preview_selected_arm_for_scope(scope)
+                self.preview_live_selected_arm_for_scope(scope)
             })
     }
 
-    pub(crate) fn preview_selected_arm_for_scope(&self, scope_id: ScopeId) -> Option<u8> {
-        if let Some(arm) = self.selected_arm_for_scope(scope_id) {
-            return Some(arm);
-        }
-        self.preview_route_arm_selection_non_consuming(scope_id)
-            .map(Arm::as_u8)
+    pub(in crate::endpoint::kernel) fn preview_live_selected_arm_for_scope(
+        &self,
+        scope_id: ScopeId,
+    ) -> Option<u8> {
+        self.selected_live_arm_for_scope(scope_id)
+            .or_else(|| {
+                self.preview_live_route_arm_selection_non_consuming(scope_id)
+                    .map(Arm::as_u8)
+            })
             .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
     }
 
     #[inline]
     pub(crate) fn current_offer_scope_id(&self) -> ScopeId {
-        let mut selected_arm_for_scope = |scope| self.selected_arm_for_scope(scope);
+        let mut selected_arm_for_scope = |scope| self.selected_live_arm_for_scope(scope);
         let mut preview_selected_arm_for_scope = |scope| {
-            self.preview_route_arm_selection_non_consuming(scope)
+            self.preview_live_route_arm_selection_non_consuming(scope)
                 .map(Arm::as_u8)
                 .or_else(|| self.poll_arm_from_ready_mask(scope).map(Arm::as_u8))
         };
@@ -83,16 +108,16 @@ where
     ) -> ScopeId {
         self.cursor
             .rebase_passive_descendant_scope(stop_scope, initial_scope, |scope| {
-                self.selected_arm_for_scope(scope)
-                    .or_else(|| self.preview_selected_arm_for_scope(scope))
+                self.selected_live_arm_for_scope(scope)
+                    .or_else(|| self.preview_live_selected_arm_for_scope(scope))
             })
     }
 
     pub(crate) fn current_route_arm_authorized(&self) -> RecvResult<bool> {
         self.cursor
             .current_route_arm_authorization(
-                |scope| self.selected_arm_for_scope(scope),
-                |scope| self.preview_selected_arm_for_scope(scope),
+                |scope| self.selected_live_arm_for_scope(scope),
+                |scope| self.preview_live_selected_arm_for_scope(scope),
             )
             .map(|authorization| authorization.authorizes_current_arm())
             .map_err(|_| RecvError::PhaseInvariant)

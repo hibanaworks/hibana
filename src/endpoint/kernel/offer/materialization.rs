@@ -45,13 +45,17 @@ where
         let lane_wire = preview_meta.lane;
         let transport_payload = ingress.take_transport();
         let branch_kind = self.materialized_branch_kind(&preview_meta);
-        let transport_payload_for_branch = self.resolve_materialized_transport(
-            branch_kind,
-            lane_wire,
-            preview_meta.peer,
-            preview_meta.frame_label,
-            transport_payload,
-        )?;
+        let transport_payload_for_branch = self
+            .resolve_materialized_transport(
+                branch_kind,
+                lane_wire,
+                preview_meta.peer,
+                preview_meta.frame_label,
+                transport_payload,
+            )
+            .inspect_err(|_| {
+                ingress.discard_terminal();
+            })?;
         let branch_meta = BranchMeta {
             scope_id,
             selected_arm,
@@ -108,13 +112,16 @@ where
         let observed_frame_label = payload.observed_frame_label_raw();
         let transport_payload_matches_branch_lane = payload.lane_wire() == lane_wire;
         if matches!(branch_kind, BranchKind::WireRecv) && transport_payload_matches_branch_lane {
-            return Ok(Some(self.accept_materialized_transport_frame(
+            return match self.accept_materialized_transport_frame(
                 payload.lane_idx(),
                 lane_wire,
                 source_role,
                 frame_label,
                 payload,
-            )?));
+            ) {
+                Ok(frame) => Ok(Some(frame)),
+                Err(err) => Err(err),
+            };
         }
         let transport_payload_frame_mismatch = observed_frame_label != frame_label;
         if matches!(branch_kind, BranchKind::WireRecv) && transport_payload_frame_mismatch {

@@ -1,7 +1,7 @@
 use super::{
-    CursorEndpoint, OfferEntryPosition, OfferScopeSelection, RecvError, RecvResult, ScopeId,
-    Transport, state_index_to_usize,
+    CursorEndpoint, OfferScopeSelection, RecvError, RecvResult, Transport, state_index_to_usize,
 };
+use crate::endpoint::kernel::frontier::checked_state_index;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -34,7 +34,7 @@ where
     }
 
     pub(in crate::endpoint::kernel::offer) fn select_observed_ingress_route_scope(
-        &self,
+        &mut self,
         carried_lane: Option<u8>,
         carried_frame_label: Option<u8>,
     ) -> RecvResult<Option<OfferScopeSelection>> {
@@ -42,14 +42,80 @@ where
             return Ok(None);
         };
         let current_idx = self.cursor.index();
-        let Some(scope_id) = self
-            .cursor
-            .enclosing_passive_route_scope_for_exact_frame_label(current_idx, lane, frame_label)
-        else {
+        let reentry_target = {
+            let endpoint = &*self;
+            let mut selected_arm_for_scope =
+                |scope| endpoint.preview_live_selected_arm_for_scope(scope);
+            endpoint.cursor.roll_reentry_recv_index_for_frame(
+                lane,
+                frame_label,
+                &mut selected_arm_for_scope,
+            )
+        };
+        let (scope_id, target_idx, reentry_observed_target) = if let Some(target_idx) =
+            reentry_target
+        {
+            let node_scope = self.cursor.node_scope_id_at(target_idx);
+            let scope_id = self
+                .cursor
+                .route_scope_for_offer_node(node_scope, target_idx)
+                .ok_or(RecvError::PhaseInvariant)?;
+            (scope_id, target_idx, true)
+        } else if let Some(scope_id) = self
+            .active_reentry_scope_for_observed_frame(lane, frame_label)
+            .or_else(|| {
+                self.cursor
+                    .enclosing_passive_route_scope_for_exact_frame_label(
+                        current_idx,
+                        lane,
+                        frame_label,
+                    )
+            })
+        {
+            let target_idx = self
+                .cursor
+                .passive_descendant_target_index_from_exact_frame_label(scope_id, lane, frame_label)
+                .ok_or(RecvError::PhaseInvariant)?;
+            (scope_id, target_idx, false)
+        } else {
             return Ok(None);
         };
-        self.offer_scope_selection_for_scope_lane(scope_id, current_idx, lane)
-            .map(Some)
+        let observed_arm = if reentry_observed_target {
+            self.cursor.route_arm_for_index(scope_id, target_idx)
+        } else {
+            self.cursor
+                .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
+        };
+        let selected_arm_for_observed = {
+            let preview_conflict = self.cursor.event_conflict_for_index(target_idx);
+            let endpoint = &*self;
+            let mut selected_arm_for_scope =
+                |scope| endpoint.preview_live_selected_arm_for_scope(scope);
+            self.cursor.selected_arm_for_reentry_preview_conflict(
+                scope_id,
+                preview_conflict,
+                &mut selected_arm_for_scope,
+            )
+        };
+        if let (Some(selected), Some(observed)) = (selected_arm_for_observed, observed_arm)
+            && selected != observed
+        {
+            return Ok(None);
+        }
+        if target_idx != current_idx {
+            self.commit_cursor_realign_index(target_idx)
+                .map_err(|_| RecvError::PhaseInvariant)?;
+            self.sync_lane_offer_state();
+        }
+        let mut selection = self.offer_scope_selection_for_scope_lane_with_selected_arm(
+            scope_id,
+            target_idx,
+            lane,
+            selected_arm_for_observed.or(observed_arm),
+        )?;
+        selection.observed_target =
+            checked_state_index(target_idx).ok_or(RecvError::PhaseInvariant)?;
+        Ok(Some(selection))
     }
 
     pub(in crate::endpoint::kernel::offer) fn select_carried_ingress_scope(
@@ -76,46 +142,5 @@ where
         let current_idx = self.cursor.index();
         self.offer_scope_selection_for_scope_lane(scope_id, current_idx, lane_idx as u8)
             .map(Some)
-    }
-
-    pub(in crate::endpoint::kernel::offer) fn offer_scope_selection_for_scope_lane(
-        &self,
-        scope_id: ScopeId,
-        current_idx: usize,
-        offer_lane: u8,
-    ) -> RecvResult<OfferScopeSelection> {
-        let lane_idx = usize::from(offer_lane);
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return Err(RecvError::PhaseInvariant);
-        }
-        if !self.cursor.route_offer_entry_allows_current(
-            scope_id,
-            current_idx,
-            self.selected_arm_for_scope(scope_id),
-        ) {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        if !offer_lanes.contains(lane_idx) {
-            return Err(RecvError::PhaseInvariant);
-        }
-        let route_offer_entry_matches = crate::invariant_some(
-            self.cursor
-                .route_offer_entry_cursor_position(scope_id, current_idx),
-        )
-        .is_at_entry();
-        let entry_position = if route_offer_entry_matches {
-            OfferEntryPosition::RouteEntry
-        } else {
-            OfferEntryPosition::AfterRouteEntry
-        };
-        let frontier_parallel_root =
-            CursorEndpoint::<ROLE, T>::parallel_scope_root(&self.cursor, scope_id);
-        Ok(OfferScopeSelection {
-            scope_id,
-            frontier_parallel_root,
-            offer_lane,
-            entry_position,
-        })
     }
 }

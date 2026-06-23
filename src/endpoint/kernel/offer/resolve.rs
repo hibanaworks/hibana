@@ -106,7 +106,7 @@ where
                 },
             )));
         }
-        if let Some(route_token) = self.peek_scope_ack(scope_id) {
+        if let Some(route_token) = self.peek_live_scope_ack(scope_id) {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
                 RouteAuthorityResolution {
                     route_token,
@@ -156,11 +156,27 @@ where
     ) -> Option<RouteArmToken> {
         let lane = state.ingress.transport_lane_wire()?;
         let frame_label = state.ingress.transport_frame_label_raw()?;
-        let arm = self
-            .cursor
-            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)?;
+        let arm = if let Some(target_idx) = state.selection().observed_target_index() {
+            let mut selected = None;
+            self.cursor
+                .visit_route_arms_for_index(target_idx, |candidate_scope, candidate_arm| {
+                    if candidate_scope == scope_id {
+                        selected = Some(candidate_arm);
+                    }
+                });
+            selected?
+        } else {
+            let arm = self
+                .cursor
+                .passive_descendant_dispatch_arm_from_exact_frame_label(
+                    scope_id,
+                    lane,
+                    frame_label,
+                )?;
+            self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
+            arm
+        };
         self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
-        self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
         Arm::new(arm).map(RouteArmToken::from_poll)
     }
 
@@ -204,29 +220,13 @@ where
         cx: &mut core::task::Context<'_>,
         frame_hint: FrameHintResolution,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
-        if !state.facts.profile.is_dynamic() {
-            return self.poll_route_authority_after_local_sources_miss(
-                state,
-                pending_recv,
-                frontier_visited,
-                cx,
-                frame_hint,
-            );
-        }
-
-        match self.passive_dynamic_resolver_authority(state, pending_recv, frontier_visited, cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
-                RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
-                    route_token,
-                    commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
-                }),
-            )),
-            Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
-                Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
-            }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-        }
+        self.poll_route_authority_after_local_sources_miss(
+            state,
+            pending_recv,
+            frontier_visited,
+            cx,
+            frame_hint,
+        )
     }
 
     #[inline(never)]
@@ -258,19 +258,7 @@ where
             }
         }
 
-        match self.poll_or_defer_route_authority(state, pending_recv, frontier_visited, cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(RouteResolveOutcome::Token(route_token))) => Poll::Ready(Ok(
-                RouteAuthorityOutcome::Resolved(RouteAuthorityResolution {
-                    route_token,
-                    commit_evidence: RouteArmCommitEvidence::PollFrame,
-                }),
-            )),
-            Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
-                Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
-            }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-        }
+        self.poll_or_defer_route_authority(state, pending_recv, frontier_visited, cx)
     }
 
     fn controller_resolver_authority(
@@ -330,29 +318,6 @@ where
         }
     }
 
-    fn passive_dynamic_resolver_authority(
-        &mut self,
-        state: &mut OfferResolveState<'r>,
-        _pending_recv: &mut super::lane_port::PendingRecv,
-        _frontier_visited: &mut FrontierVisitSet,
-        _cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<RouteResolveOutcome>> {
-        let selection = state.selection();
-        let scope_id = selection.scope_id;
-        let resolver_step = match self.prepare_route_arm_selection_from_resolver(scope_id) {
-            Ok(step) => step,
-            Err(err) => return Poll::Ready(Err(err)),
-        };
-        match resolver_step {
-            RouteResolveStep::Resolved(resolver_arm) => Poll::Ready(Ok(
-                RouteResolveOutcome::Token(RouteArmToken::from_resolver(resolver_arm)),
-            )),
-            RouteResolveStep::Reject(resolver_id) => {
-                Poll::Ready(Err(RecvError::ResolverReject { resolver_id }))
-            }
-        }
-    }
-
     #[inline(never)]
     fn poll_or_defer_route_authority(
         &mut self,
@@ -360,7 +325,7 @@ where
         pending_recv: &mut super::lane_port::PendingRecv,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
-    ) -> Poll<RecvResult<RouteResolveOutcome>> {
+    ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
         let selection = state.selection();
         if state.facts.profile.is_passive()
             && state
@@ -368,24 +333,56 @@ where
                 .transport_lane_wire()
                 .is_some_and(|lane| lane != selection.offer_lane)
         {
-            return Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier));
+            return Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier));
         }
         let offer_lanes = self.offer_lane_set_for_scope(selection.scope_id);
-        if let Some(poll_arm) =
-            self.try_poll_route_arm_selection_for_offer(selection.scope_id, offer_lanes, cx)
+        if let Some(authority) =
+            self.poll_route_authority_from_offer_lanes(selection.scope_id, offer_lanes, cx)
         {
-            Poll::Ready(Ok(RouteResolveOutcome::Token(RouteArmToken::from_poll(
-                poll_arm,
-            ))))
-        } else {
-            self.defer_missing_route_authority(
-                state,
-                pending_recv,
-                frontier_visited,
-                cx,
-                state.ingress.evidence_state(),
-            )
+            return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(authority)));
         }
+        match self.defer_missing_route_authority(
+            state,
+            pending_recv,
+            frontier_visited,
+            cx,
+            state.ingress.evidence_state(),
+        ) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(RouteResolveOutcome::RestartFrontier)) => {
+                Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier))
+            }
+            Poll::Ready(Ok(RouteResolveOutcome::Token(_))) => {
+                Poll::Ready(Err(RecvError::PhaseInvariant))
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        }
+    }
+
+    pub(super) fn poll_route_authority_from_offer_lanes(
+        &self,
+        scope_id: crate::global::const_dsl::ScopeId,
+        offer_lanes: crate::global::role_program::LaneSetView<'_>,
+        cx: &mut core::task::Context<'_>,
+    ) -> Option<RouteAuthorityResolution> {
+        if let Some(arm) = self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes, cx) {
+            return Some(RouteAuthorityResolution {
+                route_token: RouteArmToken::from_ack(arm),
+                commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
+            });
+        }
+        let is_dynamic_route_scope = self
+            .cursor
+            .route_scope_controller_resolver(scope_id)
+            .is_some_and(|(resolver, _)| resolver.is_dynamic());
+        if is_dynamic_route_scope {
+            return None;
+        }
+        self.poll_arm_from_ready_mask(scope_id)
+            .map(|arm| RouteAuthorityResolution {
+                route_token: RouteArmToken::from_poll(arm),
+                commit_evidence: RouteArmCommitEvidence::PollFrame,
+            })
     }
 
     fn defer_missing_route_authority(

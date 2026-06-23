@@ -5,8 +5,7 @@ use core::task::Poll;
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
     CursorEndpoint, FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet,
-    OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmCommitEvidence, RouteArmToken,
-    Transport,
+    OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmToken, Transport,
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -33,9 +32,9 @@ where
             {
                 break selected_arm;
             }
-            if let Some(poll_token) = self.poll_unready_resolver_authority(state, route_token, cx) {
-                route_token = poll_token;
-                commit_evidence = RouteArmCommitEvidence::PollFrame;
+            if let Some(authority) = self.poll_unready_resolver_authority(state, route_token, cx) {
+                route_token = authority.route_token;
+                commit_evidence = authority.commit_evidence;
                 continue;
             }
             match self.poll_selected_arm_materialization_frame(
@@ -136,8 +135,16 @@ where
         let Some(lane) = state.ingress.transport_lane_wire() else {
             return false;
         };
-        self.route_scope_arm_lane_set_for_scope(selection.scope_id, selected_arm)
-            .is_some_and(|lanes| lanes.contains(lane as usize))
+        let Some(frame_label) = state.ingress.transport_frame_label_raw() else {
+            return false;
+        };
+        self.cursor
+            .passive_descendant_dispatch_arm_from_exact_frame_label(
+                selection.scope_id,
+                lane,
+                frame_label,
+            )
+            == Some(selected_arm)
     }
 
     #[inline(never)]
@@ -146,14 +153,13 @@ where
         state: &OfferResolveState<'r>,
         route_token: RouteArmToken,
         cx: &mut core::task::Context<'_>,
-    ) -> Option<RouteArmToken> {
+    ) -> Option<RouteAuthorityResolution> {
         if !route_token.is_resolver() {
             return None;
         }
         let scope_id = state.selection().scope_id;
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        self.try_poll_route_arm_selection_for_offer(scope_id, offer_lanes, cx)
-            .map(RouteArmToken::from_poll)
+        self.poll_route_authority_from_offer_lanes(scope_id, offer_lanes, cx)
     }
 
     #[inline(never)]

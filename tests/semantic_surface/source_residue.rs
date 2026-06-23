@@ -9,6 +9,9 @@ fn cursor_scope_route_source() -> String {
         "src/global/typestate/cursor/scope_route/send_preview.rs",
     ));
     source.push_str(&read(
+        "src/global/typestate/cursor/scope_route/send_preview_start.rs",
+    ));
+    source.push_str(&read(
         "src/global/typestate/cursor/scope_route/navigation.rs",
     ));
     source.push_str(&read(
@@ -27,6 +30,10 @@ fn send_ops_source() -> String {
     let mut source = read("src/endpoint/kernel/core/send_ops.rs");
     source.push_str(&read("src/endpoint/kernel/core/send_ops/route_evidence.rs"));
     source
+}
+
+fn occurrences(source: &str, needle: &str) -> usize {
+    source.matches(needle).count()
 }
 
 #[test]
@@ -540,6 +547,8 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let role_scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
     let cursor_send_preview = read("src/global/typestate/cursor/scope_route/send_preview.rs");
+    let cursor_send_preview_start =
+        read("src/global/typestate/cursor/scope_route/send_preview_start.rs");
     let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let passive_child = read("src/global/compiled/lowering/seal/passive_child.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
@@ -552,6 +561,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let runtime_types = runtime_types_source();
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
+    let commit_delta_apply = read("src/endpoint/kernel/core/commit_delta_apply.rs");
     let forbidden_from_chain = "from_conflict_chain";
     let forbidden_chain_len = "conflict_chain_len(";
     let forbidden_chain_row = "conflict_chain_row_at(";
@@ -561,6 +571,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && !cursor_scope_route.contains("pub(crate) fn route_scope_for_event_arm")
             && cursor_scope_route_navigation.contains("pub(crate) fn event_conflict_for_index")
             && cursor_scope_route.contains("pub(crate) fn route_commit_range_for_conflict")
+            && !cursor_scope_route.contains("first_arm")
             && cursor_scope_route.contains("pub(crate) fn route_commit_row_at")
             && !cursor_scope_route.contains("node_in_selected_route_arm")
             && !cursor_scope_route_navigation.contains("node_in_selected_route_arm")
@@ -569,6 +580,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && !runtime_types.contains("pub(crate) struct SelectedRouteCommitRow")
             && decision_state.contains("pub(crate) struct SelectedRouteCommitRow")
             && decision_state.contains("conflict: PackedEventConflict")
+            && !decision_state.contains("first_arm")
             && decision_state.contains("const fn new(scope: ScopeId, selected_arm: u8)")
             && !decision_state
                 .contains("pub(crate) const fn new(scope: ScopeId, selected_arm: u8)")
@@ -577,6 +589,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             )
             && !route_commit_helpers.contains("enum ExplicitRouteCommitChain")
             && !route_commit_helpers.contains(forbidden_from_chain)
+            && !route_commit_helpers.contains("first_arm")
             && route_commit_helpers.contains(
                 "prepare_route_site_materialization_rows_from_resident_route_commit_range"
             )
@@ -592,12 +605,13 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && !route_preview.contains("fn record_prepared_route_selection")
             && !route_preview.contains("fn apply_selected_route_commit_row")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
-            && commit_delta.contains("CommitDeltaApplyPermit::new()")
-            && commit_delta.contains(".apply_prepared_route_selection(")
-            && !commit_delta
+            && !commit_delta.contains("first_arm")
+            && commit_delta_apply.contains("CommitDeltaApplyPermit::new()")
+            && commit_delta_apply.contains(".apply_prepared_route_selection(")
+            && !commit_delta_apply
                 .contains("let _ = self.decision_state.apply_prepared_route_selection(")
-            && commit_delta.contains("crate::invariant()")
-            && commit_delta.contains("fn apply_prepared_selected_route_commit_row")
+            && commit_delta_apply.contains("crate::invariant()")
+            && commit_delta_apply.contains("fn apply_prepared_selected_route_commit_row")
             && send_ops.contains(
                 "prepare_event_selected_route_commit_rows_from_resident_route_commit_range"
             )
@@ -689,21 +703,19 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         role_scope_rows.contains("let Some(ranges) = Self::route_arm_ranges(markers, scope_id) else {\n            crate::invariant();\n        };"),
         "route scope dependency bounds must fail closed when binary arm ranges are missing"
     );
-    let send_preview_start = cursor_send_preview
+    let send_preview_start = cursor_send_preview_start
         .split("fn send_preview_start_index_for_label(")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("fn send_preview_apply_controller_route_decision_for_label")
-                .next()
-        })
         .expect("send preview start lookup must stay visible");
     assert!(
-        cursor_send_preview.contains("fn send_preview_route_start_index(")
-            && cursor_send_preview
+        !cursor_send_preview_start.contains("fn send_preview_route_start_index(")
+            && send_preview_start
                 .contains("if self.enclosing_route_scope_rows_at(self.index()).is_some()")
             && send_preview_start.contains(") -> Option<usize>")
             && send_preview_start.contains("self.first_pending_step_index(usize::MAX)")
             && send_preview_start.contains("Some(self.index())")
+            && cursor_send_preview_start.contains("selected_arm_for_reentry_preview_conflict")
+            && cursor_send_preview_start.contains("event_conflict_row_allows_with_preview")
             && cursor_send_preview.contains("self.relocatable_step_done(progress_step)")
             && cursor_send_preview
                 .contains("*idx = state_index_to_usize(self.node_next_index_at(*idx));"),
@@ -748,6 +760,7 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
     let send_ops = send_ops_source();
     let recv_commit_plan = read("src/endpoint/kernel/recv_commit_plan.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
+    let commit_delta_apply = read("src/endpoint/kernel/core/commit_delta_apply.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let runtime_types = runtime_types_source();
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
@@ -784,20 +797,23 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
             && !runtime_types.contains("fn from_enabled(")
             && !runtime_types.contains("fn with_roll_row(")
             && runtime_types.contains("fn with_lane_relocation(")
-            && commit_delta.contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
+            && commit_delta_apply
+                .contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
             && commit_delta.contains(".route_commit_range_for_conflict(")
             && commit_delta.contains(".route_commit_row_at(range, idx)")
-            && commit_delta.contains(".get(&self.cursor, idx)")
-            && commit_delta.contains("fn apply_prepared_cursor_index(")
-            && commit_delta.contains("fn apply_prepared_lane_advance(")
-            && commit_delta.contains("fn apply_prepared_lane_relocation(")
-            && !commit_delta.contains("self.apply_loop_commit_row(")
-            && !commit_delta.contains("self.apply_roll_commit_row(")
+            && commit_delta_apply.contains(".get(&self.cursor, idx)")
+            && commit_delta_apply.contains("fn apply_prepared_cursor_index(")
+            && commit_delta_apply.contains("fn apply_prepared_lane_advance(")
+            && commit_delta_apply.contains("fn apply_prepared_lane_relocation(")
+            && !commit_delta_apply.contains("self.apply_loop_commit_row(")
+            && !commit_delta_apply.contains("self.apply_roll_commit_row(")
             && !route_preview.contains("fn set_cursor_index(")
             && !offer_refresh.contains("fn set_lane_cursor_to_relocatable_step(")
             && !offer_refresh.contains("fn advance_lane_cursor_to_relocatable_step(")
             && !commit_delta.contains("apply_route_commit_effects")
-            && !commit_delta.contains("settle_cursor_after_commit"),
+            && !commit_delta_apply.contains("apply_route_commit_effects")
+            && !commit_delta.contains("settle_cursor_after_commit")
+            && !commit_delta_apply.contains("settle_cursor_after_commit"),
         "CommitDelta must be the only cursor/route/reentry mutation boundary"
     );
 
@@ -839,5 +855,46 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
                 "{name} must not re-grow scattered cursor mutation: {forbidden}"
             );
         }
+    }
+}
+
+#[test]
+fn route_reentry_mutation_has_single_production_authority() {
+    let commit_delta_apply = read("src/endpoint/kernel/core/commit_delta_apply.rs");
+    let mut production = read_production_rs_tree("src/endpoint");
+    production.push_str(&read_production_rs_tree("src/global"));
+
+    for (call, expected) in [
+        (".apply_prepared_route_selection(", 1usize),
+        (".replace_route_selection_arm_for_scope(", 1usize),
+        (".replace_selected_arm_slot(", 1usize),
+        (".clear_lane_route_selections_in_scope(", 2usize),
+        (".clear_reentry_scope_events(", 2usize),
+    ] {
+        assert_eq!(
+            occurrences(&commit_delta_apply, call),
+            expected,
+            "{call} must stay in the prepared commit application boundary"
+        );
+        assert_eq!(
+            occurrences(&production, call),
+            expected,
+            "{call} must not gain a second production authority"
+        );
+    }
+
+    for forbidden in [
+        "first_arm",
+        "selected_route_label_index",
+        "node_in_selected_route_arm",
+        "apply_synthetic_branch_commit_delta",
+        "apply_empty_branch_commit_delta",
+        "prepare_synthetic_branch_commit_delta",
+        "prepare_empty_branch_commit_delta",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "route/reentry commit must not re-grow fallback or label-first authority: {forbidden}"
+        );
     }
 }

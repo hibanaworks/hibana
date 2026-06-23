@@ -73,12 +73,12 @@ where
         carried_frame_label: Option<u8>,
     ) -> RecvResult<OfferScopeSelection> {
         if let Some(selection) =
-            self.select_current_materialized_ingress_scope(carried_lane, carried_frame_label)?
+            self.select_observed_ingress_route_scope(carried_lane, carried_frame_label)?
         {
             return Ok(selection);
         }
         if let Some(selection) =
-            self.select_observed_ingress_route_scope(carried_lane, carried_frame_label)?
+            self.select_current_materialized_ingress_scope(carried_lane, carried_frame_label)?
         {
             return Ok(selection);
         }
@@ -96,7 +96,7 @@ where
         if !self.cursor.route_offer_entry_allows_current(
             scope_id,
             self.cursor.index(),
-            self.selected_arm_for_scope(scope_id),
+            self.preview_live_selected_arm_for_scope(scope_id),
         ) {
             return Err(RecvError::PhaseInvariant);
         }
@@ -289,9 +289,11 @@ where
         if !self.cursor.has_route_scope(scope_id) {
             return Some(CurrentScopeSelectionMeta::EMPTY);
         }
-        let at_route_entry = self
-            .cursor
-            .route_offer_entry_cursor_position(scope_id, current_idx)?;
+        let at_route_entry = self.cursor.route_offer_entry_cursor_position(
+            scope_id,
+            current_idx,
+            self.preview_live_selected_arm_for_scope(scope_id),
+        )?;
         if !at_route_entry.is_at_entry() {
             return Some(CurrentScopeSelectionMeta::EMPTY);
         }
@@ -458,23 +460,5 @@ where
         }
         let arm = arm?;
         Arm::new(arm)
-    }
-    pub(super) fn try_poll_route_arm_selection_for_offer(
-        &self,
-        scope_id: ScopeId,
-        offer_lanes: LaneSetView,
-        cx: &mut core::task::Context<'_>,
-    ) -> Option<Arm> {
-        if let Some(arm) = self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes, cx) {
-            return Some(arm);
-        }
-        let is_dynamic_route_scope = self
-            .cursor
-            .route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _)| resolver.is_dynamic());
-        if is_dynamic_route_scope {
-            return None;
-        }
-        self.poll_arm_from_ready_mask(scope_id)
     }
 }

@@ -1,5 +1,8 @@
 //! Production cursor/reference frontier equivalence tests.
 
+#[path = "event_program_generated_corpus_tests.rs"]
+mod generated_corpus;
+
 use super::event_program_tests::{ReferenceLocalProgram, ReferenceProject, ReferenceState};
 use crate::global::{
     compiled::images::RoleDescriptorRef,
@@ -11,7 +14,7 @@ use crate::global::{
         RelocatableResidentLaneStep, SendMeta, SendPreviewError, StateIndex, state_index_to_usize,
     },
 };
-use std::{boxed::Box, mem::MaybeUninit, vec, vec::Vec};
+use std::{boxed::Box, mem::MaybeUninit, string::String, vec, vec::Vec};
 
 type A = crate::g::Send<0, 1, crate::g::Msg<1, ()>>;
 type B = crate::g::Send<0, 1, crate::g::Msg<2, ()>>;
@@ -135,13 +138,6 @@ fn production_cursor_reenters_completed_rolled_seq_head() {
     runtime.commit_label(91);
     runtime.commit_label(92);
 
-    let mut selected_arm_for_scope = |_| None;
-    assert_eq!(
-        runtime
-            .cursor()
-            .roll_reentry_index_for_label(91, &mut selected_arm_for_scope),
-        Some(0)
-    );
     assert!(
         runtime.enabled_commit_at(0).is_some(),
         "rolled head should be event-enabled after its scope completed"
@@ -320,6 +316,43 @@ fn production_cursor_previews_repeated_label_continuation_inside_rolled_route_ar
         trace.preview_send_meta_for_label::<0>(87).is_ok(),
         "second same-label send in selected rolled route arm must remain previewable"
     );
+}
+
+#[test]
+fn production_cursor_previews_repeated_intrinsic_route_segments() {
+    const LEFT: u8 = 84;
+    const RIGHT: u8 = 85;
+    const ACK: u8 = 2;
+
+    let route_segment = || {
+        crate::g::seq(
+            crate::g::route(
+                crate::g::send::<0, 1, crate::g::Msg<{ LEFT }, ()>>(),
+                crate::g::send::<0, 1, crate::g::Msg<{ RIGHT }, ()>>(),
+            ),
+            crate::g::send::<1, 0, crate::g::Msg<{ ACK }, ()>>(),
+        )
+    };
+    let program = crate::g::seq(
+        route_segment(),
+        crate::g::seq(
+            route_segment(),
+            crate::g::seq(route_segment(), route_segment()),
+        ),
+    );
+    let mut trace = ProductionCursorTrace::new::<0>(&program);
+
+    trace.preview_send_meta_for_label::<0>(LEFT).unwrap();
+    trace.commit_label(LEFT);
+    trace.commit_label(ACK);
+    assert_sorted_eq(trace.enabled_labels(), &[LEFT, RIGHT]);
+    trace.preview_send_meta_for_label::<0>(RIGHT).unwrap();
+    trace.commit_label(RIGHT);
+    trace.commit_label(ACK);
+    trace.preview_send_meta_for_label::<0>(LEFT).unwrap();
+    trace.commit_label(LEFT);
+    trace.commit_label(ACK);
+    trace.preview_send_meta_for_label::<0>(RIGHT).unwrap();
 }
 
 #[test]
@@ -510,6 +543,182 @@ fn passive_arm_child_facts_are_strict_projected_descendants() {
 }
 
 #[test]
+fn passive_arm_child_facts_cover_right_arm_descendants() {
+    let runtime = crate::g::route(
+        crate::g::send::<0, 1, crate::g::Msg<6, ()>>(),
+        crate::g::route(
+            crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+            crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+        ),
+    );
+    let trace = ProductionCursorTrace::new::<1>(&runtime);
+    let (outer, inner) = trace.outer_inner_route_scopes_for_arm(1);
+
+    assert_eq!(trace.cursor().passive_child_scope(outer, 0), None);
+    assert_eq!(trace.cursor().passive_child_scope(outer, 1), Some(inner));
+    assert_eq!(trace.cursor().passive_child_scope(inner, 0), None);
+    assert_eq!(trace.cursor().passive_child_scope(inner, 1), None);
+    assert_ne!(trace.cursor().passive_child_scope(outer, 1), Some(outer));
+
+    let lane_a = trace.lane_for_label(1);
+    let lane_b = trace.lane_for_label(2);
+    let lane_l = trace.lane_for_label(6);
+    let frame_a = trace.frame_label_for_label(1);
+    let frame_b = trace.frame_label_for_label(2);
+    let frame_l = trace.frame_label_for_label(6);
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_a, frame_a),
+        Some(1)
+    );
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_l, frame_l),
+        Some(0)
+    );
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_b, frame_b),
+        Some(1)
+    );
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_from_exact_frame_label(inner, lane_b, frame_b),
+        Some(1)
+    );
+}
+
+#[test]
+fn passive_arm_entry_keeps_right_spine_outer_direct_arm() {
+    let runtime = crate::g::route(
+        crate::g::send::<0, 1, crate::g::Msg<6, ()>>(),
+        crate::g::route(
+            crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+            crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+        ),
+    );
+    let trace = ProductionCursorTrace::new::<1>(&runtime);
+    let (outer, _inner) = trace.outer_inner_route_scopes_for_arm(1);
+    let outer_left = trace
+        .cursor()
+        .passive_observer_arm_entry_index(outer, 0)
+        .expect("outer direct passive arm entry");
+    assert_eq!(trace.action_label_at(outer_left), Some(6));
+}
+
+#[test]
+fn reentrant_completion_covers_right_spine_prefix_then_nested_route() {
+    let inner = crate::g::route(
+        crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+        crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+    );
+    let runtime = crate::g::route(
+        crate::g::send::<0, 1, crate::g::Msg<6, ()>>(),
+        crate::g::seq(crate::g::send::<0, 1, crate::g::Msg<9, ()>>(), inner),
+    )
+    .roll();
+    let mut trace = ProductionCursorTrace::new::<1>(&runtime);
+    let (outer, _inner) = trace.outer_inner_route_scopes_for_arm(1);
+
+    trace.commit_label(9);
+    trace.commit_label(2);
+
+    let mut selected_arm_for_scope = |scope| selected_arm(&trace.selected, scope);
+    assert!(
+        trace
+            .cursor()
+            .reentrant_route_arm_event_row_done(outer, 1, &mut selected_arm_for_scope),
+        "outer right arm must be complete after its prefix and selected nested arm"
+    );
+}
+
+#[test]
+fn reentrant_completion_covers_selected_arm_with_nested_rolled_parallel() {
+    let rolled_parallel = crate::g::par(
+        crate::g::send::<0, 1, crate::g::Msg<31, ()>>(),
+        crate::g::send::<0, 1, crate::g::Msg<32, ()>>(),
+    )
+    .roll();
+    let runtime = crate::g::route(
+        rolled_parallel,
+        crate::g::send::<0, 1, crate::g::Msg<33, ()>>(),
+    )
+    .roll();
+    let mut trace = ProductionCursorTrace::new::<0>(&runtime);
+    let outer = trace.root_route_scope();
+
+    trace.commit_label(31);
+    trace.commit_label(32);
+
+    let mut selected_arm_for_scope = |scope| selected_arm(&trace.selected, scope);
+    assert!(
+        trace
+            .cursor()
+            .reentrant_route_arm_event_row_done(outer, 0, &mut selected_arm_for_scope),
+        "route arm with a completed nested rolled parallel body must be complete"
+    );
+    let (meta, cursor_index) = trace
+        .preview_send_meta_for_label::<0>(33)
+        .expect("completed left arm should allow rolled route reentry to the right arm");
+    assert_eq!(meta.route_scope, outer);
+    assert_eq!(meta.selected_route_arm, Some(1));
+    assert!(
+        trace
+            .cursor()
+            .route_commit_range_for_conflict(PackedEventConflict::route_arm(meta.route_scope, 1))
+            .is_some()
+    );
+    assert_eq!(state_index_to_usize(cursor_index), 2);
+}
+
+#[test]
+fn reentrant_completion_covers_selected_arm_with_nested_rolled_sequence() {
+    let rolled_sequence = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<34, ()>>(),
+        crate::g::send::<1, 0, crate::g::Msg<35, ()>>(),
+    )
+    .roll();
+    let runtime = crate::g::route(
+        crate::g::seq(
+            rolled_sequence,
+            crate::g::send::<0, 1, crate::g::Msg<36, ()>>(),
+        ),
+        crate::g::send::<0, 1, crate::g::Msg<37, ()>>(),
+    )
+    .roll();
+    let mut trace = ProductionCursorTrace::new::<0>(&runtime);
+    let outer = trace.root_route_scope();
+
+    trace.commit_label(34);
+    trace.commit_label(35);
+    trace.commit_label(36);
+
+    let mut selected_arm_for_scope = |scope| selected_arm(&trace.selected, scope);
+    assert!(
+        trace
+            .cursor()
+            .reentrant_route_arm_event_row_done(outer, 0, &mut selected_arm_for_scope),
+        "route arm with a completed nested rolled sequence and tail must be complete"
+    );
+    let (meta, cursor_index) = trace
+        .preview_send_meta_for_label::<0>(37)
+        .expect("completed left arm should allow rolled route reentry to the right arm");
+    assert_eq!(meta.route_scope, outer);
+    assert_eq!(meta.selected_route_arm, Some(1));
+    assert!(
+        trace
+            .cursor()
+            .route_commit_range_for_conflict(PackedEventConflict::route_arm(meta.route_scope, 1))
+            .is_some()
+    );
+    assert_eq!(state_index_to_usize(cursor_index), 3);
+}
+
+#[test]
 fn production_cursor_enabled_frontier_matches_reference_for_alternating_route_parallel() {
     type InnerChoice = crate::g::Route<A, B>;
     type OuterLeft = crate::g::Par<InnerChoice, C>;
@@ -556,6 +765,380 @@ fn production_cursor_enabled_frontier_matches_reference_for_alternating_route_pa
     outer_right.assert_enabled(&[5]);
     outer_right.commit(5);
     outer_right.assert_enabled(&[7]);
+}
+
+type Cm21 = crate::g::Send<0, 1, crate::g::Msg<21, ()>>;
+type Cm22 = crate::g::Send<0, 1, crate::g::Msg<22, ()>>;
+type Cm23 = crate::g::Send<0, 1, crate::g::Msg<23, ()>>;
+type Cm24 = crate::g::Send<0, 1, crate::g::Msg<24, ()>>;
+type CmRoute<Left, Right> = crate::g::Route<Left, Right>;
+type CmSeq<Left, Right> = crate::g::Seq<Left, Right>;
+type CmPar<Left, Right> = crate::g::Par<Left, Right>;
+type CmRoll<Inner> = crate::g::Roll<Inner>;
+
+fn run_cursor_matrix<Steps>(labels: &[u8])
+where
+    crate::g::Program<Steps>: Projectable,
+{
+    let program = crate::g::Program::<Steps>::new();
+    let mut trace = ProductionCursorTrace::new::<0>(&program);
+    for &label in labels {
+        trace.commit_label(label);
+    }
+}
+
+#[test]
+fn cursor_matrix_route_p_seq_p_par_p() {
+    type Steps = CmRoute<CmSeq<CmPar<Cm21, Cm22>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_p_seq_p_par_r() {
+    type Steps = CmRoute<CmSeq<CmRoll<CmPar<Cm21, Cm22>>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_p_seq_r_par_p() {
+    type Steps = CmRoute<CmRoll<CmSeq<CmPar<Cm21, Cm22>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_p_seq_r_par_r() {
+    type Steps = CmRoute<CmRoll<CmSeq<CmRoll<CmPar<Cm21, Cm22>>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 21, 22, 21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_r_seq_p_par_p() {
+    type Steps = CmRoll<CmRoute<CmSeq<CmPar<Cm21, Cm22>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_route_r_seq_p_par_r() {
+    type Steps = CmRoll<CmRoute<CmSeq<CmRoll<CmPar<Cm21, Cm22>>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_route_r_seq_r_par_p() {
+    type Steps = CmRoll<CmRoute<CmRoll<CmSeq<CmPar<Cm21, Cm22>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_route_r_seq_r_par_r() {
+    type Steps = CmRoll<CmRoute<CmRoll<CmSeq<CmRoll<CmPar<Cm21, Cm22>>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_route_p_par_p_seq_p() {
+    type Steps = CmRoute<CmPar<CmSeq<Cm21, Cm22>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_p_par_p_seq_r() {
+    type Steps = CmRoute<CmPar<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_p_par_r_seq_p() {
+    type Steps = CmRoute<CmRoll<CmPar<CmSeq<Cm21, Cm22>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_p_par_r_seq_r() {
+    type Steps = CmRoute<CmRoll<CmPar<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 21, 22, 21, 22, 23]);
+}
+
+#[test]
+fn cursor_matrix_route_r_par_p_seq_p() {
+    type Steps = CmRoll<CmRoute<CmPar<CmSeq<Cm21, Cm22>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_route_r_par_p_seq_r() {
+    type Steps = CmRoll<CmRoute<CmPar<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_route_r_par_r_seq_p() {
+    type Steps = CmRoll<CmRoute<CmRoll<CmPar<CmSeq<Cm21, Cm22>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_route_r_par_r_seq_r() {
+    type Steps = CmRoll<CmRoute<CmRoll<CmPar<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_route_p_par_p() {
+    type Steps = CmSeq<CmRoute<CmPar<Cm21, Cm22>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_route_p_par_r() {
+    type Steps = CmSeq<CmRoute<CmRoll<CmPar<Cm21, Cm22>>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_route_r_par_p() {
+    type Steps = CmSeq<CmRoll<CmRoute<CmPar<Cm21, Cm22>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_route_r_par_r() {
+    type Steps = CmSeq<CmRoll<CmRoute<CmRoll<CmPar<Cm21, Cm22>>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_route_p_par_p() {
+    type Steps = CmRoll<CmSeq<CmRoute<CmPar<Cm21, Cm22>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 24, 21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_route_p_par_r() {
+    type Steps = CmRoll<CmSeq<CmRoute<CmRoll<CmPar<Cm21, Cm22>>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 24, 21, 22, 21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_route_r_par_p() {
+    type Steps = CmRoll<CmSeq<CmRoll<CmRoute<CmPar<Cm21, Cm22>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_route_r_par_r() {
+    type Steps = CmRoll<CmSeq<CmRoll<CmRoute<CmRoll<CmPar<Cm21, Cm22>>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 24, 21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_par_p_route_p() {
+    type Steps = CmSeq<CmPar<CmRoute<Cm21, Cm22>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_par_p_route_r() {
+    type Steps = CmSeq<CmPar<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_par_r_route_p() {
+    type Steps = CmSeq<CmRoll<CmPar<CmRoute<Cm21, Cm22>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 23, 21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_p_par_r_route_r() {
+    type Steps = CmSeq<CmRoll<CmPar<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_par_p_route_p() {
+    type Steps = CmRoll<CmSeq<CmPar<CmRoute<Cm21, Cm22>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 23, 24, 21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_par_p_route_r() {
+    type Steps = CmRoll<CmSeq<CmPar<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_par_r_route_p() {
+    type Steps = CmRoll<CmSeq<CmRoll<CmPar<CmRoute<Cm21, Cm22>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 23, 21, 23, 24, 21, 23, 21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_r_par_r_route_r() {
+    type Steps = CmRoll<CmSeq<CmRoll<CmPar<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 24, 21, 22, 23, 21, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_route_p_seq_p() {
+    type Steps = CmPar<CmRoute<CmSeq<Cm21, Cm22>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_route_p_seq_r() {
+    type Steps = CmPar<CmRoute<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_route_r_seq_p() {
+    type Steps = CmPar<CmRoll<CmRoute<CmSeq<Cm21, Cm22>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_route_r_seq_r() {
+    type Steps = CmPar<CmRoll<CmRoute<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_route_p_seq_p() {
+    type Steps = CmRoll<CmPar<CmRoute<CmSeq<Cm21, Cm22>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 24, 21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_route_p_seq_r() {
+    type Steps = CmRoll<CmPar<CmRoute<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 24, 21, 22, 21, 22, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_route_r_seq_p() {
+    type Steps = CmRoll<CmPar<CmRoll<CmRoute<CmSeq<Cm21, Cm22>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_route_r_seq_r() {
+    type Steps = CmRoll<CmPar<CmRoll<CmRoute<CmRoll<CmSeq<Cm21, Cm22>>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 21, 22, 23, 24, 21, 22, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_seq_p_route_p() {
+    type Steps = CmPar<CmSeq<CmRoute<Cm21, Cm22>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_seq_p_route_r() {
+    type Steps = CmPar<CmSeq<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_seq_r_route_p() {
+    type Steps = CmPar<CmRoll<CmSeq<CmRoute<Cm21, Cm22>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 23, 21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_p_seq_r_route_r() {
+    type Steps = CmPar<CmRoll<CmSeq<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>>, Cm24>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_seq_p_route_p() {
+    type Steps = CmRoll<CmPar<CmSeq<CmRoute<Cm21, Cm22>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 23, 24, 21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_seq_p_route_r() {
+    type Steps = CmRoll<CmPar<CmSeq<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 24, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_seq_r_route_p() {
+    type Steps = CmRoll<CmPar<CmRoll<CmSeq<CmRoute<Cm21, Cm22>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 23, 21, 23, 24, 21, 23, 21, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_r_seq_r_route_r() {
+    type Steps = CmRoll<CmPar<CmRoll<CmSeq<CmRoll<CmRoute<Cm21, Cm22>>, Cm23>>, Cm24>>;
+    run_cursor_matrix::<Steps>(&[21, 22, 23, 21, 22, 23, 24, 21, 22, 23, 21, 22, 23, 24]);
+}
+
+#[test]
+fn cursor_matrix_par_route_seq_roll_keeps_tail_pending_after_head() {
+    let inner = crate::g::seq(
+        crate::g::send::<0, 1, crate::g::Msg<21, ()>>(),
+        crate::g::send::<0, 1, crate::g::Msg<22, ()>>(),
+    )
+    .roll();
+    let middle = crate::g::route(inner, crate::g::send::<0, 1, crate::g::Msg<23, ()>>());
+    let program = crate::g::par(middle, crate::g::send::<0, 1, crate::g::Msg<24, ()>>());
+    let mut trace = ProductionCursorTrace::new::<0>(&program);
+
+    trace.commit_label(21);
+
+    assert!(trace.event_done_at(0));
+    assert!(
+        !trace.event_done_at(1),
+        "committing rolled sequence head must not mark its tail done"
+    );
+    assert_sorted_eq(trace.enabled_labels(), &[22, 24]);
+}
+
+#[test]
+fn cursor_matrix_seq_par_roll_route_roll_can_exit_after_body_settles() {
+    let route = crate::g::route(
+        crate::g::send::<0, 1, crate::g::Msg<21, ()>>(),
+        crate::g::send::<0, 1, crate::g::Msg<22, ()>>(),
+    )
+    .roll();
+    let body = crate::g::par(route, crate::g::send::<0, 1, crate::g::Msg<23, ()>>()).roll();
+    let program = crate::g::seq(body, crate::g::send::<0, 1, crate::g::Msg<24, ()>>());
+    let mut trace = ProductionCursorTrace::new::<0>(&program);
+
+    trace.commit_label(21);
+    trace.commit_label(22);
+    assert_eq!(trace.body_reentry_scope_for_label(23), None);
+    trace.commit_label(23);
+
+    assert!(
+        trace.enabled_labels().contains(&24),
+        "completed par.roll body must allow the following seq tail; state:\n{}",
+        trace.debug_rows()
+    );
+}
+
+#[test]
+fn cursor_matrix_seq_par_roll_right_route_roll_keeps_completed_sibling_for_exit() {
+    let route = crate::g::route(
+        crate::g::send::<0, 1, crate::g::Msg<21, ()>>(),
+        crate::g::send::<0, 1, crate::g::Msg<22, ()>>(),
+    )
+    .roll();
+    let body = crate::g::par(route, crate::g::send::<0, 1, crate::g::Msg<23, ()>>()).roll();
+    let program = crate::g::seq(body, crate::g::send::<0, 1, crate::g::Msg<24, ()>>());
+    let mut trace = ProductionCursorTrace::new::<0>(&program);
+
+    trace.commit_label(22);
+    trace.commit_label(23);
+    trace.commit_label(21);
+
+    assert!(
+        trace.enabled_labels().contains(&24),
+        "nested route.roll reentry must not clear a completed par.roll sibling; state:\n{}",
+        trace.debug_rows()
+    );
 }
 
 struct ReferenceCursorTrace<Steps, const ROLE: u8>
@@ -740,6 +1323,32 @@ impl ProductionCursorTrace {
     }
 
     fn outer_inner_route_scopes(&self) -> (ScopeId, ScopeId) {
+        self.outer_inner_route_scopes_for_arm(0)
+    }
+
+    fn root_route_scope(&self) -> ScopeId {
+        let route_count = self.event_program.footprint().route_scope_count;
+        let mut slot = 0usize;
+        while slot < route_count {
+            let scope = self
+                .event_program
+                .route_scope_rows_by_slot(slot)
+                .expect("route slot must contain route rows")
+                .scope();
+            if self
+                .event_program
+                .route_scope_conflict_by_slot(slot)
+                .to_conflict()
+                .is_none()
+            {
+                return scope;
+            }
+            slot += 1;
+        }
+        panic!("root route scope missing");
+    }
+
+    fn outer_inner_route_scopes_for_arm(&self, child_arm: u8) -> (ScopeId, ScopeId) {
         let route_count = self.event_program.footprint().route_scope_count;
         let mut outer = ScopeId::none();
         let mut inner = ScopeId::none();
@@ -756,7 +1365,7 @@ impl ProductionCursorTrace {
                 .to_conflict()
             {
                 Some(LocalConflict::RouteArm { scope: parent, arm }) => {
-                    if arm == 0 {
+                    if arm == child_arm {
                         inner = scope;
                         outer = parent;
                     }
@@ -815,6 +1424,25 @@ impl ProductionCursorTrace {
         panic!("recv label {target_label} missing from event rows");
     }
 
+    fn action_label_at(&self, idx: usize) -> Option<u8> {
+        match self.event_program.node(idx).action() {
+            LocalAction::Send { label, .. }
+            | LocalAction::Recv { label, .. }
+            | LocalAction::Local { label, .. } => Some(label),
+            LocalAction::Terminate => None,
+        }
+    }
+
+    fn event_done_at(&self, idx: usize) -> bool {
+        let Some(lane) = self.event_program.local_step_lane(idx) else {
+            return false;
+        };
+        self.cursor()
+            .relocatable_resident_lane_step_at_index(idx, lane as usize)
+            .ok()
+            .is_some_and(|step| self.cursor().relocatable_step_done(step))
+    }
+
     fn preview_send_meta_for_label<const ROLE: u8>(
         &self,
         target_label: u8,
@@ -834,21 +1462,124 @@ impl ProductionCursorTrace {
     }
 
     fn commit_label(&mut self, label: u8) {
+        if self.commit_enabled_label_with_reentry_scope(label, None) {
+            return;
+        }
+        if let Ok((meta, cursor_index)) = self.preview_send_meta_for_label::<0>(label) {
+            let preview_idx = state_index_to_usize(cursor_index);
+            let reentry_scope = self.body_reentry_scope_for_index(preview_idx, meta.lane);
+            if meta.selected_route_arm.is_some() {
+                self.record_event_conflict_selection(preview_idx);
+            }
+            if self.commit_enabled_label_with_reentry_scope(label, reentry_scope) {
+                return;
+            }
+        }
+        panic!(
+            "production cursor label {label} was not enabled; enabled={:?}; preview={:?}\n{}",
+            sorted(self.enabled_labels()),
+            self.preview_send_meta_for_label::<0>(label),
+            self.debug_rows()
+        );
+    }
+
+    fn commit_enabled_label_with_reentry_scope(
+        &mut self,
+        label: u8,
+        reentry_scope: Option<ScopeId>,
+    ) -> bool {
         let mut idx = 0usize;
         while idx < self.descriptor.local_len() {
             if let Some((candidate, cursor_after, progress_step)) = self.enabled_commit_at(idx)
                 && candidate == label
             {
+                let reentry_scope =
+                    reentry_scope.or_else(|| self.body_reentry_scope_for_step(progress_step));
+                self.clear_body_reentry_scope(reentry_scope);
                 self.record_event_conflict_selection(idx);
                 self.cursor_mut().set_index(cursor_after);
                 let _ = self
                     .cursor_mut()
                     .advance_lane_to_relocatable_step(progress_step);
-                return;
+                self.apply_selected_route_completion_cursor();
+                return true;
             }
             idx += 1;
         }
-        panic!("production cursor label {label} was not enabled");
+        false
+    }
+
+    fn body_reentry_scope_for_step(
+        &self,
+        progress_step: RelocatableResidentLaneStep,
+    ) -> Option<ScopeId> {
+        let selected = &self.selected;
+        let mut selected_arm_for_scope = |scope| selected_arm(selected, scope);
+        self.cursor()
+            .roll_body_reentry_scope_for_step(progress_step, &mut selected_arm_for_scope)
+    }
+
+    fn body_reentry_scope_for_index(&self, idx: usize, lane: u8) -> Option<ScopeId> {
+        let step = self
+            .cursor()
+            .relocatable_resident_lane_step_at_index(idx, lane as usize)
+            .ok()?;
+        self.body_reentry_scope_for_step(step)
+    }
+
+    fn clear_body_reentry_scope(&mut self, reentry_scope: Option<ScopeId>) {
+        if let Some(scope) = reentry_scope {
+            self.cursor_mut().clear_reentry_scope_events(scope);
+            self.clear_selected_routes_inside_roll(scope);
+        }
+    }
+
+    fn clear_selected_routes_inside_roll(&mut self, scope: ScopeId) {
+        let mut idx = 0usize;
+        while idx < self.selected.len() {
+            let route_scope = self.selected[idx].0;
+            if self
+                .cursor()
+                .route_scope_contained_in_roll_scope(route_scope, scope)
+            {
+                self.selected.remove(idx);
+            } else {
+                idx += 1;
+            }
+        }
+    }
+
+    fn body_reentry_scope_for_label(&self, label: u8) -> Option<ScopeId> {
+        let mut idx = 0usize;
+        while idx < self.descriptor.local_len() {
+            if self.action_label_at(idx) == Some(label)
+                && let Some(lane) = self.event_program.local_step_lane(idx)
+                && let Ok(step) = self
+                    .cursor()
+                    .relocatable_resident_lane_step_at_index(idx, lane as usize)
+            {
+                let selected = &self.selected;
+                let mut selected_arm_for_scope = |scope| selected_arm(selected, scope);
+                return self
+                    .cursor()
+                    .roll_body_reentry_scope_for_step(step, &mut selected_arm_for_scope);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    fn apply_selected_route_completion_cursor(&mut self) {
+        let idx = self.cursor().index();
+        let selected = &self.selected;
+        if let Some(end) = self
+            .cursor()
+            .selected_enclosing_route_scope_end_at(idx, |scope| selected_arm(selected, scope))
+            && end != idx
+            && self.cursor().contains_node_index(end)
+        {
+            self.cursor_mut().set_index(end);
+        }
     }
 
     fn record_event_conflict_selection(&mut self, idx: usize) {
@@ -858,7 +1589,7 @@ impl ProductionCursorTrace {
             let Some(LocalConflict::RouteArm { scope, arm }) = conflict.to_conflict() else {
                 return;
             };
-            self.record_selected_arm(scope, arm);
+            self.record_or_replace_selected_arm(scope, arm);
             let slot = self
                 .event_program
                 .route_scope_slot(scope)
@@ -869,19 +1600,125 @@ impl ProductionCursorTrace {
         panic!("production conflict row chain exceeded depth bound");
     }
 
-    fn record_selected_arm(&mut self, scope: ScopeId, arm: u8) {
-        if let Some((_, selected)) = self
+    fn record_or_replace_selected_arm(&mut self, scope: ScopeId, arm: u8) {
+        if let Some(idx) = self
             .selected
-            .iter_mut()
-            .find(|(candidate, _)| *candidate == scope)
+            .iter()
+            .position(|(candidate, _)| *candidate == scope)
         {
-            assert_eq!(
-                *selected, arm,
-                "production conflict row attempted to select a different arm"
+            let old = self.selected[idx].1;
+            if old == arm {
+                return;
+            }
+            let mut selected_arm_for_scope = |candidate| selected_arm(&self.selected, candidate);
+            assert!(
+                self.cursor().reentrant_route_arm_event_row_done(
+                    scope,
+                    old,
+                    &mut selected_arm_for_scope
+                ),
+                "route scope arm replacement requires completed reentrant arm"
             );
+            self.selected[idx].1 = arm;
+            self.cursor_mut().clear_reentry_scope_events(scope);
+            let mut candidate_idx = 0usize;
+            while candidate_idx < self.selected.len() {
+                let candidate = self.selected[candidate_idx].0;
+                if candidate != scope
+                    && self
+                        .cursor()
+                        .route_scope_conflict_arm_for_scope(candidate, scope)
+                        == Some(old)
+                {
+                    self.selected.remove(candidate_idx);
+                } else {
+                    candidate_idx += 1;
+                }
+            }
             return;
         }
         self.selected.push((scope, arm));
+    }
+
+    fn debug_rows(&self) -> String {
+        use std::fmt::Write;
+
+        let mut out = String::new();
+        let _ = writeln!(out, "cursor index={}", self.cursor().index());
+        let _ = writeln!(out, "lane heads:");
+        let mut lane = 0usize;
+        while lane < self.descriptor.logical_lane_count() {
+            let step = self.cursor().step_index_at_lane(lane);
+            let label = step.and_then(|idx| self.action_label_at(idx));
+            let _ = writeln!(out, "  lane={lane} step={step:?} label={label:?}");
+            lane += 1;
+        }
+        let _ = writeln!(out, "events:");
+        let mut idx = 0usize;
+        while idx < self.descriptor.local_len() {
+            let label = self.action_label_at(idx);
+            let lane = self.event_program.local_step_lane(idx);
+            let done = lane
+                .and_then(|lane| {
+                    self.cursor()
+                        .relocatable_resident_lane_step_at_index(idx, lane as usize)
+                        .ok()
+                })
+                .is_some_and(|step| self.cursor().relocatable_step_done(step));
+            let conflict = self
+                .event_program
+                .event_conflict_for_index(idx)
+                .to_conflict();
+            let scope = self.event_program.node(idx).scope();
+            let _ = writeln!(
+                out,
+                "  {idx}: label={label:?} lane={lane:?} done={done} scope={scope:?} conflict={conflict:?}"
+            );
+            idx += 1;
+        }
+        let _ = writeln!(out, "route rows:");
+        let mut slot = 0usize;
+        while let Some(region) = self.event_program.route_scope_rows_by_slot(slot) {
+            let conflict = self
+                .event_program
+                .route_scope_conflict_by_slot(slot)
+                .to_conflict();
+            let left = self.event_program.route_arm_event_row_by_slot(slot, 0);
+            let right = self.event_program.route_arm_event_row_by_slot(slot, 1);
+            let _ = writeln!(
+                out,
+                "  slot={slot} scope={:?} rows=({}, {}) reentry={} conflict={conflict:?} left={left:?} right={right:?}",
+                region.scope(),
+                region.start(),
+                region.end(),
+                region.reentry()
+            );
+            slot += 1;
+        }
+        let _ = writeln!(out, "selected arms={:?}", self.selected);
+        let selected = &self.selected;
+        let mut probe = 0usize;
+        while probe <= self.descriptor.local_len() {
+            let end = self
+                .cursor()
+                .selected_enclosing_route_scope_end_at(probe, |scope| {
+                    selected_arm(selected, scope)
+                });
+            let _ = writeln!(out, "  selected_enclosing_end_at[{probe}]={end:?}");
+            probe += 1;
+        }
+        let _ = writeln!(out, "roll rows:");
+        let mut slot = 0usize;
+        while let Some((scope, row)) = self.event_program.roll_scope_row_by_slot(slot) {
+            let _ = writeln!(
+                out,
+                "  slot={slot} scope={scope:?} row=({}, {})",
+                row.start(),
+                row.end()
+            );
+            slot += 1;
+        }
+        out
     }
 }
 

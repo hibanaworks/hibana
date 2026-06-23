@@ -24,7 +24,32 @@ where
             None => self.cursor.index(),
         };
         let preview_conflict = self.cursor.event_conflict_for_index(preview_idx);
+        let route_rows = match route_authority {
+            SendRouteAuthority::None => super::SelectedRouteCommitRowsRef::EMPTY,
+            SendRouteAuthority::Direct {
+                lane,
+                audit_start: _,
+            } => {
+                let selected_routes = self.build_send_selected_route_rows(preview_idx, meta)?;
+                if lane != meta.lane || selected_routes.packed_selected_lane() != Some(lane) {
+                    return Err(SendError::PhaseInvariant);
+                }
+                selected_routes
+            }
+            SendRouteAuthority::MaterializedBranch => {
+                self.build_send_selected_route_rows(preview_idx, meta)?
+            }
+        };
         let mut selected_arm = |scope| {
+            let mut row_idx = 0usize;
+            while row_idx < route_rows.len() {
+                if let Some(row) = route_rows.get(&self.cursor, row_idx)
+                    && row.scope() == scope
+                {
+                    return Some(row.selected_arm());
+                }
+                row_idx += 1;
+            }
             if scope == meta.route_scope {
                 meta.selected_route_arm
             } else {
@@ -43,22 +68,6 @@ where
         ) {
             Ok(enabled) => enabled,
             Err(CursorInvariantError::INVARIANT) => return Err(SendError::PhaseInvariant),
-        };
-        let route_rows = match route_authority {
-            SendRouteAuthority::None => super::SelectedRouteCommitRowsRef::EMPTY,
-            SendRouteAuthority::Direct {
-                lane,
-                audit_start: _,
-            } => {
-                let selected_routes = self.build_send_selected_route_rows(preview_idx, meta)?;
-                if lane != meta.lane || selected_routes.packed_selected_lane() != Some(lane) {
-                    return Err(SendError::PhaseInvariant);
-                }
-                selected_routes
-            }
-            SendRouteAuthority::MaterializedBranch => {
-                self.build_send_selected_route_rows(preview_idx, meta)?
-            }
         };
         let current_route_scope = meta.route_scope;
         let current_route_arm = meta.selected_route_arm;

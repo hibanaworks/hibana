@@ -155,6 +155,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
     let select_alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
     let commit_delta = read("src/endpoint/kernel/core/commit_delta.rs");
+    let commit_delta_apply = read("src/endpoint/kernel/core/commit_delta_apply.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
@@ -253,35 +254,38 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && commit_delta.contains(".route_commit_rows")
             && commit_delta.contains(".seal(delta.selected_route_rows_ref())")
             && commit_delta.contains("pub(in crate::endpoint::kernel) fn prepare_commit_delta")
-            && commit_delta.contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
+            && commit_delta_apply
+                .contains("pub(in crate::endpoint::kernel) fn commit_prepared_delta")
             && commit_delta.contains("fn preflight_event_selected_route_chain(")
             && commit_delta.contains("event_conflict_for_index(event_idx)")
             && commit_delta.contains(".route_commit_range_for_conflict(")
             && commit_delta.contains(".route_commit_row_at(range, idx)")
             && !commit_delta.contains("route_scope_conflict_for_scope(scope)")
-            && commit_delta.contains(".get(&self.cursor, idx)")
+            && commit_delta_apply.contains(".get(&self.cursor, idx)")
             && commit_delta.contains("fn commit_cursor_realign_index(")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
-            && commit_delta.contains("CommitDeltaApplyPermit::new()")
+            && commit_delta_apply.contains("CommitDeltaApplyPermit::new()")
             && commit_delta.contains("let routes = delta.selected_routes();")
-            && commit_delta.contains("crate::invariant()")
-            && !commit_delta.contains("panic!(\"prepared route row missing\")")
-            && !commit_delta.contains("panic!(\"prepared route lane missing\")")
-            && !commit_delta.contains("panic!(\"prepared route scope missing\")")
-            && !commit_delta
+            && commit_delta_apply.contains("crate::invariant()")
+            && !commit_delta_apply.contains("panic!(\"prepared route row missing\")")
+            && !commit_delta_apply.contains("panic!(\"prepared route lane missing\")")
+            && !commit_delta_apply.contains("panic!(\"prepared route scope missing\")")
+            && !commit_delta_apply
                 .contains("let _ = self.decision_state.apply_prepared_route_selection(")
-            && commit_delta.contains("fn apply_prepared_cursor_index(")
-            && commit_delta.contains("fn apply_prepared_lane_advance(")
-            && commit_delta.contains("fn apply_prepared_lane_relocation(")
-            && !commit_delta.contains("self.apply_loop_commit_row(")
-            && !commit_delta.contains("self.apply_roll_commit_row(")
+            && commit_delta_apply.contains("fn apply_prepared_cursor_index(")
+            && commit_delta_apply.contains("fn apply_prepared_lane_advance(")
+            && commit_delta_apply.contains("fn apply_prepared_lane_relocation(")
+            && !commit_delta_apply.contains("self.apply_loop_commit_row(")
+            && !commit_delta_apply.contains("self.apply_roll_commit_row(")
             && !route_preview.contains("fn set_cursor_index(")
             && !offer_refresh.contains("fn set_lane_cursor_to_relocatable_step(")
             && !offer_refresh.contains("fn advance_lane_cursor_to_relocatable_step(")
             && !commit_delta.contains("apply_route_commit_effects")
+            && !commit_delta_apply.contains("apply_route_commit_effects")
             && !commit_delta.contains("settle_cursor_after_commit")
-            && !commit_delta.contains("publish_commit_apply_outcome")
-            && !commit_delta.contains("record_prepared_route_selection"),
+            && !commit_delta_apply.contains("settle_cursor_after_commit")
+            && !commit_delta_apply.contains("publish_commit_apply_outcome")
+            && !commit_delta_apply.contains("record_prepared_route_selection"),
         "CommitDelta apply must be the only cursor mutation boundary"
     );
     assert!(

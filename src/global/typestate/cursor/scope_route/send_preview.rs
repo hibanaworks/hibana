@@ -21,15 +21,15 @@ struct SendPreviewDecisionContext<'a> {
 }
 
 impl EventCursor {
-    fn send_preview_local_label_at(&self, idx: usize) -> Option<u8> {
+    fn send_preview_local_label_lane_at(&self, idx: usize) -> Option<(u8, u8)> {
         if let Some(meta) = self.try_recv_meta_at(idx) {
-            return Some(meta.label);
+            return Some((meta.label, meta.lane));
         }
         if let Some(meta) = self.try_send_meta_at(idx) {
-            return Some(meta.label);
+            return Some((meta.label, meta.lane));
         }
         if let Some(meta) = self.try_local_meta_at(idx) {
-            return Some(meta.label);
+            return Some((meta.label, meta.lane));
         }
         None
     }
@@ -49,8 +49,10 @@ impl EventCursor {
         let mut completed = None;
         let mut idx = row.start();
         while idx < row.end() {
-            if self.send_preview_local_label_at(idx) == Some(target_label) {
-                if !self.local_event_done(idx) {
+            if let Some((label, lane)) = self.send_preview_local_label_lane_at(idx)
+                && label == target_label
+            {
+                if !self.node_event_done_for_lane(idx, lane) {
                     return Some(idx);
                 }
                 if completed.is_none() {
@@ -62,7 +64,6 @@ impl EventCursor {
         completed
     }
 
-    #[inline]
     fn send_preview_is_at_controller_arm_entry(&self, scope_id: ScopeId, idx: usize) -> bool {
         let mut arm = 0u8;
         while arm <= 1 {
@@ -81,27 +82,8 @@ impl EventCursor {
         false
     }
 
-    #[inline(never)]
-    fn send_preview_controller_scope_at(&self, idx: usize) -> Option<ScopeId> {
-        let mut selected = None;
-        let mut selected_len = 0usize;
-        let mut slot = 0usize;
-        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-            if idx >= region.start() && idx < region.end() {
-                let scope = region.scope();
-                let len = region.end() - region.start();
-                if len >= selected_len && self.is_route_controller(scope) {
-                    selected = Some(scope);
-                    selected_len = len;
-                }
-            }
-            slot += 1;
-        }
-        selected
-    }
-
     #[inline]
-    fn intrinsic_send_preview_controller_arm_entry_for_label(
+    pub(super) fn intrinsic_send_preview_controller_arm_entry_for_label(
         &self,
         scope_id: ScopeId,
         target_label: u8,
@@ -198,25 +180,27 @@ impl EventCursor {
         scope: ScopeId,
         preview_route_arm: Option<SendPreviewRouteArm>,
         preview_conflict: PackedEventConflict,
+        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<u8> {
-        let committed = self.send_preview_selected_arm_for_scope_with_route(
-            scope,
-            preview_route_arm,
-            selected_arm_for_scope,
-        );
-        let committed_arm = committed?;
         if preview_route_arm.is_some_and(|preview| preview.scope == scope) {
+            return preview_route_arm.map(|preview| preview.arm);
+        }
+        if let Some(committed_arm) = committed_arm_for_scope(scope) {
+            if self
+                .preview_conflict_arm(preview_conflict, scope)
+                .is_some_and(|preview_arm| preview_arm != committed_arm)
+                && self.reentry_committed_arm_complete(
+                    scope,
+                    committed_arm,
+                    committed_arm_for_scope,
+                )
+            {
+                return None;
+            }
             return Some(committed_arm);
         }
-        if self
-            .preview_conflict_arm(preview_conflict, scope)
-            .is_some_and(|preview_arm| preview_arm != committed_arm)
-            && self.reentry_committed_arm_complete(scope, committed_arm, selected_arm_for_scope)
-        {
-            return None;
-        }
-        Some(committed_arm)
+        selected_arm_for_scope(scope)
     }
 
     #[inline(never)]
@@ -231,41 +215,17 @@ impl EventCursor {
             preview_route_arm,
             arm_for_scope,
         )?;
-        if !self.selected_route_arm_completes_scope(scope_id, arm, |scope| {
+        let mut selected_arm_for_scope = |scope| {
             self.send_preview_selected_arm_for_scope_with_route(
                 scope,
                 preview_route_arm,
                 arm_for_scope,
             )
-        }) {
+        };
+        if !self.selected_route_arm_completes_scope(scope_id, arm, &mut selected_arm_for_scope) {
             return None;
         }
         self.route_scope_end_by_id(scope_id)
-    }
-
-    #[inline(never)]
-    fn send_preview_pending_label_index(&self, target_label: u8) -> Option<usize> {
-        let idx = self.index();
-        if let Some(meta) = self.try_recv_meta_at(idx)
-            && meta.label == target_label
-            && self.index_for_lane_step(meta.lane as usize) == Some(idx)
-            && !self.local_event_done(idx)
-        {
-            return Some(idx);
-        }
-        if let Some(meta) = self.try_send_meta_at(idx)
-            && meta.label == target_label
-            && !self.local_event_done(idx)
-        {
-            return Some(idx);
-        }
-        if let Some(meta) = self.try_local_meta_at(idx)
-            && meta.label == target_label
-            && !self.local_event_done(idx)
-        {
-            return Some(idx);
-        }
-        None
     }
 
     fn send_preview_label_at_index(&self, idx: usize) -> Option<u8> {
@@ -291,58 +251,6 @@ impl EventCursor {
             };
         }
         SendPreviewError::Invariant
-    }
-
-    #[inline(never)]
-    fn send_preview_local_start_index_for_label(&self, target_label: u8) -> Option<usize> {
-        if let Some(idx) = self.send_preview_pending_label_index(target_label) {
-            return Some(idx);
-        }
-        if let Some((lane_idx, _)) = self.pending_step_for_label(target_label)
-            && let Some(idx) = self.index_for_lane_step(lane_idx)
-            && !self.local_event_done(idx)
-        {
-            return Some(idx);
-        }
-        None
-    }
-
-    #[inline(never)]
-    fn send_preview_route_start_index(&self) -> Option<usize> {
-        if self
-            .send_preview_controller_scope_at(self.index())
-            .is_some()
-        {
-            return Some(self.index());
-        }
-        if self.enclosing_route_scope_rows_at(self.index()).is_some() {
-            return Some(self.index());
-        }
-        None
-    }
-
-    #[inline(never)]
-    fn send_preview_start_index_for_label(
-        &self,
-        target_label: u8,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
-        if let Some(idx) = self.send_preview_local_start_index_for_label(target_label) {
-            return Some(idx);
-        }
-        if let Some(idx) = self.send_preview_route_start_index() {
-            return Some(idx);
-        }
-        if self.has_reentry_scopes()
-            && let Some(idx) =
-                self.roll_reentry_index_for_label(target_label, &mut *selected_arm_for_scope)
-        {
-            return Some(idx);
-        }
-        if let Some(idx) = self.first_pending_step_index(usize::MAX) {
-            return Some(idx);
-        }
-        Some(self.index())
     }
 
     #[inline(never)]
@@ -465,7 +373,7 @@ impl EventCursor {
         idx: &mut usize,
         ctx: &mut SendPreviewDecisionContext<'_>,
     ) -> Result<(), SendPreviewError> {
-        let scope_id = match self.send_preview_controller_scope_at(*idx) {
+        let scope_id = match self.send_preview_controller_scope_at_for_decision(*idx) {
             Some(scope_id) => Some(scope_id),
             None => self
                 .enclosing_route_scope_rows_at(*idx)
@@ -554,12 +462,8 @@ impl EventCursor {
                 .ok_or(SendPreviewError::Invariant)?
         };
         if let Some(preview) = preview_route_arm {
-            if current_meta.route_scope.is_none() {
-                current_meta.route_scope = preview.scope;
-            }
-            if current_meta.route_scope == preview.scope {
-                current_meta.selected_route_arm = Some(preview.arm);
-            }
+            current_meta.route_scope = preview.scope;
+            current_meta.selected_route_arm = Some(preview.arm);
         }
         Ok(current_meta)
     }
@@ -569,6 +473,7 @@ impl EventCursor {
         &self,
         idx: usize,
         preview_route_arm: Option<SendPreviewRouteArm>,
+        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let preview_conflict = self.machine().event_conflict_for_index(idx);
@@ -577,6 +482,7 @@ impl EventCursor {
                 scope,
                 preview_route_arm,
                 preview_conflict,
+                committed_arm_for_scope,
                 selected_arm_for_scope,
             )
         };
@@ -593,9 +499,15 @@ impl EventCursor {
         idx: &mut usize,
         target_label: u8,
         preview_route_arm: Option<SendPreviewRouteArm>,
+        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Result<Option<(SendMeta, StateIndex)>, SendPreviewError> {
-        if !self.send_preview_conflict_allows(*idx, preview_route_arm, selected_arm_for_scope) {
+        if !self.send_preview_conflict_allows(
+            *idx,
+            preview_route_arm,
+            committed_arm_for_scope,
+            selected_arm_for_scope,
+        ) {
             *idx = state_index_to_usize(self.node_next_index_at(*idx));
             return Ok(None);
         }
@@ -622,7 +534,7 @@ impl EventCursor {
                 && !self.roll_reentry_event_allows_index(
                     *idx,
                     current_meta.lane,
-                    &mut *selected_arm_for_scope,
+                    &mut *committed_arm_for_scope,
                 )
             {
                 *idx = state_index_to_usize(self.node_next_index_at(*idx));
@@ -634,6 +546,7 @@ impl EventCursor {
                     scope,
                     preview_route_arm,
                     preview_conflict,
+                    committed_arm_for_scope,
                     selected_arm_for_scope,
                 )
             };
@@ -700,6 +613,7 @@ impl EventCursor {
                 &mut idx,
                 target_label,
                 preview_route_arm,
+                committed_arm_for_scope,
                 selected_arm_for_scope,
             )? {
                 return Ok(result);

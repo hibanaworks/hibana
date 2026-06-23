@@ -66,6 +66,16 @@ fn local_route_program() -> RoleProgram<0> {
     )
 }
 
+fn simple_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            g::send::<0, 1, Msg<11, ()>>(),
+            g::send::<0, 1, Msg<12, ()>>(),
+        )
+        .resolve::<ROUTE_RESOLVER>(),
+    )
+}
+
 fn two_site_route_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let first = g::route(
         g::send::<0, 1, Msg<11, u32>>(),
@@ -192,16 +202,26 @@ fn dynamic_resolver_success_emits_one_reversible_audit() {
             let rv = cluster
                 .rendezvous(slab, transport.clone())
                 .expect("register rendezvous");
-            let program = local_route_program();
+            let origin_program = simple_route_program::<0>();
+            let target_program = simple_route_program::<1>();
             rv.set_resolver(
-                &program,
+                &origin_program,
                 ResolverRef::<ROUTE_RESOLVER>::decision_state(&ROUTE_STATE, choose_left),
             )
             .expect("install resolver");
-            let mut endpoint = rv.enter(sid, &program).expect("attach endpoint");
+            let mut origin = rv.enter(sid, &origin_program).expect("attach origin");
+            let mut target = rv.enter(sid, &target_program).expect("attach target");
 
-            let branch = futures::executor::block_on(endpoint.offer()).expect("offer route");
-            futures::executor::block_on(branch.recv::<Msg<11, ()>>()).expect("left branch commits");
+            futures::executor::block_on(async {
+                origin
+                    .send::<Msg<11, ()>>(&())
+                    .await
+                    .expect("left branch sends");
+                target
+                    .recv::<Msg<11, ()>>()
+                    .await
+                    .expect("left branch receives");
+            });
 
             rv.tap().collect::<Vec<_>>()
         });

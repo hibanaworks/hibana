@@ -48,13 +48,22 @@ fn prepare_selected_route_commit_row_from_parts(
     if scope_slot > u16::MAX as usize {
         return None;
     }
-    decision_state.preflight_selected_route_commit(
-        lane_idx,
-        scope,
-        scope_slot,
-        arm,
-        route_reentry_from_cursor(cursor, scope),
-    )
+    let reentry = route_reentry_from_cursor(cursor, scope);
+    if reentry.is_reentrant()
+        && let Some(existing) = selected_arm_for_scope_from_parts(decision_state, cursor, scope)
+    {
+        let mut selected_arm_for_scope =
+            |candidate| selected_arm_for_scope_from_parts(decision_state, cursor, candidate);
+        if cursor.reentrant_route_arm_event_row_done(scope, existing, &mut selected_arm_for_scope) {
+            return super::SelectedRouteCommitRow::from_resident_conflict(
+                PackedEventConflict::route_arm(scope, arm),
+            );
+        }
+        if existing != arm {
+            return None;
+        }
+    }
+    decision_state.preflight_selected_route_commit(lane_idx, scope, scope_slot, arm, reentry)
 }
 
 pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
@@ -62,7 +71,6 @@ pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_rows_from
     cursor: &EventCursor,
     lane: u8,
     event_idx: usize,
-    arm: u8,
     rows: &mut SelectedRouteCommitRows,
 ) -> RecvResult<()> {
     prepare_selected_route_commit_rows_from_resident_route_commit_range(
@@ -70,7 +78,6 @@ pub(in crate::endpoint::kernel) fn prepare_event_selected_route_commit_rows_from
         cursor,
         lane,
         cursor.event_conflict_for_index(event_idx),
-        Some(arm),
         rows,
     )
 }
@@ -89,7 +96,6 @@ pub(in crate::endpoint::kernel::core) fn prepare_route_site_materialization_rows
         cursor,
         lane,
         PackedEventConflict::route_arm(scope, arm),
-        Some(arm),
         rows,
     )
 }
@@ -108,7 +114,6 @@ pub(in crate::endpoint::kernel) fn prepare_descriptor_checked_recv_reentry_rows_
         cursor,
         lane,
         PackedEventConflict::route_arm(scope, arm),
-        Some(arm),
         rows,
     )
 }
@@ -126,11 +131,10 @@ fn prepare_selected_route_commit_rows_from_resident_route_commit_range(
     cursor: &EventCursor,
     lane: u8,
     conflict: PackedEventConflict,
-    first_arm: Option<u8>,
     rows: &mut SelectedRouteCommitRows,
 ) -> RecvResult<()> {
     let range = cursor
-        .route_commit_range_for_conflict(conflict, first_arm)
+        .route_commit_range_for_conflict(conflict)
         .ok_or(RecvError::PhaseInvariant)?;
     let mut idx = 0usize;
     while idx < range.len() {
@@ -153,7 +157,7 @@ fn prepare_selected_route_commit_rows_from_resident_route_commit_range(
         }
         idx += 1;
     }
-    rows.merge_chain(cursor, lane, conflict, first_arm)
+    rows.merge_chain(cursor, lane, conflict)
 }
 
 #[inline]

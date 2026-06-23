@@ -1,6 +1,6 @@
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::RouteResolver;
-use crate::global::typestate::{ARM_SHARED, state_index_to_usize};
+use crate::global::typestate::state_index_to_usize;
 use crate::session::cluster::core::DecisionArm;
 use crate::transport::Transport;
 
@@ -35,17 +35,15 @@ where
             let Some(event_meta) = cursor.try_recv_meta_at(event_idx) else {
                 return Err(RecvError::PhaseInvariant);
             };
-            let event_arm = match event_meta.route_arm {
-                Some(arm) => arm,
-                None => selected_arm,
-            };
+            if event_meta.route_arm.is_none() {
+                return Err(RecvError::PhaseInvariant);
+            }
             let mut rows = route_commit_rows.begin();
             prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
                 decision_state,
                 cursor,
                 lane_wire,
                 event_idx,
-                event_arm,
                 &mut rows,
             )?;
             rows.as_commit_rows(lane_wire)
@@ -89,14 +87,12 @@ where
                 .profile
                 .poll_wire_commit_requires_intrinsic_observation()
             {
-                let Some((arm, _)) = self.cursor.observed_recv_target_for_lane_frame_label(
-                    scope_id,
-                    lane_wire,
-                    branch.frame_label,
-                ) else {
+                let Some(arm) = self
+                    .cursor
+                    .route_arm_for_index(scope_id, state_index_to_usize(branch.cursor_index))
+                else {
                     return Err(RecvError::PhaseInvariant);
                 };
-                let arm = if arm == ARM_SHARED { 0 } else { arm };
                 if arm != selected_arm {
                     return Err(RecvError::PhaseInvariant);
                 }

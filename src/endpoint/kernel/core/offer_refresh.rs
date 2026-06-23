@@ -1,6 +1,6 @@
 use super::{
-    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, OfferEntrySummary, ScopeId,
-    StateIndex, Transport, state_index_to_usize,
+    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, OfferEntrySummary,
+    ReentryScopeLiveness, ScopeId, StateIndex, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -115,16 +115,23 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
+        let reentry_offer = self.active_reentry_offer_for_lane(lane_idx);
         let (entry_idx, scope_id) = if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
-            (idx, self.cursor.node_scope_id_at(idx))
+            let scope_id = self.cursor.node_scope_id_at(idx);
+            if self.cursor.has_route_scope(scope_id) {
+                (idx, scope_id)
+            } else {
+                let (scope_id, entry) = reentry_offer?;
+                (state_index_to_usize(entry), scope_id)
+            }
         } else {
-            let (scope_id, entry) = self.active_reentry_offer_for_lane(lane_idx)?;
+            let (scope_id, entry) = reentry_offer?;
             (state_index_to_usize(entry), scope_id)
         };
         let normalized = self.cursor.normalize_lane_offer_entry(
             scope_id,
             entry_idx,
-            |scope| self.selected_arm_for_scope(scope),
+            |scope| self.selected_live_arm_for_scope(scope),
             || self.active_reentry_offer_for_lane(lane_idx),
         )?;
         let scope_id = normalized.scope_id();
@@ -168,7 +175,53 @@ where
         }
         let scope = self
             .decision_state
-            .active_reentry_scope_for_lane(lane_idx, |scope| self.is_reentry_route(scope))?;
+            .active_reentry_scope_for_lane(lane_idx, |scope| {
+                if !self.is_reentry_route(scope) {
+                    return ReentryScopeLiveness::NotReentry;
+                }
+                let Some(arm) = self.selected_arm_for_scope(scope) else {
+                    return ReentryScopeLiveness::Incomplete;
+                };
+                if self.reentrant_selected_arm_complete(scope, arm) {
+                    ReentryScopeLiveness::Complete
+                } else {
+                    ReentryScopeLiveness::Incomplete
+                }
+            })?;
         self.cursor.active_reentry_offer_entry(scope)
+    }
+
+    pub(in crate::endpoint::kernel) fn active_reentry_scope_for_observed_frame(
+        &self,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<ScopeId> {
+        let lane_idx = lane as usize;
+        if lane_idx >= self.cursor.logical_lane_count() {
+            return None;
+        }
+        self.decision_state
+            .active_reentry_scope_for_lane(lane_idx, |scope| {
+                if !self.is_reentry_route(scope)
+                    || self
+                        .cursor
+                        .passive_descendant_target_index_from_exact_frame_label(
+                            scope,
+                            lane,
+                            frame_label,
+                        )
+                        .is_none()
+                {
+                    return ReentryScopeLiveness::NotReentry;
+                }
+                let Some(arm) = self.selected_arm_for_scope(scope) else {
+                    return ReentryScopeLiveness::Incomplete;
+                };
+                if self.reentrant_selected_arm_complete(scope, arm) {
+                    ReentryScopeLiveness::Complete
+                } else {
+                    ReentryScopeLiveness::Incomplete
+                }
+            })
     }
 }

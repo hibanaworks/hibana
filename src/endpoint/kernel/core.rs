@@ -17,7 +17,7 @@ use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
 use super::offer::*;
 mod route_commit_helpers;
-use super::decision_state::{RouteCommitRowSetBuilder, RouteState};
+use super::decision_state::{ReentryScopeLiveness, RouteCommitRowSetBuilder, RouteState};
 use crate::eff::EffIndex;
 use crate::global::compiled::images::EventSemanticKind;
 use crate::global::const_dsl::{RouteResolver, ScopeId};
@@ -314,6 +314,7 @@ const fn controller_arm_semantic_from_node(kind: EventSemanticKind) -> EventSema
 }
 
 mod commit_delta;
+mod commit_delta_apply;
 mod commit_delta_route_only;
 mod frontier_observation;
 mod frontier_select;

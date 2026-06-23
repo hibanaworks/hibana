@@ -2,6 +2,7 @@
 
 use super::OfferEntryPosition;
 use crate::global::const_dsl::ScopeId;
+use crate::global::typestate::{StateIndex, state_index_to_usize};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(in crate::endpoint::kernel) enum FrameHintResolution {
@@ -39,4 +40,16 @@ pub(in crate::endpoint::kernel) struct OfferScopeSelection {
     pub(in crate::endpoint::kernel) frontier_parallel_root: Option<ScopeId>,
     pub(in crate::endpoint::kernel) offer_lane: u8,
     pub(in crate::endpoint::kernel) entry_position: OfferEntryPosition,
+    pub(in crate::endpoint::kernel) observed_target: StateIndex,
+}
+
+impl OfferScopeSelection {
+    #[inline]
+    pub(in crate::endpoint::kernel) const fn observed_target_index(self) -> Option<usize> {
+        if self.observed_target.is_absent() {
+            None
+        } else {
+            Some(state_index_to_usize(self.observed_target))
+        }
+    }
 }

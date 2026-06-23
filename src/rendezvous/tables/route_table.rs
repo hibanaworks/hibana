@@ -378,27 +378,6 @@ impl RouteTable {
         Poll::Pending
     }
 
-    pub(crate) fn acknowledge_with_role_count(
-        &self,
-        lane: Lane,
-        role_count: u8,
-        role: u8,
-        scope: ScopeId,
-    ) -> Option<u8> {
-        let role_slots = Self::role_slot_count(role_count);
-        if (role as usize) >= role_slots {
-            return None;
-        }
-        let coord = ScopeCoord::from_scope(scope)?;
-        let lane_idx = self.lane_slot(lane);
-        let slot_idx = Self::slot_for_scope(self, lane_idx, coord)?;
-        let role_bit = Self::seen_bit(role as usize);
-        let arm = self.mark_unseen_role(slot_idx, role_bit);
-        let arm = arm?;
-        self.reclaim_completed_route_slot(lane_idx, slot_idx, role_count);
-        Some(arm)
-    }
-
     pub(crate) fn peek_with_role_count(
         &self,
         lane: Lane,

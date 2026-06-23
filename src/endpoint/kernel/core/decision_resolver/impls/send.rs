@@ -3,8 +3,8 @@ use super::super::super::{
     SendRouteAuthority, Transport,
 };
 use crate::{
+    global::const_dsl::ScopeId,
     global::{const_dsl::RouteResolver, role_program::PackedLaneRange},
-    global::{const_dsl::ScopeId, typestate::PackedEventConflict},
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -86,17 +86,16 @@ where
         meta: &SendMeta,
         preview_idx: usize,
     ) -> SendResult<Option<PackedLaneRange>> {
-        let Some(selected_arm) = meta.selected_route_arm else {
+        let conflict = self.cursor.event_conflict_for_index(preview_idx);
+        if conflict.to_conflict().is_none() {
             return Ok(None);
-        };
-        let conflict = if meta.route_scope.is_none() {
-            self.cursor.event_conflict_for_index(preview_idx)
-        } else {
-            PackedEventConflict::route_arm(meta.route_scope, selected_arm)
-        };
+        }
+        if meta.selected_route_arm.is_none() {
+            return Err(SendError::PhaseInvariant);
+        }
         Ok(Some(
             self.cursor
-                .route_commit_range_for_conflict(conflict, Some(selected_arm))
+                .route_commit_range_for_conflict(conflict)
                 .ok_or(SendError::PhaseInvariant)?,
         ))
     }
@@ -127,6 +126,12 @@ where
             {
                 audit_start = idx as u16;
             }
+            if let Some(selected) = self.selected_arm_for_scope(scope_id)
+                && self.reentrant_selected_arm_complete(scope_id, selected)
+                && audit_start as usize == rows.len()
+            {
+                audit_start = idx as u16;
+            }
             self.resolve_dynamic_route_arm_for_send_preview(
                 meta,
                 scope_id,
@@ -151,6 +156,25 @@ where
             return Err(SendError::PhaseInvariant);
         }
         if let Some(selected) = self.selected_arm_for_scope(scope_id) {
+            if self.reentrant_selected_arm_complete(scope_id, selected) {
+                if meta.route_scope != scope_id {
+                    let resolution = self.resolve_dynamic_resolver_for_send_preview(
+                        meta.lane,
+                        scope_id,
+                        resolver_id,
+                    )?;
+                    return if resolution.index() == arm_index {
+                        Ok(())
+                    } else {
+                        Err(SendError::ResolverReject { resolver_id })
+                    };
+                }
+                return if meta.selected_route_arm == Some(arm_index) {
+                    Ok(())
+                } else {
+                    Err(SendError::PhaseInvariant)
+                };
+            }
             return if selected == arm_index {
                 Ok(())
             } else {

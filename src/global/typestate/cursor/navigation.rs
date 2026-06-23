@@ -112,16 +112,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn route_arm_at(&self, idx: usize) -> Option<u8> {
-        self.machine().node(idx).route_arm()
-    }
-
-    #[inline(always)]
-    pub(crate) fn current_route_arm(&self) -> Option<u8> {
-        self.route_arm_at(self.idx_usize())
-    }
-
-    #[inline(always)]
     pub(crate) fn try_send_meta_at(&self, idx: usize) -> Option<SendMeta> {
         self.try_send_meta_from_node(idx)
     }

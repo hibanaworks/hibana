@@ -215,16 +215,6 @@ impl EventCursor {
     ) -> CursorRefresh {
         let target = target.0;
         let lane_idx = target.lane as usize;
-        let roll_reentry = if self.has_reentry_scopes()
-            && self.local_event_done(target.step_idx as usize)
-            && let Some(scope) =
-                self.roll_reentry_scope_for_step(RelocatableResidentLaneStep(target))
-        {
-            self.clear_roll_scope_events_for_reentry(scope);
-            true
-        } else {
-            false
-        };
         let Ok((row_idx, ordinal)) =
             self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
         else {
@@ -233,7 +223,7 @@ impl EventCursor {
         self.mark_local_event_done(target.step_idx as usize);
         let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
         let next = usize::from(ordinal) + 1;
-        if roll_reentry || next > self.lane_cursors()[lane_idx] as usize {
+        if next > self.lane_cursors()[lane_idx] as usize {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(next);
             self.refresh_current_step_label_code(lane_idx);
         }

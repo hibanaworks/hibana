@@ -3,6 +3,8 @@ mod navigation;
 mod roll;
 mod row_completion;
 mod send_preview;
+mod send_preview_route;
+mod send_preview_start;
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
@@ -43,7 +45,7 @@ impl EventCursor {
         &self,
         progress_step: RelocatableResidentLaneStep,
         preview_conflict: PackedEventConflict,
-        mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
+        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let target = progress_step.0;
         if self.relocatable_step_done(progress_step) {
@@ -53,8 +55,7 @@ impl EventCursor {
             let Some(idx) = self.node_index_for_relocatable_step(progress_step) else {
                 return false;
             };
-            if !self.roll_reentry_event_allows_index(idx, target.lane, &mut selected_arm_for_scope)
-            {
+            if !self.roll_reentry_event_allows_index(idx, target.lane, selected_arm_for_scope) {
                 return false;
             }
         }
@@ -73,7 +74,7 @@ impl EventCursor {
                     && self.event_conflict_row_allows_with_preview(
                         self.machine().event_conflict_for_index(pending_idx),
                         preview_conflict,
-                        &mut selected_arm_for_scope,
+                        selected_arm_for_scope,
                     )
                 {
                     return false;
@@ -263,6 +264,22 @@ impl EventCursor {
             next_index,
             authorized_arm_for_scope,
         )
+    }
+
+    #[inline]
+    pub(crate) fn node_event_done_for_lane(&self, idx: usize, lane: u8) -> bool {
+        let Ok(step) = self.relocatable_resident_lane_step_at_index(idx, lane as usize) else {
+            crate::invariant();
+        };
+        self.relocatable_step_done(step)
+    }
+
+    #[inline]
+    pub(crate) fn clear_node_event_done_for_lane(&mut self, idx: usize, lane: u8) {
+        let Ok(step) = self.relocatable_resident_lane_step_at_index(idx, lane as usize) else {
+            crate::invariant();
+        };
+        self.clear_local_event_done(step.0.step_idx as usize);
     }
 
     fn dependency_applies(
@@ -480,22 +497,38 @@ impl EventCursor {
     }
 
     #[inline]
+    fn route_arm_entry_matches_current(
+        &self,
+        scope_id: ScopeId,
+        current_idx: usize,
+        arm: u8,
+    ) -> bool {
+        self.passive_observer_arm_entry_index(scope_id, arm) == Some(current_idx)
+            || self
+                .shared_controller_arm_entry_by_arm(scope_id, arm)
+                .is_some_and(|(entry, _)| state_index_to_usize(entry) == current_idx)
+    }
+
+    #[inline]
     pub(crate) fn route_offer_entry_allows_current(
         &self,
         scope_id: ScopeId,
         current_idx: usize,
         selected_arm: Option<u8>,
     ) -> bool {
-        if let Some(offer_entry) = self.route_scope_offer_entry(scope_id)
-            && !offer_entry.is_absent()
-            && current_idx != state_index_to_usize(offer_entry)
-        {
-            if self.route_scope_reentry(scope_id) && self.current_route_arm().is_some() {
-                return true;
-            }
-            return selected_arm.is_some() && self.current_route_arm() == selected_arm;
+        let Some(position) =
+            self.route_offer_entry_cursor_position(scope_id, current_idx, selected_arm)
+        else {
+            return false;
+        };
+        if position.is_at_entry() {
+            return true;
         }
-        true
+        selected_arm
+            .or_else(|| self.route_arm_for_index(scope_id, current_idx))
+            .is_some_and(|arm| {
+                self.route_current_index_allows_selected_arm(scope_id, current_idx, arm)
+            })
     }
 
     #[inline]
@@ -503,12 +536,59 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
         current_idx: usize,
+        selected_arm: Option<u8>,
     ) -> Option<RouteOfferEntryCursorPosition> {
         let offer_entry = self.route_scope_offer_entry(scope_id)?;
         if offer_entry.is_absent() || current_idx == state_index_to_usize(offer_entry) {
-            Some(RouteOfferEntryCursorPosition::AtEntry)
+            return Some(RouteOfferEntryCursorPosition::AtEntry);
+        }
+        if let Some(arm) = selected_arm.or_else(|| self.route_arm_for_index(scope_id, current_idx))
+            && self.route_arm_entry_matches_current(scope_id, current_idx, arm)
+        {
+            return Some(RouteOfferEntryCursorPosition::AtEntry);
+        }
+        Some(RouteOfferEntryCursorPosition::AfterEntry)
+    }
+
+    #[inline]
+    fn route_current_index_allows_selected_arm(
+        &self,
+        scope_id: ScopeId,
+        current_idx: usize,
+        selected_arm: u8,
+    ) -> bool {
+        let Some(region) = self.route_scope_rows(scope_id) else {
+            return false;
+        };
+        if current_idx < region.start() || current_idx >= region.end() {
+            return false;
+        }
+        let conflict = self.machine().event_conflict_for_index(current_idx);
+        let mut selected_arm_for_scope = |_scope| None;
+        self.event_conflict_row_allows(
+            conflict,
+            scope_id,
+            Some(selected_arm),
+            &mut selected_arm_for_scope,
+        )
+    }
+
+    #[inline]
+    fn route_offer_entry_for_index(
+        &self,
+        scope_id: ScopeId,
+        current_idx: usize,
+        selected_arm: Option<u8>,
+        canonical_entry: StateIndex,
+    ) -> usize {
+        if canonical_entry.is_absent()
+            || self
+                .route_offer_entry_cursor_position(scope_id, current_idx, selected_arm)
+                .is_some_and(RouteOfferEntryCursorPosition::is_at_entry)
+        {
+            current_idx
         } else {
-            Some(RouteOfferEntryCursorPosition::AfterEntry)
+            state_index_to_usize(canonical_entry)
         }
     }
 
@@ -587,9 +667,17 @@ impl EventCursor {
         let mut region = self.route_scope_rows(scope_id)?;
         let mut entry = crate::invariant_some(self.route_scope_offer_entry(region.scope()));
         if !entry.is_absent() && state_index_to_usize(entry) != entry_idx {
+            let selected_arm = selected_arm_for_scope(scope_id);
+            if self
+                .route_offer_entry_cursor_position(scope_id, entry_idx, selected_arm)
+                .is_some_and(RouteOfferEntryCursorPosition::is_at_entry)
+            {
+                return self
+                    .contains_node_index(entry_idx)
+                    .then_some(RouteOfferCursorState::new(region.scope(), entry_idx));
+            }
             let canonical_entry = state_index_to_usize(entry);
             if canonical_entry >= region.start() && canonical_entry < region.end() {
-                let selected_arm = selected_arm_for_scope(scope_id);
                 if region.reentry() || selected_arm.is_none() {
                     entry_idx = canonical_entry;
                 } else {
@@ -613,11 +701,9 @@ impl EventCursor {
                 }
             }
         }
-        let entry_idx = if entry.is_absent() {
-            entry_idx
-        } else {
-            state_index_to_usize(entry)
-        };
+        let selected_arm = selected_arm_for_scope(scope_id);
+        let entry_idx =
+            self.route_offer_entry_for_index(region.scope(), entry_idx, selected_arm, entry);
         self.contains_node_index(entry_idx)
             .then_some(RouteOfferCursorState::new(region.scope(), entry_idx))
     }
@@ -644,12 +730,11 @@ impl EventCursor {
     pub(crate) fn route_commit_range_for_conflict(
         &self,
         conflict: PackedEventConflict,
-        first_arm: Option<u8>,
     ) -> Option<PackedLaneRange> {
         let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
             return None;
         };
-        if scope.is_none() || first_arm.is_some_and(|expected| expected != arm) {
+        if scope.is_none() {
             return None;
         }
         let slot = self.route_scope_slot_inner(scope)?;

@@ -41,7 +41,7 @@ src/endpoint/kernel/decision_state.rs	900	1	recursive
 src/endpoint/kernel/endpoint_init.rs	520	1	recursive
 src/endpoint/kernel/public_ops.rs	460	1	recursive
 src/endpoint/kernel/core.rs	560	1	recursive
-src/endpoint/kernel/core/commit_delta.rs	520	1	recursive
+src/endpoint/kernel/core/commit_delta.rs	420	1	recursive
 src/endpoint/kernel/core/commit_delta_route_only.rs	140	1	recursive
 src/endpoint/kernel/core/frontier_helpers.rs	360	1	recursive
 src/endpoint/kernel/core/public_types.rs	210	1	recursive

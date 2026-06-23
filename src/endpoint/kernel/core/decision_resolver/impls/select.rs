@@ -297,7 +297,7 @@ where
         }
         self.cursor
             .passive_child_scope(scope_id, arm)
-            .and_then(|scope| self.preview_selected_arm_for_scope(scope))
+            .and_then(|scope| self.preview_live_selected_arm_for_scope(scope))
             .is_some()
     }
 
@@ -323,6 +323,24 @@ where
         selected_arm: u8,
     ) -> RecvResult<CachedRecvMeta> {
         let scope_id = selection.scope_id;
+        if let Some(target_idx) = selection.observed_target_index() {
+            let target_arm = self
+                .cursor
+                .route_arm_for_index(scope_id, target_idx)
+                .ok_or(RecvError::PhaseInvariant)?;
+            if target_arm != selected_arm {
+                return Err(RecvError::PhaseInvariant);
+            }
+            let meta = self
+                .cursor
+                .try_recv_meta_at(target_idx)
+                .ok_or(RecvError::PhaseInvariant)?;
+            return Ok(Self::cached_recv_meta_from_recv(
+                target_idx,
+                meta,
+                Some(selected_arm),
+            ));
+        }
         let controller_arm_entry = if self.cursor.is_route_controller(scope_id) {
             self.cursor
                 .shared_controller_arm_entry_by_arm(scope_id, selected_arm)
@@ -375,7 +393,7 @@ where
         &mut self,
         selection: OfferScopeSelection,
         resolved: ResolvedRouteArm,
-        observed_frame_label: Option<u8>,
+        observed_frame: Option<(u8, u8)>,
     ) -> RecvResult<bool> {
         let scope_id = selection.scope_id;
         let selected_arm = resolved.selected_arm;
@@ -383,9 +401,19 @@ where
         let Some(nested_scope) = materialization_meta.passive_child_scope(selected_arm) else {
             return Ok(false);
         };
-        if let Some(observed_label) = observed_frame_label {
+        if let Some((observed_lane, observed_label)) = observed_frame {
             let meta = self.preview_selected_arm_meta(selection, selected_arm)?;
-            if !meta.is_empty() && meta.frame_label == observed_label {
+            let exact_target = self
+                .cursor
+                .passive_descendant_target_index_from_exact_frame_label(
+                    scope_id,
+                    observed_lane,
+                    observed_label,
+                );
+            if !meta.is_empty()
+                && meta.frame_label == observed_label
+                && exact_target == Some(state_index_to_usize(meta.cursor_index))
+            {
                 return Ok(false);
             }
         }
@@ -481,19 +509,28 @@ where
         }
 
         let logical_lane_count = self.cursor.logical_lane_count();
+        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
+        let mut next_offer = offer_lanes.first_set(logical_lane_count);
+        let mut recorded = false;
+        while let Some(lane_idx) = next_offer {
+            self.record_route_arm_selection_for_lane(lane_idx, scope_id, arm);
+            recorded = true;
+            next_offer = offer_lanes.next_set_from(lane_idx + 1, logical_lane_count);
+        }
+
         let Some(candidate_lanes) = self.route_scope_arm_lane_set_for_scope(scope_id, arm) else {
-            if (decision_lane as usize) < logical_lane_count {
+            if !recorded && (decision_lane as usize) < logical_lane_count {
                 self.record_route_arm_selection_for_lane(decision_lane as usize, scope_id, arm);
             }
             return;
         };
-        let mut recorded = false;
         let mut next = candidate_lanes.first_set(logical_lane_count);
         while let Some(lane_idx) = next {
-            if self
-                .cursor
-                .route_arm_lane_last_eff(scope_id, arm, lane_idx as u8)
-                .is_some()
+            if !offer_lanes.contains(lane_idx)
+                && self
+                    .cursor
+                    .route_arm_lane_last_eff(scope_id, arm, lane_idx as u8)
+                    .is_some()
             {
                 self.record_route_arm_selection_for_lane(lane_idx, scope_id, arm);
                 recorded = true;

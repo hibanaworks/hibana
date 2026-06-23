@@ -238,7 +238,7 @@ where
                 return Err(RecvError::PhaseInvariant);
             }
         };
-        let route_rows = if let Some(arm) = meta.route_arm {
+        let route_rows = if meta.route_arm.is_some() {
             let route_rows = {
                 let Self {
                     cursor,
@@ -252,7 +252,6 @@ where
                     cursor,
                     meta.lane,
                     cursor_index,
-                    arm,
                     &mut rows,
                 )?;
                 rows.as_commit_rows(meta.lane)

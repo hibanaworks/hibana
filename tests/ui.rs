@@ -154,8 +154,10 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-route-merged.rs");
     t.pass("tests/ui-pass/g-route-resolver-scope-nested-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-label.rs");
+    t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-endpoint-op.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-overlap-after-left-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-intra-arm-distinct-inbound-evidence.rs");
+    t.pass("tests/ui-pass/g-route-resolved-nested-roll-same-endpoint-op.rs");
     t.pass("tests/ui-pass/g-route-static-basic.rs");
     t.pass("tests/ui-pass/g-route-static-prefix-local.rs");
     t.pass("tests/ui-pass/g-route-static-prefix-send.rs");

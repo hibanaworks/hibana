@@ -1,5 +1,5 @@
 use super::super::{
-    ARM_SHARED, EventCursor, PackedEventConflict, RouteScopeRows, ScopeId, StateIndex,
+    ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, RouteScopeRows, ScopeId, StateIndex,
     state_index_to_usize,
 };
 use crate::global::typestate::LocalConflict;
@@ -30,6 +30,23 @@ impl EventCursor {
             slot += 1;
         }
         selected
+    }
+
+    pub(crate) fn visit_route_arms_for_index(
+        &self,
+        idx: usize,
+        mut visit: impl FnMut(ScopeId, u8),
+    ) {
+        let mut slot = 0usize;
+        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+            if region.start() <= idx
+                && idx < region.end()
+                && let Some(arm) = self.route_arm_for_index(region.scope(), idx)
+            {
+                visit(region.scope(), arm);
+            }
+            slot += 1;
+        }
     }
 
     #[inline(always)]
@@ -92,14 +109,24 @@ impl EventCursor {
 
     pub(crate) fn route_arm_for_index(&self, scope_id: ScopeId, idx: usize) -> Option<u8> {
         let slot = self.route_scope_slot_inner(scope_id)?;
+        let lane = match self.action_at(idx) {
+            LocalAction::Send { lane, .. }
+            | LocalAction::Recv { lane, .. }
+            | LocalAction::Local { lane, .. } => lane,
+            LocalAction::Terminate => return None,
+        };
+        let Ok(step) = self.relocatable_resident_lane_step_at_index(idx, lane as usize) else {
+            crate::invariant();
+        };
+        let step_idx = step.0.step_idx as usize;
         let mut arm = 0u8;
         while arm <= 1 {
             if let Some(row) = self
                 .machine()
                 .event_program()
                 .route_arm_event_row_by_slot(slot, arm)
-                && idx >= row.start()
-                && idx < row.end()
+                && step_idx >= row.start()
+                && step_idx < row.end()
             {
                 return Some(arm);
             }
@@ -128,23 +155,6 @@ impl EventCursor {
         {
             return None;
         }
-        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
-    }
-
-    /// Resolve an already-observed wire frame label to the branch-local first
-    /// recv target recorded by projection metadata.
-    ///
-    /// This does not grant route authority. Dynamic routes still require a
-    /// resolver/controller decision; this lookup is only for validating that
-    /// an observed frame belongs to the selected arm before committing decode
-    /// progress in split images.
-    #[inline]
-    pub(crate) fn observed_recv_target_for_lane_frame_label(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
         self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
     }
 
@@ -179,6 +189,18 @@ impl EventCursor {
     ) -> Option<u8> {
         self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
             .and_then(|(dispatch_arm, _)| (dispatch_arm != ARM_SHARED).then_some(dispatch_arm))
+    }
+
+    pub(crate) fn passive_descendant_target_index_from_exact_frame_label(
+        &self,
+        scope_id: ScopeId,
+        lane: u8,
+        frame_label: u8,
+    ) -> Option<usize> {
+        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
+            .and_then(|(dispatch_arm, target)| {
+                (dispatch_arm != ARM_SHARED).then_some(state_index_to_usize(target))
+            })
     }
 
     pub(crate) fn enclosing_passive_route_scope_for_exact_frame_label(

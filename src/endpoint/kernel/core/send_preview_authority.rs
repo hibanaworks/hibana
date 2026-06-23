@@ -37,7 +37,7 @@ where
         if scope_id.is_none() {
             return Ok(None);
         }
-        if let Some(arm) = self.selected_arm_for_scope(scope_id) {
+        if let Some(arm) = self.selected_live_arm_for_scope(scope_id) {
             return Ok(Some(arm));
         }
         self.preview_dynamic_resolver_arm_for_scope(scope_id, lane)
@@ -51,7 +51,9 @@ where
         if scope_id.is_none() {
             return Ok(None);
         }
-        if let Some(arm) = self.selected_arm_for_scope(scope_id) {
+        if let Some(arm) = self.selected_arm_for_scope(scope_id)
+            && !self.reentrant_selected_arm_complete(scope_id, arm)
+        {
             return Ok(Some(arm));
         }
         if self

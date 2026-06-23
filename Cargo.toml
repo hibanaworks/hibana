@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name          = "hibana"
-version       = "0.9.3"
+version       = "0.9.4"
 edition       = "2024"
 rust-version  = "1.95"
 autotests     = false
@@ -153,6 +153,10 @@ path = "tests/route_multiphase_progress_inner.rs"
 [[test]]
 name = "route_with_internal_parallel"
 path = "tests/route_with_internal_parallel.rs"
+
+[[test]]
+name = "rolled_resolver_reentry"
+path = "tests/rolled_resolver_reentry.rs"
 
 [[test]]
 name = "send_route_authority"

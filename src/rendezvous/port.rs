@@ -259,12 +259,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
-    pub(crate) fn ack_route_arm_selection(&self, scope: ScopeId, role: u8) -> Option<u8> {
-        self.route_table()
-            .acknowledge_with_role_count(self.lane, self.role_count, role, scope)
-    }
-
-    #[inline]
     pub(crate) fn peek_route_arm_selection(&self, scope: ScopeId, role: u8) -> Option<u8> {
         self.route_table()
             .peek_with_role_count(self.lane, self.role_count, role, scope)

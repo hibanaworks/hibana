@@ -344,7 +344,7 @@ where
         };
         let mut evidence = OfferEntryEvidence::empty();
         if !scope_id.is_none()
-            && (self.peek_scope_ack(scope_id).is_some()
+            && (self.peek_live_scope_ack(scope_id).is_some()
                 || self
                     .preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
                     .is_some())

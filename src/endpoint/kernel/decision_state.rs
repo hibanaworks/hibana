@@ -13,6 +13,10 @@ use crate::global::role_program::{
     DENSE_LANE_ABSENT, DenseLaneOrdinal, LaneSet, LaneSetView, LaneWord, PackedLaneRange,
 };
 use crate::global::typestate::{EventCursor, LocalConflict, PackedEventConflict};
+
+mod reentry_clear;
+pub(super) use reentry_clear::ReentryScopeLiveness;
+
 const SELECTED_ARM_NONE: u8 = u8::MAX;
 
 #[derive(Clone, Copy)]
@@ -314,10 +318,9 @@ impl SelectedRouteCommitRows {
         cursor: &EventCursor,
         lane: u8,
         conflict: PackedEventConflict,
-        first_arm: Option<u8>,
     ) -> RecvResult<()> {
         let range = cursor
-            .route_commit_range_for_conflict(conflict, first_arm)
+            .route_commit_range_for_conflict(conflict)
             .ok_or(RecvError::PhaseInvariant)?;
         if range.len() > self.max_len as usize {
             return Err(RecvError::PhaseInvariant);
@@ -666,6 +669,7 @@ impl RouteState {
             if current.scope == input.scope {
                 if current.arm == input.arm
                     || (input.effective_refs == 1 && input.effective_arm == current.arm)
+                    || (input.reentry.is_reentrant() && input.effective_arm == input.arm)
                 {
                     return Some(SelectedRouteCommitRow::new(input.scope, input.arm));
                 }
@@ -785,30 +789,6 @@ impl RouteState {
         } else {
             Some(slot.arm)
         }
-    }
-
-    pub(super) fn active_reentry_scope_for_lane<F>(
-        &self,
-        lane_idx: usize,
-        mut is_reentry_route: F,
-    ) -> Option<ScopeId>
-    where
-        F: FnMut(ScopeId) -> bool,
-    {
-        let len = self.lane_route_arm_len(lane_idx);
-        let mut idx = len;
-        while idx > 0 {
-            idx -= 1;
-            let slot = self.lane_route_arms.get(lane_idx, idx);
-            let scope = slot.scope;
-            if scope.is_none() {
-                continue;
-            }
-            if is_reentry_route(scope) {
-                return Some(scope);
-            }
-        }
-        None
     }
 
     #[inline]
