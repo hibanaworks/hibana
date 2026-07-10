@@ -377,6 +377,78 @@ fn route_arm_selection_consumes_only_at_resolve_authority() {
 }
 
 #[test]
+fn compact_route_arm_authority_fails_closed_before_publication() {
+    let authority = read("src/endpoint/kernel/authority.rs");
+    let evidence = read("src/endpoint/kernel/evidence.rs");
+    let evidence_store = read("src/endpoint/kernel/evidence_store.rs");
+    let frontier_types = read("src/endpoint/kernel/offer/frontier_types.rs");
+    let first_recv_dispatch = read("src/endpoint/kernel/offer/first_recv_dispatch.rs");
+    let scope_evidence = read("src/endpoint/kernel/core/scope_evidence_logic.rs");
+    let route_commit = read("src/endpoint/kernel/core/route_commit_helpers.rs");
+    let offer_select = read("src/endpoint/kernel/offer/select.rs");
+    let offer_resolve = read("src/endpoint/kernel/offer/resolve.rs");
+    let route_authority_paths =
+        format!("{scope_evidence}\n{route_commit}\n{offer_select}\n{offer_resolve}");
+
+    assert!(
+        authority.contains("pub(super) const fn decode_raw(value: u8) -> Option<Self>")
+            && authority.contains("pub(super) const fn from_raw(value: u8) -> Self")
+            && authority.contains("pub(super) const fn from_single_ready_mask(mask: u8)")
+            && authority.contains("if mask & !0b11 != 0")
+            && authority.contains("None => crate::invariant()"),
+        "compact route authority must have one explicit fail-closed decoding boundary"
+    );
+    for forbidden in [
+        "Arm::new(",
+        ".and_then(Arm::decode_raw)",
+        ".map(RouteArmToken::from_poll)",
+        "if let Some(arm) = Arm::decode_raw",
+    ] {
+        assert!(
+            !route_authority_paths.contains(forbidden),
+            "route authority must not collapse an invalid compact arm into absence: {forbidden}"
+        );
+    }
+    assert!(
+        scope_evidence.contains("Arm::from_single_ready_mask(mask)")
+            && scope_evidence.contains("let arm = crate::invariant_some(")
+            && route_commit.contains("Arm::from_single_ready_mask(mask).map(Arm::as_u8)")
+            && route_commit
+                .contains("crate::invariant_some(port.peek_route_arm_selection(scope_id, ROLE))")
+            && evidence_store.contains("arm: Arm")
+            && evidence.contains("fn controller_evidence_excluded(self, arm: Arm")
+            && first_recv_dispatch.contains("if arm_mask & !0b11 != 0")
+            && !first_recv_dispatch.contains("arm_mask & 0b11")
+            && !evidence.contains("_ => false"),
+        "decoded route arms must remain typed through ready-mask and frame-label evidence"
+    );
+    assert!(
+        !frontier_types.contains("CachedRouteArm")
+            && !frontier_types.contains("route_arm: CachedRouteArm")
+            && !frontier_types.contains("semantic: EventSemanticKind")
+            && !frontier_types.contains("choice: RouteChoiceMark")
+            && frontier_types.contains("pub(in crate::endpoint::kernel) const FLAG_NEXT_PRESENT")
+            && frontier_types.contains(
+                "self.cursor_index.is_absent() || (self.flags & Self::FLAG_NEXT_PRESENT) == 0"
+            ),
+        "frontier recv metadata must not duplicate route authority that no consumer reads"
+    );
+    let validation = offer_resolve
+        .find("let arm = if let Some(target_idx)")
+        .expect("staged passive route arm validation must remain present");
+    let intrinsic_publication = offer_resolve
+        .find("self.mark_intrinsic_passive_descendant_path_ready")
+        .expect("staged passive intrinsic publication must remain present");
+    let ready_publication = offer_resolve
+        .find("self.mark_scope_ready_arm_from_exact_passive_arm")
+        .expect("staged passive ready-arm publication must remain present");
+    assert!(
+        validation < intrinsic_publication && intrinsic_publication < ready_publication,
+        "staged passive route authority must validate before either evidence publication"
+    );
+}
+
+#[test]
 fn production_sources_keep_absence_codes_named_by_meaning() {
     let production = read_production_rs_tree("src");
     for forbidden in [

@@ -84,7 +84,15 @@ for theorem in \
   prepared_lease_generation_strictly_increases \
   prepared_lease_capacity_never_shrinks \
   lease_allocation_failure_certificate_sound \
-  lease_allocation_abort_certificate_sound; do
+  lease_allocation_abort_certificate_sound \
+  route_arm_decode_encode_round_trip \
+  route_arm_decode_accepts_only_binary \
+  invalid_route_arm_decode_rejected \
+  invalid_route_arm_has_no_publication \
+  valid_route_arm_publication_is_exact \
+  invalid_ready_arm_mask_rejected \
+  valid_ready_arm_mask_is_accepted \
+  selected_ready_arm_mask_is_exact; do
   if ! rg -q "^theorem ${theorem}\b" "${PROOF_DIR}/Hibana"; then
     echo "Lean proof gate missing theorem: ${theorem}" >&2
     exit 1
@@ -100,9 +108,9 @@ axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
 if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "21" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "21" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "7" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "49" ]]; then
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "28" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "8" ]] \
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "57" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi

@@ -1,9 +1,11 @@
 use super::{
     AlignedSlab, DropEndpointState, NoopRx, NoopTransport, NoopTx, ReceiveState, ReceiveTransport,
-    program,
+    fanout_program, program,
 };
 use core::{
     cell::Cell,
+    future::Future,
+    pin::pin,
     task::{Context, Poll},
 };
 use std::rc::Rc;
@@ -210,6 +212,49 @@ impl Transport for ReentrantReadyRecvTransport {
 
 struct ReentrantSendTransport {
     state: Rc<DropEndpointState>,
+}
+
+struct ReentrantCancelTransport {
+    state: Rc<DropEndpointState>,
+    cancel_count: Rc<Cell<usize>>,
+}
+
+impl Transport for ReentrantCancelTransport {
+    type Tx<'a> = NoopTx;
+    type Rx<'a> = NoopRx;
+
+    fn open<'a>(&'a self, _: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        (NoopTx, NoopRx)
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _: &'a mut Self::Tx<'a>,
+        _: Outgoing<'f>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        Poll::Pending
+    }
+
+    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {
+        self.cancel_count.set(self.cancel_count.get() + 1);
+        self.state.fire();
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        _: &'a mut Self::Rx<'a>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        Poll::Pending
+    }
+
+    fn requeue<'a>(&self, _: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        Ok(())
+    }
 }
 
 impl Transport for ReentrantSendTransport {
@@ -480,4 +525,50 @@ fn transport_send_callback_reentry_cannot_commit_after_peer_drop() {
     let error =
         result.expect_err("transport send callback must not commit after dropping its peer");
     assert!(format!("{error:?}").contains("EndpointDropped"));
+}
+
+#[test]
+fn transport_cancel_callback_reentry_consumes_cleanup_authority_once() {
+    let role0 = fanout_program::<0>();
+    let role1 = fanout_program::<1>();
+    let role2 = fanout_program::<2>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let state = Rc::new(DropEndpointState::empty());
+    let cancel_count = Rc::new(Cell::new(0));
+    let mut storage = SessionKitStorage::<ReentrantCancelTransport>::uninit();
+    let kit = storage.init();
+    let rendezvous = kit
+        .rendezvous(
+            &mut slab.0,
+            ReentrantCancelTransport {
+                state: Rc::clone(&state),
+                cancel_count: Rc::clone(&cancel_count),
+            },
+        )
+        .expect("register rendezvous");
+    let sid = SessionId::new(17);
+    let mut sender = rendezvous.enter(sid, &role0).expect("sender");
+    let mut peer1 = Some(rendezvous.enter(sid, &role1).expect("peer 1"));
+    let mut peer2 = Some(rendezvous.enter(sid, &role2).expect("peer 2"));
+    state.arm(&mut peer2);
+    let payload = 17u32;
+    {
+        let mut send = pin!(sender.send::<Msg<2, u32>>(&payload));
+        let waker = futures::task::noop_waker_ref();
+        let mut cx = Context::from_waker(waker);
+
+        assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
+        drop(peer1.take());
+        let result = match send.as_mut().poll(&mut cx) {
+            Poll::Ready(result) => result,
+            Poll::Pending => panic!("poisoned pending send must cancel and terminate"),
+        };
+
+        assert!(state.fired.get());
+        assert!(peer2.is_none());
+        assert_eq!(cancel_count.get(), 1);
+        let error = result.expect_err("cancel callback reentry must preserve the session fault");
+        assert!(format!("{error:?}").contains("EndpointDropped"));
+    }
+    assert_eq!(cancel_count.get(), 1);
 }

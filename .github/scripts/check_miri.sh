@@ -60,8 +60,8 @@ run_miri_test() {
 
 run_miri_test \
   public-runtime-owner \
-  18 \
-  18 \
+  19 \
+  19 \
   0 \
   -p hibana \
   --test miri_runtime_owner
@@ -173,4 +173,4 @@ run_miri_test \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=78 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=79 ignored=1"

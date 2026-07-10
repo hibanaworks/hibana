@@ -1,10 +1,12 @@
-use super::{FrameLabelMask, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeFrameLabelView};
+use super::{
+    Arm, FrameLabelMask, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeFrameLabelView,
+};
 
 #[test]
 fn overlapping_frame_label_is_not_route_evidence() {
     let mut scratch = ScopeFrameLabelScratch::EMPTY;
-    scratch.record_arm_frame_label(0, 7);
-    scratch.record_arm_frame_label(1, 7);
+    scratch.record_arm_frame_label(Arm::LEFT, 7);
+    scratch.record_arm_frame_label(Arm::RIGHT, 7);
     let meta = scratch.view();
 
     assert_eq!(meta.evidence_arm_for_frame_label(7), None);
@@ -14,12 +16,12 @@ fn overlapping_frame_label_is_not_route_evidence() {
 #[test]
 fn unique_frame_label_remains_route_evidence() {
     let mut scratch = ScopeFrameLabelScratch::EMPTY;
-    scratch.record_arm_frame_label(0, 7);
-    scratch.record_arm_frame_label(1, 8);
+    scratch.record_arm_frame_label(Arm::LEFT, 7);
+    scratch.record_arm_frame_label(Arm::RIGHT, 8);
     let meta = scratch.view();
 
-    assert_eq!(meta.evidence_arm_for_frame_label(7), Some(0));
-    assert_eq!(meta.evidence_arm_for_frame_label(8), Some(1));
+    assert_eq!(meta.evidence_arm_for_frame_label(7), Some(Arm::LEFT));
+    assert_eq!(meta.evidence_arm_for_frame_label(8), Some(Arm::RIGHT));
     assert!(meta.evidence_frame_label_mask().contains_frame_label(7));
     assert!(meta.evidence_frame_label_mask().contains_frame_label(8));
     assert!(!FrameLabelMask::EMPTY.contains_frame_label(7));
@@ -30,8 +32,8 @@ fn controller_frame_label_exclusion_does_not_need_duplicate_masks() {
     let mut scratch = ScopeFrameLabelScratch::EMPTY;
     scratch.meta_mut().controller_frame_labels[0] = 7;
     scratch.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0;
-    scratch.record_arm_frame_label(0, 7);
-    scratch.exclude_controller_arm_frame_label_from_evidence(0, 7);
+    scratch.record_arm_frame_label(Arm::LEFT, 7);
+    scratch.exclude_controller_arm_frame_label_from_evidence(Arm::LEFT, 7);
     let meta = scratch.view();
 
     assert_eq!(meta.evidence_arm_for_frame_label(7), None);

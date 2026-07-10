@@ -46,9 +46,7 @@ where
         let route_token = self.peek_live_scope_ack(scope_id);
         match route_token {
             Some(RouteArmToken::Ack(_)) => {
-                let Some(arm) = Arm::new(selected_arm) else {
-                    crate::invariant();
-                };
+                let arm = Arm::from_raw(selected_arm);
                 self.record_route_arm_selection_for_lane(
                     lane_wire as usize,
                     scope_id,
@@ -57,9 +55,7 @@ where
                 self.emit_route_arm_selection(scope_id, RouteArmToken::from_ack(arm), lane_wire);
             }
             Some(RouteArmToken::Poll(_)) => {
-                let Some(arm) = Arm::new(selected_arm) else {
-                    crate::invariant();
-                };
+                let arm = Arm::from_raw(selected_arm);
                 self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, lane_wire);
                 self.emit_route_arm_selection(
                     scope_id,
@@ -85,9 +81,7 @@ where
                 .route_scope_controller_resolver(scope_id)
                 .is_some_and(|(resolver, _)| resolver.is_dynamic()) =>
             {
-                let Some(arm) = Arm::new(selected_arm) else {
-                    crate::invariant();
-                };
+                let arm = Arm::from_raw(selected_arm);
                 self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, lane_wire);
                 self.emit_route_arm_selection(
                     scope_id,

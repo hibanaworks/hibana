@@ -8,9 +8,9 @@ mod send_preview_start;
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
-    CursorInvariantError, EffIndex, EventCursor, EventSemanticKind, LaneSetView, LocalAction,
-    LocalDependency, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
-    RouteOfferCursorState, RouteResolver, ScopeId, SendMeta, StateIndex, state_index_to_usize,
+    CursorInvariantError, EffIndex, EventCursor, LaneSetView, LocalAction, LocalDependency,
+    RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep, RouteOfferCursorState, RouteResolver,
+    ScopeId, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::global::role_program::PackedLaneRange;
 
@@ -806,11 +806,6 @@ impl EventCursor {
         arm: u8,
     ) -> Option<(StateIndex, u8)> {
         self.controller_arm_entry_by_arm_inner(scope_id, arm)
-    }
-
-    #[inline]
-    pub(crate) fn event_semantic_at(&self, idx: usize) -> EventSemanticKind {
-        self.machine().node(idx).event_semantic()
     }
 
     #[inline]

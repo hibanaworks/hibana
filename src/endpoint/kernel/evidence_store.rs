@@ -1,6 +1,6 @@
 //! Mutable scope-evidence owner for endpoint kernel runtime bookkeeping.
 
-use super::authority::RouteArmToken;
+use super::authority::{Arm, RouteArmToken};
 use super::evidence::ScopeEvidence;
 use core::ops::{Index, IndexMut};
 
@@ -176,7 +176,7 @@ impl ScopeEvidenceTable {
     pub(super) fn mark_ready_arm(
         &mut self,
         slot: usize,
-        arm: u8,
+        arm: Arm,
         evidence_kind: ReadyArmEvidence,
     ) -> bool {
         let evidence = &mut self[slot];
@@ -204,7 +204,7 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn consume_ready_arm(&mut self, slot: usize, arm: u8) -> bool {
+    pub(super) fn consume_ready_arm(&mut self, slot: usize, arm: Arm) -> bool {
         let evidence = &mut self[slot];
         let bit = ScopeEvidence::arm_bit(arm);
         let ready_changed = (evidence.ready_arm_mask & bit) != 0;

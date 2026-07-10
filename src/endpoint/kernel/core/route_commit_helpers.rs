@@ -199,18 +199,9 @@ fn preview_scope_ack_token_non_consuming_from_parts<'r, const ROLE: u8, T: Trans
             next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
             continue;
         }
-        let Some(port) = ports.get(lane_idx).and_then(|port| port.as_ref()) else {
-            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-            continue;
-        };
-        let Some(arm) = port.peek_route_arm_selection(scope_id, ROLE) else {
-            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-            continue;
-        };
-        if let Some(arm) = Arm::new(arm) {
-            return Some(RouteArmToken::from_ack(arm));
-        }
-        next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
+        let port = crate::invariant_some(ports.get(lane_idx).and_then(|port| port.as_ref()));
+        let arm = crate::invariant_some(port.peek_route_arm_selection(scope_id, ROLE));
+        return Some(RouteArmToken::from_ack(Arm::from_raw(arm)));
     }
     None
 }
@@ -243,9 +234,6 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     .or_else(|| {
         let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
         let mask = decision_state.scope_evidence.poll_ready_arm_mask(slot);
-        (mask.count_ones() == 1)
-            .then(|| Arm::new(mask.trailing_zeros() as u8))
-            .flatten()
-            .map(Arm::as_u8)
+        Arm::from_single_ready_mask(mask).map(Arm::as_u8)
     })
 }

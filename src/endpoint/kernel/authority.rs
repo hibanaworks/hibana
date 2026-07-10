@@ -4,9 +4,35 @@
 pub(super) struct Arm(u8);
 
 impl Arm {
+    pub(super) const LEFT: Self = Self(0);
+    pub(super) const RIGHT: Self = Self(1);
+
     #[inline]
-    pub(super) const fn new(value: u8) -> Option<Self> {
-        if value <= 1 { Some(Self(value)) } else { None }
+    pub(super) const fn decode_raw(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::LEFT),
+            1 => Some(Self::RIGHT),
+            2..=u8::MAX => None,
+        }
+    }
+
+    #[inline]
+    pub(super) const fn from_raw(value: u8) -> Self {
+        match Self::decode_raw(value) {
+            Some(arm) => arm,
+            None => crate::invariant(),
+        }
+    }
+
+    #[inline]
+    pub(super) const fn from_single_ready_mask(mask: u8) -> Option<Self> {
+        if mask & !0b11 != 0 {
+            crate::invariant();
+        }
+        if mask.count_ones() != 1 {
+            return None;
+        }
+        Some(Self::from_raw(mask.trailing_zeros() as u8))
     }
 
     #[inline]
@@ -14,6 +40,9 @@ impl Arm {
         self.0
     }
 }
+
+#[cfg(kani)]
+mod kani;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RouteArmToken {
@@ -82,7 +111,7 @@ mod tests {
 
     #[test]
     fn route_arm_token_carries_arm_and_authority_together() {
-        let left = Arm::new(0).expect("left arm");
+        let left = Arm::LEFT;
         assert_eq!(RouteArmToken::from_ack(left).arm(), left);
         assert_eq!(RouteArmToken::from_ack(left).as_tap_seq(), 1);
         assert_eq!(RouteArmToken::from_resolver(left).as_tap_seq(), 2);
@@ -90,5 +119,34 @@ mod tests {
         assert!(RouteArmToken::from_ack(left).is_ack());
         assert!(RouteArmToken::from_resolver(left).is_resolver());
         assert!(RouteArmToken::from_poll(left).is_poll());
+    }
+
+    #[test]
+    fn raw_route_arm_and_ready_mask_decode_exact_binary_authority() {
+        for raw in 0..=u8::MAX {
+            assert_eq!(Arm::decode_raw(raw).is_some(), raw <= 1);
+        }
+        assert_eq!(Arm::from_single_ready_mask(0), None);
+        assert_eq!(Arm::from_single_ready_mask(1), Some(Arm::LEFT));
+        assert_eq!(Arm::from_single_ready_mask(2), Some(Arm::RIGHT));
+        assert_eq!(Arm::from_single_ready_mask(3), None);
+    }
+
+    #[test]
+    #[should_panic]
+    fn invalid_raw_route_arm_fails_closed() {
+        let _ = Arm::from_raw(2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn invalid_single_bit_ready_mask_fails_closed() {
+        let _ = Arm::from_single_ready_mask(1 << 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn invalid_mixed_ready_mask_fails_closed() {
+        let _ = Arm::from_single_ready_mask((1 << 2) | 1);
     }
 }

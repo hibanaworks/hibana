@@ -139,7 +139,7 @@ where
             self.record_scope_ack(scope_id, route_token);
             self.emit_route_arm_selection(scope_id, route_token, decision_lane);
         } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
-            let arm = crate::invariant_some(Arm::new(selected_arm));
+            let arm = Arm::from_raw(selected_arm);
             let token = RouteArmToken::from_ack(arm);
             if matches!(branch.kind, BranchKind::ArmSend) {
                 let lane = lane_wire;

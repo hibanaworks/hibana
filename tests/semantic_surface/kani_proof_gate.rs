@@ -7,6 +7,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let script = read(".github/scripts/check_kani.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
+    let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
     let version = read(".github/kani-version");
 
     assert_eq!(version.trim(), "0.67.0");
@@ -18,7 +19,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("harnesses=9 backend=CBMC"));
+    assert!(script.contains("harnesses=11 backend=CBMC"));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
@@ -43,6 +44,13 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "resolver_storage_layout_is_bounded_and_exact",
     ] {
         assert!(harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    for harness in [
+        "route_arm_decoding_accepts_exact_binary_domain",
+        "single_ready_mask_decoding_is_exact",
+    ] {
+        assert!(authority_harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));
     }
 }

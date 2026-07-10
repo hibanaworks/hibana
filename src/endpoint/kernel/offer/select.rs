@@ -127,12 +127,16 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
+    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm(
+        &mut self,
+        scope_id: ScopeId,
+        arm: Arm,
+    ) {
         self.mark_scope_ready_arm_inner(scope_id, arm, ReadyArmEvidence::Poll);
     }
 
     #[inline]
-    pub(super) fn mark_scope_materialization_ready_arm(&mut self, scope_id: ScopeId, arm: u8) {
+    pub(super) fn mark_scope_materialization_ready_arm(&mut self, scope_id: ScopeId, arm: Arm) {
         self.mark_scope_ready_arm_inner(scope_id, arm, ReadyArmEvidence::Materialization);
     }
 
@@ -146,7 +150,8 @@ where
     ) {
         let exact_passive_arm = self
             .cursor
-            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label);
+            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
+            .map(Arm::from_raw);
         let arm = exact_passive_arm
             .or_else(|| frame_label_meta.evidence_arm_for_frame_label(frame_label));
         if let Some(arm) = arm {
@@ -161,7 +166,7 @@ where
     pub(super) fn mark_scope_ready_arm_from_exact_passive_arm(
         &mut self,
         scope_id: ScopeId,
-        arm: u8,
+        arm: Arm,
     ) {
         if self.intrinsic_passive_scope_evidence_materializes_poll(scope_id) {
             self.mark_scope_ready_arm(scope_id, arm);
@@ -191,8 +196,10 @@ where
             else {
                 break;
             };
+            let arm = Arm::from_raw(arm);
             self.mark_scope_ready_arm(current_scope, arm);
-            let Some(child_scope) = self.cursor.passive_child_scope(current_scope, arm) else {
+            let Some(child_scope) = self.cursor.passive_child_scope(current_scope, arm.as_u8())
+            else {
                 break;
             };
             current_scope = child_scope;
@@ -398,9 +405,10 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<()>> {
         let materialization_meta = self.selection_materialization_meta(selection);
+        let selected_arm = selected_arm.map(Arm::from_raw);
         let progress_lane = match selected_arm {
             Some(arm) => self
-                .route_scope_arm_lane_set_for_scope(selection.scope_id, arm)
+                .route_scope_arm_lane_set_for_scope(selection.scope_id, arm.as_u8())
                 .and_then(|lanes| lanes.first_set(self.cursor.logical_lane_count()))
                 .map(|lane_idx| lane_idx as u8),
             None => Some(selection.offer_lane),
@@ -442,7 +450,6 @@ where
             }
             next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
-        let arm = arm?;
-        Arm::new(arm)
+        Some(Arm::from_raw(arm?))
     }
 }

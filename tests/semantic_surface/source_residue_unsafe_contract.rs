@@ -24,6 +24,7 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
     let resolver_offer = read("src/endpoint/kernel/core/decision_resolver/impls/select.rs");
     let resolver_send = read("src/endpoint/kernel/core/decision_resolver/impls/send.rs");
     let transport_send = read("src/endpoint/kernel/core/send_ops.rs");
+    let lane_port = read("src/endpoint/kernel/lane_port.rs");
     let transport_recv = read("src/endpoint/kernel/observe.rs");
     let recv_commit = read("src/endpoint/kernel/recv_commit_plan.rs");
     let offer_ingress = read("src/endpoint/kernel/offer/ingress.rs");
@@ -46,6 +47,8 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
             && regression.contains("resolver_callback_reentry_cannot_prepare_send_after_peer_drop")
             && regression.contains("transport_send_callback_reentry_cannot_commit_after_peer_drop")
             && regression
+                .contains("transport_cancel_callback_reentry_consumes_cleanup_authority_once")
+            && regression
                 .contains("transport_recv_callback_reentry_cannot_commit_frame_after_peer_drop")
             && regression
                 .contains("payload_validation_callback_reentry_cannot_commit_after_peer_drop")
@@ -57,6 +60,7 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
             && resolver_send.contains("return Err(SendError::SessionFault(kind))")
             && transport_send.contains("let transport_poll = lane_port::poll_send_outgoing")
             && transport_send.contains("cancel_send_outgoing(&mut pending.transport, port)")
+            && lane_port.contains("pending.state = SendIoState::Unpolled;\n    unsafe {")
             && transport_recv
                 .matches("if let Some(kind) = self.session_fault()")
                 .count()

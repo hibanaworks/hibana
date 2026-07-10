@@ -49,3 +49,11 @@ import Hibana.MainTheorems
 #print axioms Hibana.prepared_lease_capacity_never_shrinks
 #print axioms Hibana.lease_allocation_failure_certificate_sound
 #print axioms Hibana.lease_allocation_abort_certificate_sound
+#print axioms Hibana.route_arm_decode_encode_round_trip
+#print axioms Hibana.route_arm_decode_accepts_only_binary
+#print axioms Hibana.invalid_route_arm_decode_rejected
+#print axioms Hibana.invalid_route_arm_has_no_publication
+#print axioms Hibana.valid_route_arm_publication_is_exact
+#print axioms Hibana.invalid_ready_arm_mask_rejected
+#print axioms Hibana.valid_ready_arm_mask_is_accepted
+#print axioms Hibana.selected_ready_arm_mask_is_exact

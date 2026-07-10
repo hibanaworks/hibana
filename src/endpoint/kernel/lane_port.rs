@@ -341,12 +341,13 @@ where
             if pending.transport_is_pending() {
                 let transport = port.transport();
                 let tx_ptr = port.tx_ptr();
-                /* SAFETY: the pending state records an armed transport poll on
-                this port's lane-local Tx handle. */
+                pending.state = SendIoState::Unpolled;
                 unsafe {
+                    // SAFETY: the pending state records an armed transport poll and this
+                    // port owns its lane-local Tx handle. The state is detached before
+                    // external cancellation, so reentry cannot consume it twice.
                     transport.cancel_send(&mut *tx_ptr);
                 }
-                pending.state = SendIoState::Unpolled;
             }
             return Poll::Ready(Err(err));
         }
@@ -388,12 +389,13 @@ where
     }
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
+    pending.state = SendIoState::Unpolled;
     unsafe {
         // SAFETY: the pending state records an armed transport poll and this
-        // `Port` owns the matching lane-local Tx handle.
+        // port owns its lane-local Tx handle. The state was detached before
+        // external cancellation, preventing duplicate reentrant cleanup.
         transport.cancel_send(&mut *tx_ptr);
     }
-    pending.state = SendIoState::Unpolled;
 }
 
 #[cfg(test)]

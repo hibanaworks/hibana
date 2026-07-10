@@ -10,7 +10,7 @@ use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
     eff::EffIndex,
     global::{
-        compiled::images::{EventSemanticKind, RoleDescriptorRef},
+        compiled::images::RoleDescriptorRef,
         const_dsl::{RouteResolver, ScopeId, ScopeKind},
         event_program::{LocalEventProgram, LocalEventRowSet},
         role_program::{LaneSetView, LaneSteps, PackedLaneRange, lane_word_count},

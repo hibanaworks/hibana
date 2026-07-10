@@ -18,7 +18,6 @@ use super::offer::*;
 mod route_commit_helpers;
 use super::decision_state::{ReentryScopeLiveness, RouteCommitRowSetBuilder, RouteState};
 use crate::eff::EffIndex;
-use crate::global::compiled::images::EventSemanticKind;
 use crate::global::const_dsl::{RouteResolver, ScopeId};
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
@@ -284,27 +283,6 @@ fn controller_arm_label(cursor: &EventCursor, scope_id: ScopeId, arm: u8) -> Opt
     cursor
         .shared_controller_arm_entry_by_arm(scope_id, arm)
         .map(|(_, label)| label)
-}
-
-#[inline]
-fn controller_arm_semantic_kind(
-    cursor: &EventCursor,
-    scope_id: ScopeId,
-    arm: u8,
-) -> Option<EventSemanticKind> {
-    let (entry, _) = cursor.shared_controller_arm_entry_by_arm(scope_id, arm)?;
-    Some(controller_arm_semantic_from_node(
-        cursor.event_semantic_at(state_index_to_usize(entry)),
-    ))
-}
-
-#[inline]
-const fn controller_arm_semantic_from_node(kind: EventSemanticKind) -> EventSemanticKind {
-    match kind {
-        EventSemanticKind::DecisionArm | EventSemanticKind::ProtocolEvent => {
-            EventSemanticKind::DecisionArm
-        }
-    }
 }
 
 mod commit_delta;

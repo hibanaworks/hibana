@@ -1,7 +1,7 @@
 use super::{
-    CursorEndpoint, EventCursor, FrameLabelMask, FrontierFacts, FrontierKind, FrontierReadiness,
-    OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta, ScopeFrameLabelScratch,
-    ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
+    Arm, CursorEndpoint, EventCursor, FrameLabelMask, FrontierFacts, FrontierKind,
+    FrontierReadiness, OfferScopeSelection, ScopeArmMaterializationMeta, ScopeFrameLabelMeta,
+    ScopeFrameLabelScratch, ScopeId, ScopeReentryMeta, Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -92,14 +92,15 @@ where
             out.meta_mut().recv_frame_label = recv_meta.frame_label;
             out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_FRAME_LABEL;
             if let Some(arm) = recv_meta.route_arm {
-                out.meta_mut().recv_arm = arm;
+                let arm = Arm::from_raw(arm);
+                out.meta_mut().recv_arm = arm.as_u8();
                 out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_ARM;
                 out.record_arm_frame_label(arm, recv_meta.frame_label);
                 if !cursor.current_recv_matches_scope_arm(
                     scope_id,
                     recv_meta.lane,
                     recv_meta.frame_label,
-                    arm,
+                    arm.as_u8(),
                 ) {
                     out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CURRENT_RECV_BINDING_EXCLUDED;
                 }
@@ -108,44 +109,42 @@ where
         if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
             out.meta_mut().controller_frame_labels[0] = label;
             out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM0;
-            out.record_arm_frame_label(0, label);
+            out.record_arm_frame_label(Arm::LEFT, label);
             if !is_controller {
-                out.exclude_controller_arm_frame_label_from_evidence(0, label);
+                out.exclude_controller_arm_frame_label_from_evidence(Arm::LEFT, label);
             }
         }
         if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
             out.meta_mut().controller_frame_labels[1] = label;
             out.meta_mut().flags |= ScopeFrameLabelMeta::FLAG_CONTROLLER_ARM1;
-            out.record_arm_frame_label(1, label);
+            out.record_arm_frame_label(Arm::RIGHT, label);
             if !is_controller {
-                out.exclude_controller_arm_frame_label_from_evidence(1, label);
+                out.exclude_controller_arm_frame_label_from_evidence(Arm::RIGHT, label);
             }
         }
         if reentry_meta.route_reentry() {
             if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 0) {
-                out.record_arm_frame_label(0, label);
+                out.record_arm_frame_label(Arm::LEFT, label);
             }
             if let Some((_entry, label)) = cursor.controller_arm_entry_by_arm(scope_id, 1) {
-                out.record_arm_frame_label(1, label);
+                out.record_arm_frame_label(Arm::RIGHT, label);
             }
         }
         let mut dispatch_arm_masks = [FrameLabelMask::EMPTY; 2];
         crate::invariant_some(cursor.visit_route_scope_first_recv_dispatch(
             scope_id,
             |arm, target| {
-                if arm >= 2 {
-                    crate::invariant();
-                }
+                let arm = Arm::from_raw(arm);
                 if target.is_absent() {
                     return;
                 }
                 let recv =
                     crate::invariant_some(cursor.try_recv_meta_at(state_index_to_usize(target)));
-                dispatch_arm_masks[arm as usize].insert_frame_label(recv.frame_label);
+                dispatch_arm_masks[arm.as_u8() as usize].insert_frame_label(recv.frame_label);
             },
         ));
-        out.record_dispatch_arm_frame_label_mask(0, dispatch_arm_masks[0]);
-        out.record_dispatch_arm_frame_label_mask(1, dispatch_arm_masks[1]);
+        out.record_dispatch_arm_frame_label_mask(Arm::LEFT, dispatch_arm_masks[0]);
+        out.record_dispatch_arm_frame_label_mask(Arm::RIGHT, dispatch_arm_masks[1]);
     }
 
     #[inline]

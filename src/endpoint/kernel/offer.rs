@@ -46,9 +46,8 @@ pub(in crate::endpoint::kernel) use self::commit_types::{
     BranchCommitPlan, BranchKind, BranchMeta,
 };
 pub(in crate::endpoint::kernel) use self::frontier_types::{
-    CachedRecvMeta, CachedRouteArm, CurrentFrontierSelectionState,
-    CurrentReentryControllerEvidence, CurrentScopeSelectionMeta, FrontierFacts, FrontierReadiness,
-    ScopeArmMaterializationMeta,
+    CachedRecvMeta, CurrentFrontierSelectionState, CurrentReentryControllerEvidence,
+    CurrentScopeSelectionMeta, FrontierFacts, FrontierReadiness, ScopeArmMaterializationMeta,
 };
 use self::ingress::OfferFrontierFacts;
 pub(in crate::endpoint::kernel) use self::ingress_types::{

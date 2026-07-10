@@ -1,6 +1,6 @@
 //! Scope-evidence owners for route selection.
 
-use super::authority::RouteArmToken;
+use super::authority::{Arm, RouteArmToken};
 use crate::{global::const_dsl::ScopeId, transport::FrameLabelMask};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,7 +122,7 @@ impl ScopeFrameLabelScratch {
     }
 
     #[inline]
-    pub(super) fn record_arm_frame_label(&mut self, arm: u8, frame_label: u8) {
+    pub(super) fn record_arm_frame_label(&mut self, arm: Arm, frame_label: u8) {
         self.meta
             .record_arm_frame_label(&mut self.masks, arm, frame_label);
     }
@@ -130,7 +130,7 @@ impl ScopeFrameLabelScratch {
     #[inline]
     pub(super) fn record_dispatch_arm_frame_label_mask(
         &mut self,
-        arm: u8,
+        arm: Arm,
         frame_label_mask: FrameLabelMask,
     ) {
         self.meta
@@ -140,7 +140,7 @@ impl ScopeFrameLabelScratch {
     #[inline]
     pub(super) fn exclude_controller_arm_frame_label_from_evidence(
         &mut self,
-        arm: u8,
+        arm: Arm,
         frame_label: u8,
     ) {
         self.meta
@@ -150,8 +150,8 @@ impl ScopeFrameLabelScratch {
 
 impl ScopeFrameLabelMeta {
     #[inline]
-    fn controller_evidence_excluded(self, arm: u8, frame_label: u8) -> bool {
-        match arm {
+    fn controller_evidence_excluded(self, arm: Arm, frame_label: u8) -> bool {
+        match arm.as_u8() {
             0 => {
                 self.controller_frame_labels[0] == frame_label
                     && (self.flags & Self::FLAG_CONTROLLER_ARM0_EVIDENCE_EXCLUDED) != 0
@@ -160,7 +160,7 @@ impl ScopeFrameLabelMeta {
                 self.controller_frame_labels[1] == frame_label
                     && (self.flags & Self::FLAG_CONTROLLER_ARM1_EVIDENCE_EXCLUDED) != 0
             }
-            _ => false,
+            _ => crate::invariant(),
         }
     }
 
@@ -168,12 +168,11 @@ impl ScopeFrameLabelMeta {
     fn arm_contains_evidence_frame_label(
         self,
         masks: &ScopeFrameLabelMasks,
-        arm: u8,
+        arm: Arm,
         frame_label: u8,
     ) -> bool {
-        let arm_idx = arm as usize;
-        arm_idx < masks.arm_frame_label_masks.len()
-            && masks.arm_frame_label_masks[arm_idx].contains_frame_label(frame_label)
+        let arm_idx = arm.as_u8() as usize;
+        masks.arm_frame_label_masks[arm_idx].contains_frame_label(frame_label)
             && !self.controller_evidence_excluded(arm, frame_label)
     }
 
@@ -182,16 +181,16 @@ impl ScopeFrameLabelMeta {
         &self,
         masks: &ScopeFrameLabelMasks,
         frame_label: u8,
-    ) -> Option<u8> {
-        let left = self.arm_contains_evidence_frame_label(masks, 0, frame_label);
-        let right = self.arm_contains_evidence_frame_label(masks, 1, frame_label);
+    ) -> Option<Arm> {
+        let left = self.arm_contains_evidence_frame_label(masks, Arm::LEFT, frame_label);
+        let right = self.arm_contains_evidence_frame_label(masks, Arm::RIGHT, frame_label);
         if left == right {
             return None;
         }
         if left {
-            return Some(0);
+            return Some(Arm::LEFT);
         }
-        Some(1)
+        Some(Arm::RIGHT)
     }
 
     #[inline]
@@ -209,34 +208,30 @@ impl ScopeFrameLabelMeta {
     pub(super) fn record_arm_frame_label(
         &mut self,
         masks: &mut ScopeFrameLabelMasks,
-        arm: u8,
+        arm: Arm,
         frame_label: u8,
     ) {
-        if (arm as usize) < masks.arm_frame_label_masks.len() {
-            masks.arm_frame_label_masks[arm as usize] |=
-                FrameLabelMask::from_frame_label(frame_label);
-        }
+        masks.arm_frame_label_masks[arm.as_u8() as usize] |=
+            FrameLabelMask::from_frame_label(frame_label);
     }
 
     #[inline]
     pub(super) fn record_dispatch_arm_frame_label_mask(
         &mut self,
         masks: &mut ScopeFrameLabelMasks,
-        arm: u8,
+        arm: Arm,
         frame_label_mask: FrameLabelMask,
     ) {
-        if (arm as usize) < masks.arm_frame_label_masks.len() {
-            masks.arm_frame_label_masks[arm as usize] |= frame_label_mask;
-        }
+        masks.arm_frame_label_masks[arm.as_u8() as usize] |= frame_label_mask;
     }
 
     #[inline]
     pub(super) fn exclude_controller_arm_frame_label_from_evidence(
         &mut self,
-        arm: u8,
+        arm: Arm,
         frame_label: u8,
     ) {
-        match arm {
+        match arm.as_u8() {
             0 if self.controller_frame_labels[0] == frame_label => {
                 self.flags |= Self::FLAG_CONTROLLER_ARM0_EVIDENCE_EXCLUDED;
             }
@@ -250,7 +245,7 @@ impl ScopeFrameLabelMeta {
 
 impl ScopeFrameLabelView<'_> {
     #[inline]
-    pub(super) fn evidence_arm_for_frame_label(&self, frame_label: u8) -> Option<u8> {
+    pub(super) fn evidence_arm_for_frame_label(&self, frame_label: u8) -> Option<Arm> {
         self.meta
             .evidence_arm_for_frame_label(self.masks, frame_label)
     }
@@ -270,8 +265,6 @@ pub(super) struct ScopeEvidence {
 }
 
 impl ScopeEvidence {
-    pub(super) const ARM0_READY: u8 = 1 << 0;
-    pub(super) const ARM1_READY: u8 = 1 << 1;
     pub(super) const FLAG_ACK_CONFLICT: u8 = 1;
     pub(super) const EMPTY: Self = Self {
         ack: None,
@@ -281,12 +274,8 @@ impl ScopeEvidence {
     };
 
     #[inline]
-    pub(super) const fn arm_bit(arm: u8) -> u8 {
-        match arm {
-            0 => Self::ARM0_READY,
-            1 => Self::ARM1_READY,
-            2..=u8::MAX => crate::invariant(),
-        }
+    pub(super) const fn arm_bit(arm: Arm) -> u8 {
+        1 << arm.as_u8()
     }
 }
 

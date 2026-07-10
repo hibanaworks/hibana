@@ -27,7 +27,7 @@ src/endpoint/kernel/offer/select_alignment/model/set.rs	220	1	recursive
 src/endpoint/kernel/offer/state.rs	260	1	recursive
 src/endpoint/kernel/offer/commit.rs	250	1	recursive
 src/endpoint/kernel/offer/commit_types.rs	120	1	recursive
-src/endpoint/kernel/offer/frontier_types.rs	420	1	recursive
+src/endpoint/kernel/offer/frontier_types.rs	300	1	recursive
 src/endpoint/kernel/core/offer_refresh.rs	300	1	recursive
 src/endpoint/kernel/core/scope_evidence_logic.rs	430	1	recursive
 src/endpoint/kernel/branch_recv.rs	150	1	recursive

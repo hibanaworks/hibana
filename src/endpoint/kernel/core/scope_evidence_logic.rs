@@ -50,7 +50,7 @@ where
     pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_inner(
         &mut self,
         scope_id: ScopeId,
-        arm: u8,
+        arm: Arm,
         evidence_kind: ReadyArmEvidence,
     ) {
         if let Some(slot) = self.scope_slot_for_route(scope_id) {
@@ -91,7 +91,7 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) -> bool {
-        (self.scope_ready_arm_mask(scope_id) & ScopeEvidence::arm_bit(arm)) != 0
+        (self.scope_ready_arm_mask(scope_id) & ScopeEvidence::arm_bit(Arm::from_raw(arm))) != 0
     }
 
     #[inline]
@@ -108,6 +108,7 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) {
+        let arm = Arm::from_raw(arm);
         if let Some(slot) = self.scope_slot_for_route(scope_id) {
             self.decision_state
                 .scope_evidence
@@ -168,10 +169,7 @@ where
         scope_id: ScopeId,
     ) -> Option<Arm> {
         let mask = self.scope_poll_ready_arm_mask(scope_id);
-        if mask.count_ones() != 1 {
-            return None;
-        }
-        Arm::new(mask.trailing_zeros() as u8)
+        Arm::from_single_ready_mask(mask)
     }
 
     #[inline]
@@ -211,11 +209,12 @@ where
         arm: u8,
         materialization_meta: ScopeArmMaterializationMeta,
     ) -> bool {
+        let decoded_arm = Arm::from_raw(arm);
         if Self::scope_arm_has_recv_with_dispatch(
             &self.cursor,
             scope_id,
             arm,
-            materialization_meta.arm_has_first_recv_dispatch(arm),
+            materialization_meta.arm_has_first_recv_dispatch(decoded_arm),
         ) {
             return true;
         }
@@ -298,17 +297,11 @@ where
                 next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                 continue;
             }
-            let Some(arm) = self
-                .port_for_lane(lane_idx)
-                .peek_route_arm_selection(scope_id, ROLE)
-            else {
-                next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-                continue;
-            };
-            if let Some(arm) = Arm::new(arm) {
-                return Some(RouteArmToken::from_ack(arm));
-            }
-            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
+            let arm = crate::invariant_some(
+                self.port_for_lane(lane_idx)
+                    .peek_route_arm_selection(scope_id, ROLE),
+            );
+            return Some(RouteArmToken::from_ack(Arm::from_raw(arm)));
         }
         None
     }
@@ -329,9 +322,8 @@ where
                 .get(lane_idx)
                 .and_then(|port| port.as_ref())
                 .and_then(|port| port.peek_route_arm_selection(scope_id, ROLE))
-                .and_then(Arm::new)
             {
-                return Some(arm);
+                return Some(Arm::from_raw(arm));
             }
             lane_idx += 1;
         }

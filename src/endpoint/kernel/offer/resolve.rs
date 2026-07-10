@@ -160,20 +160,21 @@ where
                         selected = Some(candidate_arm);
                     }
                 });
-            selected?
+            Arm::from_raw(selected?)
         } else {
-            let arm = self
-                .cursor
-                .passive_descendant_dispatch_arm_from_exact_frame_label(
-                    scope_id,
-                    lane,
-                    frame_label,
-                )?;
+            let arm = Arm::from_raw(
+                self.cursor
+                    .passive_descendant_dispatch_arm_from_exact_frame_label(
+                        scope_id,
+                        lane,
+                        frame_label,
+                    )?,
+            );
             self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
             arm
         };
         self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
-        Arm::new(arm).map(RouteArmToken::from_poll)
+        Some(RouteArmToken::from_poll(arm))
     }
 
     fn collect_passive_route_authority_after_ack_miss(

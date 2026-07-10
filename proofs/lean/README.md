@@ -18,6 +18,10 @@ The kernel-checked boundary covers:
 - fail-closed rejection of direct unresolved commits, wrong resolver ids,
   resolver reuse without reset, and any continuation after resolver rejection;
 - unique route-arm authority in every commit state;
+- exact refinement of compact route-arm values into left/right authority,
+  including rejection without a publication successor for every value above
+  the binary domain, plus separation of valid non-unique ready masks from
+  invalid masks carrying out-of-domain bits;
 - exact commit and resolver successor deltas from one prepared base state;
 - atomic roll and route-arm reentry resets, including inside-clear and
   outside-preservation properties.
