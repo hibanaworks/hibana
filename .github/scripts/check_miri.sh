@@ -60,8 +60,8 @@ run_miri_test() {
 
 run_miri_test \
   public-runtime-owner \
-  11 \
-  11 \
+  18 \
+  18 \
   0 \
   -p hibana \
   --test miri_runtime_owner
@@ -100,12 +100,52 @@ run_miri_test \
   --test cursor_send_recv_session_forget_recv
 
 run_miri_test \
+  forgotten-send-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_session_forget_send
+
+run_miri_test \
+  endpoint-drop-wake-owner \
+  2 \
+  2 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_session_drop_wake
+
+run_miri_test \
+  session-fault-cancel-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_session_fault_cancel
+
+run_miri_test \
+  local-action-owner \
+  3 \
+  3 \
+  0 \
+  -p hibana \
+  --test local_action
+
+run_miri_test \
   route-branch-send-owner \
   3 \
   3 \
   0 \
   -p hibana \
   --test route_branch_send
+
+run_miri_test \
+  resolved-send-owner \
+  2 \
+  2 \
+  0 \
+  -p hibana \
+  --test send_route_authority
 
 run_miri_test \
   offer-branch-owner \
@@ -124,4 +164,4 @@ run_miri_test \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=61 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=77 ignored=1"

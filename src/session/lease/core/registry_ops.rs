@@ -104,6 +104,23 @@ where
             .map_err(ClusterError::resource_exhausted)
     }
 
+    /// Resolve the rendezvous authority carried by one published endpoint.
+    ///
+    /// Unlike registry access, endpoint-owned cleanup must remain available
+    /// while a transport callback runs under an attach lease. The live
+    /// slot/generation pair is the authority for bypassing the registry-busy
+    /// rejection; stale or reserved handles remain fail closed.
+    pub(crate) fn published_endpoint_owner(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<&Rendezvous<'cfg, 'cfg, T>> {
+        let rendezvous = self.node_ref(&rv_id)?;
+        rendezvous.endpoint_lease_storage(slot, generation)?;
+        Some(rendezvous)
+    }
+
     pub(crate) fn ensure_dynamic_resolver_capacity(
         &self,
         rv_id: RendezvousId,

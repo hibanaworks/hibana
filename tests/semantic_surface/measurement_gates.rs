@@ -257,7 +257,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
             && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
             && miri_gate.contains(
-                "public-runtime-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
+                "public-runtime-owner \\\n  18 \\\n  18 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
             )
             && miri_gate.contains(
                 "endpoint-waiter-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  rendezvous::core::endpoint_waiter::tests"
@@ -272,7 +272,22 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "forgotten-recv-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_forget_recv"
             )
             && miri_gate.contains(
+                "forgotten-send-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_forget_send"
+            )
+            && miri_gate.contains(
+                "endpoint-drop-wake-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_drop_wake"
+            )
+            && miri_gate.contains(
+                "session-fault-cancel-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_fault_cancel"
+            )
+            && miri_gate.contains(
+                "local-action-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test local_action"
+            )
+            && miri_gate.contains(
                 "route-branch-send-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
+            )
+            && miri_gate.contains(
+                "resolved-send-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --test send_route_authority"
             )
             && miri_gate.contains(
                 "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
@@ -281,7 +296,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=61 ignored=1")
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=77 ignored=1")
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")

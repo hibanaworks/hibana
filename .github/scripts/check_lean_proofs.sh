@@ -75,8 +75,11 @@ for theorem in \
   session_generation_trace_checker_sound \
   poisoned_generation_step_never_revives \
   poisoned_generation_attach_rejected \
+  poisoned_generation_publish_rejected \
+  publication_permitted_implies_live \
   poisoned_generation_trace_never_revives \
   failed_lease_allocation_preserves_state \
+  poisoned_generation_aborts_lease_publication \
   successful_lease_allocation_commits_exact_plan \
   prepared_lease_generation_strictly_increases \
   prepared_lease_capacity_never_shrinks \
@@ -95,11 +98,11 @@ done
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
-if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "20" ]] \
+if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "21" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "20" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "6" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "46" ]]; then
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "21" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "7" ]] \
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "49" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi

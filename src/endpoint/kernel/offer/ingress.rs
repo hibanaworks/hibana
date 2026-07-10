@@ -69,7 +69,11 @@ where
         payload: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<()> {
         let port = self.port_for_lane(payload.lane_idx());
-        payload.requeue_on(port).map_err(RecvError::Transport)
+        let requeue = payload.requeue_on(port);
+        if let Some(kind) = self.session_fault() {
+            return Err(RecvError::SessionFault(kind));
+        }
+        requeue.map_err(RecvError::Transport)
     }
 
     pub(super) fn collect_offer_ingress(

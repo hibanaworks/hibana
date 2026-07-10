@@ -80,13 +80,16 @@ where
         role: u8,
         role_count: u8,
         active_leases: &'a Cell<u32>,
-    ) -> (Port<'a, T>, LaneGuard<'a, T>)
+    ) -> Result<(Port<'a, T>, LaneGuard<'a, T>), RendezvousError>
     where
         'rv: 'a,
     {
         let (tx, rx) = self
             .transport
             .open(crate::transport::PortOpen::from_descriptor(role, sid, lane));
+        if self.session_fault(sid).is_some() {
+            return Err(RendezvousError::SessionPoisoned { sid });
+        }
         let port = Port::new(PortInit {
             transport: &self.transport,
             tap: self.tap(),
@@ -108,7 +111,7 @@ where
         });
         let guard =
             LaneGuard::new_detached((self as *const Self).cast::<()>(), sid, lane, active_leases);
-        (port, guard)
+        Ok((port, guard))
     }
 
     // ============================================================================

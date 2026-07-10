@@ -116,6 +116,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         generation.contains("def nextLeaseGeneration?")
             && generation.contains("def applySessionGenerationAction")
             && generation.contains("def runSessionGenerationTrace")
+            && generation.contains("def SessionGenerationState.publicationPermitted")
+            && generation.contains("theorem poisoned_generation_publish_rejected")
+            && generation.contains("theorem publication_permitted_implies_live")
             && generation.contains("poisoned_generation_trace_never_revives")
             && lease_generation.contains("next_endpoint_lease_generation(&self) -> Option<u32>")
             && lease_generation.contains("checked_add(1)")
@@ -130,6 +133,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && allocation.contains("| initializationRejected")
             && allocation.contains("if publishReady then")
             && allocation.contains("theorem failed_lease_allocation_preserves_state")
+            && allocation.contains("theorem poisoned_generation_aborts_lease_publication")
             && allocation.contains("structure LeaseAllocationFailureCertificate")
             && allocation.contains("structure LeaseAllocationAbortCertificate")
             && allocation.contains("PreservesAuthorityAndCapacity")
@@ -189,8 +193,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem session_generation_trace_checker_sound",
         "theorem poisoned_generation_step_never_revives",
         "theorem poisoned_generation_attach_rejected",
+        "theorem poisoned_generation_publish_rejected",
+        "theorem publication_permitted_implies_live",
         "theorem poisoned_generation_trace_never_revives",
         "theorem failed_lease_allocation_preserves_state",
+        "theorem poisoned_generation_aborts_lease_publication",
         "theorem successful_lease_allocation_commits_exact_plan",
         "theorem prepared_lease_generation_strictly_increases",
         "theorem prepared_lease_capacity_never_shrinks",
@@ -224,8 +231,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && axiom_audit.contains("#print axioms Hibana.slab_layout_certificate_sound")
             && axiom_audit.contains("#print axioms Hibana.reachable_state_has_logical_progress")
             && axiom_audit.contains("#print axioms Hibana.poisoned_generation_trace_never_revives")
+            && axiom_audit.contains("#print axioms Hibana.poisoned_generation_publish_rejected")
+            && axiom_audit.contains("#print axioms Hibana.publication_permitted_implies_live")
             && axiom_audit
                 .contains("#print axioms Hibana.lease_allocation_failure_certificate_sound")
+            && axiom_audit
+                .contains("#print axioms Hibana.poisoned_generation_aborts_lease_publication")
             && axiom_audit
                 .contains("#print axioms Hibana.lease_allocation_abort_certificate_sound")
             && commit.contains("rollReentryState?")

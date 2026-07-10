@@ -564,7 +564,11 @@ where
         let offer_lane = self.offer_lane_for_scope(scope_id);
         let cluster = self.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
-        let resolution = match cluster.resolve_dynamic_resolver(rv_id, scope_id, resolver_id) {
+        let resolver_result = cluster.resolve_dynamic_resolver(rv_id, scope_id, resolver_id);
+        if let Some(kind) = self.session_fault() {
+            return Err(RecvError::SessionFault(kind));
+        }
+        let resolution = match resolver_result {
             Ok(resolution) => resolution,
             Err(ClusterError::ResolverReject { resolver_id }) => {
                 self.emit_dynamic_resolver_reject_audit(offer_lane, scope_id, resolver_id);

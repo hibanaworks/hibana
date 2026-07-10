@@ -140,7 +140,12 @@ where
     where
         F: FnOnce(Payload<'r>) -> Result<(), CodecError>,
     {
-        if let Err(err) = plan.payload.validate(validate) {
+        let validation = plan.payload.validate(validate);
+        if let Some(kind) = self.session_fault() {
+            plan.payload.discard_uncommitted();
+            return Err(RecvError::SessionFault(kind));
+        }
+        if let Err(err) = validation {
             plan.payload.discard_uncommitted();
             return Err(RecvError::Codec(err));
         }

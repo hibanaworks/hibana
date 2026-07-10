@@ -232,7 +232,12 @@ where
         resolver_id: u16,
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
         let cluster = self.session.cluster();
-        match cluster.resolve_dynamic_resolver(self.rendezvous_id(), scope_id, resolver_id) {
+        let resolver_result =
+            cluster.resolve_dynamic_resolver(self.rendezvous_id(), scope_id, resolver_id);
+        if let Some(kind) = self.session_fault() {
+            return Err(SendError::SessionFault(kind));
+        }
+        match resolver_result {
             Ok(resolution) => Ok(resolution),
             Err(crate::session::cluster::error::ClusterError::ResolverReject { resolver_id }) => {
                 self.emit_dynamic_resolver_reject_audit(lane, scope_id, resolver_id);

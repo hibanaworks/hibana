@@ -81,6 +81,22 @@ theorem failed_lease_allocation_preserves_state
       plannedImageFrontier payloadOffset = result at failed ⊢
   cases result <;> cases publishReady <;> simp_all
 
+theorem poisoned_generation_aborts_lease_publication
+    {state : LeaseAllocatorState}
+    {requiredTableSlots payloadBytes : Nat}
+    {plannedImageFrontier payloadOffset : Option Nat}
+    (cause : SessionFault) :
+    (runLeaseAllocation state requiredTableSlots payloadBytes
+      plannedImageFrontier payloadOffset
+      (SessionGenerationState.publicationPermitted (.poisoned cause))).1 = state /\
+    ∀ plan,
+      (runLeaseAllocation state requiredTableSlots payloadBytes
+        plannedImageFrontier payloadOffset
+        (SessionGenerationState.publicationPermitted (.poisoned cause))).2 ≠ .ok plan := by
+  simp only [SessionGenerationState.publicationPermitted]
+  unfold runLeaseAllocation
+  split <;> simp_all
+
 theorem successful_lease_allocation_commits_exact_plan
     {state : LeaseAllocatorState}
     {requiredTableSlots payloadBytes : Nat}

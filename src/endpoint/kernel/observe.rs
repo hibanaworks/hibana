@@ -47,14 +47,21 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
         let port = self.port_for_lane(lane_idx);
-        match lane_port::poll_recv_frame_preamble(
+        let transport_poll = lane_port::poll_recv_frame_preamble(
             pending_recv,
             port,
             self.sid.raw(),
             lane_wire,
             ROLE,
             cx,
-        ) {
+        );
+        if let Some(kind) = self.session_fault() {
+            if let Poll::Ready(Ok(frame)) = transport_poll {
+                frame.discard_uncommitted();
+            }
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
+        match transport_poll {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(frame)) => Poll::Ready(Ok(frame)),
             Poll::Ready(Err(RecvError::Transport(err))) => {
@@ -95,7 +102,7 @@ where
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(in crate::endpoint::kernel) fn poll_accepted_transport_frame(
         &mut self,
         pending_recv: &mut lane_port::PendingRecv,
@@ -104,7 +111,14 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::ReceivedFrame<'r>>> {
         let port = self.port_for_lane(lane_idx);
-        match lane_port::poll_recv_frame(pending_recv, port, expected, cx) {
+        let transport_poll = lane_port::poll_recv_frame(pending_recv, port, expected, cx);
+        if let Some(kind) = self.session_fault() {
+            if let Poll::Ready(Ok(frame)) = transport_poll {
+                frame.discard_uncommitted();
+            }
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
+        match transport_poll {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(frame)) => Poll::Ready(Ok(frame)),
             Poll::Ready(Err(RecvError::Transport(err))) => {

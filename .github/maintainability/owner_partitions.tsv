@@ -192,6 +192,7 @@ tests	tests/tap_resolver_audit.rs
 tests	tests/lane_lifecycle_tap.rs
 tests	tests/local_action.rs
 tests	tests/local_only_hygiene.rs
+tests	tests/miri_runtime_owner
 tests	tests/miri_runtime_owner.rs
 tests	tests/nested_route_runtime.rs
 tests	tests/no_default_rodata.rs

@@ -292,9 +292,12 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn session_fault(&self) -> Option<SessionFaultKind> {
-        self.session
-            .cluster()
-            .session_fault(self.public_rv, self.sid)
+        self.session.cluster().session_fault(
+            self.public_rv,
+            self.public_slot,
+            self.public_generation,
+            self.sid,
+        )
     }
 
     #[inline]
@@ -302,9 +305,13 @@ where
         &self,
         cause: SessionFaultKind,
     ) -> SessionFaultKind {
-        self.session
-            .cluster()
-            .poison_session::<ROLE>(self.public_rv, self.sid, cause)
+        self.session.cluster().poison_session::<ROLE>(
+            self.public_rv,
+            self.public_slot,
+            self.public_generation,
+            self.sid,
+            cause,
+        )
     }
 
     #[inline]

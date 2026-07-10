@@ -32,15 +32,19 @@ The kernel-checked boundary covers:
   resolver rejection transition;
 - fail-closed endpoint lease generation exhaustion, strict successful
   generation increase, first-fault authority, poisoned-attach rejection, and
-  absence of poison-to-live revival before generation retirement.
+  absence of poison-to-live revival before generation retirement. Publication
+  after transport or resolver callbacks is permitted only if the same
+  generation remains live.
 - two-phase endpoint lease allocation, including general failure-state identity,
   exact successful commit, nonshrinking table capacity, and production-exported
   initial/growth planning failures, exact post-plan aborts, and compaction-aware
   aborts that preserve endpoint and observed lane authority plus every resident
   owner capacity while allowing frontier shrink. The production snapshot binds
   active-association cardinality and explicit session/lane witnesses as well as
-  allocator fields. Physical root relocation is normalized out of failure-state
-  equality and checked separately by slab certificates and Miri.
+  allocator fields. A generation poisoned by external callback re-entry after
+  planning is proved unable to publish and leaves allocator state unchanged.
+  Physical root relocation is normalized out of failure-state equality and
+  checked separately by slab certificates and Miri.
 
 The gate exports real production-cursor frontiers and descriptor topology from
 Rust and checks them as concrete Lean proofs. The generated corpus contains 13

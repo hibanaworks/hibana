@@ -18,6 +18,9 @@ use hibana::{
     },
 };
 
+#[path = "miri_runtime_owner/callback_reentry.rs"]
+mod callback_reentry;
+
 const OUTER_RESOLVER: u16 = 701;
 const INNER_RESOLVER: u16 = 702;
 
@@ -442,6 +445,12 @@ impl DropEndpointState {
             drop_target(target);
         }
     }
+
+    fn fire_if_armed(&self) {
+        if self.drop_target.get().is_some() {
+            self.fire();
+        }
+    }
 }
 
 unsafe fn drop_option<T>(target: *mut ()) {
@@ -661,11 +670,18 @@ fn transport_callback_reentry_uses_lease_waiter_outside_endpoint_storage() {
     let waker = counting_waker(&wake_count);
     let mut cx = Context::from_waker(&waker);
 
-    assert!(recv.as_mut().poll(&mut cx).is_pending());
+    let error = match recv.as_mut().poll(&mut cx) {
+        Poll::Ready(Err(error)) => error,
+        Poll::Ready(Ok(payload)) => {
+            core::hint::black_box(payload);
+            panic!("reentrant transport recv committed after dropping its peer");
+        }
+        Poll::Pending => panic!("reentrant transport recv deferred an already published fault"),
+    };
     assert!(state.fired.get());
     assert!(origin.is_none());
     assert_eq!(wake_count.get(), 1);
-    assert!(matches!(recv.as_mut().poll(&mut cx), Poll::Ready(Err(_))));
+    assert!(format!("{error:?}").contains("EndpointDropped"));
 }
 
 #[test]

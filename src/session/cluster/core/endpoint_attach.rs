@@ -48,7 +48,7 @@ where
             let lease = self
                 .lease_port(rv_id, sid, physical_lane, ROLE, role_count)
                 .map_err(AttachError::from)?;
-            let access = lease.into_port_guard();
+            let access = lease.into_port_guard().map_err(AttachError::from)?;
             /* SAFETY: secondary-lane attach owns the endpoint slot before
             publication. `logical_idx` selects initialized port/guard columns,
             and the lane lease has validated the physical lane for this session. */
@@ -97,7 +97,7 @@ where
         let session_lease = self
             .lease_port(rv_id, sid, session_wire_lane, ROLE, role_count)
             .map_err(AttachError::from)?;
-        let session_access = session_lease.into_port_guard();
+        let session_access = session_lease.into_port_guard().map_err(AttachError::from)?;
         let owner: crate::session::brand::Owner<'r> = /* SAFETY: the port guard
         owns the validated session brand for this attach operation; narrowing it
         to `'r` matches the endpoint lease lifetime that will hold the port. */ unsafe {

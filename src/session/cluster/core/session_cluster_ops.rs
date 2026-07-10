@@ -177,7 +177,10 @@ where
         slot: EndpointLeaseId,
         generation: u32,
     ) -> core::ptr::NonNull<crate::endpoint::carrier::KernelEndpointHeader<'cfg>> {
-        let rv = crate::invariant_some(self.get_local(&rv_id));
+        let rv = crate::invariant_some(
+            self.locals()
+                .published_endpoint_owner(rv_id, slot, generation),
+        );
         let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
         let (offset, len) = crate::invariant_some(rv.endpoint_lease_storage(slot, generation));
         let storage_end = crate::invariant_some(offset.checked_add(len));
@@ -197,21 +200,30 @@ where
     pub(crate) fn session_fault(
         &self,
         rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
         sid: SessionId,
     ) -> Option<crate::rendezvous::SessionFaultKind> {
-        crate::invariant_some(self.get_local(&rv_id)).session_fault(sid)
+        crate::invariant_some(
+            self.locals()
+                .published_endpoint_owner(rv_id, slot, generation),
+        )
+        .session_fault(sid)
     }
 
     #[inline]
     pub(crate) fn poison_session<const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
         sid: SessionId,
         cause: crate::rendezvous::SessionFaultKind,
     ) -> crate::rendezvous::SessionFaultKind {
-        let Some(rv) = self.get_local(&rv_id) else {
-            crate::invariant();
-        };
+        let rv = crate::invariant_some(
+            self.locals()
+                .published_endpoint_owner(rv_id, slot, generation),
+        );
         rv.poison_session(sid, ROLE, cause)
     }
 
@@ -254,7 +266,11 @@ where
         slot: EndpointLeaseId,
         generation: u32,
     ) {
-        crate::invariant_some(self.get_local(&rv_id)).release_endpoint_lease(slot, generation);
+        crate::invariant_some(
+            self.locals()
+                .published_endpoint_owner(rv_id, slot, generation),
+        )
+        .release_endpoint_lease(slot, generation);
     }
 
     pub(crate) fn replace_public_endpoint_waiter(
@@ -264,11 +280,11 @@ where
         generation: u32,
         replacement: core::task::Waker,
     ) -> Option<core::task::Waker> {
-        crate::invariant_some(self.get_local(&rv_id)).replace_endpoint_waiter(
-            slot,
-            generation,
-            replacement,
+        crate::invariant_some(
+            self.locals()
+                .published_endpoint_owner(rv_id, slot, generation),
         )
+        .replace_endpoint_waiter(slot, generation, replacement)
     }
 
     pub(crate) fn take_public_endpoint_waiter(
@@ -277,7 +293,11 @@ where
         slot: EndpointLeaseId,
         generation: u32,
     ) -> Option<core::task::Waker> {
-        crate::invariant_some(self.get_local(&rv_id)).take_endpoint_waiter(slot, generation)
+        crate::invariant_some(
+            self.locals()
+                .published_endpoint_owner(rv_id, slot, generation),
+        )
+        .take_endpoint_waiter(slot, generation)
     }
 
     pub(crate) fn publish_public_endpoint_slot(

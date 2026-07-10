@@ -39,8 +39,11 @@ import Hibana.MainTheorems
 #print axioms Hibana.session_generation_trace_checker_sound
 #print axioms Hibana.poisoned_generation_step_never_revives
 #print axioms Hibana.poisoned_generation_attach_rejected
+#print axioms Hibana.poisoned_generation_publish_rejected
+#print axioms Hibana.publication_permitted_implies_live
 #print axioms Hibana.poisoned_generation_trace_never_revives
 #print axioms Hibana.failed_lease_allocation_preserves_state
+#print axioms Hibana.poisoned_generation_aborts_lease_publication
 #print axioms Hibana.successful_lease_allocation_commits_exact_plan
 #print axioms Hibana.prepared_lease_generation_strictly_increases
 #print axioms Hibana.prepared_lease_capacity_never_shrinks

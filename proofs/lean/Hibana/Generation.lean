@@ -55,6 +55,22 @@ inductive SessionGenerationState where
   | retired
   deriving DecidableEq
 
+/-- Publication after external code returns is allowed only while the same
+session generation remains live. -/
+def SessionGenerationState.publicationPermitted : SessionGenerationState -> Bool
+  | .live => true
+  | .poisoned _ => false
+  | .retired => false
+
+theorem poisoned_generation_publish_rejected (cause : SessionFault) :
+    SessionGenerationState.publicationPermitted (.poisoned cause) = false := rfl
+
+theorem publication_permitted_implies_live
+    {state : SessionGenerationState}
+    (permitted : state.publicationPermitted = true) :
+    state = .live := by
+  cases state <;> simp_all [SessionGenerationState.publicationPermitted]
+
 inductive SessionGenerationAction where
   | attach
   | poison (cause : SessionFault)

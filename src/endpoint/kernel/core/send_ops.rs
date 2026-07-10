@@ -250,7 +250,12 @@ where
         let lane_idx = pending.lane_idx();
         let port = self.port_for_lane(lane_idx);
         let lane_wire = pending.lane_wire();
-        match lane_port::poll_send_outgoing(&mut pending.transport, port, cx) {
+        let transport_poll = lane_port::poll_send_outgoing(&mut pending.transport, port, cx);
+        if let Some(kind) = self.session_fault() {
+            lane_port::cancel_send_outgoing(&mut pending.transport, port);
+            return Poll::Ready(Err(SendError::SessionFault(kind)));
+        }
+        match transport_poll {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(err)) => {

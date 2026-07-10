@@ -419,8 +419,10 @@ where
         }
     }
 
-    pub(crate) fn into_port_guard(mut self) -> LanePortAccess<'lease, 'cfg, T> {
-        let (port, guard) = {
+    pub(crate) fn into_port_guard(
+        mut self,
+    ) -> Result<LanePortAccess<'lease, 'cfg, T>, RendezvousError> {
+        let opened = {
             let lease = crate::invariant_some(self.lease.as_mut());
             let rv_ptr: *const Rendezvous<'cfg, 'cfg, T> =
                 lease.with_rendezvous(core::ptr::from_ref);
@@ -437,13 +439,14 @@ where
                 active_leases,
             )
         };
+        let (port, guard) = opened?;
         self.lease = None;
         self.active_leases = None;
-        LanePortAccess {
+        Ok(LanePortAccess {
             port,
             lane_guard: guard,
             brand: self.brand,
-        }
+        })
     }
 }
 
