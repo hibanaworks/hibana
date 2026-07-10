@@ -15,5 +15,6 @@ src/global/role_program/image_impl	role-resident-column-access	resident role blo
 src/global/typestate	typestate-cursor-authority	cursor, facts, lane progress, navigation, and scope-route ownership
 src/global/typestate/cursor	typestate-cursor-subowners	cursor lane progress, route navigation, and route commit cursor ownership
 src/rendezvous	rendezvous-root	rendezvous association, core, port, tables, and waiter ownership
+src/rendezvous/core	resident-allocation-authority	access port, endpoint lease, lane lifecycle, and slab layout ownership
 tests	runtime-test-surface	runtime, UI, public surface, semantic surface, and runtime regression ownership
 tests/semantic_surface	semantic-surface-regression-gates	source-shape semantic guards for endpoint runtime, descriptor measurement, docs, and transport ownership

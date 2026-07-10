@@ -7,7 +7,7 @@ GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
 EXPECTED_MARKER="hibana Lean generated proof passed traces=13 frames=55 projections=7 progress=4"
-EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=5 poison=1 generation=1 atomic-failures=3"
+EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=5 poison=1 generation=1 atomic-failures=4"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
 if [[ ! -f "${PROOF_DIR}/lean-toolchain" ]] \
@@ -80,7 +80,8 @@ for theorem in \
   successful_lease_allocation_commits_exact_plan \
   prepared_lease_generation_strictly_increases \
   prepared_lease_capacity_never_shrinks \
-  lease_allocation_failure_certificate_sound; do
+  lease_allocation_failure_certificate_sound \
+  lease_allocation_abort_certificate_sound; do
   if ! rg -q "^theorem ${theorem}\b" "${PROOF_DIR}/Hibana"; then
     echo "Lean proof gate missing theorem: ${theorem}" >&2
     exit 1
@@ -94,11 +95,11 @@ done
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
-if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "19" ]] \
+if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "20" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
   || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "20" ]] \
   || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "6" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "45" ]]; then
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "46" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi
@@ -139,4 +140,4 @@ if [[ "${runtime_lean_output}" != *"${EXPECTED_RUNTIME_MARKER}"* ]]; then
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=13 frames=55 projections=7 progress=4 runtime-regions=5 atomic-failures=3"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=13 frames=55 projections=7 progress=4 runtime-regions=5 atomic-failures=4"

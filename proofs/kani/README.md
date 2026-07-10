@@ -8,8 +8,13 @@ The pinned gate exhausts the production arithmetic for:
 
 - fail-closed endpoint lease generation;
 - aligned endpoint placement inside a selected gap;
+- exact endpoint-lease table sizing and 32-bit bounds across the full `u16`
+  capacity domain;
 - aligned, monotonic resident-sidecar packing;
-- exact symmetric sidecar-range collision detection.
+- aligned, pairwise-disjoint sequential sidecar packing;
+- exact symmetric sidecar-range collision detection;
+- exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
+  capacity domain.
 
 The harnesses cover both successful and rejected symbolic inputs. They use no
 arbitrary role, lane, descriptor, or slab capacity bound. Lean proves the

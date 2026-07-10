@@ -68,3 +68,27 @@ fn public_surface_and_gates_do_not_retain_forbidden_role_token_api() {
         "surface hygiene gate must check forbidden role-token residue with explicit guard-file scope"
     );
 }
+
+#[test]
+fn test_transport_state_has_one_safe_shared_owner() {
+    let transport = read("tests/common/mod.rs");
+    assert!(transport.contains("state: Rc<RefCell<TestState>>"));
+    assert!(transport.contains("state: &'a RefCell<TestState>"));
+    assert!(transport.contains("state: Rc::new(RefCell::new(TestState::new()))"));
+    for forbidden in [
+        "TransportPool",
+        "TransportSlot",
+        "TEST_TRANSPORT_POOL_CAPACITY",
+        "UnsafeCell",
+        "MaybeUninit",
+        "thread_local!",
+        "pool as *const TransportPool",
+        "unsafe",
+        "core::ptr",
+    ] {
+        assert!(
+            !transport.contains(forbidden),
+            "test transport state must not retain manual pool ownership: {forbidden}"
+        );
+    }
+}

@@ -1,12 +1,11 @@
-use core::ptr;
 use hibana::runtime::{
     ids::SessionId,
     transport::{FrameHeader, ReceivedFrame, Transport, TransportError},
     wire::Payload,
 };
-use std::cell::UnsafeCell;
 use std::{
-    mem::MaybeUninit,
+    cell::RefCell,
+    rc::Rc,
     task::{Context, Poll, Waker},
 };
 
@@ -14,7 +13,6 @@ const TEST_ROLE_CAPACITY: usize = 5;
 const TEST_QUEUE_CAPACITY: usize = 16;
 const TEST_LANE_CAPACITY: usize = 256;
 const TEST_FRAME_PAYLOAD_CAPACITY: usize = 128;
-const TEST_TRANSPORT_POOL_CAPACITY: usize = 4;
 
 pub(crate) const fn frame_header_from_parts(
     session: SessionId,
@@ -36,16 +34,6 @@ pub(crate) const fn frame_header_from_parts(
     ])
 }
 
-unsafe fn init_option_array<T, const N: usize>(dst: *mut Option<T>) {
-    let mut idx = 0usize;
-    while idx < N {
-        unsafe {
-            dst.add(idx).write(None);
-        }
-        idx += 1;
-    }
-}
-
 pub(crate) struct FixedQueue<T, const N: usize> {
     items: [Option<T>; N],
     head: usize,
@@ -53,22 +41,12 @@ pub(crate) struct FixedQueue<T, const N: usize> {
 }
 
 impl<T, const N: usize> FixedQueue<T, N> {
-    unsafe fn init(dst: *mut Self) {
-        unsafe {
-            init_option_array::<T, N>(ptr::addr_of_mut!((*dst).items).cast::<Option<T>>());
-            ptr::addr_of_mut!((*dst).head).write(0);
-            ptr::addr_of_mut!((*dst).len).write(0);
+    fn new() -> Self {
+        Self {
+            items: core::array::from_fn(|_| None),
+            head: 0,
+            len: 0,
         }
-    }
-
-    fn reset(&mut self) {
-        let mut idx = 0usize;
-        while idx < N {
-            self.items[idx] = None;
-            idx += 1;
-        }
-        self.head = 0;
-        self.len = 0;
     }
 
     fn push_back(&mut self, item: T) {
@@ -183,19 +161,10 @@ pub(crate) struct RoleState {
 }
 
 impl RoleState {
-    unsafe fn init(dst: *mut Self) {
-        unsafe {
-            FixedQueue::init(ptr::addr_of_mut!((*dst).queue));
-            init_option_array::<Waker, TEST_LANE_CAPACITY>(
-                ptr::addr_of_mut!((*dst).waiters).cast::<Option<Waker>>(),
-            );
-        }
-    }
-
-    fn reset(&mut self) {
-        self.queue.reset();
-        for waiter in &mut self.waiters {
-            *waiter = None;
+    fn new() -> Self {
+        Self {
+            queue: FixedQueue::new(),
+            waiters: core::array::from_fn(|_| None),
         }
     }
 
@@ -219,20 +188,9 @@ pub(crate) struct TestState {
 }
 
 impl TestState {
-    unsafe fn init(dst: *mut Self) {
-        let roles = unsafe { ptr::addr_of_mut!((*dst).roles).cast::<RoleState>() };
-        let mut idx = 0usize;
-        while idx < TEST_ROLE_CAPACITY {
-            unsafe {
-                RoleState::init(roles.add(idx));
-            }
-            idx += 1;
-        }
-    }
-
-    fn reset(&mut self) {
-        for role in &mut self.roles {
-            role.reset();
+    fn new() -> Self {
+        Self {
+            roles: core::array::from_fn(|_| RoleState::new()),
         }
     }
 
@@ -274,103 +232,6 @@ impl TestState {
     }
 }
 
-struct TransportPool {
-    initialized: UnsafeCell<[bool; TEST_TRANSPORT_POOL_CAPACITY]>,
-    refs: UnsafeCell<[usize; TEST_TRANSPORT_POOL_CAPACITY]>,
-    states: UnsafeCell<[MaybeUninit<TestState>; TEST_TRANSPORT_POOL_CAPACITY]>,
-}
-
-impl TransportPool {
-    const fn new() -> Self {
-        Self {
-            initialized: UnsafeCell::new([false; TEST_TRANSPORT_POOL_CAPACITY]),
-            refs: UnsafeCell::new([0; TEST_TRANSPORT_POOL_CAPACITY]),
-            states: UnsafeCell::new(
-                [const { MaybeUninit::uninit() }; TEST_TRANSPORT_POOL_CAPACITY],
-            ),
-        }
-    }
-
-    fn ensure_slot_initialized(&self, idx: usize) {
-        assert!(
-            idx < TEST_TRANSPORT_POOL_CAPACITY,
-            "transport slot out of range"
-        );
-        unsafe {
-            let initialized = &mut *self.initialized.get();
-            if !initialized[idx] {
-                let states = &mut *self.states.get();
-                TestState::init(states[idx].as_mut_ptr());
-                initialized[idx] = true;
-            }
-        }
-    }
-
-    fn allocate(&self) -> Option<usize> {
-        unsafe {
-            let refs = &mut *self.refs.get();
-            let states = &mut *self.states.get();
-            let mut idx = 0usize;
-            while idx < TEST_TRANSPORT_POOL_CAPACITY {
-                if refs[idx] == 0 {
-                    self.ensure_slot_initialized(idx);
-                    refs[idx] = 1;
-                    (&mut *states[idx].as_mut_ptr()).reset();
-                    return Some(idx);
-                }
-                idx += 1;
-            }
-            None
-        }
-    }
-
-    fn ref_inc(&self, idx: usize) {
-        unsafe {
-            let refs = &mut *self.refs.get();
-            refs[idx] += 1;
-        }
-    }
-
-    fn ref_dec(&self, idx: usize) {
-        unsafe {
-            let refs = &mut *self.refs.get();
-            assert!(refs[idx] > 0, "test transport slot refcount underflow");
-            refs[idx] -= 1;
-        }
-    }
-
-    fn state_with<R>(&self, idx: usize, f: impl FnOnce(&TestState) -> R) -> R {
-        self.ensure_slot_initialized(idx);
-        unsafe { f(&*(*self.states.get())[idx].as_ptr()) }
-    }
-
-    fn state_with_mut<R>(&self, idx: usize, f: impl FnOnce(&mut TestState) -> R) -> R {
-        self.ensure_slot_initialized(idx);
-        unsafe { f(&mut *(*self.states.get())[idx].as_mut_ptr()) }
-    }
-}
-
-impl Drop for TransportPool {
-    fn drop(&mut self) {
-        unsafe {
-            let initialized = &mut *self.initialized.get();
-            let states = &mut *self.states.get();
-            let mut idx = 0usize;
-            while idx < TEST_TRANSPORT_POOL_CAPACITY {
-                if initialized[idx] {
-                    core::ptr::drop_in_place(states[idx].as_mut_ptr());
-                    initialized[idx] = false;
-                }
-                idx += 1;
-            }
-        }
-    }
-}
-
-std::thread_local! {
-    static TRANSPORT_POOL: TransportPool = const { TransportPool::new() };
-}
-
 pub(crate) struct TestTx {
     pub(crate) session_id: SessionId,
     pub(crate) local_role: u8,
@@ -379,8 +240,7 @@ pub(crate) struct TestTx {
 }
 
 pub(crate) struct TestRx<'a> {
-    pool: &'a TransportPool,
-    slot: usize,
+    state: &'a RefCell<TestState>,
     role: u8,
     lane: u8,
     current: Option<FrameOwned>,
@@ -388,28 +248,22 @@ pub(crate) struct TestRx<'a> {
 }
 
 pub(crate) struct TestTransport {
-    pool: &'static TransportPool,
-    slot: usize,
+    state: Rc<RefCell<TestState>>,
 }
 
 impl TestTransport {
     pub(crate) fn new() -> Self {
-        TRANSPORT_POOL.with(|pool| {
-            if let Some(slot) = pool.allocate() {
-                let pool_ref = unsafe { &*(pool as *const TransportPool) };
-                return Self {
-                    pool: pool_ref,
-                    slot,
-                };
-            }
-            panic!("test transport slot pool exhausted");
-        })
+        Self {
+            state: Rc::new(RefCell::new(TestState::new())),
+        }
     }
 
     pub(crate) fn queue_is_empty(&self) -> bool {
-        self.pool.state_with(self.slot, |state| {
-            state.roles.iter().all(|role| role.queue.len == 0)
-        })
+        self.state
+            .borrow()
+            .roles
+            .iter()
+            .all(|role| role.queue.len == 0)
     }
 
     pub(crate) fn stage_send(
@@ -456,9 +310,7 @@ impl TestTransport {
     pub(crate) fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TransportError>> {
         let role = tx.pending_role.take().expect("queued role");
         let frame = tx.pending_frame.take().expect("queued frame");
-        let waiters = self
-            .pool
-            .state_with_mut(self.slot, |state| state.enqueue(role, frame));
+        let waiters = self.state.borrow_mut().enqueue(role, frame);
         waiters.wake_all();
         Poll::Ready(Ok(()))
     }
@@ -477,14 +329,15 @@ impl TestTransport {
             rx.current = None;
         }
         if rx.current.is_none() {
-            let dequeued = rx.pool.state_with_mut(rx.slot, |state| {
+            let dequeued = {
+                let mut state = rx.state.borrow_mut();
                 if let Some(frame) = state.dequeue(rx.role, rx.lane) {
                     Some(frame)
                 } else {
                     state.add_waiter(rx.role, rx.lane, cx.waker().clone());
                     None
                 }
-            });
+            };
             if let Some(frame) = dequeued {
                 rx.current_hint_drained.set(frame.hint_drained);
                 rx.current = Some(frame);
@@ -492,7 +345,7 @@ impl TestTransport {
                 return Poll::Pending;
             }
         }
-        let frame = rx.current.as_ref().expect("current frame");
+        let frame: &'a FrameOwned = rx.current.as_ref().expect("current frame");
         let header = frame_header_from_parts(
             frame.session_id,
             frame.lane,
@@ -500,16 +353,14 @@ impl TestTransport {
             rx.role,
             frame.frame_label,
         );
-        let bytes: &'a [u8] = unsafe { &*(frame.as_slice() as *const [u8]) };
+        let bytes: &'a [u8] = frame.as_slice();
         Poll::Ready(Ok(ReceivedFrame::framed(header, Payload::new(bytes))))
     }
 
     pub(crate) fn open_rx(&self, role: u8, lane: u8) -> TestRx<'_> {
-        self.pool
-            .state_with(self.slot, |state| state.ensure_role(role));
+        self.state.borrow().ensure_role(role);
         TestRx {
-            pool: self.pool,
-            slot: self.slot,
+            state: self.state.as_ref(),
             role,
             lane,
             current: None,
@@ -520,10 +371,8 @@ impl TestTransport {
 
 impl Clone for TestTransport {
     fn clone(&self) -> Self {
-        self.pool.ref_inc(self.slot);
         Self {
-            pool: self.pool,
-            slot: self.slot,
+            state: Rc::clone(&self.state),
         }
     }
 }
@@ -532,12 +381,6 @@ const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
 const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
 const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
     TestTransport::stage_send_with_session;
-
-impl Drop for TestTransport {
-    fn drop(&mut self) {
-        self.pool.ref_dec(self.slot);
-    }
-}
 
 impl Transport for TestTransport {
     type Tx<'a>
@@ -556,8 +399,7 @@ impl Transport for TestTransport {
         let local_role = port.local_role();
         let session_id = port.session_id();
         let lane = port.lane();
-        self.pool
-            .state_with(self.slot, |state| state.ensure_role(local_role));
+        self.state.borrow().ensure_role(local_role);
         (
             TestTx {
                 session_id,
@@ -566,8 +408,7 @@ impl Transport for TestTransport {
                 pending_frame: None,
             },
             TestRx {
-                pool: self.pool,
-                slot: self.slot,
+                state: self.state.as_ref(),
                 role: local_role,
                 lane,
                 current: None,
@@ -611,8 +452,7 @@ impl Transport for TestTransport {
         if let Some(mut frame) = rx.current.take() {
             frame.hint_drained = false;
             rx.current_hint_drained.set(false);
-            rx.pool
-                .state_with_mut(rx.slot, |state| state.requeue(rx.role, frame));
+            rx.state.borrow_mut().requeue(rx.role, frame);
         }
         Ok(())
     }

@@ -1,8 +1,10 @@
 use super::{
-    arena::packed_sidecar_range, endpoint_lease::next_endpoint_lease_generation,
+    arena::packed_sidecar_range,
+    endpoint_lease::{endpoint_lease_storage_bytes, next_endpoint_lease_generation},
     resident_lease::sidecar_ranges_overlap,
 };
-use crate::rendezvous::core::endpoint_leases::endpoint_offset_in_gap;
+use crate::rendezvous::core::{EndpointLeaseRecord, endpoint_leases::endpoint_offset_in_gap};
+use crate::session::cluster::core::ResolverBucket;
 
 #[kani::proof]
 fn endpoint_generation_advances_or_exhausts() {
@@ -33,14 +35,37 @@ fn endpoint_gap_placement_is_aligned_and_bounded() {
     kani::cover!(placement.is_some());
     kani::cover!(placement.is_none());
     if let Some(offset) = placement {
+        let unaligned = base
+            .checked_add(gap_end - bytes)
+            .expect("successful placement has a representable upper bound");
+        let absolute = base
+            .checked_add(offset)
+            .expect("successful placement has a representable address");
         assert!(offset >= gap_start);
         assert!(gap_end >= bytes);
         assert!(offset.checked_add(bytes).is_some_and(|end| end <= gap_end));
+        assert!(absolute <= unaligned);
+        assert!(unaligned - absolute < align);
         assert!(
             base.checked_add(offset)
                 .is_some_and(|absolute| absolute & (align - 1) == 0)
         );
     }
+}
+
+#[kani::proof]
+fn endpoint_lease_storage_layout_is_bounded_and_exact() {
+    let capacity = usize::from(kani::any::<u16>());
+    let record_bytes = core::mem::size_of::<EndpointLeaseRecord>();
+    let storage_bytes = endpoint_lease_storage_bytes(capacity)
+        .expect("the full u16 endpoint capacity domain must fit resident storage arithmetic");
+
+    kani::cover!(capacity == 0);
+    kani::cover!(capacity == usize::from(u16::MAX));
+    assert!(record_bytes != 0);
+    assert!(core::mem::align_of::<EndpointLeaseRecord>().is_power_of_two());
+    assert!(record_bytes.checked_mul(capacity) == Some(storage_bytes));
+    assert!(storage_bytes <= u32::MAX as usize);
 }
 
 #[kani::proof]
@@ -65,6 +90,42 @@ fn packed_sidecar_range_is_aligned_and_monotonic() {
 }
 
 #[kani::proof]
+fn packed_sidecar_pair_is_aligned_and_disjoint() {
+    let base: usize = kani::any();
+    let frontier: usize = kani::any();
+    let first_bytes: usize = kani::any();
+    let second_bytes: usize = kani::any();
+    let first_align: usize = kani::any();
+    let second_align: usize = kani::any();
+    kani::assume(first_align.is_power_of_two());
+    kani::assume(second_align.is_power_of_two());
+
+    let pair = packed_sidecar_range(base, frontier, first_bytes, first_align).and_then(
+        |(first_start, first_end)| {
+            packed_sidecar_range(base, first_end, second_bytes, second_align).map(
+                |(second_start, second_end)| (first_start, first_end, second_start, second_end),
+            )
+        },
+    );
+    kani::cover!(pair.is_some());
+    kani::cover!(pair.is_none());
+    if let Some((first_start, first_end, second_start, second_end)) = pair {
+        assert!(first_start >= frontier);
+        assert!(first_end <= second_start);
+        assert!(first_end.checked_sub(first_start) == Some(first_bytes));
+        assert!(second_end.checked_sub(second_start) == Some(second_bytes));
+        assert!(
+            base.checked_add(first_start)
+                .is_some_and(|absolute| absolute & (first_align - 1) == 0)
+        );
+        assert!(
+            base.checked_add(second_start)
+                .is_some_and(|absolute| absolute & (second_align - 1) == 0)
+        );
+    }
+}
+
+#[kani::proof]
 fn sidecar_overlap_is_symmetric_and_exact() {
     let left_start: usize = kani::any();
     let left_end: usize = kani::any();
@@ -78,4 +139,20 @@ fn sidecar_overlap_is_symmetric_and_exact() {
     kani::cover!(!overlap);
     assert!(overlap == sidecar_ranges_overlap(right_start, right_end, left_start, left_end));
     assert!(overlap == !(left_end <= right_start || right_end <= left_start));
+}
+
+#[kani::proof]
+fn resolver_storage_layout_is_bounded_and_exact() {
+    let capacity: u16 = kani::any();
+    let capacity = usize::from(capacity);
+    let entry_bytes = ResolverBucket::storage_bytes(1);
+    let storage_bytes = ResolverBucket::storage_bytes(capacity);
+    let align = ResolverBucket::storage_align();
+
+    kani::cover!(capacity == 0);
+    kani::cover!(capacity == usize::from(u16::MAX));
+    assert!(entry_bytes != 0);
+    assert!(align.is_power_of_two());
+    assert!(entry_bytes.checked_mul(capacity) == Some(storage_bytes));
+    assert!(storage_bytes <= u32::MAX as usize);
 }

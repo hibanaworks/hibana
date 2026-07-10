@@ -150,6 +150,12 @@ structure LeaseSlotSnapshot where
   state : Nat
   deriving DecidableEq
 
+structure LeaseAssociationWitness where
+  session : Nat
+  lane : Nat
+  attached : Bool
+  deriving DecidableEq
+
 structure LeaseAllocatorSnapshot where
   generation : Nat
   tableBytes : Nat
@@ -159,6 +165,8 @@ structure LeaseAllocatorSnapshot where
   imageFrontier : Nat
   workspaceBytes : Nat
   endpointFloor : Nat
+  activeLaneAttachments : Nat
+  associationWitnesses : List LeaseAssociationWitness
   slots : List LeaseSlotSnapshot
   deriving DecidableEq
 
@@ -179,5 +187,47 @@ theorem lease_allocation_failure_certificate_sound
     (accepted : certificate.check = true) : certificate.PreservesState := by
   simpa [LeaseAllocationFailureCertificate.check,
     LeaseAllocationFailureCertificate.PreservesState] using accepted
+
+structure LeaseAllocationAbortCertificate where
+  before : LeaseAllocatorSnapshot
+  after : LeaseAllocatorSnapshot
+
+def LeaseAllocationAbortCertificate.PreservesAuthorityAndCapacity
+    (certificate : LeaseAllocationAbortCertificate) : Prop :=
+  certificate.after.generation = certificate.before.generation /\
+  certificate.after.tableBytes = certificate.before.tableBytes /\
+  certificate.after.assocBytes = certificate.before.assocBytes /\
+  certificate.after.routeBytes = certificate.before.routeBytes /\
+  certificate.after.resolverBytes = certificate.before.resolverBytes /\
+  certificate.after.workspaceBytes = certificate.before.workspaceBytes /\
+  certificate.after.endpointFloor = certificate.before.endpointFloor /\
+  certificate.after.activeLaneAttachments = certificate.before.activeLaneAttachments /\
+  certificate.after.associationWitnesses = certificate.before.associationWitnesses /\
+  certificate.after.slots = certificate.before.slots /\
+  certificate.after.imageFrontier <= certificate.before.imageFrontier
+
+def LeaseAllocationAbortCertificate.check
+    (certificate : LeaseAllocationAbortCertificate) : Bool :=
+  certificate.after.generation == certificate.before.generation &&
+    (certificate.after.tableBytes == certificate.before.tableBytes &&
+      (certificate.after.assocBytes == certificate.before.assocBytes &&
+        (certificate.after.routeBytes == certificate.before.routeBytes &&
+          (certificate.after.resolverBytes == certificate.before.resolverBytes &&
+            (certificate.after.workspaceBytes == certificate.before.workspaceBytes &&
+              (certificate.after.endpointFloor == certificate.before.endpointFloor &&
+                (certificate.after.activeLaneAttachments ==
+                    certificate.before.activeLaneAttachments &&
+                  (certificate.after.associationWitnesses ==
+                      certificate.before.associationWitnesses &&
+                    (certificate.after.slots == certificate.before.slots &&
+                      certificate.after.imageFrontier <=
+                        certificate.before.imageFrontier)))))))))
+
+theorem lease_allocation_abort_certificate_sound
+    {certificate : LeaseAllocationAbortCertificate}
+    (accepted : certificate.check = true) :
+    certificate.PreservesAuthorityAndCapacity := by
+  simpa [LeaseAllocationAbortCertificate.check,
+    LeaseAllocationAbortCertificate.PreservesAuthorityAndCapacity] using accepted
 
 end Hibana

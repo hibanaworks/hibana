@@ -25,6 +25,21 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         read("tests/affine_progression.rs"),
     ]
     .join("\n");
+    let raw_offer_constructor = branch
+        .split("impl<'e, 'r, const ROLE: u8> RawOfferFuture")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(super) fn poll_raw").next())
+        .expect("raw offer constructor must stay visible");
+    let offer_lease = raw_offer_constructor
+        .find("let lease = endpoint.init_public_offer_state();")
+        .expect("offer state must be initialized");
+    let endpoint_pointer = raw_offer_constructor
+        .find("let endpoint_ptr = core::ptr::from_mut(endpoint);")
+        .expect("offer future must capture the endpoint pointer");
+    assert!(
+        offer_lease < endpoint_pointer,
+        "offer initialization must finish before creating the future's raw endpoint pointer"
+    );
 
     for required in [
         "pub(in crate::endpoint) enum PublicActiveOp",

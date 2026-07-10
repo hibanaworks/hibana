@@ -35,9 +35,11 @@ The kernel-checked boundary covers:
   absence of poison-to-live revival before generation retirement.
 - two-phase endpoint lease allocation, including general failure-state identity,
   exact successful commit, nonshrinking table capacity, and production-exported
-  initial/growth planning failures and post-plan initialization aborts, with
-  production snapshots covering every resident owner capacity and allocator
-  authority field. Physical root relocation is normalized out of failure-state
+  initial/growth planning failures, exact post-plan aborts, and compaction-aware
+  aborts that preserve endpoint and observed lane authority plus every resident
+  owner capacity while allowing frontier shrink. The production snapshot binds
+  active-association cardinality and explicit session/lane witnesses as well as
+  allocator fields. Physical root relocation is normalized out of failure-state
   equality and checked separately by slab certificates and Miri.
 
 The gate exports real production-cursor frontiers and descriptor topology from
@@ -48,7 +50,7 @@ intrinsic route arms, send/receive projections, nested and repeated roll
 restart, resolved left/right arms, nested resolver sites, alternating resolved
 roll reentry, and resolver rejection. A separate production runtime export
 checks a five-region live slab, poison retirement, lease-generation exhaustion,
-and three allocation-failure atomicity certificates.
+and four allocation-failure atomicity certificates.
 
 This is not a source-to-source proof of arbitrary Rust. The topology certificate
 intentionally compares virtual-lane-independent facts because production packs

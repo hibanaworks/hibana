@@ -18,7 +18,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("harnesses=4 backend=CBMC"));
+    assert!(script.contains("harnesses=7 backend=CBMC"));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
@@ -34,8 +34,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     for harness in [
         "endpoint_generation_advances_or_exhausts",
         "endpoint_gap_placement_is_aligned_and_bounded",
+        "endpoint_lease_storage_layout_is_bounded_and_exact",
         "packed_sidecar_range_is_aligned_and_monotonic",
+        "packed_sidecar_pair_is_aligned_and_disjoint",
         "sidecar_overlap_is_symmetric_and_exact",
+        "resolver_storage_layout_is_bounded_and_exact",
     ] {
         assert!(harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));

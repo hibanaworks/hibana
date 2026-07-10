@@ -591,6 +591,8 @@ fn aborted_endpoint_reservation_restores_generation_and_owner_capacities() {
     assert_eq!(rv.endpoint_lease_slot_count(), 1);
     assert!(rv.image_frontier.get() <= frontier_before);
     assert_eq!(resident_owner_capacities(rv), owners_before);
+    assert_eq!(rv.active_lane_attachment_count(), 1);
+    assert!(rv.has_lane_attachment(first_sid, crate::session::types::Lane::new(0)));
     assert_eq!(
         rv.endpoint_lease_slot_by_index(usize::from(first_slot)),
         Some(first_before)

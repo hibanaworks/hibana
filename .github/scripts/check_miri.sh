@@ -60,8 +60,8 @@ run_miri_test() {
 
 run_miri_test \
   public-runtime-owner \
-  8 \
-  8 \
+  11 \
+  11 \
   0 \
   -p hibana \
   --test miri_runtime_owner
@@ -76,6 +76,14 @@ run_miri_test \
   rendezvous::core::endpoint_waiter::tests
 
 run_miri_test \
+  offer-branch-owner \
+  11 \
+  11 \
+  0 \
+  -p hibana \
+  --test offer_branch_recv_evidence
+
+run_miri_test \
   resident-sidecar-owner \
   20 \
   19 \
@@ -84,4 +92,4 @@ run_miri_test \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=29 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=43 ignored=1"

@@ -19,6 +19,11 @@ pub(in crate::rendezvous::core) const fn next_endpoint_lease_generation(
     current.checked_add(1)
 }
 
+#[inline]
+pub(super) fn endpoint_lease_storage_bytes(capacity: usize) -> Option<usize> {
+    capacity.checked_mul(core::mem::size_of::<EndpointLeaseRecord>())
+}
+
 impl EndpointLeaseRecord {
     fn take_published_waiter(&self) -> Option<core::task::Waker> {
         if !self.slot().is_published() {
@@ -184,11 +189,6 @@ where
         Some(next)
     }
 
-    #[inline]
-    fn endpoint_lease_storage_bytes(capacity: usize) -> Option<usize> {
-        capacity.checked_mul(core::mem::size_of::<EndpointLeaseRecord>())
-    }
-
     pub(in crate::rendezvous::core) fn plan_endpoint_lease_capacity(
         &self,
         required_slots: usize,
@@ -200,8 +200,8 @@ where
         if EndpointLeaseId::try_from(required_slots).is_err() {
             return Err(ResourceScope::EndpointLease);
         }
-        let bytes = Self::endpoint_lease_storage_bytes(required_slots)
-            .ok_or(ResourceScope::EndpointLease)?;
+        let bytes =
+            endpoint_lease_storage_bytes(required_slots).ok_or(ResourceScope::EndpointLease)?;
         let lease = self
             .plan_persistent_sidecar_bytes(bytes, core::mem::align_of::<EndpointLeaseRecord>())
             .ok_or(ResourceScope::EndpointLease)?;
@@ -288,7 +288,7 @@ where
             self.retire_persistent_sidecar(source.cast());
             return;
         }
-        let bytes = crate::invariant_some(Self::endpoint_lease_storage_bytes(required_slots));
+        let bytes = crate::invariant_some(endpoint_lease_storage_bytes(required_slots));
         self.endpoint_lease_storage
             .set(Sidecar::from_raw_parts(source.ptr(), bytes));
         self.compact_live_sidecars();

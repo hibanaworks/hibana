@@ -118,8 +118,8 @@ impl<'e, 'r, const ROLE: u8> Drop for RouteBranch<'e, 'r, ROLE> {
 impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
-        let endpoint_ptr = core::ptr::from_mut(endpoint);
         let lease = endpoint.init_public_offer_state();
+        let endpoint_ptr = core::ptr::from_mut(endpoint);
         Self {
             endpoint: endpoint_ptr,
             lease: OfferFutureLease::from_public_lease(lease),

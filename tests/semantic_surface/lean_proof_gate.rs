@@ -109,7 +109,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && runtime_exporter.contains("rv.live_sidecars()")
             && runtime_exporter.contains("layout_certificate_source")
             && runtime_exporter
-                .contains("regions={region_count} poison=1 generation=1 atomic-failures=3"),
+                .contains("regions={region_count} poison=1 generation=1 atomic-failures=4"),
         "layout and logical-progress certificates must be generated from live production owners and checked as closed finite models"
     );
     assert!(
@@ -131,12 +131,19 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && allocation.contains("if publishReady then")
             && allocation.contains("theorem failed_lease_allocation_preserves_state")
             && allocation.contains("structure LeaseAllocationFailureCertificate")
+            && allocation.contains("structure LeaseAllocationAbortCertificate")
+            && allocation.contains("PreservesAuthorityAndCapacity")
+            && allocation.contains("activeLaneAttachments : Nat")
+            && allocation.contains("associationWitnesses : List LeaseAssociationWitness")
             && allocation.contains("assocBytes : Nat")
             && allocation.contains("routeBytes : Nat")
             && allocation.contains("resolverBytes : Nat")
             && runtime_exporter.contains("generatedInitialAllocationFailure")
             && runtime_exporter.contains("generatedGrowthAllocationFailure")
             && runtime_exporter.contains("generatedAbortedAllocation")
+            && runtime_exporter.contains("generatedCompactingAbort")
+            && runtime_exporter.contains("rv.active_lane_attachment_count()")
+            && runtime_exporter.contains("rv.has_lane_attachment(*sid, *lane)")
             && runtime_exporter.contains("rv.assoc_storage.get()")
             && runtime_exporter.contains("rv.route_storage.get()")
             && runtime_exporter.contains("rv.resolver_storage_sidecar()"),
@@ -188,6 +195,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem prepared_lease_generation_strictly_increases",
         "theorem prepared_lease_capacity_never_shrinks",
         "theorem lease_allocation_failure_certificate_sound",
+        "theorem lease_allocation_abort_certificate_sound",
     ] {
         assert!(
             syntax.contains(theorem)
@@ -218,10 +226,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && axiom_audit.contains("#print axioms Hibana.poisoned_generation_trace_never_revives")
             && axiom_audit
                 .contains("#print axioms Hibana.lease_allocation_failure_certificate_sound")
+            && axiom_audit
+                .contains("#print axioms Hibana.lease_allocation_abort_certificate_sound")
             && commit.contains("rollReentryState?")
             && commit.contains("routeReentryState?")
             && proof_gate.contains("traces=13 frames=55 projections=7 progress=4")
-            && proof_gate.contains("regions=5 poison=1 generation=1 atomic-failures=3")
+            && proof_gate.contains("regions=5 poison=1 generation=1 atomic-failures=4")
             && proof_gate.contains("export_production_trace_for_lean")
             && proof_gate.contains("export_runtime_certificates_for_lean")
             && proof_gate.contains("rm -f \"${GENERATED}\" \"${RUNTIME_GENERATED}\"")

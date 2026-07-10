@@ -12,9 +12,18 @@ use hibana::{
         SessionKitStorage,
         ids::SessionId,
         program::{RoleProgram, project},
+        resolver::{DecisionArm, ResolverError, ResolverRef},
         transport::{Outgoing, PortOpen, ReceivedFrame, Transport, TransportError},
+        wire::Payload,
     },
 };
+
+const OUTER_RESOLVER: u16 = 701;
+const INNER_RESOLVER: u16 = 702;
+
+fn choose_arm(arm: &DecisionArm) -> Result<DecisionArm, ResolverError> {
+    Ok(*arm)
+}
 
 struct NoopTransport;
 struct NoopTx;
@@ -66,6 +75,20 @@ fn fanout_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
+fn nested_resolver_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            g::route(
+                g::send::<0, 1, Msg<41, u32>>(),
+                g::send::<0, 1, Msg<42, u32>>(),
+            )
+            .resolve::<INNER_RESOLVER>(),
+            g::send::<0, 1, Msg<43, u32>>(),
+        )
+        .resolve::<OUTER_RESOLVER>(),
+    )
+}
+
 #[repr(align(16))]
 struct AlignedSlab([u8; 65_536]);
 
@@ -88,6 +111,158 @@ fn public_runtime_owner_stays_alias_clean_across_multiple_attaches() {
         .expect("attach fresh session after rejected poisoned reentry");
 
     core::hint::black_box((&endpoint1, &endpoint2));
+}
+
+#[test]
+fn resolver_replacement_survives_sidecar_relocation_and_typed_dispatch() {
+    let outer = DecisionArm::Left;
+    let inner = DecisionArm::Right;
+    let role0 = nested_resolver_program::<0>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(&mut slab.0, NoopTransport)
+        .expect("register rendezvous");
+
+    rv.set_resolver(
+        &role0,
+        ResolverRef::<OUTER_RESOLVER>::decision_state(&outer, choose_arm),
+    )
+    .expect("install outer resolver before sidecar relocation");
+    let mut endpoint = rv
+        .enter(SessionId::new(3), &role0)
+        .expect("attach endpoint and relocate resolver sidecar");
+    rv.set_resolver(
+        &role0,
+        ResolverRef::<INNER_RESOLVER>::decision_state(&inner, choose_arm),
+    )
+    .expect("grow resolver table after endpoint sidecars exist");
+
+    futures::executor::block_on(endpoint.send::<Msg<42, u32>>(&42))
+        .expect("dispatch relocated outer and replaced inner resolver entries");
+}
+
+#[test]
+fn failed_peer_attach_abort_keeps_existing_endpoint_live() {
+    let role0 = program::<0>();
+    let role1 = program::<1>();
+    let mut exercised = false;
+
+    for slab_bytes in (1024usize..=8192).step_by(128) {
+        let mut slab = AlignedSlab([0; 65_536]);
+        let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+        let kit = storage.init();
+        let rv = kit
+            .rendezvous(&mut slab.0[..slab_bytes], NoopTransport)
+            .expect("register constrained rendezvous");
+        let sid = SessionId::new(4);
+        let Ok(mut endpoint0) = rv.enter(sid, &role0) else {
+            continue;
+        };
+        if rv.enter(sid, &role1).is_ok() {
+            continue;
+        }
+
+        futures::executor::block_on(endpoint0.send::<Msg<1, u32>>(&4))
+            .expect("existing endpoint survives failed peer attach abort");
+        exercised = true;
+        break;
+    }
+
+    assert!(
+        exercised,
+        "Miri fixture must reach a failed peer attach after the first endpoint is live"
+    );
+}
+
+struct ReceiveState {
+    bytes: [u8; 4],
+    requeues: Cell<usize>,
+}
+
+struct ReceiveTransport {
+    state: Rc<ReceiveState>,
+}
+
+struct ReceiveRx {
+    delivered: bool,
+}
+
+impl Transport for ReceiveTransport {
+    type Tx<'a> = NoopTx;
+    type Rx<'a> = ReceiveRx;
+
+    fn open<'a>(&'a self, _: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        (NoopTx, ReceiveRx { delivered: false })
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _: &'a mut Self::Tx<'a>,
+        _: Outgoing<'f>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        if rx.delivered {
+            return Poll::Pending;
+        }
+        rx.delivered = true;
+        Poll::Ready(Ok(ReceivedFrame::deterministic(Payload::new(
+            &self.state.bytes,
+        ))))
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        if !rx.delivered {
+            panic!("receive transport requeued without a delivered frame");
+        }
+        rx.delivered = false;
+        self.state.requeues.set(self.state.requeues.get() + 1);
+        Ok(())
+    }
+}
+
+#[test]
+fn receive_receipt_resolves_valid_borrowed_frame() {
+    let role1 = program::<1>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let state = Rc::new(ReceiveState {
+        bytes: 0x1122_3344u32.to_be_bytes(),
+        requeues: Cell::new(0),
+    });
+    let mut storage = SessionKitStorage::<ReceiveTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(
+            &mut slab.0,
+            ReceiveTransport {
+                state: Rc::clone(&state),
+            },
+        )
+        .expect("register receive rendezvous");
+    let mut endpoint = rv
+        .enter(SessionId::new(5), &role1)
+        .expect("attach receiver");
+
+    assert_eq!(
+        futures::executor::block_on(endpoint.recv::<Msg<1, u32>>())
+            .expect("borrowed receive frame is valid"),
+        0x1122_3344
+    );
+    assert_eq!(state.requeues.get(), 0);
 }
 
 struct DeferredState {

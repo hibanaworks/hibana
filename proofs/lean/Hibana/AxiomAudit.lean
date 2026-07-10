@@ -45,3 +45,4 @@ import Hibana.MainTheorems
 #print axioms Hibana.prepared_lease_generation_strictly_increases
 #print axioms Hibana.prepared_lease_capacity_never_shrinks
 #print axioms Hibana.lease_allocation_failure_certificate_sound
+#print axioms Hibana.lease_allocation_abort_certificate_sound

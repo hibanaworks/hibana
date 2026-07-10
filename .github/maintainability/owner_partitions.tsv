@@ -163,6 +163,14 @@ src/rendezvous	src/rendezvous/port.rs
 src/rendezvous	src/rendezvous/recv_frame_receipt.rs
 src/rendezvous	src/rendezvous/tables
 src/rendezvous	src/rendezvous/tables.rs
+src/rendezvous/core	src/rendezvous/core/access_port.rs
+src/rendezvous/core	src/rendezvous/core/endpoint_leases
+src/rendezvous/core	src/rendezvous/core/endpoint_leases.rs
+src/rendezvous/core	src/rendezvous/core/endpoint_waiter.rs
+src/rendezvous/core	src/rendezvous/core/lane_lifecycle.rs
+src/rendezvous/core	src/rendezvous/core/storage_layout
+src/rendezvous/core	src/rendezvous/core/storage_layout.rs
+src/rendezvous/core	src/rendezvous/core/storage_runtime_budget.rs
 tests	tests/affine_progression.rs
 tests	tests/callsite_regression.rs
 tests	tests/common
