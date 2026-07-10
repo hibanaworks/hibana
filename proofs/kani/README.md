@@ -10,6 +10,10 @@ The pinned gate exhausts the production arithmetic for:
 - aligned endpoint placement inside a selected gap;
 - exact endpoint-lease table sizing and 32-bit bounds across the full `u16`
   capacity domain;
+- exact association-column sizing and 32-bit bounds across the full `u16`
+  capacity domain;
+- exact route frame/lane-column sizing and 32-bit bounds across the full
+  `u16 x u16` capacity domain;
 - aligned, monotonic resident-sidecar packing;
 - aligned, pairwise-disjoint sequential sidecar packing;
 - exact symmetric sidecar-range collision detection;

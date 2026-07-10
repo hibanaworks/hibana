@@ -263,13 +263,25 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "endpoint-waiter-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  rendezvous::core::endpoint_waiter::tests"
             )
             && miri_gate.contains(
+                "affine-send-owner \\\n  4 \\\n  4 \\\n  0 \\\n  -p hibana \\\n  --test affine_progression"
+            )
+            && miri_gate.contains(
+                "direct-recv-owner \\\n  10 \\\n  10 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_direct_recv"
+            )
+            && miri_gate.contains(
+                "forgotten-recv-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_forget_recv"
+            )
+            && miri_gate.contains(
+                "route-branch-send-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
+            )
+            && miri_gate.contains(
                 "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
             )
             && miri_gate.contains(
                 "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=43 ignored=1")
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=61 ignored=1")
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")

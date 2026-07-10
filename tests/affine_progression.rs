@@ -374,9 +374,14 @@ fn forgotten_started_send_future_leaves_send_fail_closed() {
                 let waker = noop_waker_ref();
                 let mut cx = Context::from_waker(waker);
                 let payload = 88u32;
-                let mut send = Box::pin(controller.send::<Msg<SEND_LOGICAL, u32>>(&payload));
-                assert!(matches!(send.as_mut().poll(&mut cx), Poll::Pending));
-                core::mem::forget(send);
+                let mut abandoned_send =
+                    core::mem::ManuallyDrop::new(
+                        controller.send::<Msg<SEND_LOGICAL, u32>>(&payload),
+                    );
+                {
+                    let mut pinned_send = core::pin::Pin::new(&mut *abandoned_send);
+                    assert!(matches!(pinned_send.as_mut().poll(&mut cx), Poll::Pending));
+                }
 
                 let err = futures::executor::block_on(
                     controller.send::<Msg<SEND_LOGICAL, u32>>(&payload),

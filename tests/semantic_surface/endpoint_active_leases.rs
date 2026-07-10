@@ -235,10 +235,15 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "forgotten_route_branch_leaves_endpoint_fail_closed",
         "forgotten_route_recv_future_leaves_endpoint_fail_closed",
         "core::mem::forget",
+        "ManuallyDrop::new",
     ] {
         assert!(
             lifecycle_tests.contains(required),
-            "mem::forget behavior must be covered by runtime regression tests: {required}"
+            "abandoned future behavior must be covered by runtime regression tests: {required}"
         );
     }
+    assert!(
+        !lifecycle_tests.contains("Box::pin(controller.send"),
+        "abandoned send futures must not require a leaked heap allocation"
+    );
 }

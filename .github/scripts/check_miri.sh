@@ -76,6 +76,38 @@ run_miri_test \
   rendezvous::core::endpoint_waiter::tests
 
 run_miri_test \
+  affine-send-owner \
+  4 \
+  4 \
+  0 \
+  -p hibana \
+  --test affine_progression
+
+run_miri_test \
+  direct-recv-owner \
+  10 \
+  10 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_direct_recv
+
+run_miri_test \
+  forgotten-recv-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_session_forget_recv
+
+run_miri_test \
+  route-branch-send-owner \
+  3 \
+  3 \
+  0 \
+  -p hibana \
+  --test route_branch_send
+
+run_miri_test \
   offer-branch-owner \
   11 \
   11 \
@@ -92,4 +124,4 @@ run_miri_test \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=43 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=61 ignored=1"

@@ -1,10 +1,12 @@
 use super::{
+    AssocTable, RouteTable,
     arena::packed_sidecar_range,
     endpoint_lease::{endpoint_lease_storage_bytes, next_endpoint_lease_generation},
     resident_lease::sidecar_ranges_overlap,
 };
 use crate::rendezvous::core::{EndpointLeaseRecord, endpoint_leases::endpoint_offset_in_gap};
 use crate::session::cluster::core::ResolverBucket;
+use crate::session::types::SessionId;
 
 #[kani::proof]
 fn endpoint_generation_advances_or_exhausts() {
@@ -65,6 +67,46 @@ fn endpoint_lease_storage_layout_is_bounded_and_exact() {
     assert!(record_bytes != 0);
     assert!(core::mem::align_of::<EndpointLeaseRecord>().is_power_of_two());
     assert!(record_bytes.checked_mul(capacity) == Some(storage_bytes));
+    assert!(storage_bytes <= u32::MAX as usize);
+}
+
+#[kani::proof]
+fn association_storage_layout_is_bounded_and_exact() {
+    let capacity = usize::from(kani::any::<u16>());
+    let storage_bytes = AssocTable::storage_bytes(capacity);
+    let row_bytes = core::mem::size_of::<SessionId>() + 2 * core::mem::size_of::<u8>();
+
+    kani::cover!(capacity == 0);
+    kani::cover!(capacity == usize::from(u16::MAX));
+    assert!(AssocTable::storage_align().is_power_of_two());
+    assert!(row_bytes.checked_mul(capacity) == Some(storage_bytes));
+    assert!(storage_bytes <= u32::MAX as usize);
+}
+
+#[kani::proof]
+fn route_storage_layout_is_bounded_and_exact() {
+    let route_slots = usize::from(kani::any::<u16>());
+    let lane_slots = usize::from(kani::any::<u16>());
+    let empty_bytes = RouteTable::storage_bytes(0, 0);
+    let one_frame_bytes = RouteTable::storage_bytes(1, 0);
+    let frame_stride = one_frame_bytes - empty_bytes;
+    let frames_only = RouteTable::storage_bytes(route_slots, 0);
+    let storage_bytes = RouteTable::storage_bytes(route_slots, lane_slots);
+    let lane_bytes = core::mem::size_of::<u16>()
+        .checked_mul(lane_slots)
+        .expect("the full u16 lane capacity domain must fit route storage arithmetic");
+
+    kani::cover!(route_slots == 0 && lane_slots == 0);
+    kani::cover!(route_slots == usize::from(u16::MAX) && lane_slots == usize::from(u16::MAX));
+    assert!(RouteTable::storage_align().is_power_of_two());
+    assert!(frame_stride != 0);
+    assert!(
+        frame_stride
+            .checked_mul(route_slots)
+            .and_then(|frames| frames.checked_add(empty_bytes))
+            == Some(frames_only)
+    );
+    assert!(storage_bytes.checked_sub(frames_only) == Some(lane_bytes));
     assert!(storage_bytes <= u32::MAX as usize);
 }
 
