@@ -743,4 +743,6 @@ bash ./.github/scripts/run_final_form_gates.sh
 Use that gate rather than raw `cargo test` for release decisions; repo-only unit
 tests are enabled through `hibana_repo_tests`. The suite protects the public
 surface, `no_std` build, projection boundary, descriptor publication, future
-layout, route authority, and size measurements.
+layout, route authority, and size measurements. It also executes every explicit
+`[[test]]` target and runs the pinned Miri owner suite declared by
+`.github/miri-toolchain`; a zero-test match fails either gate.

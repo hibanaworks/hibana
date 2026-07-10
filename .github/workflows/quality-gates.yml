@@ -15,5 +15,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep
+          MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
+          rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
       - name: Run final-form gates
         run: bash ./.github/scripts/run_final_form_gates.sh

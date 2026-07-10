@@ -151,95 +151,39 @@ where
         }
     }
 
-    fn refresh_offer_entry_state(&mut self, entry_idx: usize) {
-        if !self.offer_entry_has_active_lanes(entry_idx) {
-            self.frontier_state.clear_offer_entry_state(entry_idx);
-            return;
-        }
-        let detached_root = match self
-            .frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .copied()
-            .map(|state| state.parallel_root)
-        {
-            Some(root) => root,
-            None => ScopeId::none(),
-        };
+    fn offer_entry_representative_lane_excluding(
+        &self,
+        entry_idx: usize,
+        excluded_lane_idx: usize,
+    ) -> Option<(usize, LaneOfferState)> {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut scan_idx = active_offer_lanes.first_set(lane_limit);
-        let mut representative_lane_idx = None;
         while let Some(lane_idx) = scan_idx {
             let info = self.decision_state.lane_offer_state(lane_idx);
-            if state_index_to_usize(info.entry) == entry_idx {
-                representative_lane_idx = Some(lane_idx);
-                break;
+            if lane_idx != excluded_lane_idx && state_index_to_usize(info.entry) == entry_idx {
+                return Some((lane_idx, info));
             }
             scan_idx = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
-        let Some(lane_idx) = representative_lane_idx else {
-            self.frontier_state.clear_offer_entry_state(entry_idx);
-            return;
-        };
-        self.detach_offer_entry_from_root_frontier(entry_idx, detached_root);
-        Self::ensure_global_frontier_scratch_ready(self);
-        let mut global_active_entries = self.global_active_entries();
-        global_active_entries.remove_entry(entry_idx);
-        let info = self.decision_state.lane_offer_state(lane_idx);
-        if info.scope.is_none() {
-            self.frontier_state.clear_offer_entry_state(entry_idx);
-            return;
-        }
-        let selection_meta = self.compute_offer_entry_selection_meta(
-            info.scope,
-            info,
-            !self.offer_lane_set_for_scope(info.scope).is_empty(),
-        );
-        let entry_summary = self.compute_offer_entry_summary(entry_idx);
-        if let Some(state) = self.frontier_state.offer_entry_state_mut(entry_idx) {
-            state.lane_idx = lane_idx as u8;
-            state.parallel_root = info.parallel_root;
-            state.frontier = info.frontier;
-            state.scope_id = info.scope;
-            state.selection_meta = selection_meta;
-            state.summary = entry_summary;
-        }
-        Self::ensure_global_frontier_scratch_ready(self);
-        let mut global_active_entries = self.global_active_entries();
-        global_active_entries.insert_entry(entry_idx, lane_idx as u8);
-        self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
+        None
     }
 
-    fn detach_lane_from_offer_entry(&mut self, lane_idx: usize, info: LaneOfferState) {
+    fn detach_lane_from_offer_entry(&mut self, info: LaneOfferState) {
         let entry_idx = state_index_to_usize(info.entry);
         if info.entry.is_absent() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
-        let remaining_active_lanes = self.offer_entry_has_other_active_lanes(entry_idx, lane_idx);
-        if !remaining_active_lanes {
-            let parallel_root = if info.parallel_root.is_none() {
-                match self
-                    .offer_entry_state_snapshot(entry_idx)
-                    .and_then(|_| self.offer_entry_parallel_root(entry_idx))
-                {
-                    Some(root) => root,
-                    None => ScopeId::none(),
-                }
-            } else {
-                info.parallel_root
-            };
-            self.detach_offer_entry_from_root_frontier(entry_idx, parallel_root);
-            Self::ensure_global_frontier_scratch_ready(self);
-            let mut global_active_entries = self.global_active_entries();
-            global_active_entries.remove_entry(entry_idx);
-            self.frontier_state.clear_offer_entry_state(entry_idx);
-            return;
+        self.detach_offer_entry_from_root_frontier(entry_idx, info.parallel_root);
+        if let Some((representative_lane_idx, representative)) =
+            self.offer_entry_representative_lane_from_route_state(entry_idx)
+        {
+            self.attach_offer_entry_to_root_frontier(
+                entry_idx,
+                representative.parallel_root,
+                representative_lane_idx as u8,
+            );
         }
-        if self.offer_entry_state_snapshot(entry_idx).is_none() {
-            return;
-        }
-        self.refresh_offer_entry_state(entry_idx);
     }
 
     fn attach_lane_to_offer_entry(&mut self, lane_idx: usize, info: LaneOfferState) {
@@ -247,22 +191,23 @@ where
         if info.entry.is_absent() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
-        let was_inactive = self
-            .global_active_entries()
-            .slot_for_entry(entry_idx)
-            .is_none();
-        if was_inactive {
-            Self::ensure_global_frontier_scratch_ready(self);
-            let mut global_active_entries = self.global_active_entries();
-            global_active_entries.insert_entry(entry_idx, lane_idx as u8);
-            self.attach_offer_entry_to_root_frontier(entry_idx, info.parallel_root, lane_idx as u8);
+        if let Some((_, previous)) =
+            self.offer_entry_representative_lane_excluding(entry_idx, lane_idx)
+        {
+            self.detach_offer_entry_from_root_frontier(entry_idx, previous.parallel_root);
         }
-        self.refresh_offer_entry_state(entry_idx);
+        let (representative_lane_idx, representative) =
+            crate::invariant_some(self.offer_entry_representative_lane_from_route_state(entry_idx));
+        self.attach_offer_entry_to_root_frontier(
+            entry_idx,
+            representative.parallel_root,
+            representative_lane_idx as u8,
+        );
     }
 
     pub(in crate::endpoint::kernel) fn clear_lane_offer_state(&mut self, lane_idx: usize) {
         let detached = self.decision_state.clear_lane_offer_state(lane_idx);
-        self.detach_lane_from_offer_entry(lane_idx, detached);
+        self.detach_lane_from_offer_entry(detached);
         self.detach_lane_from_root_frontier(detached);
     }
 
@@ -315,7 +260,7 @@ where
             return;
         }
         let detached = self.decision_state.clear_lane_offer_state(lane_idx);
-        self.detach_lane_from_offer_entry(lane_idx, detached);
+        self.detach_lane_from_offer_entry(detached);
         self.detach_lane_from_root_frontier(detached);
         if let Some(info) = self.compute_lane_offer_state(lane_idx) {
             let reentry = if self.is_reentry_route(info.scope) {
@@ -371,11 +316,8 @@ where
         &mut self,
         state: &mut OfferState<'r>,
     ) -> Poll<RecvResult<Option<u8>>> {
-        let mut frontier_scratch = self.frontier_scratch_view();
         state.execution = OfferExecution::Selecting {
-            frontier_visited: super::frontier::frontier_visit_set_from_scratch(
-                &mut frontier_scratch,
-            ),
+            frontier_visited: self.frontier_state.empty_frontier_visit_set(),
         };
         Poll::Ready(Ok(None))
     }

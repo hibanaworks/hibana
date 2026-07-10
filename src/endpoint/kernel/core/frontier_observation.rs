@@ -3,8 +3,8 @@ use super::super::frontier::{
     frontier_observed_entries_view_from_storage,
 };
 use super::{
-    ActiveEntrySet, CursorEndpoint, FrontierScratchLayout, FrontierScratchState, ObservedEntrySet,
-    Transport, lane_port,
+    ActiveEntrySet, CursorEndpoint, FrontierScratchLayout, ObservedEntrySet, Transport, lane_port,
+    state_index_to_usize,
 };
 use crate::endpoint::kernel::offer::CurrentReentryControllerEvidence;
 
@@ -25,14 +25,7 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn init_global_frontier_scratch_if_needed(&mut self) {
-        if self
-            .frontier_state
-            .global_frontier_scratch_state
-            .is_initialized()
-        {
-            return;
-        }
+    pub(in crate::endpoint::kernel) fn global_active_entries(&mut self) -> ActiveEntrySet {
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
         let mut active_entries = frontier_global_active_entries_view_from_storage(
             scratch_ptr,
@@ -40,24 +33,23 @@ where
             frontier_entry_capacity,
         );
         active_entries.clear();
-        self.frontier_state.global_frontier_scratch_state = FrontierScratchState::Initialized;
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn global_active_entries(&self) -> ActiveEntrySet {
-        if !self
-            .frontier_state
-            .global_frontier_scratch_state
-            .is_initialized()
-        {
-            return ActiveEntrySet::EMPTY;
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
+        let lane_limit = self.cursor.logical_lane_count();
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            let info = self.decision_state.lane_offer_state(lane_idx);
+            if info.entry.is_absent() || info.scope.is_none() {
+                crate::invariant();
+            }
+            let entry_idx = state_index_to_usize(info.entry);
+            if active_entries.slot_for_entry(entry_idx).is_none()
+                && !active_entries.insert_entry(entry_idx, lane_idx as u8)
+            {
+                crate::invariant();
+            }
+            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
-        let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
-        frontier_global_active_entries_view_from_storage(
-            scratch_ptr,
-            layout,
-            frontier_entry_capacity,
-        )
+        active_entries
     }
 
     #[inline]
@@ -81,7 +73,6 @@ where
         &mut self,
         entry_idx: usize,
     ) -> Option<OfferEntryObservedState> {
-        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }

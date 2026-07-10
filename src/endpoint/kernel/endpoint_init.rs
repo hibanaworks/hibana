@@ -285,9 +285,9 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
                         arena_layout.frontier_root_active_slots(),
                     ),
                 },
-                offer_entry_slots: section_ptr::<crate::endpoint::kernel::frontier::OfferEntrySlot>(
+                visited_scopes: section_ptr::<crate::global::const_dsl::ScopeId>(
                     arena_storage,
-                    arena_layout.frontier_offer_entry_slots(),
+                    arena_layout.frontier_visited_scopes(),
                 ),
             },
             FrontierStateCapacity {
@@ -295,7 +295,6 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
                     row_count: arena_layout.frontier_root_rows().count(),
                     pool_capacity: arena_layout.frontier_root_active_slots().count(),
                 },
-                max_offer_entries: arena_layout.frontier_offer_entry_slots().count(),
             },
         );
     }

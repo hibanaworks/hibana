@@ -3,7 +3,7 @@
 use core::task::Waker;
 
 use super::{
-    core::{CursorEndpoint, MaterializedRouteBranch, PublicActiveOp, SendInit, SendState},
+    core::{CursorEndpoint, PublicActiveOp, SendInit, SendState},
     lane_port,
     offer::OfferState,
 };
@@ -77,23 +77,22 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn restore_materialized_route_branch(
-        &mut self,
-        branch: MaterializedRouteBranch<'r>,
-    ) {
-        if let Some(offered_frame) = branch.offered_frame {
-            let frame = offered_frame.into_frame();
-            let port = self.port_for_lane(frame.lane_idx());
-            if lane_port::requeue_recv_frame(port, frame).is_err() {
-                self.poison_session(SessionFaultKind::TransportClosed);
-            }
+    fn park_public_route_branch(&mut self, from: PublicActiveOp) {
+        if self.public_route_branch.is_none() || self.public_active_op != from {
+            self.public_op_busy_fault();
+            return;
         }
+        self.public_active_op = PublicActiveOp::RestoredRouteBranch;
     }
 
     #[inline]
     pub(in crate::endpoint) fn reset_public_offer_state(&mut self) {
         self.clear_session_waiter();
-        self.finish_public_op(PublicActiveOp::Offer);
+        if self.public_route_branch.is_some() {
+            self.park_public_route_branch(PublicActiveOp::Offer);
+        } else {
+            self.finish_public_op(PublicActiveOp::Offer);
+        }
         let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         self.restore_detached_offer_state(&mut state);
     }
@@ -124,12 +123,29 @@ where
         self.clear_public_op_if_current(PublicActiveOp::Offer);
         let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         state.discard_terminal();
+        if let Some(branch) = self.public_route_branch.take() {
+            branch.discard_terminal();
+        }
     }
 
     #[inline]
     #[must_use]
     pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> super::core::PublicOpLease {
-        let lease = self.start_public_op(PublicActiveOp::Offer);
+        let lease = match self.public_active_op {
+            PublicActiveOp::Idle if self.public_route_branch.is_none() => {
+                self.start_public_op(PublicActiveOp::Offer)
+            }
+            PublicActiveOp::RestoredRouteBranch if self.public_route_branch.is_some() => self
+                .transition_public_op(PublicActiveOp::RestoredRouteBranch, PublicActiveOp::Offer),
+            PublicActiveOp::Idle | PublicActiveOp::RestoredRouteBranch => {
+                self.public_op_busy_fault();
+                super::core::PublicOpLease::Rejected
+            }
+            _ => {
+                self.public_op_busy_fault();
+                super::core::PublicOpLease::Rejected
+            }
+        };
         match lease {
             super::core::PublicOpLease::Held => {}
             super::core::PublicOpLease::Rejected => return lease,
@@ -140,10 +156,7 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn restore_public_route_branch(&mut self) {
-        self.finish_public_op(PublicActiveOp::RouteBranch);
-        if let Some(branch) = self.public_route_branch.take() {
-            self.restore_materialized_route_branch(branch);
-        }
+        self.park_public_route_branch(PublicActiveOp::RouteBranch);
     }
 
     #[inline]
@@ -183,22 +196,16 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_send_state(&mut self) {
         self.clear_session_waiter();
-        let restore_branch = self.public_active_op == PublicActiveOp::BranchSend;
         match self.public_active_op {
             PublicActiveOp::Send => self.finish_public_op(PublicActiveOp::Send),
-            PublicActiveOp::BranchSend => self.finish_public_op(PublicActiveOp::BranchSend),
+            PublicActiveOp::BranchSend => {
+                self.park_public_route_branch(PublicActiveOp::BranchSend);
+            }
             PublicActiveOp::Poisoned => {}
             _ => self.public_op_busy_fault(),
         }
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);
-        if restore_branch {
-            if let Some(branch) = self.public_route_branch.take() {
-                self.restore_materialized_route_branch(branch);
-            } else {
-                self.public_op_busy_fault();
-            }
-        }
     }
 
     #[inline]
@@ -273,10 +280,7 @@ where
     #[inline]
     pub(in crate::endpoint) fn reset_public_branch_recv_state(&mut self) {
         self.clear_session_waiter();
-        self.finish_public_op(PublicActiveOp::BranchRecv);
-        if let Some(branch) = self.public_route_branch.take() {
-            self.restore_materialized_route_branch(branch);
-        }
+        self.park_public_route_branch(PublicActiveOp::BranchRecv);
         self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
 

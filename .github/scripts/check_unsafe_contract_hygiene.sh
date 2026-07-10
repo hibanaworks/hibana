@@ -386,34 +386,31 @@ if focused_failures:
 
 registry_ops = Path("src/session/lease/core/registry_ops.rs")
 registry = registry_ops.read_text()
-init_call = registry.find("RendezvousEntry::init_from_parts(")
-if init_call == -1:
-    print("unsafe contract hygiene violation: registry entry initialization disappeared", file=__import__("sys").stderr)
-    raise SystemExit(1)
-window = " ".join(registry[max(0, init_call - 700) : init_call].replace("*", " ").split())
-required_terms = [
-    "SAFETY:",
-    "rendezvous",
-    "Rendezvous::init_in_slab_auto",
-    "non-null",
-    "slab-pinned",
-    "entry_ptr",
-    "persistent sidecar",
-    "RendezvousEntry",
-    "size/align",
-    "not published",
-    "self.head",
-    "initialized list head",
-    "published to `self.head` only",
-]
-missing_terms = [term for term in required_terms if term not in window]
-if missing_terms:
+init_call = registry.find("Rendezvous::init_in_slab_auto(id, resources, transport)")
+ptr_init = registry.find("NonNull::new_unchecked(rendezvous)")
+link = registry.find("rendezvous_ref.link_registry_next(self.head.get());")
+publish = registry.find("self.head.set(Some(rendezvous_ptr));")
+if min(init_call, ptr_init, link, publish) == -1 or not (init_call < ptr_init < link < publish):
     print(
-        "unsafe contract hygiene violation: registry entry initialization must carry the concrete entry_ptr/rendezvous/self.head/publish SAFETY contract",
+        "unsafe contract hygiene violation: intrusive rendezvous registry must initialize, witness non-null, link, then publish",
         file=__import__("sys").stderr,
     )
-    for term in missing_terms:
-        print(f"{registry_ops}: missing registry SAFETY fact: {term}", file=__import__("sys").stderr)
+    raise SystemExit(1)
+init_window = " ".join(registry[max(0, init_call - 220) : init_call].replace("*", " ").split())
+ptr_window = " ".join(registry[max(0, ptr_init - 220) : ptr_init].replace("*", " ").split())
+for term, window in [
+    ("SAFETY:", init_window),
+    ("caller slab", init_window),
+    ("SAFETY:", ptr_window),
+    ("non-null", ptr_window),
+    ("initialized header", ptr_window),
+    ("pinned", ptr_window),
+]:
+    if term not in window:
+        print(f"{registry_ops}: missing intrusive registry SAFETY fact: {term}", file=__import__("sys").stderr)
+        raise SystemExit(1)
+if "RendezvousEntry" in registry or "allocate_external_persistent_sidecar_bytes" in registry:
+    print("unsafe contract hygiene violation: detached registry-node residue returned", file=__import__("sys").stderr)
     raise SystemExit(1)
 PY
 
@@ -499,8 +496,8 @@ fi
 
 for required in \
   'SAFETY: `Port` owns the Rx handle for this lane.' \
-  'SAFETY: `PendingSend` owns the outgoing payload borrow while this send' \
-  'SAFETY: a pending send is armed, so `PendingSend` owns the outgoing'
+  'SAFETY: the scoped scratch lease keeps `outgoing` stable for this call,' \
+  'SAFETY: the pending state records an armed transport poll and this'
 do
   if [[ "${lane_port_rs}" != *"${required}"* ]]; then
     echo "lane_port transport raw-handle operations must carry local SAFETY contracts: ${required}" >&2

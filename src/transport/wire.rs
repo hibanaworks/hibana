@@ -32,6 +32,10 @@ pub(crate) fn require_exact_len(actual: usize, expected: usize) -> Result<(), Co
 /// Send-side payload encoding contract.
 pub trait WireEncode {
     /// Encode into `out`, returning the number of bytes written.
+    ///
+    /// An unchanged value must produce the same bytes on repeated calls. Hibana
+    /// may encode again while progressing a parked transport without retaining a
+    /// borrow into shared rendezvous scratch between polls.
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;
 }
 

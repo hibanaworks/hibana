@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use super::{AssocTable, EndpointLeaseId, EndpointLeaseSlot, Rendezvous, RouteTable, Transport};
+use super::{AssocTable, EndpointLeaseSlot, Rendezvous, RouteTable, Transport};
 mod capacity;
 
 // # Unsafe Owner Contract
@@ -8,10 +8,10 @@ mod capacity;
 // This file owns rendezvous slab layout, sidecar allocation, migration, and
 // resident table ingress. The slab pointer and endpoint-lease table are created
 // by the rendezvous constructor and remain pinned for the rendezvous lifetime.
-// Every raw allocation returned here is aligned, range-checked against the
-// current slab frontier, and recorded by advancing the rendezvous image frontier
-// before typed owners bind to it. Migration paths copy initialized table entries
-// into freshly allocated sidecar storage before rebinding.
+// Every raw allocation returned here is aligned and range-checked against live
+// owner roots, frontier workspace, and endpoint storage. Typed owners bind only
+// after replacement initialization, and retirement canonically packs live roots
+// before lowering the image frontier.
 
 pub(crate) struct Sidecar<T> {
     ptr: *mut T,
@@ -37,6 +37,9 @@ impl<T> Sidecar<T> {
 
     #[inline]
     pub(crate) const fn from_raw_parts(ptr: *mut T, bytes: usize) -> Self {
+        if ptr.is_null() || bytes == 0 {
+            crate::invariant();
+        }
         Self {
             ptr,
             bytes,
@@ -56,7 +59,17 @@ impl<T> Sidecar<T> {
 
     #[inline]
     pub(crate) fn is_empty(self) -> bool {
-        self.ptr.is_null() || self.bytes == 0
+        if self.ptr.is_null() {
+            if self.bytes != 0 {
+                crate::invariant();
+            }
+            true
+        } else {
+            if self.bytes == 0 {
+                crate::invariant();
+            }
+            false
+        }
     }
 
     #[inline]
@@ -75,7 +88,7 @@ where
 {
     #[inline(always)]
     pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-        if align == 0 {
+        if !align.is_power_of_two() {
             crate::invariant();
         }
         let mask = align - 1;
@@ -87,7 +100,7 @@ where
 
     #[inline(always)]
     pub(crate) const fn align_down(value: usize, align: usize) -> usize {
-        if align == 0 {
+        if !align.is_power_of_two() {
             crate::invariant();
         }
         let mask = align - 1;
@@ -111,12 +124,7 @@ where
 
     #[inline]
     pub(crate) fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
-        /* SAFETY: `Rendezvous` owns the installed resident slab pointer; this
-        returns base/len without a slice borrow aliasing endpoint leases. */
-        unsafe {
-            let slab = &mut *self.slab;
-            (slab.as_mut_ptr(), slab.len())
-        }
+        (self.slab_ptr, self.slab_len)
     }
 
     #[inline]
@@ -124,7 +132,7 @@ where
         let (_, slab_len) = self.slab_ptr_and_len();
         let mut floor = slab_len;
         let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
+        while idx < self.endpoint_lease_slot_count() {
             let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
             if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
@@ -137,22 +145,23 @@ where
     #[inline]
     pub(crate) fn endpoint_lease_floor(&self) -> usize {
         crate::invariant_some(
-            (self.image_frontier as usize).checked_add(self.frontier_workspace_bytes as usize),
+            (self.image_frontier.get() as usize)
+                .checked_add(self.frontier_workspace_bytes.get() as usize),
         )
     }
 
     #[inline]
     pub(crate) fn endpoint_leases_ptr(&self) -> *mut EndpointLeaseSlot {
-        self.endpoint_lease_storage.ptr()
+        self.endpoint_lease_storage.get().ptr()
     }
 
     #[inline]
-    fn set_image_frontier(&mut self, frontier: u32) {
-        self.image_frontier = frontier;
+    fn set_image_frontier(&self, frontier: u32) {
+        self.image_frontier.set(frontier);
     }
 
     #[inline]
-    fn set_frontier_workspace_bytes(&mut self, bytes: u32) {
-        self.frontier_workspace_bytes = bytes;
+    fn set_frontier_workspace_bytes(&self, bytes: u32) {
+        self.frontier_workspace_bytes.set(bytes);
     }
 }

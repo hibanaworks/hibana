@@ -25,6 +25,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     let runtime_resources = read("src/runtime_core/resources.rs");
     let transport = transport_source();
     let rendezvous_assoc = read("src/rendezvous/association.rs");
+    let rendezvous_fault = read("src/rendezvous/association/fault.rs");
     let endpoint_core = endpoint_kernel_core_source();
     let offer_frontier = offer_frontier_source();
     let frontier_runtime = {
@@ -190,9 +191,14 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
         "runtime resources and offer progress must derive runtime shape and expose only Evidence/Pending/Fault, not offer-time guesses"
     );
     assert!(
-        rendezvous_assoc.contains("EndpointDropped")
+        rendezvous_fault.contains("EndpointDropped")
             && rendezvous_assoc.contains("register_waiter")
             && rendezvous_assoc.contains("wake_session_waiters")
+            && rendezvous_assoc.contains("(*self.waiter_ptr(idx)).take()")
+            && rendezvous_assoc.contains("waker.wake()")
+            && rendezvous_assoc.contains("crate::invariant_some(self.lane_offset(lane))")
+            && rendezvous_assoc
+                .contains("crate::invariant_some(self.find_entry_by_offset(lane_offset, sid))")
             && endpoint_core.contains("SessionFaultKind::EndpointDropped"),
         "session poison must wake registered waiters and live endpoint drop must become terminal evidence"
     );

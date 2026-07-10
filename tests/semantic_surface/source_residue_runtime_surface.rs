@@ -195,7 +195,7 @@ fn endpoint_lease_slot_is_session_role_authority() {
         "endpoint allocation must scan live endpoint leases before claiming a slot"
     );
     let claim = cluster_ops
-        .find("core.locals.allocate_endpoint_lease_for_session_role")
+        .find("self.locals().allocate_endpoint_lease_for_session_role(")
         .expect("endpoint storage owner must claim endpoint lease");
     let resident = cluster_ops
         .find("rv.ensure_endpoint_resident_budget(resident_budget)")
@@ -204,19 +204,31 @@ fn endpoint_lease_slot_is_session_role_authority() {
         .find("rv.ensure_core_lane_storage_for_assoc_entries")
         .expect("endpoint storage owner must ensure lane association capacity");
     assert!(
-        cluster_ops.contains("core.locals.allocate_endpoint_lease_for_session_role")
+        cluster_ops.contains("self.locals().allocate_endpoint_lease_for_session_role(")
             && cluster_ops.contains("sid,\n                ROLE,")
             && endpoint_attach.contains("allocate_public_endpoint_storage_for_rv::<ROLE>")
             && endpoint_attach.contains("PublicEndpointStorageRequest")
             && endpoint_attach.contains("required_bytes: storage_layout.total_bytes")
             && endpoint_attach.contains("required_align: storage_layout.total_align")
             && registry_ops.find("has_live_endpoint_session_role(sid, role)")
-                < registry_ops.find("rendezvous.allocate_endpoint_lease")
+                < registry_ops.find(".allocate_endpoint_lease(sid, role, bytes, align, resident_budget)")
             && !registry_ops.contains("ensure_endpoint_resident_budget")
             && claim < resident
             && resident < assoc
+            && endpoint_lease.contains("if !slot.is_live() || slot.generation != generation {\n            crate::invariant();")
+            && !endpoint_lease.contains("return Ok(());")
             && !endpoint_core.contains("release_session_role_claim"),
         "attach/drop must claim endpoint lease before sidecar capacity growth and release only that lease"
+    );
+    let lane_claim = cluster_ops
+        .find("lease.with_rendezvous(|rv| rv.activate_lane_attachment(sid, lane))?")
+        .expect("lane claim must precede lane lease construction");
+    let lane_lease = cluster_ops
+        .find("Ok(LaneLease::new(")
+        .expect("claimed lane must construct its affine release authority");
+    assert!(
+        lane_claim < lane_lease && !endpoint_attach.contains("activate_lane_attachment"),
+        "LaneLease must be constructible only after its lane claim succeeds"
     );
 
     for forbidden in [

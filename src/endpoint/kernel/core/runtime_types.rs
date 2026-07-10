@@ -4,10 +4,6 @@ use super::{
     SendRouteAudit, SendRouteAuthority, StateIndex, Transport, lane_port,
 };
 
-pub(crate) struct StagedSendPayload {
-    pub(crate) encoded_len: usize,
-}
-
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
     pub(crate) delta: PreparedCommitDelta,
     pub(crate) route_audit: SendRouteAudit,
@@ -27,7 +23,7 @@ pub(crate) struct SendCommitPlan<'rv> {
 
 pub(crate) struct PendingSendIo<'r> {
     pub(in crate::endpoint::kernel) lane: Lane,
-    pub(in crate::endpoint::kernel) transport: lane_port::PendingSend<'r>,
+    pub(in crate::endpoint::kernel) transport: lane_port::PendingSend,
     pub(in crate::endpoint::kernel) commit_plan: Option<SendCommitPlan<'r>>,
 }
 
@@ -43,15 +39,9 @@ impl<'r> PendingSendIo<'r> {
     }
 }
 
-pub(crate) enum SendTransportStep<'r> {
-    Immediate(SendCommitPlan<'r>),
-    Pending(PendingSendIo<'r>),
-}
-
 pub(crate) enum SendInitOutcome<'r> {
     Ready(SendResult<SendCommitOutcome<'r>>),
     Pending { pending: PendingSendIo<'r> },
-    Commit { commit_plan: SendCommitPlan<'r> },
 }
 
 pub(crate) struct SendCommitOutcome<'rv> {

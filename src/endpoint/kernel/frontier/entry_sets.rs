@@ -15,21 +15,6 @@ impl<T> EntryBuffer<T> {
         capacity: 0,
     };
 
-    #[cfg(all(test, hibana_repo_tests))]
-    #[inline]
-    pub(crate) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut T, capacity: usize) {
-        if capacity > u8::MAX as usize {
-            crate::invariant();
-        }
-        /* SAFETY: the repo-test owner passes an unpublished `EntryBuffer`
-        cell; the pointer and checked u8 capacity are written before the buffer
-        is assumed initialized. */
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
-            core::ptr::addr_of_mut!((*dst).capacity).write(capacity as u8);
-        }
-    }
-
     #[inline]
     pub(crate) const fn capacity(&self) -> usize {
         self.capacity as usize
@@ -141,30 +126,6 @@ impl ActiveEntrySet {
         slots: EntryBuffer::EMPTY,
     };
 
-    #[cfg(all(test, hibana_repo_tests))]
-    #[inline]
-    pub(crate) unsafe fn init_from_parts(
-        dst: *mut Self,
-        slots: *mut ActiveEntrySlot,
-        capacity: usize,
-    ) {
-        /* SAFETY: the repo-test owner passes an unpublished `ActiveEntrySet`
-        cell and backing active-entry slots. `EntryBuffer` records the backing
-        slice before slots are initialized below. */
-        unsafe {
-            EntryBuffer::init_from_parts(core::ptr::addr_of_mut!((*dst).slots), slots, capacity);
-        }
-        let mut idx = 0usize;
-        while idx < capacity {
-            /* SAFETY: `idx < capacity` selects one active-entry backing slot
-            owned by this test set; every slot starts EMPTY before use. */
-            unsafe {
-                slots.add(idx).write(ActiveEntrySlot::EMPTY);
-            }
-            idx += 1;
-        }
-    }
-
     #[inline]
     pub(crate) fn clear(&mut self) {
         let capacity = self.slots.capacity();
@@ -251,29 +212,6 @@ impl ActiveEntrySet {
             shift_idx -= 1;
         }
         self.slots[insert_idx] = ActiveEntrySlot { entry, lane_idx };
-        true
-    }
-
-    pub(crate) fn remove_entry(&mut self, entry_idx: usize) -> bool {
-        let Some(entry) = checked_state_index(entry_idx) else {
-            return false;
-        };
-        let len = self.len();
-        let mut idx = 0usize;
-        while idx < len {
-            if self.slots[idx].entry == entry {
-                break;
-            }
-            idx += 1;
-        }
-        if idx >= len {
-            return false;
-        }
-        while idx + 1 < len {
-            self.slots[idx] = self.slots[idx + 1];
-            idx += 1;
-        }
-        self.slots[len - 1] = ActiveEntrySlot::EMPTY;
         true
     }
 }

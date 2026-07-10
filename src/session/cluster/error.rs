@@ -125,9 +125,6 @@ pub(crate) enum ResourceScope {
     ResolverTable,
     RouteTable,
     EndpointLease,
-    EndpointBounds,
-    EndpointMark,
-    EndpointHeader,
 }
 
 impl ResourceScope {
@@ -138,9 +135,6 @@ impl ResourceScope {
             Self::ResolverTable => "resolver",
             Self::RouteTable => "route",
             Self::EndpointLease => "ep-lease",
-            Self::EndpointBounds => "ep-bounds",
-            Self::EndpointMark => "ep-mark",
-            Self::EndpointHeader => "ep-header",
         }
     }
 }

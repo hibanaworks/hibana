@@ -19,7 +19,9 @@ fn write_probe(manifest_dir: &Path, probe_dir: &Path) {
     fs::write(
         probe_dir.join("Cargo.toml"),
         format!(
-            r#"[package]
+            r#"[workspace]
+
+[package]
 name = "hibana-no-default-rodata-probe"
 version = "0.0.0"
 edition = "2024"

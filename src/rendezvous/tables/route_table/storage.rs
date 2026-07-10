@@ -11,7 +11,7 @@
 
 use super::super::{checked_add_usize, checked_mul_usize, checked_sub_usize};
 use super::{
-    FrameLabelMask, MAX_TRACKED_ROLES, PhantomData, RouteFrame, RouteTable,
+    Cell, FrameLabelMask, MAX_TRACKED_ROLES, PhantomData, RouteFrame, RouteTable,
     RouteTableStorageBinding, RouteTableStorageParts, RouteTableStorageShape, UnsafeCell,
     WaiterSlot,
 };
@@ -58,29 +58,15 @@ impl RouteTable {
         (value + mask) & !mask
     }
 
-    pub(crate) const fn empty() -> Self {
-        Self {
-            frames: UnsafeCell::new(core::ptr::null_mut()),
-            route_slots: 0,
-            lane_base: 0,
-            lane_slots: 0,
-            lane_heads: UnsafeCell::new(core::ptr::null_mut()),
-            free_head: UnsafeCell::new(core::ptr::null_mut()),
-            pending_frame_hint_masks: UnsafeCell::new(core::ptr::null_mut()),
-            waiters: UnsafeCell::new(core::ptr::null_mut()),
-            _no_send_sync: PhantomData,
-        }
-    }
-
     pub(crate) unsafe fn init_empty(dst: *mut Self) {
+        /* SAFETY: the caller provides exclusive, writable storage for one
+        RouteTable with exact size/alignment; every field is initialized before
+        safe exposure. */
         unsafe {
-            // SAFETY: the caller provides exclusive, writable storage for one
-            // `RouteTable`; every field is initialized exactly once before the
-            // table is exposed through safe methods.
             core::ptr::addr_of_mut!((*dst).frames).write(UnsafeCell::new(core::ptr::null_mut()));
-            core::ptr::addr_of_mut!((*dst).route_slots).write(0);
-            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
-            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
+            core::ptr::addr_of_mut!((*dst).route_slots).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).lane_base).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(Cell::new(0));
             core::ptr::addr_of_mut!((*dst).lane_heads)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).free_head).write(UnsafeCell::new(core::ptr::null_mut()));
@@ -93,12 +79,12 @@ impl RouteTable {
 
     #[inline]
     pub(crate) const fn route_slots(&self) -> usize {
-        self.route_slots
+        self.route_slots.get()
     }
 
     #[inline]
     pub(crate) const fn lane_slots(&self) -> usize {
-        self.lane_slots as usize
+        self.lane_slots.get() as usize
     }
 
     #[inline]
@@ -163,7 +149,7 @@ impl RouteTable {
         unsafe { *self.pending_frame_hint_masks.get() }
     }
 
-    unsafe fn bind_storage(&mut self, binding: RouteTableStorageBinding) {
+    unsafe fn bind_storage(&self, binding: RouteTableStorageBinding) {
         let RouteTableStorageBinding { parts, shape } = binding;
         let mut idx = 0usize;
         while idx < shape.route_slots {
@@ -220,25 +206,35 @@ impl RouteTable {
             }
             waiter_idx += 1;
         }
-        *self.frames.get_mut() = parts.frames;
-        self.route_slots = shape.route_slots;
-        self.lane_base = shape.lane_base;
-        self.lane_slots = shape.lane_slots as u16;
-        *self.lane_heads.get_mut() = parts.lane_heads;
-        *self.free_head.get_mut() = parts.free_head;
-        *self.pending_frame_hint_masks.get_mut() = parts.pending_frame_hint_masks;
-        *self.waiters.get_mut() = parts.waiters;
+        unsafe {
+            self.frames.get().write(parts.frames);
+            self.lane_heads.get().write(parts.lane_heads);
+            self.free_head.get().write(parts.free_head);
+            self.pending_frame_hint_masks
+                .get()
+                .write(parts.pending_frame_hint_masks);
+            self.waiters.get().write(parts.waiters);
+        }
+        self.route_slots.set(shape.route_slots);
+        self.lane_base.set(shape.lane_base);
+        self.lane_slots.set(shape.lane_slots as u16);
     }
 
-    unsafe fn rebind_storage(&mut self, binding: RouteTableStorageBinding) {
-        *self.frames.get_mut() = binding.parts.frames;
-        self.route_slots = binding.shape.route_slots;
-        self.lane_base = binding.shape.lane_base;
-        self.lane_slots = binding.shape.lane_slots as u16;
-        *self.lane_heads.get_mut() = binding.parts.lane_heads;
-        *self.free_head.get_mut() = binding.parts.free_head;
-        *self.pending_frame_hint_masks.get_mut() = binding.parts.pending_frame_hint_masks;
-        *self.waiters.get_mut() = binding.parts.waiters;
+    unsafe fn rebind_storage(&self, binding: RouteTableStorageBinding) {
+        /* SAFETY: migration initialized every replacement column described by
+        this binding before the owner publishes their pointers. */
+        unsafe {
+            self.frames.get().write(binding.parts.frames);
+            self.lane_heads.get().write(binding.parts.lane_heads);
+            self.free_head.get().write(binding.parts.free_head);
+            self.pending_frame_hint_masks
+                .get()
+                .write(binding.parts.pending_frame_hint_masks);
+            self.waiters.get().write(binding.parts.waiters);
+        }
+        self.route_slots.set(binding.shape.route_slots);
+        self.lane_base.set(binding.shape.lane_base);
+        self.lane_slots.set(binding.shape.lane_slots as u16);
     }
 
     #[inline]
@@ -335,28 +331,30 @@ impl RouteTable {
             }
             hint_idx += 1;
         }
-        let mut waiter_idx = 0usize;
         let waiter_count = checked_mul_usize(shape.lane_slots, MAX_TRACKED_ROLES);
         let src_waiter_count = checked_mul_usize(self.lane_slots(), MAX_TRACKED_ROLES);
-        while waiter_idx < src_waiter_count {
-            /* SAFETY: `waiter_idx` is within the initialized source waiter
-            column and the replacement waiter column. The clone initializes each
-            destination waiter slot once before rebinding. */
-            unsafe {
-                let src_waiter = &*self.waiters_ptr().add(waiter_idx);
-                WaiterSlot::init_clone_from(dst_parts.waiters.add(waiter_idx), src_waiter);
-            }
-            waiter_idx += 1;
-        }
+        let mut waiter_idx = 0usize;
         while waiter_idx < waiter_count {
-            /* SAFETY: `waiter_idx` is only in the replacement waiter column;
-            this initializes the new lane/role waiter slot before publication. */
+            /* SAFETY: every replacement waiter slot is initialized before any
+            source waiter ownership is transferred into it. */
             unsafe {
                 WaiterSlot::init_empty(dst_parts.waiters.add(waiter_idx));
             }
             waiter_idx += 1;
         }
-        if self.route_slots == 0 {
+        waiter_idx = 0;
+        while waiter_idx < src_waiter_count {
+            /* SAFETY: both indexes are inside initialized waiter columns.
+            `take` transfers the Waker without invoking its clone/drop vtable,
+            so migration has no external reentry point before publication. */
+            unsafe {
+                if let Some(waker) = (*self.waiters_ptr().add(waiter_idx)).take() {
+                    (*dst_parts.waiters.add(waiter_idx)).set_owned(waker);
+                }
+            }
+            waiter_idx += 1;
+        }
+        if self.route_slots.get() == 0 {
             return;
         }
         let mut lane_idx = 0usize;
@@ -407,13 +405,13 @@ impl RouteTable {
             }
             lane_idx += 1;
         }
-        if self.lane_base != shape.lane_base {
+        if self.lane_base.get() != shape.lane_base {
             crate::invariant();
         }
     }
 
     pub(crate) unsafe fn bind_from_storage_with_layout(
-        &mut self,
+        &self,
         storage: *mut u8,
         route_slots: usize,
         lane_base: u32,
@@ -422,9 +420,8 @@ impl RouteTable {
         let parts = /* SAFETY: `storage` is the fresh route-table arena leased
         by rendezvous capacity growth for `route_slots` and `lane_slots`. */
             unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
-        /* SAFETY: `bind_from_storage_with_layout` has exclusive `&mut self`;
-        `bind_storage` initializes all route-table columns before publishing the
-        pointers into this table. */
+        /* SAFETY: the rendezvous storage owner serializes route-table binding;
+        `bind_storage` initializes all columns before publishing their pointers. */
         unsafe {
             self.bind_storage(RouteTableStorageBinding {
                 parts,
@@ -464,7 +461,7 @@ impl RouteTable {
     }
 
     pub(crate) unsafe fn rebind_from_storage(
-        &mut self,
+        &self,
         storage: *mut u8,
         route_slots: usize,
         lane_base: u32,
@@ -474,8 +471,8 @@ impl RouteTable {
         whose route-frame, lane-head, hint, and waiter columns were initialized
         by `migrate_from_storage`. */
             unsafe { Self::storage_parts(storage, route_slots, lane_slots) };
-        /* SAFETY: `rebind_from_storage` has exclusive `&mut self` and only
-        swaps this table's column pointers to the staged replacement bundle. */
+        /* SAFETY: the rendezvous storage owner serializes rebinding and this
+        swaps column pointers only to the fully staged replacement bundle. */
         unsafe {
             self.rebind_storage(RouteTableStorageBinding {
                 parts,
@@ -488,17 +485,47 @@ impl RouteTable {
         }
     }
 
-    pub(crate) fn clear_current_waiters(&self) {
-        let waiters = self.waiters_ptr();
+    pub(crate) unsafe fn relocate_storage(&self, storage: *mut u8) {
+        /* SAFETY: the rendezvous owner exclusively moved the complete route
+        sidecar without changing shape; rebinding mutates only its sole roots. */
+        unsafe {
+            self.rebind_from_storage(
+                storage,
+                self.route_slots(),
+                self.lane_base.get(),
+                self.lane_slots(),
+            );
+        }
+    }
+
+    pub(crate) fn clear_storage(&self) {
         let waiter_count = checked_mul_usize(self.lane_slots(), MAX_TRACKED_ROLES);
         let mut waiter_idx = 0usize;
         while waiter_idx < waiter_count {
-            /* SAFETY: waiters_ptr points at the currently bound route-table waiter column. */
-            unsafe {
-                (*waiters.add(waiter_idx)).clear();
+            /* SAFETY: the scan is bounded by the currently published route
+            waiter column. Retiring storage with a live Waker would leak its
+            ownership and permit the reclaimed bytes to overwrite it. */
+            if unsafe { !(*self.waiters_ptr().add(waiter_idx)).is_empty() } {
+                crate::invariant();
             }
             waiter_idx += 1;
         }
+        unsafe {
+            /* SAFETY: the caller releases route storage only after all live
+            endpoint route budgets have reached zero and the scan above proved
+            no Waker ownership remains. Publishing null columns and zero shape
+            makes the unbound state visible before the sidecar can be reused. */
+            self.frames.get().write(core::ptr::null_mut());
+            self.lane_heads.get().write(core::ptr::null_mut());
+            self.free_head.get().write(core::ptr::null_mut());
+            self.pending_frame_hint_masks
+                .get()
+                .write(core::ptr::null_mut());
+            self.waiters.get().write(core::ptr::null_mut());
+        }
+        self.route_slots.set(0);
+        self.lane_base.set(0);
+        self.lane_slots.set(0);
     }
 
     unsafe fn storage_parts(

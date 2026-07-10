@@ -21,39 +21,6 @@ impl WaiterSlot {
     }
 
     #[inline]
-    pub(crate) unsafe fn init_owned(dst: *mut Self, waker: Waker) {
-        /* SAFETY: `dst` is the caller-owned waiter slot for one table cell.
-        `init_empty` initializes that cell, then `set_owned` installs the only
-        live waker before the slot is exposed to route/association waiters. */
-        unsafe {
-            Self::init_empty(dst);
-            (*dst).set_owned(waker);
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn init_clone_from(dst: *mut Self, source: &Self) {
-        match source.waker.as_ref() {
-            Some(waker) => {
-                /* SAFETY: `dst` is a distinct waiter destination selected by
-                the migrating owner; cloning the source waker initializes the
-                destination slot without borrowing the source mutably. */
-                unsafe {
-                    Self::init_owned(dst, waker.clone());
-                }
-            }
-            None => {
-                /* SAFETY: `dst` is the unpublished waiter destination selected
-                by the migrating owner, and the empty source state initializes
-                the full slot as `None`. */
-                unsafe {
-                    Self::init_empty(dst);
-                }
-            }
-        }
-    }
-
-    #[inline]
     pub(crate) fn set(&mut self, waker: &Waker) {
         self.clear();
         self.set_owned(waker.clone());
@@ -70,15 +37,13 @@ impl WaiterSlot {
     }
 
     #[inline]
-    pub(crate) fn clear(&mut self) {
-        self.waker = None;
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.waker.is_none()
     }
 
     #[inline]
-    pub(crate) fn wake(&mut self) {
-        if let Some(waker) = self.take() {
-            waker.wake();
-        }
+    pub(crate) fn clear(&mut self) {
+        self.waker = None;
     }
 }
 
@@ -145,7 +110,10 @@ mod tests {
             let slot = &mut *ptr;
             assert!(slot.take().is_none());
             slot.set(&waker);
-            slot.wake();
+            let waker = slot.take();
+            if let Some(waker) = waker {
+                waker.wake();
+            }
             assert_eq!(count.get(), 1);
             assert!(slot.take().is_none());
             core::ptr::drop_in_place(ptr);
@@ -163,35 +131,25 @@ mod tests {
 
         slot.set(&first_waker);
         slot.set(&second_waker);
-        slot.wake();
+        let waker = slot.take();
+        if let Some(waker) = waker {
+            waker.wake();
+        }
 
         assert_eq!(first.get(), 0);
         assert_eq!(second.get(), 1);
     }
 
     #[test]
-    fn init_owned_transfers_waker_without_dropping_it() {
-        let layout = std::alloc::Layout::new::<WaiterSlot>();
-        let ptr =
-            /* SAFETY: `layout` is exactly `WaiterSlot`; null is checked before
-            `init_owned` writes the allocation or the same layout deallocates it. */
-            unsafe { std::alloc::alloc(layout).cast::<WaiterSlot>() };
-        if ptr.is_null() {
-            std::alloc::handle_alloc_error(layout);
-        }
-
+    fn set_owned_transfers_waker_without_cloning_it() {
         let count = Cell::new(0);
         let waker = counting_waker(&count);
-        /* SAFETY: `ptr` is the unique `WaiterSlot` allocation from this test;
-        `init_owned` initializes it once, and this block wakes, drops, and
-        deallocates it exactly once with the matching layout. */
-        unsafe {
-            WaiterSlot::init_owned(ptr, waker);
-            (*ptr).wake();
-            assert_eq!(count.get(), 1);
-            assert!((*ptr).take().is_none());
-            core::ptr::drop_in_place(ptr);
-            std::alloc::dealloc(ptr.cast::<u8>(), layout);
+        let mut slot = WaiterSlot::empty();
+        slot.set_owned(waker);
+        if let Some(waker) = slot.take() {
+            waker.wake();
         }
+        assert_eq!(count.get(), 1);
+        assert!(slot.take().is_none());
     }
 }

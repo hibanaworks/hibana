@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "${ROOT_DIR}"
+
+MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_TIMEOUT_SECONDS:-180}"
+export MIRIFLAGS="-Zmiri-strict-provenance"
+
+if [[ ! "${MIRI_TOOLCHAIN}" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "miri gate invalid pinned toolchain: ${MIRI_TOOLCHAIN}" >&2
+  exit 1
+fi
+
+source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
+hibana_enable_repo_tests_cfg
+
+if ! rustup run "${MIRI_TOOLCHAIN}" cargo miri --version >/dev/null 2>&1; then
+  echo "miri gate missing pinned toolchain/component: ${MIRI_TOOLCHAIN}" >&2
+  echo "install with: rustup toolchain install ${MIRI_TOOLCHAIN} --profile minimal --component miri --component rust-src" >&2
+  exit 1
+fi
+if ! rustup component list --toolchain "${MIRI_TOOLCHAIN}" \
+  | grep -Eq '^rust-src.*\(installed\)$'; then
+  echo "miri gate missing rust-src for pinned toolchain: ${MIRI_TOOLCHAIN}" >&2
+  exit 1
+fi
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "miri gate requires GNU timeout" >&2
+  exit 1
+fi
+
+run_miri_test() {
+  local label="$1"
+  local expected="$2"
+  shift 2
+  local output
+  output="$(mktemp "${TMPDIR:-/tmp}/hibana-miri.XXXXXX")"
+  if ! timeout "${MIRI_TIMEOUT_SECONDS}s" \
+    cargo +"${MIRI_TOOLCHAIN}" miri test "$@" >"${output}" 2>&1; then
+    cat "${output}" >&2
+    rm -f "${output}"
+    echo "miri gate failed: ${label}" >&2
+    return 1
+  fi
+  cat "${output}"
+  if ! grep -Fq "running ${expected} test" "${output}" \
+    || ! grep -Fq "test result: ok. ${expected} passed;" "${output}"; then
+    rm -f "${output}"
+    echo "miri gate test-count mismatch: ${label} expected=${expected}" >&2
+    return 1
+  fi
+  rm -f "${output}"
+}
+
+run_miri_test \
+  public-runtime-owner \
+  2 \
+  -p hibana \
+  --test miri_runtime_owner
+
+run_miri_test \
+  resident-sidecar-owner \
+  5 \
+  -p hibana \
+  --lib \
+  storage_layout::capacity::tests
+
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=7"

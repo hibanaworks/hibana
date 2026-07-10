@@ -13,6 +13,7 @@ pub(in crate::endpoint) enum PublicActiveOp {
     Recv,
     Offer,
     RouteBranch,
+    RestoredRouteBranch,
     BranchRecv,
     BranchSend,
 }

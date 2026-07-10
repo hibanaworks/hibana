@@ -11,7 +11,7 @@ use super::evidence::{
     ScopeReentryMeta,
 };
 use super::frontier::*;
-use super::frontier_state::{FrontierScratchState, FrontierState};
+use super::frontier_state::FrontierState;
 use super::lane_port;
 use super::lane_slots::LaneSlotArray;
 use super::layout::{EndpointArenaLayout, LeasedState};
@@ -219,11 +219,6 @@ pub(crate) fn kernel_send<'r>(
                 }
                 SendInitOutcome::Pending { pending } => {
                     *state = SendState::Sending { pending };
-                }
-                SendInitOutcome::Commit { commit_plan } => {
-                    let result = endpoint.finish_send_after_transport_kernel(commit_plan);
-                    *state = SendState::Done;
-                    return Poll::Ready(Ok(result));
                 }
             },
             SendState::Sending { pending } => {

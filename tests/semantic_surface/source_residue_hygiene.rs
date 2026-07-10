@@ -215,7 +215,6 @@ fn production_sources_do_not_keep_fallible_success_wrappers() {
         "self.active = true",
         "self.active = false",
         "pub(crate) active: bool,\n    pub(crate) lane_idx",
-        "active: true,\n            ..OfferEntryState::EMPTY",
         "active: true,\n                lane_idx",
         "public_slot_owned: bool",
         "public_slot_owned: true",

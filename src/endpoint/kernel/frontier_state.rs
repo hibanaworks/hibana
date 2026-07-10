@@ -9,9 +9,9 @@
 use core::ops::{Index, IndexMut};
 
 use super::frontier::{
-    ActiveEntrySet, ActiveEntrySlot, EntryBuffer, LaneOfferState, RootFrontierState,
+    ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierVisitSet, LaneOfferState,
+    RootFrontierState,
 };
-use super::frontier::{OfferEntrySlot, OfferEntryState, OfferEntryTable};
 use crate::global::const_dsl::ScopeId;
 
 pub(super) struct RootFrontierTable {
@@ -33,12 +33,11 @@ pub(super) struct RootFrontierCapacity {
 
 pub(super) struct FrontierStateStorage {
     pub(super) root: RootFrontierStorage,
-    pub(super) offer_entry_slots: *mut OfferEntrySlot,
+    pub(super) visited_scopes: *mut ScopeId,
 }
 
 pub(super) struct FrontierStateCapacity {
     pub(super) root: RootFrontierCapacity,
-    pub(super) max_offer_entries: usize,
 }
 
 impl RootFrontierTable {
@@ -337,22 +336,7 @@ impl IndexMut<usize> for RootFrontierTable {
 
 pub(super) struct FrontierState {
     pub(super) root_frontier_state: RootFrontierTable,
-    pub(super) offer_entry_state: OfferEntryTable,
-    pub(super) global_frontier_scratch_state: FrontierScratchState,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum FrontierScratchState {
-    Uninitialized = 0,
-    Initialized = 1,
-}
-
-impl FrontierScratchState {
-    #[inline]
-    pub(super) const fn is_initialized(self) -> bool {
-        matches!(self, Self::Initialized)
-    }
+    visited_scopes: *mut ScopeId,
 }
 
 impl FrontierState {
@@ -371,13 +355,20 @@ impl FrontierState {
                 storage.root,
                 capacity.root,
             );
-            OfferEntryTable::init_from_parts(
-                core::ptr::addr_of_mut!((*dst).offer_entry_state),
-                storage.offer_entry_slots,
-                capacity.max_offer_entries,
-            );
-            core::ptr::addr_of_mut!((*dst).global_frontier_scratch_state)
-                .write(FrontierScratchState::Uninitialized);
+            core::ptr::addr_of_mut!((*dst).visited_scopes).write(storage.visited_scopes);
+        }
+    }
+
+    #[inline]
+    pub(super) fn empty_frontier_visit_set(&mut self) -> FrontierVisitSet {
+        /* SAFETY: `visited_scopes` is the endpoint-owned arena section paired
+        with the offer-entry capacity. One public offer operation owns the
+        returned initialized prefix until it completes or is dropped. */
+        unsafe {
+            FrontierVisitSet::from_parts(
+                self.visited_scopes,
+                self.root_frontier_state.pool_capacity(),
+            )
         }
     }
 
@@ -417,27 +408,6 @@ impl FrontierState {
             Some(slot) => self.root_frontier_state.active_entry_set(slot),
             None => ActiveEntrySet::EMPTY,
         }
-    }
-
-    #[inline]
-    pub(super) fn offer_entry_state_mut(
-        &mut self,
-        entry_idx: usize,
-    ) -> Option<&mut OfferEntryState> {
-        if !self.offer_entry_state.has_storage() {
-            return None;
-        }
-        self.offer_entry_state.get_mut(entry_idx)
-    }
-
-    #[inline]
-    pub(super) fn set_offer_entry_state(&mut self, entry_idx: usize, state: OfferEntryState) {
-        self.offer_entry_state.set(entry_idx, state);
-    }
-
-    #[inline]
-    pub(super) fn clear_offer_entry_state(&mut self, entry_idx: usize) {
-        self.set_offer_entry_state(entry_idx, OfferEntryState::EMPTY);
     }
 
     pub(super) fn remove_root_frontier_slot(&mut self, slot_idx: usize) {

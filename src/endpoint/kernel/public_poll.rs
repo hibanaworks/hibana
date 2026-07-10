@@ -37,14 +37,23 @@ where
             self.terminal_clear_public_offer_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
-        if self.public_route_branch.is_some() {
+        if let Some(branch) = self.public_route_branch.as_ref() {
+            let label = branch.branch_meta.label;
             self.clear_session_waiter();
-            self.public_op_busy_fault();
-            let err = RecvError::PhaseInvariant;
-            return Poll::Ready(Err(err));
+            self.public_offer_state = OfferState::new();
+            self.public_active_op = PublicActiveOp::RouteBranch;
+            return Poll::Ready(Ok(label));
         }
         let mut offer_state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
-        let poll = self.poll_offer_state(&mut offer_state, cx);
+        let poll = {
+            let Some(_scratch_lease) = self.port_for_lane(self.primary_lane).try_scratch_lease()
+            else {
+                self.public_offer_state = offer_state;
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            };
+            self.poll_offer_state(&mut offer_state, cx)
+        };
         match poll {
             Poll::Pending => {
                 self.register_session_waiter(cx.waker());
@@ -197,7 +206,8 @@ where
         }
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         let mut payload = payload;
-        match kernel_send(self, &mut send_state, &mut payload, cx) {
+        let poll = kernel_send(self, &mut send_state, &mut payload, cx);
+        match poll {
             Poll::Pending => {
                 if payload.is_some() {
                     crate::invariant();

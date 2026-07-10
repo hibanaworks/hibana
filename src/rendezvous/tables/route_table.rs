@@ -1,5 +1,5 @@
 use super::{
-    Context, FrameLabelMask, Lane, MAX_TRACKED_ROLES, PhantomData, Poll, ScopeId, ScopeKind,
+    Cell, Context, FrameLabelMask, Lane, MAX_TRACKED_ROLES, PhantomData, Poll, ScopeId, ScopeKind,
     UnsafeCell, WaiterSlot,
 };
 // # Unsafe Owner Contract
@@ -88,9 +88,9 @@ struct RouteTableStorageBinding {
 
 pub(crate) struct RouteTable {
     frames: UnsafeCell<*mut RouteFrame>,
-    route_slots: usize,
-    lane_base: u32,
-    lane_slots: u16,
+    route_slots: Cell<usize>,
+    lane_base: Cell<u32>,
+    lane_slots: Cell<u16>,
     lane_heads: UnsafeCell<*mut u16>,
     free_head: UnsafeCell<*mut u16>,
     pending_frame_hint_masks: UnsafeCell<*mut FrameLabelMask>,
@@ -103,10 +103,10 @@ mod storage;
 impl RouteTable {
     #[inline]
     fn lane_slot(&self, lane: Lane) -> usize {
-        if lane.raw() < self.lane_base {
+        if lane.raw() < self.lane_base.get() {
             crate::invariant();
         }
-        let lane_idx = (lane.raw() - self.lane_base) as usize;
+        let lane_idx = (lane.raw() - self.lane_base.get()) as usize;
         if lane_idx >= self.lane_slots() {
             crate::invariant();
         }
@@ -134,7 +134,7 @@ impl RouteTable {
 
     #[inline]
     fn frame_ref(&self, idx: usize) -> &RouteFrame {
-        if idx >= self.route_slots {
+        if idx >= self.route_slots.get() {
             crate::invariant();
         }
         /* SAFETY: `RouteTable` owns the initialized `frames` column; `idx` is
@@ -145,7 +145,7 @@ impl RouteTable {
 
     #[inline]
     fn frame_ptr_checked(&self, idx: usize) -> *mut RouteFrame {
-        if idx >= self.route_slots {
+        if idx >= self.route_slots.get() {
             crate::invariant();
         }
         self.frames_ptr().wrapping_add(idx)
@@ -276,7 +276,7 @@ impl RouteTable {
         if let Some(idx) = Self::slot_for_scope(self, lane_idx, coord) {
             return Some(idx);
         }
-        if self.route_slots == 0 {
+        if self.route_slots.get() == 0 {
             return None;
         }
         let idx = self.pop_free_slot()?;
@@ -343,7 +343,10 @@ impl RouteTable {
 
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
-            self.with_waiter_mut(lane_idx, role_idx, |waiter| waiter.wake());
+            let waker = self.with_waiter_mut(lane_idx, role_idx, WaiterSlot::take);
+            if let Some(waker) = waker {
+                waker.wake();
+            }
             role_idx += 1;
         }
         generation
@@ -423,7 +426,7 @@ impl RouteTable {
 
     #[inline]
     pub(crate) fn pending_frame_hint_mask_for_lane(&self, lane: Lane) -> FrameLabelMask {
-        if self.route_slots == 0 {
+        if self.route_slots.get() == 0 {
             return FrameLabelMask::EMPTY;
         }
         let lane_idx = self.lane_slot(lane);
@@ -436,7 +439,7 @@ impl RouteTable {
         before: FrameLabelMask,
         after: FrameLabelMask,
     ) {
-        if before == after || self.route_slots == 0 {
+        if before == after || self.route_slots.get() == 0 {
             return;
         }
         let lane_idx = self.lane_slot(lane);
@@ -448,7 +451,7 @@ impl RouteTable {
         lane: Lane,
         frame_label_mask: FrameLabelMask,
     ) -> bool {
-        if self.route_slots == 0 {
+        if self.route_slots.get() == 0 {
             return false;
         }
         let lane_idx = self.lane_slot(lane);
@@ -456,7 +459,7 @@ impl RouteTable {
     }
 
     pub(crate) fn reset_lane(&self, lane: Lane) {
-        if self.route_slots == 0 {
+        if self.route_slots.get() == 0 {
             return;
         }
         let lane_idx = self.lane_slot(lane);
@@ -477,13 +480,16 @@ impl RouteTable {
     }
 
     pub(crate) fn wake_lane_waiters(&self, lane: Lane) {
-        if self.route_slots == 0 {
+        if self.route_slots.get() == 0 {
             return;
         }
         let lane_idx = self.lane_slot(lane);
         let mut role_idx = 0usize;
         while role_idx < MAX_TRACKED_ROLES {
-            self.with_waiter_mut(lane_idx, role_idx, |waiter| waiter.wake());
+            let waker = self.with_waiter_mut(lane_idx, role_idx, WaiterSlot::take);
+            if let Some(waker) = waker {
+                waker.wake();
+            }
             role_idx += 1;
         }
     }

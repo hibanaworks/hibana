@@ -47,25 +47,6 @@ fn root_frontier_table_accepts_full_u8_lane_domain_rows() {
 }
 
 #[test]
-fn global_active_entry_set_stays_packed_after_removal() {
-    let mut slots = [ActiveEntrySlot::EMPTY; 4];
-    let mut active = ActiveEntrySet::EMPTY;
-    unsafe {
-        ActiveEntrySet::init_from_parts(
-            (&mut active) as *mut ActiveEntrySet,
-            slots.as_mut_ptr(),
-            4,
-        );
-    }
-    assert!(active.insert_entry(10, 0));
-    assert!(active.insert_entry(20, 1));
-    assert!(active.remove_entry(10));
-    assert_eq!(active.len(), 1);
-    assert_eq!(active.entry_at(0), Some(20));
-    assert_eq!(active.occupancy_mask(), 0b0000_0001);
-}
-
-#[test]
 fn root_frontier_shared_active_pool_stays_packed_after_row_removal() {
     let mut rows = [RootFrontierState::EMPTY; 4];
     let mut active = [ActiveEntrySlot::EMPTY; 8];

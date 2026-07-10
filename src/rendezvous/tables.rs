@@ -11,7 +11,7 @@
 //! exposing safe table methods.
 
 use core::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     marker::PhantomData,
     task::{Context, Poll},
 };

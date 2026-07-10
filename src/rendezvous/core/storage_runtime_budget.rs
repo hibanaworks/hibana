@@ -5,7 +5,7 @@ where
     'cfg: 'rv,
 {
     pub(crate) fn ensure_core_lane_storage_for_assoc_entries(
-        &mut self,
+        &self,
         required_lane_slots: usize,
         required_assoc_slots: usize,
     ) -> Result<(), ResourceScope> {
@@ -13,7 +13,7 @@ where
     }
 
     pub(crate) fn ensure_endpoint_resident_budget(
-        &mut self,
+        &self,
         budget: EndpointResidentBudget,
     ) -> Result<(), ResourceScope> {
         let route_frame_slots = core::cmp::max(

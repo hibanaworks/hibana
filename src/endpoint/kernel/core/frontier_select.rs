@@ -1,8 +1,8 @@
 use super::{
     ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, FrontierCandidate,
     FrontierKind, LaneOfferState, ObservedEntrySet, OfferEntryEvidence, OfferEntryObservedState,
-    OfferEntryState, OfferEntrySummary, ScopeArmMaterializationMeta, ScopeId, Transport,
-    offer_entry_frontier_candidate, offer_entry_observed_state, state_index_to_usize,
+    ScopeArmMaterializationMeta, ScopeId, Transport, offer_entry_frontier_candidate,
+    offer_entry_observed_state, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -23,103 +23,7 @@ where
             }
             next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
-        self.frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .copied()
-            .is_some_and(OfferEntryState::is_active)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_has_other_active_lanes(
-        &self,
-        entry_idx: usize,
-        excluded_lane_idx: usize,
-    ) -> bool {
-        let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
-        let mut next = active_offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            if lane_idx != excluded_lane_idx {
-                let info = self.decision_state.lane_offer_state(lane_idx);
-                if !info.entry.is_absent() && state_index_to_usize(info.entry) == entry_idx {
-                    return true;
-                }
-            }
-            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        }
         false
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_state_snapshot(
-        &self,
-        entry_idx: usize,
-    ) -> Option<OfferEntryState> {
-        let has_active_lanes = self.offer_entry_has_active_lanes(entry_idx);
-        if let Some(state) = self.offer_entry_state_from_route_state(entry_idx) {
-            return Some(state);
-        }
-        if let Some(state) = self
-            .frontier_state
-            .offer_entry_state
-            .get(entry_idx)
-            .copied()
-        {
-            if state.is_active() || has_active_lanes {
-                return Some(state);
-            }
-            return None;
-        }
-        has_active_lanes.then_some(OfferEntryState::active(
-            u8::MAX,
-            ScopeId::none(),
-            FrontierKind::Route,
-            ScopeId::none(),
-            CurrentScopeSelectionMeta::EMPTY,
-            OfferEntrySummary::EMPTY,
-        ))
-    }
-
-    #[inline]
-    fn offer_entry_state_from_route_state(&self, entry_idx: usize) -> Option<OfferEntryState> {
-        let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
-        let mut next = active_offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            let info = self.decision_state.lane_offer_state(lane_idx);
-            if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
-                next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-                continue;
-            }
-            let cached_state = self
-                .frontier_state
-                .offer_entry_state
-                .get(entry_idx)
-                .copied()
-                .filter(|state| state.scope_id == info.scope);
-            let selection_meta = match cached_state {
-                Some(state) => state.selection_meta,
-                None => self.compute_offer_entry_selection_meta(
-                    info.scope,
-                    info,
-                    !self.offer_lane_set_for_scope(info.scope).is_empty(),
-                ),
-            };
-            let summary = match cached_state {
-                Some(state) => state.summary,
-                None => self.compute_offer_entry_summary_from_route_state(entry_idx),
-            };
-            return Some(OfferEntryState::active(
-                lane_idx as u8,
-                info.parallel_root,
-                info.frontier,
-                info.scope,
-                selection_meta,
-                summary,
-            ));
-        }
-        None
     }
 
     #[inline]
@@ -138,13 +42,15 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<CurrentScopeSelectionMeta> {
-        let state = self.offer_entry_state_snapshot(entry_idx)?;
-        if !self.offer_entry_has_active_lanes(entry_idx)
-            || self.offer_entry_scope_id(entry_idx) != scope_id
-        {
+        let (_, info) = self.offer_entry_representative_lane_from_route_state(entry_idx)?;
+        if info.scope != scope_id {
             return None;
         }
-        Some(state.selection_meta)
+        Some(self.compute_offer_entry_selection_meta(
+            scope_id,
+            info,
+            !self.offer_lane_set_for_scope(scope_id).is_empty(),
+        ))
     }
 
     #[inline]
@@ -153,7 +59,6 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<ScopeArmMaterializationMeta> {
-        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx)
             || self.offer_entry_scope_id(entry_idx) != scope_id
         {
@@ -168,7 +73,6 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<LaneOfferState> {
-        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx)
             || self.offer_entry_scope_id(entry_idx) != scope_id
         {
@@ -306,7 +210,7 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            if self.offer_entry_state_snapshot(entry_idx).is_none() {
+            if !self.offer_entry_has_active_lanes(entry_idx) {
                 continue;
             }
             if self.offer_entry_has_active_lanes(entry_idx)
@@ -383,7 +287,6 @@ where
         &mut self,
         entry_idx: usize,
     ) -> Option<FrontierCandidate> {
-        self.offer_entry_state_snapshot(entry_idx)?;
         if !self.offer_entry_has_active_lanes(entry_idx) {
             return None;
         }

@@ -23,7 +23,8 @@ where
     T: crate::transport::Transport,
 {
     /// Owned local rendezvous instances.
-    pub(crate) locals: crate::session::lease::core::RendezvousTable<'cfg, T>,
+    pub(crate) locals:
+        core::cell::UnsafeCell<crate::session::lease::core::RendezvousTable<'cfg, T>>,
 
     /// Number of active lane leases (affine witness count).
     pub(crate) active_leases: core::cell::Cell<u32>,
@@ -38,8 +39,8 @@ where
         `SessionStorage` cell. The rendezvous registry and active lease counter
         are both initialized before the cluster can expose storage access. */
         unsafe {
-            crate::session::lease::core::RendezvousTable::init_empty(core::ptr::addr_of_mut!(
-                (*dst).locals
+            core::ptr::addr_of_mut!((*dst).locals).write(core::cell::UnsafeCell::new(
+                crate::session::lease::core::RendezvousTable::empty(),
             ));
             core::ptr::addr_of_mut!((*dst).active_leases).write(core::cell::Cell::new(0));
         }

@@ -12,6 +12,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let warning_free_gate = read(".github/scripts/check_warning_free.sh");
     let direct_projection_gate = read(".github/scripts/check_direct_projection_binary.sh");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
+    let manifest_test_gate = read(".github/scripts/check_manifest_tests.sh");
+    let miri_gate = read(".github/scripts/check_miri.sh");
+    let miri_toolchain = read(".github/miri-toolchain");
     let compile_pressure_guard = read(".github/scripts/lib/compile_pressure_guard.sh");
     let compile_pressure_budget_helper = read(".github/scripts/lib/compile_pressure_budget.py");
     let compile_pressure_budget =
@@ -227,6 +230,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         workflow.contains("fetch-depth: 0")
             && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
+            && run_final_gate.contains("bash ./.github/scripts/check_manifest_tests.sh")
+            && run_final_gate.contains("bash ./.github/scripts/check_miri.sh")
             && run_final_gate
                 .contains("bash ./.github/scripts/check_surface_test_alias_hygiene.sh")
             && run_final_gate
@@ -239,6 +244,26 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && final_gate
                 .contains("if [[ \"${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}\" != \"1\" ]]; then"),
         "CI must run fixed Pico snapshots and the worktree size snapshot unless an explicit local override is set"
+    );
+    assert!(
+        manifest_test_gate.contains("import tomllib")
+            && manifest_test_gate.contains("get(\"workspace\", {}).get(\"members\")")
+            && manifest_test_gate.contains("data.get(\"test\", [])")
+            && manifest_test_gate.contains("cargo +\"${TOOLCHAIN}\" test --manifest-path")
+            && manifest_test_gate.contains("if running == 0 or passed != running")
+            && manifest_test_gate.contains("manifest test gate count mismatch")
+            && miri_toolchain.trim() == "nightly-2026-05-28"
+            && !miri_gate.contains("MIRI_TOOLCHAIN:-")
+            && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
+            && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
+            && miri_gate.contains(
+                "public-runtime-owner \\\n  2 \\\n  -p hibana \\\n  --test miri_runtime_owner"
+            )
+            && !miri_gate.contains("--exact")
+            && miri_gate.contains("storage_layout::capacity::tests")
+            && miri_gate.contains("miri gate test-count mismatch")
+            && workflow.contains("--profile minimal --component miri --component rust-src"),
+        "final-form validation must execute every manifest target and the pinned nonzero Miri owner suite"
     );
     assert!(
         !final_gate_with_helpers.contains("CARGO_BUILD_JOBS")

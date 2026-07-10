@@ -14,18 +14,15 @@ where
         if additional_entries == 0 {
             return Ok(());
         }
-        self.with_storage_mut(|core| {
-            core.locals
-                .ensure_dynamic_resolver_capacity(rv_id, additional_entries)
-        })
+        self.locals()
+            .ensure_dynamic_resolver_capacity(rv_id, additional_entries)
     }
 
     pub(crate) fn dynamic_resolver(
         &self,
         key: DynamicResolverKey,
-    ) -> Option<&DynamicResolverEntry<'cfg>> {
-        /* SAFETY: resolver references are read through the cluster-owned registry after key validation. */
-        unsafe { (*self.storage_ref_ptr()).locals.dynamic_resolver(key) }
+    ) -> Option<DynamicResolverEntry<'cfg>> {
+        self.locals().dynamic_resolver(key)
     }
 
     pub(crate) fn set_resolver<const RESOLVER: u16, const ROLE: u8>(
@@ -93,7 +90,7 @@ where
         if self.dynamic_resolver(key).is_none() {
             self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
         }
-        self.with_storage_mut(|core| core.locals.insert_dynamic_resolver(key, entry))
+        self.locals().insert_dynamic_resolver(key, entry)
     }
 
     pub(crate) fn resolve_dynamic_resolver(

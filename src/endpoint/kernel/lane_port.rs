@@ -72,19 +72,43 @@ impl PendingRecv {
     }
 }
 
-pub(super) struct PendingSend<'r> {
-    outgoing: Option<Outgoing<'r>>,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SendIoState {
+    Unpolled,
+    TransportPending,
 }
 
-impl<'r> PendingSend<'r> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SendCarrier {
+    Local,
+    Transport,
+}
+
+pub(super) struct PendingSend {
+    payload: RawSendPayload,
+    meta: crate::transport::SendMeta,
+    carrier: SendCarrier,
+    state: SendIoState,
+}
+
+impl PendingSend {
     #[inline]
-    pub(super) const fn new() -> Self {
-        Self { outgoing: None }
+    pub(super) const fn new(
+        payload: RawSendPayload,
+        meta: crate::transport::SendMeta,
+        carrier: SendCarrier,
+    ) -> Self {
+        Self {
+            payload,
+            meta,
+            carrier,
+            state: SendIoState::Unpolled,
+        }
     }
 
     #[inline]
-    fn clear(&mut self) {
-        self.outgoing = None;
+    fn transport_is_pending(&self) -> bool {
+        self.state == SendIoState::TransportPending
     }
 }
 
@@ -104,14 +128,6 @@ impl RawSendPayload {
         // pointer, and the public send future moves that pair into staging once.
         unsafe { (self.encode)(ptr, scratch) }.map_err(SendError::Codec)
     }
-}
-
-#[inline]
-pub(super) fn scratch_ptr<'r, T>(port: &Port<'r, T>) -> *mut [u8]
-where
-    T: Transport + 'r,
-{
-    port.scratch_ptr()
 }
 
 #[inline]
@@ -294,72 +310,82 @@ where
 }
 
 #[inline]
-pub(super) fn begin_send_outgoing<'f, 'r>(pending: &mut PendingSend<'r>, outgoing: Outgoing<'f>)
-where
-    'r: 'f,
-{
-    pending.outgoing = Some(Outgoing {
-        meta: outgoing.meta,
-        payload: unsafe {
-            // SAFETY: send planning encodes the erased user payload into the
-            // endpoint-resident outgoing scratch before this `Outgoing` is staged.
-            // `PendingSend` only extends that scratch borrow; completion,
-            // cancellation, and send-state reset clear the scratch after the
-            // transport no longer holds the outgoing view.
-            endpoint_resident_payload(outgoing.payload)
-        },
-    });
-}
-
-#[inline]
 pub(super) fn poll_send_outgoing<'r, T>(
-    pending: &mut PendingSend<'r>,
+    pending: &mut PendingSend,
     port: &Port<'r, T>,
     cx: &mut Context<'_>,
-) -> Poll<Result<(), TransportError>>
+) -> Poll<Result<(), SendError>>
 where
     T: Transport + 'r,
 {
-    let outgoing = crate::invariant_some(pending.outgoing);
+    let Some(_scratch_lease) = port.try_scratch_lease() else {
+        cx.waker().wake_by_ref();
+        return Poll::Pending;
+    };
+    let scratch_ptr = port.scratch_ptr();
+    let scratch = /* SAFETY: the scoped rendezvous scratch lease excludes
+    reentrant scratch access and resident layout mutation for this encode/poll
+    call. `Port` bounded the pointer and length to initialized slab bytes, and
+    no reference to them escapes the transport call below. */ unsafe {
+        &mut *scratch_ptr
+    };
+    let encoded_len = match pending.payload.encode_into(scratch) {
+        Ok(encoded_len) => encoded_len,
+        Err(err) => {
+            if pending.transport_is_pending() {
+                let transport = port.transport();
+                let tx_ptr = port.tx_ptr();
+                /* SAFETY: the pending state records an armed transport poll on
+                this port's lane-local Tx handle. */
+                unsafe {
+                    transport.cancel_send(&mut *tx_ptr);
+                }
+                pending.state = SendIoState::Unpolled;
+            }
+            return Poll::Ready(Err(err));
+        }
+    };
+    if pending.carrier == SendCarrier::Local {
+        return Poll::Ready(Ok(()));
+    }
+    let outgoing = Outgoing {
+        meta: pending.meta,
+        payload: Payload::new(&scratch[..encoded_len]),
+    };
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
     let poll = unsafe {
-        // SAFETY: `PendingSend` owns the outgoing payload borrow while this send
-        // is armed, and `Port` owns the lane-local Tx handle until the poll
-        // completes or is explicitly cancelled.
+        // SAFETY: the scoped scratch lease keeps `outgoing` stable for this call,
+        // and `Port` owns the lane-local Tx handle. The transport signature cannot
+        // retain the shorter outgoing borrow in its longer-lived Tx state.
         transport.poll_send(&mut *tx_ptr, outgoing, cx)
     };
-    if poll.is_ready() {
-        pending.clear();
+    match poll {
+        Poll::Pending => {
+            pending.state = SendIoState::TransportPending;
+            Poll::Pending
+        }
+        Poll::Ready(result) => {
+            pending.state = SendIoState::Unpolled;
+            Poll::Ready(result.map_err(SendError::Transport))
+        }
     }
-    poll
 }
 
 #[inline]
-pub(super) fn cancel_send_outgoing<'r, T>(pending: &mut PendingSend<'r>, port: &Port<'r, T>)
+pub(super) fn cancel_send_outgoing<'r, T>(pending: &mut PendingSend, port: &Port<'r, T>)
 where
     T: Transport + 'r,
 {
-    if pending.outgoing.is_none() {
+    if !pending.transport_is_pending() {
         return;
     }
     let transport = port.transport();
     let tx_ptr = port.tx_ptr();
     unsafe {
-        // SAFETY: a pending send is armed, so `PendingSend` owns the outgoing
-        // payload and this `Port` owns the matching lane-local Tx handle.
+        // SAFETY: the pending state records an armed transport poll and this
+        // `Port` owns the matching lane-local Tx handle.
         transport.cancel_send(&mut *tx_ptr);
     }
-    pending.clear();
-}
-
-#[inline]
-pub(super) fn requeue_recv_frame<'r, T>(
-    port: &Port<'r, T>,
-    frame: ReceivedFrame<'r>,
-) -> Result<(), crate::transport::TransportError>
-where
-    T: Transport + 'r,
-{
-    frame.requeue_on(port)
+    pending.state = SendIoState::Unpolled;
 }

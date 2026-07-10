@@ -188,17 +188,6 @@ impl FrontierVisitSet {
     }
 }
 
-#[inline]
-pub(crate) fn frontier_visit_set_from_scratch(
-    scratch: &mut FrontierScratchView,
-) -> FrontierVisitSet {
-    let capacity = scratch.visited_scopes_mut().len();
-    /* SAFETY: `scratch` is the endpoint frontier scratch borrow for the active
-    operation. The visited-scope slice remains live for the returned set and is
-    reset by `from_parts`. */
-    unsafe { FrontierVisitSet::from_parts(scratch.visited_scopes_mut().as_mut_ptr(), capacity) }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrontierDeferOutcome {
     Continue,

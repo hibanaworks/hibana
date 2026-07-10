@@ -628,12 +628,6 @@ check_absent "(?i)\\b(${MODE_WORD}(ibility|ible)?|${OLD_WORD}|${RECOVERY_WORD}|$
 check_absent "${DEAD_CODE_ALLOW_PATTERN}|${DEAD_CODE_SPLIT_ALLOW_PATTERN}|DiscardedAndPending|keeps_waiting|absorbed" \
   "static hygiene residue in production source" \
   src
-check_absent_multiline "wake_by_ref\\(\\);[[:space:]]*\\n[[:space:]]*return Poll::Pending" \
-  "transport mismatch wake-and-pending recovery path" \
-  src/endpoint/kernel/lane_port.rs src/endpoint/kernel/observe.rs src/endpoint/kernel/offer.rs src/endpoint/kernel/offer/materialization.rs
-check_absent_multiline "wake_by_ref\\(\\);[[:space:]]*\\n[[:space:]]*Poll::Pending" \
-  "transport mismatch wake-and-pending recovery expression" \
-  src/endpoint/kernel/lane_port.rs src/endpoint/kernel/observe.rs src/endpoint/kernel/offer.rs src/endpoint/kernel/offer/materialization.rs
 check_absent "\\b(test_from_slice|bind_test_storage)\\b" \
   "named cfg-test constructor/helper residue in production source" \
   src

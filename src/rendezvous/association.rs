@@ -9,57 +9,23 @@
 //! access backing arrays only through the table's entry capacity and must keep
 //! sid, lane, packed state, and waiter columns synchronized before waking waiters.
 
-use core::{cell::UnsafeCell, marker::PhantomData, task::Waker};
+use core::{
+    cell::{Cell, UnsafeCell},
+    marker::PhantomData,
+    task::Waker,
+};
 
 use crate::session::types::{Lane, SessionId};
 
 use super::waiter::WaiterSlot;
 
+mod fault;
 mod storage;
+pub(crate) use fault::SessionFaultKind;
 
 const ENTRY_COUNT_BITS: u32 = 5;
 const ENTRY_COUNT_MASK: u8 = (1u8 << ENTRY_COUNT_BITS) - 1;
 const ENTRY_FAULT_SHIFT: u32 = ENTRY_COUNT_BITS;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SessionFaultKind {
-    TransportClosed,
-    PeerReset,
-    DecodeFailed,
-    ProtocolViolation,
-    EndpointDropped,
-    ProgressInvariantViolated,
-}
-
-impl SessionFaultKind {
-    const ABSENT_CODE: u8 = 0;
-
-    #[inline]
-    const fn encode(self) -> u8 {
-        match self {
-            Self::TransportClosed => 1,
-            Self::PeerReset => 2,
-            Self::DecodeFailed => 3,
-            Self::ProtocolViolation => 4,
-            Self::EndpointDropped => 5,
-            Self::ProgressInvariantViolated => 6,
-        }
-    }
-
-    #[inline]
-    const fn decode(raw: u8) -> Option<Self> {
-        match raw {
-            Self::ABSENT_CODE => None,
-            1 => Some(Self::TransportClosed),
-            2 => Some(Self::PeerReset),
-            3 => Some(Self::DecodeFailed),
-            4 => Some(Self::ProtocolViolation),
-            5 => Some(Self::EndpointDropped),
-            6 => Some(Self::ProgressInvariantViolated),
-            _ => crate::invariant(),
-        }
-    }
-}
 
 /// Association table for active `(session, lane)` claims.
 ///
@@ -67,9 +33,9 @@ impl SessionFaultKind {
 /// are independent from lane indices so multiple sessions can hold the same
 /// physical lane without aliasing release authority.
 pub(super) struct AssocTable {
-    lane_base: u32,
-    lane_slots: u16,
-    assoc_slots: u16,
+    lane_base: Cell<u32>,
+    lane_slots: Cell<u16>,
+    assoc_slots: Cell<u16>,
     entry_sids: UnsafeCell<*mut SessionId>,
     entry_lanes: UnsafeCell<*mut u8>,
     entry_states: UnsafeCell<*mut u8>,
@@ -107,12 +73,12 @@ impl AssocTable {
 
     #[inline]
     fn lane_slots(&self) -> usize {
-        self.lane_slots as usize
+        self.lane_slots.get() as usize
     }
 
     #[inline]
     pub(super) fn assoc_slots(&self) -> usize {
-        self.assoc_slots as usize
+        self.assoc_slots.get() as usize
     }
 
     #[inline]
@@ -146,10 +112,10 @@ impl AssocTable {
     #[inline]
     fn lane_offset(&self, lane: Lane) -> Option<u8> {
         let lane_raw = lane.raw();
-        if lane_raw < self.lane_base {
+        if lane_raw < self.lane_base.get() {
             return None;
         }
-        let offset = lane_raw - self.lane_base;
+        let offset = lane_raw - self.lane_base.get();
         if (offset as usize) >= self.lane_slots() || offset > u8::MAX as u32 {
             return None;
         }
@@ -315,7 +281,7 @@ impl AssocTable {
     }
 
     #[inline]
-    pub(super) fn for_each_lane(&self, sid: SessionId, mut visit: impl FnMut(Lane)) {
+    pub(super) fn next_session_lane(&self, sid: SessionId, after: Option<u32>) -> Option<Lane> {
         /* SAFETY: the scan is bounded by `0..assoc_slots` for the current assoc
         columns. It only reads sid/lane/state tuples and yields lanes derived
         from the same table's `lane_base`. */
@@ -323,30 +289,33 @@ impl AssocTable {
             let lanes = self.entry_lanes_ptr();
             let sids = self.entry_sids_ptr();
             let states = self.entry_states_ptr();
+            let mut next = None::<u32>;
             let mut idx = 0usize;
             while idx < self.assoc_slots() {
                 if Self::entry_count(*states.add(idx)) != 0 && *sids.add(idx) == sid {
-                    visit(Lane::new(self.lane_base + *lanes.add(idx) as u32));
+                    let lane = self.lane_base.get() + *lanes.add(idx) as u32;
+                    if after.is_none_or(|after| lane > after)
+                        && next.is_none_or(|current| lane < current)
+                    {
+                        next = Some(lane);
+                    }
                 }
                 idx += 1;
             }
+            next.map(Lane::new)
         }
     }
 
     #[inline]
     pub(super) fn register_waiter(&self, sid: SessionId, lane: Lane, waker: &Waker) {
-        let Some(lane_offset) = self.lane_offset(lane) else {
-            return;
-        };
-        let Some(idx) = self.find_entry_by_offset(lane_offset, sid) else {
-            return;
-        };
+        let lane_offset = crate::invariant_some(self.lane_offset(lane));
+        let idx = crate::invariant_some(self.find_entry_by_offset(lane_offset, sid));
         /* SAFETY: `find_entry_by_offset` bounds the waiter slot before replacing
         the waiter for that `(sid, lane)` claim. */
         unsafe {
             let states = self.entry_states_ptr();
             if Self::entry_count(*states.add(idx)) == 0 {
-                return;
+                crate::invariant();
             }
             (*self.waiter_ptr(idx)).set(waker);
         }
@@ -354,18 +323,14 @@ impl AssocTable {
 
     #[inline]
     pub(super) fn clear_waiter(&self, sid: SessionId, lane: Lane) {
-        let Some(lane_offset) = self.lane_offset(lane) else {
-            return;
-        };
-        let Some(idx) = self.find_entry_by_offset(lane_offset, sid) else {
-            return;
-        };
+        let lane_offset = crate::invariant_some(self.lane_offset(lane));
+        let idx = crate::invariant_some(self.find_entry_by_offset(lane_offset, sid));
         /* SAFETY: `find_entry_by_offset` bounds the waiter slot before clearing
         the waiter for that `(sid, lane)` claim. */
         unsafe {
             let states = self.entry_states_ptr();
             if Self::entry_count(*states.add(idx)) == 0 {
-                return;
+                crate::invariant();
             }
             (*self.waiter_ptr(idx)).clear();
         }
@@ -373,19 +338,28 @@ impl AssocTable {
 
     #[inline]
     pub(super) fn wake_session_waiters(&self, sid: SessionId) {
-        /* SAFETY: the scan is bounded by the current assoc entry count. Wakers
-        are read from the waiter column only for slots whose paired sid/state
-        columns belong to `sid`. */
-        unsafe {
-            let sids = self.entry_sids_ptr();
-            let states = self.entry_states_ptr();
-            let mut idx = 0usize;
-            while idx < self.assoc_slots() {
-                if Self::entry_count(*states.add(idx)) != 0 && *sids.add(idx) == sid {
-                    (*self.waiter_ptr(idx)).wake();
+        loop {
+            let waker = /* SAFETY: every pass scans the currently bound columns
+            and returns immediately after taking one owned waker. */ unsafe {
+                let sids = self.entry_sids_ptr();
+                let states = self.entry_states_ptr();
+                let mut idx = 0usize;
+                let mut found = None;
+                while idx < self.assoc_slots() {
+                    if Self::entry_count(*states.add(idx)) != 0 && *sids.add(idx) == sid {
+                        found = (*self.waiter_ptr(idx)).take();
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                    idx += 1;
                 }
-                idx += 1;
-            }
+                found
+            };
+            let Some(waker) = waker else {
+                break;
+            };
+            waker.wake();
         }
     }
 

@@ -1,6 +1,6 @@
 use super::{
-    AttachError, ClusterError, EndpointInitArgs, EndpointLeaseId, Lane,
-    PublicEndpointStorageRequest, RendezvousId, RoleImageSlice, SessionCluster, SessionId,
+    AttachError, EndpointInitArgs, EndpointLeaseId, Lane, PublicEndpointStorageRequest,
+    RendezvousId, RoleImageSlice, SessionCluster, SessionId,
 };
 
 struct SecondaryEndpointLaneAttach<'lease, const ROLE: u8, T>
@@ -45,13 +45,9 @@ where
             }
 
             let physical_lane = Lane::new(logical_idx as u32);
-            let mut lease = self
+            let lease = self
                 .lease_port(rv_id, sid, physical_lane, ROLE, role_count)
                 .map_err(AttachError::from)?;
-            lease.with_rendezvous_mut(|rv| -> Result<(), AttachError> {
-                rv.activate_lane_attachment(sid, physical_lane)
-                    .map_err(AttachError::from)
-            })?;
             let access = lease.into_port_guard();
             /* SAFETY: secondary-lane attach owns the endpoint slot before
             publication. `logical_idx` selects initialized port/guard columns,
@@ -98,13 +94,9 @@ where
         let primary_lane_index = Self::primary_endpoint_lane_index(role_image, logical_lane_count);
         let session_lane_index = 0usize;
         let session_wire_lane = Lane::new(session_lane_index as u32);
-        let mut session_lease = self
+        let session_lease = self
             .lease_port(rv_id, sid, session_wire_lane, ROLE, role_count)
             .map_err(AttachError::from)?;
-        session_lease.with_rendezvous_mut(|rv| -> Result<(), AttachError> {
-            rv.activate_lane_attachment(sid, session_wire_lane)
-                .map_err(AttachError::from)
-        })?;
         let session_access = session_lease.into_port_guard();
         let owner: crate::session::brand::Owner<'r> = /* SAFETY: the port guard
         owns the validated session brand for this attach operation; narrowing it
@@ -259,19 +251,17 @@ where
             requirements and reserve a live endpoint slot. */
             unsafe {
                 let logical_lane_count = role_image.logical_lane_count().max(1);
-                let required_assoc_slots = self.with_storage_mut(|core| {
-                    let rv = core
-                        .locals
-                        .get_mut_checked(&rv_id)
-                        .map_err(Self::map_rendezvous_access_error)
-                        .map_err(AttachError::cluster)?;
-                    Ok::<usize, AttachError>(Self::required_assoc_slots_for_endpoint(
-                        rv,
-                        sid,
-                        role_image,
-                        logical_lane_count,
-                    ))
-                })?;
+                let rv = self
+                    .locals()
+                    .get_checked(&rv_id)
+                    .map_err(Self::map_rendezvous_access_error)
+                    .map_err(AttachError::cluster)?;
+                let required_assoc_slots = Self::required_assoc_slots_for_endpoint(
+                    rv,
+                    sid,
+                    role_image,
+                    logical_lane_count,
+                );
                 let storage_layout = Self::public_endpoint_storage_requirement(role_image);
                 let resident_budget = Self::public_endpoint_resident_budget(role_image);
                 let (slot, generation, dst) = self
@@ -299,15 +289,8 @@ where
                     public_ops,
                     public_slot_ownership: crate::endpoint::kernel::PublicSlotOwnership::Owned,
                 }) {
-                    let release_result = self.with_storage_mut(|core| {
-                        if let Some(rv) = core.locals.get_mut(&rv_id) {
-                            rv.release_endpoint_lease(slot, generation)?;
-                        }
-                        Ok(())
-                    });
-                    release_result.map_err(|scope| {
-                        AttachError::cluster(ClusterError::resource_exhausted(scope))
-                    })?;
+                    crate::invariant_some(self.get_local(&rv_id))
+                        .release_endpoint_lease(slot, generation);
                     return Err(err);
                 }
                 Ok((slot, generation))

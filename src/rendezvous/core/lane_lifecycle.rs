@@ -1,6 +1,7 @@
 use super::{
-    AssocTable, Cell, EndpointLeaseId, Lane, LaneRelease, PhantomData, Rendezvous, RendezvousId,
-    RouteTable, RuntimeResources, SessionId, Sidecar, TapRing, Transport, Waker, emit, events,
+    AssocTable, Cell, Lane, LaneRelease, PhantomData, Rendezvous, RendezvousAccessState,
+    RendezvousId, RouteTable, RuntimeResources, SessionId, Sidecar, TapRing, Transport, UnsafeCell,
+    Waker, emit, events,
 };
 use crate::{observe::core::TapEvent, runtime_core::consts::TAP_EVENTS};
 
@@ -39,14 +40,16 @@ where
         slab: &mut [u8],
     ) -> Option<(*mut Self, &mut [TapEvent; TAP_EVENTS], &mut [u8])> {
         let layout = Self::resident_carve_layout(slab)?;
-        let header_ptr = /* SAFETY: `resident_carve_layout` proved
-        `header_start` is inside `slab` and aligned for `Rendezvous`. */ unsafe {
-            slab.as_mut_ptr().add(layout.header_start).cast::<Self>()
+        let slab_len = slab.len();
+        let slab_ptr = slab.as_mut_ptr();
+        let header_ptr = /* SAFETY: `resident_carve_layout` proved the
+        unpublished header range is inside `slab` and aligned for `Rendezvous`. */ unsafe {
+            slab_ptr.add(layout.header_start).cast::<Self>()
         };
         let tap_ptr = /* SAFETY: `resident_carve_layout` proved `tap_start` is
         inside `slab` and aligned for `TapEvent`; `TAP_EVENTS` initialized
         cells fit before the runtime slice. */ unsafe {
-            slab.as_mut_ptr().add(layout.tap_start).cast::<TapEvent>()
+            slab_ptr.add(layout.tap_start).cast::<TapEvent>()
         };
         let mut idx = 0usize;
         while idx < TAP_EVENTS {
@@ -60,8 +63,8 @@ where
             &mut *(tap_ptr.cast::<[TapEvent; TAP_EVENTS]>())
         };
         let runtime_ptr = /* SAFETY: `runtime_start <= slab.len()` was checked
-        by `resident_carve_layout`, so this points at the runtime suffix. */ unsafe { slab.as_mut_ptr().add(layout.runtime_start) };
-        let runtime_len = slab.len() - layout.runtime_start;
+        by `resident_carve_layout`, so this points at the runtime suffix. */ unsafe { slab_ptr.add(layout.runtime_start) };
+        let runtime_len = slab_len - layout.runtime_start;
         let runtime_slab = /* SAFETY: `runtime_ptr` and `runtime_len` describe
         the suffix of the same caller slab after the rendezvous header and tap
         ring; it is disjoint from both initialized prefixes. */ unsafe { core::slice::from_raw_parts_mut(runtime_ptr, runtime_len) };
@@ -83,6 +86,8 @@ where
         let (dst, tap_storage, runtime_slab) = /* SAFETY: `slab` is the
         exclusive runtime resource for this rendezvous; carving initializes the
         tap ring and returns disjoint header/runtime regions. */ unsafe { Self::carve_resident_storage(slab) }?;
+        let runtime_slab_len = runtime_slab.len();
+        let runtime_slab_ptr = runtime_slab.as_mut_ptr();
         let image_frontier = 0u32;
         /* SAFETY: `dst` is the unpublished rendezvous header carved from the
         caller slab. All resident fields, tables, lane range, and transport
@@ -90,19 +95,25 @@ where
         unsafe {
             core::ptr::addr_of_mut!((*dst).brand_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).id).write(rv_id);
+            core::ptr::addr_of_mut!((*dst).access_state)
+                .write(Cell::new(RendezvousAccessState::Available));
+            core::ptr::addr_of_mut!((*dst).registry_next).write(Cell::new(None));
+            core::ptr::addr_of_mut!((*dst).resolver_bucket).write(UnsafeCell::new(
+                crate::session::cluster::core::ResolverBucket::empty(),
+            ));
             core::ptr::addr_of_mut!((*dst).tap).write(TapRing::from_storage(tap_storage));
             core::ptr::addr_of_mut!((*dst).tap_counter).write(Cell::new(0));
-            core::ptr::addr_of_mut!((*dst).slab).write(runtime_slab as *mut [u8]);
+            core::ptr::addr_of_mut!((*dst).slab_ptr).write(runtime_slab_ptr);
+            core::ptr::addr_of_mut!((*dst).slab_len).write(runtime_slab_len);
             core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
-            core::ptr::addr_of_mut!((*dst).image_frontier).write(image_frontier);
-            core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(0);
-            core::ptr::addr_of_mut!((*dst).endpoint_lease_storage).write(Sidecar::EMPTY);
-            core::ptr::addr_of_mut!((*dst).endpoint_lease_capacity).write(EndpointLeaseId::ZERO);
-            core::ptr::addr_of_mut!((*dst).lane_range)
-                .write((lane_range.start as u32)..(lane_range.end as u32));
+            core::ptr::addr_of_mut!((*dst).image_frontier).write(Cell::new(image_frontier));
+            core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_storage).write(Cell::new(Sidecar::EMPTY));
+            core::ptr::addr_of_mut!((*dst).lane_base).write(Cell::new(lane_range.start as u32));
+            core::ptr::addr_of_mut!((*dst).lane_end).write(Cell::new(lane_range.end as u32));
             core::ptr::addr_of_mut!((*dst).transport).write(transport);
-            core::ptr::addr_of_mut!((*dst).assoc_storage).write(Sidecar::EMPTY);
-            core::ptr::addr_of_mut!((*dst).route_storage).write(Sidecar::EMPTY);
+            core::ptr::addr_of_mut!((*dst).assoc_storage).write(Cell::new(Sidecar::EMPTY));
+            core::ptr::addr_of_mut!((*dst).route_storage).write(Cell::new(Sidecar::EMPTY));
             AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
             RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
         }
@@ -129,9 +140,11 @@ where
     ) -> crate::rendezvous::SessionFaultKind {
         let kind = self.assoc.poison_session(sid, cause);
         self.assoc.wake_session_waiters(sid);
-        self.assoc.for_each_lane(sid, |lane| {
+        let mut after = None;
+        while let Some(lane) = self.assoc.next_session_lane(sid, after) {
             self.routes.wake_lane_waiters(lane);
-        });
+            after = Some(lane.raw());
+        }
         kind
     }
 
@@ -174,79 +187,5 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::transport::{Outgoing, PortOpen, ReceivedFrame, TransportError};
-
-    #[derive(Clone)]
-    struct LayoutTransport;
-
-    impl Transport for LayoutTransport {
-        type Tx<'a>
-            = ()
-        where
-            Self: 'a;
-        type Rx<'a>
-            = ()
-        where
-            Self: 'a;
-
-        fn open<'a>(&'a self, _port: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
-            ((), ())
-        }
-
-        fn poll_send<'a, 'f>(
-            &self,
-            _tx: &'a mut Self::Tx<'a>,
-            _outgoing: Outgoing<'_>,
-            _cx: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<(), TransportError>>
-        where
-            'a: 'f,
-        {
-            core::task::Poll::Ready(Ok(()))
-        }
-
-        fn cancel_send<'a>(&self, _tx: &'a mut Self::Tx<'a>) {}
-
-        fn poll_recv<'a>(
-            &'a self,
-            _rx: &'a mut Self::Rx<'a>,
-            _cx: &mut core::task::Context<'_>,
-        ) -> core::task::Poll<Result<ReceivedFrame<'a>, TransportError>> {
-            core::task::Poll::Ready(Err(TransportError::Failed))
-        }
-
-        fn requeue<'a>(&self, _rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
-            Err(TransportError::Failed)
-        }
-    }
-
-    type TestRv<'a> = Rendezvous<'a, 'a, LayoutTransport>;
-
-    #[test]
-    fn single_slab_carve_layout_accounts_for_alignment_and_tap_ring() {
-        let mut storage = [0u8; 8192];
-        let slab = &mut storage[1..];
-        let layout = TestRv::resident_carve_layout(slab).expect("layout");
-        let base = slab.as_ptr() as usize;
-        let header_ptr = base + layout.header_start;
-        let runtime_ptr = base + layout.runtime_start;
-        let tap_ptr = base + layout.tap_start;
-
-        assert_eq!(header_ptr % core::mem::align_of::<TestRv<'_>>(), 0);
-        assert_eq!(tap_ptr % core::mem::align_of::<TapEvent>(), 0);
-        assert_eq!(runtime_ptr % core::mem::align_of::<TapEvent>(), 0);
-        assert!(
-            layout.tap_start > 0,
-            "misaligned slab must add prefix padding"
-        );
-        assert!(
-            layout.runtime_start
-                >= core::mem::size_of::<TestRv<'_>>()
-                    + core::mem::size_of::<[TapEvent; TAP_EVENTS]>(),
-            "resident prefix must include header and tap ring bytes"
-        );
-    }
-}
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;

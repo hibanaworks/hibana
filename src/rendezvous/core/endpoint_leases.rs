@@ -1,6 +1,6 @@
 use super::{
     EndpointLeaseId, EndpointLeaseSlot, EndpointLeaseState, EndpointResidentBudget, Rendezvous,
-    RouteTable, Sidecar, Transport,
+    Sidecar, Transport,
 };
 use crate::{session::cluster::error::ResourceScope, session::types::SessionId};
 impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
@@ -8,20 +8,8 @@ where
     'cfg: 'rv,
 {
     #[inline]
-    pub(crate) fn ensure_endpoint_lease_live(
-        &mut self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Result<(), ResourceScope> {
-        if self.endpoint_lease_mut(lease_slot, generation).is_some() {
-            Ok(())
-        } else {
-            Err(ResourceScope::EndpointMark)
-        }
-    }
-    #[inline]
-    pub(crate) unsafe fn allocate_endpoint_lease(
-        &mut self,
+    pub(crate) fn allocate_endpoint_lease(
+        &self,
         sid: SessionId,
         role: u8,
         bytes: usize,
@@ -31,9 +19,10 @@ where
         if bytes > u32::MAX as usize {
             return Err(ResourceScope::EndpointLease);
         }
+        let mut slot_count = self.endpoint_lease_slot_count();
         let mut has_empty_slot = false;
         let mut slot_idx = 0usize;
-        while slot_idx < usize::from(self.endpoint_lease_capacity) {
+        while slot_idx < slot_count {
             let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(slot_idx));
             if !slot.is_live() {
                 has_empty_slot = true;
@@ -42,20 +31,20 @@ where
             slot_idx += 1;
         }
         if !has_empty_slot {
-            let required_slots = usize::from(self.endpoint_lease_capacity)
+            let required_slots = slot_count
                 .checked_add(1)
                 .ok_or(ResourceScope::EndpointLease)?;
             self.ensure_endpoint_lease_capacity(required_slots)?;
+            slot_count = required_slots;
         }
         let (slab_ptr, slab_len) = self.slab_ptr_and_len();
         let slab_base = slab_ptr as usize;
         let slab_end = slab_base
             .checked_add(slab_len)
             .ok_or(ResourceScope::EndpointLease)?;
-        let lease_base = self.endpoint_leases_ptr() as usize;
-        let lease_bytes = usize::from(self.endpoint_lease_capacity)
-            .checked_mul(core::mem::size_of::<EndpointLeaseSlot>())
-            .ok_or(ResourceScope::EndpointLease)?;
+        let lease_storage = self.endpoint_lease_storage.get();
+        let lease_base = lease_storage.ptr() as usize;
+        let lease_bytes = lease_storage.bytes();
         let lease_end = lease_base
             .checked_add(lease_bytes)
             .ok_or(ResourceScope::EndpointLease)?;
@@ -69,7 +58,7 @@ where
             let mut best_idx = None;
             let mut best_offset = 0usize;
             let mut idx = 0usize;
-            while idx < usize::from(self.endpoint_lease_capacity) {
+            while idx < slot_count {
                 let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
                 let offset = slot.offset as usize;
                 if slot.is_live() && offset < candidate_end && offset >= best_offset {
@@ -81,7 +70,7 @@ where
             let gap_start = match best_idx {
                 Some(idx) => {
                     let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
-                    slot.offset as usize + slot.len as usize
+                    crate::invariant_some((slot.offset as usize).checked_add(slot.len as usize))
                 }
                 None => floor,
             };
@@ -104,23 +93,25 @@ where
                     let lease_len = crate::invariant_ok(u32::try_from(bytes));
                     let lease_offset = crate::invariant_ok(u32::try_from(offset));
                     let mut insert_idx = 0usize;
-                    while insert_idx < usize::from(self.endpoint_lease_capacity) {
-                        let slot = crate::invariant_some(
-                            self.endpoint_lease_slot_by_index_mut(insert_idx),
-                        );
+                    while insert_idx < slot_count {
+                        let slot =
+                            crate::invariant_some(self.endpoint_lease_slot_by_index(insert_idx));
                         if !slot.is_live() {
                             let generation = Self::next_endpoint_lease_generation(slot);
                             let lease_id =
                                 crate::invariant_ok(EndpointLeaseId::try_from(insert_idx));
-                            *slot = EndpointLeaseSlot {
-                                generation,
-                                sid,
-                                role,
-                                offset: lease_offset,
-                                len: lease_len,
-                                resident_budget,
-                                state: EndpointLeaseState::Live,
-                            };
+                            self.write_endpoint_lease_slot(
+                                insert_idx,
+                                EndpointLeaseSlot {
+                                    generation,
+                                    sid,
+                                    role,
+                                    offset: lease_offset,
+                                    len: lease_len,
+                                    resident_budget,
+                                    state: EndpointLeaseState::Live,
+                                },
+                            );
                             return Ok((lease_id, generation, offset, bytes));
                         }
                         insert_idx += 1;
@@ -138,8 +129,9 @@ where
     }
     #[inline]
     pub(crate) fn has_live_endpoint_session_role(&self, sid: SessionId, role: u8) -> bool {
+        let slot_count = self.endpoint_lease_slot_count();
         let mut idx = 0usize;
-        while idx < usize::from(self.endpoint_lease_capacity) {
+        while idx < slot_count {
             let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
             if slot.is_live() && slot.sid == sid && slot.role == role {
                 return true;
@@ -149,23 +141,20 @@ where
         false
     }
     #[inline]
-    pub(crate) fn release_endpoint_lease(
-        &mut self,
-        lease_slot: EndpointLeaseId,
-        generation: u32,
-    ) -> Result<(), ResourceScope> {
+    pub(crate) fn release_endpoint_lease(&self, lease_slot: EndpointLeaseId, generation: u32) {
         let idx = usize::from(lease_slot);
-        if idx >= usize::from(self.endpoint_lease_capacity) {
-            return Ok(());
+        let slot_count = self.endpoint_lease_slot_count();
+        if idx >= slot_count {
+            crate::invariant();
         }
-        let slot = *crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
+        let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
         if !slot.is_live() || slot.generation != generation {
-            return Ok(());
+            crate::invariant();
         }
         if self.routes.route_slots() != 0 {
             let mut required_route_frames = 0usize;
             let mut live_idx = 0usize;
-            while live_idx < usize::from(self.endpoint_lease_capacity) {
+            while live_idx < slot_count {
                 if live_idx != idx {
                     let live_slot =
                         crate::invariant_some(self.endpoint_lease_slot_by_index(live_idx));
@@ -179,17 +168,19 @@ where
                 live_idx += 1;
             }
             if required_route_frames == 0 {
-                self.release_external_persistent_sidecar(self.route_storage.cast::<u8>());
-                self.routes = RouteTable::empty();
-                self.route_storage = Sidecar::EMPTY;
+                let route_storage = self.route_storage.get();
+                self.routes.clear_storage();
+                self.route_storage.set(Sidecar::EMPTY);
+                self.retire_persistent_sidecar(route_storage.cast::<u8>());
             }
         }
-        let generation = slot.generation;
-        *crate::invariant_some(self.endpoint_lease_slot_by_index_mut(idx)) = EndpointLeaseSlot {
-            generation,
-            ..EndpointLeaseSlot::EMPTY
-        };
+        self.write_endpoint_lease_slot(
+            idx,
+            EndpointLeaseSlot {
+                generation: slot.generation,
+                ..EndpointLeaseSlot::EMPTY
+            },
+        );
         self.recompute_frontier_workspace_bytes();
-        Ok(())
     }
 }

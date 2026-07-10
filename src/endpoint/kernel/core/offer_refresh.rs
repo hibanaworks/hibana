@@ -21,7 +21,7 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn active_frontier_entries(
-        &self,
+        &mut self,
         current_parallel: Option<ScopeId>,
     ) -> ActiveEntrySet {
         match current_parallel {

@@ -89,77 +89,98 @@ fn sidecar_owner_single_authority() {
 }
 
 #[test]
-fn resolver_sidecar_replacement_publishes_after_release() {
+fn resolver_sidecar_replacement_publishes_before_retirement() {
+    let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
     let resolver_bucket = read("src/session/cluster/core/dynamic_resolvers/bucket.rs");
-    let source_pos = resolver_bucket
-        .find("let source_storage = self.storage_sidecar();")
+    let source_pos = capacity
+        .find("let source = bucket.erased_storage_sidecar();")
         .expect("resolver capacity growth must capture the source sidecar");
-    let stage_pos = resolver_bucket
-        .find("self.init_replacement_storage(storage.cast(), required);")
-        .expect("resolver replacement must stage entries before release");
-    let release_pos = resolver_bucket
-        .find("release(source_storage.cast())")
-        .expect("resolver replacement must release the source sidecar");
-    let commit_pos = resolver_bucket
-        .find("self.commit_storage(storage.cast(), required);")
-        .expect("resolver replacement must publish the staged sidecar");
+    let resolver_growth = &capacity[source_pos..];
+    let allocate_pos = resolver_growth
+        .find(".allocate_persistent_sidecar_bytes(")
+        .expect("resolver replacement must allocate through the owner");
+    let replace_pos = resolver_growth
+        .find("(&mut *self.resolver_bucket.get()).replace_storage(storage, required);")
+        .expect("resolver replacement must publish the initialized root");
+    let retire_pos = resolver_growth
+        .find("self.retire_persistent_sidecar(source);")
+        .expect("resolver replacement must retire the old root");
     assert!(
-        source_pos < stage_pos && stage_pos < release_pos && release_pos < commit_pos,
-        "resolver replacement must stage into the new sidecar, release the old sidecar, then publish"
+        allocate_pos < replace_pos && replace_pos < retire_pos,
+        "resolver replacement must stage and publish the new root before retiring the old root"
     );
 
     assert!(
         resolver_bucket
             .contains("pub(in crate::session::cluster::core) unsafe fn init_replacement_storage")
             && resolver_bucket.contains("if let Some(entry) = *source_entries.add(source_idx)")
-            && !resolver_bucket.contains("(*source_entries.add(source_idx)).take()"),
-        "resolver staging must copy entries without mutating the published source bucket"
+            && resolver_bucket.contains("self.commit_storage(storage.cast(), required);")
+            && !resolver_bucket.contains("FnOnce(usize, usize)"),
+        "resolver replacement must copy plain entries and leave allocation authority in Rendezvous"
     );
 }
 
 #[test]
-fn assoc_and_route_sidecar_replacement_stage_before_release() {
+fn assoc_and_route_sidecar_replacement_publish_before_retire() {
     let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
+    let arena = read("src/rendezvous/core/storage_layout/capacity/arena.rs");
     let assoc_stage_pos = capacity
         .find(".init_replacement_storage(\n                    lease.ptr(),\n                    lane_base,\n                    target_lane_slots,\n                    target_assoc_slots,\n                );")
         .expect("assoc replacement must stage entries before release");
-    let assoc_release_pos = capacity
-        .find("self.release_sidecar(source_assoc);")
-        .expect("assoc replacement must release the source sidecar");
     let assoc_commit_pos = capacity
         .find(".commit_storage(\n                    lease.ptr(),\n                    lane_base,\n                    target_lane_slots,\n                    target_assoc_slots,\n                );")
-        .expect("assoc replacement must publish only after release");
+        .expect("assoc replacement must publish the staged columns");
+    let assoc_root_pos = capacity
+        .find("self.assoc_storage.set(lease);")
+        .expect("assoc replacement must publish the sidecar root");
+    let assoc_retire_pos = capacity
+        .find("self.retire_sidecar(source_assoc);")
+        .expect("assoc replacement must retire the source sidecar");
     assert!(
-        assoc_stage_pos < assoc_release_pos && assoc_release_pos < assoc_commit_pos,
-        "assoc replacement must stage, release, then publish"
+        assoc_stage_pos < assoc_commit_pos
+            && assoc_commit_pos < assoc_root_pos
+            && assoc_root_pos < assoc_retire_pos,
+        "assoc replacement must stage and publish before retirement"
     );
 
     let route_stage_pos = capacity
         .find("self.routes.migrate_from_storage(")
         .expect("route replacement must stage entries before release");
-    let route_release_pos = capacity
-        .find("self.release_sidecar(source_route);")
-        .expect("route replacement must release the source sidecar");
-    let route_commit_pos = capacity
+    let route_replacement = &capacity[route_stage_pos..];
+    let route_commit_pos = route_replacement
         .find("self.routes.rebind_from_storage(")
-        .expect("route replacement must publish only after release");
+        .expect("route replacement must publish staged columns");
+    let route_root_pos = route_replacement
+        .find("self.route_storage.set(lease);")
+        .expect("route replacement must publish the sidecar root");
+    let route_retire_pos = route_replacement
+        .find("self.retire_sidecar(source_route);")
+        .expect("route replacement must retire the source sidecar");
     assert!(
-        route_stage_pos < route_release_pos && route_release_pos < route_commit_pos,
-        "route replacement must stage, release, then publish"
+        route_commit_pos < route_root_pos && route_root_pos < route_retire_pos,
+        "route replacement must stage and publish before retirement"
     );
 
     let assoc = read("src/rendezvous/association/storage.rs");
     assert!(
         assoc.contains("pub(in crate::rendezvous) unsafe fn init_replacement_storage")
-            && assoc.contains("WaiterSlot::init_clone_from")
-            && !assoc.contains("core::ptr::read(source_waiters.add(source_idx))"),
-        "assoc staging must not move out of the published source waiter column"
+            && assoc.contains("(*self.waiter_ptr(source_idx)).take()")
+            && !assoc.contains("WaiterSlot::init_clone_from"),
+        "assoc migration must transfer waiter ownership without a clone callback"
     );
 
     let route = read("src/rendezvous/tables/route_table/storage.rs");
     assert!(
-        route.contains("WaiterSlot::init_clone_from") && !route.contains("src_waiter.take()"),
-        "route staging must not move out of the published source waiter column"
+        route.contains("(*self.waiters_ptr().add(waiter_idx)).take()")
+            && !route.contains("WaiterSlot::init_clone_from"),
+        "route migration must transfer waiter ownership without a clone callback"
+    );
+    assert!(
+        arena.contains("fn compact_live_sidecars(&self)")
+            && arena.contains("core::ptr::copy(")
+            && arena.contains("self.assoc.relocate_storage(compacted.ptr());")
+            && arena.contains("self.routes.relocate_storage(compacted.ptr());"),
+        "retirement must canonicalize all live sidecars and rebind typed roots"
     );
 }
 

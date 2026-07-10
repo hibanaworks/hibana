@@ -24,9 +24,6 @@ where
         entry_idx: usize,
         out: &mut ScopeFrameLabelScratch,
     ) -> bool {
-        if endpoint.offer_entry_state_snapshot(entry_idx).is_none() {
-            return false;
-        }
         if !endpoint.offer_entry_has_active_lanes(entry_idx)
             || endpoint.offer_entry_scope_id(entry_idx) != scope_id
         {
@@ -58,13 +55,6 @@ where
                 .decision_state
                 .lane_offer_reentry_lanes()
                 .contains(lane_idx)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn ensure_global_frontier_scratch_ready(
-        endpoint: &mut CursorEndpoint<'r, ROLE, T>,
-    ) {
-        endpoint.init_global_frontier_scratch_if_needed();
     }
 
     pub(in crate::endpoint::kernel) fn select_scope(
@@ -100,10 +90,8 @@ where
         ) {
             return Err(RecvError::PhaseInvariant);
         }
-        let cached_entry_state = self.offer_entry_state_snapshot(current_idx).filter(|_| {
-            self.offer_entry_has_active_lanes(current_idx)
-                && self.offer_entry_scope_id(current_idx) == scope_id
-        });
+        let current_entry_active = self.offer_entry_has_active_lanes(current_idx)
+            && self.offer_entry_scope_id(current_idx) == scope_id;
         // Route hints are offer-scoped; preview only inspects them here.
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
         let lane_limit = self.cursor.logical_lane_count();
@@ -113,7 +101,7 @@ where
             .map(|lane_idx| lane_idx as u8);
         let offer_lane = if let Some(lane) = carried_offer_lane {
             Some(lane)
-        } else if cached_entry_state.is_some() {
+        } else if current_entry_active {
             self.offer_entry_representative_lane_idx(current_idx)
                 .map(|lane_idx| lane_idx as u8)
         } else {
@@ -309,9 +297,7 @@ where
 
     #[inline]
     pub(super) fn entry_has_route_scope(&self, entry_idx: usize) -> bool {
-        let entry_scope = if self.offer_entry_state_snapshot(entry_idx).is_some()
-            && self.offer_entry_has_active_lanes(entry_idx)
-        {
+        let entry_scope = if self.offer_entry_has_active_lanes(entry_idx) {
             let scope_id = self.offer_entry_scope_id(entry_idx);
             (!scope_id.is_none()).then_some(scope_id)
         } else {
@@ -376,8 +362,7 @@ where
         let current_entry_parallel = if cursor_parallel_has_offer || !current_entry_has_offer {
             None
         } else {
-            self.offer_entry_state_snapshot(current_idx)
-                .and_then(|_| self.offer_entry_parallel_root(current_idx))
+            self.offer_entry_parallel_root(current_idx)
         };
         let current_parallel = if cursor_parallel_has_offer {
             cursor_parallel

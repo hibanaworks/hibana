@@ -608,11 +608,6 @@ impl<'r> ReceivedFrame<'r> {
     }
 
     #[inline]
-    pub(crate) const fn lane_idx(&self) -> usize {
-        self.core.lane_idx()
-    }
-
-    #[inline]
     pub(crate) const fn lane_wire(&self) -> u8 {
         self.core.lane_wire()
     }
@@ -638,16 +633,5 @@ impl<'r> ReceivedFrame<'r> {
     #[inline]
     pub(crate) fn discard_uncommitted(self) {
         self.core.discard_uncommitted();
-    }
-
-    #[inline]
-    pub(crate) fn requeue_on<T>(
-        self,
-        port: &Port<'r, T>,
-    ) -> Result<(), crate::transport::TransportError>
-    where
-        T: Transport + 'r,
-    {
-        self.core.requeue_on(port)
     }
 }

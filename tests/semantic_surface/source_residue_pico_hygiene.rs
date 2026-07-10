@@ -125,14 +125,40 @@ fn production_sources_do_not_reintroduce_static_hygiene_residue() {
             inline_in_attr_group = false;
         }
     }
+}
+
+#[test]
+fn rendezvous_scratch_borrows_are_scoped_and_offer_progress_is_endpoint_resident() {
+    let port = read("src/rendezvous/port.rs");
+    let lane_port = read("src/endpoint/kernel/lane_port.rs");
+    let public_poll = read("src/endpoint/kernel/public_poll.rs");
+    let layout = read("src/endpoint/kernel/layout.rs");
+    let frontier_state = read("src/endpoint/kernel/frontier_state.rs");
+    let transport = read("src/transport.rs");
+    let production = read_production_rs_tree("src");
 
     assert!(
-        !production.contains("wake_by_ref();\n        return Poll::Pending;"),
-        "transport mismatch paths must not wake and return Pending"
+        port.contains("pub(crate) struct ScratchLease<'r>")
+            && port.contains("RendezvousAccessState::ScratchLease")
+            && port.contains("pub(crate) fn try_scratch_lease(&self)")
+            && public_poll.contains(".try_scratch_lease()"),
+        "offer scratch access must remain a scoped rendezvous lease"
     );
     assert!(
-        !production.contains("wake_by_ref();\n            Poll::Pending"),
-        "transport mismatch paths must not wake and stay Pending"
+        lane_port.contains("payload: RawSendPayload")
+            && lane_port.contains("pending.payload.encode_into(scratch)")
+            && !lane_port.contains("PendingSend<'r>")
+            && !lane_port.contains("begin_send_outgoing")
+            && transport.contains("must not retain the payload pointer")
+            && transport.contains("whose address may differ"),
+        "pending sends must retain the source payload, never a shared-scratch borrow"
+    );
+    assert!(
+        layout.contains("frontier_visited_scopes: EndpointArenaSection")
+            && frontier_state.contains("visited_scopes: *mut ScopeId")
+            && !production.contains("OfferEntryTable")
+            && !production.contains("global_frontier_scratch_state"),
+        "poll-spanning offer state must be endpoint resident and derived from active lanes"
     );
 }
 
@@ -323,13 +349,19 @@ fn tap_ring_bytes_stay_at_half_kib() {
 }
 
 #[test]
-fn port_does_not_snapshot_endpoint_lease_raw_root() {
+fn port_derives_endpoint_lease_count_from_the_live_root() {
     let port = read("src/rendezvous/port.rs");
+    let rendezvous = read("src/rendezvous/core.rs");
+    let resolver = read("src/session/cluster/core/dynamic_resolvers/bucket.rs");
     for forbidden in [
         "endpoint_leases: *const super::core::EndpointLeaseSlot",
         "endpoint_leases: *const EndpointLeaseSlot",
         "endpoint_lease_capacity: super::core::EndpointLeaseId,",
         "endpoint_lease_capacity: EndpointLeaseId,",
+        "endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>",
+        "endpoint_lease_capacity: *const EndpointLeaseId",
+        "endpoint_lease_capacity: &'r Cell<EndpointLeaseId>",
+        "endpoint_lease_capacity: &'tap Cell<EndpointLeaseId>",
     ] {
         assert!(
             !port.contains(forbidden),
@@ -337,12 +369,16 @@ fn port_does_not_snapshot_endpoint_lease_raw_root() {
         );
     }
     assert!(
-        port.contains("endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>")
-            && port.contains("endpoint_lease_capacity: *const EndpointLeaseId")
+        port.contains("endpoint_lease_storage: &'r Cell<Sidecar<EndpointLeaseSlot>>")
             && port.contains("fn endpoint_lease_owner_view(&self)")
-            && port.contains("let storage = unsafe { *self.endpoint_lease_storage };")
-            && port.contains("let capacity = unsafe { *self.endpoint_lease_capacity };"),
-        "Port must reload endpoint lease sidecar root and capacity from the rendezvous owner"
+            && port.contains("let storage = self.endpoint_lease_storage.get();")
+            && port.contains("EndpointLeaseSlot::storage_slot_count(storage)"),
+        "Port must reload the endpoint lease sidecar root and derive its slot count from exact bytes"
+    );
+    assert!(
+        !rendezvous.contains("endpoint_lease_capacity:")
+            && !named_struct_body(&resolver, "ResolverBucket<'cfg>").contains("capacity:"),
+        "endpoint lease and resolver capacities must have one authority in Sidecar::bytes"
     );
 }
 

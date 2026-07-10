@@ -16,9 +16,7 @@ where
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
-            if self.offer_entry_state_snapshot(entry_idx).is_none()
-                || !self.offer_entry_has_active_lanes(entry_idx)
-            {
+            if !self.offer_entry_has_active_lanes(entry_idx) {
                 continue;
             }
             let Some(observed) = self.recompute_offer_entry_observed_state_non_consuming(entry_idx)

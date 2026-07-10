@@ -119,6 +119,10 @@ name = "local_action"
 path = "tests/local_action.rs"
 
 [[test]]
+name = "miri_runtime_owner"
+path = "tests/miri_runtime_owner.rs"
+
+[[test]]
 name = "nested_route_runtime"
 path = "tests/nested_route_runtime.rs"
 

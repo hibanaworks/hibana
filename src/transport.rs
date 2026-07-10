@@ -318,6 +318,10 @@ pub trait Transport {
     /// Transport implementations select any carrier-local framing or protection
     /// state internally. Hibana passes descriptor-checked bytes; it does not
     /// expose protocol-specific transport phases as core concepts.
+    ///
+    /// After returning [`Poll::Pending`], implementations may retain progress in
+    /// `tx` but must not retain the payload pointer. A later poll provides the
+    /// same encoded content from scratch storage whose address may differ.
     fn poll_send<'a, 'f>(
         &self,
         tx: &'a mut Self::Tx<'a>,

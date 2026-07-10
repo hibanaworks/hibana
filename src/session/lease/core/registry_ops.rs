@@ -1,6 +1,6 @@
 use core::{ptr, ptr::NonNull};
 
-use super::{EndpointLeaseId, EndpointResidentBudget, RendezvousEntry, RendezvousTable};
+use super::{EndpointLeaseId, EndpointResidentBudget, RendezvousTable};
 use crate::{
     rendezvous::core::Rendezvous,
     session::{
@@ -15,7 +15,7 @@ where
     T: Transport,
 {
     fn contains_key(&self, key: &RendezvousId) -> bool {
-        self.entry_ref(key).is_some()
+        self.node_ref(key).is_some()
     }
 
     fn next_available_rendezvous_id(&self) -> Option<RendezvousId> {
@@ -31,7 +31,7 @@ where
     }
 
     pub(crate) fn register_local_from_resources_auto(
-        &mut self,
+        &self,
         resources: crate::runtime_core::resources::RuntimeResources<'cfg>,
         transport: T,
     ) -> Result<RendezvousId, RegisterRendezvousError> {
@@ -42,43 +42,19 @@ where
             Rendezvous::init_in_slab_auto(id, resources, transport)
                 .ok_or(RegisterRendezvousError::StorageExhausted)?
         };
-        let entry_ptr = /* SAFETY: rendezvous has just been initialized and is not linked into the table yet. */ unsafe {
-            let rv = &mut *rendezvous;
-            match rv.allocate_external_persistent_sidecar_bytes(
-                core::mem::size_of::<RendezvousEntry<'cfg, T>>(),
-                core::mem::align_of::<RendezvousEntry<'cfg, T>>(),
-            ) {
-                Some(sidecar) => sidecar.ptr().cast::<RendezvousEntry<'cfg, T>>(),
-                None => {
-                    ptr::drop_in_place(rendezvous);
-                    return Err(RegisterRendezvousError::StorageExhausted);
-                }
-            }
+        let rendezvous_ptr = /* SAFETY: `init_in_slab_auto` returned a non-null
+        initialized header pinned in the caller's slab. */ unsafe {
+            NonNull::new_unchecked(rendezvous)
         };
-        /* SAFETY: `rendezvous` is the non-null, slab-pinned pointer returned by
-         * `Rendezvous::init_in_slab_auto`; `entry_ptr` was allocated from the same
-         * rendezvous persistent sidecar with `RendezvousEntry` size/align and is
-         * not published in the registry; `self.head` is the existing initialized
-         * list head, and the entry is published to `self.head` only after initialization.
-         */
-        unsafe {
-            RendezvousEntry::init_from_parts(
-                entry_ptr,
-                id,
-                NonNull::new_unchecked(rendezvous),
-                self.head,
-            );
-        }
-        self.head = NonNull::new(entry_ptr);
-        self.len = self
-            .len
-            .checked_add(1)
-            .ok_or(RegisterRendezvousError::CapacityExceeded)?;
+        let rendezvous_ref = /* SAFETY: the new rendezvous is still unpublished
+        and remains owned by this registry insertion. */ unsafe { rendezvous_ptr.as_ref() };
+        rendezvous_ref.link_registry_next(self.head.get());
+        self.head.set(Some(rendezvous_ptr));
         Ok(id)
     }
 
     pub(crate) fn allocate_endpoint_lease_for_session_role(
-        &mut self,
+        &self,
         rv: RendezvousId,
         sid: SessionId,
         role: u8,
@@ -91,103 +67,89 @@ where
         }
 
         let mut target = None;
-        let mut current = self.head;
-        while let Some(mut entry_ptr) = current {
-            let entry = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
-                entry_ptr.as_mut()
+        let mut current = self.head.get();
+        while let Some(rendezvous_ptr) = current {
+            let rendezvous = /* SAFETY: registry links are initialized rendezvous
+            headers and remain pinned until table drop. */ unsafe {
+                rendezvous_ptr.as_ref()
             };
-            if entry.id == rv {
-                target = Some(entry_ptr);
+            if rendezvous.registry_id() == rv {
+                target = Some(rendezvous_ptr);
             }
-            if entry.is_active() {
-                return Err(ClusterError::RendezvousBusy { id: entry.id.raw() });
+            if rendezvous.access_is_busy() {
+                return Err(ClusterError::RendezvousBusy {
+                    id: rendezvous.registry_id().raw(),
+                });
             }
-            if crate::invariant_some(entry.rendezvous_ref())
-                .has_live_endpoint_session_role(sid, role)
-            {
-                if entry.id != rv {
+            if rendezvous.has_live_endpoint_session_role(sid, role) {
+                if rendezvous.registry_id() != rv {
                     return Err(ClusterError::RendezvousMismatch {
-                        expected: entry.id.raw(),
+                        expected: rendezvous.registry_id().raw(),
                         actual: rv.raw(),
                     });
                 }
                 return Err(ClusterError::RendezvousBusy { id: rv.raw() });
             }
-            current = entry.next;
+            current = rendezvous.registry_next();
         }
 
-        let Some(mut target) = target else {
+        let Some(target) = target else {
             return Err(ClusterError::RendezvousUnregistered { id: rv.raw() });
         };
-        let entry = /* SAFETY: target was discovered in the initialized registry list above. */ unsafe {
-            target.as_mut()
+        let rendezvous = /* SAFETY: target was discovered in the initialized registry list above. */ unsafe {
+            target.as_ref()
         };
-        let Some(rendezvous) = entry.rendezvous_mut() else {
-            return Err(ClusterError::RendezvousBusy { id: rv.raw() });
-        };
-        /* SAFETY: duplicate session-role ownership has been rejected by scanning
-        every registered rendezvous entry above; the selected rendezvous now owns
-        the endpoint lease slot and writes the live `(sid, role)` identity atomically
-        with the endpoint storage reservation. */
-        unsafe { rendezvous.allocate_endpoint_lease(sid, role, bytes, align, resident_budget) }
+        rendezvous
+            .allocate_endpoint_lease(sid, role, bytes, align, resident_budget)
             .map_err(ClusterError::resource_exhausted)
     }
 
     pub(crate) fn ensure_dynamic_resolver_capacity(
-        &mut self,
+        &self,
         rv_id: RendezvousId,
         additional_entries: usize,
     ) -> Result<(), crate::session::cluster::error::ClusterError> {
         if additional_entries == 0 {
             return Ok(());
         }
-        let entry = self.entry_mut(&rv_id).ok_or(
+        let rendezvous = self.node_ref(&rv_id).ok_or(
             crate::session::cluster::error::ClusterError::RendezvousMismatch {
                 expected: rv_id.raw(),
                 actual: 0,
             },
         )?;
-        let rv = entry.rendezvous_mut().ok_or(
-            crate::session::cluster::error::ClusterError::RendezvousMismatch {
-                expected: rv_id.raw(),
-                actual: 0,
-            },
-        )?;
-        let rv_ptr = core::ptr::from_mut(rv);
-        entry.resolver_bucket.ensure_capacity(
-            additional_entries,
-            |bytes, align| {
-                /* SAFETY: rv_ptr comes from the selected registry entry and remains pinned for the duration of this capacity update. */
-                unsafe { (&mut *rv_ptr).allocate_external_persistent_sidecar_bytes(bytes, align) }
-            },
-            |sidecar| {
-                /* SAFETY: rv_ptr comes from the selected registry entry and remains pinned for the duration of this capacity update. */
-                unsafe { (&mut *rv_ptr).release_external_persistent_sidecar(sidecar) }
-            },
-        )
+        if rendezvous.access_is_busy() {
+            return Err(
+                crate::session::cluster::error::ClusterError::RendezvousBusy { id: rv_id.raw() },
+            );
+        }
+        rendezvous.ensure_dynamic_resolver_capacity(additional_entries)
     }
 
     pub(crate) fn insert_dynamic_resolver(
-        &mut self,
+        &self,
         key: crate::session::cluster::core::DynamicResolverKey,
         entry: crate::session::cluster::core::DynamicResolverEntry<'cfg>,
     ) -> Result<(), crate::session::cluster::error::ClusterError> {
-        self.entry_mut(&key.rv)
-            .ok_or(
-                crate::session::cluster::error::ClusterError::RendezvousMismatch {
-                    expected: key.rv.raw(),
-                    actual: 0,
-                },
-            )?
-            .resolver_bucket
-            .insert(key.scope, entry)
+        let rendezvous = self.node_ref(&key.rv).ok_or(
+            crate::session::cluster::error::ClusterError::RendezvousMismatch {
+                expected: key.rv.raw(),
+                actual: 0,
+            },
+        )?;
+        if rendezvous.access_is_busy() {
+            return Err(
+                crate::session::cluster::error::ClusterError::RendezvousBusy { id: key.rv.raw() },
+            );
+        }
+        rendezvous.insert_dynamic_resolver(key.scope, entry)
     }
 
     pub(crate) fn dynamic_resolver(
         &self,
         key: crate::session::cluster::core::DynamicResolverKey,
-    ) -> Option<&crate::session::cluster::core::DynamicResolverEntry<'cfg>> {
-        self.entry_ref(&key.rv)?.resolver_bucket.get(key.scope)
+    ) -> Option<crate::session::cluster::core::DynamicResolverEntry<'cfg>> {
+        self.node_ref(&key.rv)?.dynamic_resolver(key.scope)
     }
 }
 
@@ -196,15 +158,15 @@ where
     T: Transport,
 {
     fn drop(&mut self) {
-        let mut current = self.head;
-        while let Some(entry_ptr) = current {
-            let entry = entry_ptr.as_ptr();
-            current = /* SAFETY: registry links are initialized slab nodes and remain pinned until table drop. */ unsafe {
-                (*entry).next
+        let mut current = self.head.get();
+        while let Some(rendezvous_ptr) = current {
+            let rendezvous = rendezvous_ptr.as_ptr();
+            current = /* SAFETY: registry links are initialized rendezvous headers and remain pinned until table drop. */ unsafe {
+                (*rendezvous).registry_next()
             };
-            /* SAFETY: each entry is visited once through the intrusive list and owns its rendezvous header. */
+            /* SAFETY: each intrusive rendezvous header is visited and dropped exactly once. */
             unsafe {
-                ptr::drop_in_place(entry);
+                ptr::drop_in_place(rendezvous);
             }
         }
     }
@@ -215,6 +177,6 @@ where
 pub(crate) enum RegisterRendezvousError {
     /// Attempted to register more rendezvous than the identifier space allows.
     CapacityExceeded,
-    /// Caller-provided slab cannot fit the rendezvous resident header or registry node.
+    /// Caller-provided slab cannot fit the rendezvous header and tap ring.
     StorageExhausted,
 }

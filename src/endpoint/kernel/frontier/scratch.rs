@@ -1,6 +1,6 @@
 use super::{
     ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierCandidate, FrontierObservationSlot,
-    ObservedEntrySet, ScopeId, align_up, max_usize, mem, slice,
+    ObservedEntrySet, align_up, max_usize, mem, slice,
 };
 // # Unsafe Owner Contract
 //
@@ -35,7 +35,6 @@ pub(crate) struct FrontierScratchLayout {
     global_active_entry_slots: FrontierScratchSection,
     observed_entry_slots: FrontierScratchSection,
     candidates: FrontierScratchSection,
-    visited_scopes: FrontierScratchSection,
     total_bytes: usize,
     total_align: usize,
 }
@@ -59,15 +58,10 @@ impl FrontierScratchLayout {
         offset = candidates.offset + candidates.bytes;
         total_align = max_usize(total_align, candidates.align);
 
-        let visited_scopes = Self::section_array::<ScopeId>(offset, max_frontier_entries);
-        offset = visited_scopes.offset + visited_scopes.bytes;
-        total_align = max_usize(total_align, visited_scopes.align);
-
         Self {
             global_active_entry_slots,
             observed_entry_slots,
             candidates,
-            visited_scopes,
             total_bytes: offset,
             total_align,
         }
@@ -99,11 +93,6 @@ impl FrontierScratchLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn visited_scopes(self) -> FrontierScratchSection {
-        self.visited_scopes
-    }
-
-    #[inline(always)]
     const fn section_array<T>(offset: usize, count: usize) -> FrontierScratchSection {
         let align = mem::align_of::<T>();
         let bytes = checked_usize_mul(mem::size_of::<T>(), count);
@@ -128,7 +117,6 @@ const fn checked_usize_mul(lhs: usize, rhs: usize) -> usize {
 pub(crate) struct FrontierScratchView {
     candidates: *mut FrontierCandidate,
     frontier_entry_capacity: u8,
-    visited_scopes: *mut ScopeId,
 }
 
 #[inline]
@@ -197,7 +185,6 @@ impl FrontierScratchView {
         Self {
             candidates: frontier_section_ptr(storage, layout.candidates()),
             frontier_entry_capacity: frontier_entry_capacity as u8,
-            visited_scopes: frontier_section_ptr(storage, layout.visited_scopes()),
         }
     }
 
@@ -207,16 +194,6 @@ impl FrontierScratchView {
         scratch arena, and `frontier_entry_capacity` is the count used to build
         that section; this mutable slice is scoped to `&mut self`. */
         unsafe { slice::from_raw_parts_mut(self.candidates, self.frontier_entry_capacity as usize) }
-    }
-
-    #[inline]
-    pub(crate) fn visited_scopes_mut(&mut self) -> &mut [ScopeId] {
-        /* SAFETY: `visited_scopes` is the initialized `ScopeId` scratch column
-        paired with this frontier view; `&mut self` keeps this slice as the only
-        live mutable borrow for the shared entry capacity. */
-        unsafe {
-            slice::from_raw_parts_mut(self.visited_scopes, self.frontier_entry_capacity as usize)
-        }
     }
 }
 

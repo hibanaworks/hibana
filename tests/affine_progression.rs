@@ -58,12 +58,77 @@ std::thread_local! {
         const { UnsafeCell::new(SessionKitStorage::uninit()) };
     static PENDING_SEND_KIT_SLOT: UnsafeCell<TestKitStorage<PendingSendTransport>> =
         const { UnsafeCell::new(SessionKitStorage::uninit()) };
+    static DEFERRED_CAPTURE_KIT_SLOT: UnsafeCell<TestKitStorage<DeferredCaptureTransport>> =
+        const { UnsafeCell::new(SessionKitStorage::uninit()) };
 }
 
 #[derive(Clone)]
 struct PendingSendTransport {
     inner: TestTransport,
     state: &'static PendingSendState,
+}
+
+#[derive(Clone)]
+struct DeferredCaptureTransport {
+    inner: TestTransport,
+    state: &'static PendingSendState,
+}
+
+impl Transport for DeferredCaptureTransport {
+    type Tx<'a>
+        = TestTx
+    where
+        Self: 'a;
+    type Rx<'a>
+        = TestRx<'a>
+    where
+        Self: 'a;
+
+    fn open<'a>(
+        &'a self,
+        port: hibana::runtime::transport::PortOpen,
+    ) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        self.inner.open(port)
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        tx: &'a mut Self::Tx<'a>,
+        outgoing: Outgoing<'f>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        self.state.polls.set(self.state.polls.get().wrapping_add(1));
+        if !self.state.ready.get() {
+            return Poll::Pending;
+        }
+        self.inner.stage_send(
+            tx,
+            outgoing.target_role(),
+            outgoing.lane(),
+            outgoing.frame_label().raw(),
+            outgoing.payload().as_bytes(),
+        );
+        self.inner.poll_send_staged(tx)
+    }
+
+    fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>) {
+        self.inner.cancel_send(tx);
+    }
+
+    fn poll_recv<'a>(
+        &'a self,
+        rx: &'a mut Self::Rx<'a>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        self.inner.poll_recv_current(rx, cx)
+    }
+
+    fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        self.inner.requeue(rx)
+    }
 }
 
 impl Transport for PendingSendTransport {
@@ -207,6 +272,73 @@ fn dropping_pending_send_future_keeps_endpoint_on_same_send_step() {
                         .await
                         .expect("worker recv after cancelled send future");
                     assert_eq!(payload, 99);
+                });
+            });
+        });
+    });
+}
+
+#[test]
+fn interleaved_pending_sends_reencode_from_their_own_payloads() {
+    PENDING_SEND_STATE.with(|state| {
+        state.reset();
+        let state: &'static PendingSendState = unsafe { &*(state as *const PendingSendState) };
+
+        with_runtime_workspace(|slab| {
+            with_resident_tls_ref(&DEFERRED_CAPTURE_KIT_SLOT, |cluster| {
+                let protocol = g::send::<0, 1, Msg<SEND_LOGICAL, u32>>();
+                let sender_program: RoleProgram<0> = project(&protocol);
+                let receiver_program: RoleProgram<1> = project(&protocol);
+                let transport = DeferredCaptureTransport {
+                    inner: TestTransport::new(),
+                    state,
+                };
+                let rv = cluster
+                    .rendezvous(slab, transport)
+                    .expect("register rendezvous");
+                let mut sender_a = rv
+                    .enter(SessionId::new(0x410), &sender_program)
+                    .expect("attach sender A");
+                let mut receiver_a = rv
+                    .enter(SessionId::new(0x410), &receiver_program)
+                    .expect("attach receiver A");
+                let mut sender_b = rv
+                    .enter(SessionId::new(0x411), &sender_program)
+                    .expect("attach sender B");
+                let mut receiver_b = rv
+                    .enter(SessionId::new(0x411), &receiver_program)
+                    .expect("attach receiver B");
+
+                let payload_a = 0x1122_3344u32;
+                let payload_b = 0xaabb_ccddu32;
+                {
+                    let mut send_a = pin!(sender_a.send::<Msg<SEND_LOGICAL, u32>>(&payload_a));
+                    let mut send_b = pin!(sender_b.send::<Msg<SEND_LOGICAL, u32>>(&payload_b));
+                    let waker = noop_waker_ref();
+                    let mut cx = Context::from_waker(waker);
+
+                    assert!(matches!(send_a.as_mut().poll(&mut cx), Poll::Pending));
+                    assert!(matches!(send_b.as_mut().poll(&mut cx), Poll::Pending));
+                    state.set_ready(true);
+                    assert!(matches!(send_a.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+                    assert!(matches!(send_b.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+                }
+
+                futures::executor::block_on(async {
+                    assert_eq!(
+                        receiver_a
+                            .recv::<Msg<SEND_LOGICAL, u32>>()
+                            .await
+                            .expect("receive A"),
+                        payload_a
+                    );
+                    assert_eq!(
+                        receiver_b
+                            .recv::<Msg<SEND_LOGICAL, u32>>()
+                            .await
+                            .expect("receive B"),
+                        payload_b
+                    );
                 });
             });
         });

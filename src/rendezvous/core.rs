@@ -1,17 +1,22 @@
 //! Rendezvous session primitives.
 //!
 //! The rendezvous component owns the association tables that map session
-//! identifiers to transport lanes. It also owns resident generation state,
-//! endpoint leases, and lane release side effects for one rendezvous image.
+//! identifiers to transport lanes. It also owns route state, endpoint leases,
+//! resolver storage, and lane release side effects for one rendezvous image.
 //!
 //! # Unsafe Owner Contract
 //!
 //! This module owns resident rendezvous images and endpoint lease tables.
 //! Unsafe blocks here may initialize or migrate pinned rendezvous storage, but
-//! must preserve the association table, generation table, and endpoint lease
-//! lifetimes before returning safe ports or endpoints.
+//! must preserve association, route, resolver, and endpoint-lease owner roots
+//! before returning safe ports or endpoints.
 
-use core::{cell::Cell, marker::PhantomData, ops::Range, task::Waker};
+use core::{
+    cell::{Cell, UnsafeCell},
+    marker::PhantomData,
+    ptr::NonNull,
+    task::Waker,
+};
 
 use super::{
     association::AssocTable,
@@ -38,10 +43,6 @@ pub(crate) use storage_layout::Sidecar;
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct EndpointLeaseId(u16);
-
-impl EndpointLeaseId {
-    pub(crate) const ZERO: Self = Self(0);
-}
 
 impl From<u8> for EndpointLeaseId {
     #[inline]
@@ -176,6 +177,22 @@ impl EndpointLeaseSlot {
     pub(crate) const fn is_live(&self) -> bool {
         self.state.is_live()
     }
+
+    #[inline]
+    pub(crate) fn storage_slot_count(storage: Sidecar<Self>) -> usize {
+        if storage.is_empty() {
+            return 0;
+        }
+        let slot_bytes = core::mem::size_of::<Self>();
+        if slot_bytes == 0 || !storage.bytes().is_multiple_of(slot_bytes) {
+            crate::invariant();
+        }
+        let slots = storage.bytes() / slot_bytes;
+        if u16::try_from(slots).is_err() {
+            crate::invariant();
+        }
+        slots
+    }
 }
 
 #[repr(u8)]
@@ -183,6 +200,14 @@ impl EndpointLeaseSlot {
 pub(crate) enum EndpointLeaseState {
     Vacant = 0,
     Live = 1,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RendezvousAccessState {
+    Available = 0,
+    RegistryLease = 1,
+    ScratchLease = 2,
 }
 
 impl EndpointLeaseState {
@@ -198,20 +223,94 @@ where
 {
     brand_marker: PhantomData<brand::Brand<'rv>>,
     id: RendezvousId,
+    access_state: Cell<RendezvousAccessState>,
+    registry_next: Cell<Option<NonNull<Rendezvous<'rv, 'cfg, T>>>>,
+    resolver_bucket: UnsafeCell<crate::session::cluster::core::ResolverBucket<'cfg>>,
     tap: TapRing<'cfg>,
     tap_counter: Cell<u32>,
-    slab: *mut [u8],
+    slab_ptr: *mut u8,
+    slab_len: usize,
     slab_marker: PhantomData<&'cfg mut [u8]>,
-    image_frontier: u32,
-    frontier_workspace_bytes: u32,
-    endpoint_lease_storage: Sidecar<EndpointLeaseSlot>,
-    endpoint_lease_capacity: EndpointLeaseId,
-    lane_range: Range<u32>,
+    image_frontier: Cell<u32>,
+    frontier_workspace_bytes: Cell<u32>,
+    endpoint_lease_storage: Cell<Sidecar<EndpointLeaseSlot>>,
+    lane_base: Cell<u32>,
+    lane_end: Cell<u32>,
     transport: T,
-    assoc_storage: Sidecar<u8>,
-    route_storage: Sidecar<u8>,
+    assoc_storage: Cell<Sidecar<u8>>,
+    route_storage: Cell<Sidecar<u8>>,
     assoc: AssocTable,
     routes: RouteTable,
+}
+
+impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
+where
+    'cfg: 'rv,
+{
+    #[inline]
+    pub(crate) const fn registry_id(&self) -> RendezvousId {
+        self.id
+    }
+
+    #[inline]
+    pub(crate) fn registry_next(&self) -> Option<NonNull<Self>> {
+        self.registry_next.get()
+    }
+
+    #[inline]
+    pub(crate) fn link_registry_next(&self, next: Option<NonNull<Self>>) {
+        if self.registry_next.get().is_some() {
+            crate::invariant();
+        }
+        self.registry_next.set(next);
+    }
+
+    #[inline]
+    pub(crate) fn access_is_busy(&self) -> bool {
+        self.access_state.get() != RendezvousAccessState::Available
+    }
+
+    #[inline]
+    pub(crate) fn acquire_registry_lease(&self) {
+        if self.access_state.get() != RendezvousAccessState::Available {
+            crate::invariant();
+        }
+        self.access_state.set(RendezvousAccessState::RegistryLease);
+    }
+
+    #[inline]
+    pub(crate) fn release_registry_lease(&self) {
+        if self.access_state.get() != RendezvousAccessState::RegistryLease {
+            crate::invariant();
+        }
+        self.access_state.set(RendezvousAccessState::Available);
+    }
+
+    #[inline]
+    pub(crate) fn resolver_storage_sidecar(&self) -> Sidecar<u8> {
+        /* SAFETY: shared sidecar-root inspection copies the resolver descriptor
+        without borrowing any resolver entry. */
+        unsafe { (&*self.resolver_bucket.get()).erased_storage_sidecar() }
+    }
+
+    pub(crate) fn insert_dynamic_resolver(
+        &self,
+        scope: crate::global::const_dsl::ScopeId,
+        entry: crate::session::cluster::core::DynamicResolverEntry<'cfg>,
+    ) -> Result<(), crate::session::cluster::error::ClusterError> {
+        /* SAFETY: registry access rejects an active affine lease; this
+        local-only rendezvous solely mutates the initialized resolver bucket. */
+        unsafe { (&mut *self.resolver_bucket.get()).insert(scope, entry) }
+    }
+
+    pub(crate) fn dynamic_resolver(
+        &self,
+        scope: crate::global::const_dsl::ScopeId,
+    ) -> Option<crate::session::cluster::core::DynamicResolverEntry<'cfg>> {
+        /* SAFETY: shared lookup copies the initialized resolver entry before
+        any callback can run. */
+        unsafe { (&*self.resolver_bucket.get()).get(scope) }
+    }
 }
 
 mod endpoint_leases;
@@ -221,71 +320,10 @@ mod storage_runtime_budget;
 
 /// RAII witness for lane access through a leased rendezvous entry.
 ///
-/// `LaneLease<'lease, 'cfg, ...>` owns a `RendezvousLease` and is consumed by
-/// value when it is converted into a port. The lease core marks the rendezvous
-/// entry active while the lease is alive, so the normal rendezvous lookup paths
-/// reject a second mutable borrow of that entry.
-///
-/// ```text
-/// Drop order:
-///   LaneLease<'lease, ...> -> Port<'lease, ...> -> rendezvous borrow expires
-/// ```
-///
-/// The borrow lifetime is independent of the rendezvous storage lifetime. This
-/// permits short scopes where a lane lease is dropped before the rendezvous
-/// storage owner itself:
-///
-/// ```text
-/// let mut rv = /* some Rendezvous owner */; // 'rv starts
-/// {
-///     let lease = rv.lease_port(...);     // 'a: shorter borrow
-/// }                                        // 'a ends, lease dropped
-///                                          // rv can now be moved/dropped
-/// ```
-///
-/// # Owner Guarantees
-///
-/// 1. The lease is affine; it is not cloneable.
-/// 2. The lease stores the rendezvous entry lease that marked the entry active.
-/// 3. Dropping the lease releases the lane and clears the active entry marker.
-///
-/// # Example
-///
-/// ```ignore
-/// let mut rv = /* some Rendezvous owner */;
-/// {
-///     let lease = rv.lease_port(sid, lane, role)?;
-///     let port = lease.port();
-///     // ... use port
-/// } // lease dropped here, lane released, borrow expires
-/// // rv can now be safely dropped or moved
-/// ```
-///
-/// # Visibility
-///
-/// This type is crate-private lane ownership machinery. Public API users obtain
-/// endpoints via the
-/// `SessionKit::rendezvous(...).enter(sid, &role_program)` path.
-///
-/// # Cluster Ownership Model
-///
-/// `LaneLease` owns the rendezvous lease outright. This ties the borrow
-/// lifetime `'lease` to the leased rendezvous entry:
-/// Cluster -> RendezvousLease -> LaneLease.
-///
-/// # Safety Invariants
-///
-/// 1. The stored `RendezvousLease` remains alive until the lane lease is
-///    consumed or dropped.
-/// 2. Normal cluster lookup paths refuse a rendezvous entry while its lease is
-///    active.
-/// 3. Callers must not reach storage through raw owner pointers without the active-entry marker.
-///
-/// # Observable Properties
-///
-/// - LANE_ACQUIRE tap event when a session/lane association count moves 0->1
-/// - LANE_RELEASE tap event when that association count moves 1->0
-/// - Streaming checker verifies association acquire/release pairs match
+/// Construction succeeds only after the rendezvous has recorded the matching
+/// `(SessionId, Lane)` claim. Consuming the lease transfers that release
+/// authority into a `LaneGuard`; dropping it before conversion releases the
+/// claim directly. The registry lease remains affine throughout construction.
 pub(crate) struct LaneLease<'lease, 'cfg, T>
 where
     T: Transport,
@@ -337,15 +375,12 @@ where
     pub(crate) fn into_port_guard(mut self) -> LanePortAccess<'lease, 'cfg, T> {
         let (port, guard) = {
             let lease = crate::invariant_some(self.lease.as_mut());
-            // SAFETY: `RendezvousLease<'lease, 'cfg, ...>` holds the unique mutable
-            // entry borrow for `'lease`, so reborrowing the rendezvous as shared for
-            // the same `'lease` lifetime is sound as long as we do not use the lease
-            // mutably while the shared reference is live.
-            let rv_ptr: *mut Rendezvous<'cfg, 'cfg, T> = lease.with_rendezvous(core::ptr::from_mut);
+            let rv_ptr: *const Rendezvous<'cfg, 'cfg, T> =
+                lease.with_rendezvous(core::ptr::from_ref);
             let rv: &'lease Rendezvous<'cfg, 'cfg, T> =
-                /* SAFETY: the active `RendezvousLease` owns the pinned entry
-                for `'lease`; this shared borrow is used only while the lease is
-                not mutably accessed. */ unsafe { &*rv_ptr };
+                /* SAFETY: the active `RendezvousLease` keeps the pinned registry
+                entry alive for `'lease`; published rendezvous mutation uses only
+                interior owner cells. */ unsafe { &*rv_ptr };
             let active_leases = *crate::invariant_some(self.active_leases.as_ref());
             rv.open_port_guard(
                 self.sid,
@@ -362,15 +397,6 @@ where
             lane_guard: guard,
             brand: self.brand,
         }
-    }
-
-    #[inline]
-    pub(crate) fn with_rendezvous_mut<R>(
-        &mut self,
-        f: impl FnOnce(&mut Rendezvous<'cfg, 'cfg, T>) -> R,
-    ) -> R {
-        let lease = crate::invariant_some(self.lease.as_mut());
-        lease.with_rendezvous(f)
     }
 }
 

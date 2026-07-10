@@ -15,19 +15,14 @@ pub(in crate::session::cluster::core) struct ResolverBucketEntry<'cfg> {
 
 pub(crate) struct ResolverBucket<'cfg> {
     storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
-    capacity: usize,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
 impl<'cfg> ResolverBucket<'cfg> {
-    pub(crate) unsafe fn init_empty(dst: *mut Self) {
-        /* SAFETY: `RendezvousEntry::init_from_parts` passes an unpublished
-        resolver bucket cell. The sidecar pointer and capacity are initialized
-        together before the entry can be linked into the registry. */
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).storage).write(Sidecar::EMPTY);
-            core::ptr::addr_of_mut!((*dst).capacity).write(0);
-            core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
+    pub(crate) const fn empty() -> Self {
+        Self {
+            storage: Sidecar::EMPTY,
+            _no_send_sync: PhantomData,
         }
     }
 
@@ -60,8 +55,25 @@ impl<'cfg> ResolverBucket<'cfg> {
     }
 
     #[inline]
+    pub(crate) fn erased_storage_sidecar(&self) -> Sidecar<u8> {
+        self.storage.cast()
+    }
+
+    #[inline]
     pub(crate) fn capacity(&self) -> usize {
-        self.capacity
+        Self::sidecar_capacity(self.storage)
+    }
+
+    #[inline]
+    fn sidecar_capacity(storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>) -> usize {
+        if storage.is_empty() {
+            return 0;
+        }
+        let entry_bytes = core::mem::size_of::<Option<ResolverBucketEntry<'cfg>>>();
+        if entry_bytes == 0 || !storage.bytes().is_multiple_of(entry_bytes) {
+            crate::invariant();
+        }
+        storage.bytes() / entry_bytes
     }
 
     pub(crate) fn entry_count(&self) -> usize {
@@ -71,8 +83,8 @@ impl<'cfg> ResolverBucket<'cfg> {
         }
         let mut idx = 0usize;
         let mut count = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: `idx < self.capacity` bounds this resolver-bucket slot,
+        while idx < self.capacity() {
+            /* SAFETY: `idx < self.capacity()` bounds this resolver-bucket slot,
             and `entries` is the sidecar pointer currently installed for this
             bucket. Shared counting does not mutate resolver storage. */
             unsafe {
@@ -90,6 +102,9 @@ impl<'cfg> ResolverBucket<'cfg> {
         storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
         capacity: usize,
     ) {
+        if Self::sidecar_capacity(storage) != capacity {
+            crate::invariant();
+        }
         let entries = storage.ptr();
         let mut idx = 0usize;
         while idx < capacity {
@@ -109,8 +124,11 @@ impl<'cfg> ResolverBucket<'cfg> {
         storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
         new_capacity: usize,
     ) {
+        if Self::sidecar_capacity(storage) != new_capacity {
+            crate::invariant();
+        }
         let source_entries = self.entries_ptr();
-        let source_capacity = self.capacity;
+        let source_capacity = self.capacity();
         let new_entries = storage.ptr();
         let mut idx = 0usize;
         while idx < new_capacity {
@@ -150,52 +168,49 @@ impl<'cfg> ResolverBucket<'cfg> {
         storage: Sidecar<Option<ResolverBucketEntry<'cfg>>>,
         new_capacity: usize,
     ) {
+        if Self::sidecar_capacity(storage) != new_capacity {
+            crate::invariant();
+        }
         self.storage = storage;
-        self.capacity = new_capacity;
     }
 
-    pub(crate) fn ensure_capacity<FA, FR>(
-        &mut self,
+    pub(crate) fn required_capacity(
+        &self,
         additional_entries: usize,
-        allocate: FA,
-        mut release: FR,
-    ) -> Result<(), ClusterError>
-    where
-        FA: FnOnce(usize, usize) -> Option<Sidecar<u8>>,
-        FR: FnMut(Sidecar<u8>),
-    {
+    ) -> Result<Option<usize>, ClusterError> {
         if additional_entries == 0 {
-            return Ok(());
+            return Ok(None);
         }
         let required = self.entry_count().checked_add(additional_entries).ok_or(
             ClusterError::resource_exhausted(ResourceScope::ResolverTable),
         )?;
         if self.capacity() >= required {
-            return Ok(());
+            return Ok(None);
         }
+        Ok(Some(required))
+    }
 
+    pub(crate) unsafe fn replace_storage(&mut self, storage: Sidecar<u8>, required: usize) {
         let source_storage = self.storage_sidecar();
-        let storage = allocate(
-            ResolverBucket::storage_bytes(required),
-            ResolverBucket::storage_align(),
-        )
-        .ok_or(ClusterError::resource_exhausted(
-            ResourceScope::ResolverTable,
-        ))?;
-        /* SAFETY: the session cluster allocator returned a resolver sidecar
-        sized and aligned by `ResolverBucket::{storage_bytes, storage_align}`.
-        This bucket commits that sidecar only after initialization succeeds, and
-        releases the old sidecar before replacing the installed pointer. */
+        /* SAFETY: the rendezvous allocator supplied a resolver sidecar with the
+        exact bucket size/alignment. Copy initialization has no callback and the
+        new root is committed before the old sidecar is retired. */
         unsafe {
             if source_storage.ptr().is_null() {
                 self.bind_from_storage(storage.cast(), required);
             } else {
                 self.init_replacement_storage(storage.cast(), required);
-                release(source_storage.cast());
                 self.commit_storage(storage.cast(), required);
             }
         }
-        Ok(())
+    }
+
+    pub(crate) unsafe fn relocate_storage(&mut self, storage: Sidecar<u8>) {
+        let relocated = storage.cast();
+        if Self::sidecar_capacity(relocated) != self.capacity() {
+            crate::invariant();
+        }
+        self.storage = relocated;
     }
 
     pub(crate) fn insert(
@@ -211,8 +226,8 @@ impl<'cfg> ResolverBucket<'cfg> {
         }
         let mut first_empty = None;
         let mut idx = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: `idx < self.capacity` bounds the installed resolver
+        while idx < self.capacity() {
+            /* SAFETY: `idx < self.capacity()` bounds the installed resolver
             bucket sidecar. `&mut self` is the bucket mutation token, so this
             scan may update an existing slot or remember a vacant one. */
             unsafe {
@@ -242,21 +257,21 @@ impl<'cfg> ResolverBucket<'cfg> {
         Ok(())
     }
 
-    pub(crate) fn get(&self, scope: ScopeId) -> Option<&DynamicResolverEntry<'cfg>> {
+    pub(crate) fn get(&self, scope: ScopeId) -> Option<DynamicResolverEntry<'cfg>> {
         let entries = self.entries_ptr();
         if entries.is_null() {
             return None;
         }
         let mut idx = 0usize;
-        while idx < self.capacity {
-            /* SAFETY: `idx < self.capacity` bounds the installed resolver
-            bucket sidecar. This shared lookup returns a borrow tied to `&self`
-            and does not mutate resolver entries. */
+        while idx < self.capacity() {
+            /* SAFETY: `idx < self.capacity()` bounds the installed resolver
+            bucket sidecar. This shared lookup copies the entry without exposing
+            a borrow into relocatable storage. */
             unsafe {
                 if let Some(stored) = (&*entries.add(idx)).as_ref()
                     && stored.scope == scope
                 {
-                    return Some(&stored.entry);
+                    return Some(stored.entry);
                 }
             }
             idx += 1;

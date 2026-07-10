@@ -32,12 +32,6 @@ where
                 ..
             } = self;
             let event_idx = state_index_to_usize(branch.cursor_index);
-            let Some(event_meta) = cursor.try_recv_meta_at(event_idx) else {
-                return Err(RecvError::PhaseInvariant);
-            };
-            if event_meta.route_arm.is_none() {
-                return Err(RecvError::PhaseInvariant);
-            }
             let mut rows = route_commit_rows.begin();
             prepare_event_selected_route_commit_rows_from_resident_route_commit_range(
                 decision_state,
@@ -145,9 +139,7 @@ where
             self.record_scope_ack(scope_id, route_token);
             self.emit_route_arm_selection(scope_id, route_token, decision_lane);
         } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
-            let Some(arm) = Arm::new(selected_arm) else {
-                return;
-            };
+            let arm = crate::invariant_some(Arm::new(selected_arm));
             let token = RouteArmToken::from_ack(arm);
             if matches!(branch.kind, BranchKind::ArmSendHint) {
                 let lane = lane_wire;

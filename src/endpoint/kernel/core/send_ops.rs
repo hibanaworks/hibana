@@ -1,8 +1,8 @@
 use super::{
-    CursorEndpoint, CursorInvariantError, Payload, PendingSendIo, Poll, SendCommitOutcome,
-    SendCommitPlan, SendCommitProof, SendError, SendInitOutcome, SendMeta, SendProgressCommitPlan,
-    SendResult, SendRouteAudit, SendRouteAuthority, SendRuntimeDesc, SendTransportStep,
-    StagedSendPayload, StateIndex, TapFrameMeta, Transport, ids, lane_port,
+    CursorEndpoint, CursorInvariantError, PendingSendIo, Poll, SendCommitOutcome, SendCommitPlan,
+    SendCommitProof, SendError, SendInitOutcome, SendMeta, SendProgressCommitPlan, SendResult,
+    SendRouteAudit, SendRouteAuthority, SendRuntimeDesc, StateIndex, TapFrameMeta, Transport, ids,
+    lane_port,
 };
 use crate::global::typestate::state_index_to_usize;
 
@@ -124,18 +124,6 @@ where
     }
 
     #[inline(never)]
-    fn stage_send_payload(
-        &mut self,
-        payload: Option<lane_port::RawSendPayload>,
-        scratch: &mut [u8],
-    ) -> SendResult<StagedSendPayload> {
-        let data = payload.ok_or(SendError::PhaseInvariant)?;
-        Ok(StagedSendPayload {
-            encoded_len: data.encode_into(scratch)?,
-        })
-    }
-
-    #[inline(never)]
     fn build_send_commit_plan(
         &mut self,
         preview_cursor_index: Option<StateIndex>,
@@ -175,52 +163,33 @@ where
         meta: SendMeta,
         payload: Option<lane_port::RawSendPayload>,
         route_authority: SendRouteAuthority,
-    ) -> SendResult<SendTransportStep<'r>> {
+    ) -> SendResult<PendingSendIo<'r>> {
         let commit_plan =
             self.build_send_commit_plan(preview_cursor_index, meta, route_authority)?;
-        let scratch_ptr = {
-            let port = self.port_for_lane(meta.lane as usize);
-            lane_port::scratch_ptr(port)
-        };
-        let staged_send = {
-            let scratch = /* SAFETY: `scratch_ptr` comes from the selected
-            lane port's send scratch. This send operation owns the mutable
-            endpoint borrow while staging the payload into that scratch buffer. */ unsafe { &mut *scratch_ptr };
-            self.stage_send_payload(payload, scratch)?
-        };
-        let encoded_len = staged_send.encoded_len;
-
-        if meta.peer == ROLE {
-            return Ok(SendTransportStep::Immediate(commit_plan));
-        }
-
+        let payload = payload.ok_or(SendError::PhaseInvariant)?;
         let port = self.port_for_lane(meta.lane as usize);
         let lane = port.lane();
-        let payload_view = {
-            let scratch = /* SAFETY: the send payload was staged into this same
-            lane scratch above, and `encoded_len` is the length returned by the
-            encoder for that buffer. */
-                unsafe { &*scratch_ptr };
-            Payload::new(&scratch[..encoded_len])
+        let carrier = if meta.peer == ROLE {
+            lane_port::SendCarrier::Local
+        } else {
+            lane_port::SendCarrier::Transport
         };
-        let outgoing = crate::transport::Outgoing {
-            meta: crate::transport::SendMeta {
+        let transport = lane_port::PendingSend::new(
+            payload,
+            crate::transport::SendMeta {
                 eff_index: meta.eff_index,
                 logical_label: crate::transport::LogicalLabel::new(meta.label),
                 frame_label: crate::transport::FrameLabel::new(meta.frame_label),
                 target_role: meta.peer,
                 lane: lane.as_wire(),
             },
-            payload: payload_view,
-        };
-
-        let mut transport = lane_port::PendingSend::new();
-        lane_port::begin_send_outgoing(&mut transport, outgoing);
-        Ok(SendTransportStep::Pending(PendingSendIo {
+            carrier,
+        );
+        Ok(PendingSendIo {
             lane,
             transport,
             commit_plan: Some(commit_plan),
-        }))
+        })
     }
 
     #[inline(never)]
@@ -264,15 +233,12 @@ where
         {
             return SendInitOutcome::Ready(Err(err));
         }
-        let step =
+        let pending =
             match self.begin_send_transport(preview_cursor_index, meta, payload, route_authority) {
-                Ok(step) => step,
+                Ok(pending) => pending,
                 Err(err) => return SendInitOutcome::Ready(Err(err)),
             };
-        match step {
-            SendTransportStep::Immediate(commit_plan) => SendInitOutcome::Commit { commit_plan },
-            SendTransportStep::Pending(pending) => SendInitOutcome::Pending { pending },
-        }
+        SendInitOutcome::Pending { pending }
     }
 
     #[inline(never)]
@@ -288,8 +254,10 @@ where
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(err)) => {
-                self.emit_transport_fault_event(lane_idx, lane_wire, err);
-                Poll::Ready(Err(SendError::Transport(err)))
+                if let SendError::Transport(transport_error) = err {
+                    self.emit_transport_fault_event(lane_idx, lane_wire, transport_error);
+                }
+                Poll::Ready(Err(err))
             }
         }
     }

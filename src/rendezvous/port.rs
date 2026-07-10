@@ -9,7 +9,7 @@ use core::{
     task::{Context, Poll},
 };
 
-use super::core::{EndpointLeaseId, EndpointLeaseSlot, Sidecar};
+use super::core::{EndpointLeaseSlot, RendezvousAccessState, Sidecar};
 use super::tables::RouteTable;
 use crate::{
     endpoint::kernel::FrontierScratchLayout,
@@ -71,11 +71,12 @@ pub(crate) struct Port<'r, T: Transport> {
     transport: &'r T,
     tx: UnsafeCell<T::Tx<'r>>,
     rx: UnsafeCell<T::Rx<'r>>,
-    slab: *mut [u8],
-    image_frontier: *const u32,
-    frontier_workspace_bytes: *const u32,
-    endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>,
-    endpoint_lease_capacity: *const EndpointLeaseId,
+    slab_ptr: *mut u8,
+    slab_len: usize,
+    access_state: &'r Cell<RendezvousAccessState>,
+    image_frontier: &'r Cell<u32>,
+    frontier_workspace_bytes: &'r Cell<u32>,
+    endpoint_lease_storage: &'r Cell<Sidecar<EndpointLeaseSlot>>,
     scratch_marker: PhantomData<&'r mut [u8]>,
     pub(crate) lane: Lane,
     role: u8,
@@ -95,17 +96,32 @@ pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub(crate) tap: &'tap TapRing<'tap>,
     pub(crate) tap_counter: &'tap Cell<u32>,
     pub(crate) routes: &'tap RouteTable,
-    pub(crate) slab: *mut [u8],
-    pub(crate) image_frontier: *const u32,
-    pub(crate) frontier_workspace_bytes: *const u32,
-    pub(crate) endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>,
-    pub(crate) endpoint_lease_capacity: *const EndpointLeaseId,
+    pub(crate) slab_ptr: *mut u8,
+    pub(crate) slab_len: usize,
+    pub(crate) access_state: &'tap Cell<RendezvousAccessState>,
+    pub(crate) image_frontier: &'tap Cell<u32>,
+    pub(crate) frontier_workspace_bytes: &'tap Cell<u32>,
+    pub(crate) endpoint_lease_storage: &'tap Cell<Sidecar<EndpointLeaseSlot>>,
     pub(crate) lane: Lane,
     pub(crate) role: u8,
     pub(crate) role_count: u8,
     pub(crate) rv_id: RendezvousId,
     pub(crate) tx: T::Tx<'r>,
     pub(crate) rx: T::Rx<'r>,
+}
+
+pub(crate) struct ScratchLease<'r> {
+    state: &'r Cell<RendezvousAccessState>,
+}
+
+impl Drop for ScratchLease<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.state.get() != RendezvousAccessState::ScratchLease {
+            crate::invariant();
+        }
+        self.state.set(RendezvousAccessState::Available);
+    }
 }
 
 impl<'r, T: Transport + 'r> Port<'r, T> {
@@ -143,11 +159,12 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             tap,
             tap_counter,
             routes,
-            slab,
+            slab_ptr,
+            slab_len,
+            access_state,
             image_frontier,
             frontier_workspace_bytes,
             endpoint_lease_storage,
-            endpoint_lease_capacity,
             lane,
             role,
             role_count,
@@ -159,11 +176,12 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             transport,
             tx: UnsafeCell::new(tx),
             rx: UnsafeCell::new(rx),
-            slab,
+            slab_ptr,
+            slab_len,
+            access_state,
             image_frontier,
             frontier_workspace_bytes,
             endpoint_lease_storage,
-            endpoint_lease_capacity,
             scratch_marker: PhantomData,
             lane,
             role,
@@ -186,36 +204,49 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
 
     #[inline]
     fn slab_ptr_and_len(&self) -> (*mut u8, usize) {
-        unsafe {
-            // SAFETY: `slab` points to the rendezvous-owned backing slice bound
-            // during port construction and remains pinned for the port lifetime.
-            let slab = &mut *self.slab;
-            (slab.as_mut_ptr(), slab.len())
+        (self.slab_ptr, self.slab_len)
+    }
+
+    #[inline]
+    pub(crate) fn try_scratch_lease(&self) -> Option<ScratchLease<'r>> {
+        if self.access_state.get() != RendezvousAccessState::Available {
+            return None;
+        }
+        self.access_state.set(RendezvousAccessState::ScratchLease);
+        Some(ScratchLease {
+            state: self.access_state,
+        })
+    }
+
+    #[inline]
+    fn require_scratch_lease(&self) {
+        if self.access_state.get() != RendezvousAccessState::ScratchLease {
+            crate::invariant();
         }
     }
 
     #[inline]
-    fn endpoint_lease_owner_view(&self) -> (*const EndpointLeaseSlot, EndpointLeaseId) {
-        // SAFETY: these pointers target pinned rendezvous owner fields bound
-        // during port construction. Capacity growth may replace the sidecar
-        // root value, so every floor computation reloads both fields.
-        let storage = unsafe { *self.endpoint_lease_storage };
-        let capacity = unsafe { *self.endpoint_lease_capacity };
-        if capacity != EndpointLeaseId::ZERO && storage.ptr().is_null() {
-            crate::invariant();
-        }
-        (storage.ptr().cast_const(), capacity)
+    fn endpoint_lease_owner_view(&self) -> (*const EndpointLeaseSlot, usize) {
+        // The pinned rendezvous owner cells outlive this port. Capacity growth
+        // may replace the sidecar root, so every floor computation reloads it
+        // and derives the slot count from the exact sidecar byte length.
+        let storage = self.endpoint_lease_storage.get();
+        (
+            storage.ptr().cast_const(),
+            EndpointLeaseSlot::storage_slot_count(storage),
+        )
     }
 
     #[inline]
     fn endpoint_storage_floor(&self) -> usize {
         let (_, slab_len) = self.slab_ptr_and_len();
-        let (endpoint_leases, endpoint_lease_capacity) = self.endpoint_lease_owner_view();
+        let (endpoint_leases, endpoint_lease_slot_count) = self.endpoint_lease_owner_view();
         let mut floor = slab_len;
         let mut idx = 0usize;
-        while idx < usize::from(endpoint_lease_capacity) {
-            // SAFETY: `endpoint_leases` has `endpoint_lease_capacity`
-            // initialized slots owned by this port.
+        while idx < endpoint_lease_slot_count {
+            // SAFETY: `endpoint_leases` has `endpoint_lease_slot_count`
+            // initialized slots owned by the rendezvous and observed through
+            // its live sidecar root.
             let slot = unsafe { &*endpoint_leases.add(idx) };
             if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
@@ -335,11 +366,11 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
 
     #[inline]
     pub(crate) fn scratch_ptr(&self) -> *mut [u8] {
+        self.require_scratch_lease();
         let (ptr, _) = self.slab_ptr_and_len();
-        // SAFETY: `image_frontier` and `frontier_workspace_bytes` are
-        // port-owned initialized offsets into the pinned port slab.
-        let base = unsafe { *self.image_frontier } as usize;
-        let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
+        // The owner cells hold initialized offsets into the pinned rendezvous slab.
+        let base = self.image_frontier.get() as usize;
+        let workspace = self.frontier_workspace_bytes.get() as usize;
         let start = checked_add_usize(base, workspace);
         let end = self.endpoint_storage_floor();
         if start > end {
@@ -353,11 +384,11 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
 
     #[inline]
     pub(crate) fn frontier_scratch_ptr(&self) -> *mut [u8] {
+        self.require_scratch_lease();
         let (ptr, _) = self.slab_ptr_and_len();
-        // SAFETY: `image_frontier` and `frontier_workspace_bytes` are
-        // port-owned initialized offsets into the pinned port slab.
-        let start = unsafe { *self.image_frontier } as usize;
-        let workspace = unsafe { *self.frontier_workspace_bytes } as usize;
+        // The owner cells hold initialized offsets into the pinned rendezvous slab.
+        let start = self.image_frontier.get() as usize;
+        let workspace = self.frontier_workspace_bytes.get() as usize;
         let lease_floor = self.endpoint_storage_floor();
         let workspace_end = checked_add_usize(start, workspace);
         if workspace_end > lease_floor {

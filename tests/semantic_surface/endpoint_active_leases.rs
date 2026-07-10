@@ -34,6 +34,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "Recv",
         "Offer",
         "RouteBranch",
+        "RestoredRouteBranch",
         "BranchRecv",
         "BranchSend",
         "public_active_op: PublicActiveOp",
@@ -67,7 +68,9 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("fn init_public_recv_state(&mut self) -> super::core::PublicOpLease")
             && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Recv);")
             && public_runtime.contains("fn init_public_offer_state(&mut self) -> super::core::PublicOpLease")
-            && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Offer);")
+            && public_runtime.contains("PublicActiveOp::RestoredRouteBranch if self.public_route_branch.is_some()")
+            && public_runtime.contains("transition_public_op(PublicActiveOp::RestoredRouteBranch, PublicActiveOp::Offer)")
+            && !public_runtime.contains("restore_materialized_route_branch")
             && public_runtime.contains("super::core::PublicOpLease::Rejected => return lease")
             && public_runtime.contains("if self.public_active_op != PublicActiveOp::Offer")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
@@ -77,15 +80,17 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Send)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Recv)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::Offer)")
-            && public_runtime.contains("self.finish_public_op(PublicActiveOp::BranchRecv)")
+            && public_runtime.contains("self.park_public_route_branch(PublicActiveOp::BranchRecv)")
             && public_runtime.contains("self.finish_public_op(PublicActiveOp::BranchSend)")
-            && public_runtime.contains("self.finish_public_op(PublicActiveOp::RouteBranch)")
+            && public_runtime.contains("self.park_public_route_branch(PublicActiveOp::RouteBranch)")
+            && public_runtime.contains("self.park_public_route_branch(PublicActiveOp::BranchSend)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Send)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Recv)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Offer)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchRecv)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchSend)")
-            && public_runtime.contains("if self.public_route_branch.is_some() {\n            self.clear_session_waiter();\n            self.public_op_busy_fault();")
+            && public_runtime.contains("if let Some(branch) = self.public_route_branch.as_ref() {")
+            && public_runtime.contains("let label = branch.branch_meta.label;")
             && public_runtime.contains("if self.public_route_branch.is_none() {\n            self.clear_session_waiter();\n            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();\n            self.public_op_busy_fault();"),
         "endpoint API calls must start only from Idle, checked completion must poison on wrong active-op order, and terminal sweep must use an explicit lenient clear path"
     );

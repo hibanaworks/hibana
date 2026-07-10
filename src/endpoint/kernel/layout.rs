@@ -3,7 +3,6 @@ use core::ops::{Deref, DerefMut};
 use super::decision_state::{RouteCommitRowSetBuilder, RouteScopeSelectedArmSlot, RouteState};
 use super::evidence::RouteArmState;
 use super::evidence_store::ScopeEvidenceSlot;
-use super::frontier::OfferEntrySlot;
 use super::frontier::{ActiveEntrySlot, LaneOfferState, RootFrontierState};
 use super::frontier_state::FrontierState;
 use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RuntimeRoleFootprint};
@@ -85,7 +84,7 @@ pub(crate) struct RouteFrontierArenaLayout {
     frontier_state: EndpointArenaSection,
     frontier_root_rows: EndpointArenaSection,
     frontier_root_active_slots: EndpointArenaSection,
-    frontier_offer_entry_slots: EndpointArenaSection,
+    frontier_visited_scopes: EndpointArenaSection,
     scope_evidence_slots: EndpointArenaSection,
 }
 
@@ -206,10 +205,12 @@ impl EndpointArenaLayout {
         offset = frontier_root_active_slots.end_offset();
         total_align = max_usize(total_align, frontier_root_active_slots.align());
 
-        let frontier_offer_entry_slots =
-            Self::section_array::<OfferEntrySlot>(offset, footprint.frontier_entry_count());
-        offset = frontier_offer_entry_slots.end_offset();
-        total_align = max_usize(total_align, frontier_offer_entry_slots.align());
+        let frontier_visited_scopes = Self::section_array::<crate::global::const_dsl::ScopeId>(
+            offset,
+            footprint.frontier_entry_count(),
+        );
+        offset = frontier_visited_scopes.end_offset();
+        total_align = max_usize(total_align, frontier_visited_scopes.align());
 
         let scope_evidence_slots =
             Self::section_array::<ScopeEvidenceSlot>(offset, footprint.scope_evidence_count());
@@ -237,7 +238,7 @@ impl EndpointArenaLayout {
                 frontier_state,
                 frontier_root_rows,
                 frontier_root_active_slots,
-                frontier_offer_entry_slots,
+                frontier_visited_scopes,
                 scope_evidence_slots,
             },
             total_bytes: offset,
@@ -340,8 +341,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn frontier_offer_entry_slots(&self) -> EndpointArenaSection {
-        self.frontier.frontier_offer_entry_slots
+    pub(crate) const fn frontier_visited_scopes(&self) -> EndpointArenaSection {
+        self.frontier.frontier_visited_scopes
     }
 
     #[inline(always)]
@@ -495,7 +496,7 @@ mod tests {
             footprint.frontier_entry_count()
         );
         assert_eq!(
-            layout.frontier_offer_entry_slots().count(),
+            layout.frontier_visited_scopes().count(),
             footprint.frontier_entry_count()
         );
     }

@@ -289,6 +289,39 @@ fn dropped_endpoint_lease_allows_same_session_role_to_reenter() {
 }
 
 #[test]
+fn poisoned_session_reenter_rejects_before_lane_lease_construction() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let controller_program = controller_program();
+            let worker_program = worker_program();
+            let poisoned_sid = SessionId::new(15);
+
+            let controller = rv
+                .enter(poisoned_sid, &controller_program)
+                .expect("controller endpoint");
+            let worker = rv
+                .enter(poisoned_sid, &worker_program)
+                .expect("worker endpoint");
+            drop(controller);
+
+            assert!(
+                rv.enter(poisoned_sid, &controller_program).is_err(),
+                "a poisoned session must reject reentry without constructing lane release authority"
+            );
+            let fresh = rv
+                .enter(SessionId::new(16), &controller_program)
+                .expect("failed reentry must release registry and endpoint lease ownership");
+            drop(fresh);
+            drop(worker);
+        });
+    });
+}
+
+#[test]
 fn distinct_session_or_role_endpoint_leases_can_coexist() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();

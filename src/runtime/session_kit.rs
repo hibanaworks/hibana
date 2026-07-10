@@ -1,5 +1,4 @@
 use super::AttachError;
-use crate::session::cluster::error::{ClusterError, ResourceScope};
 
 /// Protocol-neutral session kit facade for protocol implementors.
 ///
@@ -235,12 +234,7 @@ where
         'cfg: 'r,
     {
         let (slot, generation) = self.inner.enter::<ROLE>(rv, sid, program)?;
-        let ptr = self
-            .inner
-            .public_endpoint_header_ptr(rv, slot, generation)
-            .ok_or(AttachError::cluster(ClusterError::resource_exhausted(
-                ResourceScope::EndpointHeader,
-            )))?;
+        let ptr = self.inner.public_endpoint_header_ptr(rv, slot, generation);
         let handle = crate::endpoint::carrier::PackedEndpointHandle::new(generation);
         Ok(crate::endpoint::Endpoint::from_handle(ptr, handle))
     }

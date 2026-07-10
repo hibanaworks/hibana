@@ -30,7 +30,7 @@ where
         sid: SessionId,
         lane: Lane,
     ) -> Result<(), RendezvousError> {
-        if !self.lane_range.contains(&lane.raw()) {
+        if lane.raw() < self.lane_base.get() || lane.raw() >= self.lane_end.get() {
             return Err(RendezvousError::LaneOutOfRange { lane });
         }
         if self.session_fault(sid).is_some() {
@@ -96,11 +96,12 @@ where
             tap: self.tap(),
             tap_counter: &self.tap_counter,
             routes: &self.routes,
-            slab: self.slab,
-            image_frontier: core::ptr::addr_of!(self.image_frontier),
-            frontier_workspace_bytes: core::ptr::addr_of!(self.frontier_workspace_bytes),
-            endpoint_lease_storage: core::ptr::addr_of!(self.endpoint_lease_storage),
-            endpoint_lease_capacity: core::ptr::addr_of!(self.endpoint_lease_capacity),
+            slab_ptr: self.slab_ptr,
+            slab_len: self.slab_len,
+            access_state: &self.access_state,
+            image_frontier: &self.image_frontier,
+            frontier_workspace_bytes: &self.frontier_workspace_bytes,
+            endpoint_lease_storage: &self.endpoint_lease_storage,
             lane,
             role,
             role_count,

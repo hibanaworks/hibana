@@ -1,4 +1,7 @@
-use core::{cell::UnsafeCell, marker::PhantomData};
+use core::{
+    cell::{Cell, UnsafeCell},
+    marker::PhantomData,
+};
 
 use crate::{rendezvous::waiter::WaiterSlot, session::types::SessionId};
 
@@ -16,9 +19,9 @@ impl AssocTable {
     pub(in crate::rendezvous) unsafe fn init_empty(dst: *mut Self) {
         /* SAFETY: `Rendezvous` initialization passes an unpublished `AssocTable`; lane range is zeroed and column pointers are null before binding. */
         unsafe {
-            core::ptr::addr_of_mut!((*dst).lane_base).write(0);
-            core::ptr::addr_of_mut!((*dst).lane_slots).write(0);
-            core::ptr::addr_of_mut!((*dst).assoc_slots).write(0);
+            core::ptr::addr_of_mut!((*dst).lane_base).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).lane_slots).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).assoc_slots).write(Cell::new(0));
             core::ptr::addr_of_mut!((*dst).entry_sids)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).entry_lanes)
@@ -81,7 +84,10 @@ impl AssocTable {
 
     #[inline]
     const fn overflow_waiter_slots(assoc_slots: usize) -> usize {
-        assoc_slots.saturating_sub(1)
+        if assoc_slots == 0 {
+            crate::invariant();
+        }
+        assoc_slots - 1
     }
 
     #[inline]
@@ -175,9 +181,9 @@ impl AssocTable {
         let sids = self.entry_sids_ptr();
         let states = self.entry_states_ptr();
         /* SAFETY: `idx` and `last` are live assoc-table indexes. The removed
-        waiter is cleared, then the last live entry is moved into the gap so
+        waiter is taken before the last live entry is moved into the gap, so
         live entries stay prefix-packed and entry 0 keeps the inline waiter. */
-        unsafe {
+        let removed_waker = unsafe {
             let mut last = self.assoc_slots();
             loop {
                 if last == 0 {
@@ -188,7 +194,7 @@ impl AssocTable {
                     break;
                 }
             }
-            (*self.waiter_ptr(idx)).clear();
+            let removed_waker = (*self.waiter_ptr(idx)).take();
             if last != idx {
                 lanes.add(idx).write(*lanes.add(last));
                 sids.add(idx).write(*sids.add(last));
@@ -201,11 +207,13 @@ impl AssocTable {
             sids.add(last).write(SessionId::new(0));
             states.add(last).write(Self::EMPTY_ENTRY_STATE);
             (*self.waiter_ptr(last)).clear();
-        }
+            removed_waker
+        };
+        drop(removed_waker);
     }
 
     unsafe fn bind_storage(
-        &mut self,
+        &self,
         lane_base: u32,
         lane_slots: usize,
         assoc_slots: usize,
@@ -230,18 +238,22 @@ impl AssocTable {
                 waiter_idx += 1;
             }
         }
-        self.lane_base = lane_base;
-        self.lane_slots = lane_slots as u16;
-        self.assoc_slots = assoc_slots as u16;
-        *self.inline_waiter.get_mut() = WaiterSlot::empty();
-        *self.entry_sids.get_mut() = parts.entry_sids;
-        *self.entry_lanes.get_mut() = parts.entry_lanes;
-        *self.entry_states.get_mut() = parts.entry_states;
-        *self.waiters.get_mut() = parts.waiters;
+        self.lane_base.set(lane_base);
+        self.lane_slots.set(lane_slots as u16);
+        self.assoc_slots.set(assoc_slots as u16);
+        /* SAFETY: all columns belong to this freshly initialized table binding
+        and are published only after every slot is initialized. */
+        unsafe {
+            self.inline_waiter.get().write(WaiterSlot::empty());
+            self.entry_sids.get().write(parts.entry_sids);
+            self.entry_lanes.get().write(parts.entry_lanes);
+            self.entry_states.get().write(parts.entry_states);
+            self.waiters.get().write(parts.waiters);
+        }
     }
 
     pub(in crate::rendezvous) unsafe fn bind_from_storage(
-        &mut self,
+        &self,
         storage: *mut u8,
         lane_base: u32,
         lane_slots: usize,
@@ -270,7 +282,7 @@ impl AssocTable {
         lane_slots: usize,
         assoc_slots: usize,
     ) {
-        let source_base = self.lane_base;
+        let source_base = self.lane_base.get();
         let source_slots = self.assoc_slots();
         let source_lanes = self.entry_lanes_ptr();
         let source_sids = self.entry_sids_ptr();
@@ -328,11 +340,8 @@ impl AssocTable {
                             if source_idx != 0 {
                                 crate::invariant();
                             }
-                        } else {
-                            WaiterSlot::init_clone_from(
-                                parts.waiters.add(dst_idx - 1),
-                                &*self.waiter_ptr(source_idx),
-                            );
+                        } else if let Some(waker) = (*self.waiter_ptr(source_idx)).take() {
+                            (*parts.waiters.add(dst_idx - 1)).set_owned(waker);
                         }
                     }
                     dst_idx += 1;
@@ -342,37 +351,43 @@ impl AssocTable {
         }
     }
 
-    pub(in crate::rendezvous) fn clear_current_overflow_waiters(&self) {
-        let waiters = self.waiters_ptr();
-        let mut idx = 0usize;
-        while idx < Self::overflow_waiter_slots(self.assoc_slots()) {
-            /* SAFETY: waiters_ptr points at the currently bound overflow waiter column. */
-            unsafe {
-                (*waiters.add(idx)).clear();
-            }
-            idx += 1;
-        }
-    }
-
     pub(in crate::rendezvous) unsafe fn commit_storage(
-        &mut self,
+        &self,
         storage: *mut u8,
         lane_base: u32,
         lane_slots: usize,
         assoc_slots: usize,
     ) {
-        let parts = /* SAFETY: `storage` is an initialized assoc-table arena staged for publication. */ unsafe {
+        let parts = /* SAFETY: `storage` is an initialized, exclusively owned
+        assoc arena staged before pointer publication. */ unsafe {
             Self::storage_parts(storage, assoc_slots)
         };
         if lane_slots > usize::from(u16::MAX) || assoc_slots > usize::from(u16::MAX) {
             crate::invariant();
         }
-        self.lane_base = lane_base;
-        self.lane_slots = lane_slots as u16;
-        self.assoc_slots = assoc_slots as u16;
-        *self.entry_sids.get_mut() = parts.entry_sids;
-        *self.entry_lanes.get_mut() = parts.entry_lanes;
-        *self.entry_states.get_mut() = parts.entry_states;
-        *self.waiters.get_mut() = parts.waiters;
+        self.lane_base.set(lane_base);
+        self.lane_slots.set(lane_slots as u16);
+        self.assoc_slots.set(assoc_slots as u16);
+        /* SAFETY: replacement columns were fully initialized before this
+        owner-local pointer publication. */
+        unsafe {
+            self.entry_sids.get().write(parts.entry_sids);
+            self.entry_lanes.get().write(parts.entry_lanes);
+            self.entry_states.get().write(parts.entry_states);
+            self.waiters.get().write(parts.waiters);
+        }
+    }
+
+    pub(in crate::rendezvous) unsafe fn relocate_storage(&self, storage: *mut u8) {
+        /* SAFETY: the rendezvous owner moved the complete sidecar byte range
+        without changing shape; commit recomputes only the column pointers. */
+        unsafe {
+            self.commit_storage(
+                storage,
+                self.lane_base.get(),
+                self.lane_slots(),
+                self.assoc_slots(),
+            );
+        }
     }
 }
