@@ -87,7 +87,7 @@ fn dropping_live_endpoint_poison_wakes_waiting_peer() {
 }
 
 #[test]
-fn overflow_session_waiter_survives_assoc_entry_compaction() {
+fn endpoint_waiter_isolated_from_unrelated_session_compaction() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -120,26 +120,26 @@ fn overflow_session_waiter_survives_assoc_entry_compaction() {
             assert_eq!(
                 wake_count.get(),
                 0,
-                "compacting an unrelated session must not wake session B"
+                "unrelated session retirement must not wake session B"
             );
 
             drop(origin_b);
             assert!(
                 wake_count.get() > 0,
-                "session B waiter must move from overflow storage into the inline slot"
+                "session B endpoint waiter must observe its peer drop"
             );
             match recv_future.as_mut().poll(&mut context) {
                 Poll::Ready(Err(error)) => {
                     assert!(
                         format!("{error:?}").contains("EndpointDropped"),
-                        "compacted waiter must observe the peer drop fault: {error:?}"
+                        "endpoint waiter must observe the peer drop fault: {error:?}"
                     );
                 }
                 Poll::Ready(Ok(payload)) => {
                     core::hint::black_box(&payload);
                     panic!("recv unexpectedly progressed after peer drop");
                 }
-                Poll::Pending => panic!("compacted session waiter remained pending"),
+                Poll::Pending => panic!("session B endpoint waiter remained pending"),
             }
         });
     });

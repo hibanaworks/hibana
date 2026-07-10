@@ -51,13 +51,13 @@ where
             }
             let destination = /* SAFETY: canonical packing preserves physical
             sidecar order, so each destination ends no later than its source and
-            cannot overwrite a later live source. `ptr::copy` handles overlap
-            and transfers non-Copy waiter ownership without running callbacks. */ unsafe {
+            cannot overwrite a later live source. `ptr::copy` handles overlap;
+            no owner callback runs before every typed root is rebound. */ unsafe {
                 slab_ptr.add(destination_start)
             };
             if destination_start != source_start {
                 /* SAFETY: source/destination are within the same resident slab;
-                the owner roots are rebound below and the old bytes are never
+                the owner roots are rebound below and the source bytes are never
                 observed or dropped again. */
                 unsafe {
                     core::ptr::copy(

@@ -1,16 +1,13 @@
 //! Public endpoint operation lifecycle: preview reset, terminal clear, and waiter ownership.
 
-use core::task::Waker;
-
 use super::{
     core::{CursorEndpoint, PublicActiveOp, SendInit, SendState},
     lane_port,
     offer::OfferState,
 };
 use crate::{
-    endpoint::{RecvError, SendError},
+    endpoint::{RecvError, SendError, carrier::WaiterTransfer},
     rendezvous::SessionFaultKind,
-    session::types::Lane,
     transport::Transport,
 };
 
@@ -86,8 +83,8 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn reset_public_offer_state(&mut self) {
-        self.clear_session_waiter();
+    pub(in crate::endpoint) fn reset_public_offer_state(&mut self, waiters: &mut WaiterTransfer) {
+        self.clear_endpoint_waiter(waiters);
         if self.public_route_branch.is_some() {
             self.park_public_route_branch(PublicActiveOp::Offer);
         } else {
@@ -119,7 +116,6 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_offer_state(&mut self) {
-        self.clear_session_waiter();
         self.clear_public_op_if_current(PublicActiveOp::Offer);
         let mut state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         state.discard_terminal();
@@ -194,8 +190,8 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn reset_public_send_state(&mut self) {
-        self.clear_session_waiter();
+    pub(in crate::endpoint) fn reset_public_send_state(&mut self, waiters: &mut WaiterTransfer) {
+        self.clear_endpoint_waiter(waiters);
         match self.public_active_op {
             PublicActiveOp::Send => self.finish_public_op(PublicActiveOp::Send),
             PublicActiveOp::BranchSend => {
@@ -210,7 +206,6 @@ where
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_send_state(&mut self) {
-        self.clear_session_waiter();
         self.clear_public_op_if_current(PublicActiveOp::Send);
         self.clear_public_op_if_current(PublicActiveOp::BranchSend);
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
@@ -240,15 +235,14 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn reset_public_recv_state(&mut self) {
-        self.clear_session_waiter();
+    pub(in crate::endpoint) fn reset_public_recv_state(&mut self, waiters: &mut WaiterTransfer) {
+        self.clear_endpoint_waiter(waiters);
         self.finish_public_op(PublicActiveOp::Recv);
         self.public_recv_state = super::recv::RecvState::new();
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_recv_state(&mut self) {
-        self.clear_session_waiter();
         self.clear_public_op_if_current(PublicActiveOp::Recv);
         self.public_recv_state = super::recv::RecvState::new();
     }
@@ -278,15 +272,17 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn reset_public_branch_recv_state(&mut self) {
-        self.clear_session_waiter();
+    pub(in crate::endpoint) fn reset_public_branch_recv_state(
+        &mut self,
+        waiters: &mut WaiterTransfer,
+    ) {
+        self.clear_endpoint_waiter(waiters);
         self.park_public_route_branch(PublicActiveOp::BranchRecv);
         self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
 
     #[inline]
     pub(in crate::endpoint) fn terminal_clear_public_branch_recv_state(&mut self) {
-        self.clear_session_waiter();
         self.clear_public_op_if_current(PublicActiveOp::BranchRecv);
         if let Some(branch) = self.public_route_branch.take() {
             branch.discard_terminal();
@@ -308,28 +304,32 @@ where
     ) -> SessionFaultKind {
         self.session
             .cluster()
-            .poison_session(self.public_rv, self.sid, cause)
+            .poison_session::<ROLE>(self.public_rv, self.sid, cause)
     }
 
     #[inline]
-    pub(in crate::endpoint) fn primary_physical_lane(&self) -> Lane {
-        self.port_for_lane(self.primary_lane).lane
+    pub(in crate::endpoint::kernel) fn register_endpoint_waiter(
+        &self,
+        waiters: &mut WaiterTransfer,
+    ) {
+        let replacement = waiters.take_replacement();
+        let displaced = self.session.cluster().replace_public_endpoint_waiter(
+            self.public_rv,
+            self.public_slot,
+            self.public_generation,
+            replacement,
+        );
+        waiters.defer(displaced);
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn register_session_waiter(&self, waker: &Waker) {
-        let lane = self.primary_physical_lane();
-        self.session
-            .cluster()
-            .register_session_waiter(self.public_rv, self.sid, lane, waker);
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn clear_session_waiter(&self) {
-        let lane = self.primary_physical_lane();
-        self.session
-            .cluster()
-            .clear_session_waiter(self.public_rv, self.sid, lane);
+    pub(crate) fn clear_endpoint_waiter(&self, waiters: &mut WaiterTransfer) {
+        let waiter = self.session.cluster().take_public_endpoint_waiter(
+            self.public_rv,
+            self.public_slot,
+            self.public_generation,
+        );
+        waiters.defer(waiter);
     }
 
     #[inline]

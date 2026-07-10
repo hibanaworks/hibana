@@ -130,14 +130,20 @@ where
             }
         }
         let mut dispatch_arm_masks = [FrameLabelMask::EMPTY; 2];
-        let _ = cursor.visit_route_scope_first_recv_dispatch(scope_id, |arm, target| {
-            if arm < 2
-                && !target.is_absent()
-                && let Some(recv) = cursor.try_recv_meta_at(state_index_to_usize(target))
-            {
+        crate::invariant_some(cursor.visit_route_scope_first_recv_dispatch(
+            scope_id,
+            |arm, target| {
+                if arm >= 2 {
+                    crate::invariant();
+                }
+                if target.is_absent() {
+                    return;
+                }
+                let recv =
+                    crate::invariant_some(cursor.try_recv_meta_at(state_index_to_usize(target)));
                 dispatch_arm_masks[arm as usize].insert_frame_label(recv.frame_label);
-            }
-        });
+            },
+        ));
         out.record_dispatch_arm_frame_label_mask(0, dispatch_arm_masks[0]);
         out.record_dispatch_arm_frame_label_mask(1, dispatch_arm_masks[1]);
     }

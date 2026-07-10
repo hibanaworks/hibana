@@ -1,7 +1,6 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionFaultKind {
     TransportClosed,
-    PeerReset,
     DecodeFailed,
     ProtocolViolation,
     EndpointDropped,
@@ -14,11 +13,10 @@ impl SessionFaultKind {
     pub(super) const fn encode(self) -> u8 {
         match self {
             Self::TransportClosed => 1,
-            Self::PeerReset => 2,
-            Self::DecodeFailed => 3,
-            Self::ProtocolViolation => 4,
-            Self::EndpointDropped => 5,
-            Self::ProgressInvariantViolated => 6,
+            Self::DecodeFailed => 2,
+            Self::ProtocolViolation => 3,
+            Self::EndpointDropped => 4,
+            Self::ProgressInvariantViolated => 5,
         }
     }
 
@@ -26,11 +24,10 @@ impl SessionFaultKind {
         match raw {
             Self::ABSENT_CODE => None,
             1 => Some(Self::TransportClosed),
-            2 => Some(Self::PeerReset),
-            3 => Some(Self::DecodeFailed),
-            4 => Some(Self::ProtocolViolation),
-            5 => Some(Self::EndpointDropped),
-            6 => Some(Self::ProgressInvariantViolated),
+            2 => Some(Self::DecodeFailed),
+            3 => Some(Self::ProtocolViolation),
+            4 => Some(Self::EndpointDropped),
+            5 => Some(Self::ProgressInvariantViolated),
             _ => crate::invariant(),
         }
     }

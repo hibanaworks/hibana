@@ -42,6 +42,7 @@ bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_unsafe_contract_hygiene.sh
 bash ./.github/scripts/check_manifest_tests.sh
 bash ./.github/scripts/check_miri.sh
+bash ./.github/scripts/check_lean_proofs.sh
 bash ./.github/scripts/check_boundary_contracts.sh --local-only
 bash ./.github/scripts/check_plane_boundaries.sh
 bash ./.github/scripts/check_mgmt_boundary.sh

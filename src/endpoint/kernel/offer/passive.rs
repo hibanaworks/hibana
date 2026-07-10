@@ -1,15 +1,13 @@
 use super::{
-    CursorEndpoint, FrameHintResolution, FrontierDeferOutcome, FrontierDeferRequest,
+    CursorEndpoint, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest,
     FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
-    OfferScopeProfile, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    ResolvePendingState, ResolveTokenOutcome, RouteArmToken, ScopeFrameLabelScratch, Transport,
-    lane_port,
+    OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult, ResolvePendingState,
+    ResolveTokenOutcome, RouteArmToken, ScopeFrameLabelScratch, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput<'a> {
     pub(super) selection: OfferScopeSelection,
     pub(super) offer_lanes: crate::global::role_program::LaneSetView<'a>,
-    pub(super) profile: OfferScopeProfile,
-    pub(super) frame_hint: FrameHintResolution,
+    pub(super) frame_evidence: FrameEvidenceResolution,
 }
 
 pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
@@ -19,8 +17,12 @@ pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
 }
 
 pub(super) enum PassiveRouteEvidenceOutcome {
-    Authority { route_token: RouteArmToken },
-    EvidenceOnly { frame_hint: FrameHintResolution },
+    Authority {
+        route_token: RouteArmToken,
+    },
+    EvidenceOnly {
+        frame_evidence: FrameEvidenceResolution,
+    },
     RestartFrontier,
 }
 
@@ -127,22 +129,14 @@ where
         let PassiveRouteEvidenceInput {
             selection,
             offer_lanes,
-            profile,
-            mut frame_hint,
+            mut frame_evidence,
         } = input;
         let scope_id = selection.scope_id;
         let frontier_parallel_root = selection.frontier_parallel_root;
         let mut wire_turn = PassiveWireTurn::Unpolled;
         loop {
-            frame_hint.record(self.refresh_passive_scope_evidence(
-                selection,
-                offer_lanes,
-                profile,
-                &mut state,
-            )?);
-            if let Some(arm) =
-                self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes, cx)
-            {
+            frame_evidence.record(self.refresh_passive_scope_evidence(selection, &mut state)?);
+            if let Some(arm) = self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes) {
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
                     route_token: RouteArmToken::from_ack(arm),
                 }));
@@ -157,7 +151,7 @@ where
                 break;
             }
 
-            if frame_hint.is_resolved() && wire_turn.has_polled() {
+            if frame_evidence.is_resolved() && wire_turn.has_polled() {
                 break;
             }
 
@@ -170,7 +164,7 @@ where
             }
 
             if !wire_turn.has_polled() {
-                frame_hint.record(self.poll_passive_wire_turn(
+                frame_evidence.record(self.poll_passive_wire_turn(
                     selection,
                     pending_recv,
                     &mut state,
@@ -196,26 +190,26 @@ where
                 FrontierDeferOutcome::Pending => return Poll::Pending,
             }
         }
-        Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly { frame_hint }))
+        Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly {
+            frame_evidence,
+        }))
     }
 
     fn refresh_passive_scope_evidence(
         &mut self,
         selection: OfferScopeSelection,
-        offer_lanes: crate::global::role_program::LaneSetView<'_>,
-        profile: OfferScopeProfile,
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
-    ) -> RecvResult<FrameHintResolution> {
+    ) -> RecvResult<FrameEvidenceResolution> {
         let scope_id = selection.scope_id;
         if let Some(frame_lane) = state.transport_lane_wire() {
             let Some(frame_label) = state.transport_frame_label_raw() else {
-                return Ok(FrameHintResolution::unresolved());
+                return Ok(FrameEvidenceResolution::unresolved());
             };
             let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
             self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
             let frame_label_meta = frame_label_scratch.view();
             if frame_label_meta
-                .frame_hint_mask()
+                .evidence_frame_label_mask()
                 .contains_frame_label(frame_label)
             {
                 self.mark_scope_ready_arm_from_frame_label(
@@ -224,30 +218,16 @@ where
                     frame_label,
                     &frame_label_meta,
                 );
-                return Ok(FrameHintResolution::resolved());
+                return Ok(FrameEvidenceResolution::resolved());
             }
-            return Ok(FrameHintResolution::unresolved());
+            return Ok(FrameEvidenceResolution::unresolved());
         }
 
-        let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
-        self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
-        self.ingest_scope_evidence_for_offer(
-            scope_id,
-            offer_lanes,
-            profile.frame_hint_ingestion(),
-            &frame_label_scratch.view(),
-        );
         if self.scope_evidence_conflicted(scope_id) {
             return Err(RecvError::PhaseInvariant);
         }
 
-        Ok(
-            if self.peek_scope_frame_hint_with_lane(scope_id).is_some() {
-                FrameHintResolution::resolved()
-            } else {
-                FrameHintResolution::unresolved()
-            },
-        )
+        Ok(FrameEvidenceResolution::unresolved())
     }
 
     fn poll_passive_wire_turn(
@@ -256,7 +236,7 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
         cx: &mut core::task::Context<'_>,
-    ) -> RecvResult<FrameHintResolution> {
+    ) -> RecvResult<FrameEvidenceResolution> {
         let recv_lane_idx = selection.offer_lane as usize;
         let recv_lane = recv_lane_idx as u8;
         let frame = match self.poll_received_framed_transport_frame_for_lane(
@@ -265,7 +245,7 @@ where
             recv_lane,
             cx,
         ) {
-            Poll::Pending => return Ok(FrameHintResolution::unresolved()),
+            Poll::Pending => return Ok(FrameEvidenceResolution::unresolved()),
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Err(err),
         };
@@ -275,11 +255,11 @@ where
         self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
         let frame_label_meta = frame_label_scratch.view();
         if frame_label_meta
-            .frame_hint_mask()
+            .evidence_frame_label_mask()
             .contains_frame_label(observed_frame_label)
         {
             state.stage_transport(frame);
-            return Ok(FrameHintResolution::resolved());
+            return Ok(FrameEvidenceResolution::resolved());
         }
         self.emit_materialization_mismatch_observation(
             recv_lane_idx,

@@ -8,7 +8,7 @@ fn overlapping_frame_label_is_not_route_evidence() {
     let meta = scratch.view();
 
     assert_eq!(meta.evidence_arm_for_frame_label(7), None);
-    assert!(!meta.frame_hint_mask().contains_frame_label(7));
+    assert!(!meta.evidence_frame_label_mask().contains_frame_label(7));
 }
 
 #[test]
@@ -20,8 +20,8 @@ fn unique_frame_label_remains_route_evidence() {
 
     assert_eq!(meta.evidence_arm_for_frame_label(7), Some(0));
     assert_eq!(meta.evidence_arm_for_frame_label(8), Some(1));
-    assert!(meta.frame_hint_mask().contains_frame_label(7));
-    assert!(meta.frame_hint_mask().contains_frame_label(8));
+    assert!(meta.evidence_frame_label_mask().contains_frame_label(7));
+    assert!(meta.evidence_frame_label_mask().contains_frame_label(8));
     assert!(!FrameLabelMask::EMPTY.contains_frame_label(7));
 }
 
@@ -35,7 +35,7 @@ fn controller_frame_label_exclusion_does_not_need_duplicate_masks() {
     let meta = scratch.view();
 
     assert_eq!(meta.evidence_arm_for_frame_label(7), None);
-    assert!(meta.frame_hint_mask().contains_frame_label(7));
+    assert!(meta.evidence_frame_label_mask().contains_frame_label(7));
 }
 
 #[test]

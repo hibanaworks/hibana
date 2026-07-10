@@ -168,10 +168,13 @@ fn endpoint_lease_slot_is_session_role_authority() {
     let lease_core = read("src/session/lease/core.rs");
     let rendezvous_core = read("src/rendezvous/core.rs");
     let endpoint_lease = read("src/rendezvous/core/endpoint_leases.rs");
+    let endpoint_lease_capacity =
+        read("src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs");
     let registry_ops = read("src/session/lease/core/registry_ops.rs");
     let cluster_ops = read("src/session/cluster/core/session_cluster_ops.rs");
     let endpoint_attach = read("src/session/cluster/core/endpoint_attach.rs");
     let endpoint_core = read("src/endpoint/kernel/core.rs");
+    let carrier_lifecycle = read("src/endpoint/carrier/lifecycle.rs");
     let production_scope = [
         lease_core.as_str(),
         rendezvous_core.as_str(),
@@ -185,20 +188,22 @@ fn endpoint_lease_slot_is_session_role_authority() {
 
     let lease_slot = named_struct_body(&rendezvous_core, "EndpointLeaseSlot");
     assert!(
-        lease_slot.contains("sid: SessionId,") && lease_slot.contains("role: u8,"),
-        "endpoint lease slot must be the live session-role identity owner"
+        lease_slot.contains("sid: SessionId,")
+            && lease_slot.contains("role: u8,")
+            && lease_slot.contains("state: EndpointLeaseState,"),
+        "endpoint lease slot must own session-role identity and publication state"
     );
     assert!(
         registry_ops.contains("allocate_endpoint_lease_for_session_role")
-            && registry_ops.contains("has_live_endpoint_session_role(sid, role)")
-            && endpoint_lease.contains("pub(crate) fn has_live_endpoint_session_role"),
-        "endpoint allocation must scan live endpoint leases before claiming a slot"
+            && registry_ops.contains("has_endpoint_session_role(sid, role)")
+            && endpoint_lease.contains("pub(crate) fn has_endpoint_session_role"),
+        "endpoint allocation must scan reserved and published endpoint leases before claiming a slot"
     );
     let claim = cluster_ops
         .find("self.locals().allocate_endpoint_lease_for_session_role(")
         .expect("endpoint storage owner must claim endpoint lease");
     let resident = cluster_ops
-        .find("rv.ensure_endpoint_resident_budget(resident_budget)")
+        .find("rv.ensure_endpoint_resident_capacity()")
         .expect("endpoint storage owner must ensure resident route/frontier budget");
     let assoc = cluster_ops
         .find("rv.ensure_core_lane_storage_for_assoc_entries")
@@ -210,15 +215,37 @@ fn endpoint_lease_slot_is_session_role_authority() {
             && endpoint_attach.contains("PublicEndpointStorageRequest")
             && endpoint_attach.contains("required_bytes: storage_layout.total_bytes")
             && endpoint_attach.contains("required_align: storage_layout.total_align")
-            && registry_ops.find("has_live_endpoint_session_role(sid, role)")
-                < registry_ops.find(".allocate_endpoint_lease(sid, role, bytes, align, resident_budget)")
-            && !registry_ops.contains("ensure_endpoint_resident_budget")
+            && registry_ops.find("has_endpoint_session_role(sid, role)")
+                < registry_ops
+                    .find(".allocate_endpoint_lease(sid, role, bytes, align, resident_budget)")
+            && !registry_ops.contains("ensure_endpoint_resident_capacity")
             && claim < resident
             && resident < assoc
-            && endpoint_lease.contains("if !slot.is_live() || slot.generation != generation {\n            crate::invariant();")
+            && endpoint_lease.contains("state: EndpointLeaseState::Reserved")
+            && endpoint_lease.contains("slot.state != EndpointLeaseState::Reserved")
+            && endpoint_lease.contains("state: EndpointLeaseState::Published")
+            && endpoint_lease_capacity
+                .contains("(slot.is_published() && slot.generation == generation).then")
+            && endpoint_attach.contains("self.publish_public_endpoint_slot(")
+            && endpoint_attach.contains(", slot, generation);")
             && !endpoint_lease.contains("return Ok(());")
             && !endpoint_core.contains("release_session_role_claim"),
-        "attach/drop must claim endpoint lease before sidecar capacity growth and release only that lease"
+        "attach/drop must reserve before growth, publish only after initialization, and release only that lease"
+    );
+    let take_release = carrier_lifecycle
+        .find("take_owned_slot_release()")
+        .expect("carrier must take endpoint lease release authority before drop");
+    let drop_endpoint = carrier_lifecycle
+        .find("core::ptr::drop_in_place(endpoint);")
+        .expect("carrier must run complete endpoint drop glue");
+    let release_slot = carrier_lifecycle
+        .find("cluster.release_public_endpoint_slot_owned(")
+        .expect("carrier must release endpoint storage after drop glue");
+    assert!(
+        take_release < drop_endpoint
+            && drop_endpoint < release_slot
+            && !endpoint_core.contains("cluster.release_public_endpoint_slot_owned("),
+        "endpoint allocation must remain live until every endpoint field has finished dropping"
     );
     let lane_claim = cluster_ops
         .find("lease.with_rendezvous(|rv| rv.activate_lane_attachment(sid, lane))?")
@@ -295,7 +322,7 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
         "pub(crate) const fn scope(&self) -> ScopeId",
         "pub(crate) scope: crate::global::const_dsl::ScopeId",
         "scope: ScopeId,",
-        "pub(crate) struct RouteFrame {\n    pub(crate) scope: ScopeId,",
+        "struct RouteFrame {\n    sid: SessionId,\n    scope: ScopeId,",
     ] {
         assert!(
             production_scope.contains(required),
@@ -778,7 +805,7 @@ fn route_site_tap_evidence_uses_local_ordinal_site() {
     ] {
         assert!(
             !select.contains(forbidden) && !resolver.contains(forbidden),
-            "route-site tap evidence must not regain old packing: {forbidden}"
+            "route-site tap evidence packing drifted: {forbidden}"
         );
     }
 }

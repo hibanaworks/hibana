@@ -1,6 +1,6 @@
 //! Typed offer route-shape profile and ingress planning.
 
-use super::{FrameHintIngestion, OfferScopeSelection, RouteArmToken, ingress::OfferIngressMode};
+use super::{OfferScopeSelection, RouteArmToken, ingress::OfferIngressMode};
 
 mod evidence;
 mod planning;
@@ -73,7 +73,7 @@ pub(super) enum OfferControllerLocalReadiness {
 
 #[derive(Clone, Copy)]
 pub(super) enum OfferPassiveReadiness {
-    ReadyArmOrFrameHint,
+    ReadyArm,
     DynamicScopeWithoutRecv,
     DynamicAckMaterializable,
     NeedsTransport,
@@ -141,7 +141,7 @@ impl OfferRouteShape {
     const fn passive_resolved_without_frame(self) -> bool {
         matches!(
             self.passive,
-            OfferPassiveReadiness::ReadyArmOrFrameHint
+            OfferPassiveReadiness::ReadyArm
                 | OfferPassiveReadiness::DynamicScopeWithoutRecv
                 | OfferPassiveReadiness::DynamicAckMaterializable
         )
@@ -162,15 +162,6 @@ impl OfferScopeProfile {
     #[inline]
     pub(super) const fn is_dynamic(self) -> bool {
         matches!(self, Self::ControllerDynamic | Self::PassiveDynamic)
-    }
-
-    #[inline]
-    pub(super) const fn frame_hint_ingestion(self) -> FrameHintIngestion {
-        if self.is_dynamic() {
-            FrameHintIngestion::Dynamic
-        } else {
-            FrameHintIngestion::Scope
-        }
     }
 
     #[inline]

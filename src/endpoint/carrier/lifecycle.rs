@@ -1,4 +1,4 @@
-use super::{NonNull, PackedEndpointHandle};
+use super::{NonNull, PackedEndpointHandle, WaiterTransfer};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -12,9 +12,20 @@ where
         }) else {
             return;
         };
-        /* SAFETY: endpoint carrier validates the resident header tag and generation before projecting the stored endpoint pointer. */
+        let mut waiters = WaiterTransfer::empty();
+        let release = /* SAFETY: the validated endpoint pointer is uniquely
+        owned by this carrier drop callback until `drop_in_place` returns. */ unsafe {
+            let endpoint = &mut *endpoint;
+            endpoint.clear_endpoint_waiter(&mut waiters);
+            endpoint.take_owned_slot_release()
+        };
+        /* SAFETY: endpoint carrier validates the resident header tag and
+        generation before projecting the stored endpoint pointer. */
         unsafe {
             core::ptr::drop_in_place(endpoint);
+        }
+        if let Some((cluster, rv_id, slot, generation)) = release {
+            cluster.release_public_endpoint_slot_owned(rv_id, slot, generation);
         }
     }
 }

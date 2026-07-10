@@ -126,7 +126,13 @@ impl RawSendPayload {
         let ptr = self.ptr.as_ptr().cast_const();
         // SAFETY: `from_typed` stores the encoder matching the erased payload
         // pointer, and the public send future moves that pair into staging once.
-        unsafe { (self.encode)(ptr, scratch) }.map_err(SendError::Codec)
+        let encoded_len = unsafe { (self.encode)(ptr, scratch) }.map_err(SendError::Codec)?;
+        if encoded_len > scratch.len() {
+            return Err(SendError::Codec(
+                crate::transport::wire::CodecError::Malformed,
+            ));
+        }
+        Ok(encoded_len)
     }
 }
 
@@ -388,4 +394,33 @@ where
         transport.cancel_send(&mut *tx_ptr);
     }
     pending.state = SendIoState::Unpolled;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RawSendPayload;
+    use crate::{
+        endpoint::SendError,
+        transport::wire::{CodecError, WireEncode},
+    };
+
+    struct OversizedLength;
+
+    impl WireEncode for OversizedLength {
+        fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
+            Ok(out.len() + 1)
+        }
+    }
+
+    #[test]
+    fn erased_encoder_rejects_length_beyond_scratch() {
+        let payload = OversizedLength;
+        let mut scratch = [0u8; 1];
+        let result = RawSendPayload::from_typed(&payload).encode_into(&mut scratch);
+
+        assert!(matches!(
+            result,
+            Err(SendError::Codec(CodecError::Malformed))
+        ));
+    }
 }

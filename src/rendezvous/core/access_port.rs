@@ -36,7 +36,6 @@ where
         if self.session_fault(sid).is_some() {
             return Err(RendezvousError::SessionPoisoned { sid });
         }
-        let lane_was_empty = !self.assoc.lane_has_entries(lane);
         let first_attach = if self.assoc.has_entry(lane, sid) {
             if self.assoc.increment(lane, sid).is_none() {
                 return Err(RendezvousError::LaneAttachOverflow { lane });
@@ -50,6 +49,7 @@ where
         };
 
         if first_attach {
+            self.routes.reset_session_lane(sid, lane);
             emit(
                 self.tap(),
                 events::lane_acquire(
@@ -59,10 +59,6 @@ where
                     lane.as_wire() as u16,
                 ),
             );
-
-            if lane_was_empty {
-                self.reset_lane_recycled_state(lane);
-            }
         }
         Ok(())
     }
@@ -102,6 +98,7 @@ where
             image_frontier: &self.image_frontier,
             frontier_workspace_bytes: &self.frontier_workspace_bytes,
             endpoint_lease_storage: &self.endpoint_lease_storage,
+            sid,
             lane,
             role,
             role_count,

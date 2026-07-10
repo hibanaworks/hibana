@@ -151,7 +151,7 @@ where
         if storage_end > slab_len {
             crate::invariant();
         }
-        if let Err(resource) = rv.ensure_endpoint_resident_budget(resident_budget) {
+        if let Err(resource) = rv.ensure_endpoint_resident_capacity() {
             rv.release_endpoint_lease(slot, generation);
             return Err(ClusterError::resource_exhausted(resource));
         }
@@ -203,7 +203,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn poison_session(
+    pub(crate) fn poison_session<const ROLE: u8>(
         &self,
         rv_id: RendezvousId,
         sid: SessionId,
@@ -212,23 +212,7 @@ where
         let Some(rv) = self.get_local(&rv_id) else {
             crate::invariant();
         };
-        rv.poison_session(sid, cause)
-    }
-
-    #[inline]
-    pub(crate) fn register_session_waiter(
-        &self,
-        rv_id: RendezvousId,
-        sid: SessionId,
-        lane: Lane,
-        waker: &core::task::Waker,
-    ) {
-        crate::invariant_some(self.get_local(&rv_id)).register_session_waiter(sid, lane, waker);
-    }
-
-    #[inline]
-    pub(crate) fn clear_session_waiter(&self, rv_id: RendezvousId, sid: SessionId, lane: Lane) {
-        crate::invariant_some(self.get_local(&rv_id)).clear_session_waiter(sid, lane);
+        rv.poison_session(sid, ROLE, cause)
     }
 
     fn ensure_compiled_program_ref<const ROLE: u8, P>(
@@ -271,6 +255,38 @@ where
         generation: u32,
     ) {
         crate::invariant_some(self.get_local(&rv_id)).release_endpoint_lease(slot, generation);
+    }
+
+    pub(crate) fn replace_public_endpoint_waiter(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+        replacement: core::task::Waker,
+    ) -> Option<core::task::Waker> {
+        crate::invariant_some(self.get_local(&rv_id)).replace_endpoint_waiter(
+            slot,
+            generation,
+            replacement,
+        )
+    }
+
+    pub(crate) fn take_public_endpoint_waiter(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<core::task::Waker> {
+        crate::invariant_some(self.get_local(&rv_id)).take_endpoint_waiter(slot, generation)
+    }
+
+    pub(crate) fn publish_public_endpoint_slot(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) {
+        crate::invariant_some(self.get_local(&rv_id)).publish_endpoint_lease(slot, generation);
     }
 
     pub(crate) fn with_resident_program_ref<const ROLE: u8, P, F, R, E>(

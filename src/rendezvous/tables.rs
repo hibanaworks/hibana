@@ -1,6 +1,6 @@
 //! Rendezvous state tables.
 //!
-//! These tables manage route decisions and waiters.
+//! These tables manage session-owned route decisions.
 //! All tables are !Send/!Sync and single-threaded under no_std.
 //!
 //! # Unsafe Owner Contract
@@ -13,17 +13,15 @@
 use core::{
     cell::{Cell, UnsafeCell},
     marker::PhantomData,
-    task::{Context, Poll},
+    task::Poll,
 };
 
-use super::waiter::WaiterSlot;
 use crate::{
     global::const_dsl::{ScopeId, ScopeKind},
-    session::types::Lane,
-    transport::FrameLabelMask,
+    session::types::{Lane, SessionId},
 };
 
-const MAX_TRACKED_ROLES: usize = u16::BITS as usize;
+const MAX_TRACKED_ROLES: usize = crate::g::ROLE_DOMAIN_SIZE as usize;
 #[inline]
 const fn checked_add_usize(lhs: usize, rhs: usize) -> usize {
     if lhs > usize::MAX - rhs {

@@ -15,7 +15,6 @@ use core::{
     cell::{Cell, UnsafeCell},
     marker::PhantomData,
     ptr::NonNull,
-    task::Waker,
 };
 
 use super::{
@@ -155,10 +154,10 @@ impl EndpointResidentBudget {
 pub(crate) struct EndpointLeaseSlot {
     pub(crate) generation: u32,
     pub(crate) sid: SessionId,
-    pub(crate) role: u8,
     pub(crate) offset: u32,
     pub(crate) len: u32,
     pub(crate) resident_budget: EndpointResidentBudget,
+    pub(crate) role: u8,
     pub(crate) state: EndpointLeaseState,
 }
 
@@ -166,16 +165,56 @@ impl EndpointLeaseSlot {
     const EMPTY: Self = Self {
         generation: 0,
         sid: SessionId::new(0),
-        role: 0,
         offset: 0,
         len: 0,
         resident_budget: EndpointResidentBudget::ZERO,
+        role: 0,
         state: EndpointLeaseState::Vacant,
     };
 
     #[inline]
-    pub(crate) const fn is_live(&self) -> bool {
-        self.state.is_live()
+    pub(crate) const fn is_occupied(&self) -> bool {
+        self.state.is_occupied()
+    }
+
+    #[inline]
+    pub(crate) const fn is_published(&self) -> bool {
+        self.state.is_published()
+    }
+}
+
+pub(crate) struct EndpointLeaseRecord {
+    slot: EndpointLeaseSlot,
+    waiter: endpoint_waiter::EndpointWaiter,
+}
+
+impl EndpointLeaseRecord {
+    #[inline]
+    const fn empty() -> Self {
+        Self {
+            slot: EndpointLeaseSlot::EMPTY,
+            waiter: endpoint_waiter::EndpointWaiter::empty(),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn slot(&self) -> EndpointLeaseSlot {
+        self.slot
+    }
+
+    #[inline]
+    pub(crate) fn replace_waiter(&self, waker: core::task::Waker) -> Option<core::task::Waker> {
+        self.waiter.replace(waker)
+    }
+
+    #[inline]
+    pub(crate) fn take_waiter(&self) -> Option<core::task::Waker> {
+        self.waiter.take()
+    }
+
+    #[inline]
+    pub(crate) fn waiter_is_empty(&self) -> bool {
+        self.waiter.is_empty()
     }
 
     #[inline]
@@ -199,7 +238,8 @@ impl EndpointLeaseSlot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EndpointLeaseState {
     Vacant = 0,
-    Live = 1,
+    Reserved = 1,
+    Published = 2,
 }
 
 #[repr(u8)]
@@ -212,8 +252,13 @@ pub(crate) enum RendezvousAccessState {
 
 impl EndpointLeaseState {
     #[inline]
-    const fn is_live(self) -> bool {
-        matches!(self, Self::Live)
+    const fn is_occupied(self) -> bool {
+        !matches!(self, Self::Vacant)
+    }
+
+    #[inline]
+    const fn is_published(self) -> bool {
+        matches!(self, Self::Published)
     }
 }
 
@@ -233,7 +278,8 @@ where
     slab_marker: PhantomData<&'cfg mut [u8]>,
     image_frontier: Cell<u32>,
     frontier_workspace_bytes: Cell<u32>,
-    endpoint_lease_storage: Cell<Sidecar<EndpointLeaseSlot>>,
+    endpoint_lease_generation: Cell<u32>,
+    endpoint_lease_storage: Cell<Sidecar<EndpointLeaseRecord>>,
     lane_base: Cell<u32>,
     lane_end: Cell<u32>,
     transport: T,
@@ -314,6 +360,7 @@ where
 }
 
 mod endpoint_leases;
+mod endpoint_waiter;
 mod lane_lifecycle;
 mod storage_layout;
 mod storage_runtime_budget;

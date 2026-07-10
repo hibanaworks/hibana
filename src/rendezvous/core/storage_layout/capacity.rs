@@ -39,7 +39,7 @@ where
             ResidentSidecar {
                 kind: ResidentSidecarKind::EndpointLeases,
                 storage: self.endpoint_lease_storage.get().cast(),
-                align: core::mem::align_of::<super::EndpointLeaseSlot>(),
+                align: core::mem::align_of::<super::EndpointLeaseRecord>(),
             },
             ResidentSidecar {
                 kind: ResidentSidecarKind::Associations,
@@ -289,34 +289,86 @@ where
         self.ensure_lane_storage(required_lane_slots, required_assoc_slots)
     }
 
+    pub(crate) fn shrink_assoc_table_capacity(&self, required_assoc_slots: usize) {
+        let current_slots = self.assoc.assoc_slots();
+        if required_assoc_slots > current_slots {
+            crate::invariant();
+        }
+        if required_assoc_slots == current_slots {
+            return;
+        }
+        let assoc_storage = self.assoc_storage.get();
+        if required_assoc_slots == 0 {
+            self.assoc.clear_storage();
+            self.assoc_storage.set(Sidecar::EMPTY);
+            self.retire_persistent_sidecar(assoc_storage);
+            return;
+        }
+        /* SAFETY: association entries are prefix-packed and release computes
+        the target from the current active-entry authority. The assoc owner
+        moves overlapping columns before publishing the smaller layout. */
+        unsafe {
+            self.assoc
+                .shrink_storage_in_place(assoc_storage.ptr(), required_assoc_slots);
+        }
+        self.assoc_storage.set(Sidecar::from_raw_parts(
+            assoc_storage.ptr(),
+            AssocTable::storage_bytes(required_assoc_slots),
+        ));
+        self.compact_live_sidecars();
+    }
+
+    pub(crate) fn shrink_lane_range(&self, required_lane_slots: usize) {
+        if required_lane_slots > self.lane_slot_count() {
+            crate::invariant();
+        }
+        if self.assoc.is_bound() {
+            self.assoc.shrink_lane_slots(required_lane_slots);
+        } else if required_lane_slots != 0 {
+            crate::invariant();
+        }
+        let lane_end = crate::invariant_some(
+            self.lane_base()
+                .checked_add(crate::invariant_ok(u32::try_from(required_lane_slots))),
+        );
+        self.lane_end.set(lane_end);
+    }
+
     pub(crate) fn ensure_route_table_capacity(
         &self,
         required_frame_slots: usize,
         required_lane_slots: usize,
     ) -> Result<(), ResourceScope> {
+        if required_frame_slots >= RouteTable::FRAME_LIST_END as usize
+            || (required_frame_slots != 0 && required_lane_slots == 0)
+        {
+            return Err(ResourceScope::RouteTable);
+        }
         if required_frame_slots == 0
             || (self.routes.route_slots() >= required_frame_slots
                 && self.routes.lane_slots() >= required_lane_slots)
         {
             return Ok(());
         }
+        let target_frame_slots = required_frame_slots.max(self.routes.route_slots());
+        let target_lane_slots = required_lane_slots.max(self.routes.lane_slots());
         let lease = self
             .lease_sidecar::<u8>(
-                RouteTable::storage_bytes(required_frame_slots, required_lane_slots),
+                RouteTable::storage_bytes(target_frame_slots, target_lane_slots),
                 RouteTable::storage_align(),
             )
             .ok_or(ResourceScope::RouteTable)?;
         let source_route = self.route_storage.get();
         if self.routes.route_slots() == 0 {
             /* SAFETY: route storage is currently unbound. The fresh sidecar
-            lease has route-table size/alignment, and binding initializes all
-            frame/lane/waiter columns before publication. */
+            lease has route-table size/alignment, and binding initializes the
+            frame, lane-head, and free-list columns before publication. */
             unsafe {
                 self.routes.bind_from_storage_with_layout(
                     lease.ptr(),
-                    required_frame_slots,
+                    target_frame_slots,
                     self.lane_base(),
-                    required_lane_slots,
+                    target_lane_slots,
                 );
             }
             self.route_storage.set(lease);
@@ -324,14 +376,14 @@ where
         }
 
         /* SAFETY: the fresh route-table sidecar is unpublished replacement
-        storage. Migration transfers initialized frame/lane/waiter state before
-        the new owner root is published and the old sidecar is retired. */
+        storage. Migration transfers initialized frame/list state before the
+        new owner root is published and the source sidecar is retired. */
         unsafe {
             self.routes.migrate_from_storage(
                 lease.ptr(),
-                required_frame_slots,
+                target_frame_slots,
                 self.lane_base(),
-                required_lane_slots,
+                target_lane_slots,
             );
         }
         /* SAFETY: migration populated the replacement route-table columns before
@@ -339,13 +391,57 @@ where
         unsafe {
             self.routes.rebind_from_storage(
                 lease.ptr(),
-                required_frame_slots,
+                target_frame_slots,
                 self.lane_base(),
-                required_lane_slots,
+                target_lane_slots,
             );
         }
         self.route_storage.set(lease);
         self.retire_sidecar(source_route);
         Ok(())
+    }
+
+    pub(crate) fn shrink_route_table_capacity(
+        &self,
+        required_frame_slots: usize,
+        required_lane_slots: usize,
+    ) {
+        let current_frames = self.routes.route_slots();
+        if required_frame_slots > current_frames || required_lane_slots > self.routes.lane_slots() {
+            crate::invariant();
+        }
+        if required_frame_slots == 0 {
+            if current_frames == 0 {
+                return;
+            }
+            let route_storage = self.route_storage.get();
+            self.routes.clear_storage();
+            self.route_storage.set(Sidecar::EMPTY);
+            self.retire_persistent_sidecar(route_storage.cast::<u8>());
+            return;
+        }
+        if required_lane_slots == 0 {
+            crate::invariant();
+        }
+        if required_frame_slots == current_frames && required_lane_slots == self.routes.lane_slots()
+        {
+            return;
+        }
+        let route_storage = self.route_storage.get();
+        /* SAFETY: release/rollback only lowers descriptor-derived capacity
+        after dead session frames have been reclaimed. The route owner compacts
+        any remaining live frames before publishing the smaller in-place layout. */
+        unsafe {
+            self.routes.shrink_storage_in_place(
+                route_storage.ptr(),
+                required_frame_slots,
+                required_lane_slots,
+            );
+        }
+        self.route_storage.set(Sidecar::from_raw_parts(
+            route_storage.ptr(),
+            RouteTable::storage_bytes(required_frame_slots, required_lane_slots),
+        ));
+        self.compact_live_sidecars();
     }
 }

@@ -26,6 +26,15 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     let transport = transport_source();
     let rendezvous_assoc = read("src/rendezvous/association.rs");
     let rendezvous_fault = read("src/rendezvous/association/fault.rs");
+    let rendezvous_lifecycle = read("src/rendezvous/core/lane_lifecycle.rs");
+    let endpoint_lease_owner =
+        read("src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs");
+    let rendezvous_core = read("src/rendezvous/core.rs");
+    let endpoint_carrier = read("src/endpoint/carrier.rs")
+        + &read("src/endpoint/carrier/recv.rs")
+        + &read("src/endpoint/carrier/route.rs")
+        + &read("src/endpoint/carrier/send.rs");
+    let endpoint_public_ops = read("src/endpoint/kernel/public_ops.rs");
     let endpoint_core = endpoint_kernel_core_source();
     let offer_frontier = offer_frontier_source();
     let frontier_runtime = {
@@ -192,15 +201,26 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     );
     assert!(
         rendezvous_fault.contains("EndpointDropped")
-            && rendezvous_assoc.contains("register_waiter")
-            && rendezvous_assoc.contains("wake_session_waiters")
-            && rendezvous_assoc.contains("(*self.waiter_ptr(idx)).take()")
-            && rendezvous_assoc.contains("waker.wake()")
-            && rendezvous_assoc.contains("crate::invariant_some(self.lane_offset(lane))")
-            && rendezvous_assoc
-                .contains("crate::invariant_some(self.find_entry_by_offset(lane_offset, sid))")
+            && rendezvous_lifecycle.contains("self.routes.reset_session(sid);")
+            && rendezvous_lifecycle
+                .contains("self.wake_session_endpoint_waiters(sid, source_role);")
+            && rendezvous_core.contains("pub(crate) struct EndpointLeaseRecord")
+            && rendezvous_core.contains("waiter: endpoint_waiter::EndpointWaiter")
+            && endpoint_lease_owner.contains("impl EndpointLeaseRecord")
+            && endpoint_lease_owner.contains("record.take_published_waiter()")
+            && endpoint_lease_owner.contains("waiter.wake();")
+            && endpoint_lease_owner.contains("let current = storage.get();")
+            && endpoint_lease_owner.contains("f: impl FnOnce(&EndpointLeaseRecord) -> R")
+            && !endpoint_lease_owner.contains("Option<&EndpointLeaseRecord>")
+            && endpoint_carrier.contains("WaiterTransfer::with_replacement(cx.waker())")
+            && endpoint_public_ops.contains("let replacement = waiters.take_replacement();")
+            && endpoint_public_ops.contains("replace_public_endpoint_waiter(")
+            && endpoint_public_ops.contains("waiters.defer(displaced);")
+            && !endpoint_public_ops.contains("waker.clone()")
+            && !endpoint_carrier.contains("waiter: super::waiter::EndpointWaiter")
+            && !rendezvous_assoc.contains("WaiterSlot")
             && endpoint_core.contains("SessionFaultKind::EndpointDropped"),
-        "session poison must wake registered waiters and live endpoint drop must become terminal evidence"
+        "session poison must wake lease-owned waiters without aliasing endpoint storage or restoring lane/role waiter tables"
     );
 }
 

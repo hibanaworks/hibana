@@ -56,15 +56,22 @@ run_miri_test() {
 
 run_miri_test \
   public-runtime-owner \
-  2 \
+  8 \
   -p hibana \
   --test miri_runtime_owner
 
 run_miri_test \
+  endpoint-waiter-owner \
+  2 \
+  -p hibana \
+  --lib \
+  rendezvous::core::endpoint_waiter::tests
+
+run_miri_test \
   resident-sidecar-owner \
-  5 \
+  14 \
   -p hibana \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=7"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=24"

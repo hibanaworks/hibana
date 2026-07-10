@@ -507,17 +507,23 @@ done
 
 for required in \
   'SAFETY: the caller provides exclusive, writable storage for one' \
-  'SAFETY: `bind_storage` owns the route-frame backing slice' \
-  'SAFETY: `bind_storage` has exclusive publication of the' \
-  'SAFETY: `free_head` is the single u16 free-list head owned by this' \
-  'SAFETY: `pending_frame_hint_masks` has one initialized slot per' \
-  'SAFETY: the waiter arena contains `lane_slots *'
+  'SAFETY: `idx` is inside the owner-exclusive unpublished frame' \
+  'SAFETY: `lane_idx` is inside the owner-exclusive unpublished' \
+  'SAFETY: `free_head` is the owner bundle' \
+  'SAFETY: both lane-head ranges lie in the same current sidecar.' \
+  'SAFETY: compacted live frames occupy `0..active_count`'
 do
   if [[ "${route_table_rs}" != *"${required}"* ]]; then
     echo "RouteTable raw storage operations must carry local SAFETY contracts: ${required}" >&2
     exit 1
   fi
 done
+
+if [[ "${route_table_rs}" == *"WaiterSlot"* \
+  || "${route_table_rs}" == *"pending_frame_hint"* ]]; then
+  echo "RouteTable must not regain relocatable waiter or dead frame-hint columns" >&2
+  exit 1
+fi
 
 for required in \
   'SAFETY: `FrontierState` is initialized in one caller-owned endpoint' \

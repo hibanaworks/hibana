@@ -32,7 +32,7 @@ where
             {
                 break selected_arm;
             }
-            if let Some(authority) = self.poll_unready_resolver_authority(state, route_token, cx) {
+            if let Some(authority) = self.poll_unready_resolver_authority(state, route_token) {
                 route_token = authority.route_token;
                 commit_evidence = authority.commit_evidence;
                 continue;
@@ -152,14 +152,13 @@ where
         &mut self,
         state: &OfferResolveState<'r>,
         route_token: RouteArmToken,
-        cx: &mut core::task::Context<'_>,
     ) -> Option<RouteAuthorityResolution> {
         if !route_token.is_resolver() {
             return None;
         }
         let scope_id = state.selection().scope_id;
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        self.poll_route_authority_from_offer_lanes(scope_id, offer_lanes, cx)
+        self.poll_route_authority_from_offer_lanes(scope_id, offer_lanes)
     }
 
     #[inline(never)]

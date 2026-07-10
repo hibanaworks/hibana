@@ -6,17 +6,17 @@
 use core::{
     cell::{Cell, UnsafeCell},
     marker::PhantomData,
-    task::{Context, Poll},
+    task::Poll,
 };
 
-use super::core::{EndpointLeaseSlot, RendezvousAccessState, Sidecar};
+use super::core::{EndpointLeaseRecord, RendezvousAccessState, Sidecar};
 use super::tables::RouteTable;
 use crate::{
     endpoint::kernel::FrontierScratchLayout,
     global::const_dsl::ScopeId,
     observe::core::TapRing,
-    session::types::{Lane, RendezvousId},
-    transport::{FrameLabelMask, Transport},
+    session::types::{Lane, RendezvousId, SessionId},
+    transport::Transport,
 };
 
 #[inline(always)]
@@ -53,13 +53,12 @@ fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
 }
 
 mod recv_frame;
-mod route_hints;
 
+use self::recv_frame::RecvFrameReceiptState;
 pub(crate) use self::recv_frame::{
     FrameMismatch, FrameObservation, PreambleFrame, PreambleObservation, ReceivedFrame,
     transport_frame_tap_event,
 };
-use self::{recv_frame::RecvFrameReceiptState, route_hints::RouteHintQueue};
 
 /// Lightweight port describing how an endpoint reaches the transport.
 ///
@@ -76,8 +75,9 @@ pub(crate) struct Port<'r, T: Transport> {
     access_state: &'r Cell<RendezvousAccessState>,
     image_frontier: &'r Cell<u32>,
     frontier_workspace_bytes: &'r Cell<u32>,
-    endpoint_lease_storage: &'r Cell<Sidecar<EndpointLeaseSlot>>,
+    endpoint_lease_storage: &'r Cell<Sidecar<EndpointLeaseRecord>>,
     scratch_marker: PhantomData<&'r mut [u8]>,
+    sid: SessionId,
     pub(crate) lane: Lane,
     role: u8,
     role_count: u8,
@@ -101,7 +101,8 @@ pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub(crate) access_state: &'tap Cell<RendezvousAccessState>,
     pub(crate) image_frontier: &'tap Cell<u32>,
     pub(crate) frontier_workspace_bytes: &'tap Cell<u32>,
-    pub(crate) endpoint_lease_storage: &'tap Cell<Sidecar<EndpointLeaseSlot>>,
+    pub(crate) endpoint_lease_storage: &'tap Cell<Sidecar<EndpointLeaseRecord>>,
+    pub(crate) sid: SessionId,
     pub(crate) lane: Lane,
     pub(crate) role: u8,
     pub(crate) role_count: u8,
@@ -130,26 +131,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
         FrontierScratchLayout::new(0, 0).total_align()
     }
 
-    #[inline]
-    fn sync_pending_route_frame_hint_lane_masks(
-        &self,
-        before: FrameLabelMask,
-        after: FrameLabelMask,
-    ) {
-        if before != after {
-            self.route_table()
-                .update_pending_frame_hint_mask_for_lane(self.lane, before, after);
-        }
-    }
-
-    #[inline]
-    fn route_hints_from_table(&self) -> RouteHintQueue {
-        RouteHintQueue::from_mask(
-            self.route_table()
-                .pending_frame_hint_mask_for_lane(self.lane),
-        )
-    }
-
     pub(crate) fn new<'tap>(init: PortInit<'r, 'tap, T>) -> Self
     where
         'tap: 'r,
@@ -165,6 +146,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             image_frontier,
             frontier_workspace_bytes,
             endpoint_lease_storage,
+            sid,
             lane,
             role,
             role_count,
@@ -183,6 +165,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             frontier_workspace_bytes,
             endpoint_lease_storage,
             scratch_marker: PhantomData,
+            sid,
             lane,
             role,
             role_count,
@@ -226,14 +209,14 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
-    fn endpoint_lease_owner_view(&self) -> (*const EndpointLeaseSlot, usize) {
+    fn endpoint_lease_owner_view(&self) -> (*const EndpointLeaseRecord, usize) {
         // The pinned rendezvous owner cells outlive this port. Capacity growth
         // may replace the sidecar root, so every floor computation reloads it
         // and derives the slot count from the exact sidecar byte length.
         let storage = self.endpoint_lease_storage.get();
         (
             storage.ptr().cast_const(),
-            EndpointLeaseSlot::storage_slot_count(storage),
+            EndpointLeaseRecord::storage_slot_count(storage),
         )
     }
 
@@ -247,8 +230,8 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             // SAFETY: `endpoint_leases` has `endpoint_lease_slot_count`
             // initialized slots owned by the rendezvous and observed through
             // its live sidecar root.
-            let slot = unsafe { &*endpoint_leases.add(idx) };
-            if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
+            let slot = unsafe { (&*endpoint_leases.add(idx)).slot() };
+            if slot.is_occupied() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }
             idx += 1;
@@ -273,26 +256,28 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
-    pub(crate) fn record_route_arm_selection(&self, scope: ScopeId, arm: u8) -> u16 {
-        self.route_table()
-            .record_with_role_count(self.lane, self.role_count, self.role, scope, arm)
+    pub(crate) fn record_route_arm_selection(&self, scope: ScopeId, arm: u8) {
+        self.route_table().record_with_role_count(
+            self.sid,
+            self.lane,
+            self.role_count,
+            self.role,
+            scope,
+            arm,
+        );
+        EndpointLeaseRecord::wake_session_waiters(self.endpoint_lease_storage, self.sid, self.role);
     }
 
     #[inline]
-    pub(crate) fn poll_route_arm_selection(
-        &self,
-        scope: ScopeId,
-        role: u8,
-        cx: &mut Context<'_>,
-    ) -> Poll<u8> {
+    pub(crate) fn poll_route_arm_selection(&self, scope: ScopeId, role: u8) -> Poll<u8> {
         self.route_table()
-            .poll_with_role_count(self.lane, self.role_count, role, scope, cx)
+            .poll_with_role_count(self.sid, self.lane, self.role_count, role, scope)
     }
 
     #[inline]
     pub(crate) fn peek_route_arm_selection(&self, scope: ScopeId, role: u8) -> Option<u8> {
         self.route_table()
-            .peek_with_role_count(self.lane, self.role_count, role, scope)
+            .peek_with_role_count(self.sid, self.lane, self.role_count, role, scope)
     }
 
     #[inline]
@@ -303,55 +288,12 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
         target_lane: Lane,
     ) -> bool {
         self.route_table().has_pending_lane_with_role_count(
+            self.sid,
             self.role_count,
             role,
             scope,
             target_lane,
         )
-    }
-
-    #[inline]
-    pub(crate) fn has_route_hint_for_frame_label_mask(
-        &self,
-        frame_label_mask: FrameLabelMask,
-    ) -> bool {
-        let hints = self.route_hints_from_table();
-        let before = hints.present_mask;
-        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
-        hints.has_any_frame_label_in_mask(frame_label_mask)
-    }
-
-    #[inline]
-    pub(crate) fn has_pending_route_hint_for_lane(
-        &self,
-        frame_label_mask: FrameLabelMask,
-        target_lane: Lane,
-    ) -> bool {
-        let hints = self.route_hints_from_table();
-        let before = hints.present_mask;
-        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
-        self.route_table()
-            .has_pending_frame_hint_for_lane(target_lane, frame_label_mask)
-    }
-
-    #[inline]
-    pub(crate) fn take_route_hint_for_frame_label_mask(
-        &self,
-        frame_label_mask: FrameLabelMask,
-    ) -> Option<u8> {
-        let mut hints = self.route_hints_from_table();
-        let before = hints.present_mask;
-        let taken = hints.take_from_frame_label_mask(frame_label_mask);
-        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
-        taken
-    }
-
-    #[inline]
-    pub(crate) fn clear_route_hints(&self) {
-        let mut hints = self.route_hints_from_table();
-        let before = hints.present_mask;
-        hints.clear();
-        self.sync_pending_route_frame_hint_lane_masks(before, hints.present_mask);
     }
 
     #[inline]
@@ -439,16 +381,7 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{align_up_absolute_offset, route_hints::RouteHintQueue};
-    use crate::transport::FrameLabelMask;
-
-    fn route_hints(labels: &[u8]) -> RouteHintQueue {
-        let mut mask = FrameLabelMask::EMPTY;
-        for frame_label in labels {
-            mask.insert_frame_label(*frame_label);
-        }
-        RouteHintQueue::from_mask(mask)
-    }
+    use super::align_up_absolute_offset;
 
     #[test]
     fn frontier_scratch_offset_aligns_absolute_address_not_offset_only() {
@@ -465,60 +398,6 @@ mod tests {
         assert_eq!(
             aligned, start,
             "offset-only alignment would incorrectly move an already aligned absolute address"
-        );
-    }
-
-    #[test]
-    fn route_hint_unmatched_is_not_discarded_across_scope_selection() {
-        let mut queue = route_hints(&[41, 42]);
-
-        let first = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(99));
-        assert_eq!(
-            first, None,
-            "non-matching take must not clear buffered hints"
-        );
-
-        let second = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(42));
-        assert_eq!(
-            second,
-            Some(42),
-            "later matching hint must remain available"
-        );
-
-        let third = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(41));
-        assert_eq!(
-            third,
-            Some(41),
-            "earlier unmatched hint must still be available after sibling selection"
-        );
-    }
-
-    #[test]
-    fn route_hint_queue_deduplicates_same_frame_label() {
-        let mut queue = route_hints(&[25, 25, 25]);
-
-        let first = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(25));
-        assert_eq!(first, Some(25));
-
-        let second = queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(25));
-        assert_eq!(
-            second, None,
-            "duplicate frame labels must be coalesced in queue"
-        );
-    }
-
-    #[test]
-    fn route_hint_has_matching_is_non_consuming() {
-        let mut queue = route_hints(&[25, 201]);
-
-        assert!(queue.has_any_frame_label_in_mask(FrameLabelMask::from_frame_label(201)));
-        assert_eq!(
-            queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(201)),
-            Some(201)
-        );
-        assert_eq!(
-            queue.take_from_frame_label_mask(FrameLabelMask::from_frame_label(25)),
-            Some(25)
         );
     }
 }

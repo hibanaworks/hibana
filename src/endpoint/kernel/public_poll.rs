@@ -11,7 +11,7 @@ use super::{
     offer::OfferState,
 };
 use crate::{
-    endpoint::{RecvError, RecvResult, SendError, SendResult},
+    endpoint::{RecvError, RecvResult, SendError, SendResult, carrier::WaiterTransfer},
     transport::{
         Transport,
         wire::{CodecError, Payload},
@@ -26,6 +26,7 @@ where
     pub(in crate::endpoint) fn poll_public_offer(
         &mut self,
         cx: &mut core::task::Context<'_>,
+        waiters: &mut WaiterTransfer,
     ) -> Poll<RecvResult<u8>> {
         if self.public_active_op != PublicActiveOp::Offer {
             self.public_op_busy_fault();
@@ -34,12 +35,14 @@ where
             return Poll::Ready(Err(err));
         }
         if let Some(kind) = self.session_fault() {
+            self.clear_endpoint_waiter(waiters);
             self.terminal_clear_public_offer_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
+        self.register_endpoint_waiter(waiters);
         if let Some(branch) = self.public_route_branch.as_ref() {
             let label = branch.branch_meta.label;
-            self.clear_session_waiter();
+            self.clear_endpoint_waiter(waiters);
             self.public_offer_state = OfferState::new();
             self.public_active_op = PublicActiveOp::RouteBranch;
             return Poll::Ready(Ok(label));
@@ -56,12 +59,11 @@ where
         };
         match poll {
             Poll::Pending => {
-                self.register_session_waiter(cx.waker());
                 self.public_offer_state = offer_state;
                 Poll::Pending
             }
             Poll::Ready(Ok(label)) => {
-                self.clear_session_waiter();
+                self.clear_endpoint_waiter(waiters);
                 self.public_offer_state = OfferState::new();
                 if self.public_route_branch.is_none() {
                     crate::invariant();
@@ -71,7 +73,7 @@ where
             }
             Poll::Ready(Err(err)) => {
                 offer_state.discard_terminal();
-                self.clear_session_waiter();
+                self.clear_endpoint_waiter(waiters);
                 self.finish_public_op(PublicActiveOp::Offer);
                 self.public_offer_state = OfferState::new();
                 self.poison_for_recv_error(&err);
@@ -86,8 +88,10 @@ where
         logical_label: u8,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
+        waiters: &mut WaiterTransfer,
     ) -> Poll<RecvResult<Payload<'r>>> {
         if let Some(kind) = self.session_fault() {
+            self.clear_endpoint_waiter(waiters);
             self.terminal_clear_public_recv_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
@@ -97,16 +101,16 @@ where
             self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
         }
+        self.register_endpoint_waiter(waiters);
         let mut recv_state =
             core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
         match kernel_recv(self, logical_label, validate, &mut recv_state, cx) {
             Poll::Pending => {
-                self.register_session_waiter(cx.waker());
                 self.public_recv_state = recv_state;
                 Poll::Pending
             }
             Poll::Ready(result) => {
-                self.clear_session_waiter();
+                self.clear_endpoint_waiter(waiters);
                 self.finish_public_op(PublicActiveOp::Recv);
                 self.public_recv_state = super::recv::RecvState::new();
                 match result {
@@ -126,8 +130,10 @@ where
         logical_label: u8,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
+        waiters: &mut WaiterTransfer,
     ) -> Poll<RecvResult<Payload<'r>>> {
         if let Some(kind) = self.session_fault() {
+            self.clear_endpoint_waiter(waiters);
             self.terminal_clear_public_branch_recv_state();
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
@@ -137,12 +143,13 @@ where
             self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
         }
+        self.register_endpoint_waiter(waiters);
         let mut branch_recv_state = core::mem::replace(
             &mut self.public_branch_recv_state,
             super::branch_recv::BranchRecvState::empty(),
         );
         if self.public_route_branch.is_none() {
-            self.clear_session_waiter();
+            self.clear_endpoint_waiter(waiters);
             self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
@@ -150,13 +157,12 @@ where
         }
         match kernel_branch_recv(self, logical_label, validate, &mut branch_recv_state, cx) {
             Poll::Pending => {
-                self.register_session_waiter(cx.waker());
                 self.public_branch_recv_state = branch_recv_state;
                 Poll::Pending
             }
             Poll::Ready(result) => match result {
                 Ok(payload) => {
-                    self.clear_session_waiter();
+                    self.clear_endpoint_waiter(waiters);
                     self.finish_public_op(PublicActiveOp::BranchRecv);
                     self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                     let branch = crate::invariant_some(self.public_route_branch.take());
@@ -169,7 +175,7 @@ where
                     if let Some(branch) = self.public_route_branch.take() {
                         branch.discard_terminal();
                     }
-                    self.clear_session_waiter();
+                    self.clear_endpoint_waiter(waiters);
                     self.finish_public_op(PublicActiveOp::BranchRecv);
                     self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                     self.poison_for_recv_error(&err);
@@ -184,17 +190,19 @@ where
         &mut self,
         cx: &mut core::task::Context<'_>,
         payload: Option<lane_port::RawSendPayload>,
+        waiters: &mut WaiterTransfer,
     ) -> Poll<SendResult<SendCommitOutcome<'r>>> {
         let active_op = self.public_active_op;
         let branch_send = active_op == PublicActiveOp::BranchSend;
         if let Some(kind) = self.session_fault() {
             if branch_send {
+                self.clear_endpoint_waiter(waiters);
                 self.terminal_clear_public_send_state();
                 if let Some(branch) = self.public_route_branch.take() {
                     branch.discard_terminal();
                 }
             } else {
-                self.reset_public_send_state();
+                self.reset_public_send_state(waiters);
             }
             return Poll::Ready(Err(SendError::SessionFault(kind)));
         }
@@ -204,6 +212,7 @@ where
             self.poison_for_send_error(&err);
             return Poll::Ready(Err(err));
         }
+        self.register_endpoint_waiter(waiters);
         let mut send_state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         let mut payload = payload;
         let poll = kernel_send(self, &mut send_state, &mut payload, cx);
@@ -212,12 +221,11 @@ where
                 if payload.is_some() {
                     crate::invariant();
                 }
-                self.register_session_waiter(cx.waker());
                 self.public_send_state = send_state;
                 Poll::Pending
             }
             Poll::Ready(result) => {
-                self.clear_session_waiter();
+                self.clear_endpoint_waiter(waiters);
                 if branch_send {
                     self.finish_public_op(PublicActiveOp::BranchSend);
                 } else {

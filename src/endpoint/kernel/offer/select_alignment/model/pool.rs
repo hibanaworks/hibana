@@ -149,7 +149,7 @@ impl OfferAlignmentCandidatePool {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn hinted_frontier(
+    pub(in crate::endpoint::kernel::offer::select_alignment) const fn ready_frontier(
         self,
         candidates: OfferEntrySet,
     ) -> OfferEntrySet {
@@ -165,13 +165,9 @@ impl OfferAlignmentCandidatePool {
         intrinsic_controller_frontier: OfferEntrySet,
     ) -> OfferAlignmentSelection {
         let candidates = self.arbitration_frontier(input, intrinsic_controller_frontier);
-        let hinted = self.hinted_frontier(candidates);
-        let hint_filter = hinted.first_entry_idx(observed_entries);
-        let candidates = if !hinted.is_empty() {
-            hinted
-        } else {
-            candidates
-        };
+        let ready = self.ready_frontier(candidates);
+        let ready_entry_filter = ready.first_entry_idx(observed_entries);
+        let candidates = if !ready.is_empty() { ready } else { candidates };
         let controllers = candidates.intersect(self.controller_entries);
         let dynamic_controllers = controllers.intersect(self.dynamic_controller_entries);
         let outcome =
@@ -179,7 +175,7 @@ impl OfferAlignmentCandidatePool {
                 .outcome(observed_entries);
 
         OfferAlignmentSelection {
-            hint_filter,
+            ready_entry_filter,
             outcome,
         }
     }

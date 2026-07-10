@@ -126,7 +126,7 @@ where
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
         let lane_limit = self.cursor.logical_lane_count();
         let lanes = self.transport_lane_set_for_offer(facts);
-        let preferred_lane = self.preferred_transport_lane_for_offer(facts, lanes, lane_limit);
+        let preferred_lane = self.preferred_transport_lane_for_offer(facts, lane_limit);
         let mut scan_idx = 0usize;
         while let Some(lane_idx) =
             next_preferred_transport_lane(preferred_lane, lanes, lane_limit, &mut scan_idx)
@@ -161,15 +161,8 @@ where
     fn preferred_transport_lane_for_offer(
         &self,
         facts: OfferFrontierFacts,
-        lanes: crate::global::role_program::LaneSetView<'_>,
         lane_limit: usize,
     ) -> usize {
-        if let Some((lane, _)) = self.peek_scope_frame_hint_with_lane(facts.scope_id()) {
-            let lane_idx = lane as usize;
-            if lane_idx < lane_limit && lanes.contains(lane_idx) {
-                return lane_idx;
-            }
-        }
         if let Some(token) = self.peek_live_scope_ack(facts.scope_id())
             && let Some(arm_lanes) =
                 self.route_scope_arm_lane_set_for_scope(facts.scope_id(), token.arm().as_u8())

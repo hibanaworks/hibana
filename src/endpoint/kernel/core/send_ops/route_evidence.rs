@@ -78,7 +78,6 @@ where
                     self.consume_scope_ready_arm(scope_id, selected_arm);
                 }
                 self.clear_scope_evidence(scope_id);
-                self.port_for_lane(lane_wire as usize).clear_route_hints();
                 return;
             }
             None if self
@@ -99,7 +98,6 @@ where
                     self.consume_scope_ready_arm(scope_id, selected_arm);
                 }
                 self.clear_scope_evidence(scope_id);
-                self.port_for_lane(lane_wire as usize).clear_route_hints();
                 return;
             }
             None => {
@@ -107,7 +105,6 @@ where
                     self.consume_scope_ready_arm(scope_id, selected_arm);
                 }
                 self.clear_scope_evidence(scope_id);
-                self.port_for_lane(lane_wire as usize).clear_route_hints();
                 return;
             }
         }
@@ -116,7 +113,6 @@ where
             self.consume_scope_ready_arm(scope_id, selected_arm);
         }
         self.clear_scope_evidence(scope_id);
-        self.port_for_lane(lane_wire as usize).clear_route_hints();
     }
 
     #[inline(never)]

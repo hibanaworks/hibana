@@ -5,12 +5,12 @@ use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{StateIndex, state_index_to_usize};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(in crate::endpoint::kernel) enum FrameHintResolution {
+pub(in crate::endpoint::kernel) enum FrameEvidenceResolution {
     Unresolved,
     Resolved,
 }
 
-impl FrameHintResolution {
+impl FrameEvidenceResolution {
     #[inline]
     pub(in crate::endpoint::kernel) const fn unresolved() -> Self {
         Self::Unresolved

@@ -34,11 +34,9 @@ impl OfferScopeProfile {
     ) -> OfferPassiveReadiness {
         match self {
             Self::PassiveIntrinsic if evidence.has_ready_signal() => {
-                OfferPassiveReadiness::ReadyArmOrFrameHint
+                OfferPassiveReadiness::ReadyArm
             }
-            Self::PassiveDynamic if evidence.has_ready_signal() => {
-                OfferPassiveReadiness::ReadyArmOrFrameHint
-            }
+            Self::PassiveDynamic if evidence.has_ready_signal() => OfferPassiveReadiness::ReadyArm,
             Self::PassiveDynamic if evidence.dynamic_scope_without_recv() => {
                 OfferPassiveReadiness::DynamicScopeWithoutRecv
             }

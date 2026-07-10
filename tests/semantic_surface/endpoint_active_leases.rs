@@ -91,14 +91,15 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::BranchSend)")
             && public_runtime.contains("if let Some(branch) = self.public_route_branch.as_ref() {")
             && public_runtime.contains("let label = branch.branch_meta.label;")
-            && public_runtime.contains("if self.public_route_branch.is_none() {\n            self.clear_session_waiter();\n            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();\n            self.public_op_busy_fault();"),
+            && public_runtime.contains("if self.public_route_branch.is_none() {\n            self.clear_endpoint_waiter(waiters);\n            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();\n            self.public_op_busy_fault();")
+            && public_runtime.contains("self.register_endpoint_waiter(waiters);")
+            && !public_runtime.contains("self.register_endpoint_waiter(cx.waker())")
+            && !public_ops.contains("waker.clone()"),
         "endpoint API calls must start only from Idle, checked completion must poison on wrong active-op order, and terminal sweep must use an explicit lenient clear path"
     );
     assert!(
         route_preview.contains("PublicActiveOp::Idle")
-            && route_preview.contains(
-                "PublicActiveOp::RouteBranch => return self.preview_branch_send_meta(target_label)"
-            )
+            && route_preview.contains("self.preview_branch_send_meta(target_label, waiters)")
             && route_preview.contains("self.public_op_busy_fault();")
             && route_preview.contains("return Err(SendError::PhaseInvariant);"),
         "send preview must not overwrite a forgotten active operation and must route branch send through the selected-arm token"

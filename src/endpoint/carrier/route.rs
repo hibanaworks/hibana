@@ -1,5 +1,6 @@
 use super::{
     BranchRecvPollRequest, Context, NonNull, OutSlot, PackedEndpointHandle, Poll, RawPayload,
+    WaiterTransfer,
 };
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
@@ -9,11 +10,12 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
     ) {
+        let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: offer-state reset owns the carrier endpoint slot selected
             // by `handle` and clears only the resident public offer state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |endpoint| {
-                endpoint.reset_public_offer_state();
+                endpoint.reset_public_offer_state(&mut waiters);
             });
         }
     }
@@ -68,11 +70,12 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
     ) {
+        let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: branch-recv reset owns the carrier endpoint slot selected
             // by `handle` and clears only the resident branch-recv state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
-                kernel.reset_public_branch_recv_state();
+                kernel.reset_public_branch_recv_state(&mut waiters);
             });
         }
     }
@@ -83,6 +86,7 @@ where
         cx: &mut Context<'_>,
         out: *mut Poll<crate::endpoint::RecvResult<u8>>,
     ) {
+        let mut waiters = WaiterTransfer::with_replacement(cx.waker());
         let poll = unsafe {
             // SAFETY: offer polling owns the carrier endpoint slot selected by
             // `handle`; the route label poll result is copied into the out slot
@@ -93,7 +97,7 @@ where
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| kernel.poll_public_offer(cx),
+                |kernel| kernel.poll_public_offer(cx, &mut waiters),
             )
         };
         OutSlot::new(out).write(poll);
@@ -110,6 +114,7 @@ where
             cx,
             out,
         } = request;
+        let mut waiters = WaiterTransfer::with_replacement(cx.waker());
         let poll = unsafe {
             // SAFETY: branch recv polling owns the carrier endpoint slot
             // selected by `handle`; validation and payload staging stay inside
@@ -120,7 +125,12 @@ where
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| match kernel.poll_public_branch_recv(logical_label, validate, cx) {
+                |kernel| match kernel.poll_public_branch_recv(
+                    logical_label,
+                    validate,
+                    cx,
+                    &mut waiters,
+                ) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),

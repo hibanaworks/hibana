@@ -293,6 +293,7 @@ where
                         .release_endpoint_lease(slot, generation);
                     return Err(err);
                 }
+                self.publish_public_endpoint_slot(rv_id, slot, generation);
                 Ok((slot, generation))
             },
             Err(err) => Err(err),

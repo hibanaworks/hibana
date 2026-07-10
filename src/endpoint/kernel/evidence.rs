@@ -195,7 +195,7 @@ impl ScopeFrameLabelMeta {
     }
 
     #[inline]
-    pub(super) fn frame_hint_mask(&self, masks: &ScopeFrameLabelMasks) -> FrameLabelMask {
+    pub(super) fn evidence_frame_label_mask(&self, masks: &ScopeFrameLabelMasks) -> FrameLabelMask {
         let shared = masks.arm_frame_label_masks[0] & masks.arm_frame_label_masks[1];
         let mut mask =
             (masks.arm_frame_label_masks[0] | masks.arm_frame_label_masks[1]).without(shared);
@@ -256,16 +256,14 @@ impl ScopeFrameLabelView<'_> {
     }
 
     #[inline]
-    pub(super) fn frame_hint_mask(&self) -> FrameLabelMask {
-        self.meta.frame_hint_mask(self.masks)
+    pub(super) fn evidence_frame_label_mask(&self) -> FrameLabelMask {
+        self.meta.evidence_frame_label_mask(self.masks)
     }
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct ScopeEvidence {
     pub(super) ack: Option<RouteArmToken>,
-    pub(super) hint_frame_label: u8,
-    pub(super) hint_lane: u8,
     pub(super) ready_arm_mask: u8,
     pub(super) poll_ready_arm_mask: u8,
     pub(super) flags: u8,
@@ -275,12 +273,8 @@ impl ScopeEvidence {
     pub(super) const ARM0_READY: u8 = 1 << 0;
     pub(super) const ARM1_READY: u8 = 1 << 1;
     pub(super) const FLAG_ACK_CONFLICT: u8 = 1;
-    pub(super) const FLAG_HINT_CONFLICT: u8 = 1 << 1;
-    pub(super) const FLAG_HAS_HINT: u8 = 1 << 2;
     pub(super) const EMPTY: Self = Self {
         ack: None,
-        hint_frame_label: 0,
-        hint_lane: 0,
         ready_arm_mask: 0,
         poll_ready_arm_mask: 0,
         flags: 0,

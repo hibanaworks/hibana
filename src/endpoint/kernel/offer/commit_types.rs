@@ -78,7 +78,7 @@ pub(crate) enum BranchKind {
     LocalAction,
     /// Arm starts with Send operation (passive observer scenario).
     /// The driver continues on the same borrowed endpoint with `send()`.
-    ArmSendHint,
+    ArmSend,
     /// Terminal arm without a resident receive/send event.
     /// Branch recv validates Hibana's canonical empty payload and advances to scope end.
     TerminalArm,

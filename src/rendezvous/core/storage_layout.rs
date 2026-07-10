@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use super::{AssocTable, EndpointLeaseSlot, Rendezvous, RouteTable, Transport};
+use super::{AssocTable, EndpointLeaseRecord, Rendezvous, RouteTable, Transport};
 mod capacity;
 
 // # Unsafe Owner Contract
@@ -134,7 +134,7 @@ where
         let mut idx = 0usize;
         while idx < self.endpoint_lease_slot_count() {
             let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
-            if slot.is_live() && slot.len != 0 && (slot.offset as usize) < floor {
+            if slot.is_occupied() && slot.len != 0 && (slot.offset as usize) < floor {
                 floor = slot.offset as usize;
             }
             idx += 1;
@@ -151,7 +151,7 @@ where
     }
 
     #[inline]
-    pub(crate) fn endpoint_leases_ptr(&self) -> *mut EndpointLeaseSlot {
+    pub(crate) fn endpoint_lease_records_ptr(&self) -> *mut EndpointLeaseRecord {
         self.endpoint_lease_storage.get().ptr()
     }
 

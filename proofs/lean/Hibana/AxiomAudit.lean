@@ -1,0 +1,28 @@
+import Hibana.MainTheorems
+
+#print axioms Hibana.artifact_checker_sound
+#print axioms Hibana.trace_checker_sound
+#print axioms Hibana.commit_marks_event_done
+#print axioms Hibana.selected_arm_unique
+#print axioms Hibana.reset_roll_preserves_outside_done
+#print axioms Hibana.reset_roll_clears_done
+#print axioms Hibana.reset_roll_preserves_outside_selection
+#print axioms Hibana.reset_roll_clears_selection
+#print axioms Hibana.reset_route_arm_preserves_selection
+#print axioms Hibana.reset_route_arm_preserves_outside_done
+#print axioms Hibana.reset_route_arm_clears_done
+#print axioms Hibana.program_trace_checker_sound
+#print axioms Hibana.local_action_send_recv_duality
+#print axioms Hibana.local_action_uninvolved_projects_none
+#print axioms Hibana.local_action_self_send_projects_local
+#print axioms Hibana.local_action_preserves_label
+#print axioms Hibana.commit_exact_successor
+#print axioms Hibana.resolver_reject_never_selects
+#print axioms Hibana.resolver_select_never_rejects
+#print axioms Hibana.resolver_selection_exact_authority
+#print axioms Hibana.selected_route_is_not_resolvable
+#print axioms Hibana.unresolved_dynamic_route_cannot_commit
+#print axioms Hibana.unresolved_dynamic_commit_rejected
+#print axioms Hibana.wrong_resolver_id_rejected
+#print axioms Hibana.resolver_reuse_without_reset_rejected
+#print axioms Hibana.resolver_reject_is_terminal

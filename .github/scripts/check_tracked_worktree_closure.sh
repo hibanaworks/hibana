@@ -12,7 +12,7 @@ fi
 FAILED=0
 while IFS= read -r path; do
   case "${path}" in
-    src/*|tests/*|.github/scripts/*|.github/maintainability/*|.github/workflows/*)
+    src/*|tests/*|proofs/lean/*|.github/scripts/*|.github/maintainability/*|.github/workflows/*)
       echo "tracked worktree closure violation: required source/CI file is untracked: ${path}" >&2
       FAILED=1
       ;;

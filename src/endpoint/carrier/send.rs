@@ -1,4 +1,4 @@
-use super::{Context, NonNull, OutSlot, PackedEndpointHandle, Poll};
+use super::{Context, NonNull, OutSlot, PackedEndpointHandle, Poll, WaiterTransfer};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -9,6 +9,7 @@ where
         logical_label: u8,
         out: *mut crate::endpoint::kernel::SendPreview,
     ) -> crate::endpoint::SendResult<()> {
+        let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: preview-send owns the carrier endpoint slot selected by
             // `handle` for this call and writes only the caller-provided
@@ -20,7 +21,7 @@ where
                     crate::transport::TransportError::Failed,
                 )),
                 |kernel| {
-                    let preview = kernel.preview_send_meta(logical_label)?;
+                    let preview = kernel.preview_send_meta(logical_label, &mut waiters)?;
                     OutSlot::new(out).write(preview);
                     Ok(())
                 },
@@ -55,11 +56,12 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
     ) {
+        let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: send-state reset owns the carrier endpoint slot selected
             // by `handle` and clears only the resident public send state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
-                kernel.reset_public_send_state();
+                kernel.reset_public_send_state(&mut waiters);
             });
         }
     }
@@ -71,6 +73,7 @@ where
         cx: &mut Context<'_>,
         out: *mut (),
     ) {
+        let mut waiters = WaiterTransfer::with_replacement(cx.waker());
         let poll = unsafe {
             // SAFETY: send polling owns the carrier endpoint slot selected by
             // `handle`; the payload option is consumed inside this single poll
@@ -81,7 +84,7 @@ where
                 Poll::Ready(Err(crate::endpoint::SendError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| kernel.poll_public_send(cx, payload),
+                |kernel| kernel.poll_public_send(cx, payload, &mut waiters),
             )
         };
         OutSlot::erased::<

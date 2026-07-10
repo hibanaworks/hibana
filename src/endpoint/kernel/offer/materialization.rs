@@ -89,7 +89,7 @@ where
         if preview_meta.is_recv_step() {
             BranchKind::WireRecv
         } else if self.cursor.is_send_at(cursor_index) {
-            BranchKind::ArmSendHint
+            BranchKind::ArmSend
         } else if self.cursor.is_local_action_at(cursor_index) {
             BranchKind::LocalAction
         } else {

@@ -49,7 +49,7 @@ pub(in crate::endpoint::kernel) use self::frontier_types::{
 };
 use self::ingress::OfferFrontierFacts;
 pub(in crate::endpoint::kernel) use self::ingress_types::{
-    FrameHintResolution, OfferScopeSelection,
+    FrameEvidenceResolution, OfferScopeSelection,
 };
 use self::profile::OfferAuthorityPath;
 pub(in crate::endpoint::kernel) use self::profile::{OfferEntryPosition, OfferScopeProfile};
@@ -64,93 +64,10 @@ use self::state::{
 };
 pub(in crate::endpoint::kernel) use super::core::IngressEvidenceState;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(in crate::endpoint::kernel) enum FrameHintIngestion {
-    Scope,
-    Dynamic,
-}
-
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    fn ingest_scope_evidence_for_lane(
-        &mut self,
-        lane_idx: usize,
-        scope_id: ScopeId,
-        frame_hint_ingestion: FrameHintIngestion,
-        frame_label_meta: &ScopeFrameLabelView<'_>,
-    ) {
-        match frame_hint_ingestion {
-            FrameHintIngestion::Dynamic => {
-                if let Some(frame_label) = self.take_frame_hint_for_lane(lane_idx, frame_label_meta)
-                {
-                    self.record_dynamic_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
-                    self.mark_scope_ready_arm_from_frame_label(
-                        scope_id,
-                        lane_idx as u8,
-                        frame_label,
-                        frame_label_meta,
-                    );
-                }
-            }
-            FrameHintIngestion::Scope => {
-                if let Some(frame_label) = self.take_frame_hint_for_lane(lane_idx, frame_label_meta)
-                {
-                    self.record_scope_frame_hint(scope_id, lane_idx as u8, frame_label);
-                    self.mark_scope_ready_arm_from_frame_label(
-                        scope_id,
-                        lane_idx as u8,
-                        frame_label,
-                        frame_label_meta,
-                    );
-                }
-            }
-        }
-    }
-
-    pub(in crate::endpoint::kernel) fn ingest_scope_evidence_for_offer(
-        &mut self,
-        scope_id: ScopeId,
-        offer_lanes: crate::global::role_program::LaneSetView,
-        frame_hint_ingestion: FrameHintIngestion,
-        frame_label_meta: &ScopeFrameLabelView<'_>,
-    ) {
-        self.ingest_scope_evidence_for_offer_impl(
-            scope_id,
-            offer_lanes,
-            frame_hint_ingestion,
-            frame_label_meta,
-        )
-    }
-
-    fn ingest_scope_evidence_for_offer_impl(
-        &mut self,
-        scope_id: ScopeId,
-        offer_lanes: crate::global::role_program::LaneSetView,
-        frame_hint_ingestion: FrameHintIngestion,
-        frame_label_meta: &ScopeFrameLabelView<'_>,
-    ) {
-        if offer_lanes.is_empty() {
-            return;
-        }
-        let lane_limit = self.cursor.logical_lane_count();
-        let mut next = offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            let has_ack = self.pending_scope_ack_lane_mask(lane_idx, scope_id, lane_idx);
-            let has_frame_hint = self.pending_scope_frame_hint_on_lane(lane_idx, frame_label_meta);
-            if has_ack || has_frame_hint {
-                self.ingest_scope_evidence_for_lane(
-                    lane_idx,
-                    scope_id,
-                    frame_hint_ingestion,
-                    frame_label_meta,
-                );
-            }
-            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        }
-    }
-
     fn offer_entry_representative_lane_excluding(
         &self,
         entry_idx: usize,
@@ -392,18 +309,6 @@ where
                 }
                 Poll::Ready(Ok(())) => {
                     let scope_id = stage.facts.scope_id();
-                    let frame_hint_ingestion = stage.facts.profile.frame_hint_ingestion();
-                    let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
-                    self.write_selection_frame_label_meta(
-                        stage.facts.selection,
-                        &mut frame_label_scratch,
-                    );
-                    self.ingest_scope_evidence_for_offer(
-                        scope_id,
-                        self.offer_lane_set_for_scope(scope_id),
-                        frame_hint_ingestion,
-                        &frame_label_scratch.view(),
-                    );
                     if self.scope_evidence_conflicted(scope_id) {
                         stage.discard_terminal();
                         return Poll::Ready(Err(RecvError::PhaseInvariant));

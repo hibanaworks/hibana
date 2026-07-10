@@ -4,6 +4,7 @@ use super::{
     BranchKind, CursorEndpoint, PublicActiveOp, SendError, SendPreviewError, SendResult, Transport,
     state_index_to_usize,
 };
+use crate::endpoint::carrier::WaiterTransfer;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -20,8 +21,12 @@ where
     }
 
     #[inline]
-    fn fail_branch_send_preview(&mut self, error: SendError) -> SendError {
-        self.clear_session_waiter();
+    fn fail_branch_send_preview(
+        &mut self,
+        error: SendError,
+        waiters: &mut WaiterTransfer,
+    ) -> SendError {
+        self.clear_endpoint_waiter(waiters);
         if let Some(branch) = self.public_route_branch.take() {
             branch.discard_terminal();
         }
@@ -34,9 +39,10 @@ where
     fn preview_branch_send_meta(
         &mut self,
         target_label: u8,
+        waiters: &mut WaiterTransfer,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
         if let Some(kind) = self.session_fault() {
-            self.clear_session_waiter();
+            self.clear_endpoint_waiter(waiters);
             if let Some(branch) = self.public_route_branch.take() {
                 branch.discard_terminal();
             }
@@ -51,32 +57,35 @@ where
         let branch_meta = branch.branch_meta;
         let has_offered_frame = branch.offered_frame.is_some();
 
-        if branch_meta.kind != BranchKind::ArmSendHint || has_offered_frame {
-            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+        if branch_meta.kind != BranchKind::ArmSend || has_offered_frame {
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant, waiters));
         }
         if target_label != branch_meta.label {
-            return Err(self.fail_branch_send_preview(SendError::LabelMismatch {
-                expected: branch_meta.label,
-                actual: target_label,
-            }));
+            return Err(self.fail_branch_send_preview(
+                SendError::LabelMismatch {
+                    expected: branch_meta.label,
+                    actual: target_label,
+                },
+                waiters,
+            ));
         }
 
         let cursor_index = state_index_to_usize(branch_meta.cursor_index);
         let Some(mut meta) = self.cursor.try_send_meta_at(cursor_index) else {
-            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant, waiters));
         };
         if meta.label != branch_meta.label
             || meta.frame_label != branch_meta.frame_label
             || meta.lane != branch_meta.lane_wire
             || meta.route_scope != branch_meta.scope_id
         {
-            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant, waiters));
         }
         if meta
             .route_arm
             .is_some_and(|arm| arm != branch_meta.selected_arm)
         {
-            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant));
+            return Err(self.fail_branch_send_preview(SendError::PhaseInvariant, waiters));
         }
         meta.selected_route_arm = Some(branch_meta.selected_arm);
 
@@ -91,6 +100,7 @@ where
     pub(crate) fn preview_send_meta(
         &mut self,
         target_label: u8,
+        waiters: &mut WaiterTransfer,
     ) -> SendResult<crate::endpoint::kernel::SendPreview> {
         match self.public_active_op {
             PublicActiveOp::Idle => {
@@ -98,7 +108,9 @@ where
                     return Err(SendError::SessionFault(kind));
                 }
             }
-            PublicActiveOp::RouteBranch => return self.preview_branch_send_meta(target_label),
+            PublicActiveOp::RouteBranch => {
+                return self.preview_branch_send_meta(target_label, waiters);
+            }
             _ => {
                 self.public_op_busy_fault();
                 return Err(SendError::PhaseInvariant);

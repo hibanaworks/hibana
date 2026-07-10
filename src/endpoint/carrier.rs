@@ -9,7 +9,7 @@
 use core::{
     marker::PhantomData,
     ptr::NonNull,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 
 use crate::transport::wire::Payload;
@@ -91,12 +91,57 @@ pub(crate) struct BranchRecvPollRequest<'a, 'cx> {
     pub(crate) out: *mut Poll<crate::endpoint::RecvResult<RawPayload>>,
 }
 
+/// Callback-free Waker ownership crossing one raw endpoint carrier borrow.
+///
+/// One poll can retire at most the displaced waiter and the newly installed
+/// waiter. The incoming clone reuses the first slot before either is deferred.
+pub(crate) struct WaiterTransfer {
+    first: Option<Waker>,
+    second: Option<Waker>,
+}
+
+impl WaiterTransfer {
+    #[inline]
+    pub(crate) fn with_replacement(waker: &Waker) -> Self {
+        Self {
+            first: Some(waker.clone()),
+            second: None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn empty() -> Self {
+        Self {
+            first: None,
+            second: None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn take_replacement(&mut self) -> Waker {
+        crate::invariant_some(self.first.take())
+    }
+
+    #[inline]
+    pub(crate) fn defer(&mut self, waker: Option<Waker>) {
+        let Some(waker) = waker else {
+            return;
+        };
+        if self.first.is_none() {
+            self.first = Some(waker);
+        } else if self.second.is_none() {
+            self.second = Some(waker);
+        } else {
+            crate::invariant();
+        }
+    }
+}
+
 #[repr(C)]
 pub(crate) struct KernelEndpointHeader<'r> {
     ops: EndpointOps<'r>,
     generation: u32,
     role: u8,
-    padding: [u8; 3],
 }
 
 impl<'r> KernelEndpointHeader<'r> {
@@ -106,7 +151,6 @@ impl<'r> KernelEndpointHeader<'r> {
             ops,
             generation,
             role,
-            padding: [0; 3],
         }
     }
 

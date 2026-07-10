@@ -1,4 +1,6 @@
-use super::{NonNull, OutSlot, PackedEndpointHandle, Poll, RawPayload, RecvPollRequest};
+use super::{
+    NonNull, OutSlot, PackedEndpointHandle, Poll, RawPayload, RecvPollRequest, WaiterTransfer,
+};
 impl<'cfg, T> crate::runtime::SessionKit<'cfg, T>
 where
     T: crate::transport::Transport + 'cfg,
@@ -23,11 +25,12 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
     ) {
+        let mut waiters = WaiterTransfer::empty();
         unsafe {
             // SAFETY: recv-state reset owns the carrier endpoint slot selected
             // by `handle` and clears only the resident recv state.
             Self::with_public_endpoint_mut::<'cfg, ROLE, _>(ptr, handle, (), |kernel| {
-                kernel.reset_public_recv_state();
+                kernel.reset_public_recv_state(&mut waiters);
             });
         }
     }
@@ -43,6 +46,7 @@ where
             cx,
             out,
         } = request;
+        let mut waiters = WaiterTransfer::with_replacement(cx.waker());
         let poll = unsafe {
             // SAFETY: endpoint recv polling owns the carrier endpoint slot
             // selected by `handle`; validation and payload staging stay inside
@@ -53,7 +57,7 @@ where
                 Poll::Ready(Err(crate::endpoint::RecvError::Transport(
                     crate::transport::TransportError::Failed,
                 ))),
-                |kernel| match kernel.poll_public_recv(logical_label, validate, cx) {
+                |kernel| match kernel.poll_public_recv(logical_label, validate, cx, &mut waiters) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Ok(payload)) => Poll::Ready(Ok(RawPayload::from_payload(payload))),
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),

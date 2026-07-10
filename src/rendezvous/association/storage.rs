@@ -3,7 +3,7 @@ use core::{
     marker::PhantomData,
 };
 
-use crate::{rendezvous::waiter::WaiterSlot, session::types::SessionId};
+use crate::session::types::SessionId;
 
 use super::AssocTable;
 
@@ -12,7 +12,6 @@ struct AssocStorageParts {
     entry_sids: *mut SessionId,
     entry_lanes: *mut u8,
     entry_states: *mut u8,
-    waiters: *mut WaiterSlot,
 }
 
 impl AssocTable {
@@ -28,22 +27,13 @@ impl AssocTable {
                 .write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst).entry_states)
                 .write(UnsafeCell::new(core::ptr::null_mut()));
-            core::ptr::addr_of_mut!((*dst).inline_waiter)
-                .write(UnsafeCell::new(WaiterSlot::empty()));
-            core::ptr::addr_of_mut!((*dst).waiters).write(UnsafeCell::new(core::ptr::null_mut()));
             core::ptr::addr_of_mut!((*dst)._no_send_sync).write(PhantomData);
         }
     }
 
     #[inline]
     pub(in crate::rendezvous) const fn storage_align() -> usize {
-        let entry_align = core::mem::align_of::<SessionId>();
-        let waiter_align = core::mem::align_of::<WaiterSlot>();
-        if entry_align > waiter_align {
-            entry_align
-        } else {
-            waiter_align
-        }
+        core::mem::align_of::<SessionId>()
     }
 
     #[inline]
@@ -83,14 +73,6 @@ impl AssocTable {
     }
 
     #[inline]
-    const fn overflow_waiter_slots(assoc_slots: usize) -> usize {
-        if assoc_slots == 0 {
-            crate::invariant();
-        }
-        assoc_slots - 1
-    }
-
-    #[inline]
     pub(in crate::rendezvous) const fn storage_bytes(assoc_slots: usize) -> usize {
         let sid_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<SessionId>());
         let lane_offset = Self::align_up(sid_bytes, core::mem::align_of::<u8>());
@@ -100,17 +82,7 @@ impl AssocTable {
             core::mem::align_of::<u8>(),
         );
         let state_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u8>());
-        let waiter_offset = Self::align_up(
-            Self::checked_add_usize(state_offset, state_bytes),
-            core::mem::align_of::<WaiterSlot>(),
-        );
-        Self::checked_add_usize(
-            waiter_offset,
-            Self::checked_mul_usize(
-                Self::overflow_waiter_slots(assoc_slots),
-                core::mem::size_of::<WaiterSlot>(),
-            ),
-        )
+        Self::checked_add_usize(state_offset, state_bytes)
     }
 
     unsafe fn storage_parts(storage: *mut u8, assoc_slots: usize) -> AssocStorageParts {
@@ -135,41 +107,17 @@ impl AssocTable {
             ),
             storage as usize,
         );
-        let waiter_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    Self::checked_add_usize(storage as usize, state_offset),
-                    Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u8>()),
-                ),
-                core::mem::align_of::<WaiterSlot>(),
-            ),
-            storage as usize,
-        );
-        let (entry_lanes, entry_states, waiters) =
+        let (entry_lanes, entry_states) =
             /* SAFETY: all offsets are derived by the assoc arena layout and stay inside `storage_bytes(assoc_slots)`; this only computes disjoint column pointers. */ unsafe {
                 (
                     storage.add(lane_offset).cast::<u8>(),
                     storage.add(state_offset).cast::<u8>(),
-                    storage.add(waiter_offset).cast::<WaiterSlot>(),
                 )
             };
         AssocStorageParts {
             entry_sids,
             entry_lanes,
             entry_states,
-            waiters,
-        }
-    }
-
-    #[inline]
-    pub(super) fn waiter_ptr(&self, idx: usize) -> *mut WaiterSlot {
-        if idx >= self.assoc_slots() {
-            crate::invariant();
-        }
-        if idx == 0 {
-            self.inline_waiter.get()
-        } else {
-            self.waiters_ptr().wrapping_add(idx - 1)
         }
     }
 
@@ -180,10 +128,9 @@ impl AssocTable {
         let lanes = self.entry_lanes_ptr();
         let sids = self.entry_sids_ptr();
         let states = self.entry_states_ptr();
-        /* SAFETY: `idx` and `last` are live assoc-table indexes. The removed
-        waiter is taken before the last live entry is moved into the gap, so
-        live entries stay prefix-packed and entry 0 keeps the inline waiter. */
-        let removed_waker = unsafe {
+        /* SAFETY: `idx` and `last` are live assoc-table indexes. Moving the last
+        live entry into the gap keeps all synchronized columns prefix-packed. */
+        unsafe {
             let mut last = self.assoc_slots();
             loop {
                 if last == 0 {
@@ -194,22 +141,15 @@ impl AssocTable {
                     break;
                 }
             }
-            let removed_waker = (*self.waiter_ptr(idx)).take();
             if last != idx {
                 lanes.add(idx).write(*lanes.add(last));
                 sids.add(idx).write(*sids.add(last));
                 states.add(idx).write(*states.add(last));
-                if let Some(waker) = (*self.waiter_ptr(last)).take() {
-                    (*self.waiter_ptr(idx)).set_owned(waker);
-                }
             }
             lanes.add(last).write(0);
             sids.add(last).write(SessionId::new(0));
             states.add(last).write(Self::EMPTY_ENTRY_STATE);
-            (*self.waiter_ptr(last)).clear();
-            removed_waker
-        };
-        drop(removed_waker);
+        }
     }
 
     unsafe fn bind_storage(
@@ -222,8 +162,8 @@ impl AssocTable {
         if lane_slots > usize::from(u16::MAX) || assoc_slots > usize::from(u16::MAX) {
             crate::invariant();
         }
-        /* SAFETY: all entry and overflow waiter indexes are bounded by the
-        freshly carved assoc storage before the column pointers are published. */
+        /* SAFETY: all entry indexes are bounded by the freshly carved assoc
+        storage before the column pointers are published. */
         unsafe {
             let mut idx = 0usize;
             while idx < assoc_slots {
@@ -232,11 +172,6 @@ impl AssocTable {
                 parts.entry_states.add(idx).write(Self::EMPTY_ENTRY_STATE);
                 idx += 1;
             }
-            let mut waiter_idx = 0usize;
-            while waiter_idx < Self::overflow_waiter_slots(assoc_slots) {
-                WaiterSlot::init_empty(parts.waiters.add(waiter_idx));
-                waiter_idx += 1;
-            }
         }
         self.lane_base.set(lane_base);
         self.lane_slots.set(lane_slots as u16);
@@ -244,11 +179,9 @@ impl AssocTable {
         /* SAFETY: all columns belong to this freshly initialized table binding
         and are published only after every slot is initialized. */
         unsafe {
-            self.inline_waiter.get().write(WaiterSlot::empty());
             self.entry_sids.get().write(parts.entry_sids);
             self.entry_lanes.get().write(parts.entry_lanes);
             self.entry_states.get().write(parts.entry_states);
-            self.waiters.get().write(parts.waiters);
         }
     }
 
@@ -290,8 +223,8 @@ impl AssocTable {
         let parts = /* SAFETY: `storage` is the freshly leased assoc-table arena. */ unsafe {
             Self::storage_parts(storage, assoc_slots)
         };
-        /* SAFETY: replacement entry and overflow waiter indexes are bounded by
-        the freshly leased assoc storage before any replacement pointer is published. */
+        /* SAFETY: replacement entry indexes are bounded by the freshly leased
+        assoc storage before any replacement pointer is published. */
         unsafe {
             let mut idx = 0usize;
             while idx < assoc_slots {
@@ -299,11 +232,6 @@ impl AssocTable {
                 parts.entry_lanes.add(idx).write(0);
                 parts.entry_states.add(idx).write(Self::EMPTY_ENTRY_STATE);
                 idx += 1;
-            }
-            let mut waiter_idx = 0usize;
-            while waiter_idx < Self::overflow_waiter_slots(assoc_slots) {
-                WaiterSlot::init_empty(parts.waiters.add(waiter_idx));
-                waiter_idx += 1;
             }
         }
         let mut source_idx = 0usize;
@@ -320,33 +248,28 @@ impl AssocTable {
                 + /* SAFETY: `source_idx < source_slots` selects one source lane offset. */ unsafe {
                     *source_lanes.add(source_idx)
                 } as u32;
-            if lane >= lane_base {
-                let new_offset = lane - lane_base;
-                if (new_offset as usize) < lane_slots {
-                    if new_offset > u8::MAX as u32 || dst_idx >= assoc_slots {
-                        crate::invariant();
-                    }
-                    /* SAFETY: `source_idx < source_slots` reads one initialized
-                    source assoc entry, and `dst_idx < assoc_slots` writes the
-                    corresponding unpublished replacement entry in all columns. */
-                    unsafe {
-                        parts
-                            .entry_sids
-                            .add(dst_idx)
-                            .write(*source_sids.add(source_idx));
-                        parts.entry_lanes.add(dst_idx).write(new_offset as u8);
-                        parts.entry_states.add(dst_idx).write(source_state);
-                        if dst_idx == 0 {
-                            if source_idx != 0 {
-                                crate::invariant();
-                            }
-                        } else if let Some(waker) = (*self.waiter_ptr(source_idx)).take() {
-                            (*parts.waiters.add(dst_idx - 1)).set_owned(waker);
-                        }
-                    }
-                    dst_idx += 1;
-                }
+            if lane < lane_base {
+                crate::invariant();
             }
+            let new_offset = lane - lane_base;
+            if (new_offset as usize) >= lane_slots
+                || new_offset > u8::MAX as u32
+                || dst_idx >= assoc_slots
+            {
+                crate::invariant();
+            }
+            /* SAFETY: `source_idx < source_slots` reads one initialized source
+            assoc entry, and `dst_idx < assoc_slots` writes the corresponding
+            unpublished replacement entry in all columns. */
+            unsafe {
+                parts
+                    .entry_sids
+                    .add(dst_idx)
+                    .write(*source_sids.add(source_idx));
+                parts.entry_lanes.add(dst_idx).write(new_offset as u8);
+                parts.entry_states.add(dst_idx).write(source_state);
+            }
+            dst_idx += 1;
             source_idx += 1;
         }
     }
@@ -374,7 +297,6 @@ impl AssocTable {
             self.entry_sids.get().write(parts.entry_sids);
             self.entry_lanes.get().write(parts.entry_lanes);
             self.entry_states.get().write(parts.entry_states);
-            self.waiters.get().write(parts.waiters);
         }
     }
 
@@ -389,5 +311,62 @@ impl AssocTable {
                 self.assoc_slots(),
             );
         }
+    }
+
+    pub(in crate::rendezvous) unsafe fn shrink_storage_in_place(
+        &self,
+        storage: *mut u8,
+        assoc_slots: usize,
+    ) {
+        let current_slots = self.assoc_slots();
+        let active_slots = self.active_entry_count();
+        if assoc_slots == 0 || assoc_slots >= current_slots || assoc_slots < active_slots {
+            crate::invariant();
+        }
+        let states = self.entry_states_ptr();
+        let mut idx = 0usize;
+        while idx < current_slots {
+            let count = /* SAFETY: `idx` is bounded by the current initialized
+            assoc state column. */ unsafe { Self::entry_count(*states.add(idx)) };
+            if (idx < active_slots) != (count != 0) {
+                crate::invariant();
+            }
+            idx += 1;
+        }
+        let replacement = /* SAFETY: the smaller assoc layout remains inside
+        this owner-exclusive current sidecar allocation. */ unsafe {
+            Self::storage_parts(storage, assoc_slots)
+        };
+        /* SAFETY: live entries occupy the prefix. The replacement sid prefix
+        stays in place, and `ptr::copy` safely moves overlapping initialized
+        lane/state prefixes before any replacement pointer is published. */
+        unsafe {
+            core::ptr::copy(self.entry_lanes_ptr(), replacement.entry_lanes, assoc_slots);
+            core::ptr::copy(
+                self.entry_states_ptr(),
+                replacement.entry_states,
+                assoc_slots,
+            );
+            self.entry_sids.get().write(replacement.entry_sids);
+            self.entry_lanes.get().write(replacement.entry_lanes);
+            self.entry_states.get().write(replacement.entry_states);
+        }
+        self.assoc_slots.set(assoc_slots as u16);
+    }
+
+    pub(in crate::rendezvous) fn clear_storage(&self) {
+        if self.active_entry_count() != 0 {
+            crate::invariant();
+        }
+        /* SAFETY: no live entry or external column alias remains. Publishing
+        null owner roots precedes reuse of the retired assoc sidecar bytes. */
+        unsafe {
+            self.entry_sids.get().write(core::ptr::null_mut());
+            self.entry_lanes.get().write(core::ptr::null_mut());
+            self.entry_states.get().write(core::ptr::null_mut());
+        }
+        self.lane_base.set(0);
+        self.lane_slots.set(0);
+        self.assoc_slots.set(0);
     }
 }

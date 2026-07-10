@@ -108,7 +108,7 @@ impl OfferAlignmentCurrent {
         let current_progress = self
             .observation
             .accumulated_progress_evidence(current_state);
-        if !self.current_entry_survives_hint_filter(
+        if !self.current_entry_survives_ready_filter(
             self.current_passive_admission(current_state.frontier, current_progress),
             selection,
         ) {
@@ -125,7 +125,7 @@ impl OfferAlignmentCurrent {
     }
 
     #[inline]
-    fn current_entry_survives_hint_filter(
+    fn current_entry_survives_ready_filter(
         &self,
         admission: CurrentEntryAdmission,
         selection: OfferAlignmentSelection,

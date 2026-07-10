@@ -63,15 +63,18 @@ pub extern "C" fn hibana_frame_label_mask_codegen_probe(a: u8, b: u8, c: u8) -> 
     if mask.contains_frame_label(a) {
         out |= 1;
     }
-    if mask.intersects(peer) {
+    if (mask & peer).contains_frame_label(c) {
         out |= 2;
     }
-    mask.remove_frame_label(a);
-    if mask.insert_frame_label(a) {
+    if !mask
+        .without(FrameLabelMask::from_frame_label(a))
+        .contains_frame_label(a)
+    {
         out |= 4;
     }
-    let mut filtered = (mask & !FrameLabelMask::EMPTY).without(peer);
-    if filtered.take_matching(|frame_label| frame_label == a || frame_label == b).is_some() {
+    mask &= !peer;
+    mask |= FrameLabelMask::EMPTY | FrameLabelMask::from_frame_label(b);
+    if mask.insert_frame_label(c) {
         out |= 8;
     }
     out

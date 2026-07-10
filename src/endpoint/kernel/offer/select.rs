@@ -92,7 +92,7 @@ where
         }
         let current_entry_active = self.offer_entry_has_active_lanes(current_idx)
             && self.offer_entry_scope_id(current_idx) == scope_id;
-        // Route hints are offer-scoped; preview only inspects them here.
+        // Offer-lane choice remains local to the selected route scope.
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
         let lane_limit = self.cursor.logical_lane_count();
         let carried_offer_lane = carried_lane
@@ -429,7 +429,6 @@ where
         &self,
         scope_id: ScopeId,
         offer_lanes: LaneSetView,
-        cx: &mut core::task::Context<'_>,
     ) -> Option<Arm> {
         let lane_limit = self.cursor.logical_lane_count();
         let mut next = offer_lanes.first_set(lane_limit);
@@ -437,7 +436,7 @@ where
         while let Some(lane_idx) = next {
             let lane = lane_idx as u8;
             let port = self.port_for_lane(lane as usize);
-            if let Poll::Ready(route_arm) = port.poll_route_arm_selection(scope_id, ROLE, cx) {
+            if let Poll::Ready(route_arm) = port.poll_route_arm_selection(scope_id, ROLE) {
                 arm = Some(route_arm);
                 break;
             }

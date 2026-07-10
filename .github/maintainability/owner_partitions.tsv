@@ -163,7 +163,6 @@ src/rendezvous	src/rendezvous/port.rs
 src/rendezvous	src/rendezvous/recv_frame_receipt.rs
 src/rendezvous	src/rendezvous/tables
 src/rendezvous	src/rendezvous/tables.rs
-src/rendezvous	src/rendezvous/waiter.rs
 tests	tests/affine_progression.rs
 tests	tests/callsite_regression.rs
 tests	tests/common
@@ -210,6 +209,7 @@ tests	tests/ui.rs
 tests/semantic_surface	tests/semantic_surface/common.rs
 tests/semantic_surface	tests/semantic_surface/descriptor_measurement.rs
 tests/semantic_surface	tests/semantic_surface/endpoint_active_leases.rs
+tests/semantic_surface	tests/semantic_surface/lean_proof_gate.rs
 tests/semantic_surface	tests/semantic_surface/lease_owner.rs
 tests/semantic_surface	tests/semantic_surface/measurement_gates.rs
 tests/semantic_surface	tests/semantic_surface/source_residue.rs

@@ -7,8 +7,7 @@ use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::{Arm, RouteArmToken, RouteResolveStep};
 use super::evidence::{
-    ScopeEvidence, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeFrameLabelView,
-    ScopeReentryMeta,
+    ScopeEvidence, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeReentryMeta,
 };
 use super::frontier::*;
 use super::frontier_state::FrontierState;
@@ -340,6 +339,32 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
+    pub(crate) fn take_owned_slot_release(
+        &mut self,
+    ) -> Option<(
+        &'r crate::session::cluster::core::SessionCluster<'r, T>,
+        crate::session::types::RendezvousId,
+        crate::rendezvous::core::EndpointLeaseId,
+        u32,
+    )> {
+        if self.public_slot_ownership == PublicSlotOwnership::Borrowed {
+            return None;
+        }
+        if self.public_generation == 0
+            || self.public_header.generation() != self.public_generation
+            || self.public_header.role() != ROLE
+        {
+            crate::invariant();
+        }
+        self.public_slot_ownership = PublicSlotOwnership::Borrowed;
+        Some((
+            self.session.cluster(),
+            self.public_rv,
+            self.public_slot,
+            self.public_generation,
+        ))
+    }
+
     /// Rendezvous id for the primary port.
     #[inline]
     pub(crate) fn rendezvous_id(&self) -> RendezvousId {
@@ -390,11 +415,9 @@ where
     #[inline]
     pub(crate) fn offer_lane_for_scope(&self, scope_id: ScopeId) -> u8 {
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        if let Some(lane_idx) = offer_lanes.first_set(self.cursor.logical_lane_count()) {
-            lane_idx as u8
-        } else {
-            self.primary_lane as u8
-        }
+        let lane_idx =
+            crate::invariant_some(offer_lanes.first_set(self.cursor.logical_lane_count()));
+        crate::invariant_ok(u8::try_from(lane_idx))
     }
 
     #[inline]
@@ -442,13 +465,8 @@ where
             }
         }
         if self.public_generation != 0 {
-            let cluster = self.session.cluster();
             if self.public_slot_ownership == PublicSlotOwnership::Owned {
-                cluster.release_public_endpoint_slot_owned(
-                    self.public_rv,
-                    self.public_slot,
-                    self.public_generation,
-                );
+                crate::invariant();
             }
             self.public_header.retire_generation();
             self.public_generation = 0;

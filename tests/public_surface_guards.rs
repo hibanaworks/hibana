@@ -104,10 +104,10 @@ fn resolver_sidecar_replacement_publishes_before_retirement() {
         .expect("resolver replacement must publish the initialized root");
     let retire_pos = resolver_growth
         .find("self.retire_persistent_sidecar(source);")
-        .expect("resolver replacement must retire the old root");
+        .expect("resolver replacement must retire the source root");
     assert!(
         allocate_pos < replace_pos && replace_pos < retire_pos,
-        "resolver replacement must stage and publish the new root before retiring the old root"
+        "resolver replacement must stage and publish the destination root before retiring the source root"
     );
 
     assert!(
@@ -164,16 +164,22 @@ fn assoc_and_route_sidecar_replacement_publish_before_retire() {
     let assoc = read("src/rendezvous/association/storage.rs");
     assert!(
         assoc.contains("pub(in crate::rendezvous) unsafe fn init_replacement_storage")
-            && assoc.contains("(*self.waiter_ptr(source_idx)).take()")
-            && !assoc.contains("WaiterSlot::init_clone_from"),
-        "assoc migration must transfer waiter ownership without a clone callback"
+            && assoc.contains("parts.entry_sids")
+            && assoc.contains("parts.entry_lanes")
+            && assoc.contains("parts.entry_states")
+            && !assoc.contains("WaiterSlot")
+            && !assoc.contains("waiter"),
+        "assoc migration must contain only counted session/lane claim columns"
     );
 
     let route = read("src/rendezvous/tables/route_table/storage.rs");
     assert!(
-        route.contains("(*self.waiters_ptr().add(waiter_idx)).take()")
-            && !route.contains("WaiterSlot::init_clone_from"),
-        "route migration must transfer waiter ownership without a clone callback"
+        route.contains("let mut moved =")
+            && route.contains("dst_parts.frames.add(dst_idx).write(moved);")
+            && !route.contains("WaiterSlot")
+            && !route.contains("pending_frame_hint")
+            && !route.contains("waiters"),
+        "route migration must own only session-keyed frames and lane/free-list roots"
     );
     assert!(
         arena.contains("fn compact_live_sidecars(&self)")

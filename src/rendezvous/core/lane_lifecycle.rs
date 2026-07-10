@@ -1,7 +1,7 @@
 use super::{
     AssocTable, Cell, Lane, LaneRelease, PhantomData, Rendezvous, RendezvousAccessState,
     RendezvousId, RouteTable, RuntimeResources, SessionId, Sidecar, TapRing, Transport, UnsafeCell,
-    Waker, emit, events,
+    emit, events,
 };
 use crate::{observe::core::TapEvent, runtime_core::consts::TAP_EVENTS};
 
@@ -108,6 +108,7 @@ where
             core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
             core::ptr::addr_of_mut!((*dst).image_frontier).write(Cell::new(image_frontier));
             core::ptr::addr_of_mut!((*dst).frontier_workspace_bytes).write(Cell::new(0));
+            core::ptr::addr_of_mut!((*dst).endpoint_lease_generation).write(Cell::new(0));
             core::ptr::addr_of_mut!((*dst).endpoint_lease_storage).write(Cell::new(Sidecar::EMPTY));
             core::ptr::addr_of_mut!((*dst).lane_base).write(Cell::new(lane_range.start as u32));
             core::ptr::addr_of_mut!((*dst).lane_end).write(Cell::new(lane_range.end as u32));
@@ -136,41 +137,25 @@ where
     pub(crate) fn poison_session(
         &self,
         sid: SessionId,
+        source_role: u8,
         cause: crate::rendezvous::SessionFaultKind,
     ) -> crate::rendezvous::SessionFaultKind {
-        let kind = self.assoc.poison_session(sid, cause);
-        self.assoc.wake_session_waiters(sid);
-        let mut after = None;
-        while let Some(lane) = self.assoc.next_session_lane(sid, after) {
-            self.routes.wake_lane_waiters(lane);
-            after = Some(lane.raw());
+        if source_role >= crate::g::ROLE_DOMAIN_SIZE {
+            crate::invariant();
         }
+        let kind = self.assoc.poison_session(sid, cause);
+        self.routes.reset_session(sid);
+        self.wake_session_endpoint_waiters(sid, source_role);
         kind
     }
 
-    #[inline]
-    pub(crate) fn register_session_waiter(&self, sid: SessionId, lane: Lane, waker: &Waker) {
-        self.assoc.register_waiter(sid, lane, waker);
-    }
-
-    #[inline]
-    pub(crate) fn clear_session_waiter(&self, sid: SessionId, lane: Lane) {
-        self.assoc.clear_waiter(sid, lane);
-    }
-
     pub(crate) fn release_lane(&self, sid: SessionId, lane: Lane) -> LaneRelease {
-        let remaining = crate::invariant_some(self.assoc.decrement(lane, sid));
+        let remaining = self.assoc.decrement(lane, sid);
         if remaining > 0 {
             return LaneRelease::StillHeld;
         }
-        if !self.assoc.lane_has_entries(lane) {
-            self.reset_lane_recycled_state(lane);
-        }
+        self.routes.reset_session_lane(sid, lane);
         LaneRelease::Released
-    }
-
-    pub(crate) fn reset_lane_recycled_state(&self, lane: Lane) {
-        self.routes.reset_lane(lane);
     }
 
     #[inline]

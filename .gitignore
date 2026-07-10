@@ -8,3 +8,4 @@
 A*.md
 p*.md
 /.code*
+/proofs/lean/.lake

@@ -102,7 +102,6 @@ impl ScopeEvidenceTable {
     pub(super) fn clear(&mut self, slot: usize) -> bool {
         let evidence = &mut self[slot];
         let changed = evidence.ack.is_some()
-            || (evidence.flags & ScopeEvidence::FLAG_HAS_HINT) != 0
             || evidence.ready_arm_mask != 0
             || evidence.poll_ready_arm_mask != 0
             || evidence.flags != 0;
@@ -174,48 +173,6 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn record_frame_hint(&mut self, slot: usize, lane: u8, frame_label: u8) -> bool {
-        let evidence = &mut self[slot];
-        if (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0 {
-            return false;
-        }
-        if (evidence.flags & ScopeEvidence::FLAG_HAS_HINT) == 0 {
-            evidence.hint_frame_label = frame_label;
-            evidence.hint_lane = lane;
-            evidence.flags |= ScopeEvidence::FLAG_HAS_HINT;
-            true
-        } else if evidence.hint_frame_label == frame_label && evidence.hint_lane == lane {
-            false
-        } else {
-            evidence.flags |= ScopeEvidence::FLAG_HINT_CONFLICT;
-            evidence.flags &= !ScopeEvidence::FLAG_HAS_HINT;
-            evidence.hint_frame_label = 0;
-            evidence.hint_lane = 0;
-            true
-        }
-    }
-
-    #[inline]
-    pub(super) fn record_dynamic_frame_hint(
-        &mut self,
-        slot: usize,
-        lane: u8,
-        frame_label: u8,
-    ) -> bool {
-        let evidence = &mut self[slot];
-        let captured_frame_label = evidence.hint_frame_label;
-        let captured_lane = evidence.hint_lane;
-        let captured_flags = evidence.flags;
-        evidence.hint_frame_label = frame_label;
-        evidence.hint_lane = lane;
-        evidence.flags |= ScopeEvidence::FLAG_HAS_HINT;
-        evidence.flags &= !ScopeEvidence::FLAG_HINT_CONFLICT;
-        evidence.hint_frame_label != captured_frame_label
-            || evidence.hint_lane != captured_lane
-            || evidence.flags != captured_flags
-    }
-
-    #[inline]
     pub(super) fn mark_ready_arm(
         &mut self,
         slot: usize,
@@ -262,34 +219,7 @@ impl ScopeEvidenceTable {
     }
 
     #[inline]
-    pub(super) fn peek_frame_hint(&self, slot: usize) -> Option<u8> {
-        let evidence = *self.get(slot)?;
-        if (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0 {
-            return None;
-        }
-        if (evidence.flags & ScopeEvidence::FLAG_HAS_HINT) != 0 {
-            Some(evidence.hint_frame_label)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub(super) fn peek_frame_hint_with_lane(&self, slot: usize) -> Option<(u8, u8)> {
-        let evidence = *self.get(slot)?;
-        if (evidence.flags & ScopeEvidence::FLAG_HINT_CONFLICT) != 0 {
-            return None;
-        }
-        if (evidence.flags & ScopeEvidence::FLAG_HAS_HINT) != 0 {
-            Some((evidence.hint_lane, evidence.hint_frame_label))
-        } else {
-            None
-        }
-    }
-
-    #[inline]
     pub(super) fn conflicted(&self, slot: usize) -> bool {
-        (self[slot].flags & (ScopeEvidence::FLAG_ACK_CONFLICT | ScopeEvidence::FLAG_HINT_CONFLICT))
-            != 0
+        (self[slot].flags & ScopeEvidence::FLAG_ACK_CONFLICT) != 0
     }
 }

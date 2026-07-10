@@ -10,6 +10,5 @@ pub(crate) mod error;
 pub(crate) mod port;
 mod recv_frame_receipt;
 pub(crate) mod tables;
-mod waiter;
 
 pub(crate) use association::SessionFaultKind;

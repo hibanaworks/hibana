@@ -201,11 +201,7 @@ where
     }
 
     fn passive_ready_signal(&self, input: &OfferIngressPlannerInput) -> OfferPassiveReadySignal {
-        if self.scope_has_ready_arm_evidence(input.selection.scope_id)
-            || self
-                .peek_scope_frame_hint(input.selection.scope_id)
-                .is_some()
-        {
+        if self.scope_has_ready_arm_evidence(input.selection.scope_id) {
             OfferPassiveReadySignal::Observed
         } else {
             OfferPassiveReadySignal::Absent

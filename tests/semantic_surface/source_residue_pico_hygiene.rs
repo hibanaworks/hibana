@@ -356,6 +356,8 @@ fn port_derives_endpoint_lease_count_from_the_live_root() {
     for forbidden in [
         "endpoint_leases: *const super::core::EndpointLeaseSlot",
         "endpoint_leases: *const EndpointLeaseSlot",
+        "endpoint_leases: *const super::core::EndpointLeaseRecord",
+        "endpoint_leases: *const EndpointLeaseRecord",
         "endpoint_lease_capacity: super::core::EndpointLeaseId,",
         "endpoint_lease_capacity: EndpointLeaseId,",
         "endpoint_lease_storage: *const Sidecar<EndpointLeaseSlot>",
@@ -369,10 +371,10 @@ fn port_derives_endpoint_lease_count_from_the_live_root() {
         );
     }
     assert!(
-        port.contains("endpoint_lease_storage: &'r Cell<Sidecar<EndpointLeaseSlot>>")
+        port.contains("endpoint_lease_storage: &'r Cell<Sidecar<EndpointLeaseRecord>>")
             && port.contains("fn endpoint_lease_owner_view(&self)")
             && port.contains("let storage = self.endpoint_lease_storage.get();")
-            && port.contains("EndpointLeaseSlot::storage_slot_count(storage)"),
+            && port.contains("EndpointLeaseRecord::storage_slot_count(storage)"),
         "Port must reload the endpoint lease sidecar root and derive its slot count from exact bytes"
     );
     assert!(

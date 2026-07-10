@@ -81,7 +81,7 @@ where
                     id: rendezvous.registry_id().raw(),
                 });
             }
-            if rendezvous.has_live_endpoint_session_role(sid, role) {
+            if rendezvous.has_endpoint_session_role(sid, role) {
                 if rendezvous.registry_id() != rv {
                     return Err(ClusterError::RendezvousMismatch {
                         expected: rendezvous.registry_id().raw(),

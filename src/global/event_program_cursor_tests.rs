@@ -2,6 +2,8 @@
 
 #[path = "event_program_generated_corpus_tests.rs"]
 mod generated_corpus;
+#[path = "../test_support/lean_proof_export.rs"]
+mod lean_proof_export;
 
 use super::event_program_tests::{ReferenceLocalProgram, ReferenceProject, ReferenceState};
 use crate::global::{

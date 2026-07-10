@@ -1,8 +1,8 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, CursorEndpoint, EventCursor, EvidenceFingerprint, IngressEvidenceState, Lane,
-    OfferEntryEvidence, RouteArmToken, ScopeArmMaterializationMeta, ScopeEvidence,
-    ScopeFrameLabelView, ScopeId, Transport, state_index_to_usize,
+    OfferEntryEvidence, RouteArmToken, ScopeArmMaterializationMeta, ScopeEvidence, ScopeId,
+    Transport, state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -44,34 +44,6 @@ where
             return;
         };
         self.decision_state.scope_evidence.take_ack(slot);
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn record_scope_frame_hint(
-        &mut self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id) {
-            self.decision_state
-                .scope_evidence
-                .record_frame_hint(slot, lane, frame_label);
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn record_dynamic_scope_frame_hint(
-        &mut self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id) {
-            self.decision_state
-                .scope_evidence
-                .record_dynamic_frame_hint(slot, lane, frame_label);
-        }
     }
 
     #[inline]
@@ -141,26 +113,6 @@ where
                 .scope_evidence
                 .consume_ready_arm(slot, arm);
         }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn peek_scope_frame_hint(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<u8> {
-        let slot = self.scope_slot_for_route(scope_id)?;
-        self.decision_state.scope_evidence.peek_frame_hint(slot)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn peek_scope_frame_hint_with_lane(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<(u8, u8)> {
-        let slot = self.scope_slot_for_route(scope_id)?;
-        self.decision_state
-            .scope_evidence
-            .peek_frame_hint_with_lane(slot)
     }
 
     #[inline]
@@ -311,20 +263,6 @@ where
             .is_some()
     }
 
-    pub(in crate::endpoint::kernel) fn take_frame_hint_for_lane(
-        &mut self,
-        lane_idx: usize,
-        frame_label_meta: &ScopeFrameLabelView<'_>,
-    ) -> Option<u8> {
-        let port = self.port_for_lane(lane_idx);
-        let frame_hint_mask = frame_label_meta.frame_hint_mask();
-        if !port.has_route_hint_for_frame_label_mask(frame_hint_mask) {
-            None
-        } else {
-            port.take_route_hint_for_frame_label_mask(frame_hint_mask)
-        }
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn pending_scope_ack_lane_mask(
         &self,
@@ -342,21 +280,6 @@ where
                     Lane::new(offer_lane_idx as u32),
                 )
             })
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn pending_scope_frame_hint_on_lane(
-        &mut self,
-        lane_idx: usize,
-        frame_label_meta: &ScopeFrameLabelView<'_>,
-    ) -> bool {
-        let Some(port) = self.ports.get(lane_idx).and_then(|port| port.as_ref()) else {
-            return false;
-        };
-        port.has_pending_route_hint_for_lane(
-            frame_label_meta.frame_hint_mask(),
-            Lane::new(lane_idx as u32),
-        )
     }
 
     #[inline]

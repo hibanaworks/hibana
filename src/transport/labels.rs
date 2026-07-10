@@ -65,18 +65,6 @@ impl FrameLabelMask {
     }
 
     #[inline]
-    pub(crate) const fn intersects(self, other: Self) -> bool {
-        let mut idx = 0usize;
-        while idx < self.limbs.len() {
-            if (self.limbs[idx] & other.limbs[idx]) != 0 {
-                return true;
-            }
-            idx += 1;
-        }
-        false
-    }
-
-    #[inline]
     pub(crate) const fn without(self, other: Self) -> Self {
         let mut limbs = [0u8; 32];
         let mut idx = 0usize;
@@ -94,59 +82,6 @@ impl FrameLabelMask {
         let before = self.limbs[idx];
         self.limbs[idx] = before | bit;
         before != self.limbs[idx]
-    }
-
-    #[inline]
-    pub(crate) fn remove_frame_label(&mut self, frame_label: u8) {
-        let idx = (frame_label >> 3) as usize;
-        let bit = 1u8 << (frame_label & 7);
-        self.limbs[idx] &= !bit;
-    }
-
-    #[inline]
-    fn next_limb_frame_label(limb_idx: usize, remaining: &mut u8) -> Option<u8> {
-        if *remaining == 0 {
-            return None;
-        }
-        let bit_idx = remaining.trailing_zeros() as u8;
-        *remaining &= *remaining - 1;
-        Some((limb_idx as u8) * 8 + bit_idx)
-    }
-
-    #[inline]
-    fn take_matching_in_limb<F>(
-        &mut self,
-        limb_idx: usize,
-        mut remaining: u8,
-        matches: &mut F,
-    ) -> Option<u8>
-    where
-        F: FnMut(u8) -> bool,
-    {
-        while let Some(frame_label) = Self::next_limb_frame_label(limb_idx, &mut remaining) {
-            if matches(frame_label) {
-                self.remove_frame_label(frame_label);
-                return Some(frame_label);
-            }
-        }
-        None
-    }
-
-    #[inline]
-    pub(crate) fn take_matching<F>(&mut self, mut matches: F) -> Option<u8>
-    where
-        F: FnMut(u8) -> bool,
-    {
-        let mut idx = 0usize;
-        while idx < self.limbs.len() {
-            if let Some(frame_label) =
-                self.take_matching_in_limb(idx, self.limbs[idx], &mut matches)
-            {
-                return Some(frame_label);
-            }
-            idx += 1;
-        }
-        None
     }
 }
 

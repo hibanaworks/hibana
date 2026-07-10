@@ -318,7 +318,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     /// [`RouteBranch::label`] is the selected arm's first logical label.
     /// Dropping the future before completion leaves endpoint progress unchanged.
     /// Dynamic branches must be selected by an explicit resolver decision at a
-    /// projected route point; transport hints and payload labels are demux
+    /// projected route point; transport observations and payload labels are demux
     /// evidence only.
     pub fn offer<'e>(
         &'e mut self,

@@ -87,7 +87,7 @@ where
                 self.publish_recv_commit_plan(commit_plan, validate)
             }
 
-            BranchKind::ArmSendHint => Err(branch_recv_phase_invariant()),
+            BranchKind::ArmSend => Err(branch_recv_phase_invariant()),
             BranchKind::WireRecv => {
                 let meta = if let Some(meta) = prepared_meta {
                     meta
@@ -284,7 +284,7 @@ where
                 self.prepare_commit_delta(delta)
                     .map_err(|_| RecvError::PhaseInvariant)?
             }
-            BranchKind::WireRecv | BranchKind::ArmSendHint => {
+            BranchKind::WireRecv | BranchKind::ArmSend => {
                 return Err(branch_recv_phase_invariant());
             }
         };

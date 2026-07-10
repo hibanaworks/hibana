@@ -141,7 +141,7 @@ where
         } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
             let arm = crate::invariant_some(Arm::new(selected_arm));
             let token = RouteArmToken::from_ack(arm);
-            if matches!(branch.kind, BranchKind::ArmSendHint) {
+            if matches!(branch.kind, BranchKind::ArmSend) {
                 let lane = lane_wire;
                 self.record_route_arm_selection_for_lane(lane as usize, scope_id, selected_arm);
                 self.emit_route_arm_selection(scope_id, token, lane);
@@ -178,6 +178,5 @@ where
             self.consume_scope_ready_arm(scope_id, selected_arm);
         }
         self.clear_scope_evidence(scope_id);
-        self.port_for_lane(lane_wire as usize).clear_route_hints();
     }
 }

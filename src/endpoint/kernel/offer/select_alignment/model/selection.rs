@@ -135,7 +135,7 @@ impl CurrentOfferCandidateStatus {
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer::select_alignment) struct OfferAlignmentSelection {
-    pub(in crate::endpoint::kernel::offer::select_alignment) hint_filter: Option<usize>,
+    pub(in crate::endpoint::kernel::offer::select_alignment) ready_entry_filter: Option<usize>,
     pub(in crate::endpoint::kernel::offer::select_alignment) outcome: OfferAlignmentOutcome,
 }
 
@@ -150,7 +150,7 @@ impl OfferAlignmentSelection {
         self,
         current_idx: usize,
     ) -> bool {
-        match self.hint_filter {
+        match self.ready_entry_filter {
             Some(filtered_idx) => current_idx == filtered_idx,
             None => true,
         }
