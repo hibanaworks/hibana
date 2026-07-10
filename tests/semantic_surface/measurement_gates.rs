@@ -260,6 +260,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "public-runtime-owner \\\n  18 \\\n  18 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
             )
             && miri_gate.contains(
+                "transport-requeue-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport_requeue_callback_reentry_revalidates_generation"
+            )
+            && miri_gate.contains(
                 "endpoint-waiter-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  rendezvous::core::endpoint_waiter::tests"
             )
             && miri_gate.contains(
@@ -296,7 +299,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=77 ignored=1")
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=78 ignored=1")
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")

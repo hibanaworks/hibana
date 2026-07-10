@@ -11,6 +11,9 @@ mod ingress_types;
 mod materialization;
 mod passive;
 mod profile;
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "offer/requeue_callback_tests.rs"]
+mod requeue_callback_tests;
 mod resolve;
 mod resolve_materialization;
 mod resolve_types;

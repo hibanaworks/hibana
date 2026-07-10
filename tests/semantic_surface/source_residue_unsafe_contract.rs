@@ -27,6 +27,7 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
     let transport_recv = read("src/endpoint/kernel/observe.rs");
     let recv_commit = read("src/endpoint/kernel/recv_commit_plan.rs");
     let offer_ingress = read("src/endpoint/kernel/offer/ingress.rs");
+    let requeue_regression = read("src/endpoint/kernel/offer/requeue_callback_tests.rs");
     let regression =
         read("tests/miri_runtime_owner.rs") + &read("tests/miri_runtime_owner/callback_reentry.rs");
     let miri_gate = read(".github/scripts/check_miri.sh");
@@ -68,6 +69,8 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
             && recv_commit.contains("return Err(RecvError::SessionFault(kind))")
             && offer_ingress.contains("let requeue = payload.requeue_on(port)")
             && offer_ingress.contains("return Err(RecvError::SessionFault(kind))")
+            && requeue_regression
+                .contains("transport_requeue_callback_reentry_revalidates_generation")
             && miri_gate.contains("--test miri_runtime_owner"),
         "external callback reentry must revalidate the published endpoint generation before attach, offer, or send can continue"
     );

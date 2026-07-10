@@ -67,6 +67,15 @@ run_miri_test \
   --test miri_runtime_owner
 
 run_miri_test \
+  transport-requeue-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  transport_requeue_callback_reentry_revalidates_generation
+
+run_miri_test \
   endpoint-waiter-owner \
   2 \
   2 \
@@ -164,4 +173,4 @@ run_miri_test \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=77 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=78 ignored=1"
