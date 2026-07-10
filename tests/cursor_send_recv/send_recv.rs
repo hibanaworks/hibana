@@ -317,7 +317,7 @@ fn live_endpoint_send_recv_survives_endpoint_lease_table_growth() {
 }
 
 #[test]
-fn live_endpoint_send_survives_failed_later_attach_rollback() {
+fn live_endpoint_send_survives_failed_later_attach_abort() {
     let mut exercised = false;
     for slab_bytes in (1024usize..=8192).step_by(128) {
         with_runtime_workspace(|slab| {
@@ -341,7 +341,7 @@ fn live_endpoint_send_survives_failed_later_attach_rollback() {
                 futures::executor::block_on(
                     endpoint0.send::<Msg<10, FramePayload>>(&FramePayload(*b"r0ok")),
                 )
-                .expect("existing endpoint send survives failed later attach rollback");
+                .expect("existing endpoint send survives failed later attach abort");
                 exercised = true;
             });
         });

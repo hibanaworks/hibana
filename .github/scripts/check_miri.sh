@@ -33,8 +33,10 @@ fi
 
 run_miri_test() {
   local label="$1"
-  local expected="$2"
-  shift 2
+  local expected_listed="$2"
+  local expected_passed="$3"
+  local expected_ignored="$4"
+  shift 4
   local output
   output="$(mktemp "${TMPDIR:-/tmp}/hibana-miri.XXXXXX")"
   if ! timeout "${MIRI_TIMEOUT_SECONDS}s" \
@@ -45,10 +47,12 @@ run_miri_test() {
     return 1
   fi
   cat "${output}"
-  if ! grep -Fq "running ${expected} test" "${output}" \
-    || ! grep -Fq "test result: ok. ${expected} passed;" "${output}"; then
+  if ! grep -Fq "running ${expected_listed} test" "${output}" \
+    || ! grep -Fq \
+      "test result: ok. ${expected_passed} passed; 0 failed; ${expected_ignored} ignored;" \
+      "${output}"; then
     rm -f "${output}"
-    echo "miri gate test-count mismatch: ${label} expected=${expected}" >&2
+    echo "miri gate test-count mismatch: ${label} listed=${expected_listed} passed=${expected_passed} ignored=${expected_ignored}" >&2
     return 1
   fi
   rm -f "${output}"
@@ -57,21 +61,27 @@ run_miri_test() {
 run_miri_test \
   public-runtime-owner \
   8 \
+  8 \
+  0 \
   -p hibana \
   --test miri_runtime_owner
 
 run_miri_test \
   endpoint-waiter-owner \
   2 \
+  2 \
+  0 \
   -p hibana \
   --lib \
   rendezvous::core::endpoint_waiter::tests
 
 run_miri_test \
   resident-sidecar-owner \
-  14 \
+  20 \
+  19 \
+  1 \
   -p hibana \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=24"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=29 ignored=1"

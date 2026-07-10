@@ -7,6 +7,14 @@ use crate::{
 };
 use core::task::{Context, Poll};
 
+mod formal_certificate_export;
+
+static_assertions::assert_not_impl_any!(super::PersistentSidecarLease: Copy, Clone);
+static_assertions::assert_not_impl_any!(
+    super::endpoint_lease::EndpointLeaseCapacityPlan: Copy,
+    Clone
+);
+
 #[derive(Clone, Copy)]
 struct FailingTransport;
 
@@ -60,6 +68,25 @@ fn init_test_rendezvous(slab: &mut [u8]) -> &mut Rendezvous<'_, '_, FailingTrans
     };
     // SAFETY: init_in_slab_auto returned a unique resident pointer backed by slab.
     unsafe { &mut *rv_ptr }
+}
+
+fn bind_endpoint_lease_capacity(rv: &Rendezvous<'_, '_, FailingTransport>, required_slots: usize) {
+    let plan = rv
+        .plan_endpoint_lease_capacity(required_slots)
+        .expect("endpoint lease capacity plan");
+    rv.commit_endpoint_lease_capacity(plan);
+}
+
+fn populate_non_endpoint_sidecars(rv: &Rendezvous<'_, '_, FailingTransport>) {
+    rv.ensure_core_lane_tables_for_assoc_entries(1, 1)
+        .expect("association storage");
+    rv.ensure_route_table_capacity(1, 1).expect("route storage");
+    rv.ensure_dynamic_resolver_capacity(1)
+        .expect("resolver storage");
+}
+
+fn resident_owner_capacities(rv: &Rendezvous<'_, '_, FailingTransport>) -> [usize; 4] {
+    rv.live_sidecars().map(|resident| resident.storage.bytes())
 }
 
 #[test]
@@ -317,10 +344,11 @@ fn route_reset_and_shrink_preserve_other_sessions_and_free_slots() {
 fn reserved_endpoint_lease_is_invisible_to_lookup_and_wake() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_endpoint_lease_capacity(1)
-        .expect("endpoint lease table");
+    bind_endpoint_lease_capacity(rv, 1);
     let sid = crate::session::types::SessionId::new(1);
-    let generation = rv.next_endpoint_lease_generation();
+    let generation = rv
+        .next_endpoint_lease_generation()
+        .expect("endpoint generation");
     let lease_slot = crate::rendezvous::core::EndpointLeaseId::from(0u8);
     rv.write_endpoint_lease_slot(
         0,
@@ -355,8 +383,7 @@ fn endpoint_lease_lookup_rejects_out_of_range_before_record_access() {
         )
         .is_none()
     );
-    rv.ensure_endpoint_lease_capacity(1)
-        .expect("endpoint lease table");
+    bind_endpoint_lease_capacity(rv, 1);
     assert!(
         rv.endpoint_lease_storage(
             crate::rendezvous::core::EndpointLeaseId::from(1u8),
@@ -367,13 +394,207 @@ fn endpoint_lease_lookup_rejects_out_of_range_before_record_access() {
 }
 
 #[test]
-fn endpoint_lease_generation_wrap_skips_vacant_generation() {
+fn endpoint_lease_generation_exhaustion_fails_closed() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
-    rv.endpoint_lease_generation.set(u32::MAX);
+    rv.endpoint_lease_generation.set(u32::MAX - 1);
 
-    assert_eq!(rv.next_endpoint_lease_generation(), 1);
-    assert_eq!(rv.next_endpoint_lease_generation(), 2);
+    assert_eq!(rv.next_endpoint_lease_generation(), Some(u32::MAX));
+    assert_eq!(rv.next_endpoint_lease_generation(), None);
+    assert_eq!(rv.endpoint_lease_generation.get(), u32::MAX);
+    assert_eq!(
+        rv.allocate_endpoint_lease(
+            crate::session::types::SessionId::new(1),
+            0,
+            1,
+            1,
+            crate::rendezvous::core::EndpointResidentBudget::ZERO,
+        ),
+        Err(ResourceScope::EndpointLease)
+    );
+    assert_eq!(rv.endpoint_lease_slot_count(), 0);
+    assert_eq!(rv.image_frontier.get(), 0);
+}
+
+#[test]
+fn endpoint_lease_payload_exhaustion_preserves_resident_state() {
+    let mut slab = [0u8; 4096];
+    let slab_bytes = slab.len();
+    let rv = init_test_rendezvous(&mut slab);
+
+    assert_eq!(
+        rv.allocate_endpoint_lease(
+            crate::session::types::SessionId::new(1),
+            0,
+            slab_bytes,
+            1,
+            crate::rendezvous::core::EndpointResidentBudget::ZERO,
+        ),
+        Err(ResourceScope::EndpointLease)
+    );
+    assert_eq!(rv.endpoint_lease_generation.get(), 0);
+    assert_eq!(rv.endpoint_lease_slot_count(), 0);
+    assert!(rv.endpoint_lease_storage.get().is_empty());
+    assert_eq!(rv.image_frontier.get(), 0);
+}
+
+#[test]
+fn endpoint_lease_capacity_plan_is_read_only_until_commit() {
+    let mut slab = [0u8; 4096];
+    let rv = init_test_rendezvous(&mut slab);
+    let endpoint_before = rv.endpoint_lease_storage.get();
+    let assoc_before = rv.assoc_storage.get();
+    let route_before = rv.route_storage.get();
+    let resolver_before = rv.resolver_storage_sidecar();
+    let frontier_before = rv.image_frontier.get();
+
+    let plan = rv
+        .plan_endpoint_lease_capacity(1)
+        .expect("endpoint lease capacity plan");
+
+    assert!(endpoint_before.is_empty());
+    assert_eq!(rv.endpoint_lease_storage.get().ptr(), endpoint_before.ptr());
+    assert_eq!(rv.assoc_storage.get().ptr(), assoc_before.ptr());
+    assert_eq!(rv.route_storage.get().ptr(), route_before.ptr());
+    assert_eq!(rv.resolver_storage_sidecar().ptr(), resolver_before.ptr());
+    assert_eq!(rv.endpoint_lease_slot_count(), 0);
+    assert_eq!(rv.image_frontier.get(), frontier_before);
+
+    rv.commit_endpoint_lease_capacity(plan);
+    assert_eq!(rv.endpoint_lease_slot_count(), 1);
+    assert!(!rv.endpoint_lease_storage.get().is_empty());
+}
+
+#[test]
+fn first_endpoint_table_commit_preserves_existing_sidecar_owners() {
+    let mut slab = [0u8; 4096];
+    let rv = init_test_rendezvous(&mut slab);
+    let sid = crate::session::types::SessionId::new(1);
+    let lane = crate::session::types::Lane::new(0);
+    let scope = ScopeId::new(ScopeKind::Route, 0);
+    rv.ensure_core_lane_tables_for_assoc_entries(1, 1)
+        .expect("association storage");
+    rv.activate_lane_attachment(sid, lane)
+        .expect("live association");
+    rv.ensure_route_table_capacity(2, 1).expect("route storage");
+    assert!(
+        rv.routes
+            .poll_with_role_count(sid, lane, 2, 0, scope)
+            .is_pending()
+    );
+
+    rv.allocate_endpoint_lease(
+        crate::session::types::SessionId::new(2),
+        0,
+        128,
+        core::mem::align_of::<usize>(),
+        crate::rendezvous::core::EndpointResidentBudget::ZERO,
+    )
+    .expect("first endpoint lease");
+
+    assert!(rv.has_lane_attachment(sid, lane));
+    assert_eq!(rv.routes.route_slots(), 2);
+    assert!(
+        rv.routes
+            .poll_with_role_count(sid, lane, 2, 0, scope)
+            .is_pending()
+    );
+}
+
+#[test]
+fn endpoint_lease_growth_failure_preserves_existing_owner_state() {
+    let mut slab = [0u8; 4096];
+    let slab_bytes = slab.len();
+    let rv = init_test_rendezvous(&mut slab);
+    let (lease_slot, generation, _, _) = rv
+        .allocate_endpoint_lease(
+            crate::session::types::SessionId::new(1),
+            0,
+            64,
+            core::mem::align_of::<usize>(),
+            crate::rendezvous::core::EndpointResidentBudget::ZERO,
+        )
+        .expect("first endpoint lease");
+    populate_non_endpoint_sidecars(rv);
+    let storage_before = rv.endpoint_lease_storage.get();
+    let owners_before = resident_owner_capacities(rv);
+    let slot_before = rv
+        .endpoint_lease_slot_by_index(usize::from(lease_slot))
+        .expect("first endpoint slot");
+    let frontier_before = rv.image_frontier.get();
+
+    assert_eq!(
+        rv.allocate_endpoint_lease(
+            crate::session::types::SessionId::new(2),
+            0,
+            slab_bytes,
+            1,
+            crate::rendezvous::core::EndpointResidentBudget::ZERO,
+        ),
+        Err(ResourceScope::EndpointLease)
+    );
+    assert_eq!(rv.endpoint_lease_generation.get(), generation);
+    assert_eq!(rv.endpoint_lease_slot_count(), 1);
+    assert_eq!(rv.endpoint_lease_storage.get().ptr(), storage_before.ptr());
+    assert_eq!(
+        rv.endpoint_lease_storage.get().bytes(),
+        storage_before.bytes()
+    );
+    assert_eq!(rv.image_frontier.get(), frontier_before);
+    assert_eq!(resident_owner_capacities(rv), owners_before);
+    assert_eq!(
+        rv.endpoint_lease_slot_by_index(usize::from(lease_slot)),
+        Some(slot_before)
+    );
+}
+
+#[test]
+fn aborted_endpoint_reservation_restores_generation_and_owner_capacities() {
+    let mut slab = [0u8; 4096];
+    let rv = init_test_rendezvous(&mut slab);
+    let first_sid = crate::session::types::SessionId::new(1);
+    let (first_slot, first_generation, _, _) = rv
+        .allocate_endpoint_lease(
+            first_sid,
+            0,
+            64,
+            core::mem::align_of::<usize>(),
+            crate::rendezvous::core::EndpointResidentBudget {
+                route_frame_slots: 1,
+                route_lane_slots: 1,
+                frontier_workspace_bytes: 0,
+            },
+        )
+        .expect("first endpoint lease");
+    rv.publish_endpoint_lease(first_slot, first_generation);
+    populate_non_endpoint_sidecars(rv);
+    rv.activate_lane_attachment(first_sid, crate::session::types::Lane::new(0))
+        .expect("existing lane authority");
+    let first_before = rv
+        .endpoint_lease_slot_by_index(usize::from(first_slot))
+        .expect("first endpoint slot");
+    let owners_before = resident_owner_capacities(rv);
+    let frontier_before = rv.image_frontier.get();
+
+    let (aborted_slot, aborted_generation, _, _) = rv
+        .allocate_endpoint_lease(
+            crate::session::types::SessionId::new(2),
+            0,
+            64,
+            core::mem::align_of::<usize>(),
+            crate::rendezvous::core::EndpointResidentBudget::ZERO,
+        )
+        .expect("reserved endpoint lease");
+    rv.abort_endpoint_lease_reservation(aborted_slot, aborted_generation);
+
+    assert_eq!(rv.endpoint_lease_generation.get(), first_generation);
+    assert_eq!(rv.endpoint_lease_slot_count(), 1);
+    assert!(rv.image_frontier.get() <= frontier_before);
+    assert_eq!(resident_owner_capacities(rv), owners_before);
+    assert_eq!(
+        rv.endpoint_lease_slot_by_index(usize::from(first_slot)),
+        Some(first_before)
+    );
 }
 
 #[test]
@@ -406,8 +627,7 @@ fn published_endpoint_lease_cannot_be_published_twice() {
 fn route_budget_sums_distinct_sessions_and_maxes_roles() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_endpoint_lease_capacity(3)
-        .expect("endpoint lease table");
+    bind_endpoint_lease_capacity(rv, 3);
     let budget = |route_frame_slots| crate::rendezvous::core::EndpointResidentBudget {
         route_frame_slots,
         route_lane_slots: 1,
@@ -465,9 +685,10 @@ fn endpoint_lease_shrink_preserves_owner_generation_across_rebind() {
     );
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_endpoint_lease_capacity(3)
-        .expect("endpoint lease table");
-    let first_generation = rv.next_endpoint_lease_generation();
+    bind_endpoint_lease_capacity(rv, 3);
+    let first_generation = rv
+        .next_endpoint_lease_generation()
+        .expect("first endpoint generation");
     let (_, slab_len) = rv.slab_ptr_and_len();
     rv.write_endpoint_lease_slot(
         0,
@@ -493,9 +714,12 @@ fn endpoint_lease_shrink_preserves_owner_generation_across_rebind() {
     );
     rv.shrink_endpoint_lease_capacity();
     assert_eq!(rv.endpoint_lease_slot_count(), 0);
-    rv.ensure_endpoint_lease_capacity(1)
-        .expect("rebound endpoint lease table");
-    assert_ne!(rv.next_endpoint_lease_generation(), first_generation);
+    bind_endpoint_lease_capacity(rv, 1);
+    assert_ne!(
+        rv.next_endpoint_lease_generation()
+            .expect("rebound endpoint generation"),
+        first_generation
+    );
 }
 
 #[test]

@@ -1,4 +1,9 @@
+import Hibana.Allocation
 import Hibana.Commit
+import Hibana.Generation
+import Hibana.Layout
+import Hibana.Progress
+import Hibana.Refinement
 
 namespace Hibana
 

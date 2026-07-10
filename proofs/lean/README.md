@@ -21,21 +21,50 @@ The kernel-checked boundary covers:
 - exact commit and resolver successor deltas from one prepared base state;
 - atomic roll and route-arm reentry resets, including inside-clear and
   outside-preservation properties.
+- production descriptor topology refinement for every sealed choreography
+  constructor: local actions, route authority, route-arm membership, roll
+  membership, uninvolved-route erasure, and reentry mode;
+- slab certificates proving absolute-address alignment, capacity bounds,
+  resident/workspace/endpoint separation, and pairwise owner-region
+  disjointness for production-generated layouts;
+- finite-state closure certificates proving that every covered model-reachable
+  state is complete, has a commit/resolve successor, or has an explicit
+  resolver rejection transition;
+- fail-closed endpoint lease generation exhaustion, strict successful
+  generation increase, first-fault authority, poisoned-attach rejection, and
+  absence of poison-to-live revival before generation retirement.
+- two-phase endpoint lease allocation, including general failure-state identity,
+  exact successful commit, nonshrinking table capacity, and production-exported
+  initial/growth planning failures and post-plan initialization aborts, with
+  production snapshots covering every resident owner capacity and allocator
+  authority field. Physical root relocation is normalized out of failure-state
+  equality and checked separately by slab certificates and Miri.
 
-The gate exports real production-cursor frontiers from Rust and checks them as
-concrete Lean proofs. The generated corpus contains 13 artifacts and 55 frames.
-It exercises all roles of the base choreography, both intrinsic route arms,
-send/receive projections, nested and repeated roll restart, resolved left/right
-arms, nested resolver sites, alternating resolved roll reentry, and resolver
-rejection.
+The gate exports real production-cursor frontiers and descriptor topology from
+Rust and checks them as concrete Lean proofs. The generated corpus contains 13
+traces with 55 frames, seven projection certificates, and four exhaustive
+progress closures. It exercises all roles of the base choreography, both
+intrinsic route arms, send/receive projections, nested and repeated roll
+restart, resolved left/right arms, nested resolver sites, alternating resolved
+roll reentry, and resolver rejection. A separate production runtime export
+checks a five-region live slab, poison retirement, lease-generation exhaustion,
+and three allocation-failure atomicity certificates.
 
-This is not a source-to-source proof of arbitrary Rust. The normalized model
-separates the production cursor's candidate frontier from commit authority, so
-a dynamic route can expose candidate labels while remaining uncommittable until
-its resolver transition succeeds. Aeneas, Verus, Mathlib, custom axioms,
-`Classical.choice`, `sorry`, and `admit` are not part of this boundary. The
-axiom audit permits only the `propext` and `Quot.sound` dependencies introduced
-by the checked Core/Std proofs.
+This is not a source-to-source proof of arbitrary Rust. The topology certificate
+intentionally compares virtual-lane-independent facts because production packs
+mutually exclusive route arms into fewer physical lanes. Production-frontier
+traces check concrete packed behavior; progress closures exhaust the normalized
+Lean model. The slab theorem does not claim pointer provenance or typed
+initialization; Rust unsafe contracts, Miri, and layout tests retain that
+responsibility. Logical progress does not claim transport delivery, scheduler
+fairness, distributed liveness, or termination of a rolled choreography.
+
+The normalized model separates the production cursor's candidate frontier from
+commit authority, so a dynamic route can expose candidate labels while remaining
+uncommittable until its resolver transition succeeds. Aeneas, Verus, Mathlib,
+custom axioms, `Classical.choice`, `sorry`, and `admit` are not part of this
+boundary. The axiom audit permits only the `propext` and `Quot.sound`
+dependencies introduced by the checked Core/Std proofs.
 
 Run the same fail-closed gate used by CI:
 

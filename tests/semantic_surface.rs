@@ -4,6 +4,8 @@ mod common;
 mod descriptor_measurement;
 #[path = "semantic_surface/endpoint_active_leases.rs"]
 mod endpoint_active_leases;
+#[path = "semantic_surface/kani_proof_gate.rs"]
+mod kani_proof_gate;
 #[path = "semantic_surface/lean_proof_gate.rs"]
 mod lean_proof_gate;
 #[path = "semantic_surface/lease_owner.rs"]

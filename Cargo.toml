@@ -36,6 +36,7 @@ include       = [
     "!/src/**/tests.rs",
     "!/src/**/tests/**",
     "!/src/**/*_tests.rs",
+    "!/src/**/kani.rs",
     "!/src/test_support/**",
     "!/src/endpoint/kernel/test_support/**",
 ]
@@ -44,7 +45,7 @@ include       = [
 default = []
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(hibana_repo_tests)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(hibana_repo_tests)', 'cfg(kani)'] }
 
 [package.metadata.docs.rs]
 all-features = false

@@ -150,7 +150,7 @@ impl EndpointResidentBudget {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointLeaseSlot {
     pub(crate) generation: u32,
     pub(crate) sid: SessionId,

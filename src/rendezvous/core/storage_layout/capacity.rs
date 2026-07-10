@@ -2,8 +2,12 @@ use super::{AssocTable, Rendezvous, RouteTable, Sidecar, Transport};
 use crate::session::cluster::error::ResourceScope;
 mod arena;
 mod endpoint_lease;
+#[cfg(kani)]
+mod kani;
+mod resident_lease;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
+pub(in crate::rendezvous::core) use resident_lease::PersistentSidecarLease;
 
 // # Unsafe Owner Contract
 //
@@ -74,52 +78,7 @@ where
     }
 
     #[inline]
-    pub(in crate::rendezvous::core) fn allocate_persistent_sidecar_bytes(
-        &self,
-        bytes: usize,
-        align: usize,
-    ) -> Option<Sidecar<u8>> {
-        if bytes == 0 {
-            crate::invariant();
-        }
-        let (slab_ptr, _) = self.slab_ptr_and_len();
-        let base = slab_ptr as usize;
-        let mut start = Self::align_up(base, align).checked_sub(base)?;
-        loop {
-            let end = start.checked_add(bytes)?;
-            let mut conflict_end = None;
-            for resident in self.live_sidecars() {
-                let Some((live_start, live_end)) = self.sidecar_range(resident.storage) else {
-                    continue;
-                };
-                if start < live_end && end > live_start {
-                    conflict_end =
-                        Some(conflict_end.map_or(live_end, |seen: usize| seen.max(live_end)));
-                }
-            }
-            if let Some(next) = conflict_end {
-                start = Self::align_up(base.checked_add(next)?, align).checked_sub(base)?;
-                continue;
-            }
-            let reserved_end = end.checked_add(self.frontier_workspace_bytes.get() as usize)?;
-            if reserved_end > self.endpoint_storage_floor() || end > u32::MAX as usize {
-                return None;
-            }
-            self.set_image_frontier(
-                self.image_frontier
-                    .get()
-                    .max(crate::invariant_ok(u32::try_from(end))),
-            );
-            let ptr = /* SAFETY: `start..end` is disjoint from every live
-            sidecar and `reserved_end` stays below endpoint storage. */ unsafe {
-                slab_ptr.add(start)
-            };
-            return Some(Sidecar::from_raw_parts(ptr, bytes));
-        }
-    }
-
-    #[inline]
-    pub(in crate::rendezvous::core) fn retire_persistent_sidecar(&self, sidecar: Sidecar<u8>) {
+    fn retire_persistent_sidecar(&self, sidecar: Sidecar<u8>) {
         if sidecar.is_empty() {
             return;
         }
@@ -428,7 +387,7 @@ where
             return;
         }
         let route_storage = self.route_storage.get();
-        /* SAFETY: release/rollback only lowers descriptor-derived capacity
+        /* SAFETY: release/abort only lowers descriptor-derived capacity
         after dead session frames have been reclaimed. The route owner compacts
         any remaining live frames before publishing the smaller in-place layout. */
         unsafe {

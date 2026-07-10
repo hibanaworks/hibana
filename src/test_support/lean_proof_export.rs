@@ -14,6 +14,10 @@ use std::{
     vec::Vec,
 };
 
+#[path = "lean_proof_export/projection_certificate.rs"]
+mod projection_certificate;
+use projection_certificate::{progress_certificate_source, projection_certificate_source};
+
 trait LeanChoreo {
     fn lean_source() -> String;
 }
@@ -541,7 +545,7 @@ fn export_production_trace_for_lean() {
         + nested_resolved_role0.len()
         + rolled_resolved_role0.len()
         + rejected_role0.len();
-    let proof_sources = [
+    let trace_sources = [
         trace_proof_source("generatedChoreo", "generatedTraceRole0", 0, &role0),
         trace_proof_source("generatedChoreo", "generatedTraceRole1", 1, &role1),
         trace_proof_source("generatedChoreo", "generatedTraceRole2", 2, &role2),
@@ -601,8 +605,47 @@ fn export_production_trace_for_lean() {
             &rejected_role0,
         ),
     ];
-    let artifact_count = proof_sources.len();
-    let proofs = proof_sources.join("\n");
+    let trace_count = trace_sources.len();
+    let traces = trace_sources.join("\n");
+    let projection_sources = [
+        projection_certificate_source::<0>(&program, "generatedChoreo", "generatedProjectionRole0"),
+        projection_certificate_source::<1>(&program, "generatedChoreo", "generatedProjectionRole1"),
+        projection_certificate_source::<2>(&program, "generatedChoreo", "generatedProjectionRole2"),
+        projection_certificate_source::<3>(&program, "generatedChoreo", "generatedProjectionRole3"),
+        projection_certificate_source::<0>(
+            &rolled,
+            "generatedRolledChoreo",
+            "generatedRolledProjectionRole0",
+        ),
+        projection_certificate_source::<0>(
+            &nested_resolved,
+            "generatedNestedResolvedChoreo",
+            "generatedNestedResolvedProjectionRole0",
+        ),
+        projection_certificate_source::<0>(
+            &rolled_resolved,
+            "generatedRolledResolvedChoreo",
+            "generatedRolledResolvedProjectionRole0",
+        ),
+    ];
+    let projection_count = projection_sources.len();
+    let projections = projection_sources.join("\n");
+    let progress_sources = [
+        progress_certificate_source("generatedChoreo", 0, "generatedProgressRole0"),
+        progress_certificate_source(
+            "generatedResolvedChoreo",
+            0,
+            "generatedResolvedProgressRole0",
+        ),
+        progress_certificate_source("generatedRolledChoreo", 0, "generatedRolledProgressRole0"),
+        progress_certificate_source(
+            "generatedNestedResolvedChoreo",
+            0,
+            "generatedNestedResolvedProgressRole0",
+        ),
+    ];
+    let progress_count = progress_sources.len();
+    let progress = progress_sources.join("\n");
     let generated = format!(
         "import Hibana.MainTheorems\n\n\
          def generatedChoreo : Hibana.Choreo :=\n  {}\n\n\
@@ -613,7 +656,9 @@ fn export_production_trace_for_lean() {
          def generatedRolledResolvedChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedRejectingChoreo : Hibana.Choreo :=\n  {}\n\n\
          {}\n\
-         #eval IO.println \"hibana Lean trace proof passed artifacts={} frames={}\"\n",
+         {}\n\
+         {}\n\
+         #eval IO.println \"hibana Lean generated proof passed traces={} frames={} projections={} progress={}\"\n",
         Steps::lean_source(),
         RolledSteps::lean_source(),
         NestedRolledSteps::lean_source(),
@@ -621,9 +666,13 @@ fn export_production_trace_for_lean() {
         NestedResolvedSteps::lean_source(),
         RolledResolvedSteps::lean_source(),
         RejectSteps::lean_source(),
-        proofs,
-        artifact_count,
+        traces,
+        projections,
+        progress,
+        trace_count,
         total_frames,
+        projection_count,
+        progress_count,
     );
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     fs::create_dir_all(&output_dir).expect("create generated Lean proof artifact directory");

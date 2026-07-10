@@ -159,7 +159,7 @@ where
         if let Err(err) = init_result {
             /* SAFETY: the caller still owns the endpoint lease while attach is
             unpublished. Disable public Drop's release
-            path so rollback remains single-owner and explicit. */
+            path so reservation abort remains single-owner and explicit. */
             unsafe {
                 (*dst).public_generation = 0;
                 (*dst).public_slot_ownership =
@@ -290,7 +290,7 @@ where
                     public_slot_ownership: crate::endpoint::kernel::PublicSlotOwnership::Owned,
                 }) {
                     crate::invariant_some(self.get_local(&rv_id))
-                        .release_endpoint_lease(slot, generation);
+                        .abort_endpoint_lease_reservation(slot, generation);
                     return Err(err);
                 }
                 self.publish_public_endpoint_slot(rv_id, slot, generation);

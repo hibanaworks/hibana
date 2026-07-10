@@ -54,3 +54,38 @@ fn intrusive_rendezvous_registry_replaces_fixed_array_map() {
         "registry publication must not retain a second length authority or mutate after publication"
     );
 }
+
+#[test]
+fn unpublished_endpoint_failures_abort_without_consuming_generation() {
+    let endpoint_leases = read("src/rendezvous/core/endpoint_leases.rs");
+    let session_ops = read("src/session/cluster/core/session_cluster_ops.rs");
+    let endpoint_attach = read("src/session/cluster/core/endpoint_attach.rs");
+    let allocation = session_ops
+        .split("pub(in crate::session::cluster::core) fn allocate_public_endpoint_storage_for_rv")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(crate) fn public_endpoint_header_ptr")
+                .next()
+        })
+        .expect("public endpoint allocation owner must stay visible");
+    let attach = endpoint_attach
+        .split("fn attach_public_endpoint_inner")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) fn enter").next())
+        .expect("endpoint attach owner must stay visible");
+
+    assert!(endpoint_leases.contains("fn abort_endpoint_lease_reservation"));
+    assert!(endpoint_leases.contains("slot.state != EndpointLeaseState::Reserved"));
+    assert!(endpoint_leases.contains("self.endpoint_lease_generation.get() != generation"));
+    assert!(endpoint_leases.contains("generation.checked_sub(1)"));
+    assert_eq!(
+        allocation
+            .matches("rv.abort_endpoint_lease_reservation(slot, generation);")
+            .count(),
+        2,
+        "both resident-capacity failures must abort the reservation"
+    );
+    assert!(!allocation.contains("rv.release_endpoint_lease(slot, generation);"));
+    assert!(attach.contains(".abort_endpoint_lease_reservation(slot, generation);"));
+    assert!(!attach.contains(".release_endpoint_lease(slot, generation);"));
+}

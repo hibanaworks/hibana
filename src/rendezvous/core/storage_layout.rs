@@ -99,15 +99,6 @@ where
     }
 
     #[inline(always)]
-    pub(crate) const fn align_down(value: usize, align: usize) -> usize {
-        if !align.is_power_of_two() {
-            crate::invariant();
-        }
-        let mask = align - 1;
-        value & !mask
-    }
-
-    #[inline(always)]
     pub(crate) const fn frontier_workspace_guard_bytes(
         layout: crate::endpoint::kernel::FrontierScratchLayout,
     ) -> usize {

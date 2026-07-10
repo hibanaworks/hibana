@@ -1,0 +1,323 @@
+use super::*;
+use crate::{
+    rendezvous::{SessionFaultKind, error::RendezvousError},
+    session::types::{Lane, SessionId},
+};
+use std::{format, fs, path::PathBuf, string::String, vec::Vec};
+
+const PROOF_ENDPOINT_ALIGN: usize = 16;
+
+fn lean_region(kind: &str, offset: usize, bytes: usize, align: usize) -> String {
+    format!("    {{ kind := .{kind}, offset := {offset}, bytes := {bytes}, align := {align} }}")
+}
+
+fn allocator_snapshot_source(name: &str, rv: &Rendezvous<'_, '_, FailingTransport>) -> String {
+    let table = rv.endpoint_lease_storage.get();
+    let mut slots = Vec::new();
+    let mut index = 0usize;
+    while index < rv.endpoint_lease_slot_count() {
+        let slot = crate::invariant_some(rv.endpoint_lease_slot_by_index(index));
+        let state = match slot.state {
+            crate::rendezvous::core::EndpointLeaseState::Vacant => 0,
+            crate::rendezvous::core::EndpointLeaseState::Reserved => 1,
+            crate::rendezvous::core::EndpointLeaseState::Published => 2,
+        };
+        slots.push(format!(
+            "    {{ generation := {}, session := {}, role := {}, offset := {}, bytes := {}, state := {state} }}",
+            slot.generation,
+            slot.sid.raw(),
+            slot.role,
+            slot.offset,
+            slot.len,
+        ));
+        index += 1;
+    }
+    format!(
+        "def {name} : Hibana.LeaseAllocatorSnapshot := {{\n  generation := {},\n  \
+         tableBytes := {},\n  assocBytes := {},\n  routeBytes := {},\n  \
+         resolverBytes := {},\n  \
+         imageFrontier := {},\n  \
+         workspaceBytes := {},\n  endpointFloor := {},\n  slots := [\n{}\n  ]\n}}\n",
+        rv.endpoint_lease_generation.get(),
+        table.bytes(),
+        rv.assoc_storage.get().bytes(),
+        rv.route_storage.get().bytes(),
+        rv.resolver_storage_sidecar().bytes(),
+        rv.image_frontier.get(),
+        rv.frontier_workspace_bytes.get(),
+        rv.endpoint_storage_floor(),
+        slots.join(",\n"),
+    )
+}
+
+fn allocation_failure_certificate_source() -> String {
+    let initial = {
+        let mut slab = [0u8; 4096];
+        let slab_bytes = slab.len();
+        let rv = init_test_rendezvous(&mut slab);
+        let before = allocator_snapshot_source("generatedInitialFailureBefore", rv);
+        assert_eq!(
+            rv.allocate_endpoint_lease(
+                SessionId::new(1),
+                0,
+                slab_bytes,
+                1,
+                crate::rendezvous::core::EndpointResidentBudget::ZERO,
+            ),
+            Err(ResourceScope::EndpointLease)
+        );
+        let after = allocator_snapshot_source("generatedInitialFailureAfter", rv);
+        format!(
+            "{before}\n{after}\ndef generatedInitialAllocationFailure : \
+             Hibana.LeaseAllocationFailureCertificate := {{\n  before := \
+             generatedInitialFailureBefore,\n  after := generatedInitialFailureAfter\n}}\n"
+        )
+    };
+    let growth = {
+        let mut slab = [0u8; 4096];
+        let slab_bytes = slab.len();
+        let rv = init_test_rendezvous(&mut slab);
+        rv.allocate_endpoint_lease(
+            SessionId::new(1),
+            0,
+            64,
+            core::mem::align_of::<usize>(),
+            crate::rendezvous::core::EndpointResidentBudget::ZERO,
+        )
+        .expect("existing endpoint lease");
+        populate_non_endpoint_sidecars(rv);
+        let before = allocator_snapshot_source("generatedGrowthFailureBefore", rv);
+        assert_eq!(
+            rv.allocate_endpoint_lease(
+                SessionId::new(2),
+                0,
+                slab_bytes,
+                1,
+                crate::rendezvous::core::EndpointResidentBudget::ZERO,
+            ),
+            Err(ResourceScope::EndpointLease)
+        );
+        let after = allocator_snapshot_source("generatedGrowthFailureAfter", rv);
+        format!(
+            "{before}\n{after}\ndef generatedGrowthAllocationFailure : \
+             Hibana.LeaseAllocationFailureCertificate := {{\n  before := \
+             generatedGrowthFailureBefore,\n  after := generatedGrowthFailureAfter\n}}\n"
+        )
+    };
+    let abort = {
+        let mut slab = [0u8; 4096];
+        let rv = init_test_rendezvous(&mut slab);
+        let (first_slot, first_generation, _, _) = rv
+            .allocate_endpoint_lease(
+                SessionId::new(1),
+                0,
+                64,
+                core::mem::align_of::<usize>(),
+                crate::rendezvous::core::EndpointResidentBudget::ZERO,
+            )
+            .expect("existing endpoint lease");
+        rv.publish_endpoint_lease(first_slot, first_generation);
+        let before = allocator_snapshot_source("generatedAbortFailureBefore", rv);
+        let (aborted_slot, aborted_generation, _, _) = rv
+            .allocate_endpoint_lease(
+                SessionId::new(2),
+                0,
+                64,
+                core::mem::align_of::<usize>(),
+                crate::rendezvous::core::EndpointResidentBudget::ZERO,
+            )
+            .expect("aborted endpoint lease");
+        rv.abort_endpoint_lease_reservation(aborted_slot, aborted_generation);
+        let after = allocator_snapshot_source("generatedAbortFailureAfter", rv);
+        format!(
+            "{before}\n{after}\ndef generatedAbortedAllocation : \
+             Hibana.LeaseAllocationFailureCertificate := {{\n  before := \
+             generatedAbortFailureBefore,\n  after := generatedAbortFailureAfter\n}}\n"
+        )
+    };
+    format!(
+        "{initial}\n{growth}\n{abort}\n\
+         example : generatedInitialAllocationFailure.check = true := by decide\n\n\
+         example : generatedInitialAllocationFailure.PreservesState :=\n  \
+         Hibana.lease_allocation_failure_certificate_sound (by decide)\n\n\
+         example : generatedGrowthAllocationFailure.check = true := by decide\n\n\
+         example : generatedGrowthAllocationFailure.PreservesState :=\n  \
+         Hibana.lease_allocation_failure_certificate_sound (by decide)\n\n\
+         example : generatedAbortedAllocation.check = true := by decide\n\n\
+         example : generatedAbortedAllocation.PreservesState :=\n  \
+         Hibana.lease_allocation_failure_certificate_sound (by decide)\n"
+    )
+}
+
+fn layout_certificate_source(rv: &Rendezvous<'_, '_, FailingTransport>) -> (String, usize) {
+    let (slab_ptr, slab_len) = rv.slab_ptr_and_len();
+    let mut regions = Vec::new();
+    for resident in rv.live_sidecars() {
+        if let Some((start, end)) = rv.sidecar_range(resident.storage) {
+            regions.push(lean_region("resident", start, end - start, resident.align));
+        }
+    }
+    let mut endpoint_regions = 0usize;
+    let mut index = 0usize;
+    while index < rv.endpoint_lease_slot_count() {
+        let slot = crate::invariant_some(rv.endpoint_lease_slot_by_index(index));
+        if slot.is_occupied() {
+            endpoint_regions += 1;
+            regions.push(lean_region(
+                "endpoint",
+                slot.offset as usize,
+                slot.len as usize,
+                PROOF_ENDPOINT_ALIGN,
+            ));
+        }
+        index += 1;
+    }
+    assert_eq!(
+        endpoint_regions, 1,
+        "runtime layout proof fixture must own exactly one endpoint region"
+    );
+    let region_count = regions.len();
+    let source = format!(
+        "def generatedSlabLayout : Hibana.SlabLayoutCertificate := {{\n  \
+         base := {},\n  capacity := {slab_len},\n  imageFrontier := {},\n  \
+         workspaceBytes := {},\n  endpointFloor := {},\n  regions := [\n{}\n  ]\n}}\n\n\
+         example : generatedSlabLayout.check = true := by\n  decide\n\n\
+         example : generatedSlabLayout.WellFormed :=\n  \
+         Hibana.slab_layout_certificate_sound (by decide)\n",
+        slab_ptr.addr(),
+        rv.image_frontier.get(),
+        rv.frontier_workspace_bytes.get(),
+        rv.endpoint_storage_floor(),
+        regions.join(",\n"),
+    );
+    (source, region_count)
+}
+
+fn assert_production_poison_generation(rv: &Rendezvous<'_, '_, FailingTransport>) {
+    let sid = SessionId::new(77);
+    let lane0 = Lane::new(0);
+    let lane1 = Lane::new(1);
+    let lane2 = Lane::new(2);
+    rv.ensure_core_lane_tables_for_assoc_entries(3, 3)
+        .expect("poison proof association storage");
+    rv.activate_lane_attachment(sid, lane0)
+        .expect("poison proof lane 0");
+    rv.activate_lane_attachment(sid, lane1)
+        .expect("poison proof lane 1");
+
+    assert_eq!(
+        rv.poison_session(sid, 0, SessionFaultKind::TransportClosed),
+        SessionFaultKind::TransportClosed
+    );
+    assert_eq!(
+        rv.poison_session(sid, 1, SessionFaultKind::DecodeFailed),
+        SessionFaultKind::TransportClosed,
+        "the first fault must remain generation authority"
+    );
+    assert_eq!(
+        rv.activate_lane_attachment(sid, lane2),
+        Err(RendezvousError::SessionPoisoned { sid }),
+        "a poisoned generation must reject new lane attachment"
+    );
+    assert_eq!(
+        rv.release_lane(sid, lane1),
+        crate::rendezvous::core::LaneRelease::Released
+    );
+    assert_eq!(
+        rv.session_fault(sid),
+        Some(SessionFaultKind::TransportClosed),
+        "poison must survive while any lane in the generation remains"
+    );
+    assert_eq!(
+        rv.release_lane(sid, lane0),
+        crate::rendezvous::core::LaneRelease::Released
+    );
+    assert_eq!(rv.session_fault(sid), None);
+}
+
+const GENERATION_SOURCE: &str = r#"
+def generatedPoisonTail : List Hibana.SessionGenerationAction := [
+  .poison .decodeFailed,
+  .releaseRemaining,
+  .releaseLast
+]
+
+example :
+    Hibana.checkSessionGenerationTrace (.poisoned .transportClosed)
+      generatedPoisonTail = true := by
+  decide
+
+example :
+    Hibana.runSessionGenerationTrace (.poisoned .transportClosed)
+      generatedPoisonTail = some .retired := by
+  decide
+
+example :
+    Hibana.SessionGenerationTrace (.poisoned .transportClosed)
+      generatedPoisonTail .retired :=
+  Hibana.session_generation_run_sound (by decide)
+
+example :
+    Hibana.applySessionGenerationAction (.poisoned .transportClosed) .attach = none :=
+  Hibana.poisoned_generation_attach_rejected .transportClosed
+
+example : Hibana.nextLeaseGeneration? 4294967294 = some 4294967295 := by
+  decide
+
+example : Hibana.nextLeaseGeneration? 4294967295 = none :=
+  Hibana.max_lease_generation_is_exhausted
+"#;
+
+#[test]
+#[ignore = "host-only Lean runtime certificate export"]
+fn export_runtime_certificates_for_lean() {
+    let mut slab = [0u8; 8192];
+    let rv = init_test_rendezvous(&mut slab);
+    let resident_budget = crate::rendezvous::core::EndpointResidentBudget {
+        route_frame_slots: 4,
+        route_lane_slots: 3,
+        frontier_workspace_bytes: 32,
+    };
+    let (_lease, _generation, endpoint_offset, endpoint_bytes) = rv
+        .allocate_endpoint_lease(
+            SessionId::new(1),
+            0,
+            128,
+            PROOF_ENDPOINT_ALIGN,
+            resident_budget,
+        )
+        .expect("proof endpoint lease");
+    let (runtime_slab, _) = rv.slab_ptr_and_len();
+    assert_eq!(
+        (runtime_slab.addr() + endpoint_offset) % PROOF_ENDPOINT_ALIGN,
+        0
+    );
+    assert_eq!(endpoint_bytes, 128);
+    rv.ensure_endpoint_resident_capacity()
+        .expect("proof route and workspace storage");
+    rv.ensure_core_lane_tables_for_assoc_entries(3, 3)
+        .expect("proof association storage");
+    rv.ensure_dynamic_resolver_capacity(2)
+        .expect("proof resolver storage");
+
+    let (layout, region_count) = layout_certificate_source(rv);
+    assert_production_poison_generation(rv);
+    let allocation_failures = allocation_failure_certificate_source();
+
+    rv.endpoint_lease_generation.set(u32::MAX - 1);
+    assert_eq!(rv.next_endpoint_lease_generation(), Some(u32::MAX));
+    assert_eq!(
+        rv.next_endpoint_lease_generation(),
+        None,
+        "production lease generation must fail closed at exhaustion"
+    );
+
+    let generated = format!(
+        "import Hibana.MainTheorems\n\n{layout}\n{GENERATION_SOURCE}\n{allocation_failures}\n\
+         #eval IO.println \"hibana Lean runtime proof passed regions={region_count} poison=1 generation=1 atomic-failures=3\"\n"
+    );
+    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
+    fs::create_dir_all(&output_dir).expect("create generated Lean proof artifact directory");
+    fs::write(output_dir.join("RuntimeGenerated.lean"), generated)
+        .expect("write generated Lean runtime certificate");
+}

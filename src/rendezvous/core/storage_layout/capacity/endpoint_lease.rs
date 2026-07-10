@@ -1,8 +1,23 @@
 use super::super::{Rendezvous, Sidecar, Transport};
+use super::{PersistentSidecarLease, ResidentSidecarKind};
 use crate::{
     rendezvous::core::{EndpointLeaseId, EndpointLeaseRecord, EndpointLeaseSlot},
     session::cluster::error::ResourceScope,
 };
+
+pub(in crate::rendezvous::core) enum EndpointLeaseCapacityPlan {
+    Retained,
+    Replace {
+        required_slots: usize,
+        lease: PersistentSidecarLease,
+    },
+}
+
+pub(in crate::rendezvous::core) const fn next_endpoint_lease_generation(
+    current: u32,
+) -> Option<u32> {
+    current.checked_add(1)
+}
 
 impl EndpointLeaseRecord {
     fn take_published_waiter(&self) -> Option<core::task::Waker> {
@@ -163,13 +178,10 @@ where
     }
 
     #[inline]
-    pub(crate) fn next_endpoint_lease_generation(&self) -> u32 {
-        let mut next = self.endpoint_lease_generation.get().wrapping_add(1);
-        if next == 0 {
-            next = 1;
-        }
+    pub(crate) fn next_endpoint_lease_generation(&self) -> Option<u32> {
+        let next = next_endpoint_lease_generation(self.endpoint_lease_generation.get())?;
         self.endpoint_lease_generation.set(next);
-        next
+        Some(next)
     }
 
     #[inline]
@@ -177,23 +189,62 @@ where
         capacity.checked_mul(core::mem::size_of::<EndpointLeaseRecord>())
     }
 
-    pub(crate) fn ensure_endpoint_lease_capacity(
+    pub(in crate::rendezvous::core) fn plan_endpoint_lease_capacity(
         &self,
         required_slots: usize,
-    ) -> Result<(), ResourceScope> {
+    ) -> Result<EndpointLeaseCapacityPlan, ResourceScope> {
         let current = self.endpoint_lease_slot_count();
         if required_slots <= current {
-            return Ok(());
+            return Ok(EndpointLeaseCapacityPlan::Retained);
         }
         if EndpointLeaseId::try_from(required_slots).is_err() {
             return Err(ResourceScope::EndpointLease);
         }
         let bytes = Self::endpoint_lease_storage_bytes(required_slots)
             .ok_or(ResourceScope::EndpointLease)?;
-        let source_sidecar = self.endpoint_lease_storage.get();
         let lease = self
-            .allocate_persistent_sidecar_bytes(bytes, core::mem::align_of::<EndpointLeaseRecord>())
+            .plan_persistent_sidecar_bytes(bytes, core::mem::align_of::<EndpointLeaseRecord>())
             .ok_or(ResourceScope::EndpointLease)?;
+        Ok(EndpointLeaseCapacityPlan::Replace {
+            required_slots,
+            lease,
+        })
+    }
+
+    pub(in crate::rendezvous::core) fn endpoint_lease_floor_after_capacity_plan(
+        &self,
+        plan: &EndpointLeaseCapacityPlan,
+    ) -> Result<usize, ResourceScope> {
+        let EndpointLeaseCapacityPlan::Replace { lease, .. } = plan else {
+            return Ok(self.endpoint_lease_floor());
+        };
+        let mut sidecars = self.live_sidecars();
+        if !matches!(sidecars[0].kind, ResidentSidecarKind::EndpointLeases) {
+            crate::invariant();
+        }
+        sidecars[0].storage = lease.storage();
+        self.packed_sidecar_frontier(sidecars)
+            .and_then(|frontier| frontier.checked_add(self.frontier_workspace_bytes.get() as usize))
+            .ok_or(ResourceScope::EndpointLease)
+    }
+
+    pub(in crate::rendezvous::core) fn commit_endpoint_lease_capacity(
+        &self,
+        plan: EndpointLeaseCapacityPlan,
+    ) {
+        let EndpointLeaseCapacityPlan::Replace {
+            required_slots,
+            lease,
+        } = plan
+        else {
+            return;
+        };
+        let current = self.endpoint_lease_slot_count();
+        if required_slots <= current {
+            crate::invariant();
+        }
+        let source_sidecar = self.endpoint_lease_storage.get();
+        let lease = self.commit_persistent_sidecar_lease(lease);
         let new_ptr = lease.ptr().cast::<EndpointLeaseRecord>();
         unsafe {
             /* SAFETY: the replacement is disjoint and unpublished. The loop
@@ -209,8 +260,11 @@ where
             }
         }
         self.endpoint_lease_storage.set(lease.cast());
-        self.retire_persistent_sidecar(source_sidecar.cast());
-        Ok(())
+        if source_sidecar.is_empty() {
+            self.compact_live_sidecars();
+        } else {
+            self.retire_persistent_sidecar(source_sidecar.cast());
+        }
     }
 
     pub(crate) fn shrink_endpoint_lease_capacity(&self) {

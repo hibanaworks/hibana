@@ -5,6 +5,18 @@ on:
   pull_request:
 
 jobs:
+  kani:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Kani and CBMC
+        run: |
+          KANI_VERSION="$(< .github/kani-version)"
+          cargo install --locked kani-verifier --version "${KANI_VERSION}"
+          cargo kani setup
+      - name: Run Kani proofs
+        run: bash ./.github/scripts/check_kani.sh
+
   final-form:
     runs-on: ubuntu-24.04-arm
     steps:

@@ -257,15 +257,19 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
             && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
             && miri_gate.contains(
-                "public-runtime-owner \\\n  8 \\\n  -p hibana \\\n  --test miri_runtime_owner"
+                "public-runtime-owner \\\n  8 \\\n  8 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
             )
             && miri_gate.contains(
-                "endpoint-waiter-owner \\\n  2 \\\n  -p hibana \\\n  --lib \\\n  rendezvous::core::endpoint_waiter::tests"
+                "endpoint-waiter-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  rendezvous::core::endpoint_waiter::tests"
             )
             && miri_gate.contains(
-                "resident-sidecar-owner \\\n  14 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
+                "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
-            && miri_gate.contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=24")
+            && miri_gate
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=29 ignored=1")
+            && miri_gate.contains("local expected_listed=\"$2\"")
+            && miri_gate.contains("local expected_passed=\"$3\"")
+            && miri_gate.contains("local expected_ignored=\"$4\"")
             && !miri_gate.contains("--exact")
             && miri_gate.contains("storage_layout::capacity::tests")
             && miri_gate.contains("miri gate test-count mismatch")

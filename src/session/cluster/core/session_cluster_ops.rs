@@ -152,13 +152,13 @@ where
             crate::invariant();
         }
         if let Err(resource) = rv.ensure_endpoint_resident_capacity() {
-            rv.release_endpoint_lease(slot, generation);
+            rv.abort_endpoint_lease_reservation(slot, generation);
             return Err(ClusterError::resource_exhausted(resource));
         }
         if let Err(resource) =
             rv.ensure_core_lane_storage_for_assoc_entries(logical_lane_count, required_assoc_slots)
         {
-            rv.release_endpoint_lease(slot, generation);
+            rv.abort_endpoint_lease_reservation(slot, generation);
             return Err(ClusterError::resource_exhausted(resource));
         }
         Ok((

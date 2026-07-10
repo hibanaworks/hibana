@@ -4,8 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROOF_DIR="${ROOT_DIR}/proofs/lean"
 GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
+RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
-EXPECTED_MARKER="hibana Lean trace proof passed artifacts=13 frames=55"
+EXPECTED_MARKER="hibana Lean generated proof passed traces=13 frames=55 projections=7 progress=4"
+EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=5 poison=1 generation=1 atomic-failures=3"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
 if [[ ! -f "${PROOF_DIR}/lean-toolchain" ]] \
@@ -59,7 +61,26 @@ for theorem in \
   wrong_resolver_id_rejected \
   resolver_reuse_without_reset_rejected \
   resolver_reject_is_terminal \
-  program_trace_checker_sound; do
+  program_trace_checker_sound \
+  projection_certificate_sound \
+  slab_layout_certificate_sound \
+  logical_progress_checker_sound \
+  progress_certificate_sound \
+  reachable_state_has_logical_progress \
+  next_lease_generation_strictly_increases \
+  next_lease_generation_stays_nonzero \
+  next_lease_generation_stays_in_domain \
+  max_lease_generation_is_exhausted \
+  session_generation_run_sound \
+  session_generation_trace_checker_sound \
+  poisoned_generation_step_never_revives \
+  poisoned_generation_attach_rejected \
+  poisoned_generation_trace_never_revives \
+  failed_lease_allocation_preserves_state \
+  successful_lease_allocation_commits_exact_plan \
+  prepared_lease_generation_strictly_increases \
+  prepared_lease_capacity_never_shrinks \
+  lease_allocation_failure_certificate_sound; do
   if ! rg -q "^theorem ${theorem}\b" "${PROOF_DIR}/Hibana"; then
     echo "Lean proof gate missing theorem: ${theorem}" >&2
     exit 1
@@ -73,11 +94,11 @@ done
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
-if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "14" ]] \
+if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "19" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "8" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "4" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "26" ]]; then
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "20" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "6" ]] \
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "45" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi
@@ -85,17 +106,37 @@ fi
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 mkdir -p "$(dirname "${GENERATED}")"
+rm -f "${GENERATED}" "${RUNTIME_GENERATED}"
+CARGO_BUILD_JOBS=1 \
+  RUST_TEST_THREADS=1 \
+cargo +"${TOOLCHAIN}" test -p hibana --lib \
+    global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean \
+    -- --ignored --exact
+if [[ ! -s "${GENERATED}" ]]; then
+  echo "Lean proof gate production trace exporter did not create a nonempty artifact" >&2
+  exit 1
+fi
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
   cargo +"${TOOLCHAIN}" test -p hibana --lib \
-    global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean \
+    rendezvous::core::storage_layout::capacity::tests::formal_certificate_export::export_runtime_certificates_for_lean \
     -- --ignored --exact
+if [[ ! -s "${RUNTIME_GENERATED}" ]]; then
+  echo "Lean proof gate runtime exporter did not create a nonempty artifact" >&2
+  exit 1
+fi
 
 lean_output="$(cd "${PROOF_DIR}" && lake env lean "${GENERATED}")"
 printf '%s\n' "${lean_output}"
 if [[ "${lean_output}" != *"${EXPECTED_MARKER}"* ]]; then
-  echo "Lean proof gate artifact-count mismatch" >&2
+  echo "Lean proof gate generated certificate mismatch" >&2
+  exit 1
+fi
+runtime_lean_output="$(cd "${PROOF_DIR}" && lake env lean "${RUNTIME_GENERATED}")"
+printf '%s\n' "${runtime_lean_output}"
+if [[ "${runtime_lean_output}" != *"${EXPECTED_RUNTIME_MARKER}"* ]]; then
+  echo "Lean proof gate runtime certificate mismatch" >&2
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 artifacts=13 frames=55"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=13 frames=55 projections=7 progress=4 runtime-regions=5 atomic-failures=3"
