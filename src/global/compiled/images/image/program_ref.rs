@@ -79,6 +79,24 @@ impl CompiledProgramRef {
         }
     }
 
+    pub(crate) fn same_image(&self, other: &Self) -> bool {
+        if core::ptr::eq(self, other) {
+            return true;
+        }
+        if self.facts != other.facts || self.columns != other.columns {
+            return false;
+        }
+        let mut offset = 0usize;
+        let len = self.columns.blob_len();
+        while offset < len {
+            if self.byte_at(offset) != other.byte_at(offset) {
+                return false;
+            }
+            offset += 1;
+        }
+        true
+    }
+
     #[inline(always)]
     pub(super) const fn column_offset(
         &self,

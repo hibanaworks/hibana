@@ -482,6 +482,13 @@ impl EventCursor {
     }
 
     #[inline(always)]
+    pub(crate) fn program_ref(
+        &self,
+    ) -> &'static crate::global::compiled::images::CompiledProgramRef {
+        self.machine().program_ref()
+    }
+
+    #[inline(always)]
     fn state(&self) -> &EventCursorState {
         if self.state.is_null() {
             crate::invariant();

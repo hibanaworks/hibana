@@ -257,7 +257,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
             && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
             && miri_gate.contains(
-                "public-runtime-owner \\\n  19 \\\n  19 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
+                "public-runtime-owner \\\n  21 \\\n  21 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
             )
             && miri_gate.contains(
                 "transport-requeue-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport_requeue_callback_reentry_revalidates_generation"
@@ -313,7 +313,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_"
             )
             && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=133 ignored=1")
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=135 ignored=1")
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")

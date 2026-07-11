@@ -8,7 +8,11 @@ use super::super::{
 use super::decode_binary_route_arm_index;
 use crate::{
     g::{self, Msg},
-    global::{compiled::lowering::RoleCompiledCounts, const_dsl::ScopeId},
+    global::{
+        compiled::lowering::RoleCompiledCounts,
+        const_dsl::ScopeId,
+        typestate::{LocalAction, LocalConflict},
+    },
 };
 
 const BLOB_LEN: usize = 40;
@@ -252,6 +256,31 @@ fn assert_invariant(action: impl FnOnce()) {
 }
 
 #[test]
+fn role_image_column_range_rejects_stride_multiplication_overflow() {
+    assert_invariant(|| {
+        let _ = ColumnRange::new(0, 2, usize::MAX);
+    });
+}
+
+fn assert_route_commit_fixture_decodes(image: &RoleLaneImage<'_>, expected_rows: &[(ScopeId, u8)]) {
+    assert_eq!(image.route_scope_by_slot(0), Some(ScopeId::route(1)));
+    assert_eq!(image.route_scope_by_slot(1), Some(ScopeId::route(0)));
+    assert!(matches!(
+        image.route_scope_conflict_by_slot(0).to_conflict(),
+        Some(LocalConflict::RouteArm { scope, arm })
+            if scope.same(ScopeId::route(0)) && arm == 0
+    ));
+    assert!(image.route_scope_conflict_by_slot(1).is_none());
+    for (idx, (expected_scope, expected_arm)) in expected_rows.iter().copied().enumerate() {
+        assert!(matches!(
+            image.route_commit_row_at(idx).to_conflict(),
+            Some(LocalConflict::RouteArm { scope, arm })
+                if scope.same(expected_scope) && arm == expected_arm
+        ));
+    }
+}
+
+#[test]
 fn resident_route_arm_index_decoder_accepts_exact_binary_domain() {
     assert_eq!(decode_binary_route_arm_index(0), Some(0));
     assert_eq!(decode_binary_route_arm_index(1), Some(1));
@@ -462,6 +491,16 @@ fn resident_descriptor_rejects_program_lane_mismatch() {
         first_active_lane: 1,
     };
 
+    let raw_node = image
+        .lanes()
+        .local_step_node(0, image.role, image.program)
+        .expect("event and compiled atom rows must decode before lane validation");
+    assert!(matches!(
+        raw_node.action(),
+        LocalAction::Send { lane: 0, .. }
+    ));
+    assert_eq!(image.local_step_lane(0), Some(1));
+
     assert_invariant(|| {
         let _ = image.local_step_node(0);
     });
@@ -583,6 +622,12 @@ fn resident_descriptor_rejects_passive_child_without_parent_authority() {
     columns.events = ColumnRange::new(16, 1, ROLE_IMAGE_EVENT_STRIDE);
     let image = image(&columns, &PASSIVE_CHILD_WITHOUT_PARENT_BYTES);
 
+    assert_eq!(image.route_scope_by_slot(0), Some(ScopeId::route(0)));
+    assert_eq!(image.route_scope_by_slot(1), Some(ScopeId::route(1)));
+    let event_row = image.route_arm_event_row_by_slot(0, 0);
+    assert_eq!((event_row.start(), event_row.len()), (0, 1));
+    assert!(image.route_scope_conflict_by_slot(1).is_none());
+
     assert_invariant(|| {
         let _ = image.passive_arm_child_ordinal_by_slot(0, 0);
     });
@@ -636,6 +681,7 @@ fn resident_route_commit_chain_accepts_ancestor_first_order() {
     let columns = route_commit_columns(2);
     let image = image(&columns, &ROUTE_COMMIT_VALID_NESTED_BYTES);
 
+    assert_route_commit_fixture_decodes(&image, &[(ScopeId::route(0), 0), (ScopeId::route(1), 0)]);
     let row = image.route_commit_range_by_slot(0, 0);
     assert_eq!((row.start(), row.len()), (0, 2));
 }
@@ -645,6 +691,7 @@ fn resident_descriptor_rejects_foreign_route_commit_current() {
     let columns = route_commit_columns(1);
     let image = image(&columns, &ROUTE_COMMIT_FOREIGN_CURRENT_BYTES);
 
+    assert_route_commit_fixture_decodes(&image, &[(ScopeId::route(0), 0)]);
     assert_invariant(|| {
         let _ = image.route_commit_range_by_slot(0, 0);
     });
@@ -655,6 +702,7 @@ fn resident_descriptor_rejects_foreign_route_commit_parent() {
     let columns = route_commit_columns(2);
     let image = image(&columns, &ROUTE_COMMIT_FOREIGN_PARENT_BYTES);
 
+    assert_route_commit_fixture_decodes(&image, &[(ScopeId::route(0), 1), (ScopeId::route(1), 0)]);
     assert_invariant(|| {
         let _ = image.route_commit_range_by_slot(0, 0);
     });
@@ -665,6 +713,7 @@ fn resident_descriptor_rejects_truncated_route_commit_parent_chain() {
     let columns = route_commit_columns(1);
     let image = image(&columns, &ROUTE_COMMIT_TRUNCATED_PARENT_BYTES);
 
+    assert_route_commit_fixture_decodes(&image, &[(ScopeId::route(1), 0)]);
     assert_invariant(|| {
         let _ = image.route_commit_range_by_slot(0, 0);
     });
@@ -675,6 +724,14 @@ fn resident_descriptor_rejects_route_commit_rows_before_terminal_parent() {
     let columns = route_commit_columns(3);
     let image = image(&columns, &ROUTE_COMMIT_LEADING_PARENT_BYTES);
 
+    assert_route_commit_fixture_decodes(
+        &image,
+        &[
+            (ScopeId::route(0), 0),
+            (ScopeId::route(0), 0),
+            (ScopeId::route(1), 0),
+        ],
+    );
     assert_invariant(|| {
         let _ = image.route_commit_range_by_slot(0, 0);
     });

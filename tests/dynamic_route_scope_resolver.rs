@@ -310,6 +310,91 @@ fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
 }
 
 #[test]
+fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let nested_sid = SessionId::new(0x0009_1608);
+        let direct_sid = SessionId::new(0x0009_1609);
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let nested_role0 = program::<0>();
+            let nested_role1 = program::<1>();
+            let nested_role2 = program::<2>();
+            let direct_role0 = same_label_outbound_program_for::<0, ROUTE_RESOLVER>();
+            let direct_role1 = same_label_outbound_program_for::<1, ROUTE_RESOLVER>();
+            let direct_role2 = same_label_outbound_program_for::<2, ROUTE_RESOLVER>();
+
+            rv.set_resolver(
+                &nested_role0,
+                ResolverRef::<ROUTE_RESOLVER>::decision_state(&LEFT_ARM, choose_arm),
+            )
+            .expect("install nested-program resolver");
+            rv.set_resolver(
+                &direct_role0,
+                ResolverRef::<ROUTE_RESOLVER>::decision_state(&RIGHT_ARM, choose_arm),
+            )
+            .expect("install distinct-program resolver at the same local route site");
+
+            let mut nested_origin = rv
+                .enter(nested_sid, &nested_role0)
+                .expect("attach nested origin");
+            let mut nested_peer = rv
+                .enter(nested_sid, &nested_role1)
+                .expect("attach nested peer");
+            let nested_other = rv
+                .enter(nested_sid, &nested_role2)
+                .expect("attach nested other");
+            let mut direct_origin = rv
+                .enter(direct_sid, &direct_role0)
+                .expect("attach direct origin");
+            let mut direct_other = rv
+                .enter(direct_sid, &direct_role1)
+                .expect("attach direct other");
+            let mut direct_peer = rv
+                .enter(direct_sid, &direct_role2)
+                .expect("attach direct peer");
+
+            futures::executor::block_on(async {
+                nested_origin
+                    .send::<Msg<LEFT_A, u8>>(&18)
+                    .await
+                    .expect("first program keeps its left resolver authority");
+                assert_eq!(
+                    nested_peer
+                        .recv::<Msg<LEFT_A, u8>>()
+                        .await
+                        .expect("nested left peer receives"),
+                    18
+                );
+
+                direct_origin
+                    .send::<Msg<SAME_LABEL, u32>>(&1609)
+                    .await
+                    .expect("second program keeps its right resolver authority");
+                assert!(
+                    direct_other
+                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .now_or_never()
+                        .is_none(),
+                    "first program resolver must not overwrite the second program"
+                );
+                assert_eq!(
+                    direct_peer
+                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .await
+                        .expect("direct right peer receives"),
+                    1609
+                );
+            });
+
+            core::hint::black_box(&nested_other);
+        });
+    });
+}
+
+#[test]
 fn stateful_send_resolver_is_not_evaluated_twice() {
     reset_counters();
     with_runtime_workspace(|slab| {

@@ -204,8 +204,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem prepared_lease_capacity_never_shrinks",
         "theorem lease_allocation_failure_certificate_sound",
         "theorem lease_allocation_abort_certificate_sound",
-        "theorem dynamic_resolver_key_injective",
-        "theorem same_scope_distinct_resolver_ids_have_distinct_keys",
+        "theorem dynamic_resolver_site_key_injective",
+        "theorem resolver_registration_key_is_program_and_id",
+        "theorem distinct_program_images_have_distinct_registration_keys",
     ] {
         assert!(
             syntax.contains(theorem)
@@ -243,9 +244,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("#print axioms Hibana.poisoned_generation_aborts_lease_publication")
             && axiom_audit
                 .contains("#print axioms Hibana.lease_allocation_abort_certificate_sound")
-            && axiom_audit.contains("#print axioms Hibana.dynamic_resolver_key_injective")
+            && axiom_audit.contains("#print axioms Hibana.dynamic_resolver_site_key_injective")
+            && axiom_audit
+                .contains("#print axioms Hibana.resolver_registration_key_is_program_and_id")
             && axiom_audit.contains(
-                "#print axioms Hibana.same_scope_distinct_resolver_ids_have_distinct_keys"
+                "#print axioms Hibana.distinct_program_images_have_distinct_registration_keys"
             )
             && commit.contains("rollReentryState?")
             && commit.contains("routeReentryState?")

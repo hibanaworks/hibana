@@ -12,7 +12,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
     let resolver_row_harnesses = read("src/global/compiled/images/image/route_resolvers/kani.rs");
-    let atom_row_harnesses = read("src/global/compiled/images/image/program_ref/kani.rs");
+    let program_ref_harnesses = read("src/global/compiled/images/image/program_ref/kani.rs");
+    let program_columns = read("src/global/compiled/images/image/columns.rs");
+    let role_image_types = read("src/global/role_program/image_types.rs");
+    let resolver_registration_harnesses =
+        read("src/session/cluster/core/dynamic_resolvers/kani.rs");
     let version = read(".github/kani-version");
 
     assert_eq!(version.trim(), "0.67.0");
@@ -24,7 +28,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("harnesses=28 backend=CBMC"));
+    assert!(script.contains("harnesses=38 backend=CBMC"));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
@@ -89,6 +93,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(descriptor_harnesses.contains("matches!(decoded, Some(None)) == absent"));
     for harness in [
         "packed_lane_range_encoding_avoids_reserved_sentinel",
+        "packed_lane_range_reserved_sentinel_is_rejected",
         "resident_route_arm_index_decoding_accepts_exact_binary_domain",
         "resident_route_scope_decoding_accepts_exact_domain",
         "resident_roll_scope_decoding_accepts_exact_domain",
@@ -101,6 +106,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(!image_harnesses.contains("kani::assume"));
+    assert!(image_harnesses.contains("#[kani::should_panic]"));
+    assert!(
+        image_harnesses
+            .contains("kani::cover!(valid && left_scope == right_scope && left_arm != right_arm);")
+    );
+    assert!(image_harnesses.contains("&& left_mark_raw != right_mark_raw"));
 
     let harness = "scope_id_decoding_accepts_exact_compact_domain";
     assert!(scope_harnesses.contains(&format!("fn {harness}()")));
@@ -118,9 +129,113 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(resolver_row_harnesses.contains("left_scope == right_scope && left_id == right_id"));
     assert!(!resolver_row_harnesses.contains("kani::assume"));
 
-    let harness = "program_atom_row_decoding_accepts_exact_domain";
-    assert!(atom_row_harnesses.contains(&format!("fn {harness}()")));
-    assert!(atom_row_harnesses.contains("assert!(decoded.is_some() == expected)"));
-    assert!(!atom_row_harnesses.contains("kani::assume"));
+    for harness in [
+        "packed_column_range_construction_is_exact_for_resident_stride_domain",
+        "compiled_program_column_range_rejects_stride_multiplication_overflow",
+        "role_image_column_range_rejects_stride_multiplication_overflow",
+        "compiled_program_blob_comparison_matches_array_equality",
+        "compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
+        "program_atom_row_decoding_accepts_exact_domain",
+    ] {
+        assert!(program_ref_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    assert!(program_ref_harnesses.contains("assert!(decoded.is_some() == expected)"));
+    assert_eq!(
+        program_ref_harnesses
+            .matches("ProgramColumnRange::new(0, 2, usize::MAX)")
+            .count(),
+        1
+    );
+    assert_eq!(
+        program_ref_harnesses
+            .matches("let _ = ColumnRange::new(0, 2, usize::MAX)")
+            .count(),
+        1
+    );
+    assert!(program_ref_harnesses.contains("kani::cover!(valid);"));
+    assert!(program_ref_harnesses.contains("kani::cover!(!valid);"));
+    for stride in [
+        "0 => 1", "1 => 2", "2 => 4", "3 => 5", "4 => 6", "5 => 7", "6 => 8", "7 => 10",
+    ] {
+        assert!(program_ref_harnesses.contains(stride));
+    }
+    assert!(program_columns.contains("let byte_len = match len.checked_mul(stride)"));
+    assert!(role_image_types.contains("let byte_len = match len.checked_mul(stride)"));
+    assert!(program_ref_harnesses.contains("let left_bytes: [u8; 7] = kani::any();"));
+    assert!(program_ref_harnesses.contains("let right_bytes: [u8; 7] = kani::any();"));
+    assert!(program_ref_harnesses.contains("let expected = left_bytes == right_bytes;"));
+    assert!(program_ref_harnesses.contains("assert!(left.same_image(&right) == expected);"));
+    assert!(program_ref_harnesses.contains("kani::cover!(expected);"));
+    assert!(program_ref_harnesses.contains("kani::cover!(!expected);"));
+    assert!(program_ref_harnesses.contains("assert!(!canonical.same_image(&different_facts));"));
+    assert!(program_ref_harnesses.contains("assert!(!canonical.same_image(&different_columns));"));
+    assert!(
+        program_ref_harnesses.contains("assert!(!canonical.same_image(&different_final_byte));")
+    );
+    assert!(
+        program_ref_harnesses
+            .contains("kani::cover!(canonical.same_image(&same_image_at_another_address));")
+    );
+    assert!(
+        program_ref_harnesses.contains("kani::cover!(!canonical.same_image(&different_facts));")
+    );
+    assert!(
+        program_ref_harnesses.contains("kani::cover!(!canonical.same_image(&different_columns));")
+    );
+    assert!(
+        program_ref_harnesses
+            .contains("kani::cover!(!canonical.same_image(&different_final_byte));")
+    );
+    assert!(!program_ref_harnesses.contains("kani::assume"));
+
+    let harness = "resolver_registration_key_is_program_and_id";
+    assert!(resolver_registration_harnesses.contains(&format!("fn {harness}()")));
+    assert!(
+        resolver_registration_harnesses
+            .contains("assert!((left == same_program) == (left_id == right_id));")
+    );
+    assert!(resolver_registration_harnesses.contains("assert!(left != other_program);"));
+    assert!(!resolver_registration_harnesses.contains("kani::assume"));
+    assert!(script.contains(&format!("--harness {harness}")));
+
+    let harness = "resolver_registration_key_rejects_intrinsic_id";
+    assert!(resolver_registration_harnesses.contains(&format!("fn {harness}()")));
+    assert!(resolver_registration_harnesses.contains("#[kani::should_panic]"));
+    assert!(resolver_registration_harnesses.contains("INTRINSIC_ROUTE_RESOLVER_ID"));
+    assert!(script.contains(&format!("--harness {harness}")));
+
+    let harness = "resolver_initial_storage_is_initialized_and_dispatchable";
+    assert!(resolver_registration_harnesses.contains(&format!("fn {harness}()")));
+    assert!(resolver_registration_harnesses.contains("MaybeUninit::<Option<ResolverBucketEntry"));
+    assert!(resolver_registration_harnesses.contains("bucket.entry_count() == 0"));
+    assert!(resolver_registration_harnesses.contains("bucket.get(key).is_none()"));
+    assert!(resolver_registration_harnesses.contains("resolver.resolve_decision()"));
+    assert!(script.contains(&format!("--harness {harness}")));
+    assert_eq!(
+        resolver_registration_harnesses
+            .matches("bucket.replace_storage(")
+            .count(),
+        2,
+        "both initial allocation and replacement proofs must enter the production wrapper"
+    );
+
+    let harness = "resolver_replacement_compacts_entries_and_preserves_dispatch";
+    assert!(resolver_registration_harnesses.contains(&format!("fn {harness}()")));
+    assert!(
+        resolver_registration_harnesses.contains("let hole = usize::from(kani::any::<u8>() % 3);")
+    );
+    assert!(resolver_registration_harnesses.contains("kani::cover!(hole == 0);"));
+    assert!(resolver_registration_harnesses.contains("kani::cover!(hole == 1);"));
+    assert!(resolver_registration_harnesses.contains("kani::cover!(hole == 2);"));
+    assert!(
+        resolver_registration_harnesses
+            .contains("bucket.replace_storage(replacement.cast(), replacement_slots.len());")
+    );
+    assert!(!resolver_registration_harnesses.contains("bucket.init_replacement_storage"));
+    assert!(!resolver_registration_harnesses.contains("bucket.commit_storage"));
+    assert!(resolver_registration_harnesses.contains("bucket.entry_count() == 2"));
+    assert!(resolver_registration_harnesses.contains("Ok(DecisionArm::Left)"));
+    assert!(resolver_registration_harnesses.contains("Ok(DecisionArm::Right)"));
     assert!(script.contains(&format!("--harness {harness}")));
 }

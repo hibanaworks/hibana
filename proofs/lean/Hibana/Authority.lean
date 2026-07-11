@@ -12,42 +12,66 @@ def encodeRouteArm : RouteArm -> Nat
   | .left => 0
   | .right => 1
 
-/-- Resident resolver authority is identified by both its local route scope and
-its resolver id. Dropping either field is not a valid bucket key projection. -/
-structure DynamicResolverIdentity where
+/-- Structural identity of the sealed Rust `CompiledProgramRef`: one program
+fact, two packed column ranges, and the exact resident blob. -/
+structure ProgramImageIdentity where
+  roleCount : Nat
+  atomColumn : Nat × Nat
+  routeResolverColumn : Nat × Nat
+  blob : List Nat
+  deriving DecidableEq
+
+/-- A descriptor resolver site belongs to one structural resident image. -/
+structure DynamicResolverSiteIdentity where
+  program : ProgramImageIdentity
   scope : Nat
   resolverId : Nat
   deriving DecidableEq
 
-def DynamicResolverIdentity.key (identity : DynamicResolverIdentity) : Nat × Nat :=
-  (identity.scope, identity.resolverId)
+def DynamicResolverSiteIdentity.siteKey
+    (identity : DynamicResolverSiteIdentity) :
+      (ProgramImageIdentity × Nat) × Nat :=
+  ((identity.program, identity.scope), identity.resolverId)
 
-theorem dynamic_resolver_key_injective
-    {left right : DynamicResolverIdentity}
-    (same : left.key = right.key) :
+def DynamicResolverSiteIdentity.registrationKey
+    (identity : DynamicResolverSiteIdentity) : ProgramImageIdentity × Nat :=
+  (identity.program, identity.resolverId)
+
+theorem dynamic_resolver_site_key_injective
+    {left right : DynamicResolverSiteIdentity}
+    (same : left.siteKey = right.siteKey) :
     left = right := by
   cases left with
-  | mk leftScope leftResolver =>
+  | mk leftProgram leftScope leftResolver =>
       cases right with
-      | mk rightScope rightResolver =>
-          have scopeEq : leftScope = rightScope :=
+      | mk rightProgram rightScope rightResolver =>
+          have pairEq : (leftProgram, leftScope) = (rightProgram, rightScope) :=
             congrArg Prod.fst same
           have resolverEq : leftResolver = rightResolver :=
             congrArg Prod.snd same
+          have programEq : leftProgram = rightProgram := congrArg Prod.fst pairEq
+          have scopeEq : leftScope = rightScope := congrArg Prod.snd pairEq
+          cases programEq
           cases scopeEq
           cases resolverEq
           rfl
 
-theorem same_scope_distinct_resolver_ids_have_distinct_keys
-    (scope leftId rightId : Nat)
-    (distinct : leftId ≠ rightId) :
-    (DynamicResolverIdentity.key ⟨scope, leftId⟩) ≠
-      DynamicResolverIdentity.key ⟨scope, rightId⟩ := by
+theorem resolver_registration_key_is_program_and_id
+    (left right : DynamicResolverSiteIdentity) :
+    left.registrationKey = right.registrationKey ↔
+      left.program = right.program ∧ left.resolverId = right.resolverId := by
+  constructor
+  · intro same
+    exact ⟨congrArg Prod.fst same, congrArg Prod.snd same⟩
+  · rintro ⟨programEq, resolverEq⟩
+    exact Prod.ext programEq resolverEq
+
+theorem distinct_program_images_have_distinct_registration_keys
+    (left right : DynamicResolverSiteIdentity)
+    (programDistinct : left.program ≠ right.program) :
+    left.registrationKey ≠ right.registrationKey := by
   intro same
-  have identityEqual : (DynamicResolverIdentity.mk scope leftId) =
-      DynamicResolverIdentity.mk scope rightId :=
-    dynamic_resolver_key_injective same
-  exact distinct (congrArg DynamicResolverIdentity.resolverId identityEqual)
+  exact programDistinct ((resolver_registration_key_is_program_and_id left right).mp same).1
 
 theorem route_arm_decode_encode_round_trip (arm : RouteArm) :
     decodeRouteArm? (encodeRouteArm arm) = some arm := by

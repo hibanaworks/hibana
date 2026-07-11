@@ -208,7 +208,11 @@ where
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
         let scope_id = resolver.scope();
         let cluster = self.session.cluster();
-        let resolver_result = cluster.resolve_dynamic_resolver(self.rendezvous_id(), resolver);
+        let resolver_result = cluster.resolve_dynamic_resolver(
+            self.rendezvous_id(),
+            self.cursor.program_ref(),
+            resolver,
+        );
         if let Some(kind) = self.session_fault() {
             return Err(SendError::SessionFault(kind));
         }

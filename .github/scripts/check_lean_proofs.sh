@@ -97,8 +97,9 @@ for theorem in \
   invalid_ready_arm_mask_rejected \
   valid_ready_arm_mask_is_accepted \
   selected_ready_arm_mask_is_exact \
-  dynamic_resolver_key_injective \
-  same_scope_distinct_resolver_ids_have_distinct_keys; do
+  dynamic_resolver_site_key_injective \
+  resolver_registration_key_is_program_and_id \
+  distinct_program_images_have_distinct_registration_keys; do
   if ! rg -q "^theorem ${theorem}\b" "${PROOF_DIR}/Hibana"; then
     echo "Lean proof gate missing theorem: ${theorem}" >&2
     exit 1
@@ -115,8 +116,8 @@ printf '%s\n' "${axiom_output}"
 if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "23" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
   || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "29" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "11" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "63" ]]; then
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "12" ]] \
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "64" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi

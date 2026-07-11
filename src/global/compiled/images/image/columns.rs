@@ -30,7 +30,7 @@ pub(super) const fn insert_route_ordinal(
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProgramColumnRange {
     pub(crate) offset: u16,
     pub(crate) len: u16,
@@ -45,7 +45,10 @@ impl ProgramColumnRange {
         if stride == 0 {
             crate::invariant();
         }
-        let byte_len = len * stride;
+        let byte_len = match len.checked_mul(stride) {
+            Some(byte_len) => byte_len,
+            None => crate::invariant(),
+        };
         if byte_len > (u16::MAX as usize - offset) {
             crate::invariant();
         }
@@ -66,7 +69,7 @@ impl ProgramColumnRange {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProgramImageColumns {
     pub(crate) atoms: ProgramColumnRange,
     pub(crate) route_resolvers: ProgramColumnRange,

@@ -318,7 +318,7 @@ where
     where
         E: From<ClusterError>,
         P: crate::global::RoleProgramView<ROLE>,
-        F: FnOnce(&CompiledProgramRef) -> Result<R, E>,
+        F: FnOnce(&'static CompiledProgramRef) -> Result<R, E>,
     {
         let compiled = self
             .ensure_compiled_program_ref(rv_id, program)

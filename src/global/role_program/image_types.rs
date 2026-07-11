@@ -389,7 +389,10 @@ impl ColumnRange {
         if stride == 0 {
             panic!("role image packed column stride must be nonzero");
         }
-        let byte_len = len * stride;
+        let byte_len = match len.checked_mul(stride) {
+            Some(byte_len) => byte_len,
+            None => panic!("role image packed column byte range overflow"),
+        };
         if byte_len > (u16::MAX as usize - offset) {
             panic!("role image packed column byte range overflow");
         }

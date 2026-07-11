@@ -1,6 +1,6 @@
 use super::{
     ClusterError, DecisionArm, DynamicResolverKey, ErasedResolverRef, RendezvousId, ResolverRef,
-    SessionCluster,
+    ResolverRegistrationKey, SessionCluster,
 };
 use crate::global::const_dsl::DynamicRouteResolver;
 impl<'cfg, T> SessionCluster<'cfg, T>
@@ -33,27 +33,17 @@ where
         resolver: ResolverRef<'cfg, RESOLVER>,
     ) -> Result<(), ClusterError> {
         self.with_resident_program_ref(rv_id, program, |compiled| {
-            let mut matched_sites = 0usize;
-            let mut missing_sites = 0usize;
-            for resolver in compiled.route_resolver_sites_for(RESOLVER) {
-                matched_sites += 1;
-                let key = DynamicResolverKey::new(rv_id, resolver);
-                if self.dynamic_resolver(key).is_none() {
-                    missing_sites += 1;
-                }
-            }
-            if matched_sites == 0 {
+            if compiled.route_resolver_sites_for(RESOLVER).next().is_none() {
                 return Err(ClusterError::ResolverReject {
                     resolver_id: RESOLVER,
                 });
             }
-            self.ensure_dynamic_resolver_capacity(rv_id, missing_sites)?;
-            for binding in compiled.route_resolver_sites_for(RESOLVER) {
-                self.commit_prepared_dynamic_resolver(
-                    DynamicResolverKey::new(rv_id, binding),
-                    resolver,
-                );
+            let key =
+                DynamicResolverKey::new(rv_id, ResolverRegistrationKey::new(compiled, RESOLVER));
+            if self.dynamic_resolver(key).is_none() {
+                self.ensure_dynamic_resolver_capacity(rv_id, 1)?;
             }
+            self.commit_prepared_dynamic_resolver(key, resolver);
             Ok(())
         })
     }
@@ -63,7 +53,7 @@ where
         key: DynamicResolverKey,
         resolver_ref: ResolverRef<'cfg, RESOLVER>,
     ) {
-        if key.resolver().resolver_id() != RESOLVER {
+        if key.registration().resolver_id() != RESOLVER {
             crate::invariant();
         }
         crate::invariant_ok(
@@ -75,10 +65,12 @@ where
     pub(crate) fn resolve_dynamic_resolver(
         &self,
         rv_id: RendezvousId,
+        program: &'static crate::global::compiled::images::CompiledProgramRef,
         resolver: DynamicRouteResolver,
     ) -> Result<DecisionArm, ClusterError> {
-        let key = DynamicResolverKey::new(rv_id, resolver);
         let resolver_id = resolver.resolver_id();
+        let key =
+            DynamicResolverKey::new(rv_id, ResolverRegistrationKey::new(program, resolver_id));
         let Some(resolver_ref) = self.dynamic_resolver(key) else {
             return Err(ClusterError::DynamicResolverInvariant { resolver_id });
         };

@@ -3,14 +3,17 @@ use super::{ClusterError, PhantomData, RendezvousId, fmt};
 //
 // This file owns dynamic resolver erased-storage dispatch for the session
 // cluster. Resolver registration records one typed state pointer together with
-// the matching trampoline; invocation must use the recorded trampoline for that
-// exact `(scope, resolver id)` slot. The resident resolver table is supplied by
-// the cluster storage owner and bound/rebound only through the explicit
-// storage-layout paths in this module. Slot contents are initialized optional
-// bucket entries, and the raw state pointer is never exposed outside the
-// resolver dispatch boundary.
+// the matching trampoline; invocation must use the registration for that exact
+// `(program image, resolver id)`. Route scope remains immutable descriptor
+// authority, while every matching site in one program shares this callback.
+// The resident resolver table is supplied by the cluster storage owner and
+// bound/rebound only through the explicit storage-layout paths in this module.
+// Slot contents are initialized optional bucket entries, and the raw state
+// pointer is never exposed outside the resolver dispatch boundary.
 
 mod bucket;
+#[cfg(kani)]
+mod kani;
 pub(crate) use bucket::ResolverBucket;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,25 +232,55 @@ unsafe fn dispatch_decision_state<S>(
     (payload.resolver)(state)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
+pub(crate) struct ResolverRegistrationKey {
+    program: &'static crate::global::compiled::images::CompiledProgramRef,
+    resolver_id: u16,
+}
+
+impl ResolverRegistrationKey {
+    pub(crate) const fn new(
+        program: &'static crate::global::compiled::images::CompiledProgramRef,
+        resolver_id: u16,
+    ) -> Self {
+        if resolver_id == crate::global::const_dsl::INTRINSIC_ROUTE_RESOLVER_ID {
+            crate::invariant();
+        }
+        Self {
+            program,
+            resolver_id,
+        }
+    }
+
+    pub(crate) const fn resolver_id(self) -> u16 {
+        self.resolver_id
+    }
+}
+
+impl PartialEq for ResolverRegistrationKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.resolver_id == other.resolver_id && self.program.same_image(other.program)
+    }
+}
+
+impl Eq for ResolverRegistrationKey {}
+
+#[derive(Clone, Copy)]
 pub(crate) struct DynamicResolverKey {
     rv: RendezvousId,
-    resolver: crate::global::const_dsl::DynamicRouteResolver,
+    registration: ResolverRegistrationKey,
 }
 
 impl DynamicResolverKey {
-    pub(crate) const fn new(
-        rv: RendezvousId,
-        resolver: crate::global::const_dsl::DynamicRouteResolver,
-    ) -> Self {
-        Self { rv, resolver }
+    pub(crate) const fn new(rv: RendezvousId, registration: ResolverRegistrationKey) -> Self {
+        Self { rv, registration }
     }
 
     pub(crate) const fn rendezvous(self) -> RendezvousId {
         self.rv
     }
 
-    pub(crate) const fn resolver(self) -> crate::global::const_dsl::DynamicRouteResolver {
-        self.resolver
+    pub(crate) const fn registration(self) -> ResolverRegistrationKey {
+        self.registration
     }
 }

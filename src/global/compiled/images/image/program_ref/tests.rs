@@ -17,18 +17,38 @@ const fn encoded_atom(eff_idx: u16, from: u8, to: u8, label: u8, origin: u8, lan
 }
 
 fn forged_program_ref(bytes: &'static [u8; 7], role_count: u8) -> CompiledProgramRef {
-    let columns = ProgramImageColumns {
+    CompiledProgramRef::compact(ProgramImageFacts { role_count }, atom_columns(), bytes)
+}
+
+fn atom_columns() -> ProgramImageColumns {
+    ProgramImageColumns {
         atoms: ProgramColumnRange::new(0, 1, PROGRAM_IMAGE_ATOM_STRIDE),
         route_resolvers: ProgramColumnRange::new(
             PROGRAM_IMAGE_ATOM_STRIDE,
             0,
             PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
         ),
-    };
-    CompiledProgramRef::compact(ProgramImageFacts { role_count }, columns, bytes)
+    }
+}
+
+fn alternate_columns_with_same_blob_len() -> ProgramImageColumns {
+    ProgramImageColumns {
+        atoms: ProgramColumnRange::new(0, 0, PROGRAM_IMAGE_ATOM_STRIDE),
+        route_resolvers: ProgramColumnRange::new(2, 1, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE),
+    }
+}
+
+#[test]
+fn compiled_program_column_range_rejects_stride_multiplication_overflow() {
+    assert!(
+        std::panic::catch_unwind(|| ProgramColumnRange::new(0, 2, usize::MAX)).is_err(),
+        "packed program column construction must reject byte-length overflow"
+    );
 }
 
 static VALID: [u8; 7] = encoded_atom(2, 0, 1, 9, 1, u8::MAX);
+static VALID_COPY: [u8; 7] = encoded_atom(2, 0, 1, 9, 1, u8::MAX);
+static LAST_BYTE_DIFFERENT: [u8; 7] = encoded_atom(2, 0, 1, 9, 1, 0);
 static EFF_INDEX_OUT_OF_RANGE: [u8; 7] =
     encoded_atom(crate::eff::meta::MAX_EFF_NODES as u16, 0, 1, 9, 1, 0);
 static FROM_OUT_OF_RANGE: [u8; 7] = encoded_atom(2, 2, 1, 9, 1, 0);
@@ -43,6 +63,26 @@ fn compiled_program_atom_descriptor_decodes_canonical_row() {
     assert_eq!(atom.label, 9);
     assert_eq!(atom.origin.packed_bits(), 1);
     assert_eq!(atom.lane, u8::MAX);
+}
+
+#[test]
+fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
+    let canonical = forged_program_ref(&VALID, 2);
+    let same_image_at_another_address = forged_program_ref(&VALID_COPY, 2);
+    let different_facts = forged_program_ref(&VALID_COPY, 3);
+    let different_columns = CompiledProgramRef::compact(
+        ProgramImageFacts { role_count: 2 },
+        alternate_columns_with_same_blob_len(),
+        &VALID_COPY,
+    );
+    let different_final_byte = forged_program_ref(&LAST_BYTE_DIFFERENT, 2);
+
+    assert!(canonical.same_image(&canonical));
+    assert!(canonical.same_image(&same_image_at_another_address));
+    assert!(same_image_at_another_address.same_image(&canonical));
+    assert!(!canonical.same_image(&different_facts));
+    assert!(!canonical.same_image(&different_columns));
+    assert!(!canonical.same_image(&different_final_byte));
 }
 
 #[test]

@@ -160,7 +160,7 @@ where
                 crate::session::cluster::error::ClusterError::RendezvousBusy { id: rv.raw() },
             );
         }
-        rendezvous.insert_dynamic_resolver(key.resolver(), resolver_ref)
+        rendezvous.insert_dynamic_resolver(key.registration(), resolver_ref)
     }
 
     pub(crate) fn dynamic_resolver(
@@ -168,7 +168,7 @@ where
         key: crate::session::cluster::core::DynamicResolverKey,
     ) -> Option<crate::session::cluster::core::ErasedResolverRef<'cfg>> {
         self.node_ref(&key.rendezvous())?
-            .dynamic_resolver(key.resolver())
+            .dynamic_resolver(key.registration())
     }
 }
 

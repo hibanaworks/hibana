@@ -87,6 +87,22 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
 }
 
 #[test]
+fn role_projections_share_program_wide_resolver_identity() {
+    let route = g::route(
+        g::send::<0, 1, Msg<34, u8>>(),
+        g::send::<0, 2, Msg<35, u8>>(),
+    )
+    .resolve::<NESTED_PAR_ROUTE_RESOLVER>();
+    let role0: RoleProgram<0> = project(&route);
+    let role1: RoleProgram<1> = project(&route);
+    let role2: RoleProgram<2> = project(&route);
+    let program = role0.role_image_ref().program;
+
+    assert!(program.same_image(role1.role_image_ref().program));
+    assert!(program.same_image(role2.role_image_ref().program));
+}
+
+#[test]
 fn simple_controller_route_arm_event_rows_are_exact() {
     let route = g::route(
         g::send::<0, 1, Msg<71, u32>>(),

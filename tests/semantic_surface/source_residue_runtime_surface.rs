@@ -326,7 +326,7 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
     for required in [
         "scope: ScopeId,",
         "pub(crate) const fn scope(self) -> ScopeId",
-        "resolver: crate::global::const_dsl::DynamicRouteResolver,",
+        "pub(crate) struct DynamicRouteResolver {\n    resolver_id: u16,\n    scope: ScopeId,\n}",
         "struct RouteFrame {\n    sid: SessionId,\n    scope: ScopeId,",
     ] {
         assert!(
@@ -408,15 +408,23 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "pub(crate) struct DynamicRouteResolver",
         "pub(crate) struct RouteResolverMarker",
         "pub(crate) scope: ScopeId,\n    pub(crate) resolver_id: u16,",
-        "pub(crate) struct DynamicResolverKey {\n    rv: RendezvousId,\n    resolver: crate::global::const_dsl::DynamicRouteResolver,",
+        "pub(crate) struct ResolverRegistrationKey {",
+        "program: &'static crate::global::compiled::images::CompiledProgramRef,",
+        "self.resolver_id == other.resolver_id && self.program.same_image(other.program)",
+        "pub(crate) fn same_image(&self, other: &Self) -> bool",
+        "if self.facts != other.facts || self.columns != other.columns",
+        "while offset < len",
+        "self.byte_at(offset) != other.byte_at(offset)",
+        "pub(crate) struct DynamicResolverKey {\n    rv: RendezvousId,\n    registration: ResolverRegistrationKey,",
         "pub(crate) fn route_resolver_sites_for",
         "compiled.route_resolver_sites_for(RESOLVER)",
         "DynamicResolverKey::new(",
-        "let key = DynamicResolverKey::new(rv_id, resolver);",
-        "if stored.resolver == resolver",
-        "rendezvous.insert_dynamic_resolver(key.resolver(), resolver_ref)",
+        "ResolverRegistrationKey::new(compiled, RESOLVER)",
+        "ResolverRegistrationKey::new(program, resolver_id)",
+        "if stored.registration == registration",
+        "rendezvous.insert_dynamic_resolver(key.registration(), resolver_ref)",
         "self.ensure_dynamic_resolver_capacity(",
-        "missing_sites)?;",
+        "self.ensure_dynamic_resolver_capacity(rv_id, 1)?;",
         "fn commit_prepared_dynamic_resolver",
         ".insert_dynamic_resolver(key, resolver_ref.erase()),",
         "eff_list.resolver_for_scope(route_scope)",
@@ -426,7 +434,7 @@ fn route_resolver_authority_is_complete_identity_keyed() {
     ] {
         assert!(
             production_scope.contains(required),
-            "route resolver authority must stay keyed by scope and resolver id: {required}"
+            "route resolver authority must preserve descriptor sites and program-scoped registration: {required}"
         );
     }
     for forbidden in [
@@ -471,6 +479,11 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "view.route_frontier_summary(route_scope)",
         "fn register_dynamic_resolver_resolver",
         "self.resolver_markers[idx] = RouteResolverMarker::new(scope, resolver_id);",
+        "matched_sites",
+        "missing_sites",
+        "TypeId",
+        "program_fingerprint",
+        "program_hash",
     ] {
         assert!(
             !production_scope.contains(forbidden),
@@ -479,15 +492,15 @@ fn route_resolver_authority_is_complete_identity_keyed() {
     }
     assert_eq!(
         bucket_entry.trim(),
-        "resolver: DynamicRouteResolver,\n    resolver_ref: ErasedResolverRef<'cfg>,",
-        "resolver bucket entries must store one complete resolver identity and one callback"
+        "registration: ResolverRegistrationKey,\n    resolver_ref: ErasedResolverRef<'cfg>,",
+        "resolver bucket entries must store one exact program registration and one callback"
     );
     assert_eq!(
         session_effects
             .matches("self.ensure_dynamic_resolver_capacity(")
             .count(),
         1,
-        "resolver registration must preflight capacity once before its infallible commit loop"
+        "resolver registration must preflight capacity once before its infallible commit"
     );
 }
 

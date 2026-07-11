@@ -60,8 +60,8 @@ run_miri_test() {
 
 run_miri_test \
   public-runtime-owner \
-  19 \
-  19 \
+  21 \
+  21 \
   0 \
   -p hibana \
   --test miri_runtime_owner
@@ -209,4 +209,4 @@ run_miri_test \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=133 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=135 ignored=1"

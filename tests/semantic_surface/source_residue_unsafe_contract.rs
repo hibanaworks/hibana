@@ -54,9 +54,17 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
                 .contains("payload_validation_callback_reentry_cannot_commit_after_peer_drop")
             && regression
                 .contains("payload_encoding_callback_reentry_cannot_commit_after_peer_drop")
-            && resolver_offer.contains("let resolver_result = cluster.resolve_dynamic_resolver")
+            && regression.contains("resolver_registration_keeps_distinct_program_image_identity")
+            && regression
+                .contains("failed_resolver_growth_preserves_existing_registration_and_dispatch")
+            && regression.contains("Cluster(exhausted resolver)")
+            && resolver_offer.contains("let resolver_result =")
+            && resolver_offer.contains(
+                "cluster.resolve_dynamic_resolver(rv_id, self.cursor.program_ref(), resolver)"
+            )
             && resolver_offer.contains("return Err(RecvError::SessionFault(kind))")
             && resolver_send.contains("let resolver_result =")
+            && resolver_send.contains("self.cursor.program_ref(),")
             && resolver_send.contains("return Err(SendError::SessionFault(kind))")
             && transport_send.contains("let transport_poll = lane_port::poll_send_outgoing")
             && transport_send.contains("cancel_send_outgoing(&mut pending.transport, port)")

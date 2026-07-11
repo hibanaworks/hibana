@@ -10,13 +10,27 @@ The pinned gate exhausts the production arithmetic for:
   two-bit ready mask;
 - exact acceptance domains for packed event-conflict rows and optional
   descriptor route-arm bytes;
-- exact packed lane-range round trips with reserved-sentinel exclusion;
+- exact packed lane-range round trips with formal rejection of the reserved
+  sentinel;
 - exact resident decoding for route/roll scope rows, local event headers,
   logical-lane rows, route-arm lane-step rows, and binary route-arm indexing;
 - exact route-commit decision identity across scope, arm, and reentry metadata;
 - exact local-dependency decoding, including event-image range bounds;
 - exact compiled atom and route-resolver row decoding, plus complete dynamic
   resolver identity over both route scope and resolver id;
+- exact structural program-image identity across facts, column layout, and all
+  blob bytes, including arbitrary resident atom-row contents and equal images
+  stored at distinct addresses;
+- exact packed program/role column construction across every `u16` offset/len
+  and the complete resident stride domain, with fail-closed rejection of
+  `usize` stride multiplication overflow;
+- exact callback-registration identity over resident program image and resolver
+  id, including separation of distinct program images at the same route site
+  and rejection of the intrinsic resolver sentinel;
+- resolver bucket first allocation from uninitialized storage, proving complete
+  slot initialization before insertion and typed callback dispatch;
+- resolver bucket replacement compaction over a real hole-bearing entry array,
+  preserving both registration keys and typed callback dispatch;
 - fail-closed endpoint lease generation;
 - aligned endpoint placement inside a selected gap;
 - exact endpoint-lease table sizing and 32-bit bounds across the full `u16`

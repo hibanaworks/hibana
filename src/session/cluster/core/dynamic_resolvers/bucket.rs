@@ -1,17 +1,16 @@
 use core::marker::PhantomData;
 
 use crate::{
-    global::const_dsl::DynamicRouteResolver,
     rendezvous::core::Sidecar,
     session::cluster::{
-        core::ErasedResolverRef,
+        core::{ErasedResolverRef, ResolverRegistrationKey},
         error::{ClusterError, ResourceScope},
     },
 };
 
 #[derive(Clone, Copy)]
 pub(in crate::session::cluster::core) struct ResolverBucketEntry<'cfg> {
-    resolver: DynamicRouteResolver,
+    registration: ResolverRegistrationKey,
     resolver_ref: ErasedResolverRef<'cfg>,
 }
 
@@ -217,7 +216,7 @@ impl<'cfg> ResolverBucket<'cfg> {
 
     pub(crate) fn insert(
         &mut self,
-        resolver: DynamicRouteResolver,
+        registration: ResolverRegistrationKey,
         resolver_ref: ErasedResolverRef<'cfg>,
     ) -> Result<(), ClusterError> {
         let entries = self.entries_ptr();
@@ -235,7 +234,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             unsafe {
                 let slot = &mut *entries.add(idx);
                 if let Some(stored) = slot {
-                    if stored.resolver == resolver {
+                    if stored.registration == registration {
                         stored.resolver_ref = resolver_ref;
                         return Ok(());
                     }
@@ -255,14 +254,17 @@ impl<'cfg> ResolverBucket<'cfg> {
         mutation. */
         unsafe {
             *entries.add(idx) = Some(ResolverBucketEntry {
-                resolver,
+                registration,
                 resolver_ref,
             });
         }
         Ok(())
     }
 
-    pub(crate) fn get(&self, resolver: DynamicRouteResolver) -> Option<ErasedResolverRef<'cfg>> {
+    pub(crate) fn get(
+        &self,
+        registration: ResolverRegistrationKey,
+    ) -> Option<ErasedResolverRef<'cfg>> {
         let entries = self.entries_ptr();
         if entries.is_null() {
             return None;
@@ -274,7 +276,7 @@ impl<'cfg> ResolverBucket<'cfg> {
             a borrow into relocatable storage. */
             unsafe {
                 if let Some(stored) = (&*entries.add(idx)).as_ref()
-                    && stored.resolver == resolver
+                    && stored.registration == registration
                 {
                     return Some(stored.resolver_ref);
                 }

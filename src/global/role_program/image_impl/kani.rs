@@ -18,13 +18,22 @@ fn packed_lane_range_encoding_avoids_reserved_sentinel() {
     let start: u16 = kani::any();
     let len: u16 = kani::any();
 
-    if start != u16::MAX || len != u16::MAX {
+    let encodable = start != u16::MAX || len != u16::MAX;
+    kani::cover!(encodable);
+    kani::cover!(!encodable);
+    if encodable {
         let range = PackedLaneRange::new(start as usize, len as usize);
         assert!(!range.is_empty());
         assert!(range.raw() == ((start as u32) << 16) | len as u32);
         assert!(range.start() == start as usize);
         assert!(range.len() == len as usize);
     }
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn packed_lane_range_reserved_sentinel_is_rejected() {
+    let _ = PackedLaneRange::new(u16::MAX as usize, u16::MAX as usize);
 }
 
 #[kani::proof]
@@ -108,13 +117,22 @@ fn resident_route_commit_decision_match_is_exact() {
     let left_mark_raw: u8 = kani::any();
     let right_mark_raw: u8 = kani::any();
 
-    if (left_scope as usize) < crate::eff::meta::MAX_EFF_NODES
+    let valid = (left_scope as usize) < crate::eff::meta::MAX_EFF_NODES
         && (right_scope as usize) < crate::eff::meta::MAX_EFF_NODES
         && left_arm <= 1
         && right_arm <= 1
         && left_mark_raw <= 1
-        && right_mark_raw <= 1
-    {
+        && right_mark_raw <= 1;
+    kani::cover!(valid && left_scope == right_scope && left_arm == right_arm);
+    kani::cover!(valid && left_scope != right_scope);
+    kani::cover!(valid && left_scope == right_scope && left_arm != right_arm);
+    kani::cover!(
+        valid
+            && left_scope == right_scope
+            && left_arm == right_arm
+            && left_mark_raw != right_mark_raw
+    );
+    if valid {
         let left_mark = if left_mark_raw == 0 {
             ReentryMark::SinglePass
         } else {

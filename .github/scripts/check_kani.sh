@@ -30,6 +30,18 @@ for harness in \
 done
 
 for harness in \
+  resolver_registration_key_is_program_and_id \
+  resolver_registration_key_rejects_intrinsic_id \
+  resolver_initial_storage_is_initialized_and_dispatchable \
+  resolver_replacement_compacts_entries_and_preserves_dispatch; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/session/cluster/core/dynamic_resolvers/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
   route_arm_decoding_accepts_exact_binary_domain \
   single_ready_mask_decoding_is_exact; do
   if ! grep -Eq "^fn ${harness}\(\)" \
@@ -53,6 +65,7 @@ done
 
 for harness in \
   packed_lane_range_encoding_avoids_reserved_sentinel \
+  packed_lane_range_reserved_sentinel_is_rejected \
   resident_route_arm_index_decoding_accepts_exact_binary_domain \
   resident_route_scope_decoding_accepts_exact_domain \
   resident_roll_scope_decoding_accepts_exact_domain \
@@ -85,7 +98,13 @@ for harness in \
   fi
 done
 
-for harness in program_atom_row_decoding_accepts_exact_domain; do
+for harness in \
+  packed_column_range_construction_is_exact_for_resident_stride_domain \
+  compiled_program_column_range_rejects_stride_multiplication_overflow \
+  role_image_column_range_rejects_stride_multiplication_overflow \
+  compiled_program_blob_comparison_matches_array_equality \
+  compiled_program_image_identity_is_exact_over_facts_columns_and_blob \
+  program_atom_row_decoding_accepts_exact_domain; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/compiled/images/image/program_ref/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
@@ -116,6 +135,7 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness packed_local_dependency_decoding_accepts_exact_domain \
   --harness packed_local_dependency_event_bounds_are_exact \
   --harness packed_lane_range_encoding_avoids_reserved_sentinel \
+  --harness packed_lane_range_reserved_sentinel_is_rejected \
   --harness resident_route_arm_index_decoding_accepts_exact_binary_domain \
   --harness resident_route_scope_decoding_accepts_exact_domain \
   --harness resident_roll_scope_decoding_accepts_exact_domain \
@@ -126,6 +146,15 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness scope_id_decoding_accepts_exact_compact_domain \
   --harness route_resolver_row_decoding_accepts_exact_domain \
   --harness dynamic_route_resolver_identity_is_scope_and_id \
+  --harness resolver_registration_key_is_program_and_id \
+  --harness resolver_registration_key_rejects_intrinsic_id \
+  --harness resolver_initial_storage_is_initialized_and_dispatchable \
+  --harness resolver_replacement_compacts_entries_and_preserves_dispatch \
+  --harness packed_column_range_construction_is_exact_for_resident_stride_domain \
+  --harness compiled_program_column_range_rejects_stride_multiplication_overflow \
+  --harness role_image_column_range_rejects_stride_multiplication_overflow \
+  --harness compiled_program_blob_comparison_matches_array_equality \
+  --harness compiled_program_image_identity_is_exact_over_facts_columns_and_blob \
   --harness program_atom_row_decoding_accepts_exact_domain
 
-echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=28 backend=CBMC"
+echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=38 backend=CBMC"

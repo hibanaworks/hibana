@@ -23,6 +23,7 @@ mod callback_reentry;
 
 const OUTER_RESOLVER: u16 = 701;
 const INNER_RESOLVER: u16 = 702;
+const SHARED_SITE_RESOLVER: u16 = 703;
 
 fn choose_arm(arm: &DecisionArm) -> Result<DecisionArm, ResolverError> {
     Ok(*arm)
@@ -92,6 +93,26 @@ fn nested_resolver_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     )
 }
 
+fn first_shared_site_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            g::send::<0, 1, Msg<44, u32>>(),
+            g::send::<0, 1, Msg<45, u32>>(),
+        )
+        .resolve::<SHARED_SITE_RESOLVER>(),
+    )
+}
+
+fn second_shared_site_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(
+        &g::route(
+            g::send::<0, 1, Msg<46, u32>>(),
+            g::send::<0, 1, Msg<47, u32>>(),
+        )
+        .resolve::<SHARED_SITE_RESOLVER>(),
+    )
+}
+
 #[repr(align(16))]
 struct AlignedSlab([u8; 65_536]);
 
@@ -144,6 +165,78 @@ fn resolver_replacement_survives_sidecar_relocation_and_typed_dispatch() {
 
     futures::executor::block_on(endpoint.send::<Msg<42, u32>>(&42))
         .expect("dispatch relocated outer and replaced inner resolver entries");
+}
+
+#[test]
+fn resolver_registration_keeps_distinct_program_image_identity() {
+    let left = DecisionArm::Left;
+    let right = DecisionArm::Right;
+    let first = first_shared_site_program::<0>();
+    let first_registration = first_shared_site_program::<1>();
+    let second = second_shared_site_program::<0>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(&mut slab.0, NoopTransport)
+        .expect("register rendezvous");
+
+    rv.set_resolver(
+        &first_registration,
+        ResolverRef::<SHARED_SITE_RESOLVER>::decision_state(&left, choose_arm),
+    )
+    .expect("install first program resolver through another role projection");
+    rv.set_resolver(
+        &second,
+        ResolverRef::<SHARED_SITE_RESOLVER>::decision_state(&right, choose_arm),
+    )
+    .expect("install second program resolver at the same scope and resolver id");
+
+    let mut first_endpoint = rv
+        .enter(SessionId::new(31), &first)
+        .expect("attach first program");
+    let mut second_endpoint = rv
+        .enter(SessionId::new(32), &second)
+        .expect("attach second program");
+    futures::executor::block_on(first_endpoint.send::<Msg<44, u32>>(&44))
+        .expect("first program keeps its left resolver");
+    futures::executor::block_on(second_endpoint.send::<Msg<47, u32>>(&47))
+        .expect("second program keeps its right resolver");
+}
+
+#[test]
+fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
+    let left = DecisionArm::Left;
+    let right = DecisionArm::Right;
+    let first = first_shared_site_program::<0>();
+    let second = second_shared_site_program::<0>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(&mut slab.0[..1953], NoopTransport)
+        .expect("register constrained rendezvous");
+    rv.set_resolver(
+        &first,
+        ResolverRef::<SHARED_SITE_RESOLVER>::decision_state(&left, choose_arm),
+    )
+    .expect("install first resolver before exhausting resident storage");
+    let mut endpoint = rv
+        .enter(SessionId::new(33), &first)
+        .expect("attach endpoint before exhausting resident storage");
+    let growth_error = rv
+        .set_resolver(
+            &second,
+            ResolverRef::<SHARED_SITE_RESOLVER>::decision_state(&right, choose_arm),
+        )
+        .expect_err("second resolver registration must reach the capacity failure boundary");
+    assert!(
+        format!("{growth_error:?}").contains("Cluster(exhausted resolver)"),
+        "fixture must fail at resolver storage exhaustion: {growth_error:?}"
+    );
+
+    futures::executor::block_on(endpoint.send::<Msg<44, u32>>(&44))
+        .expect("failed growth must preserve the first resolver registration");
 }
 
 #[test]
