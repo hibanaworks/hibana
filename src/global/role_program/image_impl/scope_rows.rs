@@ -1,6 +1,9 @@
-use super::super::{
-    MAX_ROUTE_ARM_LANE_ROWS, PackedLaneRange, PackedRouteArmRow, RoleLaneScratch, ScopeEvent,
-    ScopeId, ScopeKind, ScopeMarker,
+use super::{
+    super::{
+        MAX_ROUTE_ARM_LANE_ROWS, PackedLaneRange, PackedRouteArmRow, RoleLaneScratch, ScopeEvent,
+        ScopeId, ScopeKind, ScopeMarker,
+    },
+    binary_route_arm_index, route_arm_row_index,
 };
 use crate::global::typestate::{LocalConflict, PackedEventConflict};
 
@@ -329,8 +332,9 @@ impl RoleLaneScratch {
         arm_start: usize,
         arm_end: usize,
     ) -> Option<ScopeId> {
-        if route.is_none() || arm > 1 || arm_start >= arm_end {
-            return None;
+        let arm = binary_route_arm_index(arm) as u8;
+        if route.is_none() || arm_start >= arm_end {
+            crate::invariant();
         }
         let mut idx = 0usize;
         while idx < markers.len() {
@@ -377,7 +381,7 @@ impl RoleLaneScratch {
         &mut self,
         input: RouteArmProjectionRowInput<'_>,
     ) {
-        let row_idx = input.route_slot * 2 + input.arm as usize;
+        let row_idx = route_arm_row_index(input.route_slot, input.arm);
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route arm projection row overflow");
         }

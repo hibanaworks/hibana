@@ -38,6 +38,41 @@ theorem invalid_route_arm_decode_rejected
       | zero => simp at invalid
       | succ raw => rfl
 
+/-- Descriptor nodes reserve byte 255 for absence; every other non-binary byte
+is invalid rather than another spelling of absence. -/
+def decodeOptionalRouteArm? (raw : Nat) : Option (Option RouteArm) :=
+  if raw = 255 then some none else Option.map some (decodeRouteArm? raw)
+
+theorem optional_route_arm_decode_encode_round_trip (arm : RouteArm) :
+    decodeOptionalRouteArm? (encodeRouteArm arm) = some (some arm) := by
+  cases arm <;> rfl
+
+theorem optional_route_arm_absence_is_exact
+    {raw : Nat}
+    (decoded : decodeOptionalRouteArm? raw = some none) :
+    raw = 255 := by
+  by_cases sentinel : raw = 255
+  · exact sentinel
+  · simp [decodeOptionalRouteArm?, sentinel] at decoded
+
+theorem invalid_optional_route_arm_rejected
+    {raw : Nat}
+    (lower : 2 <= raw)
+    (upper : raw < 255) :
+    decodeOptionalRouteArm? raw = none := by
+  simp [decodeOptionalRouteArm?, Nat.ne_of_lt upper,
+    invalid_route_arm_decode_rejected lower]
+
+theorem selected_optional_route_arm_is_binary
+    {raw : Nat} {arm : RouteArm}
+    (decoded : decodeOptionalRouteArm? raw = some (some arm)) :
+    raw = 0 \/ raw = 1 := by
+  by_cases sentinel : raw = 255
+  · subst raw
+    simp [decodeOptionalRouteArm?] at decoded
+  · simp [decodeOptionalRouteArm?, sentinel] at decoded
+    exact route_arm_decode_accepts_only_binary decoded
+
 structure RouteAuthorityPublication where
   selected : Option RouteArm
   deriving DecidableEq

@@ -449,6 +449,50 @@ fn compact_route_arm_authority_fails_closed_before_publication() {
 }
 
 #[test]
+fn resident_route_arm_descriptors_reject_invalid_compact_values() {
+    let image_impl = read("src/global/role_program/image_impl.rs");
+    let event_rows = read("src/global/role_program/image_impl/event_rows.rs");
+    let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
+    let scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
+    let facts = read("src/global/typestate/facts.rs");
+    let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
+    let descriptor_arm_paths = format!("{event_rows}\n{lane_image}\n{scope_rows}");
+
+    assert!(
+        image_impl.contains("const fn decode_binary_route_arm_index(arm: u8) -> Option<usize>")
+            && image_impl.contains("const fn binary_route_arm_index(arm: u8) -> usize")
+            && image_impl.contains("const fn route_arm_row_index(slot: usize, arm: u8) -> usize")
+            && image_impl.contains(
+                "match decode_binary_route_arm_index(arm) {\n        Some(index) => index,\n        None => crate::invariant(),"
+            ),
+        "resident descriptor arm indexing must have one fail-closed binary boundary"
+    );
+    for forbidden in ["if arm >= 2", "if arm > 1"] {
+        assert!(
+            !descriptor_arm_paths.contains(forbidden),
+            "resident descriptor arm access must not collapse an invalid arm into absence: {forbidden}"
+        );
+    }
+    assert!(
+        lane_image.matches("route_arm_row_index(slot, arm)").count() >= 5
+            && event_rows.contains("let arm = binary_route_arm_index(arm);")
+            && scope_rows.contains("let arm = binary_route_arm_index(arm) as u8;")
+            && scope_rows.contains("route_arm_row_index(input.route_slot, input.arm)")
+            && facts
+                .contains("const fn decode_optional_route_arm_raw(raw: u8) -> Option<Option<u8>>")
+            && facts.contains("2..=254 => None")
+            && facts.contains(
+                "match Self::decode_optional_route_arm_raw(raw) {\n            Some(arm) => arm,\n            None => crate::invariant(),"
+            )
+            && facts.contains("const fn decode_raw(raw: u16) -> Option<Self>")
+            && facts.contains("raw & !Self::ROUTE_VALUE_MASK")
+            && first_recv_dispatch.contains("let arm = validated_dispatch_arm(arm, target);")
+            && !first_recv_dispatch.contains("if arm >= 2 || target.is_absent()"),
+        "compact descriptor facts and dispatch entries must reject invalid values before use"
+    );
+}
+
+#[test]
 fn production_sources_keep_absence_codes_named_by_meaning() {
     let production = read_production_rs_tree("src");
     for forbidden in [

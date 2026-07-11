@@ -8,6 +8,9 @@ The pinned gate exhausts the production arithmetic for:
 
 - exact binary decoding of every compact route-arm byte and every valid
   two-bit ready mask;
+- exact acceptance domains for packed event-conflict rows and optional
+  descriptor route-arm bytes;
+- exact binary indexing for resident descriptor route-arm rows;
 - fail-closed endpoint lease generation;
 - aligned endpoint placement inside a selected gap;
 - exact endpoint-lease table sizing and 32-bit bounds across the full `u16`

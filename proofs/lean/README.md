@@ -22,6 +22,8 @@ The kernel-checked boundary covers:
   including rejection without a publication successor for every value above
   the binary domain, plus separation of valid non-unique ready masks from
   invalid masks carrying out-of-domain bits;
+- exact optional descriptor-arm decoding with byte `255` as the sole absence
+  representation and every other non-binary value rejected;
 - exact commit and resolver successor deltas from one prepared base state;
 - atomic roll and route-arm reentry resets, including inside-clear and
   outside-preservation properties.

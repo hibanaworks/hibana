@@ -12,13 +12,46 @@ use crate::global::typestate::{
 };
 mod blob_image;
 mod event_rows;
+#[cfg(kani)]
+mod kani;
 mod lane_image;
 mod plan;
 mod ref_access;
 mod roll_rows;
 mod scope_rows;
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 use scope_rows::RouteArmProjectionRowInput;
+
+#[inline(always)]
+const fn decode_binary_route_arm_index(arm: u8) -> Option<usize> {
+    match arm {
+        0 => Some(0),
+        1 => Some(1),
+        2..=u8::MAX => None,
+    }
+}
+
+#[inline(never)]
+const fn binary_route_arm_index(arm: u8) -> usize {
+    match decode_binary_route_arm_index(arm) {
+        Some(index) => index,
+        None => crate::invariant(),
+    }
+}
+
+#[inline(never)]
+const fn route_arm_row_index(slot: usize, arm: u8) -> usize {
+    let arm = binary_route_arm_index(arm);
+    let Some(base) = slot.checked_mul(2) else {
+        crate::invariant();
+    };
+    let Some(row) = base.checked_add(arm) else {
+        crate::invariant();
+    };
+    row
+}
 
 impl RoleLaneScratch {
     const ACTIVE_LANE_NONE: u16 = u16::MAX;
@@ -476,9 +509,7 @@ impl RoleLaneScratch {
     }
 
     pub(crate) const fn route_commit_row_count(&self, slot: usize, arm: u8) -> usize {
-        if arm >= 2 {
-            panic!("route commit arm overflow");
-        }
+        let arm = binary_route_arm_index(arm) as u8;
         let Some(scope) = Self::route_scope_from_row(self.route_scope_rows[slot]) else {
             panic!("route commit scope row missing");
         };
@@ -508,9 +539,7 @@ impl RoleLaneScratch {
         arm: u8,
         target: usize,
     ) -> PackedEventConflict {
-        if arm >= 2 {
-            panic!("route commit arm overflow");
-        }
+        let arm = binary_route_arm_index(arm) as u8;
         let Some(scope) = Self::route_scope_from_row(self.route_scope_rows[slot]) else {
             panic!("route commit scope row missing");
         };
@@ -534,10 +563,7 @@ impl RoleLaneScratch {
 
     #[inline(always)]
     const fn append_route_commit_range(&mut self, slot: usize, arm: u8) {
-        if arm >= 2 {
-            panic!("route commit arm overflow");
-        }
-        let row_idx = slot * 2 + arm as usize;
+        let row_idx = route_arm_row_index(slot, arm);
         if row_idx >= MAX_ROUTE_ARM_LANE_ROWS {
             panic!("route commit range overflow");
         }

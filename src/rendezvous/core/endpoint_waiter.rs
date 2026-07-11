@@ -101,12 +101,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn drop_rejects_a_registered_wake_owner() {
         let count = Cell::new(0);
         let waiter = EndpointWaiter::empty();
         assert!(waiter.replace(counting_waker(&count)).is_none());
 
-        drop(waiter);
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(waiter)));
+        assert!(rejected.is_err());
     }
 }

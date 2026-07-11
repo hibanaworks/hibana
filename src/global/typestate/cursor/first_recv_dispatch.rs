@@ -26,6 +26,14 @@ impl DispatchMatch {
     }
 }
 
+#[inline(always)]
+fn validated_dispatch_arm(arm: u8, target: StateIndex) -> u8 {
+    if arm > 1 || target.is_absent() {
+        crate::invariant();
+    }
+    arm
+}
+
 impl EventCursorMachine {
     pub(in crate::global::typestate::cursor) fn visit_first_recv_dispatch(
         &self,
@@ -60,9 +68,8 @@ impl EventCursorMachine {
     ) -> Option<u8> {
         let mut mask = 0u8;
         self.visit_first_recv_dispatch(scope_id, |arm, target| {
-            if arm < 2 && !target.is_absent() {
-                mask |= 1u8 << arm;
-            }
+            let arm = validated_dispatch_arm(arm, target);
+            mask |= 1u8 << arm;
         })?;
         Some(mask)
     }
@@ -75,9 +82,7 @@ impl EventCursorMachine {
     ) -> Option<(u8, StateIndex)> {
         let mut matched = DispatchMatch::None;
         self.visit_first_recv_dispatch(scope_id, |arm, target| {
-            if arm >= 2 || target.is_absent() {
-                return;
-            }
+            let arm = validated_dispatch_arm(arm, target);
             let node = self.node(state_index_to_usize(target));
             let LocalAction::Recv {
                 lane: target_lane,

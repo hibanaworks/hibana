@@ -1,4 +1,7 @@
-use super::super::{PackedLocalEventRow, RoleLaneImage, RoleLaneScratch, ScopeEvent, ScopeId};
+use super::{
+    super::{PackedLocalEventRow, RoleLaneImage, RoleLaneScratch, ScopeEvent, ScopeId},
+    binary_route_arm_index,
+};
 use crate::global::{
     compiled::images::{CompiledProgramRef, EventSemanticKind},
     const_dsl::EffList,
@@ -228,14 +231,12 @@ impl RoleLaneScratch {
         arm: u8,
         role: u8,
     ) -> Option<usize> {
-        if arm >= 2 {
-            return None;
-        }
+        let arm = binary_route_arm_index(arm);
         let markers = eff_list.scope_markers();
         let Some(ranges) = Self::route_arm_ranges(markers, route) else {
             return None;
         };
-        let (start, end) = ranges[arm as usize];
+        let (start, end) = ranges[arm];
         let mut idx = start;
         while idx < end && idx < eff_list.len() {
             let node = eff_list.node_at(idx);

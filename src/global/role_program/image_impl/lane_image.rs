@@ -1,10 +1,13 @@
-use super::super::{
-    BlobPtr, ColumnRange, LaneSetView, LaneStepLayout, LaneSteps, PackedLaneRange,
-    PackedLocalEventRow, PackedRollScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
-    ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
-    ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE,
-    RoleLaneImage, RouteArmLaneStepRow,
+use super::{
+    super::{
+        BlobPtr, ColumnRange, LaneSetView, LaneStepLayout, LaneSteps, PackedLaneRange,
+        PackedLocalEventRow, PackedRollScopeRow, PackedRouteArmRow, ROLE_IMAGE_CONFLICT_STRIDE,
+        ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
+        ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
+        ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
+        ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleLaneImage, RouteArmLaneStepRow,
+    },
+    route_arm_row_index,
 };
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
@@ -227,16 +230,13 @@ impl<'a> RoleLaneImage<'a> {
             ROLE_IMAGE_CONFLICT_STRIDE,
         ) {
             Some(raw) => PackedEventConflict::from_raw(raw),
-            None => PackedEventConflict::none(),
+            None => crate::invariant(),
         }
     }
 
     #[inline(always)]
     pub(crate) const fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
-        if arm >= 2 {
-            return PackedLaneRange::EMPTY;
-        }
-        let row_idx = slot * 2 + arm as usize;
+        let row_idx = route_arm_row_index(slot, arm);
         self.lane_range_row(self.columns.route_commit_ranges, row_idx)
     }
 
@@ -248,7 +248,7 @@ impl<'a> RoleLaneImage<'a> {
             ROLE_IMAGE_CONFLICT_STRIDE,
         ) {
             Some(raw) => PackedEventConflict::from_raw(raw),
-            None => PackedEventConflict::none(),
+            None => crate::invariant(),
         }
     }
 
@@ -329,10 +329,7 @@ impl<'a> RoleLaneImage<'a> {
         slot: usize,
         arm: u8,
     ) -> Option<u16> {
-        if arm >= 2 {
-            return None;
-        }
-        let row_idx = slot * 2 + arm as usize;
+        let row_idx = route_arm_row_index(slot, arm);
         match self.route_arm_row(row_idx).child_slot_delta() {
             Some(delta) => match self.route_scope_by_slot(slot + delta as usize) {
                 Some(scope) => Some(scope.local_ordinal()),
@@ -348,10 +345,7 @@ impl<'a> RoleLaneImage<'a> {
         slot: usize,
         arm: u8,
     ) -> PackedLaneRange {
-        if arm >= 2 {
-            return PackedLaneRange::EMPTY;
-        }
-        let row_idx = slot * 2 + arm as usize;
+        let row_idx = route_arm_row_index(slot, arm);
         self.route_arm_row(row_idx).event_row()
     }
 
@@ -456,10 +450,7 @@ impl<'a> RoleLaneImage<'a> {
         arm: u8,
         lane_word_count: usize,
     ) -> Option<LaneSetView<'static>> {
-        if arm >= 2 {
-            return None;
-        }
-        let row_idx = slot * 2 + arm as usize;
+        let row_idx = route_arm_row_index(slot, arm);
         let row = self.lane_range_row(self.columns.route_arm_lane_rows, row_idx);
         if row.is_empty() {
             return None;
@@ -503,10 +494,10 @@ impl<'a> RoleLaneImage<'a> {
         lane: u8,
         logical_lane_count: usize,
     ) -> Option<RouteArmLaneStepRow> {
-        if arm >= 2 || lane as usize >= logical_lane_count {
+        let arm_row_idx = route_arm_row_index(slot, arm);
+        if lane as usize >= logical_lane_count {
             return None;
         }
-        let arm_row_idx = slot * 2 + arm as usize;
         let range = self.route_arm_row(arm_row_idx).lane_step_row();
         if range.end() > self.columns.route_arm_lane_step_rows.len as usize {
             crate::invariant();

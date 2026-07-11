@@ -88,6 +88,10 @@ for theorem in \
   route_arm_decode_encode_round_trip \
   route_arm_decode_accepts_only_binary \
   invalid_route_arm_decode_rejected \
+  optional_route_arm_decode_encode_round_trip \
+  optional_route_arm_absence_is_exact \
+  invalid_optional_route_arm_rejected \
+  selected_optional_route_arm_is_binary \
   invalid_route_arm_has_no_publication \
   valid_route_arm_publication_is_exact \
   invalid_ready_arm_mask_rejected \
@@ -106,11 +110,11 @@ done
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
-if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "21" ]] \
+if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "23" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "28" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "8" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "57" ]]; then
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "29" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "9" ]] \
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "61" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi

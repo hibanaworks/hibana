@@ -150,6 +150,27 @@ fn simple_controller_route_arm_event_rows_are_exact() {
 }
 
 #[test]
+fn resident_route_arm_access_rejects_nonbinary_index() {
+    let route = g::route(
+        g::send::<0, 1, Msg<71, u32>>(),
+        g::send::<0, 1, Msg<72, u32>>(),
+    );
+    let role0: RoleProgram<0> = project(&route);
+    let events = LocalEventProgram::from_rows(role0.role_image_ref());
+    let region = events
+        .route_scope_rows_by_slot(0)
+        .expect("simple route scope row");
+    let slot = events
+        .route_scope_slot(region.scope())
+        .expect("simple route slot");
+
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        events.route_arm_event_row_by_slot(slot, 2)
+    }));
+    assert!(rejected.is_err());
+}
+
+#[test]
 fn logical_lane_count_stays_inside_wire_lane_domain() {
     assert_eq!(logical_lane_count_for_role(0, 1), MIN_ENDPOINT_LANE_SLOTS);
     assert_eq!(logical_lane_count_for_role(254, 255), LANE_DOMAIN_SIZE);

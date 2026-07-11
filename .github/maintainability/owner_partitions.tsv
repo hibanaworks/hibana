@@ -140,6 +140,7 @@ src/global/role_program	src/global/role_program/lane_set.rs
 src/global/role_program	src/global/role_program/program.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/blob_image.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/event_rows.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/kani.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/lane_image.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/plan.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/roll_rows.rs

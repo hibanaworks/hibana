@@ -52,6 +52,10 @@ import Hibana.MainTheorems
 #print axioms Hibana.route_arm_decode_encode_round_trip
 #print axioms Hibana.route_arm_decode_accepts_only_binary
 #print axioms Hibana.invalid_route_arm_decode_rejected
+#print axioms Hibana.optional_route_arm_decode_encode_round_trip
+#print axioms Hibana.optional_route_arm_absence_is_exact
+#print axioms Hibana.invalid_optional_route_arm_rejected
+#print axioms Hibana.selected_optional_route_arm_is_binary
 #print axioms Hibana.invalid_route_arm_has_no_publication
 #print axioms Hibana.valid_route_arm_publication_is_exact
 #print axioms Hibana.invalid_ready_arm_mask_rejected

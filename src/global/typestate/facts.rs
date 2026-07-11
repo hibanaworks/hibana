@@ -10,6 +10,8 @@ use crate::{
 
 mod dependency;
 pub(crate) use dependency::{LocalDependency, PackedLocalDependency};
+#[cfg(kani)]
+mod kani;
 mod meta;
 pub(crate) use meta::{EventCommitMeta, LocalMeta, RecvMeta, SendMeta, state_index_to_usize};
 mod passive_child;
@@ -25,6 +27,8 @@ pub(crate) const ARM_SHARED: u8 = 0xFF;
 /// nearest enclosing route arm at projection time; parent route membership is
 /// represented by the route scope's own conflict row, so runtime enabled checks
 /// can walk conflict rows without interpreting route-scope structure.
+/// Bits 0, 1..=12, 13, 14, and 15 are respectively arm, route ordinal,
+/// reentry, no-conflict, and reserved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PackedEventConflict(u16);
 
@@ -34,6 +38,9 @@ impl PackedEventConflict {
     const ROUTE_MASK: u16 = (1 << 12) - 1;
     const ROUTE_REENTRY_BIT: u16 = 1 << 13;
     const NO_CONFLICT_BIT: u16 = 1 << 14;
+    const REENTRY_WITHOUT_CONFLICT_RAW: u16 = Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT;
+    const ROUTE_VALUE_MASK: u16 =
+        (Self::ROUTE_MASK << Self::ARM_BITS) | 1 | Self::ROUTE_REENTRY_BIT;
     /// Maximum row-chain length for conflict traversal.
     ///
     /// An event conflict row can only point through route-scope conflict rows
@@ -48,8 +55,23 @@ impl PackedEventConflict {
     }
 
     #[inline(always)]
+    const fn decode_raw(raw: u16) -> Option<Self> {
+        if raw == Self::ABSENT_RAW
+            || raw == Self::REENTRY_WITHOUT_CONFLICT_RAW
+            || (raw & !Self::ROUTE_VALUE_MASK) == 0
+        {
+            Some(Self(raw))
+        } else {
+            None
+        }
+    }
+
+    #[inline(never)]
     pub(crate) const fn from_raw(raw: u16) -> Self {
-        Self(raw)
+        match Self::decode_raw(raw) {
+            Some(conflict) => conflict,
+            None => crate::invariant(),
+        }
     }
 
     #[inline(always)]
@@ -59,7 +81,7 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn is_none(self) -> bool {
-        self.0 == Self::ABSENT_RAW || (self.0 & Self::NO_CONFLICT_BIT) != 0
+        self.0 == Self::ABSENT_RAW || self.0 == Self::REENTRY_WITHOUT_CONFLICT_RAW
     }
 
     #[inline(always)]
@@ -81,9 +103,7 @@ impl PackedEventConflict {
     pub(crate) const fn with_route_reentry(self, mark: ReentryMark) -> Self {
         match mark {
             ReentryMark::SinglePass => {
-                if self.0 == Self::ABSENT_RAW
-                    || self.0 == (Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
-                {
+                if self.0 == Self::ABSENT_RAW || self.0 == Self::REENTRY_WITHOUT_CONFLICT_RAW {
                     Self::none()
                 } else {
                     Self(self.0 & !Self::ROUTE_REENTRY_BIT)
@@ -91,7 +111,7 @@ impl PackedEventConflict {
             }
             ReentryMark::Reentrant => {
                 if self.0 == Self::ABSENT_RAW {
-                    Self(Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT)
+                    Self(Self::REENTRY_WITHOUT_CONFLICT_RAW)
                 } else {
                     Self(self.0 | Self::ROUTE_REENTRY_BIT)
                 }
@@ -105,6 +125,18 @@ impl PackedEventConflict {
     }
 
     #[inline(always)]
+    const fn decoded_route(self) -> Option<(u16, u8)> {
+        if self.is_none() {
+            None
+        } else {
+            Some((
+                (self.0 >> Self::ARM_BITS) & Self::ROUTE_MASK,
+                (self.0 & 1) as u8,
+            ))
+        }
+    }
+
+    #[inline(always)]
     pub(crate) const fn from_conflict(conflict: LocalConflict) -> Self {
         match conflict {
             LocalConflict::RouteArm { scope, arm } => Self::route_arm(scope, arm),
@@ -114,11 +146,9 @@ impl PackedEventConflict {
 
     #[inline(always)]
     pub(crate) const fn to_conflict(self) -> Option<LocalConflict> {
-        if self.is_none() {
+        let Some((ordinal, arm)) = self.decoded_route() else {
             return None;
-        }
-        let arm = (self.0 & 1) as u8;
-        let ordinal = (self.0 >> Self::ARM_BITS) & Self::ROUTE_MASK;
+        };
         Some(LocalConflict::RouteArm {
             scope: ScopeId::route(ordinal),
             arm,
@@ -383,6 +413,7 @@ pub(crate) struct LocalNode {
     action: PackedLocalAction,
     next: StateIndex,
     scope: ScopeId,
+    /// `0`/`1` select an arm and `255` is the sole absence representation.
     route_arm_raw: u8,
     /// Bit-packed node flags.
     /// FLAG_CHOICE_DETERMINANT marks the first recv of a route arm.
@@ -398,17 +429,26 @@ impl LocalNode {
     #[inline(always)]
     const fn encode_route_arm(route_arm: Option<u8>) -> u8 {
         match route_arm {
-            Some(arm) => arm,
+            Some(arm @ 0..=1) => arm,
+            Some(_) => crate::invariant(),
             None => Self::ROUTE_ARM_NONE,
         }
     }
 
     #[inline(always)]
+    const fn decode_optional_route_arm_raw(raw: u8) -> Option<Option<u8>> {
+        match raw {
+            0..=1 => Some(Some(raw)),
+            Self::ROUTE_ARM_NONE => Some(None),
+            2..=254 => None,
+        }
+    }
+
+    #[inline(never)]
     const fn decode_route_arm(raw: u8) -> Option<u8> {
-        if raw == Self::ROUTE_ARM_NONE {
-            None
-        } else {
-            Some(raw)
+        match Self::decode_optional_route_arm_raw(raw) {
+            Some(arm) => arm,
+            None => crate::invariant(),
         }
     }
 
@@ -581,5 +621,49 @@ impl LocalNode {
     #[inline(always)]
     pub(crate) const fn event_semantic(&self) -> EventSemanticKind {
         Self::decode_semantic(self.flags)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LocalNode, PackedEventConflict};
+
+    #[test]
+    fn packed_conflict_and_optional_arm_decoders_accept_exact_domains() {
+        for raw in 0..=u16::MAX {
+            let expected = raw <= 0x3fff || raw == 0x6000 || raw == 0xffff;
+            let decoded = PackedEventConflict::decode_raw(raw);
+            assert_eq!(decoded.is_some(), expected);
+            if raw <= 0x3fff {
+                assert_eq!(
+                    decoded.and_then(PackedEventConflict::decoded_route),
+                    Some(((raw >> 1) & 0x0fff, (raw & 1) as u8))
+                );
+            } else if expected {
+                assert_eq!(decoded.and_then(PackedEventConflict::decoded_route), None);
+            }
+        }
+
+        for raw in 0..=u8::MAX {
+            let expected = match raw {
+                0 => Some(Some(0)),
+                1 => Some(Some(1)),
+                2..=254 => None,
+                255 => Some(None),
+            };
+            assert_eq!(LocalNode::decode_optional_route_arm_raw(raw), expected);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn packed_conflict_rejects_reserved_high_bit() {
+        let _ = PackedEventConflict::from_raw(1 << 15);
+    }
+
+    #[test]
+    #[should_panic]
+    fn optional_route_arm_rejects_invalid_compact_value() {
+        let _ = LocalNode::decode_route_arm(2);
     }
 }

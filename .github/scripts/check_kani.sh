@@ -38,6 +38,24 @@ for harness in \
   fi
 done
 
+for harness in \
+  packed_event_conflict_decoding_accepts_exact_domain \
+  optional_route_arm_decoding_accepts_exact_domain; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/global/typestate/facts/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in resident_route_arm_index_decoding_accepts_exact_binary_domain; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/global/role_program/image_impl/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
 RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --manifest-path "${MANIFEST}" \
   --target-dir "${ROOT_DIR}/target/kani" \
@@ -54,6 +72,9 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness sidecar_overlap_is_symmetric_and_exact \
   --harness resolver_storage_layout_is_bounded_and_exact \
   --harness route_arm_decoding_accepts_exact_binary_domain \
-  --harness single_ready_mask_decoding_is_exact
+  --harness single_ready_mask_decoding_is_exact \
+  --harness packed_event_conflict_decoding_accepts_exact_domain \
+  --harness optional_route_arm_decoding_accepts_exact_domain \
+  --harness resident_route_arm_index_decoding_accepts_exact_binary_domain
 
-echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=11 backend=CBMC"
+echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=14 backend=CBMC"

@@ -90,14 +90,16 @@ fn resident_owner_capacities(rv: &Rendezvous<'_, '_, FailingTransport>) -> [usiz
 }
 
 #[test]
-#[should_panic]
 fn nonempty_sidecar_before_slab_fails_closed() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
     let (slab_ptr, _) = rv.slab_ptr_and_len();
     let malformed = Sidecar::from_raw_parts(slab_ptr.wrapping_sub(1), 1);
 
-    core::hint::black_box(rv.sidecar_range(malformed));
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        core::hint::black_box(rv.sidecar_range(malformed));
+    }));
+    assert!(rejected.is_err());
 }
 
 #[test]
