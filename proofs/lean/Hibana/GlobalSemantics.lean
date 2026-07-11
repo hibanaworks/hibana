@@ -5,8 +5,9 @@ import Hibana.RuntimeMonitor
 namespace Hibana
 
 /-- One affine global event is either unstarted, queued for its unique receive,
-or consumed. Queue and consumption epochs prevent rolled iterations from
-sharing one message token. -/
+or consumed. The epoch tags the currently modeled queue token. Roll readiness
+and queue clearing prevent two modeled iterations from sharing that token;
+delivery outside this queue model remains a transport-contract obligation. -/
 inductive EventPhase where
   | ready
   | queued (epoch : Nat)

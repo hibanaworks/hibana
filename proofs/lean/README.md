@@ -69,7 +69,10 @@ The kernel-checked boundary covers:
   affine receive cursors, no replay, consecutive exactly-once delivery,
   post-drain peer-close observation, and rejection of sends after close;
 - guarded nested or top-level roll reset through one global transition, with
-  atomic epoch, owned queue, local cursor, and route authority reset. A finite
+  atomic owned-queue, local-cursor, and route-authority reset. The logical epoch
+  remains unchanged; stale-frame exclusion outside the modeled queues depends
+  on roll readiness plus the FIFO/exactly-once/no-replay transport contract and
+  still requires an end-to-end transport-composition refinement. A finite
   scheduler scans every send, receive, local action, resolver selection,
   resolver rejection, and roll operation; one exhaustive strong-fairness
   premise ranges over recurrently enabled operations of that type instead of
