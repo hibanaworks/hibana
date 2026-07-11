@@ -4,6 +4,7 @@ use super::{
 };
 use crate::{session::cluster::error::ResourceScope, session::types::SessionId};
 mod placement;
+mod session_binding;
 #[cfg(kani)]
 pub(in crate::rendezvous::core) use placement::endpoint_offset_in_gap;
 

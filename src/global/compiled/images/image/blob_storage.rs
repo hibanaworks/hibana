@@ -38,6 +38,18 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
+    pub(crate) const fn from_image_if_fits(
+        eff_list: &EffList,
+        columns: ProgramImageColumns,
+    ) -> Option<Self> {
+        if columns.blob_len() > N {
+            None
+        } else {
+            Some(Self::from_image(eff_list, columns))
+        }
+    }
+
+    #[inline(always)]
     pub(crate) const fn compiled_ref(
         &'static self,
         image: &CompiledProgramImage,
@@ -59,6 +71,12 @@ impl<const N: usize> ProgramImageBytes<N> {
     const fn write_u16(&mut self, offset: usize, value: u16) {
         self.write_u8(offset, value as u8);
         self.write_u8(offset + 1, (value >> 8) as u8);
+    }
+
+    #[inline(always)]
+    const fn write_payload_schema(&mut self, offset: usize, value: u32) {
+        self.write_u16(offset, value as u16);
+        self.write_u16(offset + 2, (value >> 16) as u16);
     }
 
     #[inline(always)]
@@ -85,8 +103,9 @@ impl<const N: usize> ProgramImageBytes<N> {
         self.write_u8(out + 2, atom.from);
         self.write_u8(out + 3, atom.to);
         self.write_u8(out + 4, atom.label);
-        self.write_u8(out + 5, atom.origin.packed_bits());
-        self.write_u8(out + 6, atom.lane);
+        self.write_payload_schema(out + 5, atom.payload_schema);
+        self.write_u8(out + 9, atom.origin.packed_bits());
+        self.write_u8(out + 10, atom.lane);
     }
 
     const fn write_route_resolver(
@@ -264,17 +283,6 @@ impl<const N: usize> ProgramImageBytes<N> {
             idx += 1;
         }
         None
-    }
-
-    #[inline(always)]
-    pub(crate) const fn from_capacity_bucket(
-        eff_list: &EffList,
-        columns: ProgramImageColumns,
-    ) -> Self {
-        if columns.blob_len() > N {
-            return Self::empty();
-        }
-        Self::from_image(eff_list, columns)
     }
 
     pub(crate) const fn from_image(eff_list: &EffList, columns: ProgramImageColumns) -> Self {

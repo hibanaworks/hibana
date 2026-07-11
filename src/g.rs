@@ -123,13 +123,24 @@ pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>() -> 
 }
 
 /// Construct a single send step from `FROM` to `TO` carrying `M`.
+///
+/// A self-role step is endpoint-local control and therefore carries only the
+/// canonical zero-byte unit schema. Payload-bearing communication requires
+/// distinct sender and receiver roles.
 pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>>
 where
     M: Message,
+    M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
     const {
         if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
             panic!("{}", ROLE_INDEX_ERROR);
+        }
+        if FROM == TO
+            && <M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID
+                != <() as crate::transport::wire::WirePayload>::SCHEMA_ID
+        {
+            panic!("self-role actions require the unit payload");
         }
     }
     Program::new()

@@ -31,6 +31,10 @@ src/session	src/session/cluster.rs
 src/session	src/session/lease
 src/session	src/session/lease.rs
 src/session	src/session/types.rs
+src/test_support	src/test_support/large_choreography
+src/test_support	src/test_support/lean_proof_export
+src/test_support	src/test_support/lean_proof_export.rs
+src/test_support	src/test_support/mod.rs
 src/endpoint	src/endpoint/affine.rs
 src/endpoint	src/endpoint/branch.rs
 src/endpoint	src/endpoint/carrier
@@ -155,6 +159,13 @@ src/global/typestate/cursor	src/global/typestate/cursor/lane_progress.rs
 src/global/typestate/cursor	src/global/typestate/cursor/navigation.rs
 src/global/typestate/cursor	src/global/typestate/cursor/scope_route
 src/global/typestate/cursor	src/global/typestate/cursor/scope_route.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/event_progress.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/navigation.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/roll.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/row_completion.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/send_preview.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/send_preview_route.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/send_preview_start.rs
 src/rendezvous	src/rendezvous/association
 src/rendezvous	src/rendezvous/association.rs
 src/rendezvous	src/rendezvous/core

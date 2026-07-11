@@ -14,6 +14,8 @@ impl WireEncode for FramePayload {
 }
 
 impl WirePayload for FramePayload {
+    const SCHEMA_ID: u32 = 0x4000_0101;
+
     type Decoded<'a> = Payload<'a>;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {

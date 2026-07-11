@@ -339,8 +339,8 @@ fn descriptor_projection_has_no_resource_or_tap_count_axes() {
 
     assert!(
         read("src/global/compiled/images/image/columns.rs")
-            .contains("pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 7;"),
-        "compiled program atom image stride must stay at the resource-free 7-byte layout"
+            .contains("pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 11;"),
+        "compiled program atom image stride must retain the compact schema-bearing layout"
     );
 
     for forbidden in [
@@ -631,8 +631,16 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
     );
 
     assert!(
-        program_blob.contains("pub(crate) const fn from_capacity_bucket(")
-            && role_blob.contains("pub(crate) const fn from_capacity_bucket(")
+        !program_blob.contains("from_capacity_bucket")
+            && !role_blob.contains("from_capacity_bucket")
+            && !role_blob.contains("from_program_bucket")
+            && program_blob.contains(
+                "if columns.blob_len() > N {\n            None\n        } else {\n            Some(Self::from_image(eff_list, columns))"
+            )
+            && role_blob.contains("pub(crate) const fn build_if_fits<const N: usize>(")
+            && role_blob.contains("if self.blob_len() > N {")
+            && role_blob.contains("if columns.blob_len() > N {\n            return None;\n        }")
+            && role_blob.contains("Some(RoleImageBuild {")
             && !program_blob.contains("pub(crate) const fn blob(")
             && !role_blob.contains("pub(crate) const fn blob(")
             && !program_blob.contains("BlobPtr::from_array(")
@@ -645,21 +653,27 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             && role_ref_access.contains("BlobPtr::from_array(bytes, columns.blob_len())")
             && projection.contains("ProgramImagePlan::from_program")
             && projection.contains("RoleImagePlan::from_program")
-            && projection.contains("RoleImageBuild::<N>::from_program_bucket")
+            && projection.contains("const BYTES: Option<")
+            && projection.contains("ProgramImageBytes::<N>::from_image_if_fits")
+            && projection.contains("const BUILD: Option<")
+            && projection.contains("RoleProjection::<ROLE, Steps>::PLAN.build_if_fits::<N>")
+            && projection.contains("None => panic!(\"program bucket selection\")")
+            && projection.contains("None => panic!(\"role bucket selection\")")
+            && role_blob.contains("RoleImageBytes::<N>::from_scratch(&scratch, facts, columns)")
             && projection.contains("const PROGRAM_PLAN:")
             && projection.contains("const PROGRAM_COLUMNS:")
             && projection.contains("Self::PROGRAM_PLAN.blob_len()")
             && projection.contains("const PLAN:")
             && projection.contains("Self::PLAN.blob_len()")
             && !projection.contains("ProgramImageBytes::<0>::columns")
-            && !projection.contains("RoleImageBuild::<0>::from_program_bucket")
+            && !projection.contains("RoleImageBuild::<0>::from_program")
             && !projection.contains("projected_len(")
             && !projection.contains("const SCRATCH:")
             && !projection.contains("&RoleProjection::<ROLE, Steps>::SCRATCH")
             && !projection.contains("ROLE_IMAGE_BLOB_CAPACITY")
             && !projection.contains("PROGRAM_IMAGE_BLOB_CAPACITY")
             && !projection.contains("CompiledProgramRef { image: &'static CompiledProgramImage }"),
-        "projection may use private capacity buckets, but selected buckets must stay on fail-closed compact constructors without resident CompiledProgramImage handles"
+        "projection must enter fail-closed compact constructors directly without silent bucket fallback or resident CompiledProgramImage handles"
     );
 }
 

@@ -18,9 +18,10 @@ fn recv_codec_error_poisons_before_same_generation_continuation() {
 
             futures::executor::block_on(origin_endpoint.send::<Msg<1, u32>>(&42))
                 .expect("send succeeds");
+            transport.truncate_next_payload(1, 3);
 
-            let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u64>>()) {
-                Ok(_) => panic!("recv with wrong payload shape must fail"),
+            let err = match futures::executor::block_on(target_endpoint.recv::<Msg<1, u32>>()) {
+                Ok(_) => panic!("recv with malformed bytes must fail"),
                 Err(err) => err,
             };
             assert!(format!("{err:?}").contains("operation: \"recv\""));

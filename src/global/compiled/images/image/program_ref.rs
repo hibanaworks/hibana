@@ -13,36 +13,39 @@ struct ProgramAtomRow {
     atom: EffAtom,
 }
 
+#[derive(Clone, Copy)]
+struct PackedProgramAtomFields {
+    from: u8,
+    to: u8,
+    label: u8,
+    payload_schema: u32,
+    origin: u8,
+    lane: u8,
+}
+
 impl ProgramAtomRow {
-    const fn decode(
-        eff_idx: u16,
-        from: u8,
-        to: u8,
-        label: u8,
-        origin: u8,
-        lane: u8,
-        role_count: u8,
-    ) -> Option<Self> {
+    const fn decode(eff_idx: u16, fields: PackedProgramAtomFields, role_count: u8) -> Option<Self> {
         if eff_idx as usize >= crate::eff::meta::MAX_EFF_NODES
             || role_count == 0
             || role_count > crate::g::ROLE_DOMAIN_SIZE
-            || from >= role_count
-            || to >= role_count
+            || fields.from >= role_count
+            || fields.to >= role_count
         {
             return None;
         }
-        let origin = match EventOrigin::decode_packed_bits(origin) {
+        let origin = match EventOrigin::decode_packed_bits(fields.origin) {
             Some(origin) => origin,
             None => return None,
         };
         Some(Self {
             eff_idx,
             atom: EffAtom {
-                from,
-                to,
-                label,
+                from: fields.from,
+                to: fields.to,
+                label: fields.label,
+                payload_schema: fields.payload_schema,
                 origin,
-                lane,
+                lane: fields.lane,
             },
         })
     }
@@ -127,6 +130,11 @@ impl CompiledProgramRef {
         self.byte_at(offset) as u16 | ((self.byte_at(offset + 1) as u16) << 8)
     }
 
+    #[inline(always)]
+    const fn read_payload_schema_at(&self, offset: usize) -> u32 {
+        self.read_u16_at(offset) as u32 | ((self.read_u16_at(offset + 2) as u32) << 16)
+    }
+
     #[inline]
     const fn atom_row_at(&self, row: usize) -> Option<ProgramAtomRow> {
         let offset = match self.column_offset(self.columns.atoms(), row, PROGRAM_IMAGE_ATOM_STRIDE)
@@ -136,11 +144,14 @@ impl CompiledProgramRef {
         };
         match ProgramAtomRow::decode(
             self.read_u16_at(offset),
-            self.byte_at(offset + 2),
-            self.byte_at(offset + 3),
-            self.byte_at(offset + 4),
-            self.byte_at(offset + 5),
-            self.byte_at(offset + 6),
+            PackedProgramAtomFields {
+                from: self.byte_at(offset + 2),
+                to: self.byte_at(offset + 3),
+                label: self.byte_at(offset + 4),
+                payload_schema: self.read_payload_schema_at(offset + 5),
+                origin: self.byte_at(offset + 9),
+                lane: self.byte_at(offset + 10),
+            },
             self.facts.role_count,
         ) {
             Some(row) => Some(row),
@@ -178,6 +189,21 @@ impl CompiledProgramRef {
     #[inline(always)]
     pub(crate) const fn role_count(&self) -> usize {
         self.facts.role_count as usize
+    }
+
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn proof_atom_count(&self) -> usize {
+        self.columns.atom_count()
+    }
+
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn proof_blob_len(&self) -> usize {
+        self.columns.blob_len()
+    }
+
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn proof_byte_at(&self, offset: usize) -> u8 {
+        self.byte_at(offset)
     }
 
     #[inline(always)]

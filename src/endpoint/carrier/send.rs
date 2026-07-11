@@ -7,6 +7,7 @@ where
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         logical_label: u8,
+        payload_schema: u32,
         out: *mut crate::endpoint::kernel::SendPreview,
     ) -> crate::endpoint::SendResult<()> {
         let mut waiters = WaiterTransfer::empty();
@@ -21,7 +22,8 @@ where
                     crate::transport::TransportError::Failed,
                 )),
                 |kernel| {
-                    let preview = kernel.preview_send_meta(logical_label, &mut waiters)?;
+                    let preview =
+                        kernel.preview_send_meta(logical_label, payload_schema, &mut waiters)?;
                     OutSlot::new(out).write(preview);
                     Ok(())
                 },

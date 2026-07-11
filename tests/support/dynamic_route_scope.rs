@@ -135,6 +135,27 @@ impl WireEncode for RejectCountedPayload {
     }
 }
 
+impl hibana::runtime::wire::WirePayload for RejectCountedPayload {
+    const SCHEMA_ID: u32 = 0x4000_0005;
+
+    type Decoded<'a> = u32;
+
+    fn validate_payload(input: hibana::runtime::wire::Payload<'_>) -> Result<(), CodecError> {
+        if input.as_bytes().len() == 4 {
+            Ok(())
+        } else {
+            Err(CodecError::Malformed)
+        }
+    }
+
+    fn decode_validated_payload<'a>(
+        input: hibana::runtime::wire::Payload<'a>,
+    ) -> Self::Decoded<'a> {
+        let bytes = input.as_bytes();
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+}
+
 pub(crate) fn same_label_reject_payload_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left = g::send::<0, 1, Msg<SAME_LABEL, RejectCountedPayload>>();
     let right = g::send::<0, 2, Msg<SAME_LABEL, RejectCountedPayload>>();

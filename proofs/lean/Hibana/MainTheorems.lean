@@ -2,9 +2,17 @@ import Hibana.Allocation
 import Hibana.Authority
 import Hibana.Commit
 import Hibana.Generation
+import Hibana.GlobalSemantics
+import Hibana.GlobalMessageTransitions
+import Hibana.GlobalFidelity
+import Hibana.DescriptorRefinement
+import Hibana.Cancellation
+import Hibana.TransportContract
+import Hibana.GlobalProgress
 import Hibana.Layout
 import Hibana.Progress
 import Hibana.Refinement
+import Hibana.RuntimeMonitor
 
 namespace Hibana
 
@@ -15,31 +23,34 @@ theorem initial_state_has_no_completed_event (event : Nat) :
     CommitState.initial.done event = false := rfl
 
 private def resolverProofChoreo : Choreo :=
-  .route (.dynamic 7) (.send 0 1 1) (.send 0 1 2)
+  .route (.dynamic 7) (.send 0 1 1 6) (.send 0 1 2 7)
+
+private def resolverProofFrontier : List MessageKey :=
+  [{ label := 1, schema := 6 }, { label := 2, schema := 7 }]
 
 theorem unresolved_dynamic_commit_rejected :
     checkProgramTrace resolverProofChoreo 0 [
-      { enabled := [1, 2], action := .commit 1 }
+      { enabled := resolverProofFrontier, action := .commit { label := 1, schema := 6 } }
     ] = false := by
   decide
 
 theorem wrong_resolver_id_rejected :
     checkProgramTrace resolverProofChoreo 0 [
-      { enabled := [1, 2], action := .resolve 0 8 .left }
+      { enabled := resolverProofFrontier, action := .resolve 0 8 .left }
     ] = false := by
   decide
 
 theorem resolver_reuse_without_reset_rejected :
     checkProgramTrace resolverProofChoreo 0 [
-      { enabled := [1, 2], action := .resolve 0 7 .left },
-      { enabled := [1], action := .resolve 0 7 .right }
+      { enabled := resolverProofFrontier, action := .resolve 0 7 .left },
+      { enabled := [{ label := 1, schema := 6 }], action := .resolve 0 7 .right }
     ] = false := by
   decide
 
 theorem resolver_reject_is_terminal :
     checkProgramTrace resolverProofChoreo 0 [
-      { enabled := [1, 2], action := .reject 0 7 },
-      { enabled := [1, 2], action := .stop }
+      { enabled := resolverProofFrontier, action := .reject 0 7 },
+      { enabled := resolverProofFrontier, action := .stop }
     ] = false := by
   decide
 

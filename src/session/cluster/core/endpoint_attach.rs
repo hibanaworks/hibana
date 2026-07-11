@@ -263,7 +263,6 @@ where
                     logical_lane_count,
                 );
                 let storage_layout = Self::public_endpoint_storage_requirement(role_image);
-                let resident_budget = Self::public_endpoint_resident_budget(role_image);
                 let (slot, generation, dst) = self
                     .allocate_public_endpoint_storage_for_rv::<ROLE>(
                         PublicEndpointStorageRequest {
@@ -273,7 +272,7 @@ where
                             required_align: storage_layout.total_align,
                             logical_lane_count,
                             required_assoc_slots,
-                            resident_budget,
+                            role_descriptor: role_image.descriptor(),
                         },
                     )?;
                 let arena_storage = dst.cast::<u8>().add(storage_layout.arena_offset);

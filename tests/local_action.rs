@@ -20,46 +20,32 @@ use hibana::{
 use runtime_support::with_runtime_workspace;
 use tls_ref_support::with_resident_tls_ref;
 
-#[derive(Clone, Copy)]
-struct InstallPayload {
-    data: [u8; 4],
-}
-
-impl WireEncode for InstallPayload {
-    fn encode_into(&self, buf: &mut [u8]) -> Result<usize, CodecError> {
-        if buf.len() < 4 {
-            return Err(CodecError::Truncated);
-        }
-        buf[..4].copy_from_slice(&self.data);
-        Ok(4)
-    }
-}
-
-impl WirePayload for InstallPayload {
-    type Decoded<'a> = Self;
-
-    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
-        if input.as_bytes().len() == 4 {
-            Ok(())
-        } else if input.as_bytes().len() < 4 {
-            Err(CodecError::Truncated)
-        } else {
-            Err(CodecError::Malformed)
-        }
-    }
-
-    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
-        let input = input.as_bytes();
-        let mut data = [0u8; 4];
-        data.copy_from_slice(&input[..4]);
-        Self { data }
-    }
-}
-
 type TestKit = SessionKit<'static, TestTransport>;
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 const LOCAL_ROUTE_RESOLVER: u16 = 41;
 static LOCAL_ROUTE_STATE: () = ();
+
+struct InvalidUnitSchemaPayload;
+
+impl WireEncode for InvalidUnitSchemaPayload {
+    fn encode_into(&self, _out: &mut [u8]) -> Result<usize, CodecError> {
+        Ok(1)
+    }
+}
+
+impl WirePayload for InvalidUnitSchemaPayload {
+    const SCHEMA_ID: u32 = 0;
+
+    type Decoded<'a> = Self;
+
+    fn validate_payload(_input: Payload<'_>) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn decode_validated_payload<'a>(_input: Payload<'a>) -> Self::Decoded<'a> {
+        Self
+    }
+}
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -76,7 +62,7 @@ fn run_local_action_flow(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let program = g::send::<0, 0, Msg<7, InstallPayload>>();
+    let program = g::send::<0, 0, Msg<7, ()>>();
     let actor_program: RoleProgram<0> = project(&program);
     let rv = cluster
         .rendezvous(slab, transport.clone())
@@ -84,15 +70,45 @@ fn run_local_action_flow(
 
     let sid = SessionId::new(42);
 
-    let payload = InstallPayload {
-        data: [0x13, 0x37, 0xC0, 0xDE],
-    };
-
     let mut endpoint = rv
         .enter(sid, &actor_program)
         .expect("attach actor endpoint");
-    let () = futures::executor::block_on(endpoint.send::<Msg<7, InstallPayload>>(&payload))
+    let () = futures::executor::block_on(endpoint.send::<Msg<7, ()>>(&()))
         .expect("local action succeeded");
+    assert!(transport_queue_is_empty(transport));
+}
+
+fn run_invalid_unit_schema_payload_fails_closed(
+    cluster: &'static TestKit,
+    slab: &'static mut [u8],
+    transport: &TestTransport,
+) {
+    let program = g::send::<0, 0, Msg<7, InvalidUnitSchemaPayload>>();
+    let actor_program: RoleProgram<0> = project(&program);
+    let rv = cluster
+        .rendezvous(slab, transport.clone())
+        .expect("register rendezvous");
+    let mut endpoint = rv
+        .enter(SessionId::new(45), &actor_program)
+        .expect("attach actor endpoint");
+
+    let error = futures::executor::block_on(
+        endpoint.send::<Msg<7, InvalidUnitSchemaPayload>>(&InvalidUnitSchemaPayload),
+    )
+    .expect_err("a custom payload cannot impersonate the canonical unit schema");
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("Codec(Malformed)"),
+        "nonempty local encoding must fail closed: {rendered}"
+    );
+    let poisoned = futures::executor::block_on(
+        endpoint.send::<Msg<7, InvalidUnitSchemaPayload>>(&InvalidUnitSchemaPayload),
+    )
+    .expect_err("invalid unit encoding must poison the session generation");
+    assert!(
+        format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"),
+        "local schema violation must remain terminal: {poisoned:?}"
+    );
     assert!(transport_queue_is_empty(transport));
 }
 
@@ -100,9 +116,9 @@ fn local_left(_: &()) -> Result<DecisionArm, ResolverError> {
     Ok(DecisionArm::Left)
 }
 
-fn local_route_program<const PAYLOAD_LABEL: u8, P>() -> RoleProgram<0> {
+fn local_route_program<const PAYLOAD_LABEL: u8>() -> RoleProgram<0> {
     let route = g::route(
-        g::send::<0, 0, Msg<PAYLOAD_LABEL, P>>(),
+        g::send::<0, 0, Msg<PAYLOAD_LABEL, ()>>(),
         g::send::<0, 0, Msg<8, ()>>(),
     )
     .resolve::<LOCAL_ROUTE_RESOLVER>();
@@ -114,7 +130,7 @@ fn run_local_route_recv_empty_payload(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let actor_program = local_route_program::<9, ()>();
+    let actor_program = local_route_program::<9>();
     let rv = cluster
         .rendezvous(slab, transport.clone())
         .expect("register rendezvous");
@@ -138,7 +154,7 @@ fn run_local_route_recv_non_empty_payload_fails_closed(
     slab: &'static mut [u8],
     transport: &TestTransport,
 ) {
-    let actor_program = local_route_program::<10, u8>();
+    let actor_program = local_route_program::<10>();
     let rv = cluster
         .rendezvous(slab, transport.clone())
         .expect("register rendezvous");
@@ -153,11 +169,11 @@ fn run_local_route_recv_non_empty_payload_fails_closed(
     let branch = futures::executor::block_on(endpoint.offer()).expect("offer local route");
     assert_eq!(branch.label(), 10);
     let error = futures::executor::block_on(branch.recv::<Msg<10, u8>>())
-        .expect_err("non-empty local branch payload must fail closed");
+        .expect_err("local branch receive must match the unit descriptor schema");
     let rendered = format!("{error:?}");
     assert!(
-        rendered.contains("Truncated") || rendered.contains("Codec"),
-        "non-empty local branch payload must fail through payload validation: {rendered}"
+        rendered.contains("SchemaMismatch"),
+        "local branch payload mismatch must fail before synthetic payload validation: {rendered}"
     );
     assert!(transport_queue_is_empty(transport));
 }
@@ -168,6 +184,16 @@ fn local_action_flow_executes() {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             run_local_action_flow(cluster, slab, &transport);
+        });
+    });
+}
+
+#[test]
+fn local_action_rejects_nonempty_encoder_claiming_unit_schema() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            run_invalid_unit_schema_payload_fails_closed(cluster, slab, &transport);
         });
     });
 }

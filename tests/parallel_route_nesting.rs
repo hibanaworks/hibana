@@ -151,6 +151,36 @@ where
     assert_join_blocked(&format!("{err:?}"));
 }
 
+macro_rules! attach_three_roles {
+    ($rv:expr, $sid:expr, $program:ident) => {{
+        let sid = SessionId::new($sid);
+        (
+            $rv.enter(sid, &$program::<LOCAL_ROLE>())
+                .expect("attach local role"),
+            $rv.enter(sid, &$program::<WORKER_ROLE>())
+                .expect("attach worker role"),
+            $rv.enter(sid, &$program::<OBSERVER_ROLE>())
+                .expect("attach observer role"),
+        )
+    }};
+}
+
+macro_rules! attach_four_roles {
+    ($rv:expr, $sid:expr, $program:ident) => {{
+        let sid = SessionId::new($sid);
+        (
+            $rv.enter(sid, &$program::<LOCAL_ROLE>())
+                .expect("attach local role"),
+            $rv.enter(sid, &$program::<WORKER_ROLE>())
+                .expect("attach worker role"),
+            $rv.enter(sid, &$program::<SIDE_ROLE>())
+                .expect("attach side role"),
+            $rv.enter(sid, &$program::<OBSERVER_ROLE>())
+                .expect("attach observer role"),
+        )
+    }};
+}
+
 #[test]
 fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
     with_runtime_workspace(|slab| {
@@ -159,56 +189,78 @@ fn unselected_route_arm_parallel_events_are_dead_and_not_join_obligations() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(98);
-
-            let mut local = rv
-                .enter(sid, &route_right_parallel_dead_program::<LOCAL_ROLE>())
-                .expect("attach local role");
-            let mut worker = rv
-                .enter(sid, &route_right_parallel_dead_program::<WORKER_ROLE>())
-                .expect("attach worker role");
-            let mut observer = rv
-                .enter(sid, &route_right_parallel_dead_program::<OBSERVER_ROLE>())
-                .expect("attach observer role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                    .await
-                    .expect("send left route event");
-
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
-                    "unselected right nested-par B must be dead",
-                )
-                .await;
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
-                    "unselected right nested-par C must be dead",
-                )
-                .await;
-
-                local
-                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
-                    .await
-                    .expect("send post route");
-
-                let branch = worker.offer().await.expect("offer left route event");
-                assert_eq!(branch.label(), DEAD_RIGHT_A);
-                assert_eq!(
-                    branch
-                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                {
+                    let (mut local, mut worker, observer) =
+                        attach_three_roles!(rv, 98, route_right_parallel_dead_program);
+                    local
+                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                         .await
-                        .expect("decode left route event"),
-                    1
-                );
-                assert_eq!(
-                    observer
-                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                            .await
+                            .expect("recv A"),
+                        1
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
+                        "unselected right nested-par B must be dead",
+                    )
+                    .await;
+                    core::hint::black_box(observer);
+                }
+                {
+                    let (mut local, mut worker, observer) =
+                        attach_three_roles!(rv, 99, route_right_parallel_dead_program);
+                    local
+                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                         .await
-                        .expect("recv post route"),
-                    2
-                );
+                        .expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                            .await
+                            .expect("recv A"),
+                        1
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
+                        "unselected right nested-par C must be dead",
+                    )
+                    .await;
+                    core::hint::black_box(observer);
+                }
+                {
+                    let (mut local, mut worker, mut observer) =
+                        attach_three_roles!(rv, 100, route_right_parallel_dead_program);
+                    local
+                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
+                        .await
+                        .expect("send A");
+                    local
+                        .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
+                        .await
+                        .expect("send post route");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                            .await
+                            .expect("recv A"),
+                        1
+                    );
+                    assert_eq!(
+                        observer
+                            .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                            .await
+                            .expect("recv post"),
+                        2
+                    );
+                }
             });
         });
     });
@@ -222,81 +274,67 @@ fn unselected_route_arm_parallel_events_do_not_block_parallel_join() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(99);
-
-            let mut local = rv
-                .enter(
-                    sid,
-                    &parallel_route_right_parallel_dead_program::<LOCAL_ROLE>(),
-                )
-                .expect("attach local role");
-            let mut worker = rv
-                .enter(
-                    sid,
-                    &parallel_route_right_parallel_dead_program::<WORKER_ROLE>(),
-                )
-                .expect("attach worker role");
-            let mut observer = rv
-                .enter(
-                    sid,
-                    &parallel_route_right_parallel_dead_program::<OBSERVER_ROLE>(),
-                )
-                .expect("attach observer role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                    .await
-                    .expect("send left route event");
-
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
-                    "unselected right nested-par B must be dead",
-                )
-                .await;
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
-                    "unselected right nested-par C must be dead",
-                )
-                .await;
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_POST, u8>>(&0),
-                    "outer par join must still wait for sibling E",
-                )
-                .await;
-
-                local
-                    .send::<Msg<DEAD_RIGHT_E, u8>>(&2)
-                    .await
-                    .expect("send parallel sibling E");
-                local
-                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&3)
-                    .await
-                    .expect("send post");
-
-                let branch = worker.offer().await.expect("offer left route event");
-                assert_eq!(branch.label(), DEAD_RIGHT_A);
-                assert_eq!(
-                    branch
-                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                {
+                    let (mut local, mut worker, observer) =
+                        attach_three_roles!(rv, 101, parallel_route_right_parallel_dead_program);
+                    local
+                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                         .await
-                        .expect("decode left route event"),
-                    1
-                );
-                assert_eq!(
-                    observer
-                        .recv::<Msg<DEAD_RIGHT_E, u8>>()
+                        .expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                            .await
+                            .expect("recv A"),
+                        1
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<DEAD_RIGHT_POST, u8>>(&0),
+                        "outer par join must still wait for sibling E",
+                    )
+                    .await;
+                    core::hint::black_box(observer);
+                }
+                {
+                    let (mut local, mut worker, mut observer) =
+                        attach_three_roles!(rv, 102, parallel_route_right_parallel_dead_program);
+                    local
+                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                         .await
-                        .expect("recv sibling E"),
-                    2
-                );
-                assert_eq!(
-                    observer
-                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .expect("send A");
+                    local
+                        .send::<Msg<DEAD_RIGHT_E, u8>>(&2)
                         .await
-                        .expect("recv post"),
-                    3
-                );
+                        .expect("send E");
+                    local
+                        .send::<Msg<DEAD_RIGHT_POST, u8>>(&3)
+                        .await
+                        .expect("send post");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                            .await
+                            .expect("recv A"),
+                        1
+                    );
+                    assert_eq!(
+                        observer
+                            .recv::<Msg<DEAD_RIGHT_E, u8>>()
+                            .await
+                            .expect("recv E"),
+                        2
+                    );
+                    assert_eq!(
+                        observer
+                            .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                            .await
+                            .expect("recv post"),
+                        3
+                    );
+                }
             });
         });
     });
@@ -310,70 +348,63 @@ fn outer_left_selection_kills_nested_right_route_and_parallel_body() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(100);
-
-            let mut local = rv
-                .enter(
-                    sid,
-                    &outer_left_kills_nested_right_route_program::<LOCAL_ROLE>(),
-                )
-                .expect("attach local role");
-            let mut worker = rv
-                .enter(
-                    sid,
-                    &outer_left_kills_nested_right_route_program::<WORKER_ROLE>(),
-                )
-                .expect("attach worker role");
-            let mut observer = rv
-                .enter(
-                    sid,
-                    &outer_left_kills_nested_right_route_program::<OBSERVER_ROLE>(),
-                )
-                .expect("attach observer role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
-                    .await
-                    .expect("send outer left route event");
-
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_B, u8>>(&0),
-                    "inner-left nested-par B must be dead after outer left selection",
-                )
-                .await;
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_C, u8>>(&0),
-                    "inner-left nested-par C must be dead after outer left selection",
-                )
-                .await;
-                assert_send_rejected(
-                    local.send::<Msg<DEAD_RIGHT_D, u8>>(&0),
-                    "inner-right D must be dead after outer left selection",
-                )
-                .await;
-
-                local
-                    .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
-                    .await
-                    .expect("send post route");
-
-                let branch = worker.offer().await.expect("offer outer left route event");
-                assert_eq!(branch.label(), DEAD_RIGHT_A);
-                assert_eq!(
-                    branch
-                        .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                for (sid, label) in [
+                    (103, DEAD_RIGHT_B),
+                    (104, DEAD_RIGHT_C),
+                    (105, DEAD_RIGHT_D),
+                ] {
+                    let (mut local, mut worker, observer) =
+                        attach_three_roles!(rv, sid, outer_left_kills_nested_right_route_program);
+                    local
+                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                         .await
-                        .expect("decode outer left route event"),
-                    1
-                );
-                assert_eq!(
-                    observer
-                        .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                        .expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                            .await
+                            .expect("recv A"),
+                        1
+                    );
+                    let rejected = match label {
+                        DEAD_RIGHT_B => local.send::<Msg<DEAD_RIGHT_B, u8>>(&0).await,
+                        DEAD_RIGHT_C => local.send::<Msg<DEAD_RIGHT_C, u8>>(&0).await,
+                        DEAD_RIGHT_D => local.send::<Msg<DEAD_RIGHT_D, u8>>(&0).await,
+                        _ => unreachable!(),
+                    }
+                    .expect_err("nested right event must be dead after outer left selection");
+                    assert_join_blocked(&format!("{rejected:?}"));
+                    core::hint::black_box(observer);
+                }
+                {
+                    let (mut local, mut worker, mut observer) =
+                        attach_three_roles!(rv, 106, outer_left_kills_nested_right_route_program);
+                    local
+                        .send::<Msg<DEAD_RIGHT_A, u8>>(&1)
                         .await
-                        .expect("recv post route"),
-                    2
-                );
+                        .expect("send A");
+                    local
+                        .send::<Msg<DEAD_RIGHT_POST, u8>>(&2)
+                        .await
+                        .expect("send post route");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<DEAD_RIGHT_A, u8>>()
+                            .await
+                            .expect("recv A"),
+                        1
+                    );
+                    assert_eq!(
+                        observer
+                            .recv::<Msg<DEAD_RIGHT_POST, u8>>()
+                            .await
+                            .expect("recv post"),
+                        2
+                    );
+                }
             });
         });
     });
@@ -387,93 +418,123 @@ fn route_selected_left_keeps_entire_nested_parallel_path_live() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(97);
-
-            let mut local = rv
-                .enter(sid, &route_left_nested_parallel_program::<LOCAL_ROLE>())
-                .expect("attach local role");
-            let mut worker = rv
-                .enter(sid, &route_left_nested_parallel_program::<WORKER_ROLE>())
-                .expect("attach worker role");
-            let mut side = rv
-                .enter(sid, &route_left_nested_parallel_program::<SIDE_ROLE>())
-                .expect("attach side role");
-            let mut observer = rv
-                .enter(sid, &route_left_nested_parallel_program::<OBSERVER_ROLE>())
-                .expect("attach observer role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<ROUTE_PAR_A, u8>>(&1)
-                    .await
-                    .expect("send A");
-
-                let err = local
-                    .send::<Msg<ROUTE_PAR_R, u8>>(&0)
-                    .await
-                    .expect_err("right arm must be unselected after A commits");
-                assert_join_blocked(&format!("{err:?}"));
-
-                let err = local
-                    .send::<Msg<ROUTE_PAR_D, u8>>(&0)
-                    .await
-                    .expect_err("D must wait for B and C after A selects left");
-                assert_join_blocked(&format!("{err:?}"));
-
-                local
-                    .send::<Msg<ROUTE_PAR_B, u8>>(&2)
-                    .await
-                    .expect("send B");
-                let err = local
-                    .send::<Msg<ROUTE_PAR_D, u8>>(&0)
-                    .await
-                    .expect_err("D must still wait for C");
-                assert_join_blocked(&format!("{err:?}"));
-
-                local
-                    .send::<Msg<ROUTE_PAR_C, u8>>(&3)
-                    .await
-                    .expect("send C");
-                local
-                    .send::<Msg<ROUTE_PAR_D, u8>>(&4)
-                    .await
-                    .expect("send D");
-                local
-                    .send::<Msg<ROUTE_PAR_POST, u8>>(&5)
-                    .await
-                    .expect("send Post");
-
-                let branch = worker.offer().await.expect("offer A");
-                assert_eq!(branch.label(), ROUTE_PAR_A);
-                assert_eq!(
-                    branch
-                        .recv::<Msg<ROUTE_PAR_A, u8>>()
+                {
+                    let (mut local, mut worker, side, observer) =
+                        attach_four_roles!(rv, 107, route_left_nested_parallel_program);
+                    local
+                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
                         .await
-                        .expect("decode A"),
-                    1
-                );
-                assert_eq!(
-                    side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
-                    2
-                );
-                assert_eq!(
-                    observer
-                        .recv::<Msg<ROUTE_PAR_C, u8>>()
+                        .expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                        1
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<ROUTE_PAR_R, u8>>(&0),
+                        "right arm must be unselected after A commits",
+                    )
+                    .await;
+                    core::hint::black_box((side, observer));
+                }
+                {
+                    let (mut local, mut worker, side, observer) =
+                        attach_four_roles!(rv, 108, route_left_nested_parallel_program);
+                    local
+                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
                         .await
-                        .expect("recv C"),
-                    3
-                );
-                assert_eq!(
-                    worker.recv::<Msg<ROUTE_PAR_D, u8>>().await.expect("recv D"),
-                    4
-                );
-                assert_eq!(
-                    observer
-                        .recv::<Msg<ROUTE_PAR_POST, u8>>()
+                        .expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                        1
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<ROUTE_PAR_D, u8>>(&0),
+                        "D must wait for B and C",
+                    )
+                    .await;
+                    core::hint::black_box((side, observer));
+                }
+                {
+                    let (mut local, mut worker, mut side, observer) =
+                        attach_four_roles!(rv, 109, route_left_nested_parallel_program);
+                    local
+                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
                         .await
-                        .expect("recv Post"),
-                    5
-                );
+                        .expect("send A");
+                    local
+                        .send::<Msg<ROUTE_PAR_B, u8>>(&2)
+                        .await
+                        .expect("send B");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                        1
+                    );
+                    assert_eq!(
+                        side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
+                        2
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<ROUTE_PAR_D, u8>>(&0),
+                        "D must still wait for C",
+                    )
+                    .await;
+                    core::hint::black_box(observer);
+                }
+                {
+                    let (mut local, mut worker, mut side, mut observer) =
+                        attach_four_roles!(rv, 110, route_left_nested_parallel_program);
+                    local
+                        .send::<Msg<ROUTE_PAR_A, u8>>(&1)
+                        .await
+                        .expect("send A");
+                    local
+                        .send::<Msg<ROUTE_PAR_B, u8>>(&2)
+                        .await
+                        .expect("send B");
+                    local
+                        .send::<Msg<ROUTE_PAR_C, u8>>(&3)
+                        .await
+                        .expect("send C");
+                    local
+                        .send::<Msg<ROUTE_PAR_D, u8>>(&4)
+                        .await
+                        .expect("send D");
+                    local
+                        .send::<Msg<ROUTE_PAR_POST, u8>>(&5)
+                        .await
+                        .expect("send Post");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(
+                        branch.recv::<Msg<ROUTE_PAR_A, u8>>().await.expect("recv A"),
+                        1
+                    );
+                    assert_eq!(
+                        side.recv::<Msg<ROUTE_PAR_B, u8>>().await.expect("recv B"),
+                        2
+                    );
+                    assert_eq!(
+                        observer
+                            .recv::<Msg<ROUTE_PAR_C, u8>>()
+                            .await
+                            .expect("recv C"),
+                        3
+                    );
+                    assert_eq!(
+                        worker.recv::<Msg<ROUTE_PAR_D, u8>>().await.expect("recv D"),
+                        4
+                    );
+                    assert_eq!(
+                        observer
+                            .recv::<Msg<ROUTE_PAR_POST, u8>>()
+                            .await
+                            .expect("recv Post"),
+                        5
+                    );
+                }
             });
         });
     });
@@ -487,79 +548,89 @@ fn route_inside_parallel_lane_cannot_release_join_before_sibling_lane() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(92);
-
-            let mut local = rv
-                .enter(sid, &program::<LOCAL_ROLE>())
-                .expect("attach local role");
-            let mut worker = rv
-                .enter(sid, &program::<WORKER_ROLE>())
-                .expect("attach worker role");
-            let mut side = rv
-                .enter(sid, &program::<SIDE_ROLE>())
-                .expect("attach side role");
-            let mut observer = rv
-                .enter(sid, &program::<OBSERVER_ROLE>())
-                .expect("attach observer role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
-                    .await
-                    .expect("send route payload");
-                let err = local
-                    .send::<Msg<JOIN, u8>>(&0)
-                    .await
-                    .expect_err("join must wait for the sibling parallel lane");
-                assert_join_blocked(&format!("{err:?}"));
-
-                local
-                    .send::<Msg<SIDE_REQ, u8>>(&20)
-                    .await
-                    .expect("send side request");
-                let err = local
-                    .send::<Msg<JOIN, u8>>(&0)
-                    .await
-                    .expect_err("join must wait for the sibling lane response");
-                assert_join_blocked(&format!("{err:?}"));
-
-                let branch = worker.offer().await.expect("offer route payload");
-                assert_eq!(branch.label(), ROUTE_PAYLOAD);
-                assert_eq!(
-                    branch
-                        .recv::<Msg<ROUTE_PAYLOAD, u8>>()
-                        .await
-                        .expect("recv route payload"),
-                    10
-                );
-                assert_eq!(
-                    side.recv::<Msg<SIDE_REQ, u8>>()
-                        .await
-                        .expect("recv side request"),
-                    20
-                );
-                side.send::<Msg<SIDE_RET, u8>>(&30)
-                    .await
-                    .expect("send side response");
-                assert_eq!(
+                {
+                    let (mut local, mut worker, side, observer) =
+                        attach_four_roles!(rv, 111, program);
                     local
-                        .recv::<Msg<SIDE_RET, u8>>()
+                        .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
                         .await
-                        .expect("recv side response"),
-                    30
-                );
-
-                local
-                    .send::<Msg<JOIN, u8>>(&40)
-                    .await
-                    .expect("send post-par join");
-                assert_eq!(
-                    observer
-                        .recv::<Msg<JOIN, u8>>()
+                        .expect("send route payload");
+                    let branch = worker.offer().await.expect("offer route payload");
+                    assert_eq!(
+                        branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
+                        10
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<JOIN, u8>>(&0),
+                        "join must wait for the sibling parallel lane",
+                    )
+                    .await;
+                    core::hint::black_box((side, observer));
+                }
+                {
+                    let (mut local, mut worker, mut side, observer) =
+                        attach_four_roles!(rv, 112, program);
+                    local
+                        .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
                         .await
-                        .expect("recv post-par join"),
-                    40
-                );
+                        .expect("send route payload");
+                    local
+                        .send::<Msg<SIDE_REQ, u8>>(&20)
+                        .await
+                        .expect("send side");
+                    let branch = worker.offer().await.expect("offer route payload");
+                    assert_eq!(
+                        branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
+                        10
+                    );
+                    assert_eq!(
+                        side.recv::<Msg<SIDE_REQ, u8>>().await.expect("recv side"),
+                        20
+                    );
+                    assert_send_rejected(
+                        local.send::<Msg<JOIN, u8>>(&0),
+                        "join must wait for the sibling lane response",
+                    )
+                    .await;
+                    core::hint::black_box(observer);
+                }
+                {
+                    let (mut local, mut worker, mut side, mut observer) =
+                        attach_four_roles!(rv, 113, program);
+                    local
+                        .send::<Msg<ROUTE_PAYLOAD, u8>>(&10)
+                        .await
+                        .expect("send route payload");
+                    local
+                        .send::<Msg<SIDE_REQ, u8>>(&20)
+                        .await
+                        .expect("send side");
+                    let branch = worker.offer().await.expect("offer route payload");
+                    assert_eq!(
+                        branch.recv::<Msg<ROUTE_PAYLOAD, u8>>().await.expect("recv"),
+                        10
+                    );
+                    assert_eq!(
+                        side.recv::<Msg<SIDE_REQ, u8>>().await.expect("recv side"),
+                        20
+                    );
+                    side.send::<Msg<SIDE_RET, u8>>(&30)
+                        .await
+                        .expect("send response");
+                    assert_eq!(
+                        local
+                            .recv::<Msg<SIDE_RET, u8>>()
+                            .await
+                            .expect("recv response"),
+                        30
+                    );
+                    local.send::<Msg<JOIN, u8>>(&40).await.expect("send join");
+                    assert_eq!(
+                        observer.recv::<Msg<JOIN, u8>>().await.expect("recv join"),
+                        40
+                    );
+                }
             });
         });
     });
@@ -573,57 +644,28 @@ fn nested_parallel_join_requires_every_dependency_before_post() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(95);
-
-            let mut local = rv
-                .enter(sid, &nested_parallel_join_program::<LOCAL_ROLE>())
-                .expect("attach local role");
-            let mut worker = rv
-                .enter(sid, &nested_parallel_join_program::<WORKER_ROLE>())
-                .expect("attach worker role");
-            let mut side = rv
-                .enter(sid, &nested_parallel_join_program::<SIDE_ROLE>())
-                .expect("attach side role");
-            let mut observer = rv
-                .enter(sid, &nested_parallel_join_program::<OBSERVER_ROLE>())
-                .expect("attach observer role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<PAR_E, u8>>(&4)
-                    .await
-                    .expect("send E before nested left branch completes");
-                let err = local
-                    .send::<Msg<PAR_POST, u8>>(&0)
-                    .await
-                    .expect_err("Post must still wait for the left parallel branch");
-                assert_join_blocked(&format!("{err:?}"));
-
-                local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
-                let err = local
-                    .send::<Msg<PAR_D, u8>>(&0)
-                    .await
-                    .expect_err("D must wait for both A and B");
-                assert_join_blocked(&format!("{err:?}"));
-
-                local.send::<Msg<PAR_B, u8>>(&2).await.expect("send B");
-                local.send::<Msg<PAR_D, u8>>(&3).await.expect("send D");
-                local
-                    .send::<Msg<PAR_POST, u8>>(&5)
-                    .await
-                    .expect("send Post");
-
-                assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
-                assert_eq!(side.recv::<Msg<PAR_B, u8>>().await.expect("recv B"), 2);
-                assert_eq!(worker.recv::<Msg<PAR_D, u8>>().await.expect("recv D"), 3);
-                assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
-                assert_eq!(
-                    observer
-                        .recv::<Msg<PAR_POST, u8>>()
-                        .await
-                        .expect("recv Post"),
-                    5
-                );
+                {
+                    let (mut local, worker, side, mut observer) =
+                        attach_four_roles!(rv, 114, nested_parallel_join_program);
+                    local.send::<Msg<PAR_E, u8>>(&4).await.expect("send E");
+                    assert_eq!(observer.recv::<Msg<PAR_E, u8>>().await.expect("recv E"), 4);
+                    assert_send_rejected(
+                        local.send::<Msg<PAR_POST, u8>>(&0),
+                        "Post must still wait for the left parallel branch",
+                    )
+                    .await;
+                    core::hint::black_box((worker, side));
+                }
+                {
+                    let (mut local, mut worker, side, observer) =
+                        attach_four_roles!(rv, 115, nested_parallel_join_program);
+                    local.send::<Msg<PAR_A, u8>>(&1).await.expect("send A");
+                    assert_eq!(worker.recv::<Msg<PAR_A, u8>>().await.expect("recv A"), 1);
+                    assert_send_rejected(local.send::<Msg<PAR_D, u8>>(&0), "D must wait for B")
+                        .await;
+                    core::hint::black_box((side, observer));
+                }
             });
         });
     });

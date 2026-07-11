@@ -4,32 +4,44 @@ use super::super::{
     ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
     ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
     ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBuild, RoleImageBytes,
-    RoleImageColumns, RoleImageRef, RoleLaneScratch, RouteArmLaneStepRow, RuntimeRoleFacts,
+    RoleImageColumns, RoleImagePlan, RoleImageRef, RoleLaneScratch, RouteArmLaneStepRow,
+    RuntimeRoleFacts,
 };
 use super::plan::RoleImageColumnCounts;
 use crate::global::compiled::images::CompiledProgramRef;
 use crate::global::const_dsl::{EffList, ScopeId};
 use crate::global::typestate::{PackedEventConflict, PackedLocalDependency};
 
-impl<const N: usize> RoleImageBuild<N> {
-    #[inline(always)]
-    pub(crate) const fn from_program_bucket(
+impl RoleImagePlan {
+    pub(crate) const fn build_if_fits<const N: usize>(
+        &self,
         eff_list: &EffList,
         facts: RuntimeRoleFacts,
         role: u8,
-    ) -> Self {
+    ) -> Option<RoleImageBuild<N>> {
+        if self.blob_len() > N {
+            return None;
+        }
         let scratch =
             RoleLaneScratch::from_program(eff_list, facts.footprint().logical_lane_count, role);
         let columns = RoleImageBytes::<0>::columns(&scratch, facts);
-        let bytes = RoleImageBytes::<N>::from_capacity_bucket(&scratch, facts, columns);
-        Self {
+        if columns.blob_len() != self.blob_len() {
+            panic!("role image plan mismatch");
+        }
+        if columns.blob_len() > N {
+            return None;
+        }
+        let bytes = RoleImageBytes::<N>::from_scratch(&scratch, facts, columns);
+        Some(RoleImageBuild {
             bytes,
             columns,
             active_lane_row: scratch.active_lane_row,
             first_active_lane: scratch.first_active_lane,
-        }
+        })
     }
+}
 
+impl<const N: usize> RoleImageBuild<N> {
     #[inline(always)]
     pub(crate) const fn image_ref(
         &'static self,
@@ -364,18 +376,6 @@ impl<const N: usize> RoleImageBytes<N> {
             self.w32(column, idx, ROLE_IMAGE_LANE_RANGE_STRIDE, values[idx].raw());
             idx += 1;
         }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn from_capacity_bucket(
-        scratch: &RoleLaneScratch,
-        facts: RuntimeRoleFacts,
-        columns: RoleImageColumns,
-    ) -> Self {
-        if columns.blob_len() > N {
-            return Self::empty();
-        }
-        Self::from_scratch(scratch, facts, columns)
     }
 
     pub(crate) const fn from_scratch(

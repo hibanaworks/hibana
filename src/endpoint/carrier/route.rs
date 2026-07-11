@@ -110,6 +110,7 @@ where
             ptr,
             handle,
             logical_label,
+            payload_schema,
             validate,
             cx,
             out,
@@ -127,6 +128,7 @@ where
                 ))),
                 |kernel| match kernel.poll_public_branch_recv(
                     logical_label,
+                    payload_schema,
                     validate,
                     cx,
                     &mut waiters,

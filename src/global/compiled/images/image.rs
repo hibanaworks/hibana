@@ -64,16 +64,6 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     }
 
     #[inline(always)]
-    pub(crate) fn route_table_frame_slots(&self) -> usize {
-        self.descriptor.route_table_frame_slots()
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_table_lane_slots(&self) -> usize {
-        self.descriptor.route_table_lane_slots()
-    }
-
-    #[inline(always)]
     pub(crate) fn endpoint_arena_layout(&self) -> EndpointArenaLayout {
         self.descriptor.endpoint_arena_layout()
     }

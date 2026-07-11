@@ -135,8 +135,19 @@ if not poll_public_recv or not all(
     ]
 ):
     fail("generic poll_public_recv must delegate to non-generic kernel_recv with label and validation evidence")
-if "kernel_branch_recv(self, logical_label, validate, &mut branch_recv_state, cx)" not in public_runtime:
-    fail("generic poll_public_branch_recv must delegate to non-generic kernel_branch_recv")
+poll_public_branch_recv = extract_rust_function(public_runtime, "poll_public_branch_recv")
+if not poll_public_branch_recv or not all(
+    required in poll_public_branch_recv
+    for required in [
+        "kernel_branch_recv(",
+        "logical_label",
+        "payload_schema",
+        "validate",
+        "branch_recv_state",
+        "cx",
+    ]
+):
+    fail("generic poll_public_branch_recv must delegate to non-generic kernel_branch_recv with the complete wire contract")
 
 if re.search(
     r"\b(struct|pub\\(crate\\) struct)\s+(RecvDesc|DecodeDesc|SendDesc)\b",

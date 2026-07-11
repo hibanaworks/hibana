@@ -585,20 +585,20 @@ fn offer_materialized_label_mismatch_fails_closed() {
 }
 
 #[test]
-fn codec_error_in_public_route_recv_poisons_same_generation() {
+fn schema_mismatch_in_public_route_recv_poisons_same_generation() {
     with_route_workspace(|controller, worker, _transport| {
         futures::executor::block_on(async {
             send_left(controller, 1234).await;
             let branch = worker.offer().await.expect("offer left arm");
-            let recv_result = branch.recv::<Msg<71, u64>>().await;
+            let recv_result = branch.recv::<Msg<71, i32>>().await;
             let err = match recv_result {
-                Ok(_) => panic!("wrong payload shape must fail recv"),
+                Ok(_) => panic!("wrong payload schema must fail recv"),
                 Err(err) => err,
             };
             assert!(format!("{err:?}").contains("operation: \"recv\""));
             assert!(
-                format!("{err:?}").contains("Codec"),
-                "wrong payload shape must preserve codec evidence: {err:?}"
+                format!("{err:?}").contains("SchemaMismatch"),
+                "same-width wrong payload must preserve schema evidence: {err:?}"
             );
 
             let err = match worker.offer().await {

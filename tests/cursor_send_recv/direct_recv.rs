@@ -280,6 +280,19 @@ fn assert_malformed_direct_recv_fails_closed(
                 rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
                 "mismatch must poison same generation: {rendered}"
             );
+
+            let poisoned_offer = match futures::executor::block_on(target_endpoint.offer()) {
+                Ok(branch) => {
+                    drop(branch);
+                    panic!("faulted endpoint must not publish a route branch");
+                }
+                Err(error) => error,
+            };
+            let rendered = format!("{poisoned_offer:?}");
+            assert!(
+                rendered.contains("SessionFault") && rendered.contains("ProgressInvariantViolated"),
+                "faulted offer initialization must preserve the session fault: {rendered}"
+            );
             mismatch
         });
         assert_eq!(mismatch.evidence().reason(), expected_reason);

@@ -19,7 +19,7 @@ use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::transport::Transport;
 
 mod registry_ops;
-pub(crate) use registry_ops::RegisterRendezvousError;
+pub(crate) use registry_ops::{EndpointLeaseRequest, RegisterRendezvousError};
 
 /// Local intrusive registry linked through each slab-resident rendezvous header.
 pub(crate) struct RendezvousTable<'cfg, T: Transport> {

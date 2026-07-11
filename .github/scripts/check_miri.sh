@@ -60,8 +60,8 @@ run_miri_test() {
 
 run_miri_test \
   public-runtime-owner \
-  21 \
-  21 \
+  27 \
+  27 \
   0 \
   -p hibana \
   --test miri_runtime_owner
@@ -134,11 +134,20 @@ run_miri_test \
 
 run_miri_test \
   local-action-owner \
-  3 \
-  3 \
+  4 \
+  4 \
   0 \
   -p hibana \
   --test local_action
+
+run_miri_test \
+  transport-contract-owner \
+  2 \
+  2 \
+  0 \
+  -p hibana \
+  --lib \
+  transport::tests::transport_contract_
 
 run_miri_test \
   route-branch-send-owner \
@@ -166,6 +175,15 @@ run_miri_test \
   same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority
 
 run_miri_test \
+  resolver-reject-cancellation-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  resolver_reject_does_not_encode_or_stage_send_payload
+
+run_miri_test \
   offer-branch-owner \
   11 \
   11 \
@@ -184,8 +202,8 @@ run_miri_test \
 
 run_miri_test \
   resident-descriptor-validation \
-  36 \
-  36 \
+  40 \
+  40 \
   0 \
   -p hibana \
   --lib \
@@ -209,4 +227,13 @@ run_miri_test \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=135 ignored=1"
+run_miri_test \
+  program-image-storage-validation \
+  2 \
+  2 \
+  0 \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::program_image_
+
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=151 ignored=1"

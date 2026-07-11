@@ -44,7 +44,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     > + use<'e, 'r, M, ROLE>
     where
         M: crate::g::Message,
-        M::Payload: WirePayload,
+        M::Payload: WireEncode + WirePayload,
     {
         BranchRecvFuture::<'e, 'r, ROLE, M>::new(self)
     }
@@ -53,7 +53,8 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     ///
     /// This consumes the branch preview only when the selected arm begins with
     /// a send. Dropping the returned future before completion restores the
-    /// branch preview so the route can be offered again.
+    /// branch preview so the route can be offered again. A descriptor mismatch
+    /// is terminal for the current session generation.
     #[inline]
     pub fn send<'a, M>(
         self,
@@ -63,17 +64,20 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
     + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
-        M::Payload: WireEncode + 'a,
+        M::Payload: WireEncode + WirePayload + 'a,
         'e: 'a,
         'r: 'a,
     {
         let branch = core::mem::ManuallyDrop::new(self);
         let endpoint = branch.endpoint;
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
+        let payload_schema = crate::global::payload_schema::<M>();
         let mut preview = core::mem::MaybeUninit::<crate::endpoint::kernel::SendPreview>::uninit();
         if let Err(error) =
             /* SAFETY: consuming the branch transfers its unique endpoint borrow into the returned future or a terminal ready error. */
-            unsafe { (&mut *endpoint).preview_send(logical_label, preview.as_mut_ptr()) }
+            unsafe {
+                (&mut *endpoint).preview_send(logical_label, payload_schema, preview.as_mut_ptr())
+            }
         {
             return SendFuture::ready_error(error);
         }
@@ -93,6 +97,7 @@ impl<'e, 'r, const ROLE: u8> RouteBranch<'e, 'r, ROLE> {
             crate::endpoint::kernel::PublicOpLease::Rejected => {
                 return SendFuture::ready_error(crate::endpoint::SendError::PhaseInvariant);
             }
+            crate::endpoint::kernel::PublicOpLease::Faulted => crate::invariant(),
         }
         SendFuture::pending_armed(endpoint, payload)
     }
@@ -135,11 +140,13 @@ impl<'e, 'r, const ROLE: u8> RawOfferFuture<'e, 'r, ROLE> {
                 self.lease = OfferFutureLease::Completed;
                 return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
             }
-            OfferFutureLease::RestoreOnDrop => {}
+            OfferFutureLease::RestoreOnDrop | OfferFutureLease::Faulted => {}
         }
-        match /* SAFETY: `RawOfferFuture` holds the public offer lease and owns
-        the mutable endpoint operation until poll returns Ready or Drop restores
-        the offer state. */ unsafe { (&mut *self.endpoint).poll_offer(cx) } {
+        match /* SAFETY: `RawOfferFuture` owns the unique endpoint borrow. A
+        restore-on-drop state holds the public offer lease; a faulted state
+        performs one terminal fault observation without arming offer state. */ unsafe {
+            (&mut *self.endpoint).poll_offer(cx)
+        } {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => {
                 self.lease = OfferFutureLease::Completed;

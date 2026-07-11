@@ -520,21 +520,29 @@ fn message_and_wire_codec_boundaries_stay_separated() {
         message.contains("pub trait Message: seal::Sealed")
             && message.contains("const LOGICAL_LABEL: u8;")
             && message.contains("type Payload;")
+            && message.contains("pub(crate) const fn payload_schema<M: Message>() -> u32")
+            && message.contains("<M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID")
             && message.contains(
                 "impl<const LOGICAL_LABEL: u8, P> Message for crate::g::Msg<LOGICAL_LABEL, P>"
             )
             && g.contains(
                 "pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);"
-            ),
-        "Message must stay a sealed choreography descriptor with only label and payload"
+            )
+            && g.contains(
+                "M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload"
+            )
+            && wire.contains("const SCHEMA_ID: u32;"),
+        "Message must stay label/payload-only while projection derives one complete wire schema"
     );
-    for forbidden in "type Decoded|MessageRuntime|ENCODE_PAYLOAD|P: crate::transport::wire::WirePayload|WirePayload>::zero_payload|WirePayload>::decode_validated_payload".split('|') {
+    for forbidden in "type Decoded|PAYLOAD_SCHEMA_ID|MessageRuntime|ENCODE_PAYLOAD|P: crate::transport::wire::WirePayload|WirePayload>::zero_payload|WirePayload>::decode_validated_payload".split('|') {
         assert!(
             !message.contains(forbidden),
             "Message/g::Msg must not regain codec obligations: {forbidden}"
         );
     }
-    for forbidden in "fn encoded_len|zero_payload|pub trait WirePayload: WireEncode".split('|') {
+    for forbidden in
+        "fn encoded_len|fn decode_payload|zero_payload|pub trait WirePayload: WireEncode".split('|')
+    {
         assert!(
             !wire.contains(forbidden),
             "wire public traits must not regain redundant encode/decode obligations: {forbidden}"
@@ -552,8 +560,7 @@ fn message_and_wire_codec_boundaries_stay_separated() {
         );
     }
     assert!(
-        endpoint.contains("M::Payload: WireEncode")
-            && endpoint.contains("M::Payload: WirePayload")
+        endpoint.contains("M::Payload: WireEncode + WirePayload")
             && endpoint.contains("<M::Payload as WirePayload>::Decoded<'e>")
             && !endpoint.contains("M::Decoded<'e>")
             && !endpoint.contains("MessageRuntime"),

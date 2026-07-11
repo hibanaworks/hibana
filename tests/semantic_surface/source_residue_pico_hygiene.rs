@@ -131,22 +131,37 @@ fn production_sources_do_not_reintroduce_static_hygiene_residue() {
 fn rendezvous_scratch_borrows_are_scoped_and_offer_progress_is_endpoint_resident() {
     let port = read("src/rendezvous/port.rs");
     let lane_port = read("src/endpoint/kernel/lane_port.rs");
+    let public_ops = read("src/endpoint/kernel/public_ops.rs");
     let public_poll = read("src/endpoint/kernel/public_poll.rs");
     let layout = read("src/endpoint/kernel/layout.rs");
     let frontier_state = read("src/endpoint/kernel/frontier_state.rs");
     let transport = read("src/transport.rs");
     let production = read_production_rs_tree("src");
+    let local_send = lane_port
+        .find("pending.carrier == SendCarrier::Local")
+        .expect("local send carrier branch");
+    let payload_encode = lane_port
+        .find("pending.payload.encode_into(scratch)")
+        .expect("transport payload encoding");
 
     assert!(
         port.contains("pub(crate) struct ScratchLease<'r>")
             && port.contains("RendezvousAccessState::ScratchLease")
             && port.contains("pub(crate) fn try_scratch_lease(&self)")
-            && public_poll.contains(".try_scratch_lease()"),
-        "offer scratch access must remain a scoped rendezvous lease"
+            && public_poll.contains(".try_scratch_lease()")
+            && public_ops.contains("fn retire_transport_handles(&mut self)")
+            && public_ops.contains("retirement_port.require_access_barrier()")
+            && port.contains("pub(crate) fn require_access_barrier(&self)")
+            && port.contains(
+                "RendezvousAccessState::RegistryLease | RendezvousAccessState::ScratchLease"
+            ),
+        "offer progress and external endpoint destructors must remain under a scoped rendezvous lease"
     );
     assert!(
         lane_port.contains("payload: RawSendPayload")
             && lane_port.contains("pending.payload.encode_into(scratch)")
+            && lane_port.contains("pending.payload.encode_into(&mut unit_payload)")
+            && local_send < payload_encode
             && !lane_port.contains("PendingSend<'r>")
             && !lane_port.contains("begin_send_outgoing")
             && transport.contains("must not retain the payload pointer")

@@ -132,12 +132,16 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn lane_for_label_or_offer(
+    pub(in crate::endpoint::kernel) fn lane_for_contract_or_offer(
         &self,
         scope_id: ScopeId,
         target_label: u8,
+        target_schema: u32,
     ) -> u8 {
-        if let Some((lane_idx, _)) = self.cursor.pending_step_for_label(target_label) {
+        if let Some((lane_idx, _)) = self
+            .cursor
+            .pending_step_for_contract(target_label, target_schema)
+        {
             lane_idx as u8
         } else {
             self.offer_lane_for_scope(scope_id)

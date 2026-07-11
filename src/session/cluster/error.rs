@@ -108,6 +108,9 @@ pub(crate) enum ClusterError {
     /// Rendezvous exists but is currently protected by an affine lease.
     RendezvousBusy { id: u16 },
 
+    /// Roles attached under one session ID came from different program images.
+    SessionProgramMismatch { sid: u32 },
+
     /// Resource exhaustion in a specific cluster storage area.
     ResourceExhausted { resource: ResourceScope },
 

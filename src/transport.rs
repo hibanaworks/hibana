@@ -297,6 +297,26 @@ impl PortOpen {
 /// surrounding environment without forcing allocations. Pending I/O state stays
 /// in transport-owned handles instead of leaking transport future types into
 /// higher layers.
+///
+/// # Required carrier semantics
+///
+/// For each `(session, lane, source, target)` direction, implementations must
+/// deliver accepted sends in FIFO order, exactly once, without replay. A medium
+/// that can reorder, duplicate, or replay frames must enforce sequencing inside
+/// the transport. Hibana deliberately does not enlarge its eight-byte core
+/// header with carrier-specific sequence state.
+///
+/// Connection setup must bind each `SessionId` to the same compiled protocol
+/// image at every remote participant and reject a mismatch before exposing
+/// frames. Local Hibana attaches already enforce exact image equality; this
+/// cross-device image binding remains the transport's trust boundary.
+///
+/// Peer closure must be observable: after already accepted FIFO frames are
+/// drained, a parked or later [`poll_recv`](Transport::poll_recv) for that peer
+/// must be woken and return [`TransportError::Offline`] or
+/// [`TransportError::Failed`]. This closure contract is the distributed
+/// cancellation boundary when a faulted endpoint retires its transport handles.
+/// Returning `Pending` forever after peer closure violates this trait.
 pub trait Transport {
     type Tx<'a>: 'a
     where
@@ -370,6 +390,9 @@ pub trait Transport {
 pub(crate) mod trace;
 /// Wire helpers: payload views and serialization traits.
 pub(crate) mod wire;
+
+#[cfg(kani)]
+mod kani;
 
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;

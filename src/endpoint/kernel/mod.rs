@@ -75,6 +75,20 @@ mod lane_slots {
         }
 
         #[inline]
+        pub(super) fn iter(&self) -> core::slice::Iter<'_, Option<T>> {
+            let len = self.len();
+            let ptr = if len == 0 {
+                core::ptr::NonNull::<Option<T>>::dangling().as_ptr()
+            } else {
+                self.ptr
+            };
+            /* SAFETY: `ptr,len` describe the initialized endpoint lane-slot
+            slice installed by `init_from_parts`; shared iteration cannot
+            mutate or move a lane owner. */
+            unsafe { core::slice::from_raw_parts(ptr, len).iter() }
+        }
+
+        #[inline]
         pub(super) fn iter_mut(&mut self) -> core::slice::IterMut<'_, Option<T>> {
             let len = self.len();
             let ptr = if len == 0 {

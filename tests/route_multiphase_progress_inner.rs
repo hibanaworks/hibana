@@ -68,51 +68,69 @@ fn inner_route_completion_does_not_exit_outer_route_early() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(94);
             let local_program = nested_route_program::<LOCAL_ROLE>();
             let worker_program = nested_route_program::<WORKER_ROLE>();
 
-            let mut local = rv.enter(sid, &local_program).expect("attach local role");
-            let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<INNER_PAYLOAD, u8>>(&40)
-                    .await
-                    .expect("send inner payload");
-                assert_send_blocked(local.send::<Msg<POST_OUTER, u8>>(&0)).await;
+                {
+                    let sid = SessionId::new(94);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local
+                        .send::<Msg<INNER_PAYLOAD, u8>>(&40)
+                        .await
+                        .expect("send inner payload");
+                    let branch = worker.offer().await.expect("offer inner payload");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<INNER_PAYLOAD, u8>>()
+                            .await
+                            .expect("decode inner payload"),
+                        40
+                    );
+                    assert_send_blocked(local.send::<Msg<POST_OUTER, u8>>(&0)).await;
+                }
 
-                let branch = worker.offer().await.expect("offer inner payload");
-                assert_eq!(branch.label(), INNER_PAYLOAD);
-                assert_eq!(
-                    branch
-                        .recv::<Msg<INNER_PAYLOAD, u8>>()
+                {
+                    let sid = SessionId::new(95);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local
+                        .send::<Msg<INNER_PAYLOAD, u8>>(&40)
                         .await
-                        .expect("decode inner payload"),
-                    40
-                );
-                local
-                    .send::<Msg<OUTER_LATER, u8>>(&50)
-                    .await
-                    .expect("send outer later");
-                assert_eq!(
-                    worker
-                        .recv::<Msg<OUTER_LATER, u8>>()
+                        .expect("send inner payload");
+                    let branch = worker.offer().await.expect("offer inner payload");
+                    assert_eq!(branch.label(), INNER_PAYLOAD);
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<INNER_PAYLOAD, u8>>()
+                            .await
+                            .expect("decode inner payload"),
+                        40
+                    );
+                    local
+                        .send::<Msg<OUTER_LATER, u8>>(&50)
                         .await
-                        .expect("recv outer later"),
-                    50
-                );
-                local
-                    .send::<Msg<POST_OUTER, u8>>(&60)
-                    .await
-                    .expect("send post outer");
-                assert_eq!(
-                    worker
-                        .recv::<Msg<POST_OUTER, u8>>()
+                        .expect("send outer later");
+                    assert_eq!(
+                        worker
+                            .recv::<Msg<OUTER_LATER, u8>>()
+                            .await
+                            .expect("recv outer later"),
+                        50
+                    );
+                    local
+                        .send::<Msg<POST_OUTER, u8>>(&60)
                         .await
-                        .expect("recv post outer"),
-                    60
-                );
+                        .expect("send post outer");
+                    assert_eq!(
+                        worker
+                            .recv::<Msg<POST_OUTER, u8>>()
+                            .await
+                            .expect("recv post outer"),
+                        60
+                    );
+                }
             });
         });
     });

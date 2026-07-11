@@ -168,6 +168,7 @@ fn endpoint_lease_slot_is_session_role_authority() {
     let lease_core = read("src/session/lease/core.rs");
     let rendezvous_core = read("src/rendezvous/core.rs");
     let endpoint_lease = read("src/rendezvous/core/endpoint_leases.rs");
+    let endpoint_session_binding = read("src/rendezvous/core/endpoint_leases/session_binding.rs");
     let endpoint_lease_capacity =
         read("src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs");
     let registry_ops = read("src/session/lease/core/registry_ops.rs");
@@ -179,6 +180,7 @@ fn endpoint_lease_slot_is_session_role_authority() {
         lease_core.as_str(),
         rendezvous_core.as_str(),
         endpoint_lease.as_str(),
+        endpoint_session_binding.as_str(),
         registry_ops.as_str(),
         cluster_ops.as_str(),
         endpoint_attach.as_str(),
@@ -195,12 +197,17 @@ fn endpoint_lease_slot_is_session_role_authority() {
     );
     assert!(
         registry_ops.contains("allocate_endpoint_lease_for_session_role")
+            && registry_ops.contains("endpoint_session_program(sid)")
+            && registry_ops.contains("bound_program.same_image(program)")
             && registry_ops.contains("has_endpoint_session_role(sid, role)")
-            && endpoint_lease.contains("pub(crate) fn has_endpoint_session_role"),
-        "endpoint allocation must scan reserved and published endpoint leases before claiming a slot"
+            && endpoint_lease.contains("pub(crate) fn has_endpoint_session_role")
+            && endpoint_session_binding.contains("pub(crate) fn endpoint_session_program")
+            && endpoint_session_binding.contains("resident_program_ref::<T>")
+            && endpoint_session_binding.contains("existing.same_image(program)"),
+        "endpoint allocation must bind each session generation to one exact resident program image"
     );
     let claim = cluster_ops
-        .find("self.locals().allocate_endpoint_lease_for_session_role(")
+        .find(".allocate_endpoint_lease_for_session_role(EndpointLeaseRequest {")
         .expect("endpoint storage owner must claim endpoint lease");
     let resident = cluster_ops
         .find("rv.ensure_endpoint_resident_capacity()")
@@ -209,13 +216,16 @@ fn endpoint_lease_slot_is_session_role_authority() {
         .find("rv.ensure_core_lane_storage_for_assoc_entries")
         .expect("endpoint storage owner must ensure lane association capacity");
     assert!(
-        cluster_ops.contains("self.locals().allocate_endpoint_lease_for_session_role(")
-            && cluster_ops.contains("sid,\n                ROLE,")
+        cluster_ops.contains(".allocate_endpoint_lease_for_session_role(EndpointLeaseRequest {")
+            && cluster_ops.contains("session: sid,")
+            && cluster_ops.contains("role: ROLE,")
+            && cluster_ops.contains("program: role_descriptor.program(),")
+            && endpoint_attach.contains("role_descriptor: role_image.descriptor(),")
             && endpoint_attach.contains("allocate_public_endpoint_storage_for_rv::<ROLE>")
             && endpoint_attach.contains("PublicEndpointStorageRequest")
             && endpoint_attach.contains("required_bytes: storage_layout.total_bytes")
             && endpoint_attach.contains("required_align: storage_layout.total_align")
-            && registry_ops.find("has_endpoint_session_role(sid, role)")
+            && registry_ops.find("endpoint_session_program(sid)")
                 < registry_ops
                     .find(".allocate_endpoint_lease(sid, role, bytes, align, resident_budget)")
             && !registry_ops.contains("ensure_endpoint_resident_capacity")
@@ -793,10 +803,10 @@ fn public_surface_scanner_covers_trait_associated_items_and_type_shape() {
         "Transport::poll_recv fn poll_recv<'a>( &'a self, rx: &'a mut Self::Rx<'a>, cx: &mut Context<'_>, ) -> Poll<Result<ReceivedFrame<'a>, TransportError>>;",
         "Transport::requeue fn requeue<'a>(&self, rx: &mut Self::Rx<'a>) -> Result<(), TransportError>;",
         "WireEncode::encode_into fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError>;",
+        "WirePayload::SCHEMA_ID const SCHEMA_ID: u32;",
         "WirePayload::Decoded type Decoded<'a>;",
         "WirePayload::validate_payload fn validate_payload(input: Payload<'_>) -> Result<(), CodecError>;",
         "WirePayload::decode_validated_payload fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;",
-        "WirePayload::decode_payload fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {",
     ] {
         assert!(
             runtime_allowlist.contains(required),
@@ -821,6 +831,7 @@ fn public_surface_scanner_covers_trait_associated_items_and_type_shape() {
     for forbidden in [
         "Message::Decoded",
         "WireEncode::encoded_len",
+        "WirePayload::decode_payload",
         "Transport::poll_flush",
         "WirePayload::zero_payload",
     ] {

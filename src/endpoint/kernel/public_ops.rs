@@ -17,8 +17,7 @@ where
 {
     #[inline]
     pub(in crate::endpoint::kernel) fn public_op_busy_fault(&mut self) {
-        self.public_active_op = PublicActiveOp::Poisoned;
-        self.poison_session(SessionFaultKind::ProgressInvariantViolated);
+        self.fail_session(SessionFaultKind::ProgressInvariantViolated);
     }
 
     #[inline]
@@ -27,12 +26,16 @@ where
         &mut self,
         op: PublicActiveOp,
     ) -> super::core::PublicOpLease {
-        if self.public_active_op == PublicActiveOp::Idle {
-            self.public_active_op = op;
-            super::core::PublicOpLease::Held
-        } else {
-            self.public_op_busy_fault();
-            super::core::PublicOpLease::Rejected
+        match self.public_active_op {
+            PublicActiveOp::Idle => {
+                self.public_active_op = op;
+                super::core::PublicOpLease::Held
+            }
+            PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
+            _ => {
+                self.public_op_busy_fault();
+                super::core::PublicOpLease::Rejected
+            }
         }
     }
 
@@ -43,12 +46,16 @@ where
         from: PublicActiveOp,
         to: PublicActiveOp,
     ) -> super::core::PublicOpLease {
-        if self.public_active_op == from {
-            self.public_active_op = to;
-            super::core::PublicOpLease::Held
-        } else {
-            self.public_op_busy_fault();
-            super::core::PublicOpLease::Rejected
+        match self.public_active_op {
+            active if active == from => {
+                self.public_active_op = to;
+                super::core::PublicOpLease::Held
+            }
+            PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
+            _ => {
+                self.public_op_busy_fault();
+                super::core::PublicOpLease::Rejected
+            }
         }
     }
 
@@ -100,6 +107,7 @@ where
         state: &mut OfferState<'r>,
     ) {
         let detached = state.take_detached_ingress();
+        let mut requeue_failed = false;
         for payload in [
             detached.carried_transport_payload,
             detached.stage_transport_payload,
@@ -109,8 +117,11 @@ where
         {
             let port = self.port_for_lane(payload.lane_idx());
             if payload.requeue_on(port).is_err() {
-                self.poison_session(SessionFaultKind::TransportClosed);
+                requeue_failed = true;
             }
+        }
+        if requeue_failed {
+            self.fail_session(SessionFaultKind::TransportClosed);
         }
     }
 
@@ -137,6 +148,7 @@ where
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
             }
+            PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
             _ => {
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
@@ -144,7 +156,9 @@ where
         };
         match lease {
             super::core::PublicOpLease::Held => {}
-            super::core::PublicOpLease::Rejected => return lease,
+            super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => {
+                return lease;
+            }
         }
         self.public_offer_state = OfferState::new();
         lease
@@ -170,6 +184,7 @@ where
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
             }
+            PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
             _ => {
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
@@ -177,7 +192,9 @@ where
         };
         match lease {
             super::core::PublicOpLease::Held => {}
-            super::core::PublicOpLease::Rejected => return lease,
+            super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => {
+                return lease;
+            }
         }
         let (meta, preview_cursor_index, route_authority) = init.preview.into_parts();
         self.public_send_state = SendState::Init {
@@ -228,7 +245,9 @@ where
         let lease = self.start_public_op(PublicActiveOp::Recv);
         match lease {
             super::core::PublicOpLease::Held => {}
-            super::core::PublicOpLease::Rejected => return lease,
+            super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => {
+                return lease;
+            }
         }
         self.public_recv_state = super::recv::RecvState::new();
         lease
@@ -260,6 +279,7 @@ where
                 self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                 return lease;
             }
+            super::core::PublicOpLease::Faulted => return lease,
         }
         if self.public_route_branch.is_none() {
             self.public_op_busy_fault();
@@ -277,6 +297,10 @@ where
         waiters: &mut WaiterTransfer,
     ) {
         self.clear_endpoint_waiter(waiters);
+        if self.public_active_op == PublicActiveOp::Poisoned {
+            self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
+            return;
+        }
         self.park_public_route_branch(PublicActiveOp::BranchRecv);
         self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
     }
@@ -315,6 +339,47 @@ where
     }
 
     #[inline]
+    pub(in crate::endpoint::kernel) fn retire_transport_handles(&mut self) {
+        if self.ports.iter().all(Option::is_none) {
+            return;
+        }
+        // A transport destructor is an external reentry point. Retirement is
+        // only valid while this endpoint owns the rendezvous access barrier.
+        let retirement_port = crate::invariant_some(self.ports[0].as_ref());
+        let retirement_access = match retirement_port.try_scratch_lease() {
+            Some(access) => Some(access),
+            None => {
+                retirement_port.require_access_barrier();
+                None
+            }
+        };
+        for port in self.ports.iter_mut() {
+            if let Some(port) = port.take() {
+                drop(port);
+            }
+        }
+        drop(retirement_access);
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn fail_session(
+        &mut self,
+        cause: SessionFaultKind,
+    ) -> SessionFaultKind {
+        let cause = self.poison_session(cause);
+        self.terminal_clear_public_send_state();
+        self.terminal_clear_public_recv_state();
+        self.terminal_clear_public_offer_state();
+        self.terminal_clear_public_branch_recv_state();
+        if let Some(branch) = self.public_route_branch.take() {
+            branch.discard_terminal();
+        }
+        self.public_active_op = PublicActiveOp::Poisoned;
+        self.retire_transport_handles();
+        cause
+    }
+
+    #[inline]
     pub(in crate::endpoint::kernel) fn register_endpoint_waiter(
         &self,
         waiters: &mut WaiterTransfer,
@@ -340,29 +405,36 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint) fn poison_for_recv_error(&self, error: &RecvError) -> SessionFaultKind {
+    pub(in crate::endpoint) fn poison_for_recv_error(
+        &mut self,
+        error: &RecvError,
+    ) -> SessionFaultKind {
         let cause = match error {
             RecvError::Transport(_) => SessionFaultKind::TransportClosed,
             RecvError::SessionFault(kind) => *kind,
             RecvError::Codec(_) => SessionFaultKind::DecodeFailed,
             RecvError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
-            RecvError::LabelMismatch { .. } | RecvError::ResolverReject { .. } => {
-                SessionFaultKind::ProtocolViolation
-            }
+            RecvError::LabelMismatch { .. }
+            | RecvError::SchemaMismatch { .. }
+            | RecvError::ResolverReject { .. } => SessionFaultKind::ProtocolViolation,
         };
-        self.poison_session(cause)
+        self.fail_session(cause)
     }
 
     #[inline]
-    pub(in crate::endpoint) fn poison_for_send_error(&self, error: &SendError) -> SessionFaultKind {
+    pub(in crate::endpoint) fn poison_for_send_error(
+        &mut self,
+        error: &SendError,
+    ) -> SessionFaultKind {
         let cause = match error {
             SendError::Transport(_) => SessionFaultKind::TransportClosed,
             SendError::SessionFault(kind) => *kind,
             SendError::Codec(_)
             | SendError::LabelMismatch { .. }
+            | SendError::SchemaMismatch { .. }
             | SendError::ResolverReject { .. } => SessionFaultKind::ProtocolViolation,
             SendError::PhaseInvariant => SessionFaultKind::ProgressInvariantViolated,
         };
-        self.poison_session(cause)
+        self.fail_session(cause)
     }
 }

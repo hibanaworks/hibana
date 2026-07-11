@@ -13,6 +13,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
     let resolver_row_harnesses = read("src/global/compiled/images/image/route_resolvers/kani.rs");
     let program_ref_harnesses = read("src/global/compiled/images/image/program_ref/kani.rs");
+    let transport_harnesses = read("src/transport/kani.rs");
     let program_blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
     let program_columns = read("src/global/compiled/images/image/columns.rs");
     let role_image_types = read("src/global/role_program/image_types.rs");
@@ -29,28 +30,37 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("harnesses=41 backend=CBMC"));
+    assert!(script.contains("harnesses=48 backend=CBMC"));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
     assert!(workflow.contains("cargo kani setup"));
     assert!(workflow.contains("bash ./.github/scripts/check_kani.sh"));
     assert!(!script.contains("rg -q"));
+    assert!(script.contains("hibana-kani-proofs.XXXXXX"));
+    assert!(script.contains("hibana-kani-gate.XXXXXX"));
+    assert!(script.contains("Kani proof and gate harness names must each be unique"));
+    assert!(script.contains("Kani should-panic harness may panic before its production call"));
+    assert!(
+        script.contains("Kani gate harness inventory does not match production proof inventory")
+    );
     assert!(harnesses.contains("kani::assume(left_start < left_end)"));
     assert!(
         harnesses
             .contains("assert!(overlap == !(left_end <= right_start || right_end <= left_start));")
     );
     let compaction_harness = harnesses
-        .split("fn packed_sidecar_pair_compacts_before_source_ranges()")
+        .split("fn four_resident_sidecars_compact_before_all_source_ranges()")
         .nth(1)
         .expect("sidecar compaction harness")
         .split("#[kani::proof]")
         .next()
         .expect("sidecar compaction harness body");
     assert!(!compaction_harness.contains("kani::assume"));
-    assert!(compaction_harness.contains("first_destination_end <= second_source_start"));
-    assert!(compaction_harness.contains("second_destination_end <= second_source_end"));
+    assert!(harnesses.contains("bytes: [usize; 4]"));
+    assert!(harnesses.contains("gaps: [usize; 3]"));
+    assert!(compaction_harness.contains("destinations[index].1 <= sources[index].1"));
+    assert!(compaction_harness.contains("destinations[index].1 <= sources[later].0"));
 
     for harness in [
         "endpoint_generation_advances_or_exhausts",
@@ -60,7 +70,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "route_storage_layout_is_bounded_and_exact",
         "packed_sidecar_range_is_aligned_and_monotonic",
         "packed_sidecar_pair_is_aligned_and_disjoint",
-        "packed_sidecar_pair_compacts_before_source_ranges",
+        "four_resident_sidecars_compact_before_all_source_ranges",
         "sidecar_overlap_is_symmetric_and_exact",
         "resolver_storage_layout_is_bounded_and_exact",
     ] {
@@ -76,6 +86,15 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(authority_harnesses.contains("Arm::decode_single_ready_mask(mask) == expected"));
     assert!(!authority_harnesses.contains("kani::assume"));
+    for harness in [
+        "frame_header_roundtrip_preserves_every_field",
+        "frame_header_identity_is_exact_and_injective",
+    ] {
+        assert!(transport_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    assert!(transport_harnesses.contains("left_header == right_header"));
+    assert!(!transport_harnesses.contains("kani::assume"));
     for harness in [
         "packed_event_conflict_decoding_accepts_exact_domain",
         "optional_route_arm_decoding_accepts_exact_domain",
@@ -102,6 +121,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "resident_local_step_lane_decoding_accepts_exact_domain",
         "resident_route_commit_decision_match_is_exact",
         "resident_route_arm_lane_step_decoding_accepts_exact_domain",
+        "role_image_fit_probe_rejects_undersized_storage",
+        "role_image_fit_probe_rejects_plan_mismatch",
     ] {
         assert!(image_harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));
@@ -113,6 +134,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
             .contains("kani::cover!(valid && left_scope == right_scope && left_arm != right_arm);")
     );
     assert!(image_harnesses.contains("&& left_mark_raw != right_mark_raw"));
+    assert!(image_harnesses.contains("plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }>"));
+    assert!(image_harnesses.contains("plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE>"));
 
     let harness = "scope_id_decoding_accepts_exact_compact_domain";
     assert!(scope_harnesses.contains(&format!("fn {harness}()")));
@@ -133,6 +156,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     for harness in [
         "program_image_columns_are_canonical_for_exact_count_domain",
         "program_image_columns_reject_total_byte_overflow",
+        "program_image_fit_probe_rejects_undersized_storage",
+        "program_image_constructor_rejects_undersized_storage",
         "scope_marker_identity_tag_is_exact_and_injective",
         "packed_column_range_construction_is_exact_for_resident_stride_domain",
         "compiled_program_column_range_rejects_stride_multiplication_overflow",
@@ -140,11 +165,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "compiled_program_blob_comparison_matches_array_equality",
         "compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
         "program_atom_row_decoding_accepts_exact_domain",
+        "compiled_program_atom_blob_decoding_preserves_every_schema_bit",
     ] {
         assert!(program_ref_harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(program_ref_harnesses.contains("assert!(decoded.is_some() == expected)"));
+    assert!(program_ref_harnesses.contains("row.atom.payload_schema == payload_schema"));
+    assert!(program_ref_harnesses.contains("row.payload_schema == payload_schema"));
     assert_eq!(
         program_ref_harnesses
             .matches("ProgramColumnRange::new(0, 2, usize::MAX)")
@@ -160,7 +188,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_ref_harnesses.contains("kani::cover!(valid);"));
     assert!(program_ref_harnesses.contains("kani::cover!(!valid);"));
     for stride in [
-        "0 => 1", "1 => 2", "2 => 4", "3 => 5", "4 => 6", "5 => 7", "6 => 8", "7 => 10",
+        "0 => 1", "1 => 2", "2 => 4", "3 => 5", "4 => 6", "5 => 7", "6 => 8", "7 => 10", "8 => 11",
     ] {
         assert!(program_ref_harnesses.contains(stride));
     }
@@ -179,8 +207,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
             .contains("out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);")
     );
     assert!(role_image_types.contains("let byte_len = match len.checked_mul(stride)"));
-    assert!(program_ref_harnesses.contains("let left_bytes: [u8; 12] = kani::any();"));
-    assert!(program_ref_harnesses.contains("let right_bytes: [u8; 12] = kani::any();"));
+    assert!(program_ref_harnesses.contains("let left_bytes: [u8; 16] = kani::any();"));
+    assert!(program_ref_harnesses.contains("let right_bytes: [u8; 16] = kani::any();"));
     assert!(program_ref_harnesses.contains("let expected = left_bytes == right_bytes;"));
     assert!(program_ref_harnesses.contains("assert!(left.same_image(&right) == expected);"));
     assert!(program_ref_harnesses.contains("kani::cover!(expected);"));
@@ -211,6 +239,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 0, 1)"));
     assert!(program_ref_harnesses.contains("let overflow = blob_len > usize::from(u16::MAX);"));
     assert!(program_ref_harnesses.contains("(u16::MAX, u16::MAX, u16::MAX)"));
+    assert!(program_ref_harnesses.contains("ProgramImageBytes::<10>::from_image_if_fits"));
+    assert!(program_ref_harnesses.contains(".is_none()"));
     assert!(!program_ref_harnesses.contains("kani::assume"));
 
     let harness = "resolver_registration_key_is_program_and_id";

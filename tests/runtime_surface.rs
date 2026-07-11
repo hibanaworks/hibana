@@ -370,7 +370,11 @@ fn role_program_handle_is_resident_compiled_image_backed() {
             && role_projection.contains("ProgramImageBytes")
             && role_projection.contains("ProgramProjection::<Steps>::PROGRAM_REF")
             && role_projection.contains("RoleImageBuild<N>")
-            && role_projection.contains("Self::image_ref(build)")
+            && role_projection.contains("match &RoleProjectionBlob::<ROLE, Steps, N>::BUILD")
+            && role_projection.contains("Self::image_ref::<")
+            && role_projection.contains(
+                "build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)"
+            )
             && role_blob.contains("self.bytes.image_ref("),
         "RoleProgram must stay a direct compact resident RoleImageRef handle"
     );

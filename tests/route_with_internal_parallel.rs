@@ -74,6 +74,93 @@ fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::seq(prefix, routed))
 }
 
+async fn drive_to_parallel_body(
+    controller: &mut hibana::Endpoint<'static, CONTROLLER_ROLE>,
+    local: &mut hibana::Endpoint<'static, LOCAL_ROLE>,
+) {
+    controller
+        .send::<Msg<1, u8>>(&1)
+        .await
+        .expect("send prefix request 1");
+    assert_eq!(local.recv::<Msg<1, u8>>().await.expect("recv prefix 1"), 1);
+    local
+        .send::<Msg<2, u8>>(&2)
+        .await
+        .expect("send prefix reply 1");
+    assert_eq!(
+        controller
+            .recv::<Msg<2, u8>>()
+            .await
+            .expect("recv prefix reply 1"),
+        2
+    );
+    controller
+        .send::<Msg<3, u8>>(&3)
+        .await
+        .expect("send prefix request 2");
+    assert_eq!(local.recv::<Msg<3, u8>>().await.expect("recv prefix 2"), 3);
+    local
+        .send::<Msg<4, u8>>(&4)
+        .await
+        .expect("send prefix reply 2");
+    assert_eq!(
+        controller
+            .recv::<Msg<4, u8>>()
+            .await
+            .expect("recv prefix reply 2"),
+        4
+    );
+    controller
+        .send::<Msg<5, u8>>(&5)
+        .await
+        .expect("send prefix request 3");
+    assert_eq!(local.recv::<Msg<5, u8>>().await.expect("recv prefix 3"), 5);
+    local
+        .send::<Msg<6, u8>>(&6)
+        .await
+        .expect("send prefix reply 3");
+    assert_eq!(
+        controller
+            .recv::<Msg<6, u8>>()
+            .await
+            .expect("recv prefix reply 3"),
+        6
+    );
+    controller
+        .send::<Msg<ROUTE_LEFT, ()>>(&())
+        .await
+        .expect("commit left route choice");
+    let branch = local.offer().await.expect("offer selected route choice");
+    assert_eq!(branch.label(), ROUTE_LEFT);
+    branch
+        .recv::<Msg<ROUTE_LEFT, ()>>()
+        .await
+        .expect("decode left route choice");
+    controller
+        .send::<Msg<FD_READ_REQ, u8>>(&7)
+        .await
+        .expect("send outer lane request");
+    assert_eq!(
+        local
+            .recv::<Msg<FD_READ_REQ, u8>>()
+            .await
+            .expect("recv request"),
+        7
+    );
+}
+
+async fn assert_join_rejected(local: &mut hibana::Endpoint<'static, LOCAL_ROLE>, context: &str) {
+    let error = local
+        .send::<Msg<FD_READ_RET, u8>>(&0)
+        .await
+        .expect_err(context);
+    let rendered = format!("{error:?}");
+    assert!(
+        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
+        "join must be rejected by progress evidence: {rendered}"
+    );
+}
+
 #[test]
 fn selected_route_arm_materializes_lanes_inside_parallel_body() {
     with_runtime_workspace(|slab| {
@@ -83,154 +170,87 @@ fn selected_route_arm_materializes_lanes_inside_parallel_body() {
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
             let controller_program = program::<CONTROLLER_ROLE>();
-            let sid = SessionId::new(91);
-
-            let mut controller = rv
-                .enter(sid, &controller_program)
-                .expect("attach controller");
-            let mut local = rv
-                .enter(sid, &program::<LOCAL_ROLE>())
-                .expect("attach local role");
-            let mut human = rv
-                .enter(sid, &program::<HUMAN_ROLE>())
-                .expect("attach human role");
-            let mut sensor = rv
-                .enter(sid, &program::<PICO2W_SENSOR_ROLE>())
-                .expect("attach sensor role");
+            let local_program = program::<LOCAL_ROLE>();
+            let human_program = program::<HUMAN_ROLE>();
+            let sensor_program = program::<PICO2W_SENSOR_ROLE>();
 
             futures::executor::block_on(async {
-                controller
-                    .send::<Msg<1, u8>>(&1)
-                    .await
-                    .expect("send prefix request 1");
-                assert_eq!(local.recv::<Msg<1, u8>>().await.expect("recv prefix 1"), 1);
-                local
-                    .send::<Msg<2, u8>>(&2)
-                    .await
-                    .expect("send prefix reply 1");
-                assert_eq!(
-                    controller
-                        .recv::<Msg<2, u8>>()
-                        .await
-                        .expect("recv prefix reply 1"),
-                    2
-                );
-                controller
-                    .send::<Msg<3, u8>>(&3)
-                    .await
-                    .expect("send prefix request 2");
-                assert_eq!(local.recv::<Msg<3, u8>>().await.expect("recv prefix 2"), 3);
-                local
-                    .send::<Msg<4, u8>>(&4)
-                    .await
-                    .expect("send prefix reply 2");
-                assert_eq!(
-                    controller
-                        .recv::<Msg<4, u8>>()
-                        .await
-                        .expect("recv prefix reply 2"),
-                    4
-                );
-                controller
-                    .send::<Msg<5, u8>>(&5)
-                    .await
-                    .expect("send prefix request 3");
-                assert_eq!(local.recv::<Msg<5, u8>>().await.expect("recv prefix 3"), 5);
-                local
-                    .send::<Msg<6, u8>>(&6)
-                    .await
-                    .expect("send prefix reply 3");
-                assert_eq!(
-                    controller
-                        .recv::<Msg<6, u8>>()
-                        .await
-                        .expect("recv prefix reply 3"),
-                    6
-                );
-                controller
-                    .send::<Msg<ROUTE_LEFT, ()>>(&())
-                    .await
-                    .expect("commit left route choice");
-                let branch = local.offer().await.expect("offer selected route choice");
-                assert_eq!(branch.label(), ROUTE_LEFT);
-                branch
-                    .recv::<Msg<ROUTE_LEFT, ()>>()
-                    .await
-                    .expect("decode left route choice");
-                controller
-                    .send::<Msg<FD_READ_REQ, u8>>(&7)
-                    .await
-                    .expect("send outer lane request");
-                assert_eq!(
+                {
+                    let sid = SessionId::new(91);
+                    let mut controller = rv
+                        .enter(sid, &controller_program)
+                        .expect("attach controller");
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut human = rv.enter(sid, &human_program).expect("attach human role");
+                    let sensor = rv.enter(sid, &sensor_program).expect("attach sensor role");
+                    drive_to_parallel_body(&mut controller, &mut local).await;
                     local
-                        .recv::<Msg<FD_READ_REQ, u8>>()
+                        .send::<Msg<HUMAN_REQ, u8>>(&1)
                         .await
-                        .expect("recv request"),
-                    7
-                );
+                        .expect("send parallel human request");
+                    assert_eq!(human.recv::<Msg<HUMAN_REQ, u8>>().await.expect("recv"), 1);
+                    assert_join_rejected(&mut local, "join must wait for the sensor lane").await;
+                    core::hint::black_box(sensor);
+                }
 
-                local
-                    .send::<Msg<HUMAN_REQ, u8>>(&1)
-                    .await
-                    .expect("send parallel human request");
-                let err = local
-                    .send::<Msg<FD_READ_RET, u8>>(&0)
-                    .await
-                    .expect_err("join must stay blocked until every parallel lane completes");
-                let rendered = format!("{err:?}");
-                assert!(
-                    rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
-                    "early join must be rejected by progress evidence: {rendered}"
-                );
-                local
-                    .send::<Msg<SENSOR_REQ, u8>>(&2)
-                    .await
-                    .expect("send parallel sensor request");
-                let err = local
-                    .send::<Msg<FD_READ_RET, u8>>(&0)
-                    .await
-                    .expect_err("join must stay blocked until nested lane reply completes");
-                let rendered = format!("{err:?}");
-                assert!(
-                    rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
-                    "join before nested lane reply must be rejected by progress evidence: {rendered}"
-                );
-                assert_eq!(
-                    human
-                        .recv::<Msg<HUMAN_REQ, u8>>()
-                        .await
-                        .expect("recv human req"),
-                    1
-                );
-                assert_eq!(
-                    sensor
-                        .recv::<Msg<SENSOR_REQ, u8>>()
-                        .await
-                        .expect("recv sensor req"),
-                    2
-                );
-                human
-                    .send::<Msg<HUMAN_TEXT, u8>>(&3)
-                    .await
-                    .expect("send human response");
-                assert_eq!(
+                {
+                    let sid = SessionId::new(92);
+                    let mut controller = rv
+                        .enter(sid, &controller_program)
+                        .expect("attach controller");
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut human = rv.enter(sid, &human_program).expect("attach human role");
+                    let mut sensor = rv.enter(sid, &sensor_program).expect("attach sensor role");
+                    drive_to_parallel_body(&mut controller, &mut local).await;
                     local
-                        .recv::<Msg<HUMAN_TEXT, u8>>()
+                        .send::<Msg<HUMAN_REQ, u8>>(&1)
                         .await
-                        .expect("recv human response"),
-                    3
-                );
-                local
-                    .send::<Msg<FD_READ_RET, u8>>(&4)
-                    .await
-                    .expect("send join response");
-                assert_eq!(
-                    controller
-                        .recv::<Msg<FD_READ_RET, u8>>()
+                        .expect("send human");
+                    local
+                        .send::<Msg<SENSOR_REQ, u8>>(&2)
                         .await
-                        .expect("recv join response"),
-                    4
-                );
+                        .expect("send sensor");
+                    assert_eq!(human.recv::<Msg<HUMAN_REQ, u8>>().await.expect("recv"), 1);
+                    assert_eq!(sensor.recv::<Msg<SENSOR_REQ, u8>>().await.expect("recv"), 2);
+                    assert_join_rejected(&mut local, "join must wait for the human response").await;
+                }
+
+                {
+                    let sid = SessionId::new(93);
+                    let mut controller = rv
+                        .enter(sid, &controller_program)
+                        .expect("attach controller");
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut human = rv.enter(sid, &human_program).expect("attach human role");
+                    let mut sensor = rv.enter(sid, &sensor_program).expect("attach sensor role");
+                    drive_to_parallel_body(&mut controller, &mut local).await;
+                    local
+                        .send::<Msg<HUMAN_REQ, u8>>(&1)
+                        .await
+                        .expect("send human");
+                    local
+                        .send::<Msg<SENSOR_REQ, u8>>(&2)
+                        .await
+                        .expect("send sensor");
+                    assert_eq!(human.recv::<Msg<HUMAN_REQ, u8>>().await.expect("recv"), 1);
+                    assert_eq!(sensor.recv::<Msg<SENSOR_REQ, u8>>().await.expect("recv"), 2);
+                    human
+                        .send::<Msg<HUMAN_TEXT, u8>>(&3)
+                        .await
+                        .expect("send human response");
+                    assert_eq!(local.recv::<Msg<HUMAN_TEXT, u8>>().await.expect("recv"), 3);
+                    local
+                        .send::<Msg<FD_READ_RET, u8>>(&4)
+                        .await
+                        .expect("send join response");
+                    assert_eq!(
+                        controller
+                            .recv::<Msg<FD_READ_RET, u8>>()
+                            .await
+                            .expect("recv join response"),
+                        4
+                    );
+                }
             });
         });
     });

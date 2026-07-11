@@ -85,6 +85,14 @@ impl<T, const N: usize> FixedQueue<T, N> {
         }
         None
     }
+
+    fn front_mut(&mut self) -> Option<&mut T> {
+        if self.len == 0 {
+            None
+        } else {
+            self.items[self.head].as_mut()
+        }
+    }
 }
 
 pub(crate) struct FrameOwned {
@@ -266,6 +274,17 @@ impl TestTransport {
             .all(|role| role.queue.len == 0)
     }
 
+    pub(crate) fn truncate_next_payload(&self, role: u8, len: usize) {
+        let mut state = self.state.borrow_mut();
+        let frame = state
+            .role_mut(role)
+            .queue
+            .front_mut()
+            .expect("test transport frame to truncate");
+        assert!(len < frame.len, "test corruption must truncate the payload");
+        frame.len = len;
+    }
+
     pub(crate) fn stage_send(
         &self,
         tx: &mut TestTx,
@@ -378,6 +397,7 @@ impl Clone for TestTransport {
 }
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
+const _: fn(&TestTransport, u8, usize) = TestTransport::truncate_next_payload;
 const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
 const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
     TestTransport::stage_send_with_session;

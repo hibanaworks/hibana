@@ -1,10 +1,12 @@
-use super::{CompiledProgramRef, ProgramAtomRow};
-use crate::global::compiled::images::image::blob_storage::scope_marker_identity_tag;
+use super::{CompiledProgramRef, PackedProgramAtomFields, ProgramAtomRow};
+use crate::global::compiled::images::image::blob_storage::{
+    ProgramImageBytes, scope_marker_identity_tag,
+};
 use crate::global::compiled::images::image::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
     PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
 };
-use crate::global::const_dsl::{ReentryMark, ScopeEvent};
+use crate::global::const_dsl::{EffList, ReentryMark, ScopeEvent};
 use crate::global::role_program::ColumnRange;
 
 static CANONICAL_IMAGE: [u8; 5] = [0, 1, 2, 3, 4];
@@ -89,6 +91,21 @@ fn program_image_columns_reject_total_byte_overflow() {
 }
 
 #[kani::proof]
+fn program_image_fit_probe_rejects_undersized_storage() {
+    let source = EffList::new();
+    let columns = ProgramImageColumns::new(1, 0, 0);
+    assert!(ProgramImageBytes::<10>::from_image_if_fits(&source, columns).is_none());
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn program_image_constructor_rejects_undersized_storage() {
+    let source = EffList::new();
+    let columns = ProgramImageColumns::new(1, 0, 0);
+    let _ = ProgramImageBytes::<10>::from_image(&source, columns);
+}
+
+#[kani::proof]
 fn scope_marker_identity_tag_is_exact_and_injective() {
     let left_event_raw = kani::any::<u8>() % 3;
     let right_event_raw = kani::any::<u8>() % 3;
@@ -121,7 +138,7 @@ fn scope_marker_identity_tag_is_exact_and_injective() {
 fn packed_column_range_construction_is_exact_for_resident_stride_domain() {
     let offset: u16 = kani::any();
     let len: u16 = kani::any();
-    let stride_index = kani::any::<u8>() % 8;
+    let stride_index = kani::any::<u8>() % 9;
     let stride = match stride_index {
         0 => 1,
         1 => 2,
@@ -131,6 +148,7 @@ fn packed_column_range_construction_is_exact_for_resident_stride_domain() {
         5 => 7,
         6 => 8,
         7 => 10,
+        8 => 11,
         _ => crate::invariant(),
     };
     let byte_len = usize::from(len) * stride;
@@ -146,6 +164,7 @@ fn packed_column_range_construction_is_exact_for_resident_stride_domain() {
     kani::cover!(stride_index == 5);
     kani::cover!(stride_index == 6);
     kani::cover!(stride_index == 7);
+    kani::cover!(stride_index == 8);
     if valid {
         let program = ProgramColumnRange::new(usize::from(offset), usize::from(len), stride);
         let role = ColumnRange::new(usize::from(offset), usize::from(len), stride);
@@ -174,14 +193,14 @@ fn role_image_column_range_rejects_stride_multiplication_overflow() {
 
 #[kani::proof]
 fn compiled_program_blob_comparison_matches_array_equality() {
-    let left_bytes: [u8; 12] = kani::any();
-    let right_bytes: [u8; 12] = kani::any();
-    let left_static: &'static [u8; 12] = unsafe {
+    let left_bytes: [u8; 16] = kani::any();
+    let right_bytes: [u8; 16] = kani::any();
+    let left_static: &'static [u8; 16] = unsafe {
         /* SAFETY: both arrays remain live until the two program refs have been
         compared and neither ref escapes this proof harness. */
         core::mem::transmute(&left_bytes)
     };
-    let right_static: &'static [u8; 12] = unsafe {
+    let right_static: &'static [u8; 16] = unsafe {
         /* SAFETY: both arrays remain live until the two program refs have been
         compared and neither ref escapes this proof harness. */
         core::mem::transmute(&right_bytes)
@@ -228,6 +247,7 @@ fn program_atom_row_decoding_accepts_exact_domain() {
     let from: u8 = kani::any();
     let to: u8 = kani::any();
     let label: u8 = kani::any();
+    let payload_schema: u32 = kani::any();
     let origin: u8 = kani::any();
     let lane: u8 = kani::any();
     let role_count: u8 = kani::any();
@@ -238,7 +258,18 @@ fn program_atom_row_decoding_accepts_exact_domain() {
         && from < role_count
         && to < role_count
         && origin <= 1;
-    let decoded = ProgramAtomRow::decode(eff_idx, from, to, label, origin, lane, role_count);
+    let decoded = ProgramAtomRow::decode(
+        eff_idx,
+        PackedProgramAtomFields {
+            from,
+            to,
+            label,
+            payload_schema,
+            origin,
+            lane,
+        },
+        role_count,
+    );
 
     assert!(decoded.is_some() == expected);
     if let Some(row) = decoded {
@@ -246,7 +277,40 @@ fn program_atom_row_decoding_accepts_exact_domain() {
         assert!(row.atom.from == from);
         assert!(row.atom.to == to);
         assert!(row.atom.label == label);
+        assert!(row.atom.payload_schema == payload_schema);
         assert!(row.atom.origin.packed_bits() == origin);
         assert!(row.atom.lane == lane);
     }
+}
+
+#[kani::proof]
+fn compiled_program_atom_blob_decoding_preserves_every_schema_bit() {
+    let payload_schema: u32 = kani::any();
+    let bytes = [
+        0,
+        0,
+        0,
+        1,
+        9,
+        payload_schema as u8,
+        (payload_schema >> 8) as u8,
+        (payload_schema >> 16) as u8,
+        (payload_schema >> 24) as u8,
+        0,
+        7,
+    ];
+    let bytes: &'static [u8; 11] = unsafe {
+        /* SAFETY: the forged atom bytes remain live until the program ref has
+        decoded the row and the ref does not escape this proof harness. */
+        core::mem::transmute(&bytes)
+    };
+    let row = program(
+        bytes,
+        ProgramImageFacts { role_count: 2 },
+        ProgramImageColumns::new(1, 0, 0),
+    )
+    .atom_at(0)
+    .expect("valid symbolic atom");
+
+    assert!(row.payload_schema == payload_schema);
 }

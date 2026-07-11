@@ -1,5 +1,5 @@
 use super::{Endpoint, EndpointError, EndpointOp, RecvResult, RouteBranch, carrier};
-use crate::transport::wire::{CodecError, Payload, WirePayload};
+use crate::transport::wire::{CodecError, Payload, WireEncode, WirePayload};
 use core::{
     future::Future,
     pin::Pin,
@@ -49,6 +49,7 @@ pub(super) enum OfferFutureLease {
     Rejected = 0,
     RestoreOnDrop = 1,
     Completed = 2,
+    Faulted = 3,
 }
 
 impl OfferFutureLease {
@@ -57,6 +58,7 @@ impl OfferFutureLease {
         match lease {
             crate::endpoint::kernel::PublicOpLease::Held => Self::RestoreOnDrop,
             crate::endpoint::kernel::PublicOpLease::Rejected => Self::Rejected,
+            crate::endpoint::kernel::PublicOpLease::Faulted => Self::Faulted,
         }
     }
 }
@@ -67,6 +69,7 @@ pub(crate) enum RecvFutureLease {
     Rejected = 0,
     RestoreOnDrop = 1,
     Completed = 2,
+    Faulted = 3,
 }
 
 impl RecvFutureLease {
@@ -75,6 +78,7 @@ impl RecvFutureLease {
         match lease {
             crate::endpoint::kernel::PublicOpLease::Held => Self::RestoreOnDrop,
             crate::endpoint::kernel::PublicOpLease::Rejected => Self::Rejected,
+            crate::endpoint::kernel::PublicOpLease::Faulted => Self::Faulted,
         }
     }
 }
@@ -114,6 +118,7 @@ impl<'e, 'r, const ROLE: u8> RawBranchRecvFuture<'e, 'r, ROLE> {
     fn poll_raw(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -126,11 +131,12 @@ impl<'e, 'r, const ROLE: u8> RawBranchRecvFuture<'e, 'r, ROLE> {
                 self.finish();
                 return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
             }
+            crate::endpoint::kernel::PublicOpLease::Faulted => {}
         }
-        let endpoint = /* SAFETY: this branch-recv future holds the public branch-recv
-        lease while `progress` is Pending. Polling owns `&mut self`, so no
-        second endpoint operation can borrow the same branch-recv state. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_branch_recv(logical_label, validate, cx) {
+        let endpoint = /* SAFETY: the future owns the unique endpoint borrow.
+        `Held` owns branch-recv state; `Faulted` performs one terminal fault
+        observation without arming that state. */ unsafe { &mut *self.endpoint };
+        match endpoint.poll_branch_recv(logical_label, payload_schema, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.finish();
@@ -159,6 +165,7 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
     fn poll_raw(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -168,12 +175,12 @@ impl<'e, 'r, const ROLE: u8> RawRecvFuture<'e, 'r, ROLE> {
                 self.lease = RecvFutureLease::Completed;
                 return Poll::Ready(Err(crate::endpoint::RecvError::PhaseInvariant));
             }
-            RecvFutureLease::RestoreOnDrop => {}
+            RecvFutureLease::RestoreOnDrop | RecvFutureLease::Faulted => {}
         }
-        let endpoint = /* SAFETY: this recv future holds the public recv lease
-        while it is in `RestoreOnDrop`. Polling owns `&mut self`, which keeps
-        the endpoint recv operation exclusive. */ unsafe { &mut *self.endpoint };
-        match endpoint.poll_recv(logical_label, validate, cx) {
+        let endpoint = /* SAFETY: the future owns the unique endpoint borrow.
+        `RestoreOnDrop` owns recv state; `Faulted` performs one terminal fault
+        observation without arming that state. */ unsafe { &mut *self.endpoint };
+        match endpoint.poll_recv(logical_label, payload_schema, validate, cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(payload)) => {
                 self.lease = RecvFutureLease::Completed;
@@ -203,7 +210,7 @@ where
 impl<'e, 'r, const ROLE: u8, M> RecvFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
-    M::Payload: WirePayload,
+    M::Payload: WireEncode + WirePayload,
 {
     #[inline]
     pub(super) fn new(endpoint: &'e mut Endpoint<'r, ROLE>) -> Self {
@@ -217,14 +224,19 @@ where
 impl<'e, 'r, const ROLE: u8, M> Future for BranchRecvFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
-    M::Payload: WirePayload,
+    M::Payload: WireEncode + WirePayload,
 {
     type Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };
+        let this = /* SAFETY: this facade's initialized fields are not structurally
+        pinned; endpoint ownership keeps the raw future valid and excludes an
+        aliasing mutable poll while this facade owns `Pin<&mut Self>`. */ unsafe {
+            self.get_unchecked_mut()
+        };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
+            crate::global::payload_schema::<M>(),
             <M::Payload as WirePayload>::validate_payload,
             cx,
         ) {
@@ -242,14 +254,19 @@ where
 impl<'e, 'r, const ROLE: u8, M> Future for RecvFuture<'e, 'r, ROLE, M>
 where
     M: crate::g::Message,
-    M::Payload: WirePayload,
+    M::Payload: WireEncode + WirePayload,
 {
     type Output = core::result::Result<<M::Payload as WirePayload>::Decoded<'e>, EndpointError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = /* SAFETY: these futures are never structurally pinned; the raw endpoint future remains pinned by endpoint ownership, not by this facade. */ unsafe { self.get_unchecked_mut() };
+        let this = /* SAFETY: this facade's initialized fields are not structurally
+        pinned; endpoint ownership keeps the raw future valid and excludes an
+        aliasing mutable poll while this facade owns `Pin<&mut Self>`. */ unsafe {
+            self.get_unchecked_mut()
+        };
         match this.raw.poll_raw(
             <M as crate::g::Message>::LOGICAL_LABEL,
+            crate::global::payload_schema::<M>(),
             <M::Payload as WirePayload>::validate_payload,
             cx,
         ) {
@@ -276,7 +293,8 @@ impl<'e, 'r, const ROLE: u8> Drop for RawBranchRecvFuture<'e, 'r, ROLE> {
                 }
             }
             (crate::endpoint::kernel::PublicOpLease::Held, BranchRecvFutureProgress::Finished)
-            | (crate::endpoint::kernel::PublicOpLease::Rejected, _) => {}
+            | (crate::endpoint::kernel::PublicOpLease::Rejected, _)
+            | (crate::endpoint::kernel::PublicOpLease::Faulted, _) => {}
         }
     }
 }

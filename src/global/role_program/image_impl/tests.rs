@@ -2,10 +2,11 @@ use super::super::{
     BlobPtr, ColumnRange, PackedLaneRange, ROLE_IMAGE_CONFLICT_STRIDE,
     ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
     ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
-    ROLE_IMAGE_U16_STRIDE, RoleImageColumns, RoleImageRef, RoleLaneImage, RoleProgram,
-    RuntimeRoleFacts, project,
+    ROLE_IMAGE_U16_STRIDE, RoleImageBytes, RoleImageColumns, RoleImagePlan, RoleImageRef,
+    RoleLaneImage, RoleLaneScratch, RoleProgram, RuntimeRoleFacts, project,
 };
 use super::decode_binary_route_arm_index;
+use super::plan::RoleImageColumnCounts;
 use crate::{
     g::{self, Msg},
     global::{
@@ -260,6 +261,72 @@ fn role_image_column_range_rejects_stride_multiplication_overflow() {
     assert_invariant(|| {
         let _ = ColumnRange::new(0, 2, usize::MAX);
     });
+}
+
+#[test]
+fn resident_role_image_fit_probe_rejects_undersized_storage() {
+    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0>();
+    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: 1,
+        route_scope_count: 0,
+        active_lane_count: 1,
+        endpoint_lane_slot_count: 1,
+        logical_lane_count: 1,
+    });
+
+    let plan = RoleImagePlan::from_program(&eff_list, facts, 0);
+    assert!(plan.build_if_fits::<0>(&eff_list, facts, 0).is_none());
+}
+
+#[test]
+fn resident_parallel_role_image_plan_matches_lane_bit_storage() {
+    type Parallel = g::Par<g::Send<0, 1, Msg<90, ()>>, g::Send<0, 1, Msg<91, ()>>>;
+
+    let source = <Parallel as crate::g::ProgramTerm>::PROGRAM_SOURCE;
+    let eff_list = source.eff_list();
+    let scratch = RoleLaneScratch::from_program(eff_list, 2, 0);
+    let planned = RoleImageColumnCounts::from_program(eff_list, 2, 0);
+    let resident = RoleImageColumnCounts::from_scratch(&scratch);
+
+    assert_eq!(planned.resident_boundaries, resident.resident_boundaries);
+    assert_eq!(planned.lane_bits, resident.lane_bits);
+}
+
+#[test]
+fn resident_role_image_fit_probe_rejects_plan_drift() {
+    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0>();
+    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: 1,
+        route_scope_count: 0,
+        active_lane_count: 1,
+        endpoint_lane_slot_count: 1,
+        logical_lane_count: 1,
+    });
+    let mut plan = RoleImagePlan::from_program(&eff_list, facts, 0);
+    plan.columns.lane_bits.len += 1;
+
+    assert_invariant(|| {
+        let _ = plan.build_if_fits::<64>(&eff_list, facts, 0);
+    });
+}
+
+#[test]
+#[should_panic(expected = "role image")]
+fn resident_role_image_constructor_rejects_undersized_storage() {
+    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0>();
+    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: 1,
+        route_scope_count: 0,
+        active_lane_count: 1,
+        endpoint_lane_slot_count: 1,
+        logical_lane_count: 1,
+    });
+    let scratch = RoleLaneScratch::from_program(&eff_list, facts.footprint().logical_lane_count, 0);
+    let columns = RoleImageBytes::<0>::columns(&scratch, facts);
+    let _ = RoleImageBytes::<0>::from_scratch(&scratch, facts, columns);
 }
 
 fn assert_route_commit_fixture_decodes(image: &RoleLaneImage<'_>, expected_rows: &[(ScopeId, u8)]) {

@@ -25,7 +25,16 @@ The pinned gate exhausts the production arithmetic for:
   and the complete resident stride domain, with fail-closed rejection of
   `usize` stride multiplication overflow;
 - canonical contiguous program-image layout across exact count domains, total
-  byte overflow rejection, and injective packing of scope event/reentry tags;
+  byte overflow rejection, fail-closed rejection of undersized selected bucket
+  storage, and injective packing of scope event/reentry tags;
+- exact preservation of every 32-bit payload-schema value through packed atom
+  decoding, including the concrete little-endian blob layout;
+- exact round-trip preservation and injective identity of all eight core frame
+  header bytes across the complete input domain;
+- independent fail-closed fit-probe and direct-constructor obligations for
+  undersized program storage, plus early role-image plan rejection before its
+  large scratch image is built and rejection of any plan/resident byte-length
+  disagreement after exact construction;
 - exact callback-registration identity over resident program image and resolver
   id, including separation of distinct program images at the same route site
   and rejection of the intrinsic resolver sentinel;
@@ -43,10 +52,15 @@ The pinned gate exhausts the production arithmetic for:
   `u16 x u16` capacity domain;
 - aligned, monotonic resident-sidecar packing;
 - aligned, pairwise-disjoint sequential sidecar packing;
-- proof that compacted sidecar destinations precede both source ranges;
+- proof that compacted destinations for all four resident sidecar owners precede
+  their own and every later live source range;
 - exact symmetric sidecar-range collision detection;
 - exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
   capacity domain.
+
+The pinned inventory contains 48 CBMC harnesses. Transport FIFO,
+exactly-once/no-replay delivery, and peer-close observation are modeled and
+proved in Lean, mirrored by the Rust conformance tests, and checked under Miri.
 
 The harnesses cover both successful and rejected symbolic inputs. They use no
 arbitrary role, lane, descriptor, or slab capacity bound. Lean proves the

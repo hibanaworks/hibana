@@ -12,7 +12,7 @@
 
 use core::marker::PhantomData;
 
-use crate::session::lease::core::{LeaseError, RegisterRendezvousError};
+use crate::session::lease::core::{EndpointLeaseRequest, LeaseError, RegisterRendezvousError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PublicEndpointStorageLayout {
@@ -24,12 +24,12 @@ struct PublicEndpointStorageLayout {
 use core::fmt;
 
 use super::error::{AttachError, ClusterError, ResourceScope};
-use crate::global::compiled::images::{CompiledProgramRef, RoleImageSlice};
+use crate::global::compiled::images::{CompiledProgramRef, RoleDescriptorRef, RoleImageSlice};
 use crate::rendezvous::core::{EndpointLeaseId, LaneLease, Rendezvous};
 use crate::rendezvous::error::RendezvousError;
 use crate::session::types::{Lane, RendezvousId, SessionId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(in crate::session::cluster::core) struct PublicEndpointStorageRequest {
     rv_id: RendezvousId,
     sid: SessionId,
@@ -37,7 +37,7 @@ pub(in crate::session::cluster::core) struct PublicEndpointStorageRequest {
     required_align: usize,
     logical_lane_count: usize,
     required_assoc_slots: usize,
-    resident_budget: crate::rendezvous::core::EndpointResidentBudget,
+    role_descriptor: RoleDescriptorRef,
 }
 
 struct EndpointInitArgs<'r, const ROLE: u8, T: crate::transport::Transport + 'r> {

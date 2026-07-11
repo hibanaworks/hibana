@@ -1,11 +1,6 @@
-import Hibana.Syntax
+import Hibana.GlobalSyntax
 
 namespace Hibana
-
-structure ConflictArm where
-  conflict : Nat
-  arm : RouteArm
-  deriving Repr, DecidableEq, BEq
 
 structure Event where
   id : Nat
@@ -95,8 +90,8 @@ def projectInto
     (builder : ProjectionBuilder)
     (context : ProjectionContext) : ProjectionResult :=
   match choreo with
-  | .send sender receiver label =>
-      match Choreo.localAction? role sender receiver label with
+  | .send sender receiver label schema =>
+      match Choreo.localAction? role sender receiver label schema with
       | some action => builder.addEvent context action
       | none => { builder, exits := context.incoming }
   | .seq left right =>
@@ -192,6 +187,145 @@ def projectGraph (role : Nat) (choreo : Choreo) : EventGraph :=
     rolls := result.builder.rolls
     routes := result.builder.routes
   }
+
+private theorem project_into_actions_append
+    (role : Nat)
+    (choreo : Choreo)
+    (builder : ProjectionBuilder)
+    (context : ProjectionContext) :
+    (projectInto role choreo builder context).builder.events.map Event.action =
+      builder.events.map Event.action ++ choreo.projectedActions role := by
+  induction choreo generalizing builder context with
+  | send sender receiver label schema =>
+      cases actionCase : Choreo.localAction? role sender receiver label schema <;>
+        simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+          GlobalEvent.action?, ProjectionBuilder.addEvent, actionCase]
+  | seq left right leftIH rightIH =>
+      simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+        leftIH, rightIH, List.append_assoc]
+  | par left right leftIH rightIH =>
+      simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+        leftIH, rightIH, List.append_assoc]
+  | route authority left right leftIH rightIH =>
+      simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+        leftIH, rightIH, List.append_assoc]
+  | roll body bodyIH =>
+      simp [projectInto, Choreo.projectedActions, Choreo.globalEvents, bodyIH]
+
+/-- General, trace-independent projection refinement: for every normalized
+choreography and role, the EventGraph action column is exactly the global event
+preorder filtered through role projection. -/
+theorem project_graph_actions_match_global_projection (role : Nat) (choreo : Choreo) :
+    (projectGraph role choreo).events.map Event.action = choreo.projectedActions role := by
+  have projected := project_into_actions_append role choreo .empty .root
+  simpa [projectGraph, ProjectionBuilder.empty] using projected
+
+private theorem project_into_roll_count
+    (role : Nat)
+    (choreo : Choreo)
+    (builder : ProjectionBuilder)
+    (context : ProjectionContext) :
+    (projectInto role choreo builder context).builder.rolls.length =
+      builder.rolls.length + choreo.rollCount := by
+  induction choreo generalizing builder context with
+  | send sender receiver label schema =>
+      cases actionCase : Choreo.localAction? role sender receiver label schema <;>
+        simp [projectInto, Choreo.rollCount, ProjectionBuilder.addEvent, actionCase]
+  | seq left right leftIH rightIH =>
+      simp [projectInto, Choreo.rollCount, leftIH, rightIH, Nat.add_assoc]
+  | par left right leftIH rightIH =>
+      simp [projectInto, Choreo.rollCount, leftIH, rightIH, Nat.add_assoc]
+  | route authority left right leftIH rightIH =>
+      simp [projectInto, Choreo.rollCount, leftIH, rightIH, Nat.add_assoc]
+  | roll body bodyIH =>
+      simp [projectInto, Choreo.rollCount, bodyIH, Nat.add_assoc]
+
+theorem project_graph_roll_count_matches_global
+    (role : Nat) (choreo : Choreo) :
+    (projectGraph role choreo).rolls.length = choreo.globalRolls.length := by
+  rw [global_rolls_length]
+  have count := project_into_roll_count role choreo .empty .root
+  simpa [projectGraph, ProjectionBuilder.empty] using count
+
+private theorem project_into_conflict_count
+    (role : Nat)
+    (choreo : Choreo)
+    (builder : ProjectionBuilder)
+    (context : ProjectionContext) :
+    (projectInto role choreo builder context).builder.nextConflict =
+      builder.nextConflict + choreo.routeCount := by
+  induction choreo generalizing builder context with
+  | send sender receiver label schema =>
+      cases actionCase : Choreo.localAction? role sender receiver label schema <;>
+        simp [projectInto, Choreo.routeCount, ProjectionBuilder.addEvent, actionCase]
+  | seq left right leftIH rightIH =>
+      simp [projectInto, Choreo.routeCount, leftIH, rightIH, Nat.add_assoc]
+  | par left right leftIH rightIH =>
+      simp [projectInto, Choreo.routeCount, leftIH, rightIH, Nat.add_assoc]
+  | route authority left right leftIH rightIH =>
+      simp [projectInto, Choreo.routeCount, leftIH, rightIH, Nat.add_assoc]
+  | roll body bodyIH =>
+      simpa [projectInto, Choreo.routeCount] using
+        bodyIH builder { context with reentry := .rolled }
+
+private theorem project_into_roll_conflicts_append
+    (role : Nat)
+    (choreo : Choreo)
+    (builder : ProjectionBuilder)
+    (context : ProjectionContext) :
+    (projectInto role choreo builder context).builder.rolls.map RollInfo.conflicts =
+      builder.rolls.map RollInfo.conflicts ++
+        (choreo.globalRollsFrom 0 builder.nextConflict).map GlobalRoll.conflicts := by
+  induction choreo generalizing builder context with
+  | send sender receiver label schema =>
+      cases actionCase : Choreo.localAction? role sender receiver label schema <;>
+        simp [projectInto, Choreo.globalRollsFrom, ProjectionBuilder.addEvent, actionCase]
+  | seq left right leftIH rightIH =>
+      simp only [projectInto, Choreo.globalRollsFrom]
+      rw [rightIH, leftIH]
+      rw [project_into_conflict_count]
+      rw [global_roll_conflicts_ignore_event_base
+        right 0 left.globalEvents.length (builder.nextConflict + left.routeCount)]
+      simp [List.map_append, List.append_assoc]
+  | par left right leftIH rightIH =>
+      simp only [projectInto, Choreo.globalRollsFrom]
+      rw [rightIH, leftIH]
+      rw [project_into_conflict_count]
+      rw [global_roll_conflicts_ignore_event_base
+        right 0 left.globalEvents.length (builder.nextConflict + left.routeCount)]
+      simp [List.map_append, List.append_assoc]
+  | route authority left right leftIH rightIH =>
+      simp only [projectInto, Choreo.globalRollsFrom]
+      rw [rightIH, leftIH]
+      rw [project_into_conflict_count]
+      rw [global_roll_conflicts_ignore_event_base
+        right 0 left.globalEvents.length (builder.nextConflict + 1 + left.routeCount)]
+      simp [List.map_append, List.append_assoc, Nat.add_assoc]
+  | roll body bodyIH =>
+      simp only [projectInto, Choreo.globalRollsFrom, List.map_append, List.map_cons,
+        List.map_nil]
+      rw [bodyIH]
+      rw [project_into_conflict_count]
+      simp [List.append_assoc]
+
+theorem project_graph_roll_conflicts_match_global
+    (role : Nat) (choreo : Choreo) :
+    (projectGraph role choreo).rolls.map RollInfo.conflicts =
+      choreo.globalRolls.map GlobalRoll.conflicts := by
+  have conflicts := project_into_roll_conflicts_append role choreo .empty .root
+  simpa [projectGraph, ProjectionBuilder.empty, Choreo.globalRolls] using conflicts
+
+/-- General event-identity refinement: a global occurrence visible to a role
+has the same action at its derived local descriptor event ID. -/
+theorem project_graph_action_at_global_event_local_id
+    {choreo : Choreo} {role globalId : Nat}
+    {event : GlobalEvent} {action : LocalAction}
+    (eventAt : choreo.globalEvents[globalId]? = some event)
+    (projected : event.action? role = some action) :
+    ((projectGraph role choreo).events.map Event.action)[
+      choreo.localEventId role globalId]? = some action := by
+  rw [project_graph_actions_match_global_projection]
+  exact projected_action_at_local_event_id eventAt projected
 
 private def uniqueKeys (keys : List Nat) : Bool := decide keys.Nodup
 

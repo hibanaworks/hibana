@@ -6,7 +6,7 @@ use crate::{
     },
 };
 
-pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 7;
+pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 11;
 pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5;
 pub(crate) const PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5;
 pub(crate) const PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT: u8 = u8::MAX;

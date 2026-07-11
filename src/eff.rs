@@ -110,6 +110,7 @@ pub(crate) struct EffAtom {
     pub(crate) from: u8,
     pub(crate) to: u8,
     pub(crate) label: u8,
+    pub(crate) payload_schema: u32,
     pub(crate) origin: EventOrigin,
     /// Type-level lane for parallel composition; lane 0 is the primary lane.
     pub(crate) lane: u8,
@@ -120,6 +121,7 @@ impl EffAtom {
         from: 0,
         to: 0,
         label: 0,
+        payload_schema: 0,
         origin: EventOrigin::User,
         lane: 0,
     };

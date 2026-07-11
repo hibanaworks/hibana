@@ -64,9 +64,14 @@ fn assert_compact_debug(rendered: &str) {
 }
 
 static UNIT_RESOLVER_STATE: () = ();
+const SCHEMA_ROUTE_RESOLVER: u16 = 4120;
 
 fn reject_from_unit(_: &()) -> Result<DecisionArm, ResolverError> {
     Err(ResolverError::reject())
+}
+
+fn select_right_from_unit(_: &()) -> Result<DecisionArm, ResolverError> {
+    Ok(DecisionArm::Right)
 }
 
 fn project_pair<const MSG_ID: u8>() -> (RoleProgram<0>, RoleProgram<1>) {
@@ -113,20 +118,129 @@ fn endpoint_errors_keep_debug_boundaries() {
             let rv = cluster.rendezvous(slab, transport.clone()).expect("rv");
             let sid = SessionId::new(411);
             let mut origin = rv.enter(sid, &origin_program).expect("origin");
-            let mut target = rv.enter(sid, &target_program).expect("target");
+            let target = rv.enter(sid, &target_program).expect("target");
 
             let send_error = futures::executor::block_on(origin.send::<Msg<12, u32>>(&1234))
                 .expect_err("wrong send label must fail");
             assert_endpoint_debug_boundary(send_error, "send");
+            let poisoned = futures::executor::block_on(origin.send::<Msg<11, u32>>(&1234))
+                .expect_err("wrong send label must poison the session");
+            assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
 
+            drop(origin);
+            drop(target);
+            let sid = SessionId::new(412);
+            let mut origin = rv.enter(sid, &origin_program).expect("fresh origin");
+            let mut target = rv.enter(sid, &target_program).expect("fresh target");
             futures::executor::block_on(origin.send::<Msg<11, u32>>(&1234)).expect("send");
 
-            let recv_result = futures::executor::block_on(target.recv::<Msg<11, u64>>());
+            let recv_result = futures::executor::block_on(target.recv::<Msg<11, i32>>());
             let recv_error = match recv_result {
                 Ok(_) => panic!("wrong recv payload must fail"),
                 Err(error) => error,
             };
             assert_endpoint_debug_boundary(recv_error, "recv");
+        });
+    });
+}
+
+#[test]
+fn payload_schema_mismatch_cannot_publish_send_or_consume_recv() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+            let (origin_program, target_program) = project_pair::<13>();
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("rendezvous");
+            let sid = SessionId::new(412);
+            let mut origin = rv.enter(sid, &origin_program).expect("origin");
+            let target = rv.enter(sid, &target_program).expect("target");
+
+            let send_error = futures::executor::block_on(origin.send::<Msg<13, i32>>(&1234_i32))
+                .expect_err("same-width wrong send schema must fail before publication");
+            assert!(format!("{send_error:?}").contains("SchemaMismatch"));
+            assert!(transport.queue_is_empty());
+
+            let poisoned = futures::executor::block_on(origin.send::<Msg<13, u32>>(&1234_u32))
+                .expect_err("wrong send schema must poison the session");
+            assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
+            assert!(transport.queue_is_empty());
+
+            drop(origin);
+            drop(target);
+            let sid = SessionId::new(414);
+            let mut origin = rv.enter(sid, &origin_program).expect("fresh origin");
+            let mut target = rv.enter(sid, &target_program).expect("fresh target");
+            futures::executor::block_on(origin.send::<Msg<13, u32>>(&1234_u32))
+                .expect("fresh session must publish the declared payload");
+            assert!(!transport.queue_is_empty());
+
+            let recv_error = futures::executor::block_on(target.recv::<Msg<13, i32>>())
+                .expect_err("same-width wrong recv schema must fail before frame consumption");
+            assert!(format!("{recv_error:?}").contains("SchemaMismatch"));
+            assert!(
+                !transport.queue_is_empty(),
+                "schema rejection must leave the queued frame unconsumed"
+            );
+            let poisoned = futures::executor::block_on(target.recv::<Msg<13, u32>>())
+                .expect_err("wrong recv schema must poison the session");
+            assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
+        });
+    });
+}
+
+#[test]
+fn payload_schema_tracks_selected_route_when_labels_match() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&TEST_SLOT, |cluster| {
+            let program = g::route(
+                g::send::<0, 1, Msg<14, u32>>(),
+                g::send::<0, 1, Msg<14, i32>>(),
+            )
+            .resolve::<SCHEMA_ROUTE_RESOLVER>();
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("rendezvous");
+            rv.set_resolver(
+                &origin_program,
+                ResolverRef::<SCHEMA_ROUTE_RESOLVER>::decision_state(
+                    &UNIT_RESOLVER_STATE,
+                    select_right_from_unit,
+                ),
+            )
+            .expect("install schema route resolver");
+            let sid = SessionId::new(413);
+            let mut origin = rv.enter(sid, &origin_program).expect("origin");
+            let target = rv.enter(sid, &target_program).expect("target");
+
+            let mismatch = futures::executor::block_on(origin.send::<Msg<14, u32>>(&23))
+                .expect_err("selected right arm must reject the left payload schema");
+            assert!(format!("{mismatch:?}").contains("SchemaMismatch"));
+            assert!(transport.queue_is_empty());
+
+            let poisoned = futures::executor::block_on(origin.send::<Msg<14, i32>>(&-17))
+                .expect_err("wrong selected-arm schema must poison the session");
+            assert!(format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"));
+
+            drop(origin);
+            drop(target);
+            let sid = SessionId::new(414);
+            let mut origin = rv.enter(sid, &origin_program).expect("fresh origin");
+            let mut target = rv.enter(sid, &target_program).expect("fresh target");
+            futures::executor::block_on(origin.send::<Msg<14, i32>>(&-17))
+                .expect("selected right arm and payload schema must agree");
+            let branch = futures::executor::block_on(target.offer()).expect("offer right arm");
+            assert_eq!(branch.label(), 14);
+            assert_eq!(
+                futures::executor::block_on(branch.recv::<Msg<14, i32>>())
+                    .expect("branch receive schema must match the selected arm"),
+                -17
+            );
+            assert!(transport.queue_is_empty());
         });
     });
 }

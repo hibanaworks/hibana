@@ -10,8 +10,8 @@ impl<Steps, const N: usize> ProgramProjectionBlob<Steps, N>
 where
     Steps: ProgramTerm,
 {
-    const BYTES: crate::global::compiled::images::ProgramImageBytes<N> =
-        crate::global::compiled::images::ProgramImageBytes::<N>::from_capacity_bucket(
+    const BYTES: Option<crate::global::compiled::images::ProgramImageBytes<N>> =
+        crate::global::compiled::images::ProgramImageBytes::<N>::from_image_if_fits(
             ProgramProjection::<Steps>::SOURCE_EFF_LIST,
             ProgramProjection::<Steps>::PROGRAM_COLUMNS,
         );
@@ -28,7 +28,10 @@ where
     const PROGRAM_BLOB_LEN: usize = Self::PROGRAM_PLAN.blob_len();
 
     const fn program_ref<const N: usize>() -> crate::global::compiled::images::CompiledProgramRef {
-        let bytes = &ProgramProjectionBlob::<Steps, N>::BYTES;
+        let bytes = match &ProgramProjectionBlob::<Steps, N>::BYTES {
+            Some(bytes) => bytes,
+            None => panic!("program bucket selection"),
+        };
         bytes.compiled_ref(&Self::IMAGE, Self::PROGRAM_COLUMNS)
     }
 
@@ -80,48 +83,38 @@ where
         );
     const BLOB_LEN: usize = Self::PLAN.blob_len();
 
-    const fn image_ref<const N: usize>(
-        build: &'static crate::global::role_program::RoleImageBuild<N>,
-    ) -> crate::global::role_program::RoleImageRef {
+    const fn image_ref<const N: usize>() -> crate::global::role_program::RoleImageRef {
+        let build = match &RoleProjectionBlob::<ROLE, Steps, N>::BUILD {
+            Some(build) => build,
+            None => panic!("role bucket selection"),
+        };
         build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)
     }
 
     const IMAGE_REF: crate::global::role_program::RoleImageRef = if Self::BLOB_LEN <= 32 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 32>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<32>()
     } else if Self::BLOB_LEN <= 64 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 64>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<64>()
     } else if Self::BLOB_LEN <= 96 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 96>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<96>()
     } else if Self::BLOB_LEN <= 128 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 128>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<128>()
     } else if Self::BLOB_LEN <= 192 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 192>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<192>()
     } else if Self::BLOB_LEN <= 256 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 256>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<256>()
     } else if Self::BLOB_LEN <= 384 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 384>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<384>()
     } else if Self::BLOB_LEN <= 512 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 512>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<512>()
     } else if Self::BLOB_LEN <= 1024 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 1024>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<1024>()
     } else if Self::BLOB_LEN <= 2048 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 2048>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<2048>()
     } else if Self::BLOB_LEN <= 4096 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 4096>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<4096>()
     } else if Self::BLOB_LEN <= 8192 {
-        let build = &RoleProjectionBlob::<ROLE, Steps, 8192>::BUILD;
-        Self::image_ref(build)
+        Self::image_ref::<8192>()
     } else {
         panic!("role bucket")
     };
@@ -131,8 +124,8 @@ impl<const ROLE: u8, Steps, const N: usize> RoleProjectionBlob<ROLE, Steps, N>
 where
     Steps: ProgramTerm,
 {
-    const BUILD: crate::global::role_program::RoleImageBuild<N> =
-        crate::global::role_program::RoleImageBuild::<N>::from_program_bucket(
+    const BUILD: Option<crate::global::role_program::RoleImageBuild<N>> =
+        RoleProjection::<ROLE, Steps>::PLAN.build_if_fits::<N>(
             ProgramProjection::<Steps>::SOURCE_EFF_LIST,
             RoleProjection::<ROLE, Steps>::FACTS,
             ROLE,

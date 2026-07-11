@@ -147,6 +147,12 @@ impl EventCursor {
                 origin,
                 lane,
             } => {
+                let payload_schema = self
+                    .machine()
+                    .program_ref()
+                    .node_at(eff_index.dense_ordinal())
+                    .atom_data()
+                    .payload_schema;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, selected_route_arm) = self.route_authority_at(idx, route_arm);
@@ -154,6 +160,7 @@ impl EventCursor {
                     eff_index,
                     peer,
                     label,
+                    payload_schema,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,
@@ -180,6 +187,12 @@ impl EventCursor {
                 origin,
                 lane,
             } => {
+                let payload_schema = self
+                    .machine()
+                    .program_ref()
+                    .node_at(eff_index.dense_ordinal())
+                    .atom_data()
+                    .payload_schema;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
@@ -187,6 +200,7 @@ impl EventCursor {
                     eff_index,
                     peer,
                     label,
+                    payload_schema,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,
@@ -212,12 +226,19 @@ impl EventCursor {
                 origin,
                 lane,
             } => {
+                let payload_schema = self
+                    .machine()
+                    .program_ref()
+                    .node_at(eff_index.dense_ordinal())
+                    .atom_data()
+                    .payload_schema;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
                 let (route_scope, _) = self.route_authority_at(idx, route_arm);
                 Some(LocalMeta {
                     eff_index,
                     label,
+                    payload_schema,
                     frame_label,
                     semantic: node.event_semantic(),
                     origin,

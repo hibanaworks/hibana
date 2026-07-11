@@ -4,6 +4,7 @@ use crate::global::steps::RoleLaneMask;
 impl<const FROM: u8, const TO: u8, M> ProgramTerm for Send<FROM, TO, M>
 where
     M: crate::global::Message,
+    M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
     const PROGRAM_SOURCE: ProgramSourceData = {
         ProgramSourceData::from_parts(

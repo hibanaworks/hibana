@@ -6,7 +6,7 @@ PROOF_DIR="${ROOT_DIR}/proofs/lean"
 GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
-EXPECTED_MARKER="hibana Lean generated proof passed traces=13 frames=55 projections=7 progress=4"
+EXPECTED_MARKER="hibana Lean generated proof passed traces=13 frames=55 projections=7 exact-descriptors=7 progress=4"
 EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=5 poison=1 generation=1 atomic-failures=4"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
@@ -35,77 +35,20 @@ if rg -n 'Mathlib|^[[:space:]]*\[\[require\]\]|^[[:space:]]*git[[:space:]]*=' \
   exit 1
 fi
 
-for theorem in \
-  artifact_checker_sound \
-  trace_checker_sound \
-  commit_marks_event_done \
-  selected_arm_unique \
-  reset_roll_preserves_outside_done \
-  reset_roll_clears_done \
-  reset_roll_preserves_outside_selection \
-  reset_roll_clears_selection \
-  reset_route_arm_preserves_selection \
-  reset_route_arm_preserves_outside_done \
-  reset_route_arm_clears_done \
-  local_action_send_recv_duality \
-  local_action_uninvolved_projects_none \
-  local_action_self_send_projects_local \
-  local_action_preserves_label \
-  commit_exact_successor \
-  resolver_reject_never_selects \
-  resolver_select_never_rejects \
-  resolver_selection_exact_authority \
-  selected_route_is_not_resolvable \
-  unresolved_dynamic_route_cannot_commit \
-  unresolved_dynamic_commit_rejected \
-  wrong_resolver_id_rejected \
-  resolver_reuse_without_reset_rejected \
-  resolver_reject_is_terminal \
-  program_trace_checker_sound \
-  projection_certificate_sound \
-  slab_layout_certificate_sound \
-  logical_progress_checker_sound \
-  progress_certificate_sound \
-  reachable_state_has_logical_progress \
-  next_lease_generation_strictly_increases \
-  next_lease_generation_stays_nonzero \
-  next_lease_generation_stays_in_domain \
-  max_lease_generation_is_exhausted \
-  session_generation_run_sound \
-  session_generation_trace_checker_sound \
-  poisoned_generation_step_never_revives \
-  poisoned_generation_attach_rejected \
-  poisoned_generation_publish_rejected \
-  publication_permitted_implies_live \
-  poisoned_generation_trace_never_revives \
-  failed_lease_allocation_preserves_state \
-  poisoned_generation_aborts_lease_publication \
-  successful_lease_allocation_commits_exact_plan \
-  prepared_lease_generation_strictly_increases \
-  prepared_lease_capacity_never_shrinks \
-  lease_allocation_failure_certificate_sound \
-  lease_allocation_abort_certificate_sound \
-  route_arm_decode_encode_round_trip \
-  route_arm_decode_accepts_only_binary \
-  invalid_route_arm_decode_rejected \
-  optional_route_arm_decode_encode_round_trip \
-  optional_route_arm_absence_is_exact \
-  invalid_optional_route_arm_rejected \
-  selected_optional_route_arm_is_binary \
-  invalid_route_arm_has_no_publication \
-  valid_route_arm_publication_is_exact \
-  invalid_ready_arm_mask_rejected \
-  valid_ready_arm_mask_is_accepted \
-  selected_ready_arm_mask_is_exact \
-  dynamic_resolver_site_key_injective \
-  resolver_registration_key_is_program_and_id \
-  distinct_program_images_have_distinct_registration_keys \
-  scope_topology_difference_has_distinct_registration_keys; do
-  if ! rg -q "^theorem ${theorem}\b" "${PROOF_DIR}/Hibana"; then
-    echo "Lean proof gate missing theorem: ${theorem}" >&2
-    exit 1
-  fi
-done
+declared_theorems="$(mktemp "${TMPDIR:-/tmp}/hibana-lean-theorems.XXXXXX")"
+audited_theorems="$(mktemp "${TMPDIR:-/tmp}/hibana-lean-audit.XXXXXX")"
+trap 'rm -f "${declared_theorems}" "${audited_theorems}"' EXIT
+rg --no-filename '^(protected[[:space:]]+)?theorem[[:space:]]+[A-Za-z0-9_.]+' \
+  "${PROOF_DIR}/Hibana" --glob '*.lean' \
+  | sed -E 's/^(protected[[:space:]]+)?theorem[[:space:]]+([A-Za-z0-9_.]+).*/\2/' \
+  | LC_ALL=C sort -u >"${declared_theorems}"
+sed -n 's/^#print axioms Hibana\.\([A-Za-z0-9_.]*\)$/\1/p' \
+  "${PROOF_DIR}/Hibana/AxiomAudit.lean" \
+  | LC_ALL=C sort -u >"${audited_theorems}"
+if ! diff -u "${declared_theorems}" "${audited_theorems}"; then
+  echo "Lean proof gate requires an axiom audit for every exported theorem" >&2
+  exit 1
+fi
 
 (
   cd "${PROOF_DIR}"
@@ -114,11 +57,11 @@ done
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
-if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "23" ]] \
+if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "78" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "29" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "13" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "65" ]]; then
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "92" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "22" ]] \
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "192" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi
@@ -159,4 +102,4 @@ if [[ "${runtime_lean_output}" != *"${EXPECTED_RUNTIME_MARKER}"* ]]; then
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=13 frames=55 projections=7 progress=4 runtime-regions=5 atomic-failures=4"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=13 frames=55 projections=7 exact-descriptors=7 progress=4 runtime-regions=5 atomic-failures=4"

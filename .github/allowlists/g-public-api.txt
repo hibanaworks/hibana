@@ -1,7 +1,7 @@
 pub use crate::global::Message;
 pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
 pub struct Program<Steps> {
-pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>> where M: Message, {
+pub const fn send<const FROM: u8, const TO: u8, M>() -> Program<Send<FROM, TO, M>> where M: Message, M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload, {
 Program::roll pub const fn roll(self) -> Program<Roll<Steps>> {
 pub const fn seq<LeftSteps, RightSteps>( left: Program<LeftSteps>, right: Program<RightSteps>, ) -> Program<Seq<LeftSteps, RightSteps>> {
 pub const fn route<LeftSteps, RightSteps>( left: Program<LeftSteps>, right: Program<RightSteps>, ) -> Program<Route<LeftSteps, RightSteps>> {

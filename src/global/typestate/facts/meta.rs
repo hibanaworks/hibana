@@ -11,6 +11,7 @@ pub(crate) struct SendMeta {
     pub(crate) eff_index: EffIndex,
     pub(crate) peer: u8,
     pub(crate) label: u8,
+    pub(crate) payload_schema: u32,
     pub(crate) frame_label: u8,
     pub(crate) semantic: EventSemanticKind,
     pub(crate) origin: EventOrigin,
@@ -74,6 +75,7 @@ pub(crate) struct RecvMeta {
     pub(crate) eff_index: EffIndex,
     pub(crate) peer: u8,
     pub(crate) label: u8,
+    pub(crate) payload_schema: u32,
     pub(crate) frame_label: u8,
     pub(crate) semantic: EventSemanticKind,
     pub(crate) origin: EventOrigin,
@@ -106,6 +108,7 @@ impl From<RecvMeta> for EventCommitMeta {
 pub(crate) struct LocalMeta {
     pub(crate) eff_index: EffIndex,
     pub(crate) label: u8,
+    pub(crate) payload_schema: u32,
     pub(crate) frame_label: u8,
     pub(crate) semantic: EventSemanticKind,
     pub(crate) origin: EventOrigin,

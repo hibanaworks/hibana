@@ -1426,6 +1426,28 @@ impl ProductionCursorTrace {
         panic!("recv label {target_label} missing from event rows");
     }
 
+    fn action_contract_at(&self, idx: usize) -> Option<(u8, u32)> {
+        let (eff_index, label) = match self.event_program.node(idx).action() {
+            LocalAction::Send {
+                eff_index, label, ..
+            }
+            | LocalAction::Recv {
+                eff_index, label, ..
+            }
+            | LocalAction::Local {
+                eff_index, label, ..
+            } => (eff_index, label),
+            LocalAction::Terminate => return None,
+        };
+        let schema = self
+            .event_program
+            .program_ref()
+            .atom_at(eff_index.dense_ordinal())
+            .expect("local event must retain its global payload contract")
+            .payload_schema;
+        Some((label, schema))
+    }
+
     fn action_label_at(&self, idx: usize) -> Option<u8> {
         match self.event_program.node(idx).action() {
             LocalAction::Send { label, .. }
@@ -1445,22 +1467,49 @@ impl ProductionCursorTrace {
             .is_some_and(|step| self.cursor().relocatable_step_done(step))
     }
 
-    fn preview_send_meta_for_label<const ROLE: u8>(
+    fn preview_send_meta_for_contract<const ROLE: u8>(
         &self,
         target_label: u8,
+        target_schema: u32,
     ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
         let selected = &self.selected;
         let mut committed_arm_for_scope = |scope| selected_arm(selected, scope);
         let mut preview_controller_arm_for_scope = |_scope| None;
         let mut selected_arm_for_scope = |scope| selected_arm(selected, scope);
-        let mut lane_for_label_or_offer = |_scope: ScopeId, label| self.lane_for_label(label);
-        self.cursor().send_preview_meta_for_label::<ROLE>(
+        let mut lane_for_contract_or_offer = |_scope: ScopeId, label, schema| {
+            let mut idx = 0usize;
+            while idx < self.descriptor.local_len() {
+                if self.action_contract_at(idx) == Some((label, schema)) {
+                    return self
+                        .event_program
+                        .local_step_lane(idx)
+                        .expect("message contract must retain a lane");
+                }
+                idx += 1;
+            }
+            self.lane_for_label(label)
+        };
+        self.cursor().send_preview_meta_for_contract::<ROLE>(
             target_label,
+            target_schema,
             &mut committed_arm_for_scope,
             &mut preview_controller_arm_for_scope,
             &mut selected_arm_for_scope,
-            &mut lane_for_label_or_offer,
+            &mut lane_for_contract_or_offer,
         )
+    }
+
+    fn preview_send_meta_for_label<const ROLE: u8>(
+        &self,
+        target_label: u8,
+    ) -> Result<(SendMeta, StateIndex), SendPreviewError> {
+        let target_schema = (0..self.descriptor.local_len())
+            .find_map(|idx| {
+                self.action_contract_at(idx)
+                    .and_then(|(label, schema)| (label == target_label).then_some(schema))
+            })
+            .expect("test label must retain a payload contract");
+        self.preview_send_meta_for_contract::<ROLE>(target_label, target_schema)
     }
 
     fn commit_label(&mut self, label: u8) {

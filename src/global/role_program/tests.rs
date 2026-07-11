@@ -21,6 +21,7 @@ const fn test_atom(label: u8, lane: u8) -> EffStruct {
         from: 0,
         to: 1,
         label,
+        payload_schema: label as u32,
         origin: EventOrigin::User,
         lane,
     })
@@ -671,7 +672,7 @@ fn rolled_seq_program() -> Program<RolledSeqProgramSteps> {
 
 fn roll_route_internal_parallel_program() -> impl Projectable {
     let left = g::seq(
-        g::send::<1, 1, Msg<145, u8>>(),
+        g::send::<1, 1, Msg<145, ()>>(),
         g::seq(
             g::send::<1, 2, Msg<87, u8>>(),
             g::seq(
@@ -687,7 +688,7 @@ fn roll_route_internal_parallel_program() -> impl Projectable {
         ),
     );
     let right = g::seq(
-        g::send::<1, 1, Msg<146, u8>>(),
+        g::send::<1, 1, Msg<146, ()>>(),
         g::send::<1, 2, Msg<11, u8>>(),
     );
     let routed = g::route(left, right);

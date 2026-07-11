@@ -260,51 +260,64 @@ def applyResolver
           else
             none
 
-private def insertNat (value : Nat) : List Nat -> List Nat
+private def messageKeyBefore (left right : MessageKey) : Bool :=
+  left.label < right.label || (left.label == right.label && left.schema <= right.schema)
+
+private def insertMessageKey (value : MessageKey) : List MessageKey -> List MessageKey
   | [] => [value]
   | head :: tail =>
-      if value <= head then value :: head :: tail else head :: insertNat value tail
+      if messageKeyBefore value head then
+        value :: head :: tail
+      else
+        head :: insertMessageKey value tail
 
-private def sortNats (values : List Nat) : List Nat := values.foldr insertNat []
+private def sortMessageKeys (values : List MessageKey) : List MessageKey :=
+  values.foldr insertMessageKey []
 
-def enabledLabels (graph : EventGraph) (state : CommitState) : List Nat :=
-  sortNats <| graph.events.filterMap fun event =>
-    if eventEnabled graph state event then some event.action.label else none
+def enabledKeys (graph : EventGraph) (state : CommitState) : List MessageKey :=
+  sortMessageKeys <| graph.events.filterMap fun event =>
+    if eventEnabled graph state event then some event.action.key else none
 
-def commitLabel
+def matchingEvent?
     (graph : EventGraph)
     (state : CommitState)
-    (label : Nat) : Option CommitState :=
-  match graph.events.find? (fun event =>
-    event.action.label == label && eventCommitEnabled graph state event) with
+    (key : MessageKey) : Option Event :=
+  graph.events.find? fun event =>
+    decide (event.action.key = key) && eventCommitEnabled graph state event
+
+def commitKey
+    (graph : EventGraph)
+    (state : CommitState)
+    (key : MessageKey) : Option CommitState :=
+  match matchingEvent? graph state key with
   | none => none
   | some event => commitEvent graph state event.id
 
 inductive TraceAction where
-  | commit (label : Nat)
+  | commit (key : MessageKey)
   | resolve (conflict resolver : Nat) (arm : RouteArm)
   | reject (conflict resolver : Nat)
   | stop
-  deriving Repr, DecidableEq, BEq
+  deriving Repr, DecidableEq
 
 structure TraceFrame where
-  enabled : List Nat
+  enabled : List MessageKey
   action : TraceAction
-  deriving Repr, DecidableEq, BEq
+  deriving Repr, DecidableEq
 
 def checkTrace (graph : EventGraph) : CommitState -> List TraceFrame -> Bool
   | _, [] => true
   | state, frame :: rest =>
-      if enabledLabels graph state != frame.enabled then
+      if decide (enabledKeys graph state ≠ frame.enabled) then
         false
       else
         match frame.action with
         | .stop => rest.isEmpty
-        | .commit label =>
-            if !frame.enabled.contains label then
+        | .commit key =>
+            if decide (key ∉ frame.enabled) then
               false
             else
-              match commitLabel graph state label with
+              match commitKey graph state key with
               | none => false
               | some next => checkTrace graph next rest
         | .resolve conflict resolver arm =>
@@ -321,12 +334,12 @@ def checkTrace (graph : EventGraph) : CommitState -> List TraceFrame -> Bool
 def ValidTrace (graph : EventGraph) : CommitState -> List TraceFrame -> Prop
   | _, [] => True
   | state, frame :: rest =>
-      enabledLabels graph state = frame.enabled /\
+      enabledKeys graph state = frame.enabled /\
       match frame.action with
       | .stop => rest = []
-      | .commit label =>
-          label ∈ frame.enabled /\
-          ∃ next, commitLabel graph state label = some next /\ ValidTrace graph next rest
+      | .commit key =>
+          key ∈ frame.enabled /\
+          ∃ next, commitKey graph state key = some next /\ ValidTrace graph next rest
       | .resolve conflict resolver arm =>
           ∃ next, applyResolver graph state conflict resolver (.select arm) =
             some (.selected next) /\ ValidTrace graph next rest
@@ -342,20 +355,17 @@ theorem trace_checker_sound
   | nil => trivial
   | cons frame rest ih =>
       simp only [checkTrace] at accepted
-      by_cases mismatch : enabledLabels graph state != frame.enabled
-      · simp [mismatch] at accepted
-      · have frontier : enabledLabels graph state = frame.enabled := by
-          simpa using mismatch
-        simp [mismatch] at accepted
+      by_cases frontier : enabledKeys graph state = frame.enabled
+      · simp [frontier] at accepted
         cases actionCase : frame.action with
         | stop =>
             simp [actionCase] at accepted
             subst rest
             simp [ValidTrace, actionCase, frontier]
-        | commit label =>
-            by_cases enabled : label ∈ frame.enabled
+        | commit key =>
+            by_cases enabled : key ∈ frame.enabled
             · simp [actionCase, enabled] at accepted
-              cases nextCase : commitLabel graph state label with
+              cases nextCase : commitKey graph state key with
               | none => simp [nextCase] at accepted
               | some next =>
                   simp [nextCase] at accepted
@@ -382,6 +392,7 @@ theorem trace_checker_sound
                     simp [actionCase, resolverCase] at accepted
                     subst rest
                     simp [ValidTrace, actionCase, frontier, resolverCase]
+      · simp [frontier] at accepted
 
 /-- A committed event is marked done in the single returned successor state. -/
 theorem commit_marks_event_done

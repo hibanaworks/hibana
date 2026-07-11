@@ -44,6 +44,7 @@ impl CursorInvariantError {
 pub(crate) enum SendPreviewError {
     Invariant,
     LabelMismatch { expected: u8, actual: u8 },
+    SchemaMismatch { expected: u32, actual: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

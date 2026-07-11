@@ -235,6 +235,7 @@ where
             crate::session::cluster::error::ClusterError::RendezvousMismatch { .. }
             | crate::session::cluster::error::ClusterError::RendezvousUnregistered { .. }
             | crate::session::cluster::error::ClusterError::RendezvousBusy { .. }
+            | crate::session::cluster::error::ClusterError::SessionProgramMismatch { .. }
             | crate::session::cluster::error::ClusterError::ResourceExhausted { .. }
             | crate::session::cluster::error::ClusterError::DynamicResolverInvariant { .. } => {
                 SendError::PhaseInvariant

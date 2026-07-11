@@ -4,6 +4,7 @@ use core::{
     cell::{Cell, UnsafeCell},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
+use std::vec::Vec;
 
 struct SharedState {
     waker: UnsafeCell<Option<Waker>>,
@@ -183,5 +184,93 @@ fn recv_future_records_waker_and_wakes() {
     assert!(matches!(
         transport.poll_recv(&mut rx, &mut cx),
         Poll::Ready(Ok(_))
+    ));
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContractFrame {
+    sequence: usize,
+    value: u8,
+}
+
+struct ContractCarrier {
+    frames: Vec<ContractFrame>,
+    delivered: usize,
+    closed: bool,
+    waiter: Option<Waker>,
+}
+
+impl ContractCarrier {
+    fn new() -> Self {
+        Self {
+            frames: Vec::new(),
+            delivered: 0,
+            closed: false,
+            waiter: None,
+        }
+    }
+
+    fn send(&mut self, value: u8) {
+        assert!(!self.closed, "closed carrier rejects later sends");
+        self.frames.push(ContractFrame {
+            sequence: self.frames.len(),
+            value,
+        });
+    }
+
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Result<ContractFrame, TransportError>> {
+        if let Some(frame) = self.frames.get(self.delivered).copied() {
+            self.delivered += 1;
+            Poll::Ready(Ok(frame))
+        } else if self.closed {
+            Poll::Ready(Err(TransportError::Offline))
+        } else {
+            self.waiter = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+
+    fn close_peer(&mut self) {
+        self.closed = true;
+        if let Some(waiter) = self.waiter.take() {
+            waiter.wake();
+        }
+    }
+}
+
+#[test]
+fn transport_contract_fifo_exactly_once_and_no_replay() {
+    let mut carrier = ContractCarrier::new();
+    carrier.send(11);
+    carrier.send(22);
+    carrier.send(33);
+
+    let wake_flag = Cell::new(false);
+    let waker = unsafe { flag_waker(&wake_flag) };
+    let mut cx = Context::from_waker(&waker);
+    for (sequence, value) in [11, 22, 33].into_iter().enumerate() {
+        let Poll::Ready(Ok(frame)) = carrier.poll_recv(&mut cx) else {
+            panic!("accepted frames must remain FIFO-ready");
+        };
+        assert_eq!(frame, ContractFrame { sequence, value });
+    }
+
+    assert!(matches!(carrier.poll_recv(&mut cx), Poll::Pending));
+    assert_eq!(carrier.delivered, carrier.frames.len());
+}
+
+#[test]
+fn transport_contract_peer_close_wakes_and_is_observable_after_drain() {
+    let mut carrier = ContractCarrier::new();
+    let wake_flag = Cell::new(false);
+    let waker = unsafe { flag_waker(&wake_flag) };
+    let mut cx = Context::from_waker(&waker);
+
+    assert!(matches!(carrier.poll_recv(&mut cx), Poll::Pending));
+    carrier.close_peer();
+    assert!(wake_flag.get(), "peer close must wake the parked receiver");
+    assert!(matches!(
+        carrier.poll_recv(&mut cx),
+        Poll::Ready(Err(TransportError::Offline))
     ));
 }

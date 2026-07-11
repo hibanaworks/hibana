@@ -322,9 +322,15 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && selected_arm_membership_guard
                 .contains("conflict = self.route_scope_conflict_row(scope);")
             && lane_head_guard.contains("self.event_conflict_row_allows_with_preview(")
-            && cursor_scope_route.contains("pub(crate) fn send_preview_meta_for_label")
+            && cursor_scope_route.contains("pub(crate) fn send_preview_meta_for_contract")
+            && cursor_scope_route.contains("current_meta.payload_schema == target_schema")
             && send_ops.contains(".event_enabled(")
-            && send_preview.contains(".send_preview_meta_for_label::<ROLE>(")
+            && send_preview.contains(".send_preview_meta_for_contract::<ROLE>(")
+            && send_preview.contains("target_schema,")
+            && lane_progress.contains("pub(crate) fn pending_step_for_contract(")
+            && lane_progress.contains("if schema != target_schema")
+            && !cursor_scope_route.contains("send_preview_meta_for_label")
+            && !lane_progress.contains("pending_step_for_label")
             && recv.contains(".event_enabled(")
             && !recv.contains(".event_dependency_allows(")
             && !recv.contains(".event_conflict_allows(")
@@ -345,18 +351,19 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         "dependency conflict must be carried by resident dependency rows, and dependency progress must not be tied to the current phase"
     );
     assert!(
-        cursor_scope_route.contains("fn intrinsic_send_preview_controller_arm_entry_for_label(")
+        cursor_scope_route
+            .contains("fn intrinsic_send_preview_controller_arm_entry_for_contract(")
             && cursor_scope_route
-                .contains("fn send_preview_selected_controller_arm_entry_for_label(")
+                .contains("fn send_preview_selected_controller_arm_entry_for_contract(")
             && cursor_scope_route.contains(
                 "if at_decision && let Some(selected) = (ctx.preview_controller_arm_for_scope)(scope_id)"
             )
             && cursor_scope_route.contains(
-                "let entry_idx = self.send_preview_selected_controller_arm_entry_for_label("
+                "let entry_idx = self.send_preview_selected_controller_arm_entry_for_contract("
             )
             && cursor_scope_route.contains("*ctx.preview_route_arm = Some(SendPreviewRouteArm")
-            && !cursor_scope_route.contains("fn send_preview_controller_arm_entry_for_label("),
-        "dynamic route send preview must choose a selected-arm candidate before any intrinsic label-first controller search"
+            && !cursor_scope_route.contains("fn send_preview_controller_arm_entry_for_contract("),
+        "dynamic route send preview must choose a selected-arm candidate before any intrinsic contract-first controller search"
     );
     assert!(
         send_preview_authority.contains("fn preview_dynamic_resolver_arm_for_scope(")
@@ -372,10 +379,10 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !send_preview.contains("resolver_decisions")
             && send_preview.contains("preview_error.set(Some(error));")
             && send_preview.contains("prepare_send_route_authority(")
-            && send_preview.contains(
-                "if let Some(error) = preview_error.get() {\n            return Err(error);\n        }"
-            ),
-        "send preview must treat dynamic resolver rejection as explicit route authority failure without fixed proof storage"
+            && send_preview.contains("if let Some(error) = preview_error.get() {")
+            && send_preview.contains("if let Err(error) = &result {")
+            && send_preview.contains("self.poison_for_send_error(error);"),
+        "send preview must treat dynamic resolver rejection as a terminal route authority failure without fixed proof storage"
     );
     for (name, guard) in [
         ("event_conflict_allows", event_conflict_guard),
@@ -703,7 +710,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         "route scope dependency bounds must fail closed when binary arm ranges are missing"
     );
     let send_preview_start = cursor_send_preview_start
-        .split("fn send_preview_start_index_for_label(")
+        .split("fn send_preview_start_index_for_contract(")
         .nth(1)
         .expect("send preview start lookup must stay visible");
     assert!(
@@ -718,7 +725,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && cursor_send_preview.contains("self.relocatable_step_done(progress_step)")
             && cursor_send_preview
                 .contains("*idx = state_index_to_usize(self.node_next_index_at(*idx));"),
-        "send preview label lookup must enter current route completion explicitly and use cursor-index join continuation only through event proof"
+        "send preview contract lookup must enter current route completion explicitly and use cursor-index join continuation only through event proof"
     );
     for (name, body) in [
         ("route-preview", route_preview.as_str()),

@@ -2,27 +2,29 @@ use super::super::{EventCursor, ScopeId};
 
 impl EventCursor {
     #[inline(never)]
-    fn send_preview_outbound_label_lane_at(&self, idx: usize) -> Option<(u8, u8)> {
+    fn send_preview_outbound_contract_lane_at(&self, idx: usize) -> Option<(u8, u32, u8)> {
         if let Some(meta) = self.try_send_meta_at(idx) {
-            return Some((meta.label, meta.lane));
+            return Some((meta.label, meta.payload_schema, meta.lane));
         }
         self.try_local_meta_at(idx)
-            .map(|meta| (meta.label, meta.lane))
+            .map(|meta| (meta.label, meta.payload_schema, meta.lane))
     }
 
     #[inline(never)]
-    fn send_preview_progress_start_index_for_label(
+    fn send_preview_progress_start_index_for_contract(
         &self,
         target_label: u8,
+        target_schema: u32,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
         let mut idx = 0usize;
         while self.contains_node_index(idx) {
-            let Some((label, lane)) = self.send_preview_outbound_label_lane_at(idx) else {
+            let Some((label, schema, lane)) = self.send_preview_outbound_contract_lane_at(idx)
+            else {
                 idx += 1;
                 continue;
             };
-            if label != target_label {
+            if label != target_label || schema != target_schema {
                 idx += 1;
                 continue;
             }
@@ -63,14 +65,17 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(super) fn send_preview_start_index_for_label(
+    pub(super) fn send_preview_start_index_for_contract(
         &self,
         target_label: u8,
+        target_schema: u32,
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
-        if let Some(idx) =
-            self.send_preview_progress_start_index_for_label(target_label, selected_arm_for_scope)
-        {
+        if let Some(idx) = self.send_preview_progress_start_index_for_contract(
+            target_label,
+            target_schema,
+            selected_arm_for_scope,
+        ) {
             return Some(idx);
         }
         if self.enclosing_route_scope_rows_at(self.index()).is_some() {

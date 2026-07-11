@@ -193,6 +193,13 @@ project them immediately. `Program<S>` is the unprojected typed choreography
 term; `RoleProgram<ROLE>` is the projected runtime descriptor. Neither is a
 transport handle, heap object, or reusable runtime object.
 
+The syntax-tree type ends at `project`. Endpoint futures and send/receive/offer
+kernels consume message-erased runtime descriptors and do not monomorphize over
+the choreography or payload type. The repository gate cold-compiles 1, 64, and
+256 distinct payload schemas as `no_std` `thumbv6m-none-eabi` consumers without
+raising Rust's recursion limit, then bounds rustc RSS/time and the resulting
+`.text`/`.rodata` and rlib growth.
+
 ### Messages And Payloads
 
 `g::Msg<L, P>` names one logical protocol message: `L` is the choreography
@@ -202,8 +209,25 @@ it is not a transport frame label and it is not resolved-route branch authority.
 Built-in exact codecs cover `()`, `bool`, integers, borrowed byte slices, and
 fixed byte arrays. Fixed-width decoders reject trailing bytes.
 
-Custom payloads implement `hibana::runtime::wire::WireEncode` for sending
-and `hibana::runtime::wire::WirePayload` for receiving:
+Every choreography payload implements both `WireEncode` and `WirePayload` so
+sender and receiver share one complete wire contract. `WirePayload::SCHEMA_ID`
+is that canonical wire contract's compact protocol-local identity, not Rust
+nominal type identity. Projection stores it in the descriptor, and endpoint
+send/recv rejects a different schema before publishing or consuming protocol
+progress. Incompatible encodings or validators must use distinct ids. Different
+Rust wrappers may share an id only when they intentionally implement the same
+canonical wire schema. Schema `0` is the canonical zero-byte unit schema used by
+`()`. A wrapper claiming that schema must also encode and validate exactly zero
+bytes; local actions check the zero-byte encoding before committing progress.
+
+The first local attach binds a session generation to one exact compiled program
+image; later local roles with different bytes are rejected before allocation.
+Across devices, the `Transport` implementation must bind a `SessionId` to the
+same protocol image during its own connection setup. Hibana's compact core
+header does not claim to prove cross-binary Rust type identity or carry a
+program image.
+
+Custom payloads implement the two halves directly:
 
 ```rust
 use hibana::runtime::wire::{CodecError, Payload, WireEncode, WirePayload};
@@ -221,6 +245,8 @@ impl WireEncode for FourBytes {
 }
 
 impl WirePayload for FourBytes {
+    const SCHEMA_ID: u32 = 0x4000_0000;
+
     type Decoded<'a> = FourBytes;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -741,8 +767,12 @@ bash ./.github/scripts/run_final_form_gates.sh
 ```
 
 Use that gate rather than raw `cargo test` for release decisions; repo-only unit
-tests are enabled through `hibana_repo_tests`. The suite protects the public
-surface, `no_std` build, projection boundary, descriptor publication, future
-layout, route authority, and size measurements. It also executes every explicit
-`[[test]]` target and runs the pinned Miri owner suite declared by
-`.github/miri-toolchain`; a zero-test match fails either gate.
+tests are enabled through `hibana_repo_tests`. The repository suite protects the
+public surface, `no_std` build, projection boundary, descriptor publication,
+future layout, route authority, size measurements, every explicit `[[test]]`
+target, the pinned Miri owner suite declared by `.github/miri-toolchain`, and the
+Core/Std-only Lean proof package. It also requires the Pico message-heavy type
+pressure matrix, which fails on superlinear projection image, metadata, or
+compiler-memory growth. The quality workflow runs the complete pinned
+Kani/CBMC inventory as a separate required job because it has different host
+dependencies; a zero-test or missing-harness match fails its gate.

@@ -3,6 +3,7 @@ use super::common::*;
 #[test]
 fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let final_gate = read(".github/scripts/check_final_form_measurements.sh");
+    let message_heavy_gate = read(".github/scripts/check_message_heavy_matrix.sh");
     let worktree_gate = read(".github/scripts/check_size_snapshot_regression.sh");
     let performance_gate = read(".github/scripts/check_runtime_performance_hygiene.sh");
     let kernel_monomorphization_gate =
@@ -120,6 +121,23 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             "final-form compile pressure guard must not drift back to 5GiB/10GiB ceilings: {forbidden}"
         );
     }
+
+    assert!(
+        message_heavy_gate.contains("const SCHEMA_ID: u32 = 0x4001_0000 | ID as u32;")
+            && message_heavy_gate.contains("TARGET=\"thumbv6m-none-eabi\"")
+            && message_heavy_gate.contains("#![no_std]")
+            && message_heavy_gate.contains("run_with_compile_pressure_guard")
+            && message_heavy_gate
+                .contains("HIBANA_COMPILE_PRESSURE_LABEL=\"message_heavy_${count}\"")
+            && message_heavy_gate.contains("IMAGE_GROWTH_256")
+            && message_heavy_gate.contains("RLIB_GROWTH_256")
+            && message_heavy_gate
+                .contains("message-heavy matrix check passed target=${TARGET} messages=256")
+            && !message_heavy_gate.contains("recursion_limit")
+            && !message_heavy_gate.contains("src/main.rs")
+            && !message_heavy_gate.contains("std::hint::black_box"),
+        "message-heavy gate must measure distinct wire contracts and type pressure on Pico without recursion-limit escape"
+    );
 
     for required in [
         "== final-form projected protocol matrix ==",
@@ -269,7 +287,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
             && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
             && miri_gate.contains(
-                "public-runtime-owner \\\n  21 \\\n  21 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
+                "public-runtime-owner \\\n  27 \\\n  27 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
             )
             && miri_gate.contains(
                 "transport-requeue-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport_requeue_callback_reentry_revalidates_generation"
@@ -296,7 +314,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "session-fault-cancel-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_fault_cancel"
             )
             && miri_gate.contains(
-                "local-action-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test local_action"
+                "local-action-owner \\\n  4 \\\n  4 \\\n  0 \\\n  -p hibana \\\n  --test local_action"
+            )
+            && miri_gate.contains(
+                "transport-contract-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport::tests::transport_contract_"
             )
             && miri_gate.contains(
                 "route-branch-send-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
@@ -308,24 +329,29 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "resolver-identity-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority"
             )
             && miri_gate.contains(
+                "resolver-reject-cancellation-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  resolver_reject_does_not_encode_or_stage_send_payload"
+            )
+            && miri_gate.contains(
                 "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
             )
             && miri_gate.contains(
                 "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate.contains(
-                "resident-descriptor-validation \\\n  36 \\\n  36 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"
+                "resident-descriptor-validation \\\n  40 \\\n  40 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"
             )
             && miri_gate.contains("compiled-program-descriptor-validation")
             && miri_gate.contains(
                 "global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_"
             )
-            && miri_gate.contains("compiled-program-atom-validation")
             && miri_gate.contains(
-                "global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_"
+                "compiled-program-atom-validation \\\n  7 \\\n  7 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_"
+            )
+            && miri_gate.contains(
+                "program-image-storage-validation \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::program_image_"
             )
             && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=135 ignored=1")
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=151 ignored=1")
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")
@@ -503,6 +529,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "parallel_route_alternating",
         "lane_set_view_iterates_set_bits_without_empty_lane_scan",
         "huge_choreography_runtime",
+        "message_heavy_1",
+        "message_heavy_64",
+        "message_heavy_256",
     ] {
         assert_eq!(
             compile_pressure_budget

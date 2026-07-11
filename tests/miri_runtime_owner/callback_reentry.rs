@@ -87,6 +87,25 @@ impl WireEncode for CallbackEncodedU32 {
     }
 }
 
+impl WirePayload for CallbackEncodedU32 {
+    const SCHEMA_ID: u32 = 0x4000_0004;
+
+    type Decoded<'a> = u32;
+
+    fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
+        if input.as_bytes().len() == 4 {
+            Ok(())
+        } else {
+            Err(CodecError::Malformed)
+        }
+    }
+
+    fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a> {
+        let bytes = input.as_bytes();
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+}
+
 impl WireEncode for CallbackValidatedU32 {
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
         if out.len() < 4 {
@@ -98,6 +117,8 @@ impl WireEncode for CallbackValidatedU32 {
 }
 
 impl WirePayload for CallbackValidatedU32 {
+    const SCHEMA_ID: u32 = 0x4000_0003;
+
     type Decoded<'a> = u32;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -439,6 +460,7 @@ fn payload_validation_callback_reentry_cannot_commit_after_peer_drop() {
     let mut slab = AlignedSlab([0; 65_536]);
     let transport_state = Rc::new(ReceiveState {
         bytes: 46u32.to_be_bytes(),
+        polls: Cell::new(0),
         requeues: Cell::new(0),
     });
     let drop_state = DropEndpointState::empty();

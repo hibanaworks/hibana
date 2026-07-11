@@ -22,6 +22,56 @@ structure ProgramImageIdentity where
   blob : List Nat
   deriving DecidableEq
 
+/-- One session generation has one rendezvous owner and one exact structural
+program image, regardless of how many role endpoints are attached. -/
+structure SessionBinding where
+  rendezvous : Nat
+  program : ProgramImageIdentity
+  deriving DecidableEq
+
+def bindSession?
+    (existing : Option SessionBinding)
+    (rendezvous : Nat)
+    (program : ProgramImageIdentity) : Option SessionBinding :=
+  match existing with
+  | none => some { rendezvous, program }
+  | some bound =>
+      if bound.rendezvous = rendezvous ∧ bound.program = program then
+        some bound
+      else
+        none
+
+theorem first_session_attach_binds_exactly
+    (rendezvous : Nat) (program : ProgramImageIdentity) :
+    bindSession? none rendezvous program = some { rendezvous, program } := by
+  rfl
+
+theorem exact_session_reattach_preserves_binding (binding : SessionBinding) :
+    bindSession? (some binding) binding.rendezvous binding.program = some binding := by
+  simp [bindSession?]
+
+theorem mixed_program_session_attach_rejected
+    (binding : SessionBinding) (program : ProgramImageIdentity)
+    (mismatch : binding.program ≠ program) :
+    bindSession? (some binding) binding.rendezvous program = none := by
+  simp [bindSession?, mismatch]
+
+theorem cross_rendezvous_session_attach_rejected
+    (binding : SessionBinding) (rendezvous : Nat)
+    (mismatch : binding.rendezvous ≠ rendezvous) :
+    bindSession? (some binding) rendezvous binding.program = none := by
+  simp [bindSession?, mismatch]
+
+theorem accepted_session_reattach_is_exact
+    {binding next : SessionBinding} {rendezvous : Nat} {program : ProgramImageIdentity}
+    (accepted : bindSession? (some binding) rendezvous program = some next) :
+    next = binding ∧ binding.rendezvous = rendezvous ∧ binding.program = program := by
+  unfold bindSession? at accepted
+  by_cases exact : binding.rendezvous = rendezvous ∧ binding.program = program
+  · simp [exact] at accepted
+    exact ⟨accepted.symm, exact⟩
+  · simp [exact] at accepted
+
 /-- A descriptor resolver site belongs to one structural resident image. -/
 structure DynamicResolverSiteIdentity where
   program : ProgramImageIdentity

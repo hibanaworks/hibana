@@ -55,6 +55,7 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn poll_recv_kernel_frame_source(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         state: &mut super::recv::RecvState,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<super::recv::MatchedRecvFrame<'r>>>;
@@ -62,6 +63,7 @@ pub(crate) trait RecvKernelEndpoint<'r> {
     fn finish_recv_kernel_frame(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         frame: super::recv::MatchedRecvFrame<'r>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
@@ -73,6 +75,7 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
     fn prepare_branch_recv_kernel_transport_wait(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
     ) -> RecvResult<Option<RecvMeta>>;
 
     fn poll_branch_recv_kernel_transport_payload(
@@ -90,6 +93,7 @@ pub(crate) trait BranchRecvKernelEndpoint<'r> {
     fn finish_branch_recv_kernel(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         prepared_meta: Option<RecvMeta>,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     ) -> RecvResult<Payload<'r>>;
@@ -121,16 +125,17 @@ pub(crate) trait SendKernelEndpoint<'r> {
 pub(crate) fn kernel_recv<'r>(
     endpoint: &mut dyn RecvKernelEndpoint<'r>,
     logical_label: u8,
+    payload_schema: u32,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::recv::RecvState,
     cx: &mut core::task::Context<'_>,
 ) -> Poll<RecvResult<Payload<'r>>> {
-    match endpoint.poll_recv_kernel_frame_source(logical_label, state, cx) {
+    match endpoint.poll_recv_kernel_frame_source(logical_label, payload_schema, state, cx) {
         Poll::Pending => Poll::Pending,
         Poll::Ready(Ok(frame)) => {
             Poll::Ready(
                 endpoint
-                    .finish_recv_kernel_frame(logical_label, frame, validate)
+                    .finish_recv_kernel_frame(logical_label, payload_schema, frame, validate)
                     .map(|payload| unsafe {
                         // SAFETY: recv payloads returned by the kernel are backed by
                         // endpoint-resident transport, ingress, or a canonical zero-length slice.
@@ -146,6 +151,7 @@ pub(crate) fn kernel_recv<'r>(
 pub(crate) fn kernel_branch_recv<'r>(
     endpoint: &mut dyn BranchRecvKernelEndpoint<'r>,
     logical_label: u8,
+    payload_schema: u32,
     validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
     state: &mut super::branch_recv::BranchRecvState,
     cx: &mut core::task::Context<'_>,
@@ -154,7 +160,9 @@ pub(crate) fn kernel_branch_recv<'r>(
         return Poll::Ready(Err(RecvError::PhaseInvariant));
     }
     if state.prepared_meta().is_none() {
-        let prepared = match endpoint.prepare_branch_recv_kernel_transport_wait(logical_label) {
+        let prepared = match endpoint
+            .prepare_branch_recv_kernel_transport_wait(logical_label, payload_schema)
+        {
             Ok(meta) => meta,
             Err(err) => return Poll::Ready(Err(err)),
         };
@@ -179,7 +187,8 @@ pub(crate) fn kernel_branch_recv<'r>(
         }
     }
     let prepared_meta = state.prepared_meta();
-    let result = endpoint.finish_branch_recv_kernel(logical_label, prepared_meta, validate);
+    let result =
+        endpoint.finish_branch_recv_kernel(logical_label, payload_schema, prepared_meta, validate);
     match result {
         Ok(payload) => Poll::Ready(Ok(unsafe {
             // SAFETY: committed decode payloads are staged in endpoint-resident
@@ -431,12 +440,7 @@ where
             branch.discard_terminal();
         }
         self.clear_public_op_terminal();
-        // Drop all active ports and guards
-        for port in self.ports.iter_mut() {
-            if let Some(p) = port.take() {
-                drop(p);
-            }
-        }
+        self.retire_transport_handles();
         for guard in self.guards.iter_mut() {
             if let Some(g) = guard.take() {
                 drop(g);

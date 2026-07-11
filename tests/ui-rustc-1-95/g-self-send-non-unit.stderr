@@ -1,0 +1,25 @@
+error[E0080]: evaluation panicked: self-role actions require the unit payload
+ --> $RUST/core/src/panic.rs
+  |
+  = note: evaluation of `hibana::g::send::<0, 0, hibana::g::Msg<1, u8>>::{constant#0}` failed here
+  |
+ ::: src/g.rs
+  |
+  |             panic!("self-role actions require the unit payload");
+  |             ---------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  | /     const {
+  | |         if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
+  | |             panic!("{}", ROLE_INDEX_ERROR);
+... |
+  | |     }
+  | |_____^
+
+note: the above error was encountered while instantiating `fn send::<0, 0, Msg<1, u8>>`
+ --> tests/ui/g-self-send-non-unit.rs:4:13
+  |
+4 |     let _ = g::send::<0, 0, g::Msg<1, u8>>();
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

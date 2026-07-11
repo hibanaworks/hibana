@@ -1,7 +1,8 @@
 use super::{
-    AttachError, ClusterError, CompiledProgramRef, EndpointLeaseId, Lane, LaneLease, LeaseError,
-    PublicEndpointStorageLayout, PublicEndpointStorageRequest, RegisterRendezvousError, Rendezvous,
-    RendezvousError, RendezvousId, ResourceScope, RoleImageSlice, SessionId, SessionStorage,
+    AttachError, ClusterError, CompiledProgramRef, EndpointLeaseId, EndpointLeaseRequest, Lane,
+    LaneLease, LeaseError, PublicEndpointStorageLayout, PublicEndpointStorageRequest,
+    RegisterRendezvousError, Rendezvous, RendezvousError, RendezvousId, ResourceScope,
+    RoleImageSlice, SessionId, SessionStorage,
 };
 
 // # Unsafe Owner Contract
@@ -93,19 +94,6 @@ where
         }
     }
 
-    #[inline]
-    pub(crate) fn public_endpoint_resident_budget<const ROLE: u8>(
-        compiled_role: RoleImageSlice<ROLE>,
-    ) -> crate::rendezvous::core::EndpointResidentBudget {
-        crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
-            compiled_role.route_table_frame_slots(),
-            compiled_role.route_table_lane_slots(),
-            crate::rendezvous::core::Rendezvous::<T>::frontier_workspace_guard_bytes(
-                compiled_role.descriptor().frontier_scratch_layout(),
-            ),
-        )
-    }
-
     #[inline(never)]
     pub(in crate::session::cluster::core) fn allocate_public_endpoint_storage_for_rv<
         'r,
@@ -131,17 +119,26 @@ where
             required_align,
             logical_lane_count,
             required_assoc_slots,
-            resident_budget,
+            role_descriptor,
         } = request;
-        let (slot, generation, offset, _len) =
-            self.locals().allocate_endpoint_lease_for_session_role(
-                rv_id,
-                sid,
-                ROLE,
-                required_bytes,
-                required_align,
+        let resident_budget = crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
+            role_descriptor.route_table_frame_slots(),
+            role_descriptor.route_table_lane_slots(),
+            crate::rendezvous::core::Rendezvous::<T>::frontier_workspace_guard_bytes(
+                role_descriptor.frontier_scratch_layout(),
+            ),
+        );
+        let (slot, generation, offset, _len) = self
+            .locals()
+            .allocate_endpoint_lease_for_session_role(EndpointLeaseRequest {
+                rendezvous: rv_id,
+                session: sid,
+                role: ROLE,
+                program: role_descriptor.program(),
+                bytes: required_bytes,
+                align: required_align,
                 resident_budget,
-            )?;
+            })?;
         let rv = self
             .locals()
             .get_checked(&rv_id)

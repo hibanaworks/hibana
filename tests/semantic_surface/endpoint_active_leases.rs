@@ -13,6 +13,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let runtime_types = read("src/endpoint/kernel/core/runtime_types.rs");
     let branch = read("src/endpoint/branch.rs");
     let route_preview = read("src/endpoint/kernel/core/send_preview.rs");
+    let branch_send_preview = read("src/endpoint/kernel/core/send_preview_authority.rs");
     let lifecycle_tests = [
         read("tests/cursor_send_recv/session_progress.rs"),
         read("tests/cursor_send_recv/session_forget_send.rs"),
@@ -40,6 +41,35 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         offer_lease < endpoint_pointer,
         "offer initialization must finish before creating the future's raw endpoint pointer"
     );
+    let offer_poll = public_poll
+        .split("fn poll_public_offer")
+        .nth(1)
+        .and_then(|tail| tail.split("fn poll_public_recv").next())
+        .expect("public offer poll body");
+    assert!(
+        offer_poll
+            .find("self.session_fault()")
+            .expect("offer fault check")
+            < offer_poll
+                .find("self.public_active_op != PublicActiveOp::Offer")
+                .expect("offer active-op check"),
+        "terminal session fault must precede offer active-op validation"
+    );
+    let send_preview_fault = route_preview
+        .find("self.session_fault()")
+        .expect("send preview fault check");
+    let send_preview_active_op = route_preview
+        .find("match self.public_active_op")
+        .expect("send preview active-op check");
+    assert!(
+        send_preview_fault < send_preview_active_op
+            && route_preview[send_preview_fault..send_preview_active_op]
+                .contains("return Err(SendError::SessionFault(kind));")
+            && route_preview.contains("if let Err(error) = &result {")
+            && route_preview.contains("self.clear_endpoint_waiter(waiters);")
+            && route_preview.contains("self.poison_for_send_error(error);"),
+        "every failed public send preview must converge on terminal session poisoning"
+    );
 
     for required in [
         "pub(in crate::endpoint) enum PublicActiveOp",
@@ -63,8 +93,12 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         public_types.contains("pub(crate) enum PublicOpLease")
             && public_types.contains("Rejected = 0")
             && public_types.contains("Held = 1")
+            && public_types.contains("Faulted = 2")
             && public_runtime.contains("fn start_public_op(\n        &mut self,\n        op: PublicActiveOp,\n    ) -> super::core::PublicOpLease")
-            && public_runtime.contains("self.public_active_op == PublicActiveOp::Idle")
+            && public_runtime.contains("PublicActiveOp::Idle => {")
+            && public_runtime.contains(
+                "PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted"
+            )
             && public_runtime.contains("self.public_active_op = PublicActiveOp::Poisoned;")
             && public_runtime.contains("SessionFaultKind::ProgressInvariantViolated")
             && !public_runtime.contains("fn enter_public_op(&mut self, op: PublicActiveOp) -> bool")
@@ -86,7 +120,9 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("PublicActiveOp::RestoredRouteBranch if self.public_route_branch.is_some()")
             && public_runtime.contains("transition_public_op(PublicActiveOp::RestoredRouteBranch, PublicActiveOp::Offer)")
             && !public_runtime.contains("restore_materialized_route_branch")
-            && public_runtime.contains("super::core::PublicOpLease::Rejected => return lease")
+            && public_runtime.contains(
+                "super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted"
+            )
             && public_runtime.contains("if self.public_active_op != PublicActiveOp::Offer")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
             && public_runtime.contains("fn begin_public_branch_recv_state(\n        &mut self,\n    ) -> super::core::PublicOpLease")
@@ -114,10 +150,11 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     );
     assert!(
         route_preview.contains("PublicActiveOp::Idle")
-            && route_preview.contains("self.preview_branch_send_meta(target_label, waiters)")
-            && route_preview.contains("self.public_op_busy_fault();")
-            && route_preview.contains("return Err(SendError::PhaseInvariant);"),
-        "send preview must not overwrite a forgotten active operation and must route branch send through the selected-arm token"
+            && route_preview.contains("self.preview_branch_send_meta(target_label, target_schema)")
+            && route_preview.contains("_ => return Err(SendError::PhaseInvariant),")
+            && !branch_send_preview.contains("poison_for_send_error")
+            && !branch_send_preview.contains("public_op_busy_fault"),
+        "send preview must preserve selected-arm authority while one outer boundary owns every terminal failure"
     );
     assert!(
         endpoint_ops.contains("fn call_handle_op(")
@@ -159,15 +196,16 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && send.contains("ReadyError(SendError)")
             && send.contains("Done")
             && send.contains("fn arm_on_first_poll(&mut self)")
-            && send.contains("endpoint.begin_public_send_state(logical_label)")
+            && send.contains("endpoint.begin_public_send_state(logical_label, payload_schema)")
             && send.contains("pub(crate) fn ready_error(error: SendError) -> Self")
             && send.contains("payload: Option<kernel::RawSendPayload>")
             && send.contains("state: SendFutureState")
             && !send.contains("ready_error: Option")
             && !send.contains("logical_label: 0")
             && !send.contains("RawSendPayload::empty")
-            && direct_send_constructor
-                .contains("SendFuture::pending_direct(endpoint, logical_label, payload)")
+            && direct_send_constructor.contains(
+                "SendFuture::pending_direct(endpoint, logical_label, payload_schema, payload)"
+            )
             && !direct_send_constructor.contains("preview_send(")
             && !direct_send_constructor.contains("init_public_send_state")
             && branch_send_constructor.contains("preview_send(logical_label")
@@ -189,9 +227,11 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && branch.contains("let lease = endpoint.init_public_offer_state();")
             && branch.contains("lease: OfferFutureLease::from_public_lease(lease)")
             && branch.contains("OfferFutureLease::Rejected =>")
+            && branch.contains("OfferFutureLease::RestoreOnDrop | OfferFutureLease::Faulted")
             && branch.contains("self.lease = OfferFutureLease::Completed;")
             && branch.contains("self.lease == OfferFutureLease::RestoreOnDrop")
             && futures.contains("RecvFutureLease::Rejected =>")
+            && futures.contains("RecvFutureLease::RestoreOnDrop | RecvFutureLease::Faulted")
             && futures.contains("self.lease = RecvFutureLease::Completed;")
             && futures.contains("lease: crate::endpoint::kernel::PublicOpLease")
             && futures.contains("self.lease == RecvFutureLease::RestoreOnDrop")
@@ -203,7 +243,7 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             )
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawRecvFuture")
             && futures.contains("impl<'e, 'r, const ROLE: u8> Drop for RawBranchRecvFuture"),
-        "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; failed constructors must report PhaseInvariant without touching another active operation's waiter/state"
+        "Drop cleanup may remain as acquired-lease cleanup, but only futures that actually acquired the resident active lease may restore it; rejected constructors report PhaseInvariant while terminally faulted constructors observe the preserved SessionFault without touching waiter/state"
     );
     let route_authority = send_route_authority
         .split("pub(crate) enum SendRouteAuthority")

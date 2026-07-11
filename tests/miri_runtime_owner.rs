@@ -9,7 +9,7 @@ use std::rc::Rc;
 use hibana::{
     g::{self, Msg},
     runtime::{
-        SessionKitStorage,
+        RendezvousKit, SessionKitStorage,
         ids::SessionId,
         program::{RoleProgram, project},
         resolver::{DecisionArm, ResolverError, ResolverRef},
@@ -32,6 +32,180 @@ fn choose_arm(arm: &DecisionArm) -> Result<DecisionArm, ResolverError> {
 struct NoopTransport;
 struct NoopTx;
 struct NoopRx;
+
+struct CountedMalformedTransport {
+    drops: Rc<Cell<usize>>,
+}
+
+struct CountedTransportHandle {
+    drops: Rc<Cell<usize>>,
+}
+
+impl Drop for CountedTransportHandle {
+    fn drop(&mut self) {
+        self.drops.set(self.drops.get() + 1);
+    }
+}
+
+impl Transport for CountedMalformedTransport {
+    type Tx<'a> = CountedTransportHandle;
+    type Rx<'a> = CountedTransportHandle;
+
+    fn open<'a>(&'a self, _: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        (
+            CountedTransportHandle {
+                drops: Rc::clone(&self.drops),
+            },
+            CountedTransportHandle {
+                drops: Rc::clone(&self.drops),
+            },
+        )
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _: &'a mut Self::Tx<'a>,
+        _: Outgoing<'f>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+
+    fn poll_recv<'a>(
+        &'a self,
+        _: &'a mut Self::Rx<'a>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        Poll::Ready(Ok(ReceivedFrame::deterministic(Payload::new(&[]))))
+    }
+
+    fn requeue<'a>(&self, _: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        Ok(())
+    }
+}
+
+struct TransportHandleDropState {
+    context: Cell<*const TransportHandleDropContext>,
+    fired: Cell<bool>,
+}
+
+impl TransportHandleDropState {
+    fn new() -> Self {
+        Self {
+            context: Cell::new(core::ptr::null()),
+            fired: Cell::new(false),
+        }
+    }
+
+    fn arm(&self, context: &TransportHandleDropContext) {
+        if !self.context.get().is_null() || self.fired.get() {
+            panic!("transport handle drop state armed twice");
+        }
+        self.context.set(core::ptr::from_ref(context));
+    }
+
+    fn fire_if_armed(&self) {
+        let context = self.context.get();
+        if context.is_null() || self.fired.replace(true) {
+            return;
+        }
+        /* SAFETY: the test arms this state with a live stack context before
+        dropping the endpoint and keeps the context live until both transport
+        handles have run their destructors. */
+        unsafe { (&*context).attempt_attach() };
+    }
+}
+
+struct TransportHandleDropContext {
+    rendezvous: *const (),
+    program: *const RoleProgram<1>,
+    sid: SessionId,
+    rejected_busy: Cell<bool>,
+}
+
+impl TransportHandleDropContext {
+    unsafe fn attempt_attach(&self) {
+        let rendezvous = /* SAFETY: the test stores the matching live
+        rendezvous witness and keeps its kit and slab resident. */ unsafe {
+            &*self
+                .rendezvous
+                .cast::<RendezvousKit<'static, 'static, ReentrantHandleDropTransport>>()
+        };
+        let program = /* SAFETY: the test stores the live role-1 projection for
+        the duration of transport-handle destruction. */ unsafe { &*self.program };
+        match rendezvous.enter(self.sid, program) {
+            Ok(endpoint) => {
+                drop(endpoint);
+                panic!("transport handle drop attached through a partial endpoint drop");
+            }
+            Err(error) => {
+                self.rejected_busy
+                    .set(format!("{error:?}").contains("rv-busy"));
+            }
+        }
+    }
+}
+
+struct ReentrantHandleDropTransport {
+    state: Rc<TransportHandleDropState>,
+}
+
+struct ReentrantTransportHandle {
+    state: Rc<TransportHandleDropState>,
+}
+
+impl Drop for ReentrantTransportHandle {
+    fn drop(&mut self) {
+        self.state.fire_if_armed();
+    }
+}
+
+impl Transport for ReentrantHandleDropTransport {
+    type Tx<'a> = ReentrantTransportHandle;
+    type Rx<'a> = ReentrantTransportHandle;
+
+    fn open<'a>(&'a self, _: PortOpen) -> (Self::Tx<'a>, Self::Rx<'a>) {
+        (
+            ReentrantTransportHandle {
+                state: Rc::clone(&self.state),
+            },
+            ReentrantTransportHandle {
+                state: Rc::clone(&self.state),
+            },
+        )
+    }
+
+    fn poll_send<'a, 'f>(
+        &self,
+        _: &'a mut Self::Tx<'a>,
+        _: Outgoing<'f>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<(), TransportError>>
+    where
+        'a: 'f,
+    {
+        Poll::Ready(Ok(()))
+    }
+
+    fn cancel_send<'a>(&self, _: &'a mut Self::Tx<'a>) {}
+
+    fn poll_recv<'a>(
+        &'a self,
+        _: &'a mut Self::Rx<'a>,
+        _: &mut Context<'_>,
+    ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        Poll::Pending
+    }
+
+    fn requeue<'a>(&self, _: &mut Self::Rx<'a>) -> Result<(), TransportError> {
+        Ok(())
+    }
+}
 
 impl Transport for NoopTransport {
     type Tx<'a> = NoopTx;
@@ -77,6 +251,42 @@ fn fanout_program<const ROLE: u8>() -> RoleProgram<ROLE> {
         g::send::<0, 1, Msg<2, u32>>(),
         g::send::<0, 2, Msg<3, u32>>(),
     ))
+}
+
+#[test]
+fn fatal_codec_error_retires_transport_handles_before_endpoint_drop() {
+    let role1 = program::<1>();
+    let drops = Rc::new(Cell::new(0));
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<CountedMalformedTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(
+            &mut slab.0,
+            CountedMalformedTransport {
+                drops: Rc::clone(&drops),
+            },
+        )
+        .expect("register rendezvous");
+    let mut endpoint = rv
+        .enter(SessionId::new(22), &role1)
+        .expect("attach receiver");
+
+    let error = futures::executor::block_on(endpoint.recv::<Msg<1, u32>>())
+        .expect_err("empty u32 payload must fail validation");
+
+    assert!(format!("{error:?}").contains("Truncated"));
+    assert_eq!(
+        drops.get(),
+        2,
+        "fatal error must retire both transport handles before endpoint drop"
+    );
+    drop(endpoint);
+    assert_eq!(
+        drops.get(),
+        2,
+        "endpoint drop must not retire handles twice"
+    );
 }
 
 fn nested_resolver_program<const ROLE: u8>() -> RoleProgram<ROLE> {
@@ -144,6 +354,107 @@ fn public_runtime_owner_stays_alias_clean_across_multiple_attaches() {
         .expect("attach fresh session after rejected poisoned reentry");
 
     core::hint::black_box((&endpoint1, &endpoint2));
+}
+
+#[test]
+fn session_generation_rejects_mixed_program_images_before_mutation() {
+    let role0 = program::<0>();
+    let role1 = program::<1>();
+    let unrelated_role1 = fanout_program::<1>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(&mut slab.0, NoopTransport)
+        .expect("register rendezvous");
+    let sid = SessionId::new(34);
+    let mut origin = rv.enter(sid, &role0).expect("attach program origin");
+
+    let mismatch = match rv.enter(sid, &unrelated_role1) {
+        Ok(_) => panic!("one session generation must not mix program images"),
+        Err(error) => error,
+    };
+    assert!(
+        format!("{mismatch:?}").contains("session-program-mismatch 34"),
+        "mixed-image attach must identify the session binding: {mismatch:?}"
+    );
+
+    let peer = rv
+        .enter(sid, &role1)
+        .expect("rejected attach must leave the original session binding unchanged");
+    futures::executor::block_on(origin.send::<Msg<1, u32>>(&34))
+        .expect("original endpoint must remain live after rejected attach");
+    core::hint::black_box(peer);
+}
+
+#[test]
+fn session_generation_cannot_split_across_rendezvous_owners() {
+    let role0 = program::<0>();
+    let role1 = program::<1>();
+    let mut first_slab = AlignedSlab([0; 65_536]);
+    let mut second_slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+    let kit = storage.init();
+    let first = kit
+        .rendezvous(&mut first_slab.0, NoopTransport)
+        .expect("register first rendezvous");
+    let second = kit
+        .rendezvous(&mut second_slab.0, NoopTransport)
+        .expect("register second rendezvous");
+    let sid = SessionId::new(35);
+    let origin = first.enter(sid, &role0).expect("attach session owner");
+
+    let mismatch = match second.enter(sid, &role1) {
+        Ok(_) => panic!("one session generation must have one rendezvous owner"),
+        Err(error) => error,
+    };
+    assert!(
+        format!("{mismatch:?}").contains("rv-mismatch"),
+        "cross-rendezvous attach must fail at owner identity: {mismatch:?}"
+    );
+
+    let peer = first
+        .enter(sid, &role1)
+        .expect("failed cross-owner attach must not consume the role lease");
+    core::hint::black_box((origin, peer));
+}
+
+#[test]
+fn transport_handle_drop_cannot_reenter_partial_endpoint_drop() {
+    let role0 = program::<0>();
+    let role1 = program::<1>();
+    let state = Rc::new(TransportHandleDropState::new());
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<ReentrantHandleDropTransport>::uninit();
+    let kit = storage.init();
+    let rendezvous = kit
+        .rendezvous(
+            &mut slab.0,
+            ReentrantHandleDropTransport {
+                state: Rc::clone(&state),
+            },
+        )
+        .expect("register rendezvous");
+    let sid = SessionId::new(36);
+    let mut origin = rendezvous.enter(sid, &role0).expect("attach origin");
+    futures::executor::block_on(origin.send::<Msg<1, u32>>(&36))
+        .expect("complete origin before drop reentry");
+    let context = TransportHandleDropContext {
+        rendezvous: core::ptr::from_ref(&rendezvous).cast(),
+        program: core::ptr::from_ref(&role1),
+        sid,
+        rejected_busy: Cell::new(false),
+    };
+    state.arm(&context);
+
+    drop(origin);
+
+    assert!(state.fired.get());
+    assert!(context.rejected_busy.get());
+    let peer = rendezvous
+        .enter(sid, &role1)
+        .expect("drop barrier must release after endpoint destruction");
+    core::hint::black_box(peer);
 }
 
 #[test]
@@ -281,8 +592,34 @@ fn failed_peer_attach_abort_keeps_existing_endpoint_live() {
     );
 }
 
+#[test]
+fn payload_schema_mismatch_poison_session_without_publishing() {
+    let role0 = program::<0>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(&mut slab.0, NoopTransport)
+        .expect("register send rendezvous");
+    let mut endpoint = rv.enter(SessionId::new(6), &role0).expect("attach sender");
+
+    let mismatch = futures::executor::block_on(endpoint.send::<Msg<1, i32>>(&7))
+        .expect_err("same-width payload with the wrong schema must be rejected");
+    assert!(
+        format!("{mismatch:?}").contains("SchemaMismatch"),
+        "wrong payload schema must remain distinguishable: {mismatch:?}"
+    );
+    let poisoned = futures::executor::block_on(endpoint.send::<Msg<1, u32>>(&7))
+        .expect_err("schema rejection must poison the affine session");
+    assert!(
+        format!("{poisoned:?}").contains("SessionFault(ProtocolViolation)"),
+        "the first schema mismatch must remain the session fault: {poisoned:?}"
+    );
+}
+
 struct ReceiveState {
     bytes: [u8; 4],
+    polls: Cell<usize>,
     requeues: Cell<usize>,
 }
 
@@ -321,6 +658,7 @@ impl Transport for ReceiveTransport {
         rx: &'a mut Self::Rx<'a>,
         _: &mut Context<'_>,
     ) -> Poll<Result<ReceivedFrame<'a>, TransportError>> {
+        self.state.polls.set(self.state.polls.get() + 1);
         if rx.delivered {
             return Poll::Pending;
         }
@@ -346,6 +684,7 @@ fn receive_receipt_resolves_valid_borrowed_frame() {
     let mut slab = AlignedSlab([0; 65_536]);
     let state = Rc::new(ReceiveState {
         bytes: 0x1122_3344u32.to_be_bytes(),
+        polls: Cell::new(0),
         requeues: Cell::new(0),
     });
     let mut storage = SessionKitStorage::<ReceiveTransport>::uninit();
@@ -367,7 +706,49 @@ fn receive_receipt_resolves_valid_borrowed_frame() {
             .expect("borrowed receive frame is valid"),
         0x1122_3344
     );
+    assert_eq!(state.polls.get(), 1);
     assert_eq!(state.requeues.get(), 0);
+}
+
+#[test]
+fn payload_schema_mismatch_precedes_receive_transport_poll() {
+    let role1 = program::<1>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let state = Rc::new(ReceiveState {
+        bytes: 0x1122_3344u32.to_be_bytes(),
+        polls: Cell::new(0),
+        requeues: Cell::new(0),
+    });
+    let mut storage = SessionKitStorage::<ReceiveTransport>::uninit();
+    let kit = storage.init();
+    let rv = kit
+        .rendezvous(
+            &mut slab.0,
+            ReceiveTransport {
+                state: Rc::clone(&state),
+            },
+        )
+        .expect("register receive rendezvous");
+    let mut endpoint = rv
+        .enter(SessionId::new(7), &role1)
+        .expect("attach receiver");
+
+    let mismatch = futures::executor::block_on(endpoint.recv::<Msg<1, i32>>())
+        .expect_err("same-width payload with the wrong schema must be rejected");
+    assert!(
+        format!("{mismatch:?}").contains("SchemaMismatch"),
+        "wrong payload schema must remain distinguishable: {mismatch:?}"
+    );
+    assert_eq!(
+        state.polls.get(),
+        0,
+        "schema validation must precede the transport callback"
+    );
+    assert_eq!(
+        state.requeues.get(),
+        0,
+        "schema validation must not consume or requeue a frame"
+    );
 }
 
 struct DeferredState {

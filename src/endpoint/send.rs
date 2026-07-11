@@ -18,7 +18,10 @@ use crate::{
 
 #[derive(Clone, Copy)]
 enum SendFutureState {
-    DirectUnarmed { logical_label: u8 },
+    DirectUnarmed {
+        logical_label: u8,
+        payload_schema: u32,
+    },
     Armed,
     ReadyError(SendError),
     Done,
@@ -48,12 +51,16 @@ impl<'a, 'e, 'r, const ROLE: u8> SendFuture<'a, 'e, 'r, ROLE> {
     pub(crate) fn pending_direct(
         endpoint: *mut super::Endpoint<'r, ROLE>,
         logical_label: u8,
+        payload_schema: u32,
         payload: &'a impl WireEncode,
     ) -> Self {
         Self {
             raw: RawSendFuture::pending(
                 endpoint,
-                SendFutureState::DirectUnarmed { logical_label },
+                SendFutureState::DirectUnarmed {
+                    logical_label,
+                    payload_schema,
+                },
                 Some(kernel::RawSendPayload::from_typed(payload)),
             ),
         }
@@ -114,9 +121,12 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
 
     #[inline]
     fn arm_on_first_poll(&mut self) -> SendResult<()> {
-        let logical_label = match self.state {
+        let (logical_label, payload_schema) = match self.state {
             SendFutureState::Armed => return Ok(()),
-            SendFutureState::DirectUnarmed { logical_label } => logical_label,
+            SendFutureState::DirectUnarmed {
+                logical_label,
+                payload_schema,
+            } => (logical_label, payload_schema),
             SendFutureState::ReadyError(_) | SendFutureState::Done => crate::invariant(),
         };
         if self.endpoint.is_null() {
@@ -126,7 +136,7 @@ impl<'a, 'e, 'r, const ROLE: u8> RawSendFuture<'a, 'e, 'r, ROLE> {
             let endpoint = /* SAFETY: unarmed send futures hold the unique
             endpoint borrow but have not yet published resident send state. */
                 unsafe { &mut *self.endpoint };
-            endpoint.begin_public_send_state(logical_label)
+            endpoint.begin_public_send_state(logical_label, payload_schema)
         };
         match result {
             Ok(()) => {

@@ -202,6 +202,14 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
+    pub(crate) fn require_access_barrier(&self) {
+        match self.access_state.get() {
+            RendezvousAccessState::RegistryLease | RendezvousAccessState::ScratchLease => {}
+            RendezvousAccessState::Available => crate::invariant(),
+        }
+    }
+
+    #[inline]
     fn require_scratch_lease(&self) {
         if self.access_state.get() != RendezvousAccessState::ScratchLease {
             crate::invariant();

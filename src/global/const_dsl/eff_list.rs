@@ -316,6 +316,7 @@ impl EffList {
 pub(crate) const fn const_send_typed<const FROM: u8, const TO: u8, M, const LANE: u8>() -> EffList
 where
     M: Message,
+    M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
     if let Some(message) = crate::g::role_pair_contract_error::<FROM, TO>() {
         panic!("{}", message);
@@ -324,6 +325,7 @@ where
         from: FROM,
         to: TO,
         label: <M as Message>::LOGICAL_LABEL,
+        payload_schema: crate::global::payload_schema::<M>(),
         origin: eff::EventOrigin::User,
         lane: LANE,
     };

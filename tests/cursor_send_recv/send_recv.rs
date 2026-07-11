@@ -499,7 +499,7 @@ fn completed_send_future_repoll_is_fail_fast_and_does_not_advance_again() {
 }
 
 #[test]
-fn send_preview_error_reports_debug_boundary() {
+fn send_preview_error_reports_debug_boundary_and_poison_session() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -523,22 +523,13 @@ fn send_preview_error_reports_debug_boundary() {
                 rendered.contains("LabelMismatch"),
                 "failed send preview must report the preview mismatch: {rendered}"
             );
-            assert!(
-                !rendered.contains("SessionFault"),
-                "failed send preview must not poison before send consumes progress: {rendered}"
-            );
 
-            let err = match futures::executor::block_on(origin_endpoint.offer()) {
-                Ok(_) => panic!("offer at deterministic send step must fail"),
-                Err(err) => err,
-            };
-            assert!(format!("{err:?}").contains("operation: \"offer\""));
-            let rendered = format!("{err:?}");
+            let poisoned = futures::executor::block_on(origin_endpoint.send::<Msg<1, u32>>(&22))
+                .expect_err("preview mismatch must poison the affine session");
+            let rendered = format!("{poisoned:?}");
             assert!(
-                rendered.contains("PhaseInvariant")
-                    || rendered.contains("ProgressInvariantViolated")
-                    || rendered.contains("SessionFault"),
-                "offer at a deterministic send step must fail as a progress invariant: {rendered}"
+                rendered.contains("SessionFault") && rendered.contains("ProtocolViolation"),
+                "the first mismatch must be the preserved session fault: {rendered}"
             );
             assert!(transport.queue_is_empty());
         });

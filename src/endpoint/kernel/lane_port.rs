@@ -324,6 +324,13 @@ pub(super) fn poll_send_outgoing<'r, T>(
 where
     T: Transport + 'r,
 {
+    if pending.carrier == SendCarrier::Local {
+        if pending.transport_is_pending() {
+            crate::invariant();
+        }
+        let mut unit_payload = [];
+        return Poll::Ready(pending.payload.encode_into(&mut unit_payload).map(|_| ()));
+    }
     let Some(_scratch_lease) = port.try_scratch_lease() else {
         cx.waker().wake_by_ref();
         return Poll::Pending;
@@ -352,9 +359,6 @@ where
             return Poll::Ready(Err(err));
         }
     };
-    if pending.carrier == SendCarrier::Local {
-        return Poll::Ready(Ok(()));
-    }
     let outgoing = Outgoing {
         meta: pending.meta,
         payload: Payload::new(&scratch[..encoded_len]),

@@ -75,6 +75,7 @@ pub(crate) struct RecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
     pub(crate) handle: PackedEndpointHandle,
     pub(crate) logical_label: u8,
+    pub(crate) payload_schema: u32,
     pub(crate) validate:
         for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
     pub(crate) cx: &'a mut Context<'cx>,
@@ -85,6 +86,7 @@ pub(crate) struct BranchRecvPollRequest<'a, 'cx> {
     pub(crate) ptr: NonNull<()>,
     pub(crate) handle: PackedEndpointHandle,
     pub(crate) logical_label: u8,
+    pub(crate) payload_schema: u32,
     pub(crate) validate:
         for<'payload> fn(Payload<'payload>) -> Result<(), crate::transport::wire::CodecError>,
     pub(crate) cx: &'a mut Context<'cx>,
@@ -208,6 +210,7 @@ pub(crate) struct EndpointOps<'r> {
         ptr: NonNull<()>,
         handle: PackedEndpointHandle,
         logical_label: u8,
+        payload_schema: u32,
         out: *mut crate::endpoint::kernel::SendPreview,
     ) -> crate::endpoint::SendResult<()>,
     pub(crate) poll_recv: for<'a, 'cx> unsafe fn(RecvPollRequest<'a, 'cx>),

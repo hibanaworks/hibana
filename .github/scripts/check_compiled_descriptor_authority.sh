@@ -141,7 +141,9 @@ for required in [
     "ProgramImageBytes",
     "ProgramProjection::<Steps>::PROGRAM_REF",
     "RoleImageBuild<N>",
-    "Self::image_ref(build)",
+    "match &RoleProjectionBlob::<ROLE, Steps, N>::BUILD",
+    "Self::image_ref::<",
+    "build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)",
 ]:
     if required not in role_projection_surface:
         fail(f"g projection boundary does not own a resident RoleImageRef before attach: {required}")

@@ -81,6 +81,13 @@ fn recv_future_state_caches_completion() {
     let rejected =
         RecvFutureLease::from_public_lease(crate::endpoint::kernel::PublicOpLease::Rejected);
     assert_eq!(rejected, RecvFutureLease::Rejected);
+
+    let faulted =
+        RecvFutureLease::from_public_lease(crate::endpoint::kernel::PublicOpLease::Faulted);
+    assert_eq!(faulted, RecvFutureLease::Faulted);
+    let faulted_offer =
+        OfferFutureLease::from_public_lease(crate::endpoint::kernel::PublicOpLease::Faulted);
+    assert_eq!(faulted_offer, OfferFutureLease::Faulted);
 }
 
 #[test]

@@ -3,10 +3,14 @@ use super::{
     RelocatableResidentLaneStep, ResidentLaneStep, StateIndex, state_index_to_usize,
 };
 impl EventCursor {
-    /// Find a pending lane-head event with the given label.
+    /// Find a pending lane-head event with the given message contract.
     ///
     /// Returns `Some((lane_idx, step))` if found, `None` otherwise.
-    pub(crate) fn pending_step_for_label(&self, target_label: u8) -> Option<(usize, StateIndex)> {
+    pub(crate) fn pending_step_for_contract(
+        &self,
+        target_label: u8,
+        target_schema: u32,
+    ) -> Option<(usize, StateIndex)> {
         let target_code = Self::encode_current_step_label(target_label);
         let lane_limit = self.logical_lane_count();
         let mut lane_idx = 0usize;
@@ -26,6 +30,21 @@ impl EventCursor {
                 };
                 if label != target_label {
                     crate::invariant();
+                }
+                let schema = if let Some(meta) =
+                    self.try_send_meta_at(state_index_to_usize(state_idx))
+                {
+                    meta.payload_schema
+                } else if let Some(meta) = self.try_recv_meta_at(state_index_to_usize(state_idx)) {
+                    meta.payload_schema
+                } else if let Some(meta) = self.try_local_meta_at(state_index_to_usize(state_idx)) {
+                    meta.payload_schema
+                } else {
+                    crate::invariant()
+                };
+                if schema != target_schema {
+                    lane_idx += 1;
+                    continue;
                 }
                 return Some((lane_idx, state_idx));
             }

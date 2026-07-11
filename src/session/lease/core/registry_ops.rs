@@ -10,6 +10,17 @@ use crate::{
     transport::Transport,
 };
 
+#[derive(Clone, Copy)]
+pub(crate) struct EndpointLeaseRequest {
+    pub(crate) rendezvous: RendezvousId,
+    pub(crate) session: SessionId,
+    pub(crate) role: u8,
+    pub(crate) program: &'static crate::global::compiled::images::CompiledProgramRef,
+    pub(crate) bytes: usize,
+    pub(crate) align: usize,
+    pub(crate) resident_budget: EndpointResidentBudget,
+}
+
 impl<'cfg, T> RendezvousTable<'cfg, T>
 where
     T: Transport,
@@ -55,13 +66,17 @@ where
 
     pub(crate) fn allocate_endpoint_lease_for_session_role(
         &self,
-        rv: RendezvousId,
-        sid: SessionId,
-        role: u8,
-        bytes: usize,
-        align: usize,
-        resident_budget: EndpointResidentBudget,
+        request: EndpointLeaseRequest,
     ) -> Result<(EndpointLeaseId, u32, usize, usize), ClusterError> {
+        let EndpointLeaseRequest {
+            rendezvous: rv,
+            session: sid,
+            role,
+            program,
+            bytes,
+            align,
+            resident_budget,
+        } = request;
         if role >= crate::g::ROLE_DOMAIN_SIZE {
             crate::invariant();
         }
@@ -81,14 +96,19 @@ where
                     id: rendezvous.registry_id().raw(),
                 });
             }
-            if rendezvous.has_endpoint_session_role(sid, role) {
+            if let Some(bound_program) = rendezvous.endpoint_session_program(sid) {
                 if rendezvous.registry_id() != rv {
                     return Err(ClusterError::RendezvousMismatch {
                         expected: rendezvous.registry_id().raw(),
                         actual: rv.raw(),
                     });
                 }
-                return Err(ClusterError::RendezvousBusy { id: rv.raw() });
+                if !bound_program.same_image(program) {
+                    return Err(ClusterError::SessionProgramMismatch { sid: sid.raw() });
+                }
+                if rendezvous.has_endpoint_session_role(sid, role) {
+                    return Err(ClusterError::RendezvousBusy { id: rv.raw() });
+                }
             }
             current = rendezvous.registry_next();
         }

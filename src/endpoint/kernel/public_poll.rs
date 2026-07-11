@@ -28,16 +28,16 @@ where
         cx: &mut core::task::Context<'_>,
         waiters: &mut WaiterTransfer,
     ) -> Poll<RecvResult<u8>> {
+        if let Some(kind) = self.session_fault() {
+            self.clear_endpoint_waiter(waiters);
+            self.fail_session(kind);
+            return Poll::Ready(Err(RecvError::SessionFault(kind)));
+        }
         if self.public_active_op != PublicActiveOp::Offer {
             self.public_op_busy_fault();
             let err = RecvError::PhaseInvariant;
             self.poison_for_recv_error(&err);
             return Poll::Ready(Err(err));
-        }
-        if let Some(kind) = self.session_fault() {
-            self.clear_endpoint_waiter(waiters);
-            self.terminal_clear_public_offer_state();
-            return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
         self.register_endpoint_waiter(waiters);
         if let Some(branch) = self.public_route_branch.as_ref() {
@@ -86,13 +86,14 @@ where
     pub(in crate::endpoint) fn poll_public_recv(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut core::task::Context<'_>,
         waiters: &mut WaiterTransfer,
     ) -> Poll<RecvResult<Payload<'r>>> {
         if let Some(kind) = self.session_fault() {
             self.clear_endpoint_waiter(waiters);
-            self.terminal_clear_public_recv_state();
+            self.fail_session(kind);
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
         if self.public_active_op != PublicActiveOp::Recv {
@@ -104,7 +105,14 @@ where
         self.register_endpoint_waiter(waiters);
         let mut recv_state =
             core::mem::replace(&mut self.public_recv_state, super::recv::RecvState::new());
-        match kernel_recv(self, logical_label, validate, &mut recv_state, cx) {
+        match kernel_recv(
+            self,
+            logical_label,
+            payload_schema,
+            validate,
+            &mut recv_state,
+            cx,
+        ) {
             Poll::Pending => {
                 self.public_recv_state = recv_state;
                 Poll::Pending
@@ -128,13 +136,14 @@ where
     pub(in crate::endpoint) fn poll_public_branch_recv(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         validate: for<'a> fn(Payload<'a>) -> Result<(), crate::transport::wire::CodecError>,
         cx: &mut core::task::Context<'_>,
         waiters: &mut WaiterTransfer,
     ) -> Poll<RecvResult<Payload<'r>>> {
         if let Some(kind) = self.session_fault() {
             self.clear_endpoint_waiter(waiters);
-            self.terminal_clear_public_branch_recv_state();
+            self.fail_session(kind);
             return Poll::Ready(Err(RecvError::SessionFault(kind)));
         }
         if self.public_active_op != PublicActiveOp::BranchRecv {
@@ -155,7 +164,14 @@ where
             let err = RecvError::PhaseInvariant;
             return Poll::Ready(Err(err));
         }
-        match kernel_branch_recv(self, logical_label, validate, &mut branch_recv_state, cx) {
+        match kernel_branch_recv(
+            self,
+            logical_label,
+            payload_schema,
+            validate,
+            &mut branch_recv_state,
+            cx,
+        ) {
             Poll::Pending => {
                 self.public_branch_recv_state = branch_recv_state;
                 Poll::Pending
@@ -195,15 +211,8 @@ where
         let active_op = self.public_active_op;
         let branch_send = active_op == PublicActiveOp::BranchSend;
         if let Some(kind) = self.session_fault() {
-            if branch_send {
-                self.clear_endpoint_waiter(waiters);
-                self.terminal_clear_public_send_state();
-                if let Some(branch) = self.public_route_branch.take() {
-                    branch.discard_terminal();
-                }
-            } else {
-                self.reset_public_send_state(waiters);
-            }
+            self.clear_endpoint_waiter(waiters);
+            self.fail_session(kind);
             return Poll::Ready(Err(SendError::SessionFault(kind)));
         }
         if active_op != PublicActiveOp::Send && active_op != PublicActiveOp::BranchSend {

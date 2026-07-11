@@ -63,51 +63,69 @@ fn route_arm_future_phase_blocks_post_route_send() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(93);
             let local_program = multiphase_route_program::<LOCAL_ROLE>();
             let worker_program = multiphase_route_program::<WORKER_ROLE>();
 
-            let mut local = rv.enter(sid, &local_program).expect("attach local role");
-            let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
-
             futures::executor::block_on(async {
-                local
-                    .send::<Msg<ROUTE_FIRST, u8>>(&10)
-                    .await
-                    .expect("send first route step");
-                assert_send_blocked(local.send::<Msg<POST_ROUTE, u8>>(&0)).await;
+                {
+                    let sid = SessionId::new(93);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local
+                        .send::<Msg<ROUTE_FIRST, u8>>(&10)
+                        .await
+                        .expect("send first route step");
+                    let branch = worker.offer().await.expect("offer first route step");
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<ROUTE_FIRST, u8>>()
+                            .await
+                            .expect("recv first route step"),
+                        10
+                    );
+                    assert_send_blocked(local.send::<Msg<POST_ROUTE, u8>>(&0)).await;
+                }
 
-                let branch = worker.offer().await.expect("offer first route step");
-                assert_eq!(branch.label(), ROUTE_FIRST);
-                assert_eq!(
-                    branch
-                        .recv::<Msg<ROUTE_FIRST, u8>>()
+                {
+                    let sid = SessionId::new(94);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local
+                        .send::<Msg<ROUTE_FIRST, u8>>(&10)
                         .await
-                        .expect("recv first route step"),
-                    10
-                );
-                local
-                    .send::<Msg<ROUTE_SECOND, u8>>(&20)
-                    .await
-                    .expect("send second route step");
-                assert_eq!(
-                    worker
-                        .recv::<Msg<ROUTE_SECOND, u8>>()
+                        .expect("send first route step");
+                    let branch = worker.offer().await.expect("offer first route step");
+                    assert_eq!(branch.label(), ROUTE_FIRST);
+                    assert_eq!(
+                        branch
+                            .recv::<Msg<ROUTE_FIRST, u8>>()
+                            .await
+                            .expect("recv first route step"),
+                        10
+                    );
+                    local
+                        .send::<Msg<ROUTE_SECOND, u8>>(&20)
                         .await
-                        .expect("recv second route step"),
-                    20
-                );
-                local
-                    .send::<Msg<POST_ROUTE, u8>>(&30)
-                    .await
-                    .expect("send post-route");
-                assert_eq!(
-                    worker
-                        .recv::<Msg<POST_ROUTE, u8>>()
+                        .expect("send second route step");
+                    assert_eq!(
+                        worker
+                            .recv::<Msg<ROUTE_SECOND, u8>>()
+                            .await
+                            .expect("recv second route step"),
+                        20
+                    );
+                    local
+                        .send::<Msg<POST_ROUTE, u8>>(&30)
                         .await
-                        .expect("recv post-route"),
-                    30
-                );
+                        .expect("send post-route");
+                    assert_eq!(
+                        worker
+                            .recv::<Msg<POST_ROUTE, u8>>()
+                            .await
+                            .expect("recv post-route"),
+                        30
+                    );
+                }
             });
         });
     });

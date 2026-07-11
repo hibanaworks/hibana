@@ -1,5 +1,8 @@
 use super::{
-    super::{PackedLaneRange, RouteArmLaneStepRow},
+    super::{
+        ColumnRange, PackedLaneRange, ROLE_IMAGE_EVENT_STRIDE, RoleImageColumns, RoleImagePlan,
+        RouteArmLaneStepRow, RuntimeRoleFacts,
+    },
     decode_binary_route_arm_index,
     event_rows::decode_resident_event_header,
     lane_image::{
@@ -9,9 +12,72 @@ use super::{
     },
 };
 use crate::global::{
+    compiled::lowering::RoleCompiledCounts,
     const_dsl::{ReentryMark, ScopeId},
     typestate::PackedEventConflict,
 };
+
+fn empty_role_facts() -> RuntimeRoleFacts {
+    RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: 0,
+        route_scope_count: 0,
+        active_lane_count: 0,
+        endpoint_lane_slot_count: 0,
+        logical_lane_count: 0,
+    })
+}
+
+fn one_event_role_image_plan() -> RoleImagePlan {
+    let empty = ColumnRange::new(0, 0, 1);
+    RoleImagePlan {
+        columns: RoleImageColumns {
+            events: ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE),
+            lanes: empty,
+            dependencies: empty,
+            conflicts: empty,
+            route_scopes: empty,
+            route_scope_conflicts: empty,
+            route_arms: empty,
+            resident_boundaries: empty,
+            lane_bits: empty,
+            route_arm_lane_rows: empty,
+            route_offer_lane_rows: empty,
+            route_arm_lane_step_rows: empty,
+            route_commit_ranges: empty,
+            route_commit_rows: empty,
+            roll_scopes: empty,
+        },
+    }
+}
+
+#[kani::proof]
+fn role_image_fit_probe_rejects_undersized_storage() {
+    let source = crate::global::const_dsl::EffList::new();
+    let facts = empty_role_facts();
+    let plan = one_event_role_image_plan();
+    assert!(plan.blob_len() == ROLE_IMAGE_EVENT_STRIDE);
+    assert!(
+        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }>(&source, facts, 0)
+            .is_none()
+    );
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn role_image_fit_probe_rejects_plan_mismatch() {
+    let source = crate::global::const_dsl::EffList::new();
+    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: 0,
+        route_scope_count: 0,
+        active_lane_count: 0,
+        endpoint_lane_slot_count: 1,
+        logical_lane_count: 1,
+    });
+    let plan = one_event_role_image_plan();
+    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE>(&source, facts, 0);
+}
 
 #[kani::proof]
 fn packed_lane_range_encoding_avoids_reserved_sentinel() {

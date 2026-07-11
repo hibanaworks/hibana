@@ -23,6 +23,7 @@ pub(in crate::endpoint) enum PublicActiveOp {
 pub(crate) enum PublicOpLease {
     Rejected = 0,
     Held = 1,
+    Faulted = 2,
 }
 
 #[repr(u8)]

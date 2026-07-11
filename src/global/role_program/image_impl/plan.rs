@@ -127,7 +127,11 @@ impl RoleImageColumnCounts {
 }
 
 impl RoleImageColumnCounts {
-    const fn from_program(eff_list: &EffList, logical_lane_count: usize, role: u8) -> Self {
+    pub(super) const fn from_program(
+        eff_list: &EffList,
+        logical_lane_count: usize,
+        role: u8,
+    ) -> Self {
         if logical_lane_count == 0 || logical_lane_count > LANE_DOMAIN_SIZE {
             panic!("role logical lane domain invalid");
         }
@@ -147,8 +151,7 @@ impl RoleImageColumnCounts {
         );
         let dependency_rows =
             Self::dependency_row_count(eff_list, role, local_step_count, &eff_indices, &lanes);
-        let (resident_rows, resident_lane_bits) =
-            Self::resident_row_facts(eff_list, role, local_step_count, &lanes);
+        let resident_rows = Self::resident_row_count(eff_list, role, local_step_count);
         let route_facts = Self::route_facts(eff_list, role, &lanes);
         let roll_scopes = Self::roll_scope_count(eff_list, role);
         let active_lane_bits =
@@ -162,7 +165,7 @@ impl RoleImageColumnCounts {
             dependency_rows,
             conflict_rows,
             resident_boundaries,
-            lane_bits: active_lane_bits + resident_lane_bits + route_facts.lane_bits,
+            lane_bits: active_lane_bits + route_facts.lane_bits,
             route_arm_lane_steps: route_facts.route_arm_lane_steps,
             route_commit_rows: route_facts.route_commit_rows,
             roll_scopes,
@@ -313,15 +316,9 @@ impl RoleImageColumnCounts {
         lane_byte_count(max_lane_plus_one)
     }
 
-    const fn resident_row_facts(
-        eff_list: &EffList,
-        role: u8,
-        local_step_count: usize,
-        lanes: &[u8; MAX_LOCAL_STEP_LANES],
-    ) -> (usize, usize) {
+    const fn resident_row_count(eff_list: &EffList, role: u8, local_step_count: usize) -> usize {
         let markers = eff_list.scope_markers();
         let mut row_count = 0usize;
-        let mut lane_bits = 0usize;
         let mut current_eff = 0usize;
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
@@ -338,7 +335,6 @@ impl RoleImageColumnCounts {
                 );
                 if !row.is_absent_or_zero_len() {
                     row_count += 1;
-                    lane_bits += Self::lane_byte_len_for_local_row(lanes, row);
                 }
                 let parallel_start = if marker.offset() > current_eff {
                     marker.offset()
@@ -353,7 +349,6 @@ impl RoleImageColumnCounts {
                 );
                 if !row.is_absent_or_zero_len() {
                     row_count += 1;
-                    lane_bits += Self::lane_byte_len_for_local_row(lanes, row);
                 }
                 current_eff = if exit_eff > current_eff {
                     exit_eff
@@ -371,17 +366,15 @@ impl RoleImageColumnCounts {
         );
         if !row.is_absent_or_zero_len() {
             row_count += 1;
-            lane_bits += Self::lane_byte_len_for_local_row(lanes, row);
         }
         if row_count == 0 && local_step_count > 0 {
             let row =
                 RoleLaneScratch::local_step_range_for_eff_range(eff_list, 0, eff_list.len(), role);
             if !row.is_absent_or_zero_len() {
                 row_count += 1;
-                lane_bits += Self::lane_byte_len_for_local_row(lanes, row);
             }
         }
-        (row_count, lane_bits)
+        row_count
     }
 
     const fn route_scope_conflict_for_commit(

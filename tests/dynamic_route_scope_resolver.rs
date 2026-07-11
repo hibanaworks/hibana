@@ -653,6 +653,14 @@ fn resolver_reject_does_not_encode_or_stage_send_payload() {
                 rendered.contains("ResolverReject"),
                 "resolver reject must remain visible in Debug: {rendered}"
             );
+            let followup = futures::executor::block_on(
+                origin.send::<Msg<SAME_LABEL, RejectCountedPayload>>(&RejectCountedPayload(1604)),
+            )
+            .expect_err("resolver rejection must poison the same endpoint generation");
+            assert!(
+                format!("{followup:?}").contains("SessionFault"),
+                "a poisoned endpoint must reject before resolver or payload re-entry: {followup:?}"
+            );
             rv.tap().collect::<Vec<_>>()
         });
 

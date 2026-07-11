@@ -167,51 +167,60 @@ fn packed_sidecar_pair_is_aligned_and_disjoint() {
     }
 }
 
-#[kani::proof]
-fn packed_sidecar_pair_compacts_before_source_ranges() {
-    let base: usize = kani::any();
-    let first_source_frontier: usize = kani::any();
-    let source_gap: usize = kani::any();
-    let first_bytes: usize = kani::any();
-    let second_bytes: usize = kani::any();
-    let shift_mask = (usize::BITS - 1) as u8;
-    let first_align = 1usize << usize::from(kani::any::<u8>() & shift_mask);
-    let second_align = 1usize << usize::from(kani::any::<u8>() & shift_mask);
+fn pack_four_sidecars(
+    base: usize,
+    mut frontier: usize,
+    bytes: [usize; 4],
+    aligns: [usize; 4],
+    gaps: [usize; 3],
+) -> Option<[(usize, usize); 4]> {
+    let mut ranges = [(0, 0); 4];
+    let mut index = 0usize;
+    while index < ranges.len() {
+        let range = packed_sidecar_range(base, frontier, bytes[index], aligns[index])?;
+        ranges[index] = range;
+        frontier = range.1;
+        if index < gaps.len() {
+            frontier = frontier.checked_add(gaps[index])?;
+        }
+        index += 1;
+    }
+    Some(ranges)
+}
 
-    let sources = packed_sidecar_range(base, first_source_frontier, first_bytes, first_align)
-        .and_then(|(first_start, first_end)| {
-            first_end.checked_add(source_gap).and_then(|frontier| {
-                packed_sidecar_range(base, frontier, second_bytes, second_align).map(
-                    |(second_start, second_end)| (first_start, first_end, second_start, second_end),
-                )
-            })
-        });
-    let destinations = packed_sidecar_range(base, 0, first_bytes, first_align).and_then(
-        |(first_start, first_end)| {
-            packed_sidecar_range(base, first_end, second_bytes, second_align).map(
-                |(second_start, second_end)| (first_start, first_end, second_start, second_end),
-            )
-        },
-    );
+#[kani::proof]
+fn four_resident_sidecars_compact_before_all_source_ranges() {
+    let base: usize = kani::any();
+    let source_frontier: usize = kani::any();
+    let bytes: [usize; 4] = kani::any();
+    let gaps: [usize; 3] = kani::any();
+    let shifts: [u8; 4] = kani::any();
+    let shift_mask = (usize::BITS - 1) as u8;
+    let aligns = [
+        1usize << usize::from(shifts[0] & shift_mask),
+        1usize << usize::from(shifts[1] & shift_mask),
+        1usize << usize::from(shifts[2] & shift_mask),
+        1usize << usize::from(shifts[3] & shift_mask),
+    ];
+
+    let sources = pack_four_sidecars(base, source_frontier, bytes, aligns, gaps);
+    let destinations = pack_four_sidecars(base, 0, bytes, aligns, [0; 3]);
 
     kani::cover!(sources.is_some() && destinations.is_some());
     kani::cover!(sources.is_none());
     kani::cover!(destinations.is_none());
-    if let (
-        Some((first_source_start, first_source_end, second_source_start, second_source_end)),
-        Some((
-            first_destination_start,
-            first_destination_end,
-            second_destination_start,
-            second_destination_end,
-        )),
-    ) = (sources, destinations)
-    {
-        assert!(first_destination_start <= first_source_start);
-        assert!(first_destination_end <= first_source_end);
-        assert!(first_destination_end <= second_source_start);
-        assert!(second_destination_start <= second_source_start);
-        assert!(second_destination_end <= second_source_end);
+    if let (Some(sources), Some(destinations)) = (sources, destinations) {
+        let mut index = 0usize;
+        while index < sources.len() {
+            assert!(destinations[index].0 <= sources[index].0);
+            assert!(destinations[index].1 <= sources[index].1);
+            let mut later = index + 1;
+            while later < sources.len() {
+                assert!(destinations[index].1 <= sources[later].0);
+                later += 1;
+            }
+            index += 1;
+        }
     }
 }
 

@@ -133,9 +133,13 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     }
 
     #[inline]
-    pub(super) fn begin_public_send_state(&mut self, logical_label: u8) -> SendResult<()> {
+    pub(super) fn begin_public_send_state(
+        &mut self,
+        logical_label: u8,
+        payload_schema: u32,
+    ) -> SendResult<()> {
         let mut preview = core::mem::MaybeUninit::<kernel::SendPreview>::uninit();
-        self.preview_send(logical_label, preview.as_mut_ptr())?;
+        self.preview_send(logical_label, payload_schema, preview.as_mut_ptr())?;
         let preview = /* SAFETY: `preview_send` returned `Ok`, so the carrier
         callback wrote one `SendPreview` into this local `MaybeUninit` slot
         before return. */ unsafe { preview.assume_init() };
@@ -147,6 +151,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
         match self.init_public_send_state(&init) {
             kernel::PublicOpLease::Held => Ok(()),
             kernel::PublicOpLease::Rejected => Err(crate::endpoint::SendError::PhaseInvariant),
+            kernel::PublicOpLease::Faulted => crate::invariant(),
         }
     }
 
@@ -180,18 +185,28 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn preview_send(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         out: *mut kernel::SendPreview,
     ) -> SendResult<()> {
         /* SAFETY: `self.ptr` identifies this endpoint's carrier header and
         `self.handle` names the same generation; `out` is the caller-owned
         `SendPreview` slot that `preview_send` writes before returning `Ok`. */
-        unsafe { (self.ops().preview_send)(self.erased_ptr(), self.handle, logical_label, out) }
+        unsafe {
+            (self.ops().preview_send)(
+                self.erased_ptr(),
+                self.handle,
+                logical_label,
+                payload_schema,
+                out,
+            )
+        }
     }
 
     #[inline]
     pub(super) fn poll_recv(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -204,6 +219,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 ptr: self.erased_ptr(),
                 handle: self.handle,
                 logical_label,
+                payload_schema,
                 validate,
                 cx,
                 out: out.as_mut_ptr(),
@@ -226,6 +242,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     pub(super) fn poll_branch_recv(
         &mut self,
         logical_label: u8,
+        payload_schema: u32,
         validate: for<'a> fn(Payload<'a>) -> Result<(), CodecError>,
         cx: &mut Context<'_>,
     ) -> Poll<RecvResult<carrier::RawPayload>> {
@@ -238,6 +255,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
                 ptr: self.erased_ptr(),
                 handle: self.handle,
                 logical_label,
+                payload_schema,
                 validate,
                 cx,
                 out: out.as_mut_ptr(),
@@ -272,8 +290,8 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     ///
     /// The endpoint previews the projected send descriptor on first poll.
     /// Dropping the future before completion leaves the endpoint on the same
-    /// typestate step. A preview mismatch is reported as a send failure and
-    /// must not be treated as permission to choose another branch.
+    /// typestate step. A preview mismatch reports its exact send failure and
+    /// makes the current session generation terminal.
     pub fn send<'a, 'e, M>(
         &'e mut self,
         payload: &'a M::Payload,
@@ -282,13 +300,14 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     + use<'a, 'e, 'r, M, ROLE>
     where
         M: crate::g::Message + 'a,
-        M::Payload: WireEncode + 'a,
+        M::Payload: WireEncode + WirePayload + 'a,
         'e: 'a,
         'r: 'a,
     {
         let endpoint = core::ptr::from_mut(self);
         let logical_label = <M as crate::g::Message>::LOGICAL_LABEL;
-        send::SendFuture::pending_direct(endpoint, logical_label, payload)
+        let payload_schema = crate::global::payload_schema::<M>();
+        send::SendFuture::pending_direct(endpoint, logical_label, payload_schema, payload)
     }
 
     #[inline]
@@ -306,7 +325,7 @@ impl<'r, const ROLE: u8> Endpoint<'r, ROLE> {
     > + 'e
     where
         M: crate::g::Message + 'e,
-        M::Payload: WirePayload,
+        M::Payload: WireEncode + WirePayload,
     {
         RecvFuture::<'e, 'r, ROLE, M>::new(self)
     }

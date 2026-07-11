@@ -61,6 +61,19 @@ unsafe fn encode_erased<P: WireEncode>(
 /// `Decoded<'a>` describes what receive operations yield when wire bytes are
 /// borrowed for the duration of the endpoint borrow.
 pub trait WirePayload {
+    /// Protocol-local identity of this payload's wire schema.
+    ///
+    /// This identifies the canonical encoding and validation contract, not a
+    /// Rust nominal type. Incompatible wire contracts must use distinct
+    /// identities. Two binaries may use different Rust wrapper types only when
+    /// they intentionally implement the same canonical wire schema. Identity
+    /// `0` is the canonical zero-byte unit schema used by `()`.
+    /// Another Rust wrapper may use it only if its encoder and validator also
+    /// accept exactly zero bytes. Local actions verify that invariant before
+    /// committing progress. Other custom schemas use nonzero identities.
+    /// The value is descriptor metadata and is not transmitted on the wire.
+    const SCHEMA_ID: u32;
+
     type Decoded<'a>;
 
     /// Validate payload-local bytes before endpoint progress can commit.
@@ -77,13 +90,6 @@ pub trait WirePayload {
     /// Endpoint receive/decode progress is committed before this decode function runs,
     /// so this operation has no error channel.
     fn decode_validated_payload<'a>(input: Payload<'a>) -> Self::Decoded<'a>;
-
-    /// Validate and decode bytes for non-endpoint callers.
-    #[inline]
-    fn decode_payload<'a>(input: Payload<'a>) -> Result<Self::Decoded<'a>, CodecError> {
-        Self::validate_payload(input)?;
-        Ok(Self::decode_validated_payload(input))
-    }
 }
 
 impl WireEncode for () {
@@ -93,6 +99,8 @@ impl WireEncode for () {
 }
 
 impl WirePayload for () {
+    const SCHEMA_ID: u32 = 0;
+
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -117,6 +125,8 @@ impl WireEncode for bool {
 }
 
 impl WirePayload for bool {
+    const SCHEMA_ID: u32 = 1;
+
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -134,7 +144,7 @@ impl WirePayload for bool {
 }
 
 macro_rules! impl_wire_for_int {
-    ($ty:ty, $len:expr) => {
+    ($ty:ty, $len:expr, $schema:expr) => {
         impl WireEncode for $ty {
             fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
                 if out.len() < $len {
@@ -146,6 +156,8 @@ macro_rules! impl_wire_for_int {
         }
 
         impl WirePayload for $ty {
+            const SCHEMA_ID: u32 = $schema;
+
             type Decoded<'a> = Self;
 
             fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -162,16 +174,16 @@ macro_rules! impl_wire_for_int {
     };
 }
 
-impl_wire_for_int!(u8, 1);
-impl_wire_for_int!(i8, 1);
-impl_wire_for_int!(u16, 2);
-impl_wire_for_int!(i16, 2);
-impl_wire_for_int!(u32, 4);
-impl_wire_for_int!(i32, 4);
-impl_wire_for_int!(u64, 8);
-impl_wire_for_int!(i64, 8);
-impl_wire_for_int!(u128, 16);
-impl_wire_for_int!(i128, 16);
+impl_wire_for_int!(u8, 1, 2);
+impl_wire_for_int!(i8, 1, 3);
+impl_wire_for_int!(u16, 2, 4);
+impl_wire_for_int!(i16, 2, 5);
+impl_wire_for_int!(u32, 4, 6);
+impl_wire_for_int!(i32, 4, 7);
+impl_wire_for_int!(u64, 8, 8);
+impl_wire_for_int!(i64, 8, 9);
+impl_wire_for_int!(u128, 16, 10);
+impl_wire_for_int!(i128, 16, 11);
 
 impl WireEncode for &[u8] {
     fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> {
@@ -184,6 +196,8 @@ impl WireEncode for &[u8] {
 }
 
 impl WirePayload for &[u8] {
+    const SCHEMA_ID: u32 = 12;
+
     type Decoded<'a> = &'a [u8];
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -207,6 +221,13 @@ impl<const N: usize> WireEncode for [u8; N] {
 }
 
 impl<const N: usize> WirePayload for [u8; N] {
+    const SCHEMA_ID: u32 = {
+        if N > 0x00ff_ffff {
+            crate::invariant();
+        }
+        0x0100_0000 | N as u32
+    };
+
     type Decoded<'a> = Self;
 
     fn validate_payload(input: Payload<'_>) -> Result<(), CodecError> {
@@ -225,52 +246,61 @@ impl<const N: usize> WirePayload for [u8; N] {
 mod tests {
     use super::*;
 
+    fn decode<'a, P: WirePayload>(input: &'a [u8]) -> Result<P::Decoded<'a>, CodecError> {
+        let payload = Payload::new(input);
+        P::validate_payload(payload)?;
+        Ok(P::decode_validated_payload(payload))
+    }
+
     #[test]
     fn fixed_payload_decoders_reject_trailing_bytes() {
+        assert_eq!(decode::<()>(&[]), Ok(()));
+        assert_eq!(decode::<()>(&[1]), Err(CodecError::Malformed));
+
+        assert_eq!(decode::<bool>(&[1]), Ok(true));
+        assert_eq!(decode::<bool>(&[1, 0]), Err(CodecError::Malformed));
+
+        assert_eq!(decode::<u16>(&[0x12, 0x34]), Ok(0x1234));
         assert_eq!(
-            <() as WirePayload>::decode_payload(Payload::new(&[])),
-            Ok(())
-        );
-        assert_eq!(
-            <() as WirePayload>::decode_payload(Payload::new(&[1])),
+            decode::<u16>(&[0x12, 0x34, 0x56]),
             Err(CodecError::Malformed)
         );
 
-        assert_eq!(
-            <bool as WirePayload>::decode_payload(Payload::new(&[1])),
-            Ok(true)
-        );
-        assert_eq!(
-            <bool as WirePayload>::decode_payload(Payload::new(&[1, 0])),
-            Err(CodecError::Malformed)
-        );
-
-        assert_eq!(
-            <u16 as WirePayload>::decode_payload(Payload::new(&[0x12, 0x34])),
-            Ok(0x1234)
-        );
-        assert_eq!(
-            <u16 as WirePayload>::decode_payload(Payload::new(&[0x12, 0x34, 0x56])),
-            Err(CodecError::Malformed)
-        );
-
-        assert_eq!(
-            <[u8; 2] as WirePayload>::decode_payload(Payload::new(&[7, 9])),
-            Ok([7, 9])
-        );
-        assert_eq!(
-            <[u8; 2] as WirePayload>::decode_payload(Payload::new(&[7, 9, 11])),
-            Err(CodecError::Malformed)
-        );
+        assert_eq!(decode::<[u8; 2]>(&[7, 9]), Ok([7, 9]));
+        assert_eq!(decode::<[u8; 2]>(&[7, 9, 11]), Err(CodecError::Malformed));
     }
 
     #[test]
     fn borrowed_byte_slice_remains_variable_length() {
         let bytes = [1, 2, 3];
-        assert_eq!(
-            <&[u8] as WirePayload>::decode_payload(Payload::new(&bytes)),
-            Ok(&bytes[..])
-        );
+        assert_eq!(decode::<&[u8]>(&bytes), Ok(&bytes[..]));
+    }
+
+    #[test]
+    fn builtin_payload_schemas_are_pairwise_distinct() {
+        let schemas = [
+            <() as WirePayload>::SCHEMA_ID,
+            <bool as WirePayload>::SCHEMA_ID,
+            <u8 as WirePayload>::SCHEMA_ID,
+            <i8 as WirePayload>::SCHEMA_ID,
+            <u16 as WirePayload>::SCHEMA_ID,
+            <i16 as WirePayload>::SCHEMA_ID,
+            <u32 as WirePayload>::SCHEMA_ID,
+            <i32 as WirePayload>::SCHEMA_ID,
+            <u64 as WirePayload>::SCHEMA_ID,
+            <i64 as WirePayload>::SCHEMA_ID,
+            <u128 as WirePayload>::SCHEMA_ID,
+            <i128 as WirePayload>::SCHEMA_ID,
+            <&[u8] as WirePayload>::SCHEMA_ID,
+            <[u8; 0] as WirePayload>::SCHEMA_ID,
+            <[u8; 4] as WirePayload>::SCHEMA_ID,
+        ];
+        for (index, schema) in schemas.iter().enumerate() {
+            assert!(!schemas[..index].contains(schema));
+        }
+        assert_eq!(<[u8; 0] as WirePayload>::SCHEMA_ID, 0x0100_0000);
+        assert_eq!(<[u8; 4] as WirePayload>::SCHEMA_ID, 0x0100_0004);
+        assert_eq!(<[u8; 0x00ff_ffff] as WirePayload>::SCHEMA_ID, 0x01ff_ffff);
     }
 }
 

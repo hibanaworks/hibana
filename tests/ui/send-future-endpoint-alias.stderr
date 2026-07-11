@@ -1,11 +1,11 @@
 error[E0499]: cannot borrow `*endpoint` as mutable more than once at a time
-  --> tests/ui/send-future-endpoint-alias.rs:39:22
+  --> tests/ui/send-future-endpoint-alias.rs:41:22
    |
-37 |     let send = endpoint.send::<g::Msg<7, TestPayload>>(&payload);
+39 |     let send = endpoint.send::<g::Msg<7, TestPayload>>(&payload);
    |                -------- first mutable borrow occurs here
-38 |     let next_payload = TestPayload(2);
-39 |     let send_again = endpoint.send::<g::Msg<7, TestPayload>>(&next_payload);
+40 |     let next_payload = TestPayload(2);
+41 |     let send_again = endpoint.send::<g::Msg<7, TestPayload>>(&next_payload);
    |                      ^^^^^^^^ second mutable borrow occurs here
-40 |     core::hint::black_box(&send_again);
-41 |     core::hint::black_box(send);
+42 |     core::hint::black_box(&send_again);
+43 |     core::hint::black_box(send);
    |                           ---- first borrow later used here

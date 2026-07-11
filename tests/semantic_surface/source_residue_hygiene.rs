@@ -565,6 +565,48 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
         .next()
         .expect("lane range row accessor body");
 
+    for required in [
+        "absent_route_scope_row",
+        "non_route_scope_row",
+        "route_scope_ordinal_out_of_range",
+        "duplicate_route_scope_authority",
+        "empty_route_arm_row",
+        "empty_route_arm_lane_step_range",
+        "empty_lane_range_row",
+        "empty_roll_scope_row",
+        "empty_roll_scope_event_range",
+        "roll_scope_ordinal_out_of_range",
+        "empty_local_event_row",
+        "reserved_local_event_flags",
+        "out_of_domain_local_event_index",
+        "out_of_domain_local_event_scope",
+        "local_step_lane_outside_logical_domain",
+        "program_lane_mismatch",
+        "empty_referenced_dependency_row",
+        "empty_referenced_conflict_row",
+        "out_of_domain_conflict_route_scope",
+        "out_of_domain_dependency_route_scope",
+        "dependency_range_beyond_events",
+        "zero_length_resident_boundary_row",
+        "resident_boundary_beyond_lane_rows",
+        "route_arm_event_range_beyond_events",
+        "route_arm_lane_step_range_beyond_rows",
+        "passive_child_without_parent_authority",
+        "route_arm_lane_step_outside_own_arm",
+        "route_commit_range_beyond_rows",
+        "zero_length_route_commit_range",
+        "foreign_route_commit_current",
+        "foreign_route_commit_parent",
+        "truncated_route_commit_parent_chain",
+        "route_commit_rows_before_terminal_parent",
+        "roll_scope_event_range_beyond_events",
+    ] {
+        assert!(
+            tests.contains(&format!("fn resident_descriptor_rejects_{required}()")),
+            "resident descriptor gate missing fail-closed case: {required}"
+        );
+    }
+
     assert!(
         lane_image
             .contains("const fn invalid_resident_descriptor() -> ! {\n    crate::invariant()\n}")
@@ -591,12 +633,7 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
             && lane_image.contains("Some(dependency) => Some(dependency)")
             && lane_image.contains("if conflict.is_none() {")
             && lane_image.contains("if start >= end || end > self.columns.lanes.len as usize")
-            && !lane_image.contains("while pos < end && pos < self.columns.lanes.len as usize")
-            && tests
-                .matches("#[test]\nfn resident_descriptor_rejects_")
-                .count()
-                == 34
-            && tests.matches("#[test]\nfn resident_").count() == 36,
+            && !lane_image.contains("while pos < end && pos < self.columns.lanes.len as usize"),
         "every serialized resident row must reject a reserved sentinel before publication"
     );
 }

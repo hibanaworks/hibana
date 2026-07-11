@@ -72,6 +72,7 @@ fn parse_rustc_minor_version(version: &str) -> Option<u32> {
 const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-project-role-out-of-range.rs",
     "tests/ui/g-role-out-of-range.rs",
+    "tests/ui/g-self-send-non-unit.rs",
     "tests/ui/g-roleprogram-witness-mismatch.rs",
     "tests/ui/g-par-ambiguous-endpoint-op.rs",
     "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs",
@@ -135,6 +136,7 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-project-role-out-of-range.rs");
     compile_fail(&t, "tests/ui/g-resolver-data-send.rs");
     compile_fail(&t, "tests/ui/g-role-out-of-range.rs");
+    compile_fail(&t, "tests/ui/g-self-send-non-unit.rs");
     compile_fail(&t, "tests/ui/g-roleprogram-witness-mismatch.rs");
     compile_fail(&t, "tests/ui/g-par-ambiguous-endpoint-op.rs");
     compile_fail(&t, "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs");
@@ -143,6 +145,7 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-route-roll-before-resolve.rs");
     compile_fail(&t, "tests/ui/g-route-unprojectable.rs");
     compile_fail(&t, "tests/ui/g-typed-route-duplicate-label-project.rs");
+    compile_fail(&t, "tests/ui/g-message-without-wire-contract.rs");
     t.pass("tests/ui-pass/g-par-many.rs");
     t.pass("tests/ui-pass/g-par-same-role-auto-lanes.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-local-endpoints.rs");
@@ -169,9 +172,6 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/runtime-transport-recv-frame.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/g-generic-role-ids.rs");
-    t.pass("tests/ui-pass/g-codec-free-message-project.rs");
-    t.pass("tests/ui-pass/endpoint-send-only-payload.rs");
-    t.pass("tests/ui-pass/endpoint-recv-only-payload.rs");
     t.pass("tests/ui-pass/resolver-state-unit.rs");
     t.pass("tests/ui-pass/resolver-wrapper-decide.rs");
 
@@ -209,8 +209,6 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/route-branch-double-recv.rs");
     compile_fail(&t, "tests/ui/send-future-endpoint-alias.rs");
     compile_fail(&t, "tests/ui/endpoint-result-removed.rs");
-    compile_fail(&t, "tests/ui/endpoint-send-only-payload-cannot-recv.rs");
-    compile_fail(&t, "tests/ui/endpoint-recv-only-payload-cannot-send.rs");
     compile_fail(&t, "tests/ui/endpoint-error-operation-removed.rs");
     compile_fail(&t, "tests/ui/attach-error-operation-removed.rs");
     compile_fail(&t, "tests/ui/resolver-error-operation-removed.rs");

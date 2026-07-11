@@ -14,7 +14,7 @@ note: erroneous constant encountered
   | /     const {
   | |         if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
   | |             panic!("{}", ROLE_INDEX_ERROR);
-  | |         }
+... |
   | |     }
   | |_____^
 

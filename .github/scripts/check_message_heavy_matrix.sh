@@ -5,13 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+export CARGO_BUILD_JOBS=1
+source "${ROOT_DIR}/.github/scripts/lib/compile_pressure_guard.sh"
 bash "${ROOT_DIR}/.github/scripts/ensure_rust_toolchain.sh"
 
 RUSTUP=(rustup run "${TOOLCHAIN}")
 TOOLCHAIN_RUSTC="$(rustup which --toolchain "${TOOLCHAIN}" rustc)"
 TOOLCHAIN_BIN_DIR="$(dirname "${TOOLCHAIN_RUSTC}")"
 TOOLCHAIN_CARGO="${TOOLCHAIN_BIN_DIR}/cargo"
+TARGET="thumbv6m-none-eabi"
 
+rustup target add --toolchain "${TOOLCHAIN}" "${TARGET}" >/dev/null
 rustup component add llvm-tools-preview --toolchain "${TOOLCHAIN}" >/dev/null
 
 SYSROOT="$("${RUSTUP[@]}" rustc --print sysroot)"
@@ -30,6 +34,7 @@ else
 fi
 
 MATRIX_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hibana-message-heavy-matrix-XXXXXX")"
+TARGET_DIR="${MATRIX_DIR}/target"
 cleanup() {
   rm -rf "${MATRIX_DIR}"
 }
@@ -47,11 +52,14 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+[lib]
+name = "hibana_message_heavy_${count}"
+
 [dependencies]
 hibana = { path = "${ROOT_DIR}", default-features = false }
 EOF
 
-  python3 - "${count}" "${crate_dir}/src/main.rs" <<'PY'
+  python3 - "${count}" "${crate_dir}/src/lib.rs" <<'PY'
 import sys
 
 count = int(sys.argv[1])
@@ -60,10 +68,7 @@ dst = sys.argv[2]
 
 def send_expr(idx: int) -> str:
     label = 1 + (idx % 46)
-    return (
-        "g::send::<0, 1, "
-        f"g::Msg<{label}, Payload<{idx}>>>()"
-    )
+    return "g::send::<0, 1, " f"g::Msg<{label}, Payload<{idx}>>>()"
 
 
 def seq_expr(start: int, end: int) -> str:
@@ -77,99 +82,178 @@ program = seq_expr(0, count)
 
 with open(dst, "w", encoding="utf-8") as f:
     f.write(
-        '#![recursion_limit = "1024"]\n'
+        "#![no_std]\n"
+        "#![deny(warnings)]\n\n"
         "use hibana::g;\n"
-        "use hibana::runtime::program::{project, RoleProgram};\n\n"
-        "use hibana::runtime::wire::{CodecError, Payload as WirePayloadView, WireEncode, WirePayload};\n\n"
+        "use hibana::runtime::program::{project, RoleProgram};\n"
+        "use hibana::runtime::wire::{"
+        "CodecError, Payload as WirePayloadView, WireEncode, WirePayload};\n\n"
         "#[derive(Clone, Copy)]\n"
         "struct Payload<const ID: u16>;\n\n"
         "impl<const ID: u16> WireEncode for Payload<ID> {\n"
-        "    fn encode_into(&self, out: &mut [u8]) -> Result<usize, CodecError> { Ok(out[..0].len()) }\n"
+        "    fn encode_into(&self, _out: &mut [u8]) -> Result<usize, CodecError> { Ok(0) }\n"
         "}\n\n"
         "impl<const ID: u16> WirePayload for Payload<ID> {\n"
+        "    const SCHEMA_ID: u32 = 0x4001_0000 | ID as u32;\n"
         "    type Decoded<'a> = Self;\n"
         "    fn validate_payload(input: WirePayloadView<'_>) -> Result<(), CodecError> {\n"
         "        if input.as_bytes().is_empty() { Ok(()) } else { Err(CodecError::Malformed) }\n"
         "    }\n"
         "    fn decode_validated_payload<'a>(input: WirePayloadView<'a>) -> Self::Decoded<'a> {\n"
-        "        input.as_bytes();\n"
+        "        let _ = input.as_bytes();\n"
         "        Self\n"
         "    }\n"
         "}\n\n"
-        "fn main() {\n"
+        "#[inline(never)]\n"
+        "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>) {\n"
         f"    let program = {program};\n"
-        "    let role0: RoleProgram<0> = project(&program);\n"
-        "    let role1: RoleProgram<1> = project(&program);\n"
-        "    std::hint::black_box((role0, role1));\n"
+        "    (project(&program), project(&program))\n"
         "}\n"
     )
 PY
 }
 
-text_bytes_for_case() {
+declare -A IMAGE_BYTES=()
+declare -A RLIB_BYTES=()
+declare -A COMPILE_SECONDS=()
+declare -A COMPILE_RSS_MIB=()
+
+build_case() {
   local count="$1"
   local crate_dir="${MATRIX_DIR}/messages_${count}"
-  local target_dir="${crate_dir}/target"
-  local bin="${target_dir}/release/hibana-message-heavy-${count}"
+  local crate_name="hibana_message_heavy_${count}"
+  local rlib="${TARGET_DIR}/${TARGET}/release/lib${crate_name}.rlib"
+  local output
+  local observed
+  local status
+  local guard=0
 
   generate_case "${count}"
-  PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
-  RUSTC="${TOOLCHAIN_RUSTC}" \
-  CARGO_TERM_COLOR=never \
-  CARGO_TERM_PROGRESS_WHEN=never \
-  TERM=dumb \
-    "${TOOLCHAIN_CARGO}" build \
-      --manifest-path "${crate_dir}/Cargo.toml" \
-      --release \
-      --target-dir "${target_dir}" \
-      >/dev/null
+  case "${count}" in
+    1|64|256) guard=1 ;;
+  esac
 
-  if [[ ! -f "${bin}" ]]; then
-    echo "message-heavy binary missing: ${bin}" >&2
+  if [[ "${guard}" == "1" ]]; then
+    output="$(mktemp "${TMPDIR:-/tmp}/hibana-message-heavy-pressure.XXXXXX")"
+    set +e
+    HIBANA_COMPILE_PRESSURE_LABEL="message_heavy_${count}" \
+      HIBANA_COMPILE_PRESSURE_BUDGETS="${ROOT_DIR}/.github/measurement_snapshots/hibana-compile-pressure-budget.tsv" \
+      HIBANA_COMPILE_PRESSURE_CRATE_NAME="${crate_name}" \
+      HIBANA_COMPILE_PRESSURE_POLL_SECONDS=0.1 \
+      run_with_compile_pressure_guard \
+        "message-heavy ${count}" \
+        env \
+          PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
+          RUSTC="${TOOLCHAIN_RUSTC}" \
+          CARGO_TERM_COLOR=never \
+          CARGO_TERM_PROGRESS_WHEN=never \
+          TERM=dumb \
+          CARGO_TARGET_DIR="${TARGET_DIR}" \
+          "${TOOLCHAIN_CARGO}" build \
+            --manifest-path "${crate_dir}/Cargo.toml" \
+            --no-default-features \
+            --target "${TARGET}" \
+            --release \
+            --lib \
+        2>&1 | tee "${output}"
+    status="${PIPESTATUS[0]}"
+    set -e
+    if [[ "${status}" -ne 0 ]]; then
+      rm -f "${output}"
+      exit "${status}"
+    fi
+    observed="$(grep -E "^compile pressure observed: message-heavy ${count} " "${output}" | tail -n 1)"
+    rm -f "${output}"
+    if [[ ! "${observed}" =~ elapsed=([0-9]+)s[[:space:]]seconds_budget=[0-9]+s[[:space:]]max_rss=([0-9]+)MiB ]]; then
+      echo "message-heavy matrix missing compile-pressure observation for ${count}" >&2
+      exit 1
+    fi
+    COMPILE_SECONDS["${count}"]="${BASH_REMATCH[1]}"
+    COMPILE_RSS_MIB["${count}"]="${BASH_REMATCH[2]}"
+  else
+    PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
+    RUSTC="${TOOLCHAIN_RUSTC}" \
+    CARGO_TERM_COLOR=never \
+    CARGO_TERM_PROGRESS_WHEN=never \
+    TERM=dumb \
+    CARGO_TARGET_DIR="${TARGET_DIR}" \
+      "${TOOLCHAIN_CARGO}" build \
+        --manifest-path "${crate_dir}/Cargo.toml" \
+        --no-default-features \
+        --target "${TARGET}" \
+        --release \
+        --lib \
+        >/dev/null
+  fi
+
+  if [[ ! -f "${rlib}" ]]; then
+    echo "message-heavy projected rlib missing: ${rlib}" >&2
     exit 1
   fi
 
-  "${LLVM_SIZE}" --format=berkeley "${bin}" | awk 'NR==2 { print $1 }'
+  IMAGE_BYTES["${count}"]="$("${LLVM_SIZE}" --format=sysv "${rlib}" | awk '
+    $1 ~ /^\.text/ || $1 ~ /^\.rodata/ || $1 == "__text" ||
+      $1 == "__const" || $1 == "__cstring" { total += $2 }
+    END { print total + 0 }
+  ')"
+  RLIB_BYTES["${count}"]="$(wc -c <"${rlib}" | tr -d ' ')"
+  echo "message-heavy thumb count=${count} image_bytes=${IMAGE_BYTES[${count}]} rlib_bytes=${RLIB_BYTES[${count}]}"
 }
 
-declare -A TEXT_BYTES=()
 for count in 1 8 16 32 64 256; do
-  TEXT_BYTES["${count}"]="$(text_bytes_for_case "${count}")"
-  echo "message-heavy text bytes count=${count} text=${TEXT_BYTES[${count}]}"
+  build_case "${count}"
 done
 
 growth() {
-  local from="$1"
-  local to="$2"
-  local delta=$((TEXT_BYTES[$to] - TEXT_BYTES[$from]))
+  local metric="$1"
+  local from="$2"
+  local to="$3"
+  local from_value
+  local to_value
+  local delta
+  if [[ "${metric}" == "image" ]]; then
+    from_value="${IMAGE_BYTES[$from]}"
+    to_value="${IMAGE_BYTES[$to]}"
+  else
+    from_value="${RLIB_BYTES[$from]}"
+    to_value="${RLIB_BYTES[$to]}"
+  fi
+  delta=$((to_value - from_value))
   if (( delta < 0 )); then
     delta=0
   fi
   printf '%s\n' "${delta}"
 }
 
-GROWTH_16="$(growth 1 16)"
-GROWTH_32="$(growth 16 32)"
-GROWTH_64="$(growth 16 64)"
-GROWTH_256="$(growth 64 256)"
+IMAGE_GROWTH_64="$(growth image 1 64)"
+IMAGE_GROWTH_256="$(growth image 64 256)"
+RLIB_GROWTH_64="$(growth rlib 1 64)"
+RLIB_GROWTH_256="$(growth rlib 64 256)"
 
-echo "message-heavy text growth 1->8=$(growth 1 8) 8->16=$(growth 8 16) 16->32=${GROWTH_32} 16->64=${GROWTH_64} 64->256=${GROWTH_256}"
+echo "message-heavy thumb growth image_1_to_64=${IMAGE_GROWTH_64} image_64_to_256=${IMAGE_GROWTH_256} rlib_1_to_64=${RLIB_GROWTH_64} rlib_64_to_256=${RLIB_GROWTH_256}"
+echo "message-heavy compile pressure count=1 elapsed=${COMPILE_SECONDS[1]}s rss=${COMPILE_RSS_MIB[1]}MiB count=64 elapsed=${COMPILE_SECONDS[64]}s rss=${COMPILE_RSS_MIB[64]}MiB count=256 elapsed=${COMPILE_SECONDS[256]}s rss=${COMPILE_RSS_MIB[256]}MiB"
 
-if (( TEXT_BYTES[256] > TEXT_BYTES[1] + 512 * 1024 )); then
-  echo "message-heavy text growth exceeded absolute budget" >&2
+if (( IMAGE_BYTES[256] > IMAGE_BYTES[1] + 512 * 1024 )); then
+  echo "message-heavy thumb image exceeded absolute growth budget" >&2
   exit 1
 fi
-
-if (( GROWTH_64 > GROWTH_16 * 8 + 16384 )); then
-  echo "message-heavy text growth is not sublinear enough between 16 and 64 message types" >&2
+if (( RLIB_BYTES[256] > RLIB_BYTES[1] + 2 * 1024 * 1024 )); then
+  echo "message-heavy thumb rlib metadata/code exceeded absolute growth budget" >&2
   exit 1
 fi
-
-if (( GROWTH_256 > GROWTH_64 * 8 + 32768 )); then
-  echo "message-heavy text growth is not sublinear enough between 64 and 256 message types" >&2
+if (( IMAGE_GROWTH_256 > IMAGE_GROWTH_64 * 6 + 16384 )); then
+  echo "message-heavy thumb image growth became superlinear" >&2
+  exit 1
+fi
+if (( RLIB_GROWTH_256 > RLIB_GROWTH_64 * 6 + 65536 )); then
+  echo "message-heavy thumb rlib growth became superlinear" >&2
+  exit 1
+fi
+if (( COMPILE_RSS_MIB[256] > COMPILE_RSS_MIB[64] * 2 + 128 )); then
+  echo "message-heavy compile RSS grew beyond the bounded erasure budget" >&2
   exit 1
 fi
 
 bash "${ROOT_DIR}/.github/scripts/check_message_monomorphization_hygiene.sh"
 
-echo "message-heavy matrix check passed"
+echo "message-heavy matrix check passed target=${TARGET} messages=256"

@@ -507,6 +507,7 @@ where
                 ClusterError::RendezvousMismatch { .. }
                 | ClusterError::RendezvousUnregistered { .. }
                 | ClusterError::RendezvousBusy { .. }
+                | ClusterError::SessionProgramMismatch { .. }
                 | ClusterError::ResourceExhausted { .. }
                 | ClusterError::DynamicResolverInvariant { .. },
             ) => return Err(RecvError::PhaseInvariant),

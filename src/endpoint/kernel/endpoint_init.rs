@@ -32,6 +32,40 @@ use super::evidence_store::ScopeEvidenceSlot;
 use super::layout::EndpointArenaSection;
 use super::layout::LeasedState;
 
+/// Recover the immutable compiled-program authority already resident in a
+/// published endpoint without adding another pointer to the lease ledger.
+///
+/// # Safety
+///
+/// `storage..storage + storage_len` must contain one fully initialized
+/// `CursorEndpoint<'r, ROLE, T>` allocation for any `ROLE`. `CursorEndpoint` is
+/// `repr(C)`, and its field sequence is independent of the const role value.
+pub(crate) unsafe fn resident_program_ref<'r, T>(
+    storage: *const u8,
+    storage_len: usize,
+) -> &'static crate::global::compiled::images::CompiledProgramRef
+where
+    T: Transport + 'r,
+{
+    let cursor_offset = core::mem::offset_of!(CursorEndpoint<'r, 0, T>, cursor);
+    let required =
+        crate::invariant_some(cursor_offset.checked_add(core::mem::size_of::<EventCursor>()));
+    if required > storage_len {
+        crate::invariant();
+    }
+    let cursor = /* SAFETY: the caller provides a live initialized endpoint;
+    `cursor_offset` is the role-independent `repr(C)` field offset and the
+    complete field range was checked above. */ unsafe {
+        storage.add(cursor_offset).cast::<EventCursor>()
+    };
+    if !(cursor as usize).is_multiple_of(core::mem::align_of::<EventCursor>()) {
+        crate::invariant();
+    }
+    /* SAFETY: `cursor` addresses the initialized cursor field of the published
+    endpoint and immutable program rows outlive every endpoint lease. */
+    unsafe { &*cursor }.program_ref()
+}
+
 #[inline(always)]
 unsafe fn section_ptr<T>(base: *mut u8, section: EndpointArenaSection) -> *mut T {
     /* SAFETY: `CursorEndpointStorageLayout` produced `section` for the endpoint

@@ -50,10 +50,22 @@ fn alternating_route_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
-fn assert_join_blocked(rendered: &str) {
+fn expected_session_fault(rendered: &str) -> &'static str {
+    if rendered.contains("LabelMismatch") {
+        "ProtocolViolation"
+    } else if rendered.contains("PhaseInvariant") {
+        "ProgressInvariantViolated"
+    } else {
+        panic!(
+            "the first invalid branch or join must report resident progress evidence: {rendered}"
+        )
+    }
+}
+
+fn assert_session_poisoned(rendered: &str, expected: &str) {
     assert!(
-        rendered.contains("LabelMismatch") || rendered.contains("PhaseInvariant"),
-        "post-par join must be rejected by resident progress evidence: {rendered}"
+        rendered.contains("SessionFault") && rendered.contains(expected),
+        "a rejected affine operation must preserve {expected}: {rendered}"
     );
 }
 
@@ -65,50 +77,95 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let sid = SessionId::new(96);
             let local_program = alternating_route_parallel_program::<LOCAL_ROLE>();
-
-            let mut local = rv.enter(sid, &local_program).expect("attach local role");
-            let mut worker = rv
-                .enter(sid, &alternating_route_parallel_program::<WORKER_ROLE>())
-                .expect("attach worker role");
+            let worker_program = alternating_route_parallel_program::<WORKER_ROLE>();
 
             futures::executor::block_on(async {
-                local.send::<Msg<ALT_A, u8>>(&1).await.expect("send A");
-                let err = local
-                    .send::<Msg<ALT_B, u8>>(&0)
-                    .await
-                    .expect_err("inner right payload must be unselected");
-                assert_join_blocked(&format!("{err:?}"));
-                let err = local
-                    .send::<Msg<ALT_R, u8>>(&0)
-                    .await
-                    .expect_err("outer right payload must be unselected");
-                assert_join_blocked(&format!("{err:?}"));
-                local.send::<Msg<ALT_C, u8>>(&2).await.expect("send C");
-                local.send::<Msg<ALT_D, u8>>(&5).await.expect("send D");
-                let err = local
-                    .send::<Msg<ALT_POST, u8>>(&0)
-                    .await
-                    .expect_err("Post must wait for sibling E");
-                assert_join_blocked(&format!("{err:?}"));
+                {
+                    let sid = SessionId::new(96);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local.send::<Msg<ALT_A, u8>>(&1).await.expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(branch.recv::<Msg<ALT_A, u8>>().await.expect("recv A"), 1);
+                    let rejected = local
+                        .send::<Msg<ALT_B, u8>>(&0)
+                        .await
+                        .expect_err("inner right payload must be unselected");
+                    let expected = expected_session_fault(&format!("{rejected:?}"));
+                    let poisoned = local
+                        .send::<Msg<ALT_C, u8>>(&0)
+                        .await
+                        .expect_err("an unselected inner arm must poison the session");
+                    assert_session_poisoned(&format!("{poisoned:?}"), expected);
+                }
 
-                local.send::<Msg<ALT_E, u8>>(&3).await.expect("send E");
-                local
-                    .send::<Msg<ALT_POST, u8>>(&4)
-                    .await
-                    .expect("send Post");
+                {
+                    let sid = SessionId::new(97);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local.send::<Msg<ALT_A, u8>>(&1).await.expect("send A");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(branch.recv::<Msg<ALT_A, u8>>().await.expect("recv A"), 1);
+                    let rejected = local
+                        .send::<Msg<ALT_R, u8>>(&0)
+                        .await
+                        .expect_err("outer right payload must be unselected");
+                    let expected = expected_session_fault(&format!("{rejected:?}"));
+                    let poisoned = local
+                        .send::<Msg<ALT_C, u8>>(&0)
+                        .await
+                        .expect_err("an unselected outer arm must poison the session");
+                    assert_session_poisoned(&format!("{poisoned:?}"), expected);
+                }
 
-                let branch = worker.offer().await.expect("offer A");
-                assert_eq!(branch.label(), ALT_A);
-                assert_eq!(branch.recv::<Msg<ALT_A, u8>>().await.expect("recv A"), 1);
-                assert_eq!(worker.recv::<Msg<ALT_C, u8>>().await.expect("recv C"), 2);
-                assert_eq!(worker.recv::<Msg<ALT_D, u8>>().await.expect("recv D"), 5);
-                assert_eq!(worker.recv::<Msg<ALT_E, u8>>().await.expect("recv E"), 3);
-                assert_eq!(
-                    worker.recv::<Msg<ALT_POST, u8>>().await.expect("recv Post"),
-                    4
-                );
+                {
+                    let sid = SessionId::new(98);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local.send::<Msg<ALT_A, u8>>(&1).await.expect("send A");
+                    local.send::<Msg<ALT_C, u8>>(&2).await.expect("send C");
+                    local.send::<Msg<ALT_D, u8>>(&5).await.expect("send D");
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(branch.recv::<Msg<ALT_A, u8>>().await.expect("recv A"), 1);
+                    assert_eq!(worker.recv::<Msg<ALT_C, u8>>().await.expect("recv C"), 2);
+                    assert_eq!(worker.recv::<Msg<ALT_D, u8>>().await.expect("recv D"), 5);
+                    let rejected = local
+                        .send::<Msg<ALT_POST, u8>>(&0)
+                        .await
+                        .expect_err("Post must wait for sibling E");
+                    let expected = expected_session_fault(&format!("{rejected:?}"));
+                    let poisoned = local
+                        .send::<Msg<ALT_E, u8>>(&0)
+                        .await
+                        .expect_err("an early join attempt must poison the session");
+                    assert_session_poisoned(&format!("{poisoned:?}"), expected);
+                }
+
+                {
+                    let sid = SessionId::new(99);
+                    let mut local = rv.enter(sid, &local_program).expect("attach local role");
+                    let mut worker = rv.enter(sid, &worker_program).expect("attach worker role");
+                    local.send::<Msg<ALT_A, u8>>(&1).await.expect("send A");
+                    local.send::<Msg<ALT_C, u8>>(&2).await.expect("send C");
+                    local.send::<Msg<ALT_D, u8>>(&5).await.expect("send D");
+                    local.send::<Msg<ALT_E, u8>>(&3).await.expect("send E");
+                    local
+                        .send::<Msg<ALT_POST, u8>>(&4)
+                        .await
+                        .expect("send Post");
+
+                    let branch = worker.offer().await.expect("offer A");
+                    assert_eq!(branch.label(), ALT_A);
+                    assert_eq!(branch.recv::<Msg<ALT_A, u8>>().await.expect("recv A"), 1);
+                    assert_eq!(worker.recv::<Msg<ALT_C, u8>>().await.expect("recv C"), 2);
+                    assert_eq!(worker.recv::<Msg<ALT_D, u8>>().await.expect("recv D"), 5);
+                    assert_eq!(worker.recv::<Msg<ALT_E, u8>>().await.expect("recv E"), 3);
+                    assert_eq!(
+                        worker.recv::<Msg<ALT_POST, u8>>().await.expect("recv Post"),
+                        4
+                    );
+                }
             });
         });
     });

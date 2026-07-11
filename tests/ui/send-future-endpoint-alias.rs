@@ -14,6 +14,8 @@ impl WireEncode for TestPayload {
 }
 
 impl WirePayload for TestPayload {
+    const SCHEMA_ID: u32 = 0x4000_0100;
+
     type Decoded<'a> = Self;
 
     fn validate_payload(input: hibana::runtime::wire::Payload<'_>) -> Result<(), CodecError> {

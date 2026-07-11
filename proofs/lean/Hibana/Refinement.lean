@@ -26,7 +26,7 @@ private def insertProjectionRoute
       if route.conflict <= head.conflict then route :: head :: tail
       else head :: insertProjectionRoute route tail
 
-private def sortProjectionRoutes (routes : List ProjectionRoute) : List ProjectionRoute :=
+def normalizeProjectionRoutes (routes : List ProjectionRoute) : List ProjectionRoute :=
   routes.foldr insertProjectionRoute []
 
 private def projectionRollBefore (left right : ProjectionRoll) : Bool :=
@@ -45,7 +45,7 @@ private def insertProjectionRoll
       if projectionRollBefore roll head then roll :: head :: tail
       else head :: insertProjectionRoll roll tail
 
-private def sortProjectionRolls (rolls : List ProjectionRoll) : List ProjectionRoll :=
+def normalizeProjectionRolls (rolls : List ProjectionRoll) : List ProjectionRoll :=
   rolls.foldr insertProjectionRoll []
 
 structure ProjectionShape where
@@ -58,9 +58,9 @@ def EventGraph.projectionShape (graph : EventGraph) : ProjectionShape := {
   events := graph.events.map fun event => {
     action := event.action
   }
-  rolls := sortProjectionRolls <| graph.rolls.filterMap fun roll =>
+  rolls := normalizeProjectionRolls <| graph.rolls.filterMap fun roll =>
     if roll.events.isEmpty then none else some { events := roll.events }
-  routes := sortProjectionRoutes <| graph.routes.filterMap fun route =>
+  routes := normalizeProjectionRoutes <| graph.routes.filterMap fun route =>
     if route.leftEvents.isEmpty && route.rightEvents.isEmpty then
       none
     else

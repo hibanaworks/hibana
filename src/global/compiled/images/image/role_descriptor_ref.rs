@@ -56,6 +56,19 @@ impl RoleDescriptorRef {
         self.resident.footprint().local_step_count
     }
 
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn proof_blob_len(&self) -> usize {
+        self.resident.columns.blob_len()
+    }
+
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn proof_byte_at(&self, offset: usize) -> u8 {
+        if offset >= self.proof_blob_len() {
+            crate::invariant();
+        }
+        self.resident.blob.byte_at(offset)
+    }
+
     #[inline(always)]
     pub(crate) fn has_active_lane(&self, lane_idx: usize) -> bool {
         if lane_idx >= self.logical_lane_count() {
