@@ -331,10 +331,15 @@ impl<'a> RoleLaneImage<'a> {
     ) -> Option<u16> {
         let row_idx = route_arm_row_index(slot, arm);
         match self.route_arm_row(row_idx).child_slot_delta() {
-            Some(delta) => match self.route_scope_by_slot(slot + delta as usize) {
-                Some(scope) => Some(scope.local_ordinal()),
-                None => None,
-            },
+            Some(delta) => {
+                let Some(child_slot) = slot.checked_add(delta as usize) else {
+                    crate::invariant();
+                };
+                let Some(scope) = self.route_scope_by_slot(child_slot) else {
+                    crate::invariant();
+                };
+                Some(scope.local_ordinal())
+            }
             None => None,
         }
     }
@@ -472,18 +477,18 @@ impl<'a> RoleLaneImage<'a> {
     }
 
     #[inline(always)]
-    const fn route_arm_lane_step_row_at(&self, row: usize) -> Option<RouteArmLaneStepRow> {
+    const fn route_arm_lane_step_row_at(&self, row: usize) -> RouteArmLaneStepRow {
         match self.column_offset(
             self.columns.route_arm_lane_step_rows,
             row,
             ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
         ) {
-            Some(offset) => Some(RouteArmLaneStepRow::new(
+            Some(offset) => RouteArmLaneStepRow::new(
                 self.byte_at(offset),
                 self.read_u16_at(offset + 1) as usize,
                 self.read_u16_at(offset + 3) as usize,
-            )),
-            None => None,
+            ),
+            None => crate::invariant(),
         }
     }
 
@@ -505,9 +510,7 @@ impl<'a> RoleLaneImage<'a> {
         let mut pos = range.start();
         let end = range.end();
         while pos < end {
-            let Some(row) = self.route_arm_lane_step_row_at(pos) else {
-                return None;
-            };
+            let row = self.route_arm_lane_step_row_at(pos);
             if row.lane() == lane {
                 return Some(row);
             }

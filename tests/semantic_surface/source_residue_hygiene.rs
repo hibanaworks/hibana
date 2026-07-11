@@ -457,6 +457,20 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
     let facts = read("src/global/typestate/facts.rs");
     let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let descriptor_arm_paths = format!("{event_rows}\n{lane_image}\n{scope_rows}");
+    let child_scope_accessor = lane_image
+        .split("pub(crate) const fn passive_arm_child_ordinal_by_slot")
+        .nth(1)
+        .expect("passive arm child accessor")
+        .split("pub(crate) const fn route_arm_event_row_by_slot")
+        .next()
+        .expect("passive arm child accessor body");
+    let lane_step_row_accessor = lane_image
+        .split("const fn route_arm_lane_step_row_at")
+        .nth(1)
+        .expect("route arm lane-step row accessor")
+        .split("const fn route_arm_lane_step_row(")
+        .next()
+        .expect("route arm lane-step row accessor body");
 
     assert!(
         image_impl.contains("const fn decode_binary_route_arm_index(arm: u8) -> Option<usize>")
@@ -476,8 +490,17 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
     assert!(
         lane_image.matches("route_arm_row_index(slot, arm)").count() >= 5
             && event_rows.contains("let arm = binary_route_arm_index(arm);")
+            && event_rows.contains("let Some(ranges) = Self::route_arm_ranges(markers, route) else {\n            crate::invariant();")
             && scope_rows.contains("let arm = binary_route_arm_index(arm) as u8;")
+            && scope_rows.contains("Some(binary_route_arm_index(arm) as u8)")
+            && scope_rows.contains("let Some((_, start, _)) = Self::scope_dependency_bounds(markers, view_len, scope)\n                else {\n                    crate::invariant();")
             && scope_rows.contains("route_arm_row_index(input.route_slot, input.arm)")
+            && child_scope_accessor
+                .contains("let Some(child_slot) = slot.checked_add(delta as usize) else {")
+            && child_scope_accessor.contains("let Some(scope) = self.route_scope_by_slot(child_slot) else {\n                    crate::invariant();")
+            && lane_step_row_accessor.contains("(&self, row: usize) -> RouteArmLaneStepRow")
+            && lane_step_row_accessor.contains("None => crate::invariant(),")
+            && !lane_image.contains("let Some(row) = self.route_arm_lane_step_row_at(pos) else")
             && facts
                 .contains("const fn decode_optional_route_arm_raw(raw: u8) -> Option<Option<u8>>")
             && facts.contains("2..=254 => None")

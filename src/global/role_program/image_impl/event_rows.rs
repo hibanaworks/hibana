@@ -234,7 +234,7 @@ impl RoleLaneScratch {
         let arm = binary_route_arm_index(arm);
         let markers = eff_list.scope_markers();
         let Some(ranges) = Self::route_arm_ranges(markers, route) else {
-            return None;
+            crate::invariant();
         };
         let (start, end) = ranges[arm];
         let mut idx = start;

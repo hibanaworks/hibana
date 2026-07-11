@@ -194,7 +194,7 @@ impl RoleLaneScratch {
         start: usize,
     ) -> Option<u8> {
         let Some(ranges) = Self::route_arm_ranges(markers, route) else {
-            return None;
+            crate::invariant();
         };
         let mut arm = 0usize;
         while arm < 2 {
@@ -229,7 +229,7 @@ impl RoleLaneScratch {
             }
             idx += 1;
         }
-        if arm <= 1 { Some(arm) } else { None }
+        Some(binary_route_arm_index(arm) as u8)
     }
 
     pub(super) const fn nearest_route_for_scope(
@@ -422,7 +422,7 @@ impl RoleLaneScratch {
             Some(route) => {
                 let Some((_, start, _)) = Self::scope_dependency_bounds(markers, view_len, scope)
                 else {
-                    return LocalConflict::SharedRoute;
+                    crate::invariant();
                 };
                 LocalConflict::route_arm(
                     route,
