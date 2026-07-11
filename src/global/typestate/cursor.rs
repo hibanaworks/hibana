@@ -11,7 +11,7 @@ use crate::{
     eff::EffIndex,
     global::{
         compiled::images::RoleDescriptorRef,
-        const_dsl::{RouteResolver, ScopeId, ScopeKind},
+        const_dsl::{DynamicRouteResolver, ScopeId, ScopeKind},
         event_program::{LocalEventProgram, LocalEventRowSet},
         role_program::{LaneSetView, LaneSteps, PackedLaneRange, lane_word_count},
     },
@@ -387,8 +387,8 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn route_controller(&self, scope_id: ScopeId) -> Option<(RouteResolver, u8)> {
-        self.program_ref().route_controller(scope_id)
+    fn route_resolver(&self, scope_id: ScopeId) -> Option<DynamicRouteResolver> {
+        self.program_ref().route_resolver(scope_id)
     }
 }
 

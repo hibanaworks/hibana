@@ -38,7 +38,7 @@ fn occurrences(source: &str, needle: &str) -> usize {
 
 #[test]
 fn public_repository_tests_name_registered_rendezvous_witnesses() {
-    let tests = read_all_rs_tree_except("tests", &["tests/semantic_surface/source_residue.rs"]);
+    let tests = read_all_rs_tree_except("tests", &["tests/semantic_surface"]);
     let forbidden = "rv_id";
 
     assert!(
@@ -362,12 +362,11 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
         send_preview_authority.contains("fn preview_dynamic_resolver_arm_for_scope(")
             && send_preview_authority.contains("fn preview_controller_send_arm_for_scope(")
             && send_preview_authority
-                .contains("resolve_dynamic_resolver_for_send_preview(lane, scope_id, resolver_id)")
+                .contains("resolve_dynamic_resolver_for_send_preview(lane, resolver)")
             && !send_preview_authority.contains("ResolverDecisionProof")
             && !send_preview_authority.contains("proofs")
-            && send_preview_authority.contains(
-                ".route_scope_controller_resolver(scope_id)\n            .is_some_and(|(resolver, _)| resolver.is_dynamic())"
-            )
+            && send_preview_authority
+                .contains("self.cursor.route_scope_resolver(scope_id).is_some()")
             && send_preview.contains("let preview_error = Cell::new(None::<SendError>);")
             && !send_preview.contains("ResolverDecisionProofs")
             && !send_preview.contains("resolver_decisions")

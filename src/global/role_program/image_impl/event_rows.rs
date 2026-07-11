@@ -11,6 +11,26 @@ use crate::global::{
     },
 };
 
+pub(super) const fn decode_resident_event_header(
+    eff_index: u16,
+    scope_raw: u16,
+    flags: u8,
+) -> Option<ScopeId> {
+    if eff_index as usize >= crate::eff::meta::MAX_EFF_NODES
+        || (flags & !PackedLocalEventRow::FLAG_CHOICE_DETERMINANT) != 0
+    {
+        return None;
+    }
+    let scope = match ScopeId::decode_raw(scope_raw) {
+        Some(scope) => scope,
+        None => return None,
+    };
+    if !scope.is_none() && scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES {
+        return None;
+    }
+    Some(scope)
+}
+
 impl PackedLocalEventRow {
     const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
 
@@ -32,11 +52,15 @@ impl PackedLocalEventRow {
         frame_label: u8,
         flags: u8,
     ) -> Self {
+        let scope = match decode_resident_event_header(eff_index, scope_raw, flags) {
+            Some(scope) => scope,
+            None => crate::invariant(),
+        };
         Self {
             eff_index,
             dependency_row,
             conflict_row,
-            scope: ScopeId::from_raw(scope_raw),
+            scope,
             frame_label,
             flags,
         }

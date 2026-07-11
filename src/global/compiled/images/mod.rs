@@ -6,7 +6,7 @@ pub(crate) use self::{
         CompiledProgramRef, ProgramImageBytes, ProgramImageColumns, ProgramImagePlan,
         RoleDescriptorRef, RoleImageSlice,
     },
-    program::{EventSemanticKind, RouteResolverSite},
+    program::EventSemanticKind,
 };
 
 #[cfg(all(test, hibana_repo_tests))]

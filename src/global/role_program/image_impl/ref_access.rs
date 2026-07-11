@@ -218,7 +218,7 @@ impl RoleImageRef {
         &self,
         slot: usize,
         arm: u8,
-    ) -> Option<LaneSetView<'static>> {
+    ) -> LaneSetView<'static> {
         self.lanes()
             .route_scope_arm_lane_set_by_slot(slot, arm, self.footprint().lane_word_count())
     }
@@ -227,7 +227,7 @@ impl RoleImageRef {
     pub(crate) const fn route_scope_offer_lane_set_by_slot(
         &self,
         slot: usize,
-    ) -> Option<LaneSetView<'static>> {
+    ) -> LaneSetView<'static> {
         self.lanes()
             .route_scope_offer_lane_set_by_slot(slot, self.footprint().lane_word_count())
     }

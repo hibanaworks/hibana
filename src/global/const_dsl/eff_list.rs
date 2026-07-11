@@ -1,7 +1,7 @@
 use super::{
-    EffList, EffStruct, MAX_CAPACITY, MAX_ROUTE_RESOLVER_MARKERS, MAX_SEGMENT_EFFS, MAX_SEGMENTS,
-    Message, ReentryMark, RouteResolver, RouteResolverMarker, ScopeEvent, ScopeId, ScopeKind,
-    ScopeMarker, eff,
+    DynamicRouteResolver, EffList, EffStruct, MAX_CAPACITY, MAX_ROUTE_RESOLVER_MARKERS,
+    MAX_SEGMENT_EFFS, MAX_SEGMENTS, Message, ReentryMark, RouteResolverMarker, ScopeEvent, ScopeId,
+    ScopeKind, ScopeMarker, eff,
 };
 
 #[derive(Clone, Copy)]
@@ -277,9 +277,9 @@ impl EffList {
         self.resolver_marker_len += 1;
     }
 
-    pub(crate) const fn resolver_for_scope(&self, scope: ScopeId) -> Option<RouteResolver> {
-        if scope.is_none() {
-            return None;
+    pub(crate) const fn resolver_for_scope(&self, scope: ScopeId) -> Option<DynamicRouteResolver> {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
+            crate::invariant();
         }
         let mut idx = 0usize;
         while idx < self.resolver_marker_len {

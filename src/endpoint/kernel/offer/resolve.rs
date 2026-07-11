@@ -373,10 +373,7 @@ where
                 commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
             });
         }
-        let is_dynamic_route_scope = self
-            .cursor
-            .route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _)| resolver.is_dynamic());
+        let is_dynamic_route_scope = self.cursor.route_scope_resolver(scope_id).is_some();
         if is_dynamic_route_scope {
             return None;
         }

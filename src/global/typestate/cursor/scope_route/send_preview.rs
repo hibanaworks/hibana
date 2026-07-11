@@ -160,8 +160,7 @@ impl EventCursor {
     }
 
     fn route_scope_has_dynamic_resolver(&self, scope_id: ScopeId) -> bool {
-        self.route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _)| resolver.is_dynamic())
+        self.route_scope_resolver(scope_id).is_some()
     }
 
     #[inline(never)]

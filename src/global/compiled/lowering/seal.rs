@@ -4,7 +4,7 @@ use crate::{
     global::{
         compiled::lowering::CompiledProgramImage,
         const_dsl::{
-            EffList, ReentryMark, RouteResolver, ScopeEvent, ScopeKind, ScopeMarker,
+            EffList, ReentryMark, ScopeEvent, ScopeKind, ScopeMarker,
             first_visible_controller_mask, first_visible_endpoint_selector_conflicts_from_markers,
             local_route_observer_paths_mergeable, route_arm_ranges_from_first_enter,
             validate_parallel_endpoint_selectors, validate_roll_reentry_endpoint_selectors,
@@ -388,10 +388,7 @@ const fn scope_has_dynamic_resolver(
     eff_list: &EffList,
     route_scope: crate::global::const_dsl::ScopeId,
 ) -> bool {
-    match eff_list.resolver_for_scope(route_scope) {
-        Some(RouteResolver::Dynamic { .. }) => true,
-        Some(RouteResolver::Intrinsic) | None => false,
-    }
+    eff_list.resolver_for_scope(route_scope).is_some()
 }
 
 const fn unique_controller_role(mask: u16) -> Option<u8> {

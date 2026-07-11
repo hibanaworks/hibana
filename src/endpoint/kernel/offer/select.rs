@@ -349,11 +349,8 @@ where
             };
         }
         let current_is_controller = self.cursor.is_route_controller(scope_id);
-        let current_is_dynamic = current_is_controller
-            && self
-                .cursor
-                .route_scope_controller_resolver(scope_id)
-                .is_some_and(|(resolver, _)| resolver.is_dynamic());
+        let current_is_dynamic =
+            current_is_controller && self.cursor.route_scope_resolver(scope_id).is_some();
         let frontier_facts = CursorEndpoint::<ROLE, T>::frontier_facts_at(
             &self.cursor,
             scope_id,

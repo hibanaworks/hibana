@@ -25,14 +25,21 @@ impl Arm {
     }
 
     #[inline]
+    const fn decode_single_ready_mask(mask: u8) -> Option<Option<Self>> {
+        match mask {
+            0 | 3 => Some(None),
+            1 => Some(Some(Self::LEFT)),
+            2 => Some(Some(Self::RIGHT)),
+            4..=u8::MAX => None,
+        }
+    }
+
+    #[inline]
     pub(super) const fn from_single_ready_mask(mask: u8) -> Option<Self> {
-        if mask & !0b11 != 0 {
-            crate::invariant();
+        match Self::decode_single_ready_mask(mask) {
+            Some(arm) => arm,
+            None => crate::invariant(),
         }
-        if mask.count_ones() != 1 {
-            return None;
-        }
-        Some(Self::from_raw(mask.trailing_zeros() as u8))
     }
 
     #[inline]
@@ -125,6 +132,13 @@ mod tests {
     fn raw_route_arm_and_ready_mask_decode_exact_binary_authority() {
         for raw in 0..=u8::MAX {
             assert_eq!(Arm::decode_raw(raw).is_some(), raw <= 1);
+            let expected = match raw {
+                0 | 3 => Some(None),
+                1 => Some(Some(Arm::LEFT)),
+                2 => Some(Some(Arm::RIGHT)),
+                4..=u8::MAX => None,
+            };
+            assert_eq!(Arm::decode_single_ready_mask(raw), expected);
         }
         assert_eq!(Arm::from_single_ready_mask(0), None);
         assert_eq!(Arm::from_single_ready_mask(1), Some(Arm::LEFT));

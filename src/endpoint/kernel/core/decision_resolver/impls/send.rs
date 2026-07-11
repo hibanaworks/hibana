@@ -2,10 +2,7 @@ use super::super::super::{
     CursorEndpoint, SelectedRouteCommitRowsRef, SendError, SendMeta, SendResult,
     SendRouteAuthority, Transport,
 };
-use crate::{
-    global::const_dsl::ScopeId,
-    global::{const_dsl::RouteResolver, role_program::PackedLaneRange},
-};
+use crate::{global::const_dsl::DynamicRouteResolver, global::role_program::PackedLaneRange};
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -116,9 +113,7 @@ where
                 .ok_or(SendError::PhaseInvariant)?;
             let scope_id = route_row.scope();
             let arm_index = route_row.selected_arm();
-            let Some((RouteResolver::Dynamic { resolver_id, scope }, _)) =
-                self.cursor.route_scope_controller_resolver(scope_id)
-            else {
+            let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
                 idx += 1;
                 continue;
             };
@@ -132,13 +127,7 @@ where
             {
                 audit_start = idx as u16;
             }
-            self.resolve_dynamic_route_arm_for_send_preview(
-                meta,
-                scope_id,
-                arm_index,
-                scope,
-                resolver_id,
-            )?;
+            self.resolve_dynamic_route_arm_for_send_preview(meta, arm_index, resolver)?;
             idx += 1;
         }
         Ok(audit_start)
@@ -147,22 +136,16 @@ where
     fn resolve_dynamic_route_arm_for_send_preview(
         &self,
         meta: &SendMeta,
-        scope_id: ScopeId,
         arm_index: u8,
-        resolver_scope: ScopeId,
-        resolver_id: u16,
+        resolver: DynamicRouteResolver,
     ) -> SendResult<()> {
-        if scope_id.is_none() || scope_id != resolver_scope {
-            return Err(SendError::PhaseInvariant);
-        }
+        let scope_id = resolver.scope();
+        let resolver_id = resolver.resolver_id();
         if let Some(selected) = self.selected_arm_for_scope(scope_id) {
             if self.reentrant_selected_arm_complete(scope_id, selected) {
                 if meta.route_scope != scope_id {
-                    let resolution = self.resolve_dynamic_resolver_for_send_preview(
-                        meta.lane,
-                        scope_id,
-                        resolver_id,
-                    )?;
+                    let resolution =
+                        self.resolve_dynamic_resolver_for_send_preview(meta.lane, resolver)?;
                     return if resolution.index() == arm_index {
                         Ok(())
                     } else {
@@ -188,8 +171,7 @@ where
                 Err(SendError::PhaseInvariant)
             };
         }
-        let resolution =
-            self.resolve_dynamic_resolver_for_send_preview(meta.lane, scope_id, resolver_id)?;
+        let resolution = self.resolve_dynamic_resolver_for_send_preview(meta.lane, resolver)?;
         if resolution.index() == arm_index {
             Ok(())
         } else {
@@ -208,17 +190,11 @@ where
                 .ok_or(SendError::PhaseInvariant)?;
             let scope_id = route_row.scope();
             let arm_index = route_row.selected_arm();
-            if let Some((RouteResolver::Dynamic { scope, .. }, _)) =
-                self.cursor.route_scope_controller_resolver(scope_id)
+            if self.cursor.route_scope_resolver(scope_id).is_some()
+                && let Some(selected) = self.selected_arm_for_scope(scope_id)
+                && selected != arm_index
             {
-                if scope_id.is_none() || scope_id != scope {
-                    return Err(SendError::PhaseInvariant);
-                }
-                if let Some(selected) = self.selected_arm_for_scope(scope_id)
-                    && selected != arm_index
-                {
-                    return Err(SendError::PhaseInvariant);
-                }
+                return Err(SendError::PhaseInvariant);
             }
             idx += 1;
         }
@@ -228,12 +204,11 @@ where
     pub(in crate::endpoint::kernel::core) fn resolve_dynamic_resolver_for_send_preview(
         &self,
         lane: u8,
-        scope_id: ScopeId,
-        resolver_id: u16,
+        resolver: DynamicRouteResolver,
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
+        let scope_id = resolver.scope();
         let cluster = self.session.cluster();
-        let resolver_result =
-            cluster.resolve_dynamic_resolver(self.rendezvous_id(), scope_id, resolver_id);
+        let resolver_result = cluster.resolve_dynamic_resolver(self.rendezvous_id(), resolver);
         if let Some(kind) = self.session_fault() {
             return Err(SendError::SessionFault(kind));
         }

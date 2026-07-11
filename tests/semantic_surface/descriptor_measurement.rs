@@ -585,7 +585,7 @@ fn resident_descriptor_metadata_stays_columnar() {
             && !lowering.contains("route_scope_rows: [ProgramRouteScopeRow")
             && program_blob.contains("eff_list: &EffList")
             && program_blob.contains("Self::atom_at(eff_list, idx)")
-            && program_blob.contains("eff_list.resolver_for_scope(route_scope)"),
+            && program_blob.contains("eff_list.resolver_for_scope(marker.scope_id)"),
         "resident descriptor metadata must not rebuild a compiled validation image; EffList remains the single atom/scope/resolver source for compact blobs"
     );
 }

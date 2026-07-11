@@ -56,14 +56,17 @@ impl PackedEventConflict {
 
     #[inline(always)]
     const fn decode_raw(raw: u16) -> Option<Self> {
-        if raw == Self::ABSENT_RAW
-            || raw == Self::REENTRY_WITHOUT_CONFLICT_RAW
-            || (raw & !Self::ROUTE_VALUE_MASK) == 0
-        {
-            Some(Self(raw))
-        } else {
-            None
+        if raw == Self::ABSENT_RAW || raw == Self::REENTRY_WITHOUT_CONFLICT_RAW {
+            return Some(Self(raw));
         }
+        if (raw & !Self::ROUTE_VALUE_MASK) != 0 {
+            return None;
+        }
+        let ordinal = (raw >> Self::ARM_BITS) & Self::ROUTE_MASK;
+        if ordinal as usize >= eff::meta::MAX_EFF_NODES {
+            return None;
+        }
+        Some(Self(raw))
     }
 
     #[inline(never)]
@@ -93,7 +96,7 @@ impl PackedEventConflict {
             crate::invariant();
         }
         let ordinal = scope.local_ordinal();
-        if ordinal > Self::ROUTE_MASK {
+        if ordinal as usize >= eff::meta::MAX_EFF_NODES {
             crate::invariant();
         }
         Self((ordinal << Self::ARM_BITS) | arm as u16)
@@ -631,13 +634,16 @@ mod tests {
     #[test]
     fn packed_conflict_and_optional_arm_decoders_accept_exact_domains() {
         for raw in 0..=u16::MAX {
-            let expected = raw <= 0x3fff || raw == 0x6000 || raw == 0xffff;
+            let route_ordinal = (raw >> 1) & 0x0fff;
+            let route =
+                (raw & !0x3fff) == 0 && (route_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES;
+            let expected = route || raw == 0x6000 || raw == 0xffff;
             let decoded = PackedEventConflict::decode_raw(raw);
             assert_eq!(decoded.is_some(), expected);
-            if raw <= 0x3fff {
+            if route {
                 assert_eq!(
                     decoded.and_then(PackedEventConflict::decoded_route),
-                    Some(((raw >> 1) & 0x0fff, (raw & 1) as u8))
+                    Some((route_ordinal, (raw & 1) as u8))
                 );
             } else if expected {
                 assert_eq!(decoded.and_then(PackedEventConflict::decoded_route), None);

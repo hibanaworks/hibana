@@ -1,6 +1,6 @@
 use crate::{
     eff::EffKind,
-    global::const_dsl::{EffList, RouteResolver, ScopeEvent},
+    global::const_dsl::{EffList, ScopeEvent},
 };
 
 use super::super::images::program::{CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES};

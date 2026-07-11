@@ -148,25 +148,27 @@ where
         key: crate::session::cluster::core::DynamicResolverKey,
         entry: crate::session::cluster::core::DynamicResolverEntry<'cfg>,
     ) -> Result<(), crate::session::cluster::error::ClusterError> {
-        let rendezvous = self.node_ref(&key.rv).ok_or(
+        let rv = key.rendezvous();
+        let rendezvous = self.node_ref(&rv).ok_or(
             crate::session::cluster::error::ClusterError::RendezvousMismatch {
-                expected: key.rv.raw(),
+                expected: rv.raw(),
                 actual: 0,
             },
         )?;
         if rendezvous.access_is_busy() {
             return Err(
-                crate::session::cluster::error::ClusterError::RendezvousBusy { id: key.rv.raw() },
+                crate::session::cluster::error::ClusterError::RendezvousBusy { id: rv.raw() },
             );
         }
-        rendezvous.insert_dynamic_resolver(key.scope, entry)
+        rendezvous.insert_dynamic_resolver(key.scope(), entry)
     }
 
     pub(crate) fn dynamic_resolver(
         &self,
         key: crate::session::cluster::core::DynamicResolverKey,
     ) -> Option<crate::session::cluster::core::DynamicResolverEntry<'cfg>> {
-        self.node_ref(&key.rv)?.dynamic_resolver(key.scope)
+        self.node_ref(&key.rendezvous())?
+            .dynamic_resolver(key.scope())
     }
 }
 

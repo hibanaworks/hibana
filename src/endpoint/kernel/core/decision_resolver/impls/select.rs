@@ -1,7 +1,7 @@
 use super::super::super::{
     Arm, CachedRecvMeta, ClusterError, CommitDelta, CursorEndpoint, EffIndex, OfferScopeSelection,
     RecvError, RecvMeta, RecvResult, RendezvousId, ResolvedRouteArm, RouteArmToken,
-    RouteResolveStep, RouteResolver, ScopeId, SendMeta, TapEvent, Transport, checked_state_index,
+    RouteResolveStep, ScopeId, SendMeta, TapEvent, Transport, checked_state_index,
     controller_arm_label, emit, events,
     prepare_route_site_materialization_rows_from_resident_route_commit_range,
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
@@ -485,24 +485,14 @@ where
         &mut self,
         scope_id: ScopeId,
     ) -> RecvResult<RouteResolveStep> {
-        let (resolver, _tag) = self
+        let resolver = self
             .cursor
-            .route_scope_controller_resolver(scope_id)
+            .route_scope_resolver(scope_id)
             .ok_or(RecvError::PhaseInvariant)?;
-        let RouteResolver::Dynamic {
-            resolver_id,
-            scope: resolver_scope,
-        } = resolver
-        else {
-            return Err(RecvError::PhaseInvariant);
-        };
-        if scope_id.is_none() || scope_id != resolver_scope {
-            return Err(RecvError::PhaseInvariant);
-        }
         let offer_lane = self.offer_lane_for_scope(scope_id);
         let cluster = self.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
-        let resolver_result = cluster.resolve_dynamic_resolver(rv_id, scope_id, resolver_id);
+        let resolver_result = cluster.resolve_dynamic_resolver(rv_id, resolver);
         if let Some(kind) = self.session_fault() {
             return Err(RecvError::SessionFault(kind));
         }

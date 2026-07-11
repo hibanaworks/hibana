@@ -1,13 +1,13 @@
 use super::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
-    PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT,
+    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange, ProgramImageColumns,
+    ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
 };
 use crate::{
     eff::{EffAtom, EffKind},
     global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
-        EffList, INTRINSIC_ROUTE_RESOLVER_ID, RouteResolver, ScopeEvent, ScopeId, ScopeKind,
+        DynamicRouteResolver, EffList, INTRINSIC_ROUTE_RESOLVER_ID, ScopeEvent, ScopeId, ScopeKind,
         parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
     },
 };
@@ -80,55 +80,22 @@ impl<const N: usize> ProgramImageBytes<N> {
         row: usize,
         scope: ScopeId,
         controller_role: Option<u8>,
-        decision: Option<(RouteResolver, u8)>,
+        resolver: Option<DynamicRouteResolver>,
     ) {
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
         self.write_u16(out, scope.raw());
-        let (resolver_id, decision_tag) = match decision {
-            Some((resolver, tag)) => {
-                let resolver_id = match resolver {
-                    RouteResolver::Dynamic { resolver_id, .. } => resolver_id,
-                    RouteResolver::Intrinsic => INTRINSIC_ROUTE_RESOLVER_ID,
-                };
-                (resolver_id, tag)
-            }
-            None => (
-                INTRINSIC_ROUTE_RESOLVER_ID,
-                PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG,
-            ),
+        let resolver_id = match resolver {
+            Some(resolver) => resolver.resolver_id(),
+            None => INTRINSIC_ROUTE_RESOLVER_ID,
         };
         self.write_u16(out + 2, resolver_id);
         self.write_u8(
             out + 4,
             match controller_role {
                 Some(role) => role,
-                None => PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE,
+                None => PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT,
             },
         );
-        self.write_u8(out + 5, decision_tag);
-    }
-
-    #[inline(always)]
-    const fn route_resolver_decision(
-        eff_list: &EffList,
-        route_scope: ScopeId,
-        route_enter_marker_idx: usize,
-    ) -> Option<(RouteResolver, u8)> {
-        let scope_markers = eff_list.scope_markers();
-        if route_enter_marker_idx >= scope_markers.len() {
-            return None;
-        }
-        let route_marker = scope_markers[route_enter_marker_idx];
-        if !matches!(route_marker.event, ScopeEvent::Enter)
-            || !matches!(route_marker.scope_id.kind(), Some(ScopeKind::Route))
-            || !route_marker.scope_id.same(route_scope)
-        {
-            return None;
-        }
-        match eff_list.resolver_for_scope(route_scope) {
-            Some(resolver @ RouteResolver::Dynamic { .. }) => Some((resolver, 0)),
-            Some(RouteResolver::Intrinsic) | None => None,
-        }
     }
 
     #[inline(always)]
@@ -153,7 +120,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     ) -> Option<u8> {
         let scope_markers = eff_list.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
-            return None;
+            crate::invariant();
         }
         let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
             route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
@@ -315,13 +282,13 @@ impl<const N: usize> ProgramImageBytes<N> {
                     continue;
                 }
                 let controller = Self::route_controller_role(eff_list, idx);
-                let decision = Self::route_resolver_decision(eff_list, marker.scope_id, idx);
+                let resolver = eff_list.resolver_for_scope(marker.scope_id);
                 out.write_route_resolver(
                     columns.route_resolvers,
                     route_row,
                     marker.scope_id,
                     controller,
-                    decision,
+                    resolver,
                 );
                 route_row += 1;
             }

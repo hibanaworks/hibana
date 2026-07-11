@@ -313,14 +313,18 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
             && scope.contains("const RESERVED_BIT: u16 = 0x8000;")
             && scope.contains("const KIND_SHIFT: u16 = 13;")
             && scope.contains("const LOCAL_MASK: u16 = 0x1fff;")
+            && scope.contains("pub(crate) const fn decode_raw(raw: u16) -> Option<Self>")
+            && scope.contains("pub(crate) const fn local_ordinal(self) -> u16")
+            && scope.contains("pub(crate) const fn add_ordinal(self, delta: u16) -> Self")
+            && scope.matches("if self.is_none() {").count() >= 3
             && scope
                 .contains("pub(crate) const LOCAL_CAPACITY: u16 = Self::MAX_LOCAL_ORDINAL + 1;"),
         "ScopeId must be a u16 sentinel with reserved/kind/local packed identity"
     );
     for required in [
         "scope: ScopeId,",
-        "pub(crate) const fn scope(&self) -> ScopeId",
-        "pub(crate) scope: crate::global::const_dsl::ScopeId",
+        "pub(crate) const fn scope(self) -> ScopeId",
+        "scope: crate::global::const_dsl::ScopeId",
         "scope: ScopeId,",
         "struct RouteFrame {\n    sid: SessionId,\n    scope: ScopeId,",
     ] {
@@ -367,8 +371,8 @@ fn route_resolver_authority_is_scope_keyed() {
     let route_resolvers = read("src/global/compiled/images/image/route_resolvers.rs");
     let dynamic_resolvers = read("src/session/cluster/core/dynamic_resolvers.rs");
     let dynamic_entry = named_struct_body(&dynamic_resolvers, "DynamicResolverEntry");
-    let route_site = named_struct_body(&program, "RouteResolverSite");
     let bucket = read("src/session/cluster/core/dynamic_resolvers/bucket.rs");
+    let cluster_effects = read("src/session/cluster/effects.rs");
     let session_effects = read("src/session/cluster/core/session_effect_steps.rs");
     let production_scope = [
         const_dsl.as_str(),
@@ -383,31 +387,37 @@ fn route_resolver_authority_is_scope_keyed() {
         route_resolvers.as_str(),
         dynamic_resolvers.as_str(),
         bucket.as_str(),
+        cluster_effects.as_str(),
         session_effects.as_str(),
     ]
     .join("\n");
 
     for required in [
-        "pub(crate) struct RouteResolverSite",
-        "pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self",
-        "pub(crate) const fn scope(&self) -> ScopeId",
-        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6",
+        "type Item = DynamicRouteResolver;",
+        "return Some(DynamicRouteResolver::new(scope, resolver_id));",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5",
         "self.write_u16(out, scope.raw());",
         "self.write_u16(out + 2, resolver_id);",
         "self.write_u8(out + 4,",
-        "self.write_u8(out + 5, decision_tag);",
-        "if ScopeId::from_raw(self.read_u16_at(offset)) == scope_id",
+        "struct RouteResolverRow",
+        "RouteResolverRow::decode(",
+        "if decoded.scope == scope_id",
+        "pub(crate) struct DynamicRouteResolver",
         "pub(crate) struct RouteResolverMarker",
         "pub(crate) scope: ScopeId,\n    pub(crate) resolver_id: u16,",
-        "pub(crate) struct DynamicResolverKey {\n    pub(crate) rv: RendezvousId,\n    pub(crate) scope: crate::global::const_dsl::ScopeId,",
+        "pub(crate) struct DynamicResolverKey {\n    rv: RendezvousId,\n    scope: crate::global::const_dsl::ScopeId,",
         "pub(crate) const fn new(rv: RendezvousId, scope: crate::global::const_dsl::ScopeId) -> Self",
         "pub(crate) fn route_resolver_sites_for",
         "compiled.route_resolver_sites_for(RESOLVER)",
-        "let site_scope = site.scope();",
         "DynamicResolverKey::new(",
-        "site_scope)",
+        "let key = DynamicResolverKey::new(rv_id, resolver.scope());",
+        "self.ensure_dynamic_resolver_capacity(",
+        "missing_sites)?;",
+        "fn commit_prepared_dynamic_resolver",
+        "crate::invariant_ok(self.locals().insert_dynamic_resolver(key, entry));",
         "eff_list.resolver_for_scope(route_scope)",
         "resolver_for_scope(&self, scope: ScopeId)",
+        "if !matches!(scope.kind(), Some(ScopeKind::Route)) {\n            crate::invariant();",
     ] {
         assert!(
             production_scope.contains(required),
@@ -416,6 +426,7 @@ fn route_resolver_authority_is_scope_keyed() {
     }
     for forbidden in [
         "DynamicResolverSite",
+        "struct RouteResolverSite",
         "dynamic_resolver_sites_for",
         "pub(crate) struct ResolverMarker",
         "offset: usize,\n    pub(crate) scope_id: ScopeId,\n    pub(crate) resolver: RouteResolver",
@@ -443,26 +454,32 @@ fn route_resolver_authority_is_scope_keyed() {
         "eff_index: EffIndex",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 12",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6",
+        "decision_tag",
+        "RouteResolver::Intrinsic",
         "read_u32_at",
         "write_u32",
         "pub(crate) struct RouteFrontierSummary",
         "push_route_frontier(route_summary)",
         "route_frontier_summaries(&self)",
         "view.route_frontier_summary(route_scope)",
+        "fn register_dynamic_resolver_resolver",
     ] {
         assert!(
             !production_scope.contains(forbidden),
             "route resolver authority must not regain arm-head or eff-index residue: {forbidden}"
         );
     }
-    assert_eq!(
-        route_site.trim(),
-        "scope: ScopeId,\n    resolver_id: u16,",
-        "RouteResolverSite must be exactly scope + resolver_id"
-    );
     assert!(
         !dynamic_entry.contains("scope:"),
         "dynamic resolver entry must not duplicate the scope key owned by DynamicResolverKey/bucket"
+    );
+    assert_eq!(
+        session_effects
+            .matches("self.ensure_dynamic_resolver_capacity(")
+            .count(),
+        1,
+        "resolver registration must preflight capacity once before its infallible commit loop"
     );
 }
 

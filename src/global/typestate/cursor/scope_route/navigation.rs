@@ -150,9 +150,7 @@ impl EventCursor {
         lane: u8,
         frame_label: u8,
     ) -> Option<(u8, StateIndex)> {
-        if let Some((resolver, _)) = self.route_scope_controller_resolver(scope_id)
-            && resolver.is_dynamic()
-        {
+        if self.route_scope_resolver(scope_id).is_some() {
             return None;
         }
         self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
@@ -175,10 +173,7 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
     ) -> bool {
-        !self.is_route_controller(scope_id)
-            && !self
-                .route_scope_controller_resolver(scope_id)
-                .is_some_and(|(resolver, _)| resolver.is_dynamic())
+        !self.is_route_controller(scope_id) && self.route_scope_resolver(scope_id).is_none()
     }
 
     pub(crate) fn passive_descendant_dispatch_arm_from_exact_frame_label(

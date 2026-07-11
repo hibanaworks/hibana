@@ -18,7 +18,7 @@ use super::offer::*;
 mod route_commit_helpers;
 use super::decision_state::{ReentryScopeLiveness, RouteCommitRowSetBuilder, RouteState};
 use crate::eff::EffIndex;
-use crate::global::const_dsl::{RouteResolver, ScopeId};
+use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::LaneSetView;
 use crate::global::typestate::{
     CursorInvariantError, CursorRefresh, EventCursor, RecvMeta, RelocatableResidentLaneStep,

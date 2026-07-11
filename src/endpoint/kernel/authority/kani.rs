@@ -14,12 +14,15 @@ fn route_arm_decoding_accepts_exact_binary_domain() {
 #[kani::proof]
 fn single_ready_mask_decoding_is_exact() {
     let mask: u8 = kani::any();
-    kani::assume(mask & !0b11 == 0);
+    let expected = match mask {
+        0 | 3 => Some(None),
+        1 => Some(Some(Arm::LEFT)),
+        2 => Some(Some(Arm::RIGHT)),
+        4..=u8::MAX => None,
+    };
 
-    match (mask, Arm::from_single_ready_mask(mask)) {
-        (0, None) | (3, None) => {}
-        (1, Some(arm)) => assert!(arm == Arm::LEFT),
-        (2, Some(arm)) => assert!(arm == Arm::RIGHT),
-        _ => assert!(false),
+    assert!(Arm::decode_single_ready_mask(mask) == expected);
+    if let Some(expected) = expected {
+        assert!(Arm::from_single_ready_mask(mask) == expected);
     }
 }

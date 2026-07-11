@@ -570,7 +570,7 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
     for required in [
         "ROLE_IMAGE_EVENT_STRIDE: usize = 10",
         "ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2",
-        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5",
     ] {
         assert!(
             descriptor_hot_path.contains(required),

@@ -59,10 +59,7 @@ where
         scope_id: crate::global::const_dsl::ScopeId,
     ) -> OfferScopeProfile {
         let is_controller = self.cursor.is_route_controller(scope_id);
-        let is_dynamic = self
-            .cursor
-            .route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _)| resolver.is_dynamic());
+        let is_dynamic = self.cursor.route_scope_resolver(scope_id).is_some();
         match (is_controller, is_dynamic) {
             (true, true) => OfferScopeProfile::ControllerDynamic,
             (true, false) => OfferScopeProfile::ControllerIntrinsic,

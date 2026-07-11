@@ -7,9 +7,8 @@ use crate::{
 };
 
 pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 7;
-pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6;
-pub(crate) const PROGRAM_IMAGE_INTRINSIC_ROUTE_ROLE: u8 = u8::MAX;
-pub(crate) const PROGRAM_IMAGE_INTRINSIC_ROUTE_DECISION_TAG: u8 = 0;
+pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5;
+pub(crate) const PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT: u8 = u8::MAX;
 pub(super) const ROUTE_ORDINAL_BYTES: usize = crate::eff::meta::MAX_EFF_NODES.div_ceil(8);
 
 #[inline(always)]

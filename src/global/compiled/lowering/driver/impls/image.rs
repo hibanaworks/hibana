@@ -82,10 +82,7 @@ impl CompiledProgramImage {
                                 );
                             summary.program.compiled_program_counts.route_resolvers =
                                 summary.program.lowering_facts.route_scope_count as usize;
-                            if let Some(RouteResolver::Dynamic { resolver_id, .. }) =
-                                eff_list.resolver_for_scope(marker.scope_id)
-                            {
-                                let _ = resolver_id;
+                            if eff_list.resolver_for_scope(marker.scope_id).is_some() {
                                 summary
                                     .program
                                     .compiled_program_counts

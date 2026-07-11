@@ -64,16 +64,16 @@ impl ScopeId {
         self.0 == other.0
     }
 
-    pub(crate) const fn from_raw(raw: u16) -> Self {
+    pub(crate) const fn decode_raw(raw: u16) -> Option<Self> {
         if raw == Self::ABSENT_RAW {
-            return Self::none();
+            return Some(Self::none());
         }
         if (raw & Self::RESERVED_BIT) != 0 {
-            crate::invariant();
+            return None;
         }
         match (raw >> Self::KIND_SHIFT) & Self::KIND_MASK {
-            0..=2 => Self(raw),
-            _ => crate::invariant(),
+            0..=2 => Some(Self(raw)),
+            _ => None,
         }
     }
 
@@ -91,14 +91,14 @@ impl ScopeId {
 
     pub(crate) const fn local_ordinal(self) -> u16 {
         if self.is_none() {
-            return 0;
+            crate::invariant();
         }
         self.0 & Self::LOCAL_MASK
     }
 
     pub(crate) const fn add_ordinal(self, delta: u16) -> Self {
         if self.is_none() {
-            return Self::none();
+            crate::invariant();
         }
         let ordinal = self.local_ordinal();
         let sum = ordinal as u32 + delta as u32;
@@ -107,7 +107,7 @@ impl ScopeId {
         }
         match self.kind() {
             Some(kind) => Self::new(kind, sum as u16),
-            None => Self::none(),
+            None => crate::invariant(),
         }
     }
 
@@ -123,6 +123,9 @@ impl ScopeId {
         Self::new(ScopeKind::Parallel, ordinal)
     }
 }
+
+#[cfg(kani)]
+mod kani;
 
 #[cfg(test)]
 mod tests {
@@ -146,9 +149,34 @@ mod tests {
         assert_eq!(parallel.kind(), Some(ScopeKind::Parallel));
         assert_eq!(parallel.local_ordinal(), 3071);
 
-        assert!(ScopeId::from_raw(route.raw()).same(route));
-        assert!(ScopeId::from_raw(roll.raw()).same(roll));
-        assert!(ScopeId::from_raw(parallel.raw()).same(parallel));
+        assert_eq!(ScopeId::decode_raw(route.raw()), Some(route));
+        assert_eq!(ScopeId::decode_raw(roll.raw()), Some(roll));
+        assert_eq!(ScopeId::decode_raw(parallel.raw()), Some(parallel));
         assert!(ScopeId::LOCAL_CAPACITY as usize >= crate::eff::meta::MAX_EFF_NODES);
+    }
+
+    #[test]
+    fn scope_id_decoder_accepts_exact_compact_domain() {
+        for raw in 0..=u16::MAX {
+            let expected = raw == u16::MAX
+                || ((raw & 0x8000) == 0 && ((raw >> 13) & 0b11) <= ScopeKind::Parallel as u16);
+            let decoded = ScopeId::decode_raw(raw);
+            assert_eq!(decoded.is_some(), expected);
+            if let Some(scope) = decoded {
+                assert_eq!(scope.raw(), raw);
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn absent_scope_has_no_local_ordinal() {
+        let _ = ScopeId::none().local_ordinal();
+    }
+
+    #[test]
+    #[should_panic]
+    fn absent_scope_cannot_be_rebased() {
+        let _ = ScopeId::none().add_ordinal(1);
     }
 }

@@ -76,11 +76,7 @@ where
                 self.clear_scope_evidence(scope_id);
                 return;
             }
-            None if self
-                .cursor
-                .route_scope_controller_resolver(scope_id)
-                .is_some_and(|(resolver, _)| resolver.is_dynamic()) =>
-            {
+            None if self.cursor.route_scope_resolver(scope_id).is_some() => {
                 let arm = Arm::from_raw(selected_arm);
                 self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, lane_wire);
                 self.emit_route_arm_selection(
@@ -140,9 +136,8 @@ where
                 crate::invariant();
             };
             let scope_id = route_row.scope();
-            if let Some((crate::global::const_dsl::RouteResolver::Dynamic { resolver_id, .. }, _)) =
-                self.cursor.route_scope_controller_resolver(scope_id)
-            {
+            if let Some(resolver) = self.cursor.route_scope_resolver(scope_id) {
+                let resolver_id = resolver.resolver_id();
                 let arm = match route_row.selected_arm() {
                     0 => crate::session::cluster::core::DecisionArm::Left,
                     1 => crate::session::cluster::core::DecisionArm::Right,

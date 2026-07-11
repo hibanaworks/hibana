@@ -168,6 +168,54 @@ fn packed_sidecar_pair_is_aligned_and_disjoint() {
 }
 
 #[kani::proof]
+fn packed_sidecar_pair_compacts_before_source_ranges() {
+    let base: usize = kani::any();
+    let first_source_frontier: usize = kani::any();
+    let source_gap: usize = kani::any();
+    let first_bytes: usize = kani::any();
+    let second_bytes: usize = kani::any();
+    let shift_mask = (usize::BITS - 1) as u8;
+    let first_align = 1usize << usize::from(kani::any::<u8>() & shift_mask);
+    let second_align = 1usize << usize::from(kani::any::<u8>() & shift_mask);
+
+    let sources = packed_sidecar_range(base, first_source_frontier, first_bytes, first_align)
+        .and_then(|(first_start, first_end)| {
+            first_end.checked_add(source_gap).and_then(|frontier| {
+                packed_sidecar_range(base, frontier, second_bytes, second_align).map(
+                    |(second_start, second_end)| (first_start, first_end, second_start, second_end),
+                )
+            })
+        });
+    let destinations = packed_sidecar_range(base, 0, first_bytes, first_align).and_then(
+        |(first_start, first_end)| {
+            packed_sidecar_range(base, first_end, second_bytes, second_align).map(
+                |(second_start, second_end)| (first_start, first_end, second_start, second_end),
+            )
+        },
+    );
+
+    kani::cover!(sources.is_some() && destinations.is_some());
+    kani::cover!(sources.is_none());
+    kani::cover!(destinations.is_none());
+    if let (
+        Some((first_source_start, first_source_end, second_source_start, second_source_end)),
+        Some((
+            first_destination_start,
+            first_destination_end,
+            second_destination_start,
+            second_destination_end,
+        )),
+    ) = (sources, destinations)
+    {
+        assert!(first_destination_start <= first_source_start);
+        assert!(first_destination_end <= first_source_end);
+        assert!(first_destination_end <= second_source_start);
+        assert!(second_destination_start <= second_source_start);
+        assert!(second_destination_end <= second_source_end);
+    }
+}
+
+#[kani::proof]
 fn sidecar_overlap_is_symmetric_and_exact() {
     let left_start: usize = kani::any();
     let left_end: usize = kani::any();

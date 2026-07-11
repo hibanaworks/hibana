@@ -1,10 +1,7 @@
 use super::{ProductionCursorTrace, selected_arm};
 use crate::{
     g,
-    global::{
-        Message,
-        const_dsl::{RouteResolver, ScopeId},
-    },
+    global::{Message, const_dsl::ScopeId},
 };
 use std::{
     format, fs,
@@ -229,26 +226,17 @@ impl ProductionCursorTrace {
             .route_scope_rows_by_slot(conflict as usize)
             .expect("Lean proof conflict must name a production route slot")
             .scope();
-        let (resolver, _) = self
+        let resolver = self
             .cursor()
-            .route_scope_controller_resolver(scope)
+            .route_scope_resolver(scope)
             .expect("Lean proof resolver site must exist in the production descriptor");
-        match resolver {
-            RouteResolver::Intrinsic => {
-                panic!("Lean proof resolver site unexpectedly used intrinsic authority")
-            }
-            RouteResolver::Dynamic {
-                resolver_id,
-                scope: resolver_scope,
-            } => {
-                assert_eq!(resolver_scope, scope, "resolver scope metadata diverged");
-                assert_eq!(
-                    resolver_id, expected_resolver,
-                    "resolver id metadata diverged"
-                );
-                scope
-            }
-        }
+        assert_eq!(resolver.scope(), scope, "resolver scope metadata diverged");
+        assert_eq!(
+            resolver.resolver_id(),
+            expected_resolver,
+            "resolver id metadata diverged"
+        );
+        scope
     }
 
     fn apply_proof_resolver_selection(&mut self, conflict: u16, resolver: u16, arm: ProofArm) {

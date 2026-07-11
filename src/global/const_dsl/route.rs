@@ -1,14 +1,28 @@
 use super::{INTRINSIC_ROUTE_RESOLVER_ID, ScopeId, ScopeKind};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RouteResolver {
-    Intrinsic,
-    Dynamic { resolver_id: u16, scope: ScopeId },
+#[derive(Clone, Copy)]
+pub(crate) struct DynamicRouteResolver {
+    resolver_id: u16,
+    scope: ScopeId,
 }
 
-impl RouteResolver {
-    pub(crate) const fn is_dynamic(self) -> bool {
-        matches!(self, Self::Dynamic { .. })
+impl DynamicRouteResolver {
+    pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
+        if !matches!(scope.kind(), Some(ScopeKind::Route))
+            || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
+            || resolver_id == INTRINSIC_ROUTE_RESOLVER_ID
+        {
+            crate::invariant();
+        }
+        Self { resolver_id, scope }
+    }
+
+    pub(crate) const fn resolver_id(self) -> u16 {
+        self.resolver_id
+    }
+
+    pub(crate) const fn scope(self) -> ScopeId {
+        self.scope
     }
 }
 
@@ -39,20 +53,11 @@ impl RouteResolverMarker {
     }
 
     pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
-        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
-            panic!("route resolver marker scope");
-        }
+        let _ = DynamicRouteResolver::new(scope, resolver_id);
         Self { scope, resolver_id }
     }
 
-    pub(crate) const fn resolver(self) -> RouteResolver {
-        if self.resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
-            RouteResolver::Intrinsic
-        } else {
-            RouteResolver::Dynamic {
-                resolver_id: self.resolver_id,
-                scope: self.scope,
-            }
-        }
+    pub(crate) const fn resolver(self) -> DynamicRouteResolver {
+        DynamicRouteResolver::new(self.scope, self.resolver_id)
     }
 }

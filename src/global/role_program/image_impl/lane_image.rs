@@ -9,8 +9,28 @@ use super::{
     },
     route_arm_row_index,
 };
-use crate::global::const_dsl::ScopeId;
+use crate::global::const_dsl::{ScopeId, ScopeKind};
 use crate::global::typestate::{LocalDependency, PackedEventConflict, PackedLocalDependency};
+
+pub(super) const fn decode_resident_route_scope(raw: u16) -> Option<ScopeId> {
+    let scope = match ScopeId::decode_raw(raw) {
+        Some(scope) => scope,
+        None => return None,
+    };
+    if !matches!(scope.kind(), Some(ScopeKind::Route))
+        || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
+    {
+        return None;
+    }
+    Some(scope)
+}
+
+pub(super) const fn decode_resident_roll_scope(raw_ordinal: u16) -> Option<ScopeId> {
+    if raw_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
+        return None;
+    }
+    Some(ScopeId::roll_scope(raw_ordinal))
+}
 
 impl<'a> RoleLaneImage<'a> {
     #[inline(always)]
@@ -132,13 +152,7 @@ impl<'a> RoleLaneImage<'a> {
             return None;
         }
         let row = self.resident_row_range(idx);
-        if row.is_absent_or_zero_len() {
-            None
-        } else if row.start() > u16::MAX as usize {
-            crate::invariant();
-        } else {
-            Some(row.start() as u16)
-        }
+        Some(row.start() as u16)
     }
 
     pub(crate) const fn resident_row_lane_steps(
@@ -158,7 +172,7 @@ impl<'a> RoleLaneImage<'a> {
         let mut first = usize::MAX;
         let mut len = 0usize;
         let mut layout = LaneStepLayout::Contiguous;
-        while pos < end && pos < self.columns.lanes.len as usize {
+        while pos < end {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
                 if first == usize::MAX {
                     first = pos;
@@ -186,7 +200,7 @@ impl<'a> RoleLaneImage<'a> {
     pub(crate) const fn dependency_for_index(&self, current_idx: usize) -> Option<LocalDependency> {
         let event = match self.local_step_event(current_idx) {
             Some(event) => event,
-            None => return None,
+            None => crate::invariant(),
         };
         if event.dependency_row == u16::MAX {
             return None;
@@ -195,18 +209,18 @@ impl<'a> RoleLaneImage<'a> {
         if row >= self.columns.dependencies.len as usize {
             crate::invariant();
         } else {
-            match self.packed_dependency_row(row) {
-                Some(row) => row.to_dependency(),
+            match self.packed_dependency_row(row).to_dependency() {
+                Some(dependency) => Some(dependency),
                 None => crate::invariant(),
             }
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn event_conflict_for_index(&self, current_idx: usize) -> PackedEventConflict {
         let event = match self.local_step_event(current_idx) {
             Some(event) => event,
-            None => return PackedEventConflict::none(),
+            None => crate::invariant(),
         };
         if event.conflict_row == u16::MAX {
             return PackedEventConflict::none();
@@ -216,7 +230,13 @@ impl<'a> RoleLaneImage<'a> {
             crate::invariant();
         } else {
             match self.read_u16(self.columns.conflicts, row, ROLE_IMAGE_CONFLICT_STRIDE) {
-                Some(raw) => PackedEventConflict::from_raw(raw),
+                Some(raw) => {
+                    let conflict = PackedEventConflict::from_raw(raw);
+                    if conflict.is_none() {
+                        crate::invariant();
+                    }
+                    conflict
+                }
                 None => crate::invariant(),
             }
         }
@@ -237,7 +257,11 @@ impl<'a> RoleLaneImage<'a> {
     #[inline(always)]
     pub(crate) const fn route_commit_range_by_slot(&self, slot: usize, arm: u8) -> PackedLaneRange {
         let row_idx = route_arm_row_index(slot, arm);
-        self.lane_range_row(self.columns.route_commit_ranges, row_idx)
+        let row = self.lane_range_row(self.columns.route_commit_ranges, row_idx);
+        if row.end() > self.columns.route_commit_rows.len as usize {
+            crate::invariant();
+        }
+        row
     }
 
     #[inline(always)]
@@ -256,11 +280,18 @@ impl<'a> RoleLaneImage<'a> {
     pub(crate) const fn roll_scope_row(&self, slot: usize) -> Option<PackedRollScopeRow> {
         match self.column_offset(self.columns.roll_scopes, slot, ROLE_IMAGE_ROLL_SCOPE_STRIDE) {
             Some(offset) => {
+                let Some(_) = decode_resident_roll_scope(self.read_u16_at(offset)) else {
+                    crate::invariant();
+                };
                 let row = PackedRollScopeRow::from_packed_parts(
                     self.read_u16_at(offset),
                     self.read_u32_at(offset + 2),
                 );
-                if row.is_empty() { None } else { Some(row) }
+                let event_row = row.event_row();
+                if event_row.is_zero_len() || event_row.end() > self.columns.events.len as usize {
+                    crate::invariant();
+                }
+                Some(row)
             }
             None => None,
         }
@@ -273,53 +304,66 @@ impl<'a> RoleLaneImage<'a> {
             slot,
             ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
         ) {
-            Some(offset) => Some(ScopeId::from_raw(self.read_u16_at(offset))),
+            Some(offset) => match decode_resident_route_scope(self.read_u16_at(offset)) {
+                Some(scope) => Some(scope),
+                None => crate::invariant(),
+            },
             None => None,
         }
     }
 
     #[inline(always)]
     pub(crate) const fn route_scope_by_slot(&self, slot: usize) -> Option<ScopeId> {
-        let row = match self.route_scope_row(slot) {
-            Some(row) => row,
-            None => return None,
-        };
-        if row.is_none() { None } else { Some(row) }
+        self.route_scope_row(slot)
     }
 
     #[inline(always)]
     pub(crate) const fn route_scope_reentry_by_slot(&self, slot: usize) -> bool {
         if self.route_scope_by_slot(slot).is_none() {
-            return false;
+            crate::invariant();
         }
         self.route_scope_conflict_by_slot(slot).route_reentry()
     }
 
-    #[inline(always)]
+    #[inline]
     const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
         match self.column_offset(
             self.columns.route_arms,
             row_idx,
             ROLE_IMAGE_ROUTE_ARM_STRIDE,
         ) {
-            Some(offset) => PackedRouteArmRow::from_packed_parts(
-                self.read_u32_at(offset),
-                self.read_u32_at(offset + 4),
-            ),
-            None => panic!("role image"),
+            Some(offset) => {
+                let row = PackedRouteArmRow::from_packed_parts(
+                    self.read_u32_at(offset),
+                    self.read_u32_at(offset + 4),
+                );
+                if row.is_empty() {
+                    crate::invariant();
+                }
+                let event_row = row.event_row();
+                let lane_step_row = row.lane_step_row();
+                if event_row.end() > self.columns.events.len as usize
+                    || lane_step_row.is_empty()
+                    || lane_step_row.end() > self.columns.route_arm_lane_step_rows.len as usize
+                {
+                    crate::invariant();
+                }
+                row
+            }
+            None => crate::invariant(),
         }
     }
 
     #[inline(always)]
-    const fn packed_dependency_row(&self, row: usize) -> Option<PackedLocalDependency> {
+    const fn packed_dependency_row(&self, row: usize) -> PackedLocalDependency {
         match self.column_offset(self.columns.dependencies, row, ROLE_IMAGE_DEPENDENCY_STRIDE) {
-            Some(offset) => Some(PackedLocalDependency::from_packed_parts(
+            Some(offset) => PackedLocalDependency::from_packed_parts(
                 self.read_u16_at(offset),
                 self.read_u16_at(offset + 2),
                 self.read_u16_at(offset + 4),
                 self.read_u16_at(offset + 6),
-            )),
-            None => None,
+            ),
+            None => crate::invariant(),
         }
     }
 
@@ -370,7 +414,7 @@ impl<'a> RoleLaneImage<'a> {
         let mut pos = row.start();
         let end = row.end();
         let mut seen = 0usize;
-        while pos < end && pos < self.columns.lanes.len as usize {
+        while pos < end {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
                 if seen == ordinal {
                     if pos > u16::MAX as usize {
@@ -407,7 +451,7 @@ impl<'a> RoleLaneImage<'a> {
         let mut pos = row.start();
         let end = row.end();
         let mut ordinal = 0usize;
-        while pos < end && pos < self.columns.lanes.len as usize {
+        while pos < end {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
                 if pos == step_idx {
                     if ordinal > u16::MAX as usize {
@@ -433,17 +477,26 @@ impl<'a> RoleLaneImage<'a> {
     #[inline(always)]
     const fn resident_row_range(&self, idx: usize) -> PackedLaneRange {
         if idx >= self.resident_row_count() {
-            return PackedLaneRange::EMPTY;
+            crate::invariant();
         }
         let start = self.boundary_at(idx) as usize;
         let end = self.boundary_at(idx + 1) as usize;
+        if start >= end || end > self.columns.lanes.len as usize {
+            crate::invariant();
+        }
         PackedLaneRange::new(start, end - start)
     }
 
     #[inline(always)]
     const fn lane_range_row(&self, column: ColumnRange, row_idx: usize) -> PackedLaneRange {
         match self.read_u32(column, row_idx, ROLE_IMAGE_LANE_RANGE_STRIDE) {
-            Some(raw) => PackedLaneRange::from_raw(raw),
+            Some(raw) => {
+                let row = PackedLaneRange::from_raw(raw);
+                if row.is_empty() {
+                    crate::invariant();
+                }
+                row
+            }
             None => crate::invariant(),
         }
     }
@@ -454,13 +507,10 @@ impl<'a> RoleLaneImage<'a> {
         slot: usize,
         arm: u8,
         lane_word_count: usize,
-    ) -> Option<LaneSetView<'static>> {
+    ) -> LaneSetView<'static> {
         let row_idx = route_arm_row_index(slot, arm);
         let row = self.lane_range_row(self.columns.route_arm_lane_rows, row_idx);
-        if row.is_empty() {
-            return None;
-        }
-        Some(self.lane_bit_view(row, lane_word_count))
+        self.lane_bit_view(row, lane_word_count)
     }
 
     #[inline(always)]
@@ -468,12 +518,9 @@ impl<'a> RoleLaneImage<'a> {
         &self,
         slot: usize,
         lane_word_count: usize,
-    ) -> Option<LaneSetView<'static>> {
+    ) -> LaneSetView<'static> {
         let row = self.lane_range_row(self.columns.route_offer_lane_rows, slot);
-        if row.is_empty() {
-            return None;
-        }
-        Some(self.lane_bit_view(row, lane_word_count))
+        self.lane_bit_view(row, lane_word_count)
     }
 
     #[inline(always)]
@@ -483,11 +530,17 @@ impl<'a> RoleLaneImage<'a> {
             row,
             ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
         ) {
-            Some(offset) => RouteArmLaneStepRow::new(
-                self.byte_at(offset),
-                self.read_u16_at(offset + 1) as usize,
-                self.read_u16_at(offset + 3) as usize,
-            ),
+            Some(offset) => {
+                let row = RouteArmLaneStepRow::new(
+                    self.byte_at(offset),
+                    self.read_u16_at(offset + 1) as usize,
+                    self.read_u16_at(offset + 3) as usize,
+                );
+                if row.last_step() as usize >= self.columns.events.len as usize {
+                    crate::invariant();
+                }
+                row
+            }
             None => crate::invariant(),
         }
     }
@@ -511,6 +564,9 @@ impl<'a> RoleLaneImage<'a> {
         let end = range.end();
         while pos < end {
             let row = self.route_arm_lane_step_row_at(pos);
+            if row.lane() as usize >= logical_lane_count {
+                crate::invariant();
+            }
             if row.lane() == lane {
                 return Some(row);
             }

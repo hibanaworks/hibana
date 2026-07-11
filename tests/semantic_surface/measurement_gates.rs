@@ -298,8 +298,19 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains(
                 "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
+            && miri_gate.contains(
+                "resident-descriptor-validation \\\n  23 \\\n  23 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_descriptor_rejects_"
+            )
+            && miri_gate.contains("compiled-program-descriptor-validation")
+            && miri_gate.contains(
+                "global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_"
+            )
+            && miri_gate.contains("compiled-program-atom-validation")
+            && miri_gate.contains(
+                "global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_"
+            )
             && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=79 ignored=1")
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=119 ignored=1")
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")

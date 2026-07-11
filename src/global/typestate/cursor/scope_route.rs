@@ -8,9 +8,9 @@ mod send_preview_start;
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
-    CursorInvariantError, EffIndex, EventCursor, LaneSetView, LocalAction, LocalDependency,
-    RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep, RouteOfferCursorState, RouteResolver,
-    ScopeId, SendMeta, StateIndex, state_index_to_usize,
+    CursorInvariantError, DynamicRouteResolver, EffIndex, EventCursor, LaneSetView, LocalAction,
+    LocalDependency, RecvMeta, RelocatableResidentLaneStep, ResidentLaneStep,
+    RouteOfferCursorState, ScopeId, SendMeta, StateIndex, state_index_to_usize,
 };
 use crate::global::role_program::PackedLaneRange;
 
@@ -322,9 +322,11 @@ impl EventCursor {
 
     fn route_scope_offer_lane_set_inner(&self, scope_id: ScopeId) -> Option<LaneSetView<'static>> {
         let slot = self.route_scope_slot_inner(scope_id)?;
-        self.machine()
-            .event_program()
-            .route_scope_offer_lane_set_by_slot(slot)
+        Some(
+            self.machine()
+                .event_program()
+                .route_scope_offer_lane_set_by_slot(slot),
+        )
     }
 
     fn route_scope_arm_lane_set_inner(
@@ -333,9 +335,11 @@ impl EventCursor {
         arm: u8,
     ) -> Option<LaneSetView<'static>> {
         let slot = self.route_scope_slot_inner(scope_id)?;
-        self.machine()
-            .event_program()
-            .route_scope_arm_lane_set_by_slot(slot, arm)
+        Some(
+            self.machine()
+                .event_program()
+                .route_scope_arm_lane_set_by_slot(slot, arm),
+        )
     }
 
     fn route_scope_offer_entry_inner(&self, scope_id: ScopeId) -> Option<StateIndex> {
@@ -809,14 +813,8 @@ impl EventCursor {
     }
 
     #[inline]
-    /// Get route controller resolver metadata.
-    ///
-    /// The tuple `(RouteResolver, u8)` corresponds to the route-scope resolver
-    /// binding and the decision tag baked by projection.
-    pub(crate) fn route_scope_controller_resolver(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<(RouteResolver, u8)> {
-        self.machine().route_controller(scope_id)
+    /// Get the dynamic resolver bound to a route scope.
+    pub(crate) fn route_scope_resolver(&self, scope_id: ScopeId) -> Option<DynamicRouteResolver> {
+        self.machine().route_resolver(scope_id)
     }
 }

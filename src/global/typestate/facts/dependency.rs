@@ -15,19 +15,33 @@ pub(crate) struct LocalDependency {
 }
 
 impl LocalDependency {
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn with_conflict_range(
         scope: ScopeId,
         conflict: LocalConflict,
         start: usize,
         end: usize,
     ) -> Self {
+        if scope.is_none()
+            || !matches!(scope.kind(), Some(ScopeKind::Parallel))
+            || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
+        {
+            crate::invariant();
+        }
         if start > PackedLocalDependency::STEP_MASK as usize
             || end > PackedLocalDependency::STEP_MASK as usize
         {
             crate::invariant();
         }
-        if start > end {
+        if start >= end {
+            crate::invariant();
+        }
+        if let LocalConflict::RouteArm { scope, arm } = conflict
+            && (scope.is_none()
+                || !matches!(scope.kind(), Some(ScopeKind::Route))
+                || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
+                || arm > 1)
+        {
             crate::invariant();
         }
         Self {
@@ -76,7 +90,6 @@ pub(crate) struct PackedLocalDependency {
 impl PackedLocalDependency {
     const ABSENT_FIELD: u16 = u16::MAX;
     pub(crate) const STEP_MASK: u16 = (1 << 12) - 1;
-    const DEP_ORDINAL_MASK: u16 = (1 << 12) - 1;
     const ROUTE_ORDINAL_MASK: u16 = (1 << 13) - 1;
     const CONFLICT_MASK: u16 = 0b11;
     const ROUTE_SHIFT: u16 = 2;
@@ -149,33 +162,15 @@ impl PackedLocalDependency {
 
     pub(crate) const fn from_dependency(dependency: LocalDependency) -> Self {
         let scope = dependency.scope();
-        if scope.is_none() {
-            return Self::none();
-        }
-        if !matches!(scope.kind(), Some(ScopeKind::Parallel)) {
-            crate::invariant();
-        }
         let dep_ordinal = scope.local_ordinal();
-        if dep_ordinal > Self::DEP_ORDINAL_MASK {
-            crate::invariant();
-        }
         let start = dependency.start();
         let end = dependency.end();
-        if start > Self::STEP_MASK as usize || end > Self::STEP_MASK as usize || start > end {
-            crate::invariant();
-        }
 
         let (conflict_tag, route_ordinal) = match dependency.conflict() {
             LocalConflict::Unconditional => (Self::CONFLICT_UNCONDITIONAL, 0),
             LocalConflict::SharedRoute => (Self::CONFLICT_SHARED_ROUTE, 0),
             LocalConflict::RouteArm { scope, arm } => {
-                if scope.is_none() || !matches!(scope.kind(), Some(ScopeKind::Route)) {
-                    crate::invariant();
-                }
                 let route_ordinal = scope.local_ordinal();
-                if route_ordinal > Self::ROUTE_ORDINAL_MASK {
-                    crate::invariant();
-                }
                 match arm {
                     0 => (Self::CONFLICT_ROUTE_ARM_0, route_ordinal),
                     1 => (Self::CONFLICT_ROUTE_ARM_1, route_ordinal),
@@ -192,50 +187,144 @@ impl PackedLocalDependency {
         }
     }
 
-    pub(crate) const fn to_dependency(self) -> Option<LocalDependency> {
-        if self.is_none() {
+    pub(super) const fn decode(self) -> Option<Option<LocalDependency>> {
+        if self.start == Self::ABSENT_FIELD {
+            return if self.end == Self::ABSENT_FIELD
+                && self.dep_ordinal == Self::ABSENT_FIELD
+                && self.conflict_route == Self::ABSENT_FIELD
+            {
+                Some(None)
+            } else {
+                None
+            };
+        }
+        if self.start >= self.end || self.end > Self::STEP_MASK {
             return None;
         }
-        if self.start > Self::STEP_MASK || self.end > Self::STEP_MASK || self.start > self.end {
-            crate::invariant();
-        }
-        if self.dep_ordinal > Self::DEP_ORDINAL_MASK {
-            crate::invariant();
+        if self.dep_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
+            return None;
         }
         if (self.conflict_route & !Self::CONFLICT_ROUTE_MASK) != 0 {
-            crate::invariant();
+            return None;
         }
         let conflict_tag = self.conflict_route & Self::CONFLICT_MASK;
         let route_ordinal = (self.conflict_route >> Self::ROUTE_SHIFT) & Self::ROUTE_ORDINAL_MASK;
         let scope = ScopeId::parallel(self.dep_ordinal);
-        let conflict = match conflict_tag {
-            Self::CONFLICT_UNCONDITIONAL => {
-                if route_ordinal != 0 {
-                    crate::invariant();
-                }
-                LocalConflict::Unconditional
+        let conflict = if conflict_tag == Self::CONFLICT_UNCONDITIONAL {
+            if route_ordinal != 0 {
+                return None;
             }
-            Self::CONFLICT_SHARED_ROUTE => {
-                if route_ordinal != 0 {
-                    crate::invariant();
-                }
-                LocalConflict::SharedRoute
+            LocalConflict::Unconditional
+        } else if conflict_tag == Self::CONFLICT_SHARED_ROUTE {
+            if route_ordinal != 0 {
+                return None;
             }
-            Self::CONFLICT_ROUTE_ARM_0 => LocalConflict::RouteArm {
+            LocalConflict::SharedRoute
+        } else if conflict_tag == Self::CONFLICT_ROUTE_ARM_0 {
+            if route_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
+                return None;
+            }
+            LocalConflict::RouteArm {
                 scope: ScopeId::route(route_ordinal),
                 arm: 0,
-            },
-            Self::CONFLICT_ROUTE_ARM_1 => LocalConflict::RouteArm {
+            }
+        } else {
+            if route_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
+                return None;
+            }
+            LocalConflict::RouteArm {
                 scope: ScopeId::route(route_ordinal),
                 arm: 1,
-            },
-            _ => crate::invariant(),
+            }
         };
-        Some(LocalDependency::with_conflict_range(
+        Some(Some(LocalDependency::with_conflict_range(
             scope,
             conflict,
             self.start as usize,
             self.end as usize,
-        ))
+        )))
+    }
+
+    pub(crate) const fn to_dependency(self) -> Option<LocalDependency> {
+        match self.decode() {
+            Some(dependency) => dependency,
+            None => crate::invariant(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LocalConflict, LocalDependency, PackedLocalDependency, ScopeId};
+
+    #[test]
+    fn packed_dependency_round_trips_every_conflict_kind() {
+        for conflict in [
+            LocalConflict::Unconditional,
+            LocalConflict::SharedRoute,
+            LocalConflict::RouteArm {
+                scope: ScopeId::route(7),
+                arm: 0,
+            },
+            LocalConflict::RouteArm {
+                scope: ScopeId::route(7),
+                arm: 1,
+            },
+        ] {
+            let dependency =
+                LocalDependency::with_conflict_range(ScopeId::parallel(3), conflict, 2, 5);
+            let packed = PackedLocalDependency::from_dependency(dependency);
+            assert_eq!(packed.decode(), Some(Some(dependency)));
+        }
+        assert_eq!(PackedLocalDependency::none().decode(), Some(None));
+    }
+
+    #[test]
+    fn packed_dependency_rejects_partial_absence_and_empty_ranges() {
+        let absent = u16::MAX;
+        assert_eq!(
+            PackedLocalDependency::from_packed_parts(absent, absent, absent, 0).decode(),
+            None
+        );
+        assert_eq!(
+            PackedLocalDependency::from_packed_parts(2, 2, 0, 0).decode(),
+            None
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn local_dependency_rejects_absent_scope() {
+        let _ = LocalDependency::with_conflict_range(
+            ScopeId::none(),
+            LocalConflict::Unconditional,
+            0,
+            1,
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn local_dependency_rejects_out_of_domain_parallel_scope() {
+        let _ = LocalDependency::with_conflict_range(
+            ScopeId::parallel(crate::eff::meta::MAX_EFF_NODES as u16),
+            LocalConflict::Unconditional,
+            0,
+            1,
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn local_dependency_rejects_out_of_domain_route_conflict() {
+        let _ = LocalDependency::with_conflict_range(
+            ScopeId::parallel(0),
+            LocalConflict::RouteArm {
+                scope: ScopeId::route(crate::eff::meta::MAX_EFF_NODES as u16),
+                arm: 0,
+            },
+            0,
+            1,
+        );
     }
 }

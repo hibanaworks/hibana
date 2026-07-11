@@ -82,11 +82,11 @@ pub(crate) enum EventOrigin {
 
 impl EventOrigin {
     #[inline(always)]
-    pub(crate) const fn from_packed_bits(bits: u8) -> Self {
+    pub(crate) const fn decode_packed_bits(bits: u8) -> Option<Self> {
         match bits {
-            0 => Self::User,
-            1 => Self::Session,
-            _ => crate::invariant(),
+            0 => Some(Self::User),
+            1 => Some(Self::Session),
+            _ => None,
         }
     }
 

@@ -1,5 +1,4 @@
 use crate::endpoint::{RecvError, RecvResult};
-use crate::global::const_dsl::RouteResolver;
 use crate::global::typestate::state_index_to_usize;
 use crate::session::cluster::core::DecisionArm;
 use crate::transport::Transport;
@@ -59,15 +58,9 @@ where
         if branch_scope_arm != Some(selected_arm) {
             return Err(RecvError::PhaseInvariant);
         }
-        if branch.route_token.is_resolver() {
-            let Some((RouteResolver::Dynamic { scope, .. }, _)) =
-                self.cursor.route_scope_controller_resolver(scope_id)
-            else {
-                return Err(RecvError::PhaseInvariant);
-            };
-            if scope != scope_id {
-                return Err(RecvError::PhaseInvariant);
-            }
+        if branch.route_token.is_resolver() && self.cursor.route_scope_resolver(scope_id).is_none()
+        {
+            return Err(RecvError::PhaseInvariant);
         }
         if branch.route_token.is_poll() && branch.kind == BranchKind::WireRecv {
             if branch.profile.poll_wire_commit_requires_event() {
@@ -123,11 +116,10 @@ where
         let route_token = branch.route_token;
 
         if route_token.is_resolver() {
-            let Some((RouteResolver::Dynamic { resolver_id, .. }, _)) =
-                self.cursor.route_scope_controller_resolver(scope_id)
-            else {
+            let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
                 crate::invariant();
             };
+            let resolver_id = resolver.resolver_id();
             let decision_lane = self.offer_lane_for_scope(scope_id);
             let arm = match selected_arm {
                 0 => DecisionArm::Left,

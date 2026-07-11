@@ -393,8 +393,12 @@ fn compact_route_arm_authority_fails_closed_before_publication() {
     assert!(
         authority.contains("pub(super) const fn decode_raw(value: u8) -> Option<Self>")
             && authority.contains("pub(super) const fn from_raw(value: u8) -> Self")
+            && authority
+                .contains("const fn decode_single_ready_mask(mask: u8) -> Option<Option<Self>>")
             && authority.contains("pub(super) const fn from_single_ready_mask(mask: u8)")
-            && authority.contains("if mask & !0b11 != 0")
+            && authority.contains("0 | 3 => Some(None)")
+            && authority.contains("4..=u8::MAX => None")
+            && authority.contains("match Self::decode_single_ready_mask(mask)")
             && authority.contains("None => crate::invariant()"),
         "compact route authority must have one explicit fail-closed decoding boundary"
     );
@@ -512,6 +516,68 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
             && first_recv_dispatch.contains("let arm = validated_dispatch_arm(arm, target);")
             && !first_recv_dispatch.contains("if arm >= 2 || target.is_absent()"),
         "compact descriptor facts and dispatch entries must reject invalid values before use"
+    );
+}
+
+#[test]
+fn resident_descriptor_columns_reject_in_range_sentinels() {
+    let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
+    let event_rows = read("src/global/role_program/image_impl/event_rows.rs");
+    let tests = read("src/global/role_program/image_impl/tests.rs");
+    let roll_scope = lane_image
+        .split("pub(crate) const fn roll_scope_row")
+        .nth(1)
+        .expect("roll scope row accessor")
+        .split("const fn route_scope_row")
+        .next()
+        .expect("roll scope row accessor body");
+    let route_scope = lane_image
+        .split("const fn route_scope_row")
+        .nth(1)
+        .expect("route scope row accessor")
+        .split("pub(crate) const fn route_scope_by_slot")
+        .next()
+        .expect("route scope row accessor body");
+    let route_arm = lane_image
+        .split("const fn route_arm_row")
+        .nth(1)
+        .expect("route arm row accessor")
+        .split("const fn packed_dependency_row")
+        .next()
+        .expect("route arm row accessor body");
+    let lane_range = lane_image
+        .split("const fn lane_range_row")
+        .nth(1)
+        .expect("lane range row accessor")
+        .split("pub(super) const fn route_scope_arm_lane_set_by_slot")
+        .next()
+        .expect("lane range row accessor body");
+
+    assert!(
+        roll_scope.contains("decode_resident_roll_scope(self.read_u16_at(offset))")
+            && roll_scope.contains("let event_row = row.event_row();")
+            && roll_scope.contains("event_row.end() > self.columns.events.len as usize")
+            && !roll_scope.contains("if row.is_empty() { None }")
+            && route_scope.contains("decode_resident_route_scope(self.read_u16_at(offset))")
+            && route_scope.contains("None => crate::invariant(),")
+            && lane_image
+                .contains("scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES")
+            && route_arm.contains("if row.is_empty() {")
+            && route_arm.contains("lane_step_row.is_empty()")
+            && route_arm.contains("event_row.end() > self.columns.events.len as usize")
+            && route_arm.contains(
+                "lane_step_row.end() > self.columns.route_arm_lane_step_rows.len as usize"
+            )
+            && route_arm.contains("None => crate::invariant(),")
+            && lane_range.contains("if row.is_empty() {")
+            && lane_range.contains("crate::invariant();")
+            && event_rows.contains("decode_resident_event_header(eff_index, scope_raw, flags)")
+            && lane_image.contains("Some(dependency) => Some(dependency)")
+            && lane_image.contains("if conflict.is_none() {")
+            && lane_image.contains("if start >= end || end > self.columns.lanes.len as usize")
+            && !lane_image.contains("while pos < end && pos < self.columns.lanes.len as usize")
+            && tests.matches("fn resident_descriptor_rejects_").count() == 23,
+        "every serialized resident row must reject a reserved sentinel before publication"
     );
 }
 

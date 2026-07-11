@@ -50,7 +50,7 @@ The kernel-checked boundary covers:
   allocator fields. A generation poisoned by external callback re-entry after
   planning is proved unable to publish and leaves allocator state unchanged.
   Physical root relocation is normalized out of failure-state equality and
-  checked separately by slab certificates and Miri.
+  checked separately by slab certificates, Kani packing proofs, and Miri.
 
 The gate exports real production-cursor frontiers and descriptor topology from
 Rust and checks them as concrete Lean proofs. The generated corpus contains 13

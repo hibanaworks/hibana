@@ -136,7 +136,7 @@ pub(crate) fn read_all_rs_tree(path: &str) -> String {
     read_rs_tree_filtered(path, true)
 }
 
-pub(crate) fn read_all_rs_tree_except(path: &str, excluded: &[&str]) -> String {
+pub(crate) fn read_all_rs_tree_except(path: &str, excluded_roots: &[&str]) -> String {
     fn collect_rs_files(dir: &Path, parts: &mut Vec<PathBuf>) {
         let entries =
             fs::read_dir(dir).unwrap_or_else(|err| panic!("read {} failed: {err}", dir.display()));
@@ -165,7 +165,12 @@ pub(crate) fn read_all_rs_tree_except(path: &str, excluded: &[&str]) -> String {
             .expect("test path must stay under manifest dir")
             .to_string_lossy()
             .replace('\\', "/");
-        if excluded.iter().any(|candidate| *candidate == relative) {
+        if excluded_roots.iter().any(|candidate| {
+            *candidate == relative
+                || relative
+                    .strip_prefix(candidate)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        }) {
             continue;
         }
         source.push_str(

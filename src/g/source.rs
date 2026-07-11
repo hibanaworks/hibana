@@ -68,8 +68,7 @@ impl ProgramSourceData {
         let mut error = source.error;
         if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
             error = Self::merge_error(error, Some(ProgramSourceError::ResolverIdOutOfDomain));
-        }
-        if eff.is_empty() {
+        } else if eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
         } else {
             let scope = ScopeId::route(0);

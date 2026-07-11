@@ -231,13 +231,28 @@ unsafe fn dispatch_decision_state<S>(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicResolverKey {
-    pub(crate) rv: RendezvousId,
-    pub(crate) scope: crate::global::const_dsl::ScopeId,
+    rv: RendezvousId,
+    scope: crate::global::const_dsl::ScopeId,
 }
 
 impl DynamicResolverKey {
     pub(crate) const fn new(rv: RendezvousId, scope: crate::global::const_dsl::ScopeId) -> Self {
+        if !matches!(
+            scope.kind(),
+            Some(crate::global::const_dsl::ScopeKind::Route)
+        ) || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
+        {
+            crate::invariant();
+        }
         Self { rv, scope }
+    }
+
+    pub(crate) const fn rendezvous(self) -> RendezvousId {
+        self.rv
+    }
+
+    pub(crate) const fn scope(self) -> crate::global::const_dsl::ScopeId {
+        self.scope
     }
 }
 

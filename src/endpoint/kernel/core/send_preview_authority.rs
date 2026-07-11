@@ -1,5 +1,4 @@
-use super::{Arm, CursorEndpoint, ScopeId, SendError, SendResult, Transport};
-use crate::global::const_dsl::RouteResolver;
+use super::{Arm, CursorEndpoint, ScopeId, SendResult, Transport};
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -11,20 +10,10 @@ where
         scope_id: ScopeId,
         lane: u8,
     ) -> SendResult<Option<u8>> {
-        let Some((resolver, _)) = self.cursor.route_scope_controller_resolver(scope_id) else {
+        let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
             return Ok(None);
         };
-        let RouteResolver::Dynamic {
-            resolver_id,
-            scope: resolver_scope,
-        } = resolver
-        else {
-            return Ok(None);
-        };
-        if scope_id.is_none() || resolver_scope != scope_id {
-            return Err(SendError::PhaseInvariant);
-        }
-        let arm = self.resolve_dynamic_resolver_for_send_preview(lane, scope_id, resolver_id)?;
+        let arm = self.resolve_dynamic_resolver_for_send_preview(lane, resolver)?;
         Ok(Some(arm.index()))
     }
 
@@ -56,11 +45,7 @@ where
         {
             return Ok(Some(arm));
         }
-        if self
-            .cursor
-            .route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _)| resolver.is_dynamic())
-        {
+        if self.cursor.route_scope_resolver(scope_id).is_some() {
             return Ok(None);
         }
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);

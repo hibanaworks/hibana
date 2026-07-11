@@ -137,10 +137,7 @@ where
         let scope_id = normalized.scope_id();
         let entry_idx = normalized.entry_idx();
         let is_controller = self.cursor.is_route_controller(scope_id);
-        let is_dynamic = self
-            .cursor
-            .route_scope_controller_resolver(scope_id)
-            .is_some_and(|(resolver, _)| resolver.is_dynamic());
+        let is_dynamic = self.cursor.route_scope_resolver(scope_id).is_some();
         let frontier_facts =
             Self::frontier_facts_at(&self.cursor, scope_id, is_controller, is_dynamic, entry_idx);
         let mut flags = 0u8;

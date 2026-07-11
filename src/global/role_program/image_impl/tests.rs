@@ -1,4 +1,170 @@
+use super::super::{
+    BlobPtr, ColumnRange, ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE,
+    ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE,
+    RoleImageColumns, RoleLaneImage,
+};
 use super::decode_binary_route_arm_index;
+use crate::global::const_dsl::ScopeId;
+
+const BLOB_LEN: usize = 24;
+
+const fn write_u16(bytes: &mut [u8; BLOB_LEN], offset: usize, value: u16) {
+    bytes[offset] = value as u8;
+    bytes[offset + 1] = (value >> 8) as u8;
+}
+
+const fn write_u32(bytes: &mut [u8; BLOB_LEN], offset: usize, value: u32) {
+    write_u16(bytes, offset, value as u16);
+    write_u16(bytes, offset + 2, (value >> 16) as u16);
+}
+
+const fn route_arm_bytes(event_and_child: u32, lane_step: u32) -> [u8; BLOB_LEN] {
+    let mut bytes = [0; BLOB_LEN];
+    write_u32(&mut bytes, 0, event_and_child);
+    write_u32(&mut bytes, 4, lane_step);
+    bytes
+}
+
+const fn roll_scope_bytes(scope: u16, event_row: u32) -> [u8; BLOB_LEN] {
+    let mut bytes = [0; BLOB_LEN];
+    write_u16(&mut bytes, 0, scope);
+    write_u32(&mut bytes, 2, event_row);
+    bytes
+}
+
+const fn route_scope_bytes(scope: u16) -> [u8; BLOB_LEN] {
+    let mut bytes = [0; BLOB_LEN];
+    write_u16(&mut bytes, 0, scope);
+    bytes
+}
+
+const fn event_bytes(dependency_row: u16, conflict_row: u16, flags: u8) -> [u8; BLOB_LEN] {
+    let mut bytes = [0; BLOB_LEN];
+    write_u16(&mut bytes, 2, dependency_row);
+    write_u16(&mut bytes, 4, conflict_row);
+    write_u16(&mut bytes, 6, u16::MAX);
+    bytes[9] = flags;
+    bytes
+}
+
+const fn event_header_bytes(eff_index: u16, scope: u16) -> [u8; BLOB_LEN] {
+    let mut bytes = event_bytes(u16::MAX, u16::MAX, 0);
+    write_u16(&mut bytes, 0, eff_index);
+    write_u16(&mut bytes, 6, scope);
+    bytes
+}
+
+const fn event_with_empty_dependency_bytes() -> [u8; BLOB_LEN] {
+    let mut bytes = event_bytes(0, u16::MAX, 0);
+    let mut offset = ROLE_IMAGE_EVENT_STRIDE;
+    while offset < ROLE_IMAGE_EVENT_STRIDE + ROLE_IMAGE_DEPENDENCY_STRIDE {
+        bytes[offset] = u8::MAX;
+        offset += 1;
+    }
+    bytes
+}
+
+const fn event_with_empty_conflict_bytes() -> [u8; BLOB_LEN] {
+    let mut bytes = event_bytes(u16::MAX, 0, 0);
+    write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE, u16::MAX);
+    bytes
+}
+
+const fn event_with_out_of_domain_conflict_bytes() -> [u8; BLOB_LEN] {
+    let mut bytes = event_bytes(u16::MAX, 0, 0);
+    write_u16(
+        &mut bytes,
+        ROLE_IMAGE_EVENT_STRIDE,
+        (crate::eff::meta::MAX_EFF_NODES as u16) << 1,
+    );
+    bytes
+}
+
+const fn event_with_out_of_domain_dependency_bytes() -> [u8; BLOB_LEN] {
+    let mut bytes = event_bytes(0, u16::MAX, 0);
+    write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE, 0);
+    write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE + 2, 1);
+    write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE + 4, 0);
+    write_u16(
+        &mut bytes,
+        ROLE_IMAGE_EVENT_STRIDE + 6,
+        ((crate::eff::meta::MAX_EFF_NODES as u16) << 2) | 2,
+    );
+    bytes
+}
+
+const fn resident_boundary_bytes(end: u16) -> [u8; BLOB_LEN] {
+    let mut bytes = [0; BLOB_LEN];
+    write_u16(&mut bytes, ROLE_IMAGE_U16_STRIDE, end);
+    bytes
+}
+
+const fn lane_range_bytes(raw: u32) -> [u8; BLOB_LEN] {
+    let mut bytes = [0; BLOB_LEN];
+    write_u32(&mut bytes, 0, raw);
+    bytes
+}
+
+static EMPTY_DESCRIPTOR_BYTES: [u8; BLOB_LEN] = [u8::MAX; BLOB_LEN];
+static ROUTE_ARM_WITH_EMPTY_LANE_STEP_BYTES: [u8; BLOB_LEN] = route_arm_bytes(0, u32::MAX);
+static ROUTE_ARM_WITH_OUT_OF_BOUNDS_EVENT_BYTES: [u8; BLOB_LEN] = route_arm_bytes(1, 0);
+static ROUTE_ARM_WITH_OUT_OF_BOUNDS_LANE_STEP_BYTES: [u8; BLOB_LEN] = route_arm_bytes(0, 1);
+static ROLL_SCOPE_WITH_EMPTY_EVENT_BYTES: [u8; BLOB_LEN] = roll_scope_bytes(0, u32::MAX);
+static ROLL_SCOPE_WITH_OUT_OF_BOUNDS_EVENT_BYTES: [u8; BLOB_LEN] = roll_scope_bytes(0, 1);
+static NON_ROUTE_SCOPE_BYTES: [u8; BLOB_LEN] = route_scope_bytes(ScopeId::roll_scope(0).raw());
+static ROUTE_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] =
+    route_scope_bytes(crate::eff::meta::MAX_EFF_NODES as u16);
+static ROLL_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] =
+    roll_scope_bytes(crate::eff::meta::MAX_EFF_NODES as u16, 1);
+static EVENT_WITH_INVALID_FLAGS_BYTES: [u8; BLOB_LEN] = event_bytes(u16::MAX, u16::MAX, 2);
+static EVENT_WITH_OUT_OF_DOMAIN_INDEX_BYTES: [u8; BLOB_LEN] =
+    event_header_bytes(crate::eff::meta::MAX_EFF_NODES as u16, u16::MAX);
+static EVENT_WITH_OUT_OF_DOMAIN_SCOPE_BYTES: [u8; BLOB_LEN] = event_header_bytes(
+    0,
+    ScopeId::route(crate::eff::meta::MAX_EFF_NODES as u16).raw(),
+);
+static EVENT_WITH_EMPTY_DEPENDENCY_BYTES: [u8; BLOB_LEN] = event_with_empty_dependency_bytes();
+static EVENT_WITH_EMPTY_CONFLICT_BYTES: [u8; BLOB_LEN] = event_with_empty_conflict_bytes();
+static EVENT_WITH_OUT_OF_DOMAIN_CONFLICT_BYTES: [u8; BLOB_LEN] =
+    event_with_out_of_domain_conflict_bytes();
+static EVENT_WITH_OUT_OF_DOMAIN_DEPENDENCY_BYTES: [u8; BLOB_LEN] =
+    event_with_out_of_domain_dependency_bytes();
+static ZERO_LENGTH_RESIDENT_BOUNDARY_BYTES: [u8; BLOB_LEN] = resident_boundary_bytes(0);
+static OUT_OF_BOUNDS_RESIDENT_BOUNDARY_BYTES: [u8; BLOB_LEN] = resident_boundary_bytes(1);
+static OUT_OF_BOUNDS_LANE_RANGE_BYTES: [u8; BLOB_LEN] = lane_range_bytes(1);
+
+fn empty_columns() -> RoleImageColumns {
+    let empty = ColumnRange::new(EMPTY_DESCRIPTOR_BYTES.len(), 0, 1);
+    RoleImageColumns {
+        events: empty,
+        lanes: empty,
+        dependencies: empty,
+        conflicts: empty,
+        route_scopes: empty,
+        route_scope_conflicts: empty,
+        route_arms: empty,
+        resident_boundaries: empty,
+        lane_bits: empty,
+        route_arm_lane_rows: empty,
+        route_offer_lane_rows: empty,
+        route_arm_lane_step_rows: empty,
+        route_commit_ranges: empty,
+        route_commit_rows: empty,
+        roll_scopes: empty,
+    }
+}
+
+fn image<'a>(columns: &'a RoleImageColumns, bytes: &'static [u8; BLOB_LEN]) -> RoleLaneImage<'a> {
+    RoleLaneImage::new(columns, BlobPtr::from_array(bytes, columns.blob_len()))
+}
+
+fn assert_invariant(action: impl FnOnce()) {
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).is_err(),
+        "malformed resident descriptor must fail closed"
+    );
+}
 
 #[test]
 fn resident_route_arm_index_decoder_accepts_exact_binary_domain() {
@@ -7,4 +173,264 @@ fn resident_route_arm_index_decoder_accepts_exact_binary_domain() {
     for raw in 2..=u8::MAX {
         assert_eq!(decode_binary_route_arm_index(raw), None);
     }
+}
+
+#[test]
+fn resident_descriptor_rejects_absent_route_scope_row() {
+    let mut columns = empty_columns();
+    columns.route_scopes = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
+    let image = image(&columns, &EMPTY_DESCRIPTOR_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_scope_by_slot(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_non_route_scope_row() {
+    let mut columns = empty_columns();
+    columns.route_scopes = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
+    let image = image(&columns, &NON_ROUTE_SCOPE_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_scope_by_slot(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_route_scope_ordinal_out_of_range() {
+    let mut columns = empty_columns();
+    columns.route_scopes = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
+    let image = image(&columns, &ROUTE_SCOPE_OUT_OF_RANGE_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_scope_by_slot(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_route_arm_row() {
+    let mut columns = empty_columns();
+    columns.route_arms = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    let image = image(&columns, &EMPTY_DESCRIPTOR_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_arm_event_row_by_slot(0, 0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_route_arm_lane_step_range() {
+    let mut columns = empty_columns();
+    columns.route_arms = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    let image = image(&columns, &ROUTE_ARM_WITH_EMPTY_LANE_STEP_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_arm_event_row_by_slot(0, 0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_lane_range_row() {
+    let mut columns = empty_columns();
+    columns.route_commit_ranges = ColumnRange::new(0, 1, ROLE_IMAGE_LANE_RANGE_STRIDE);
+    let image = image(&columns, &EMPTY_DESCRIPTOR_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_commit_range_by_slot(0, 0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_roll_scope_row() {
+    let mut columns = empty_columns();
+    columns.roll_scopes = ColumnRange::new(0, 1, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
+    let image = image(&columns, &EMPTY_DESCRIPTOR_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.roll_scope_row(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_roll_scope_event_range() {
+    let mut columns = empty_columns();
+    columns.roll_scopes = ColumnRange::new(0, 1, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
+    let image = image(&columns, &ROLL_SCOPE_WITH_EMPTY_EVENT_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.roll_scope_row(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_roll_scope_ordinal_out_of_range() {
+    let mut columns = empty_columns();
+    columns.roll_scopes = ColumnRange::new(0, 1, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
+    columns.events = ColumnRange::new(ROLE_IMAGE_ROLL_SCOPE_STRIDE, 1, ROLE_IMAGE_EVENT_STRIDE);
+    let image = image(&columns, &ROLL_SCOPE_OUT_OF_RANGE_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.roll_scope_row(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_local_event_row() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    let image = image(&columns, &EMPTY_DESCRIPTOR_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.local_step_event(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_reserved_local_event_flags() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    let image = image(&columns, &EVENT_WITH_INVALID_FLAGS_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.local_step_event(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_out_of_domain_local_event_index() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    let image = image(&columns, &EVENT_WITH_OUT_OF_DOMAIN_INDEX_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.local_step_event(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_out_of_domain_local_event_scope() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    let image = image(&columns, &EVENT_WITH_OUT_OF_DOMAIN_SCOPE_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.local_step_event(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_referenced_dependency_row() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    columns.dependencies =
+        ColumnRange::new(ROLE_IMAGE_EVENT_STRIDE, 1, ROLE_IMAGE_DEPENDENCY_STRIDE);
+    let image = image(&columns, &EVENT_WITH_EMPTY_DEPENDENCY_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.dependency_for_index(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_empty_referenced_conflict_row() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    columns.conflicts = ColumnRange::new(ROLE_IMAGE_EVENT_STRIDE, 1, ROLE_IMAGE_CONFLICT_STRIDE);
+    let image = image(&columns, &EVENT_WITH_EMPTY_CONFLICT_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.event_conflict_for_index(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_out_of_domain_conflict_route_scope() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    columns.conflicts = ColumnRange::new(ROLE_IMAGE_EVENT_STRIDE, 1, ROLE_IMAGE_CONFLICT_STRIDE);
+    let image = image(&columns, &EVENT_WITH_OUT_OF_DOMAIN_CONFLICT_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.event_conflict_for_index(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_out_of_domain_dependency_route_scope() {
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE);
+    columns.dependencies =
+        ColumnRange::new(ROLE_IMAGE_EVENT_STRIDE, 1, ROLE_IMAGE_DEPENDENCY_STRIDE);
+    let image = image(&columns, &EVENT_WITH_OUT_OF_DOMAIN_DEPENDENCY_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.dependency_for_index(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_zero_length_resident_boundary_row() {
+    let mut columns = empty_columns();
+    columns.resident_boundaries = ColumnRange::new(0, 2, ROLE_IMAGE_U16_STRIDE);
+    let image = image(&columns, &ZERO_LENGTH_RESIDENT_BOUNDARY_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.resident_row_min_start(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_resident_boundary_beyond_lane_rows() {
+    let mut columns = empty_columns();
+    columns.resident_boundaries = ColumnRange::new(0, 2, ROLE_IMAGE_U16_STRIDE);
+    let image = image(&columns, &OUT_OF_BOUNDS_RESIDENT_BOUNDARY_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.resident_row_min_start(0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_route_arm_event_range_beyond_events() {
+    let mut columns = empty_columns();
+    columns.route_arms = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    let image = image(&columns, &ROUTE_ARM_WITH_OUT_OF_BOUNDS_EVENT_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_arm_event_row_by_slot(0, 0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_route_arm_lane_step_range_beyond_rows() {
+    let mut columns = empty_columns();
+    columns.route_arms = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    let image = image(&columns, &ROUTE_ARM_WITH_OUT_OF_BOUNDS_LANE_STEP_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_arm_event_row_by_slot(0, 0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_route_commit_range_beyond_rows() {
+    let mut columns = empty_columns();
+    columns.route_commit_ranges = ColumnRange::new(0, 1, ROLE_IMAGE_LANE_RANGE_STRIDE);
+    let image = image(&columns, &OUT_OF_BOUNDS_LANE_RANGE_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.route_commit_range_by_slot(0, 0);
+    });
+}
+
+#[test]
+fn resident_descriptor_rejects_roll_scope_event_range_beyond_events() {
+    let mut columns = empty_columns();
+    columns.roll_scopes = ColumnRange::new(0, 1, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
+    let image = image(&columns, &ROLL_SCOPE_WITH_OUT_OF_BOUNDS_EVENT_BYTES);
+
+    assert_invariant(|| {
+        let _ = image.roll_scope_row(0);
+    });
 }

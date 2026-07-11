@@ -95,10 +95,7 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    pub(crate) fn route_scope_offer_lane_set_by_slot(
-        &self,
-        slot: usize,
-    ) -> Option<LaneSetView<'static>> {
+    pub(crate) fn route_scope_offer_lane_set_by_slot(&self, slot: usize) -> LaneSetView<'static> {
         self.rows().route_scope_offer_lane_set_by_slot(slot)
     }
 
@@ -107,7 +104,7 @@ impl LocalEventProgram {
         &self,
         slot: usize,
         arm: u8,
-    ) -> Option<LaneSetView<'static>> {
+    ) -> LaneSetView<'static> {
         self.rows().route_scope_arm_lane_set_by_slot(slot, arm)
     }
 
@@ -216,7 +213,7 @@ impl LocalEventProgram {
         slot: usize,
     ) -> Option<(ScopeId, LocalEventRowSet)> {
         let row = self.rows().roll_scope_row(slot)?;
-        let scope = row.scope()?;
+        let scope = row.scope();
         let events = LocalEventRowSet::from_packed(row.event_row())?;
         Some((scope, events))
     }

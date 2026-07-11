@@ -173,4 +173,31 @@ run_miri_test \
   --lib \
   storage_layout::capacity::tests
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=79 ignored=1"
+run_miri_test \
+  resident-descriptor-validation \
+  23 \
+  23 \
+  0 \
+  -p hibana \
+  --lib \
+  global::role_program::image_impl::tests::resident_descriptor_rejects_
+
+run_miri_test \
+  compiled-program-descriptor-validation \
+  10 \
+  10 \
+  0 \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_
+
+run_miri_test \
+  compiled-program-atom-validation \
+  7 \
+  7 \
+  0 \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_
+
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=119 ignored=1"

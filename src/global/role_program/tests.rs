@@ -65,7 +65,7 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
         Some(NESTED_PAR_ROUTE_RESOLVER)
     );
     assert_eq!(program_ref.route_controller_role(scope), Some(0));
-    assert!(program_ref.route_controller(scope).is_some());
+    assert!(program_ref.route_resolver(scope).is_some());
 
     let events = LocalEventProgram::from_rows(role0.role_image_ref());
     let slot = events.route_scope_slot(scope).expect("route slot");

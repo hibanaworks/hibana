@@ -4,7 +4,7 @@
 
 use super::core::TapEvent;
 use super::ids;
-use crate::global::const_dsl::ScopeId;
+use crate::global::const_dsl::{ScopeId, ScopeKind};
 
 // ────────────── Endpoint boundary (0x0200-0x020F) ──────────────
 
@@ -59,6 +59,11 @@ pub(crate) const fn resolver_audit(
 
 #[inline(always)]
 const fn route_site(scope_id: ScopeId) -> u16 {
+    if !matches!(scope_id.kind(), Some(ScopeKind::Route))
+        || scope_id.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
+    {
+        crate::invariant();
+    }
     scope_id.local_ordinal()
 }
 
@@ -90,5 +95,23 @@ mod tests {
         assert_eq!(first_audit.arg1() & 0xffff, 77);
         assert_eq!(second_audit.arg1() & 0xffff, 77);
         assert_eq!(first_audit.causal_key(), second_audit.causal_key());
+    }
+
+    #[test]
+    #[should_panic]
+    fn route_site_rejects_non_route_scope() {
+        let _ = route_arm_selection_with_causal(1, 2, 3, ScopeId::roll_scope(0), 1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn route_site_rejects_out_of_domain_scope() {
+        let _ = route_arm_selection_with_causal(
+            1,
+            2,
+            3,
+            ScopeId::route(crate::eff::meta::MAX_EFF_NODES as u16),
+            1,
+        );
     }
 }

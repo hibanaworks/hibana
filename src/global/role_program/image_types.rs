@@ -263,9 +263,7 @@ impl PackedRollScopeRow {
                 scope.kind(),
                 Some(crate::global::const_dsl::ScopeKind::Roll)
             )
-            || row.is_empty()
-            || row.start() > u16::MAX as usize
-            || row.len() > u16::MAX as usize
+            || row.is_absent_or_zero_len()
         {
             panic!("roll scope row overflow");
         }
@@ -299,12 +297,11 @@ impl PackedRollScopeRow {
     }
 
     #[inline(always)]
-    pub(crate) const fn scope(self) -> Option<crate::global::const_dsl::ScopeId> {
+    pub(crate) const fn scope(self) -> crate::global::const_dsl::ScopeId {
         if self.is_empty() {
-            None
-        } else {
-            Some(crate::global::const_dsl::ScopeId::roll_scope(self.scope))
+            crate::invariant();
         }
+        crate::global::const_dsl::ScopeId::roll_scope(self.scope)
     }
 
     #[inline(always)]
