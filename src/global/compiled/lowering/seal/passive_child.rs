@@ -97,7 +97,7 @@ const fn passive_child_route_enter_index(
         return None;
     }
     let mut child_idx = usize::MAX;
-    let mut child_span = usize::MAX;
+    let mut child_span = 0usize;
     let mut idx = 0usize;
     while idx < scope_markers.len() {
         let marker = scope_markers[idx];

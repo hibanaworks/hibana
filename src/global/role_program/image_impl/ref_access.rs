@@ -1,8 +1,10 @@
 use super::super::{
-    BlobPtr, LaneSetView, LaneSteps, PackedLaneRange, PackedRollScopeRow, RoleCompiledCounts,
-    RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts, RuntimeRoleFootprint,
+    BlobPtr, LaneSetView, LaneStepLayout, LaneSteps, PackedLaneRange, PackedRollScopeRow,
+    RoleCompiledCounts, RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts,
+    RuntimeRoleFootprint,
 };
-use crate::global::typestate::{LocalDependency, LocalNode, PackedEventConflict};
+use super::lane_image::invalid_resident_descriptor;
+use crate::global::typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict};
 
 #[inline(always)]
 const fn compact_count(value: usize) -> u16 {
@@ -97,13 +99,49 @@ impl RoleImageRef {
         self.lanes().resident_row_min_start(idx)
     }
 
-    #[inline(always)]
     pub(crate) const fn resident_row_lane_steps(
         &self,
         idx: usize,
         lane_idx: usize,
     ) -> Option<LaneSteps> {
-        self.lanes().resident_row_lane_steps(idx, lane_idx)
+        if lane_idx >= self.footprint().logical_lane_count {
+            return None;
+        }
+        let lanes = self.lanes();
+        if idx >= lanes.resident_row_count() {
+            return None;
+        }
+        let row = lanes.resident_row_range(idx);
+        if row.end() > self.local_step_count() {
+            invalid_resident_descriptor();
+        }
+        let mut pos = row.start();
+        let end = row.end();
+        let mut first = usize::MAX;
+        let mut len = 0usize;
+        let mut layout = LaneStepLayout::Contiguous;
+        while pos < end {
+            if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
+                if first == usize::MAX {
+                    first = pos;
+                } else if pos != first + len {
+                    layout = LaneStepLayout::Sparse;
+                }
+                len += 1;
+            }
+            pos += 1;
+        }
+        if len == 0 {
+            None
+        } else if first > u16::MAX as usize || len > u16::MAX as usize {
+            invalid_resident_descriptor();
+        } else {
+            Some(LaneSteps {
+                start: first as u16,
+                len: len as u16,
+                layout,
+            })
+        }
     }
 
     #[inline(always)]
@@ -145,6 +183,17 @@ impl RoleImageRef {
     }
 
     #[inline(always)]
+    pub(crate) const fn route_scope_slot(
+        &self,
+        scope: crate::global::const_dsl::ScopeId,
+    ) -> Option<usize> {
+        if self.columns.route_scopes.len as usize != self.footprint().route_scope_count {
+            invalid_resident_descriptor();
+        }
+        self.lanes().route_scope_slot(scope)
+    }
+
+    #[inline(always)]
     pub(crate) const fn route_scope_reentry_by_slot(&self, slot: usize) -> bool {
         self.lanes().route_scope_reentry_by_slot(slot)
     }
@@ -169,39 +218,110 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn local_step_lane(&self, step_idx: usize) -> Option<u8> {
-        self.lanes().local_step_lane(step_idx)
+        if step_idx >= self.local_step_count() {
+            return None;
+        }
+        self.lanes()
+            .local_step_lane(step_idx, self.footprint().logical_lane_count)
     }
 
-    #[inline(always)]
     pub(crate) const fn local_step_node(&self, step_idx: usize) -> Option<LocalNode> {
         if step_idx >= self.local_step_count() {
             None
         } else {
-            self.lanes()
+            let Some(node) = self
+                .lanes()
                 .local_step_node(step_idx, self.role, self.program)
+            else {
+                return None;
+            };
+            let Some(expected_lane) = self.local_step_lane(step_idx) else {
+                invalid_resident_descriptor();
+            };
+            let actual_lane = match node.action() {
+                LocalAction::Send { lane, .. }
+                | LocalAction::Recv { lane, .. }
+                | LocalAction::Local { lane, .. } => lane,
+                LocalAction::Terminate => invalid_resident_descriptor(),
+            };
+            if actual_lane != expected_lane {
+                invalid_resident_descriptor();
+            }
+            Some(node)
         }
     }
 
-    #[inline(always)]
     pub(crate) const fn resident_row_lane_step_at(
         &self,
         idx: usize,
         lane_idx: usize,
         ordinal: usize,
     ) -> Option<u16> {
-        self.lanes()
-            .resident_row_lane_step_at(idx, lane_idx, ordinal)
+        if lane_idx >= self.footprint().logical_lane_count {
+            return None;
+        }
+        let lanes = self.lanes();
+        if idx >= lanes.resident_row_count() {
+            return None;
+        }
+        let row = lanes.resident_row_range(idx);
+        if row.end() > self.local_step_count() {
+            invalid_resident_descriptor();
+        }
+        let mut pos = row.start();
+        let end = row.end();
+        let mut seen = 0usize;
+        while pos < end {
+            if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
+                if seen == ordinal {
+                    if pos > u16::MAX as usize {
+                        invalid_resident_descriptor();
+                    }
+                    return Some(pos as u16);
+                }
+                seen += 1;
+            }
+            pos += 1;
+        }
+        None
     }
 
-    #[inline(always)]
     pub(crate) const fn resident_row_lane_step_ordinal(
         &self,
         idx: usize,
         lane_idx: usize,
         step_idx: usize,
     ) -> Option<u16> {
-        self.lanes()
-            .resident_row_lane_step_ordinal(idx, lane_idx, step_idx)
+        if lane_idx >= self.footprint().logical_lane_count {
+            return None;
+        }
+        let lanes = self.lanes();
+        if idx >= lanes.resident_row_count() {
+            return None;
+        }
+        let row = lanes.resident_row_range(idx);
+        if row.end() > self.local_step_count() {
+            invalid_resident_descriptor();
+        }
+        if step_idx < row.start() || step_idx >= row.end() {
+            return None;
+        }
+        let mut pos = row.start();
+        let end = row.end();
+        let mut ordinal = 0usize;
+        while pos < end {
+            if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
+                if pos == step_idx {
+                    if ordinal > u16::MAX as usize {
+                        invalid_resident_descriptor();
+                    }
+                    return Some(ordinal as u16);
+                }
+                ordinal += 1;
+            }
+            pos += 1;
+        }
+        None
     }
 
     #[inline(always)]

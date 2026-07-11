@@ -12,6 +12,43 @@ def encodeRouteArm : RouteArm -> Nat
   | .left => 0
   | .right => 1
 
+/-- Resident resolver authority is identified by both its local route scope and
+its resolver id. Dropping either field is not a valid bucket key projection. -/
+structure DynamicResolverIdentity where
+  scope : Nat
+  resolverId : Nat
+  deriving DecidableEq
+
+def DynamicResolverIdentity.key (identity : DynamicResolverIdentity) : Nat × Nat :=
+  (identity.scope, identity.resolverId)
+
+theorem dynamic_resolver_key_injective
+    {left right : DynamicResolverIdentity}
+    (same : left.key = right.key) :
+    left = right := by
+  cases left with
+  | mk leftScope leftResolver =>
+      cases right with
+      | mk rightScope rightResolver =>
+          have scopeEq : leftScope = rightScope :=
+            congrArg Prod.fst same
+          have resolverEq : leftResolver = rightResolver :=
+            congrArg Prod.snd same
+          cases scopeEq
+          cases resolverEq
+          rfl
+
+theorem same_scope_distinct_resolver_ids_have_distinct_keys
+    (scope leftId rightId : Nat)
+    (distinct : leftId ≠ rightId) :
+    (DynamicResolverIdentity.key ⟨scope, leftId⟩) ≠
+      DynamicResolverIdentity.key ⟨scope, rightId⟩ := by
+  intro same
+  have identityEqual : (DynamicResolverIdentity.mk scope leftId) =
+      DynamicResolverIdentity.mk scope rightId :=
+    dynamic_resolver_key_injective same
+  exact distinct (congrArg DynamicResolverIdentity.resolverId identityEqual)
+
 theorem route_arm_decode_encode_round_trip (arm : RouteArm) :
     decodeRouteArm? (encodeRouteArm arm) = some arm := by
   cases arm <;> rfl

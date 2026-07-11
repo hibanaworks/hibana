@@ -2,7 +2,7 @@ use super::super::{
     ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, RouteScopeRows, ScopeId, StateIndex,
     state_index_to_usize,
 };
-use crate::global::typestate::LocalConflict;
+use crate::global::{const_dsl::ScopeKind, typestate::LocalConflict};
 
 impl EventCursor {
     #[inline(always)]
@@ -245,6 +245,9 @@ impl EventCursor {
     /// Returns `true` if `controller_role == self.compiled.role()`, `false` otherwise.
     #[inline]
     pub(crate) fn is_route_controller(&self, scope_id: ScopeId) -> bool {
+        if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
+            return false;
+        }
         self.machine()
             .route_controller_role(scope_id)
             .is_some_and(|ctrl| ctrl == self.machine().role())

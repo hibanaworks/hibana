@@ -13,6 +13,8 @@ The kernel-checked boundary covers:
 - rejection of trace commits that are absent from the enabled frontier;
 - exact dynamic `resolve` authority by route site and resolver id, including
   explicit left/right selection and terminal rejection;
+- injective resident resolver identity over `(scope, resolver id)`, including
+  separation of distinct resolver ids that share one local route ordinal;
 - visibility of unresolved dynamic-route candidates without commit authority;
 - single-use resolver authority until an enclosing `roll` reset;
 - fail-closed rejection of direct unresolved commits, wrong resolver ids,

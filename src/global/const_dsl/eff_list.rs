@@ -264,8 +264,7 @@ impl EffList {
         let mut idx = 0usize;
         while idx < self.resolver_marker_len {
             if self.resolver_markers[idx].scope.same(scope) {
-                self.resolver_markers[idx] = RouteResolverMarker::new(scope, resolver_id);
-                return;
+                panic!("duplicate route resolver scope");
             }
             idx += 1;
         }
@@ -278,7 +277,9 @@ impl EffList {
     }
 
     pub(crate) const fn resolver_for_scope(&self, scope: ScopeId) -> Option<DynamicRouteResolver> {
-        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
+        if !matches!(scope.kind(), Some(ScopeKind::Route))
+            || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
+        {
             crate::invariant();
         }
         let mut idx = 0usize;

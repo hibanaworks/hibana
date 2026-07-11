@@ -1,6 +1,6 @@
 use super::{INTRINSIC_ROUTE_RESOLVER_ID, ScopeId, ScopeKind};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicRouteResolver {
     resolver_id: u16,
     scope: ScopeId,

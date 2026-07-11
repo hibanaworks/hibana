@@ -341,21 +341,21 @@ where
 
     pub(crate) fn insert_dynamic_resolver(
         &self,
-        scope: crate::global::const_dsl::ScopeId,
-        entry: crate::session::cluster::core::DynamicResolverEntry<'cfg>,
+        resolver: crate::global::const_dsl::DynamicRouteResolver,
+        resolver_ref: crate::session::cluster::core::ErasedResolverRef<'cfg>,
     ) -> Result<(), crate::session::cluster::error::ClusterError> {
         /* SAFETY: registry access rejects an active affine lease; this
         local-only rendezvous solely mutates the initialized resolver bucket. */
-        unsafe { (&mut *self.resolver_bucket.get()).insert(scope, entry) }
+        unsafe { (&mut *self.resolver_bucket.get()).insert(resolver, resolver_ref) }
     }
 
     pub(crate) fn dynamic_resolver(
         &self,
-        scope: crate::global::const_dsl::ScopeId,
-    ) -> Option<crate::session::cluster::core::DynamicResolverEntry<'cfg>> {
+        resolver: crate::global::const_dsl::DynamicRouteResolver,
+    ) -> Option<crate::session::cluster::core::ErasedResolverRef<'cfg>> {
         /* SAFETY: shared lookup copies the initialized resolver entry before
         any callback can run. */
-        unsafe { (&*self.resolver_bucket.get()).get(scope) }
+        unsafe { (&*self.resolver_bucket.get()).get(resolver) }
     }
 }
 

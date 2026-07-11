@@ -1,5 +1,5 @@
 use super::{
-    LANE_DOMAIN_BYTES, MAX_LOCAL_STEP_LANES, MAX_RESIDENT_LANE_BIT_BYTES,
+    LANE_DOMAIN_BYTES, LANE_DOMAIN_SIZE, MAX_LOCAL_STEP_LANES, MAX_RESIDENT_LANE_BIT_BYTES,
     MAX_RESIDENT_ROW_BOUNDARY_ROWS, MAX_RESIDENT_ROW_LANE_ROWS, MAX_ROUTE_ARM_LANE_ROWS,
     MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
     PackedRouteArmRow, RoleLaneScratch, ScopeEvent, ScopeId, ScopeKind, lane_byte_count,
@@ -668,6 +668,9 @@ impl RoleLaneScratch {
         logical_lane_count: usize,
         role: u8,
     ) -> Self {
+        if logical_lane_count == 0 || logical_lane_count > LANE_DOMAIN_SIZE {
+            panic!("role logical lane domain invalid");
+        }
         let mut lanes = Self {
             local_step_events: [PackedLocalEventRow::EMPTY; MAX_LOCAL_STEP_LANES],
             local_step_lanes: [0; MAX_LOCAL_STEP_LANES],
@@ -704,22 +707,23 @@ impl RoleLaneScratch {
                 let frame_label = frame_labels.assign(atom);
                 if atom.from == role || atom.to == role {
                     let lane = atom.lane as usize;
-                    if lane < logical_lane_count {
-                        if lane < lanes.first_active_lane as usize {
-                            lanes.first_active_lane = lane as u16;
-                        }
-                        if step >= MAX_LOCAL_STEP_LANES {
-                            panic!("role local lane table overflow");
-                        }
-                        lanes.local_step_events[step] =
-                            Self::local_event_row_for_eff(eff_list, idx, frame_label, role);
-                        lanes.local_step_lanes[step] = atom.lane;
-                        lanes.local_step_conflicts[step] = if has_route {
-                            Self::route_conflict_for_eff(markers, idx)
-                        } else {
-                            PackedEventConflict::none()
-                        };
+                    if lane >= logical_lane_count {
+                        panic!("local event lane outside role logical domain");
                     }
+                    if lane < lanes.first_active_lane as usize {
+                        lanes.first_active_lane = lane as u16;
+                    }
+                    if step >= MAX_LOCAL_STEP_LANES {
+                        panic!("role local lane table overflow");
+                    }
+                    lanes.local_step_events[step] =
+                        Self::local_event_row_for_eff(eff_list, idx, frame_label, role);
+                    lanes.local_step_lanes[step] = atom.lane;
+                    lanes.local_step_conflicts[step] = if has_route {
+                        Self::route_conflict_for_eff(markers, idx)
+                    } else {
+                        PackedEventConflict::none()
+                    };
                     step += 1;
                 }
             }

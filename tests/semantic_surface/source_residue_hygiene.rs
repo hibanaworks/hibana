@@ -501,10 +501,21 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
             && scope_rows.contains("route_arm_row_index(input.route_slot, input.arm)")
             && child_scope_accessor
                 .contains("let Some(child_slot) = slot.checked_add(delta as usize) else {")
-            && child_scope_accessor.contains("let Some(scope) = self.route_scope_by_slot(child_slot) else {\n                    crate::invariant();")
-            && lane_step_row_accessor.contains("(&self, row: usize) -> RouteArmLaneStepRow")
-            && lane_step_row_accessor.contains("None => crate::invariant(),")
+            && child_scope_accessor.contains("let Some(scope) = self.route_scope_by_slot(child_slot) else {\n                    invalid_resident_descriptor();")
+            && child_scope_accessor
+                .contains("self.route_scope_conflict_by_slot(child_slot).to_conflict()")
+            && child_scope_accessor.contains("recorded_parent.same(parent_scope)")
+            && child_scope_accessor.contains("recorded_arm == arm")
+            && scope_rows.contains("let mut child_span = 0usize;")
+            && lane_step_row_accessor.contains("logical_lane_count: usize")
+            && lane_step_row_accessor.contains("event_row: PackedLaneRange")
+            && lane_step_row_accessor.contains("decode_resident_route_arm_lane_step(")
+            && lane_step_row_accessor.contains("None => invalid_resident_descriptor(),")
             && !lane_image.contains("let Some(row) = self.route_arm_lane_step_row_at(pos) else")
+            && lane_image.contains("decode_resident_local_step_lane(raw, logical_lane_count)")
+            && lane_image.contains("if found != usize::MAX {")
+            && lane_image.contains("if !route_commit_decisions_match(current, expected) {")
+            && lane_image.contains("let parent = self.route_commit_parent(scope);")
             && facts
                 .contains("const fn decode_optional_route_arm_raw(raw: u8) -> Option<Option<u8>>")
             && facts.contains("2..=254 => None")
@@ -522,6 +533,7 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
 #[test]
 fn resident_descriptor_columns_reject_in_range_sentinels() {
     let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
+    let ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let event_rows = read("src/global/role_program/image_impl/event_rows.rs");
     let tests = read("src/global/role_program/image_impl/tests.rs");
     let roll_scope = lane_image
@@ -554,12 +566,16 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
         .expect("lane range row accessor body");
 
     assert!(
-        roll_scope.contains("decode_resident_roll_scope(self.read_u16_at(offset))")
+        lane_image
+            .contains("const fn invalid_resident_descriptor() -> ! {\n    crate::invariant()\n}")
+            && lane_image.matches("crate::invariant()").count() == 1
+            && !ref_access.contains("crate::invariant()")
+            && roll_scope.contains("decode_resident_roll_scope(self.read_u16_at(offset))")
             && roll_scope.contains("let event_row = row.event_row();")
             && roll_scope.contains("event_row.end() > self.columns.events.len as usize")
             && !roll_scope.contains("if row.is_empty() { None }")
             && route_scope.contains("decode_resident_route_scope(self.read_u16_at(offset))")
-            && route_scope.contains("None => crate::invariant(),")
+            && route_scope.contains("None => invalid_resident_descriptor(),")
             && lane_image
                 .contains("scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES")
             && route_arm.contains("if row.is_empty() {")
@@ -568,15 +584,19 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
             && route_arm.contains(
                 "lane_step_row.end() > self.columns.route_arm_lane_step_rows.len as usize"
             )
-            && route_arm.contains("None => crate::invariant(),")
+            && route_arm.contains("None => invalid_resident_descriptor(),")
             && lane_range.contains("if row.is_empty() {")
-            && lane_range.contains("crate::invariant();")
+            && lane_range.contains("invalid_resident_descriptor();")
             && event_rows.contains("decode_resident_event_header(eff_index, scope_raw, flags)")
             && lane_image.contains("Some(dependency) => Some(dependency)")
             && lane_image.contains("if conflict.is_none() {")
             && lane_image.contains("if start >= end || end > self.columns.lanes.len as usize")
             && !lane_image.contains("while pos < end && pos < self.columns.lanes.len as usize")
-            && tests.matches("fn resident_descriptor_rejects_").count() == 23,
+            && tests
+                .matches("#[test]\nfn resident_descriptor_rejects_")
+                .count()
+                == 34
+            && tests.matches("#[test]\nfn resident_").count() == 36,
         "every serialized resident row must reject a reserved sentinel before publication"
     );
 }

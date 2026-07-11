@@ -34,7 +34,11 @@ impl PackedLaneRange {
         if start > u16::MAX as usize || len > u16::MAX as usize {
             panic!("lane range descriptor overflow");
         }
-        Self(((start as u32) << 16) | len as u32)
+        let raw = ((start as u32) << 16) | len as u32;
+        if raw == PACKED_LANE_RANGE_EMPTY {
+            panic!("lane range descriptor uses reserved sentinel");
+        }
+        Self(raw)
     }
 
     #[inline(always)]
@@ -103,6 +107,15 @@ impl RouteArmLaneStepRow {
             lane,
             first_step: first_step as u16,
             last_step: last_step as u16,
+        }
+    }
+
+    #[inline(always)]
+    pub(super) const fn from_packed_parts(lane: u8, first_step: u16, last_step: u16) -> Self {
+        Self {
+            lane,
+            first_step,
+            last_step,
         }
     }
 

@@ -170,19 +170,7 @@ impl LocalEventProgram {
         if scope_id.is_none() || !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
             return None;
         }
-        let mut slot = 0usize;
-        let limit = self.footprint().route_scope_count;
-        while slot < limit {
-            if self
-                .rows()
-                .route_scope_by_slot(slot)
-                .is_some_and(|scope| scope.same(scope_id))
-            {
-                return Some(slot);
-            }
-            slot += 1;
-        }
-        None
+        self.rows().route_scope_slot(scope_id)
     }
 
     #[inline(always)]
@@ -318,7 +306,10 @@ impl LocalEventProgram {
             .rows()
             .passive_arm_child_ordinal_by_slot(slot, arm)
             .map(ScopeId::route);
-        PassiveArmChildFact::new(route_scope, arm, child_route_scope)
+        match PassiveArmChildFact::new(route_scope, arm, child_route_scope) {
+            Some(fact) => Some(fact),
+            None => crate::invariant(),
+        }
     }
 
     #[inline(always)]

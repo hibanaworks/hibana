@@ -42,7 +42,8 @@ done
 for harness in \
   packed_event_conflict_decoding_accepts_exact_domain \
   optional_route_arm_decoding_accepts_exact_domain \
-  packed_local_dependency_decoding_accepts_exact_domain; do
+  packed_local_dependency_decoding_accepts_exact_domain \
+  packed_local_dependency_event_bounds_are_exact; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/typestate/facts/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
@@ -51,10 +52,14 @@ for harness in \
 done
 
 for harness in \
+  packed_lane_range_encoding_avoids_reserved_sentinel \
   resident_route_arm_index_decoding_accepts_exact_binary_domain \
   resident_route_scope_decoding_accepts_exact_domain \
   resident_roll_scope_decoding_accepts_exact_domain \
-  resident_event_header_decoding_accepts_exact_domain; do
+  resident_event_header_decoding_accepts_exact_domain \
+  resident_local_step_lane_decoding_accepts_exact_domain \
+  resident_route_commit_decision_match_is_exact \
+  resident_route_arm_lane_step_decoding_accepts_exact_domain; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/role_program/image_impl/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
@@ -70,7 +75,9 @@ for harness in scope_id_decoding_accepts_exact_compact_domain; do
   fi
 done
 
-for harness in route_resolver_row_decoding_accepts_exact_domain; do
+for harness in \
+  route_resolver_row_decoding_accepts_exact_domain \
+  dynamic_route_resolver_identity_is_scope_and_id; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/compiled/images/image/route_resolvers/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
@@ -107,12 +114,18 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness packed_event_conflict_decoding_accepts_exact_domain \
   --harness optional_route_arm_decoding_accepts_exact_domain \
   --harness packed_local_dependency_decoding_accepts_exact_domain \
+  --harness packed_local_dependency_event_bounds_are_exact \
+  --harness packed_lane_range_encoding_avoids_reserved_sentinel \
   --harness resident_route_arm_index_decoding_accepts_exact_binary_domain \
   --harness resident_route_scope_decoding_accepts_exact_domain \
   --harness resident_roll_scope_decoding_accepts_exact_domain \
   --harness resident_event_header_decoding_accepts_exact_domain \
+  --harness resident_local_step_lane_decoding_accepts_exact_domain \
+  --harness resident_route_commit_decision_match_is_exact \
+  --harness resident_route_arm_lane_step_decoding_accepts_exact_domain \
   --harness scope_id_decoding_accepts_exact_compact_domain \
   --harness route_resolver_row_decoding_accepts_exact_domain \
+  --harness dynamic_route_resolver_identity_is_scope_and_id \
   --harness program_atom_row_decoding_accepts_exact_domain
 
-echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=22 backend=CBMC"
+echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=28 backend=CBMC"

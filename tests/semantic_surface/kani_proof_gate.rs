@@ -24,7 +24,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("harnesses=22 backend=CBMC"));
+    assert!(script.contains("harnesses=28 backend=CBMC"));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
@@ -75,6 +75,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "packed_event_conflict_decoding_accepts_exact_domain",
         "optional_route_arm_decoding_accepts_exact_domain",
         "packed_local_dependency_decoding_accepts_exact_domain",
+        "packed_local_dependency_event_bounds_are_exact",
     ] {
         assert!(descriptor_harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));
@@ -87,10 +88,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     );
     assert!(descriptor_harnesses.contains("matches!(decoded, Some(None)) == absent"));
     for harness in [
+        "packed_lane_range_encoding_avoids_reserved_sentinel",
         "resident_route_arm_index_decoding_accepts_exact_binary_domain",
         "resident_route_scope_decoding_accepts_exact_domain",
         "resident_roll_scope_decoding_accepts_exact_domain",
         "resident_event_header_decoding_accepts_exact_domain",
+        "resident_local_step_lane_decoding_accepts_exact_domain",
+        "resident_route_commit_decision_match_is_exact",
+        "resident_route_arm_lane_step_decoding_accepts_exact_domain",
     ] {
         assert!(image_harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));
@@ -102,11 +107,16 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(scope_harnesses.contains("scope.is_none() == (raw == u16::MAX)"));
     assert!(script.contains(&format!("--harness {harness}")));
 
-    let harness = "route_resolver_row_decoding_accepts_exact_domain";
-    assert!(resolver_row_harnesses.contains(&format!("fn {harness}()")));
+    for harness in [
+        "route_resolver_row_decoding_accepts_exact_domain",
+        "dynamic_route_resolver_identity_is_scope_and_id",
+    ] {
+        assert!(resolver_row_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
     assert!(resolver_row_harnesses.contains("assert!(decoded.is_some() == expected)"));
+    assert!(resolver_row_harnesses.contains("left_scope == right_scope && left_id == right_id"));
     assert!(!resolver_row_harnesses.contains("kani::assume"));
-    assert!(script.contains(&format!("--harness {harness}")));
 
     let harness = "program_atom_row_decoding_accepts_exact_domain";
     assert!(atom_row_harnesses.contains(&format!("fn {harness}()")));

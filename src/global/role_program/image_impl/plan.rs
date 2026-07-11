@@ -1,10 +1,10 @@
 use super::super::{
-    ColumnRange, MAX_LOCAL_STEP_LANES, MAX_ROUTE_SCOPE_LANE_ROWS, PackedLaneRange,
-    ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
-    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
-    ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageColumns, RoleImagePlan,
-    RoleLaneScratch, RuntimeRoleFacts, lane_byte_count,
+    ColumnRange, LANE_DOMAIN_SIZE, MAX_LOCAL_STEP_LANES, MAX_ROUTE_SCOPE_LANE_ROWS,
+    PackedLaneRange, ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE,
+    ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE,
+    ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE,
+    RoleImageColumns, RoleImagePlan, RoleLaneScratch, RuntimeRoleFacts, lane_byte_count,
 };
 use crate::global::const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind};
 use crate::global::typestate::{
@@ -128,6 +128,9 @@ impl RoleImageColumnCounts {
 
 impl RoleImageColumnCounts {
     const fn from_program(eff_list: &EffList, logical_lane_count: usize, role: u8) -> Self {
+        if logical_lane_count == 0 || logical_lane_count > LANE_DOMAIN_SIZE {
+            panic!("role logical lane domain invalid");
+        }
         let mut eff_indices = [0u16; MAX_LOCAL_STEP_LANES];
         let mut lanes = [0u8; MAX_LOCAL_STEP_LANES];
         let markers = eff_list.scope_markers();
@@ -183,17 +186,17 @@ impl RoleImageColumnCounts {
             if matches!(node.kind, crate::eff::EffKind::Atom) {
                 let atom = node.atom_data();
                 if atom.from == role || atom.to == role {
-                    if (atom.lane as usize) < logical_lane_count {
-                        if step >= MAX_LOCAL_STEP_LANES || idx > u16::MAX as usize {
-                            panic!("role image plan local step overflow");
-                        }
-                        eff_indices[step] = idx as u16;
-                        lanes[step] = atom.lane;
-                        if has_route
-                            && !RoleLaneScratch::route_conflict_for_eff(markers, idx).is_none()
-                        {
-                            *conflict_rows += 1;
-                        }
+                    if atom.lane as usize >= logical_lane_count {
+                        panic!("local event lane outside role logical domain");
+                    }
+                    if step >= MAX_LOCAL_STEP_LANES || idx > u16::MAX as usize {
+                        panic!("role image plan local step overflow");
+                    }
+                    eff_indices[step] = idx as u16;
+                    lanes[step] = atom.lane;
+                    if has_route && !RoleLaneScratch::route_conflict_for_eff(markers, idx).is_none()
+                    {
+                        *conflict_rows += 1;
                     }
                     step += 1;
                 }

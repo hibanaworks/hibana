@@ -10,7 +10,13 @@ The pinned gate exhausts the production arithmetic for:
   two-bit ready mask;
 - exact acceptance domains for packed event-conflict rows and optional
   descriptor route-arm bytes;
-- exact binary indexing for resident descriptor route-arm rows;
+- exact packed lane-range round trips with reserved-sentinel exclusion;
+- exact resident decoding for route/roll scope rows, local event headers,
+  logical-lane rows, route-arm lane-step rows, and binary route-arm indexing;
+- exact route-commit decision identity across scope, arm, and reentry metadata;
+- exact local-dependency decoding, including event-image range bounds;
+- exact compiled atom and route-resolver row decoding, plus complete dynamic
+  resolver identity over both route scope and resolver id;
 - fail-closed endpoint lease generation;
 - aligned endpoint placement inside a selected gap;
 - exact endpoint-lease table sizing and 32-bit bounds across the full `u16`
@@ -21,6 +27,7 @@ The pinned gate exhausts the production arithmetic for:
   `u16 x u16` capacity domain;
 - aligned, monotonic resident-sidecar packing;
 - aligned, pairwise-disjoint sequential sidecar packing;
+- proof that compacted sidecar destinations precede both source ranges;
 - exact symmetric sidecar-range collision detection;
 - exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
   capacity domain.

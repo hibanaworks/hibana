@@ -157,6 +157,15 @@ run_miri_test \
   --test send_route_authority
 
 run_miri_test \
+  resolver-identity-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority
+
+run_miri_test \
   offer-branch-owner \
   11 \
   11 \
@@ -175,12 +184,12 @@ run_miri_test \
 
 run_miri_test \
   resident-descriptor-validation \
-  23 \
-  23 \
+  36 \
+  36 \
   0 \
   -p hibana \
   --lib \
-  global::role_program::image_impl::tests::resident_descriptor_rejects_
+  global::role_program::image_impl::tests::resident_
 
 run_miri_test \
   compiled-program-descriptor-validation \
@@ -200,4 +209,4 @@ run_miri_test \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=119 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=133 ignored=1"

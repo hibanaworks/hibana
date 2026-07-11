@@ -245,8 +245,18 @@ impl PackedLocalDependency {
         )))
     }
 
-    pub(crate) const fn to_dependency(self) -> Option<LocalDependency> {
+    pub(super) const fn decode_for_event_count(
+        self,
+        event_count: usize,
+    ) -> Option<Option<LocalDependency>> {
         match self.decode() {
+            Some(Some(dependency)) if dependency.end() > event_count => None,
+            decoded => decoded,
+        }
+    }
+
+    pub(crate) const fn to_dependency(self, event_count: usize) -> Option<LocalDependency> {
+        match self.decode_for_event_count(event_count) {
             Some(dependency) => dependency,
             None => crate::invariant(),
         }

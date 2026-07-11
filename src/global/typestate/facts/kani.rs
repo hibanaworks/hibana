@@ -65,3 +65,36 @@ fn packed_local_dependency_decoding_accepts_exact_domain() {
         assert!(PackedLocalDependency::from_dependency(dependency) == packed);
     }
 }
+
+#[kani::proof]
+fn packed_local_dependency_event_bounds_are_exact() {
+    let start: u16 = kani::any();
+    let end: u16 = kani::any();
+    let dep_ordinal: u16 = kani::any();
+    let conflict_route: u16 = kani::any();
+    let event_count: u16 = kani::any();
+    let packed = PackedLocalDependency::from_packed_parts(start, end, dep_ordinal, conflict_route);
+    let decoded = packed.decode_for_event_count(event_count as usize);
+    let absent = start == u16::MAX
+        && end == u16::MAX
+        && dep_ordinal == u16::MAX
+        && conflict_route == u16::MAX;
+    let conflict_tag = conflict_route & 0b11;
+    let route_ordinal = conflict_route >> 2;
+    let present = start < end
+        && end <= 0x0fff
+        && end <= event_count
+        && (dep_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES
+        && (conflict_route & 0x8000) == 0
+        && (if conflict_tag >= 2 {
+            (route_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES
+        } else {
+            route_ordinal == 0
+        });
+
+    assert!(decoded.is_some() == (absent || present));
+    assert!(matches!(decoded, Some(None)) == absent);
+    if let Some(Some(dependency)) = decoded {
+        assert!(dependency.end() <= event_count as usize);
+    }
+}

@@ -293,13 +293,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "resolved-send-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --test send_route_authority"
             )
             && miri_gate.contains(
+                "resolver-identity-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority"
+            )
+            && miri_gate.contains(
                 "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
             )
             && miri_gate.contains(
                 "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate.contains(
-                "resident-descriptor-validation \\\n  23 \\\n  23 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_descriptor_rejects_"
+                "resident-descriptor-validation \\\n  36 \\\n  36 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"
             )
             && miri_gate.contains("compiled-program-descriptor-validation")
             && miri_gate.contains(
@@ -310,7 +313,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_"
             )
             && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=119 ignored=1")
+                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=133 ignored=1")
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")

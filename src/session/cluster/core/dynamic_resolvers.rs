@@ -4,11 +4,11 @@ use super::{ClusterError, PhantomData, RendezvousId, fmt};
 // This file owns dynamic resolver erased-storage dispatch for the session
 // cluster. Resolver registration records one typed state pointer together with
 // the matching trampoline; invocation must use the recorded trampoline for that
-// exact resolver slot. The resident resolver table is supplied by the cluster
-// storage owner and bound/rebound only through the explicit storage-layout paths
-// in this module. Slot contents are represented as initialized
-// `Option<DynamicResolverEntry>` values, and the raw state pointer is never
-// exposed outside the resolver dispatch boundary.
+// exact `(scope, resolver id)` slot. The resident resolver table is supplied by
+// the cluster storage owner and bound/rebound only through the explicit
+// storage-layout paths in this module. Slot contents are initialized optional
+// bucket entries, and the raw state pointer is never exposed outside the
+// resolver dispatch boundary.
 
 mod bucket;
 pub(crate) use bucket::ResolverBucket;
@@ -232,32 +232,22 @@ unsafe fn dispatch_decision_state<S>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicResolverKey {
     rv: RendezvousId,
-    scope: crate::global::const_dsl::ScopeId,
+    resolver: crate::global::const_dsl::DynamicRouteResolver,
 }
 
 impl DynamicResolverKey {
-    pub(crate) const fn new(rv: RendezvousId, scope: crate::global::const_dsl::ScopeId) -> Self {
-        if !matches!(
-            scope.kind(),
-            Some(crate::global::const_dsl::ScopeKind::Route)
-        ) || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
-        {
-            crate::invariant();
-        }
-        Self { rv, scope }
+    pub(crate) const fn new(
+        rv: RendezvousId,
+        resolver: crate::global::const_dsl::DynamicRouteResolver,
+    ) -> Self {
+        Self { rv, resolver }
     }
 
     pub(crate) const fn rendezvous(self) -> RendezvousId {
         self.rv
     }
 
-    pub(crate) const fn scope(self) -> crate::global::const_dsl::ScopeId {
-        self.scope
+    pub(crate) const fn resolver(self) -> crate::global::const_dsl::DynamicRouteResolver {
+        self.resolver
     }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct DynamicResolverEntry<'cfg> {
-    pub(crate) resolver_ref: ErasedResolverRef<'cfg>,
-    pub(crate) resolver_id: u16,
 }

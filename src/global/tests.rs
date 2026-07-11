@@ -42,3 +42,18 @@ fn absent_scope_cannot_query_dynamic_route_resolver() {
 fn non_route_scope_cannot_query_dynamic_route_resolver() {
     let _ = EffList::new().resolver_for_scope(ScopeId::parallel(0));
 }
+
+#[test]
+#[should_panic]
+fn out_of_domain_scope_cannot_query_dynamic_route_resolver() {
+    let _ =
+        EffList::new().resolver_for_scope(ScopeId::route(crate::eff::meta::MAX_EFF_NODES as u16));
+}
+
+#[test]
+#[should_panic(expected = "duplicate route resolver scope")]
+fn route_scope_cannot_acquire_two_compile_time_resolver_authorities() {
+    let mut effects = EffList::new();
+    effects.push_route_resolver_mut(ScopeId::route(3), 7);
+    effects.push_route_resolver_mut(ScopeId::route(3), 8);
+}

@@ -1,16 +1,18 @@
 use core::marker::PhantomData;
 
-use super::DynamicResolverEntry;
 use crate::{
-    global::const_dsl::ScopeId,
+    global::const_dsl::DynamicRouteResolver,
     rendezvous::core::Sidecar,
-    session::cluster::error::{ClusterError, ResourceScope},
+    session::cluster::{
+        core::ErasedResolverRef,
+        error::{ClusterError, ResourceScope},
+    },
 };
 
 #[derive(Clone, Copy)]
 pub(in crate::session::cluster::core) struct ResolverBucketEntry<'cfg> {
-    pub(crate) scope: ScopeId,
-    entry: DynamicResolverEntry<'cfg>,
+    resolver: DynamicRouteResolver,
+    resolver_ref: ErasedResolverRef<'cfg>,
 }
 
 pub(crate) struct ResolverBucket<'cfg> {
@@ -215,8 +217,8 @@ impl<'cfg> ResolverBucket<'cfg> {
 
     pub(crate) fn insert(
         &mut self,
-        scope: ScopeId,
-        entry: DynamicResolverEntry<'cfg>,
+        resolver: DynamicRouteResolver,
+        resolver_ref: ErasedResolverRef<'cfg>,
     ) -> Result<(), ClusterError> {
         let entries = self.entries_ptr();
         if entries.is_null() {
@@ -233,8 +235,8 @@ impl<'cfg> ResolverBucket<'cfg> {
             unsafe {
                 let slot = &mut *entries.add(idx);
                 if let Some(stored) = slot {
-                    if stored.scope == scope {
-                        stored.entry = entry;
+                    if stored.resolver == resolver {
+                        stored.resolver_ref = resolver_ref;
                         return Ok(());
                     }
                 } else if first_empty.is_none() {
@@ -252,12 +254,15 @@ impl<'cfg> ResolverBucket<'cfg> {
         installed resolver sidecar, and `&mut self` still owns the bucket slot
         mutation. */
         unsafe {
-            *entries.add(idx) = Some(ResolverBucketEntry { scope, entry });
+            *entries.add(idx) = Some(ResolverBucketEntry {
+                resolver,
+                resolver_ref,
+            });
         }
         Ok(())
     }
 
-    pub(crate) fn get(&self, scope: ScopeId) -> Option<DynamicResolverEntry<'cfg>> {
+    pub(crate) fn get(&self, resolver: DynamicRouteResolver) -> Option<ErasedResolverRef<'cfg>> {
         let entries = self.entries_ptr();
         if entries.is_null() {
             return None;
@@ -269,9 +274,9 @@ impl<'cfg> ResolverBucket<'cfg> {
             a borrow into relocatable storage. */
             unsafe {
                 if let Some(stored) = (&*entries.add(idx)).as_ref()
-                    && stored.scope == scope
+                    && stored.resolver == resolver
                 {
-                    return Some(stored.entry);
+                    return Some(stored.resolver_ref);
                 }
             }
             idx += 1;

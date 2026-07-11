@@ -336,6 +336,8 @@ impl RoleLaneScratch {
         if route.is_none() || arm_start >= arm_end {
             crate::invariant();
         }
+        let mut child = ScopeId::none();
+        let mut child_span = 0usize;
         let mut idx = 0usize;
         while idx < markers.len() {
             let marker = markers[idx];
@@ -368,13 +370,17 @@ impl RoleLaneScratch {
                     }
                     None => crate::invariant(),
                 };
-                if end <= arm_end {
-                    return Some(marker.scope_id);
+                if end > arm_start && end <= arm_end {
+                    let span = end - arm_start;
+                    if child.is_none() || span > child_span {
+                        child = marker.scope_id;
+                        child_span = span;
+                    }
                 }
             }
             idx += 1;
         }
-        None
+        if child.is_none() { None } else { Some(child) }
     }
 
     pub(super) const fn push_route_arm_projection_row(

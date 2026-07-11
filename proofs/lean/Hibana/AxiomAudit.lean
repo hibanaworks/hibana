@@ -61,3 +61,5 @@ import Hibana.MainTheorems
 #print axioms Hibana.invalid_ready_arm_mask_rejected
 #print axioms Hibana.valid_ready_arm_mask_is_accepted
 #print axioms Hibana.selected_ready_arm_mask_is_exact
+#print axioms Hibana.dynamic_resolver_key_injective
+#print axioms Hibana.same_scope_distinct_resolver_ids_have_distinct_keys

@@ -226,6 +226,90 @@ fn resolved_route_send_calls_resolver_once_per_progress() {
 }
 
 #[test]
+fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let left_sid = SessionId::new(0x0009_1606);
+        let right_sid = SessionId::new(0x0009_1607);
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let left_role0 = same_label_outbound_program_for::<0, SAME_LABEL_ROUTE_RESOLVER>();
+            let left_role1 = same_label_outbound_program_for::<1, SAME_LABEL_ROUTE_RESOLVER>();
+            let left_role2 = same_label_outbound_program_for::<2, SAME_LABEL_ROUTE_RESOLVER>();
+            let right_role0 = same_label_outbound_program_for::<0, COUNTING_ROUTE_RESOLVER>();
+            let right_role1 = same_label_outbound_program_for::<1, COUNTING_ROUTE_RESOLVER>();
+            let right_role2 = same_label_outbound_program_for::<2, COUNTING_ROUTE_RESOLVER>();
+
+            rv.set_resolver(
+                &left_role0,
+                ResolverRef::<SAME_LABEL_ROUTE_RESOLVER>::decision_state(&LEFT_ARM, choose_arm),
+            )
+            .expect("install left resolver");
+            rv.set_resolver(
+                &right_role0,
+                ResolverRef::<COUNTING_ROUTE_RESOLVER>::decision_state(&RIGHT_ARM, choose_arm),
+            )
+            .expect("install right resolver at the same local route scope");
+
+            let mut left_origin = rv.enter(left_sid, &left_role0).expect("attach left origin");
+            let mut left_peer = rv.enter(left_sid, &left_role1).expect("attach left peer");
+            let mut left_other = rv.enter(left_sid, &left_role2).expect("attach left other");
+            let mut right_origin = rv
+                .enter(right_sid, &right_role0)
+                .expect("attach right origin");
+            let mut right_other = rv
+                .enter(right_sid, &right_role1)
+                .expect("attach right other");
+            let mut right_peer = rv
+                .enter(right_sid, &right_role2)
+                .expect("attach right peer");
+
+            futures::executor::block_on(async {
+                left_origin
+                    .send::<Msg<SAME_LABEL, u32>>(&1606)
+                    .await
+                    .expect("first resolver id keeps left authority");
+                assert!(
+                    left_other
+                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .now_or_never()
+                        .is_none(),
+                    "second registration must not overwrite the first resolver id"
+                );
+                assert_eq!(
+                    left_peer
+                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .await
+                        .expect("left resolver peer receives"),
+                    1606
+                );
+
+                right_origin
+                    .send::<Msg<SAME_LABEL, u32>>(&1607)
+                    .await
+                    .expect("second resolver id keeps right authority");
+                assert!(
+                    right_other
+                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .now_or_never()
+                        .is_none(),
+                    "first registration must not shadow the second resolver id"
+                );
+                assert_eq!(
+                    right_peer
+                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .await
+                        .expect("right resolver peer receives"),
+                    1607
+                );
+            });
+        });
+    });
+}
+
+#[test]
 fn stateful_send_resolver_is_not_evaluated_twice() {
     reset_counters();
     with_runtime_workspace(|slab| {

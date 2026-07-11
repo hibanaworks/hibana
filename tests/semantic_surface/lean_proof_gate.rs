@@ -13,6 +13,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let progress = read("proofs/lean/Hibana/Progress.lean");
     let generation = read("proofs/lean/Hibana/Generation.lean");
     let allocation = read("proofs/lean/Hibana/Allocation.lean");
+    let authority = read("proofs/lean/Hibana/Authority.lean");
     let main_theorems = read("proofs/lean/Hibana/MainTheorems.lean");
     let axiom_audit = read("proofs/lean/Hibana/AxiomAudit.lean");
     let exporter = read("src/test_support/lean_proof_export.rs");
@@ -203,6 +204,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem prepared_lease_capacity_never_shrinks",
         "theorem lease_allocation_failure_certificate_sound",
         "theorem lease_allocation_abort_certificate_sound",
+        "theorem dynamic_resolver_key_injective",
+        "theorem same_scope_distinct_resolver_ids_have_distinct_keys",
     ] {
         assert!(
             syntax.contains(theorem)
@@ -213,6 +216,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || progress.contains(theorem)
                 || generation.contains(theorem)
                 || allocation.contains(theorem)
+                || authority.contains(theorem)
                 || main_theorems.contains(theorem),
             "Lean proof kernel missing {theorem}"
         );
@@ -239,6 +243,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("#print axioms Hibana.poisoned_generation_aborts_lease_publication")
             && axiom_audit
                 .contains("#print axioms Hibana.lease_allocation_abort_certificate_sound")
+            && axiom_audit.contains("#print axioms Hibana.dynamic_resolver_key_injective")
+            && axiom_audit.contains(
+                "#print axioms Hibana.same_scope_distinct_resolver_ids_have_distinct_keys"
+            )
             && commit.contains("rollReentryState?")
             && commit.contains("routeReentryState?")
             && proof_gate.contains("traces=13 frames=55 projections=7 progress=4")
