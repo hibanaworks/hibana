@@ -99,6 +99,9 @@ for harness in \
 done
 
 for harness in \
+  program_image_columns_are_canonical_for_exact_count_domain \
+  program_image_columns_reject_total_byte_overflow \
+  scope_marker_identity_tag_is_exact_and_injective \
   packed_column_range_construction_is_exact_for_resident_stride_domain \
   compiled_program_column_range_rejects_stride_multiplication_overflow \
   role_image_column_range_rejects_stride_multiplication_overflow \
@@ -150,6 +153,9 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness resolver_registration_key_rejects_intrinsic_id \
   --harness resolver_initial_storage_is_initialized_and_dispatchable \
   --harness resolver_replacement_compacts_entries_and_preserves_dispatch \
+  --harness program_image_columns_are_canonical_for_exact_count_domain \
+  --harness program_image_columns_reject_total_byte_overflow \
+  --harness scope_marker_identity_tag_is_exact_and_injective \
   --harness packed_column_range_construction_is_exact_for_resident_stride_domain \
   --harness compiled_program_column_range_rejects_stride_multiplication_overflow \
   --harness role_image_column_range_rejects_stride_multiplication_overflow \
@@ -157,4 +163,4 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness compiled_program_image_identity_is_exact_over_facts_columns_and_blob \
   --harness program_atom_row_decoding_accepts_exact_domain
 
-echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=38 backend=CBMC"
+echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=41 backend=CBMC"

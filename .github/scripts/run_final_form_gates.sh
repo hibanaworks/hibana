@@ -17,7 +17,6 @@ if [[ "${HIBANA_FINAL_FORM_COMPILE_PRESSURE_GUARD:-1}" != "0" \
 fi
 
 export TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
-source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 

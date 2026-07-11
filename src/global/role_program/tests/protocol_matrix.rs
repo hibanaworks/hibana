@@ -1,6 +1,7 @@
 use super::*;
 use crate::global::compiled::images::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
 };
 use std::println;
 
@@ -49,10 +50,6 @@ fn endpoint_largest_section(layout: crate::endpoint::kernel::EndpointArenaLayout
     largest
 }
 
-fn pbl(column: ProgramColumnRange, stride: usize) -> usize {
-    column.byte_len(stride)
-}
-
 fn rbl(column: ColumnRange, stride: usize) -> usize {
     column.byte_len(stride)
 }
@@ -61,10 +58,9 @@ fn largest_program_section(
     program_ref: crate::global::compiled::images::CompiledProgramRef,
 ) -> usize {
     let columns = program_ref.columns;
-    pbl(columns.atoms, PROGRAM_IMAGE_ATOM_STRIDE).max(pbl(
-        columns.route_resolvers,
-        PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-    ))
+    (columns.atom_count() * PROGRAM_IMAGE_ATOM_STRIDE)
+        .max(columns.route_resolver_count() * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE)
+        .max(columns.scope_marker_count() * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE)
 }
 
 fn largest_role_section(rows: &RoleImageRef) -> usize {

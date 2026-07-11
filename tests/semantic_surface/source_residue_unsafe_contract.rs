@@ -32,6 +32,23 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
     let regression =
         read("tests/miri_runtime_owner.rs") + &read("tests/miri_runtime_owner/callback_reentry.rs");
     let miri_gate = read(".github/scripts/check_miri.sh");
+    let wide_roll_topology = regression
+        .split("fn wide_roll_shared_site_program")
+        .nth(1)
+        .and_then(|tail| tail.split("fn narrow_roll_shared_site_program").next())
+        .expect("wide-roll Miri topology fixture");
+    let narrow_roll_topology = regression
+        .split("fn narrow_roll_shared_site_program")
+        .nth(1)
+        .and_then(|tail| tail.split("#[repr(align(16))]").next())
+        .expect("narrow-roll Miri topology fixture");
+    let wide_rolls_whole_tail = wide_roll_topology
+        .lines()
+        .any(|line| line.trim() == ".roll(),");
+    let narrow_rolls_first_tail_atom = narrow_roll_topology.lines().any(|line| {
+        let line = line.trim();
+        line.contains("g::send::<") && line.ends_with(".roll(),")
+    });
 
     assert!(
         registry.contains("fn published_endpoint_owner(")
@@ -55,6 +72,10 @@ fn external_callback_reentry_revalidates_published_endpoint_generation() {
             && regression
                 .contains("payload_encoding_callback_reentry_cannot_commit_after_peer_drop")
             && regression.contains("resolver_registration_keeps_distinct_program_image_identity")
+            && wide_roll_topology.matches(".roll()").count() == 1
+            && narrow_roll_topology.matches(".roll()").count() == 1
+            && wide_rolls_whole_tail
+            && narrow_rolls_first_tail_atom
             && regression
                 .contains("failed_resolver_growth_preserves_existing_registration_and_dispatch")
             && regression.contains("Cluster(exhausted resolver)")

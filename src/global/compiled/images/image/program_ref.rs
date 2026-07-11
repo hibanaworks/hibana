@@ -129,7 +129,8 @@ impl CompiledProgramRef {
 
     #[inline]
     const fn atom_row_at(&self, row: usize) -> Option<ProgramAtomRow> {
-        let offset = match self.column_offset(self.columns.atoms, row, PROGRAM_IMAGE_ATOM_STRIDE) {
+        let offset = match self.column_offset(self.columns.atoms(), row, PROGRAM_IMAGE_ATOM_STRIDE)
+        {
             Some(offset) => offset,
             None => return None,
         };
@@ -153,7 +154,7 @@ impl CompiledProgramRef {
             crate::invariant();
         }
         let mut row = 0usize;
-        while row < self.columns.atoms.len as usize {
+        while row < self.columns.atom_count() {
             let decoded = match self.atom_row_at(row) {
                 Some(decoded) => decoded,
                 None => crate::invariant(),

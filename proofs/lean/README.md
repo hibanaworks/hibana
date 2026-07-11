@@ -15,9 +15,11 @@ The kernel-checked boundary covers:
   explicit left/right selection and terminal rejection;
 - injective descriptor resolver-site identity over `(program image, scope,
   resolver id)`, where the image explicitly contains role facts, packed column
-  ranges, and blob bytes; callback registration is keyed exactly by `(program
-  image, resolver id)` so structurally distinct programs cannot overwrite each
-  other and same-id sites share one typed callback only inside one exact image;
+  counts for atoms, resolver rows, and every scope marker, plus exact blob bytes;
+  callback registration is keyed exactly by `(program image, resolver id)` so
+  topology-distinct programs cannot overwrite each other and same-id sites share
+  one typed callback only inside one exact image; differing scope-marker counts
+  or exact marker bytes directly imply distinct registration keys;
 - visibility of unresolved dynamic-route candidates without commit authority;
 - single-use resolver authority until an enclosing `roll` reset;
 - fail-closed rejection of direct unresolved commits, wrong resolver ids,

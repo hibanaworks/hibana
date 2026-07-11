@@ -67,7 +67,7 @@ impl CompiledProgramRef {
     #[inline]
     fn route_resolver_row_at(&self, row: usize) -> Option<RouteResolverRow> {
         let offset = self.column_offset(
-            self.columns.route_resolvers,
+            self.columns.route_resolvers(),
             row,
             PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
         )?;
@@ -90,7 +90,7 @@ impl CompiledProgramRef {
             crate::invariant();
         }
         let mut row = 0usize;
-        while row < self.columns.route_resolvers.len as usize {
+        while row < self.columns.route_resolver_count() {
             let decoded = match self.route_resolver_row_at(row) {
                 Some(decoded) => decoded,
                 None => crate::invariant(),
@@ -115,7 +115,7 @@ impl CompiledProgramRef {
 
     #[inline(always)]
     pub(crate) const fn route_resolver_row_count(&self) -> usize {
-        self.columns.route_resolvers.len as usize
+        self.columns.route_resolver_count()
     }
 
     #[inline(always)]

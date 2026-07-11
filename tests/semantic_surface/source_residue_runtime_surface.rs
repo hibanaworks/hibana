@@ -376,6 +376,8 @@ fn route_resolver_authority_is_complete_identity_keyed() {
     let cluster_effects = read("src/session/cluster/effects.rs");
     let registry_ops = read("src/session/lease/core/registry_ops.rs");
     let session_effects = read("src/session/cluster/core/session_effect_steps.rs");
+    let resolver_regression = read("tests/dynamic_route_scope_resolver.rs");
+    let identity_regression = read("src/global/role_program/tests.rs");
     let production_scope = [
         const_dsl.as_str(),
         route_dsl.as_str(),
@@ -399,6 +401,11 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "type Item = DynamicRouteResolver;",
         "return Some(DynamicRouteResolver::new(scope, resolver_id));",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5",
+        "PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5",
+        "scope_marker_len: u16,",
+        "pub(crate) const fn scope_markers(self) -> ProgramColumnRange",
+        "scope_marker_identity_tag(marker.event, marker.reentry)",
+        "out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);",
         "self.write_u16(out, scope.raw());",
         "self.write_u16(out + 2, resolver_id);",
         "self.write_u8(out + 4,",
@@ -484,6 +491,8 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "TypeId",
         "program_fingerprint",
         "program_hash",
+        "pub(crate) atoms: ProgramColumnRange",
+        "pub(crate) route_resolvers: ProgramColumnRange",
     ] {
         assert!(
             !production_scope.contains(forbidden),
@@ -501,6 +510,25 @@ fn route_resolver_authority_is_complete_identity_keyed() {
             .count(),
         1,
         "resolver registration must preflight capacity once before its infallible commit"
+    );
+    assert!(
+        resolver_regression.contains(
+            "same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority"
+        ) && resolver_regression.contains("fn wide_roll_topology_program")
+            && resolver_regression.contains("fn narrow_roll_topology_program")
+            && resolver_regression.contains("TOPOLOGY_TAIL_SECOND"),
+        "public regression coverage must separate topology-only program identities"
+    );
+    assert!(
+        identity_regression.contains("resolver_identity_distinguishes_equal_count_scope_topology")
+            && identity_regression.contains("wide_program.columns.atom_count()")
+            && identity_regression.contains("wide_program.columns.route_resolver_count()")
+            && identity_regression.contains("wide_program.columns.scope_marker_count()")
+            && identity_regression.contains("assert_eq!(wide_program.facts, narrow_program.facts)")
+            && identity_regression.contains("wide_program.atom_at(eff_idx)")
+            && identity_regression
+                .contains("wide_program.route_resolver_sites_for(NESTED_PAR_ROUTE_RESOLVER)"),
+        "topology identity fixture must hold facts, atoms, resolver rows, and every column count equal"
     );
 }
 

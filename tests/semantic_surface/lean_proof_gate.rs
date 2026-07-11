@@ -207,6 +207,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem dynamic_resolver_site_key_injective",
         "theorem resolver_registration_key_is_program_and_id",
         "theorem distinct_program_images_have_distinct_registration_keys",
+        "theorem scope_topology_difference_has_distinct_registration_keys",
     ] {
         assert!(
             syntax.contains(theorem)
@@ -220,6 +221,18 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || authority.contains(theorem)
                 || main_theorems.contains(theorem),
             "Lean proof kernel missing {theorem}"
+        );
+    }
+    for identity_field in [
+        "roleCount : Nat",
+        "atomCount : Nat",
+        "routeResolverCount : Nat",
+        "scopeMarkerCount : Nat",
+        "blob : List Nat",
+    ] {
+        assert!(
+            authority.contains(identity_field),
+            "Lean program identity must retain exact Rust image field: {identity_field}"
         );
     }
     assert!(
@@ -249,6 +262,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("#print axioms Hibana.resolver_registration_key_is_program_and_id")
             && axiom_audit.contains(
                 "#print axioms Hibana.distinct_program_images_have_distinct_registration_keys"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.scope_topology_difference_has_distinct_registration_keys"
             )
             && commit.contains("rollReentryState?")
             && commit.contains("routeReentryState?")

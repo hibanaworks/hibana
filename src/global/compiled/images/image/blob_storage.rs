@@ -1,16 +1,31 @@
 use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT,
-    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange, ProgramImageColumns,
-    ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
+    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
+    ProgramImageColumns, ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
 };
 use crate::{
     eff::{EffAtom, EffKind},
     global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
-        DynamicRouteResolver, EffList, INTRINSIC_ROUTE_RESOLVER_ID, ScopeEvent, ScopeId, ScopeKind,
-        parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
+        DynamicRouteResolver, EffList, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, ScopeEvent,
+        ScopeId, ScopeKind, ScopeMarker, parallel_arm_ranges_from_enter,
+        route_arm_ranges_from_first_enter,
     },
 };
+
+/// Injective compact tag for the two non-numeric scope-marker fields.
+pub(super) const fn scope_marker_identity_tag(event: ScopeEvent, reentry: ReentryMark) -> u8 {
+    let event = match event {
+        ScopeEvent::Enter => 0,
+        ScopeEvent::Split => 1,
+        ScopeEvent::Exit => 2,
+    };
+    let reentry = match reentry {
+        ReentryMark::SinglePass => 0,
+        ReentryMark::Reentrant => 1,
+    };
+    event | (reentry << 2)
+}
 
 pub(crate) struct ProgramImageBytes<const N: usize> {
     bytes: [u8; N],
@@ -95,6 +110,21 @@ impl<const N: usize> ProgramImageBytes<N> {
                 Some(role) => role,
                 None => PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT,
             },
+        );
+    }
+
+    const fn write_scope_marker(
+        &mut self,
+        column: ProgramColumnRange,
+        row: usize,
+        marker: ScopeMarker,
+    ) {
+        let out = Self::column_offset(column, row, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE);
+        self.write_u16(out, marker.offset() as u16);
+        self.write_u16(out + 2, marker.scope_id.raw());
+        self.write_u8(
+            out + 4,
+            scope_marker_identity_tag(marker.event, marker.reentry),
         );
     }
 
@@ -262,10 +292,13 @@ impl<const N: usize> ProgramImageBytes<N> {
         let mut idx = 0usize;
         while idx < eff_list.len() {
             if let Some(atom) = Self::atom_at(eff_list, idx) {
-                out.write_atom(columns.atoms, atom_row, idx, atom);
+                out.write_atom(columns.atoms(), atom_row, idx, atom);
                 atom_row += 1;
             }
             idx += 1;
+        }
+        if atom_row != columns.atom_count() {
+            crate::invariant();
         }
 
         let mut route_row = 0usize;
@@ -284,7 +317,7 @@ impl<const N: usize> ProgramImageBytes<N> {
                 let controller = Self::route_controller_role(eff_list, idx);
                 let resolver = eff_list.resolver_for_scope(marker.scope_id);
                 out.write_route_resolver(
-                    columns.route_resolvers,
+                    columns.route_resolvers(),
                     route_row,
                     marker.scope_id,
                     controller,
@@ -292,6 +325,17 @@ impl<const N: usize> ProgramImageBytes<N> {
                 );
                 route_row += 1;
             }
+            idx += 1;
+        }
+        if route_row != columns.route_resolver_count()
+            || markers.len() != columns.scope_marker_count()
+        {
+            crate::invariant();
+        }
+
+        idx = 0;
+        while idx < markers.len() {
+            out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);
             idx += 1;
         }
         out

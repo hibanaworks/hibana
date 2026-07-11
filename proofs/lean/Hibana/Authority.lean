@@ -13,11 +13,12 @@ def encodeRouteArm : RouteArm -> Nat
   | .right => 1
 
 /-- Structural identity of the sealed Rust `CompiledProgramRef`: one program
-fact, two packed column ranges, and the exact resident blob. -/
+fact, canonical atom/resolver/scope-marker counts, and the exact resident blob. -/
 structure ProgramImageIdentity where
   roleCount : Nat
-  atomColumn : Nat × Nat
-  routeResolverColumn : Nat × Nat
+  atomCount : Nat
+  routeResolverCount : Nat
+  scopeMarkerCount : Nat
   blob : List Nat
   deriving DecidableEq
 
@@ -72,6 +73,20 @@ theorem distinct_program_images_have_distinct_registration_keys
     left.registrationKey ≠ right.registrationKey := by
   intro same
   exact programDistinct ((resolver_registration_key_is_program_and_id left right).mp same).1
+
+theorem scope_topology_difference_has_distinct_registration_keys
+    (left right : DynamicResolverSiteIdentity)
+    (topologyDistinct :
+      left.program.scopeMarkerCount ≠ right.program.scopeMarkerCount ∨
+      left.program.blob ≠ right.program.blob) :
+    left.registrationKey ≠ right.registrationKey := by
+  apply distinct_program_images_have_distinct_registration_keys left right
+  intro programEq
+  cases topologyDistinct with
+  | inl countDistinct =>
+      exact countDistinct (congrArg ProgramImageIdentity.scopeMarkerCount programEq)
+  | inr blobDistinct =>
+      exact blobDistinct (congrArg ProgramImageIdentity.blob programEq)
 
 theorem route_arm_decode_encode_round_trip (arm : RouteArm) :
     decodeRouteArm? (encodeRouteArm arm) = some arm := by

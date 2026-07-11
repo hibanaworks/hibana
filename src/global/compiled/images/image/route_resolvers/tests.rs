@@ -1,9 +1,6 @@
 use super::{CompiledProgramRef, RouteResolverRow};
 use crate::global::{
-    compiled::images::image::columns::{
-        PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
-        ProgramImageColumns, ProgramImageFacts,
-    },
+    compiled::images::image::columns::{ProgramImageColumns, ProgramImageFacts},
     const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, ScopeId},
 };
 
@@ -18,10 +15,7 @@ const fn encoded_row(scope: u16, resolver_id: u16, controller_role: u8) -> [u8; 
 }
 
 fn forged_program_ref(bytes: &'static [u8; 5], role_count: u8) -> CompiledProgramRef {
-    let columns = ProgramImageColumns {
-        atoms: ProgramColumnRange::new(0, 0, PROGRAM_IMAGE_ATOM_STRIDE),
-        route_resolvers: ProgramColumnRange::new(0, 1, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE),
-    };
+    let columns = ProgramImageColumns::new(0, 1, 0);
     CompiledProgramRef::compact(ProgramImageFacts { role_count }, columns, bytes)
 }
 

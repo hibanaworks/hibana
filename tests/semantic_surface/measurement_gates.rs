@@ -15,6 +15,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let manifest_test_gate = read(".github/scripts/check_manifest_tests.sh");
     let miri_gate = read(".github/scripts/check_miri.sh");
     let miri_toolchain = read(".github/miri-toolchain");
+    let ui_diagnostics = read(".github/scripts/configure_ui_diagnostics.sh");
+    let ui_gate = read(".github/scripts/run_ui_gate.sh");
     let compile_pressure_guard = read(".github/scripts/lib/compile_pressure_guard.sh");
     let compile_pressure_budget_helper = read(".github/scripts/lib/compile_pressure_budget.py");
     let compile_pressure_budget =
@@ -232,6 +234,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_manifest_tests.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_miri.sh")
+            && ui_diagnostics.contains("readonly HIBANA_UI_DIAGNOSTIC_COLUMNS=200")
+            && ui_diagnostics.contains("stty size 2>/dev/null </dev/tty")
+            && ui_diagnostics.contains("stty rows \"${HIBANA_UI_TTY_ROWS}\" cols")
+            && manifest_test_gate.contains("hibana_pin_ui_diagnostic_width")
+            && manifest_test_gate.contains("trap hibana_restore_ui_diagnostic_width EXIT")
+            && ui_gate.contains("hibana_pin_ui_diagnostic_width")
+            && ui_gate.contains("trap hibana_restore_ui_diagnostic_width EXIT")
+            && !run_final_gate.contains("configure_ui_diagnostics.sh")
+            && !rust_1_95_gate.contains("configure_ui_diagnostics.sh")
+            && !warning_free_gate.contains("configure_ui_diagnostics.sh")
             && run_final_gate
                 .contains("bash ./.github/scripts/check_surface_test_alias_hygiene.sh")
             && run_final_gate

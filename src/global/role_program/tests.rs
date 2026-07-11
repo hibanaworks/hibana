@@ -1,7 +1,7 @@
 use super::*;
 use crate::eff::{EffAtom, EffStruct, EventOrigin};
 use crate::g::{self, Msg, Program};
-use crate::global::compiled::images::{CompiledProgramRef, ProgramColumnRange, RoleDescriptorRef};
+use crate::global::compiled::images::{CompiledProgramRef, ProgramImageColumns, RoleDescriptorRef};
 use crate::global::const_dsl::{EffList, ScopeKind};
 use crate::global::event_program::LocalEventProgram;
 use crate::global::program::Projectable;
@@ -100,6 +100,68 @@ fn role_projections_share_program_wide_resolver_identity() {
 
     assert!(program.same_image(role1.role_image_ref().program));
     assert!(program.same_image(role2.role_image_ref().program));
+}
+
+#[test]
+fn resolver_identity_distinguishes_equal_count_scope_topology() {
+    let wide_roll = g::seq(
+        g::route(
+            g::send::<0, 1, Msg<36, u8>>(),
+            g::send::<0, 2, Msg<37, u8>>(),
+        )
+        .resolve::<NESTED_PAR_ROUTE_RESOLVER>(),
+        g::seq(
+            g::send::<0, 1, Msg<38, u8>>(),
+            g::send::<0, 1, Msg<39, u8>>(),
+        )
+        .roll(),
+    );
+    let narrow_roll = g::seq(
+        g::route(
+            g::send::<0, 1, Msg<36, u8>>(),
+            g::send::<0, 2, Msg<37, u8>>(),
+        )
+        .resolve::<NESTED_PAR_ROUTE_RESOLVER>(),
+        g::seq(
+            g::send::<0, 1, Msg<38, u8>>().roll(),
+            g::send::<0, 1, Msg<39, u8>>(),
+        ),
+    );
+    let wide_role0: RoleProgram<0> = project(&wide_roll);
+    let narrow_role0: RoleProgram<0> = project(&narrow_roll);
+    let wide_program = wide_role0.role_image_ref().program;
+    let narrow_program = narrow_role0.role_image_ref().program;
+
+    assert_eq!(wide_program.facts, narrow_program.facts);
+    assert_eq!(wide_program.columns, narrow_program.columns);
+    assert_eq!(
+        wide_program.columns.atom_count(),
+        narrow_program.columns.atom_count()
+    );
+    assert_eq!(
+        wide_program.columns.route_resolver_count(),
+        narrow_program.columns.route_resolver_count()
+    );
+    assert_eq!(
+        wide_program.columns.scope_marker_count(),
+        narrow_program.columns.scope_marker_count()
+    );
+    for eff_idx in 0..crate::eff::meta::MAX_EFF_NODES {
+        assert_eq!(
+            wide_program.atom_at(eff_idx),
+            narrow_program.atom_at(eff_idx)
+        );
+    }
+    let mut wide_resolvers = wide_program.route_resolver_sites_for(NESTED_PAR_ROUTE_RESOLVER);
+    let mut narrow_resolvers = narrow_program.route_resolver_sites_for(NESTED_PAR_ROUTE_RESOLVER);
+    assert_eq!(wide_resolvers.next(), narrow_resolvers.next());
+    assert_eq!(wide_resolvers.next(), None);
+    assert_eq!(narrow_resolvers.next(), None);
+
+    assert!(
+        !wide_program.same_image(narrow_program),
+        "resolver identity must include exact scope boundaries, not only marker counts"
+    );
 }
 
 #[test]
@@ -317,7 +379,7 @@ fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
     assert_eq!(columns.route_offer_lane_rows.len, 0);
     assert_eq!(columns.route_arm_lane_step_rows.len, 0);
     assert_eq!(core::mem::size_of::<ColumnRange>(), 4);
-    assert_eq!(core::mem::size_of::<ProgramColumnRange>(), 4);
+    assert_eq!(core::mem::size_of::<ProgramImageColumns>(), 6);
     assert!(
         core::mem::size_of::<RoleImageColumns>() < 15 * 5,
         "RoleImageColumns must not retain stride or forbidden passive metadata"

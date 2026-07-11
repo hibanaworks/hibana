@@ -93,24 +93,33 @@ fn nested_resolver_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     )
 }
 
-fn first_shared_site_program<const ROLE: u8>() -> RoleProgram<ROLE> {
-    project(
-        &g::route(
+fn wide_roll_shared_site_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(&g::seq(
+        g::route(
             g::send::<0, 1, Msg<44, u32>>(),
             g::send::<0, 1, Msg<45, u32>>(),
         )
         .resolve::<SHARED_SITE_RESOLVER>(),
-    )
+        g::seq(
+            g::send::<0, 1, Msg<50, u32>>(),
+            g::send::<0, 1, Msg<51, u32>>(),
+        )
+        .roll(),
+    ))
 }
 
-fn second_shared_site_program<const ROLE: u8>() -> RoleProgram<ROLE> {
-    project(
-        &g::route(
-            g::send::<0, 1, Msg<46, u32>>(),
-            g::send::<0, 1, Msg<47, u32>>(),
+fn narrow_roll_shared_site_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(&g::seq(
+        g::route(
+            g::send::<0, 1, Msg<44, u32>>(),
+            g::send::<0, 1, Msg<45, u32>>(),
         )
         .resolve::<SHARED_SITE_RESOLVER>(),
-    )
+        g::seq(
+            g::send::<0, 1, Msg<50, u32>>().roll(),
+            g::send::<0, 1, Msg<51, u32>>(),
+        ),
+    ))
 }
 
 #[repr(align(16))]
@@ -171,9 +180,9 @@ fn resolver_replacement_survives_sidecar_relocation_and_typed_dispatch() {
 fn resolver_registration_keeps_distinct_program_image_identity() {
     let left = DecisionArm::Left;
     let right = DecisionArm::Right;
-    let first = first_shared_site_program::<0>();
-    let first_registration = first_shared_site_program::<1>();
-    let second = second_shared_site_program::<0>();
+    let first = wide_roll_shared_site_program::<0>();
+    let first_registration = wide_roll_shared_site_program::<1>();
+    let second = narrow_roll_shared_site_program::<0>();
     let mut slab = AlignedSlab([0; 65_536]);
     let mut storage = SessionKitStorage::<NoopTransport>::uninit();
     let kit = storage.init();
@@ -200,7 +209,7 @@ fn resolver_registration_keeps_distinct_program_image_identity() {
         .expect("attach second program");
     futures::executor::block_on(first_endpoint.send::<Msg<44, u32>>(&44))
         .expect("first program keeps its left resolver");
-    futures::executor::block_on(second_endpoint.send::<Msg<47, u32>>(&47))
+    futures::executor::block_on(second_endpoint.send::<Msg<45, u32>>(&45))
         .expect("second program keeps its right resolver");
 }
 
@@ -208,8 +217,8 @@ fn resolver_registration_keeps_distinct_program_image_identity() {
 fn failed_resolver_growth_preserves_existing_registration_and_dispatch() {
     let left = DecisionArm::Left;
     let right = DecisionArm::Right;
-    let first = first_shared_site_program::<0>();
-    let second = second_shared_site_program::<0>();
+    let first = wide_roll_shared_site_program::<0>();
+    let second = narrow_roll_shared_site_program::<0>();
     let mut slab = AlignedSlab([0; 65_536]);
     let mut storage = SessionKitStorage::<NoopTransport>::uninit();
     let kit = storage.init();

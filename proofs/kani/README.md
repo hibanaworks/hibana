@@ -18,12 +18,14 @@ The pinned gate exhausts the production arithmetic for:
 - exact local-dependency decoding, including event-image range bounds;
 - exact compiled atom and route-resolver row decoding, plus complete dynamic
   resolver identity over both route scope and resolver id;
-- exact structural program-image identity across facts, column layout, and all
-  blob bytes, including arbitrary resident atom-row contents and equal images
-  stored at distinct addresses;
+- exact structural program-image identity across facts, canonical atom/resolver/
+  scope-marker counts, and all blob bytes, including arbitrary scope-marker
+  contents and equal images stored at distinct addresses;
 - exact packed program/role column construction across every `u16` offset/len
   and the complete resident stride domain, with fail-closed rejection of
   `usize` stride multiplication overflow;
+- canonical contiguous program-image layout across exact count domains, total
+  byte overflow rejection, and injective packing of scope event/reentry tags;
 - exact callback-registration identity over resident program image and resolver
   id, including separation of distinct program images at the same route site
   and rejection of the intrinsic resolver sentinel;

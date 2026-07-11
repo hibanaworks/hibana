@@ -7,8 +7,11 @@ cd "${ROOT_DIR}"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 TEST_TIMEOUT_SECONDS="${HIBANA_MANIFEST_TEST_TIMEOUT_SECONDS:-180}"
 
+source "${ROOT_DIR}/.github/scripts/configure_ui_diagnostics.sh"
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
+hibana_pin_ui_diagnostic_width
+trap hibana_restore_ui_diagnostic_width EXIT
 
 if ! command -v timeout >/dev/null 2>&1; then
   echo "manifest test gate requires GNU timeout" >&2

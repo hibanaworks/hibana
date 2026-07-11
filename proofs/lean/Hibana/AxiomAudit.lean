@@ -64,3 +64,4 @@ import Hibana.MainTheorems
 #print axioms Hibana.dynamic_resolver_site_key_injective
 #print axioms Hibana.resolver_registration_key_is_program_and_id
 #print axioms Hibana.distinct_program_images_have_distinct_registration_keys
+#print axioms Hibana.scope_topology_difference_has_distinct_registration_keys

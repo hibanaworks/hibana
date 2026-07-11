@@ -9,13 +9,48 @@ mod tls_ref_support;
 use common::TestTransport;
 use dynamic_route_scope::*;
 use hibana::{
-    g::Msg,
+    g::{self, Msg},
     runtime::{
         ids::SessionId,
+        program::{RoleProgram, project},
         resolver::{DecisionArm, ResolverRef},
         tap,
     },
 };
+
+const TOPOLOGY_LEFT: u8 = 58;
+const TOPOLOGY_RIGHT: u8 = 59;
+const TOPOLOGY_TAIL_FIRST: u8 = 60;
+const TOPOLOGY_TAIL_SECOND: u8 = 61;
+
+fn wide_roll_topology_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(&g::seq(
+        g::route(
+            g::send::<0, 1, Msg<TOPOLOGY_LEFT, u32>>(),
+            g::send::<0, 2, Msg<TOPOLOGY_RIGHT, u32>>(),
+        )
+        .resolve::<ROUTE_RESOLVER>(),
+        g::seq(
+            g::send::<0, 1, Msg<TOPOLOGY_TAIL_FIRST, u32>>(),
+            g::send::<0, 1, Msg<TOPOLOGY_TAIL_SECOND, u32>>(),
+        )
+        .roll(),
+    ))
+}
+
+fn narrow_roll_topology_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    project(&g::seq(
+        g::route(
+            g::send::<0, 1, Msg<TOPOLOGY_LEFT, u32>>(),
+            g::send::<0, 2, Msg<TOPOLOGY_RIGHT, u32>>(),
+        )
+        .resolve::<ROUTE_RESOLVER>(),
+        g::seq(
+            g::send::<0, 1, Msg<TOPOLOGY_TAIL_FIRST, u32>>().roll(),
+            g::send::<0, 1, Msg<TOPOLOGY_TAIL_SECOND, u32>>(),
+        ),
+    ))
+}
 
 fn assert_same_label_route_send_uses_selected_arm(
     resolver_arm: &'static DecisionArm,
@@ -390,6 +425,90 @@ fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
             });
 
             core::hint::black_box(&nested_other);
+        });
+    });
+}
+
+#[test]
+fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let wide_sid = SessionId::new(0x0009_1610);
+        let narrow_sid = SessionId::new(0x0009_1611);
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let wide_role0 = wide_roll_topology_program::<0>();
+            let wide_role1 = wide_roll_topology_program::<1>();
+            let wide_role2 = wide_roll_topology_program::<2>();
+            let narrow_role0 = narrow_roll_topology_program::<0>();
+            let narrow_role1 = narrow_roll_topology_program::<1>();
+            let narrow_role2 = narrow_roll_topology_program::<2>();
+
+            rv.set_resolver(
+                &wide_role0,
+                ResolverRef::<ROUTE_RESOLVER>::decision_state(&LEFT_ARM, choose_arm),
+            )
+            .expect("install wide-roll resolver");
+            rv.set_resolver(
+                &narrow_role0,
+                ResolverRef::<ROUTE_RESOLVER>::decision_state(&RIGHT_ARM, choose_arm),
+            )
+            .expect("install narrow-roll resolver");
+
+            let mut wide_origin = rv.enter(wide_sid, &wide_role0).expect("attach wide origin");
+            let mut wide_left = rv.enter(wide_sid, &wide_role1).expect("attach wide left");
+            let mut wide_right = rv.enter(wide_sid, &wide_role2).expect("attach wide right");
+            let mut narrow_origin = rv
+                .enter(narrow_sid, &narrow_role0)
+                .expect("attach narrow origin");
+            let mut narrow_left = rv
+                .enter(narrow_sid, &narrow_role1)
+                .expect("attach narrow left");
+            let mut narrow_right = rv
+                .enter(narrow_sid, &narrow_role2)
+                .expect("attach narrow right");
+
+            futures::executor::block_on(async {
+                wide_origin
+                    .send::<Msg<TOPOLOGY_LEFT, u32>>(&1610)
+                    .await
+                    .expect("wide-roll topology keeps left resolver authority");
+                assert!(
+                    wide_right
+                        .recv::<Msg<TOPOLOGY_RIGHT, u32>>()
+                        .now_or_never()
+                        .is_none(),
+                    "narrow-roll topology must not overwrite the wide-roll resolver"
+                );
+                assert_eq!(
+                    wide_left
+                        .recv::<Msg<TOPOLOGY_LEFT, u32>>()
+                        .await
+                        .expect("wide-roll left peer receives"),
+                    1610
+                );
+
+                narrow_origin
+                    .send::<Msg<TOPOLOGY_RIGHT, u32>>(&1611)
+                    .await
+                    .expect("narrow-roll topology keeps right resolver authority");
+                assert!(
+                    narrow_left
+                        .recv::<Msg<TOPOLOGY_LEFT, u32>>()
+                        .now_or_never()
+                        .is_none(),
+                    "wide-roll topology must not shadow the narrow-roll resolver"
+                );
+                assert_eq!(
+                    narrow_right
+                        .recv::<Msg<TOPOLOGY_RIGHT, u32>>()
+                        .await
+                        .expect("narrow-roll right peer receives"),
+                    1611
+                );
+            });
         });
     });
 }

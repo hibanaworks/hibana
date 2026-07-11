@@ -1,38 +1,120 @@
 use super::{CompiledProgramRef, ProgramAtomRow};
+use crate::global::compiled::images::image::blob_storage::scope_marker_identity_tag;
 use crate::global::compiled::images::image::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
 };
+use crate::global::const_dsl::{ReentryMark, ScopeEvent};
 use crate::global::role_program::ColumnRange;
 
-static CANONICAL_IMAGE: [u8; 7] = [2, 0, 0, 1, 9, 1, u8::MAX];
-static SAME_IMAGE: [u8; 7] = [2, 0, 0, 1, 9, 1, u8::MAX];
-static LAST_BYTE_DIFFERENT: [u8; 7] = [2, 0, 0, 1, 9, 1, 0];
+static CANONICAL_IMAGE: [u8; 5] = [0, 1, 2, 3, 4];
+static SAME_IMAGE: [u8; 5] = [0, 1, 2, 3, 4];
+static LAST_BYTE_DIFFERENT: [u8; 5] = [0, 1, 2, 3, 5];
 
-fn atom_columns() -> ProgramImageColumns {
-    ProgramImageColumns {
-        atoms: ProgramColumnRange::new(0, 1, PROGRAM_IMAGE_ATOM_STRIDE),
-        route_resolvers: ProgramColumnRange::new(
-            PROGRAM_IMAGE_ATOM_STRIDE,
-            0,
-            PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-        ),
-    }
+fn route_columns() -> ProgramImageColumns {
+    ProgramImageColumns::new(0, 1, 0)
 }
 
-fn alternate_columns_with_same_blob_len() -> ProgramImageColumns {
-    ProgramImageColumns {
-        atoms: ProgramColumnRange::new(0, 0, PROGRAM_IMAGE_ATOM_STRIDE),
-        route_resolvers: ProgramColumnRange::new(2, 1, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE),
-    }
+fn identity_columns() -> ProgramImageColumns {
+    ProgramImageColumns::new(1, 0, 1)
 }
 
-fn program(
-    bytes: &'static [u8; 7],
+fn alternate_columns() -> ProgramImageColumns {
+    ProgramImageColumns::new(0, 0, 1)
+}
+
+fn program<const N: usize>(
+    bytes: &'static [u8; N],
     facts: ProgramImageFacts,
     columns: ProgramImageColumns,
 ) -> CompiledProgramRef {
     CompiledProgramRef::compact(facts, columns, bytes)
+}
+
+#[kani::proof]
+fn program_image_columns_are_canonical_for_exact_count_domain() {
+    let atom_len: u16 = kani::any();
+    let route_resolver_len: u16 = kani::any();
+    let scope_marker_len: u16 = kani::any();
+    let atom_bytes = usize::from(atom_len) * PROGRAM_IMAGE_ATOM_STRIDE;
+    let route_resolver_bytes =
+        usize::from(route_resolver_len) * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE;
+    let scope_marker_bytes = usize::from(scope_marker_len) * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+    let route_resolver_offset = atom_bytes;
+    let scope_marker_offset = route_resolver_offset + route_resolver_bytes;
+    let blob_len = scope_marker_offset + scope_marker_bytes;
+    let valid = blob_len <= usize::from(u16::MAX);
+
+    kani::cover!(valid);
+    kani::cover!(!valid);
+    if valid {
+        let columns = ProgramImageColumns::new(
+            usize::from(atom_len),
+            usize::from(route_resolver_len),
+            usize::from(scope_marker_len),
+        );
+        assert!(columns.atoms().offset == 0);
+        assert!(columns.atoms().len == atom_len);
+        assert!(columns.route_resolvers().offset as usize == route_resolver_offset);
+        assert!(columns.route_resolvers().len == route_resolver_len);
+        assert!(columns.scope_markers().offset as usize == scope_marker_offset);
+        assert!(columns.scope_markers().len == scope_marker_len);
+        assert!(columns.blob_len() == blob_len);
+    }
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn program_image_columns_reject_total_byte_overflow() {
+    let atom_len: u16 = kani::any();
+    let route_resolver_len: u16 = kani::any();
+    let scope_marker_len: u16 = kani::any();
+    let blob_len = usize::from(atom_len) * PROGRAM_IMAGE_ATOM_STRIDE
+        + usize::from(route_resolver_len) * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE
+        + usize::from(scope_marker_len) * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+    let overflow = blob_len > usize::from(u16::MAX);
+
+    kani::cover!(overflow);
+    kani::cover!(!overflow);
+    let (atom_len, route_resolver_len, scope_marker_len) = if overflow {
+        (atom_len, route_resolver_len, scope_marker_len)
+    } else {
+        (u16::MAX, u16::MAX, u16::MAX)
+    };
+    let _ = ProgramImageColumns::new(
+        usize::from(atom_len),
+        usize::from(route_resolver_len),
+        usize::from(scope_marker_len),
+    );
+}
+
+#[kani::proof]
+fn scope_marker_identity_tag_is_exact_and_injective() {
+    let left_event_raw = kani::any::<u8>() % 3;
+    let right_event_raw = kani::any::<u8>() % 3;
+    let left_reentry_raw = kani::any::<u8>() % 2;
+    let right_reentry_raw = kani::any::<u8>() % 2;
+    let event = |raw| match raw {
+        0 => ScopeEvent::Enter,
+        1 => ScopeEvent::Split,
+        2 => ScopeEvent::Exit,
+        _ => crate::invariant(),
+    };
+    let reentry = |raw| match raw {
+        0 => ReentryMark::SinglePass,
+        1 => ReentryMark::Reentrant,
+        _ => crate::invariant(),
+    };
+    let left = scope_marker_identity_tag(event(left_event_raw), reentry(left_reentry_raw));
+    let right = scope_marker_identity_tag(event(right_event_raw), reentry(right_reentry_raw));
+
+    kani::cover!(left_event_raw == right_event_raw && left_reentry_raw == right_reentry_raw);
+    kani::cover!(left_event_raw != right_event_raw);
+    kani::cover!(left_event_raw == right_event_raw && left_reentry_raw != right_reentry_raw);
+    assert!(
+        (left == right)
+            == (left_event_raw == right_event_raw && left_reentry_raw == right_reentry_raw)
+    );
 }
 
 #[kani::proof]
@@ -92,21 +174,21 @@ fn role_image_column_range_rejects_stride_multiplication_overflow() {
 
 #[kani::proof]
 fn compiled_program_blob_comparison_matches_array_equality() {
-    let left_bytes: [u8; 7] = kani::any();
-    let right_bytes: [u8; 7] = kani::any();
-    let left_static: &'static [u8; 7] = unsafe {
+    let left_bytes: [u8; 12] = kani::any();
+    let right_bytes: [u8; 12] = kani::any();
+    let left_static: &'static [u8; 12] = unsafe {
         /* SAFETY: both arrays remain live until the two program refs have been
         compared and neither ref escapes this proof harness. */
         core::mem::transmute(&left_bytes)
     };
-    let right_static: &'static [u8; 7] = unsafe {
+    let right_static: &'static [u8; 12] = unsafe {
         /* SAFETY: both arrays remain live until the two program refs have been
         compared and neither ref escapes this proof harness. */
         core::mem::transmute(&right_bytes)
     };
     let facts = ProgramImageFacts { role_count: 2 };
-    let left = program(left_static, facts, atom_columns());
-    let right = program(right_static, facts, atom_columns());
+    let left = program(left_static, facts, identity_columns());
+    let right = program(right_static, facts, identity_columns());
     let expected = left_bytes == right_bytes;
 
     kani::cover!(expected);
@@ -117,16 +199,17 @@ fn compiled_program_blob_comparison_matches_array_equality() {
 #[kani::proof]
 fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
     let facts = ProgramImageFacts { role_count: 2 };
-    let canonical = program(&CANONICAL_IMAGE, facts, atom_columns());
-    let same_image_at_another_address = program(&SAME_IMAGE, facts, atom_columns());
+    let canonical = program(&CANONICAL_IMAGE, facts, route_columns());
+    let same_image_at_another_address = program(&SAME_IMAGE, facts, route_columns());
     let different_facts = program(
         &SAME_IMAGE,
         ProgramImageFacts { role_count: 3 },
-        atom_columns(),
+        route_columns(),
     );
-    let different_columns = program(&SAME_IMAGE, facts, alternate_columns_with_same_blob_len());
-    let different_final_byte = program(&LAST_BYTE_DIFFERENT, facts, atom_columns());
+    let different_columns = program(&SAME_IMAGE, facts, alternate_columns());
+    let different_final_byte = program(&LAST_BYTE_DIFFERENT, facts, route_columns());
 
+    assert!(canonical.columns.blob_len() == different_columns.columns.blob_len());
     kani::cover!(canonical.same_image(&same_image_at_another_address));
     kani::cover!(!canonical.same_image(&different_facts));
     kani::cover!(!canonical.same_image(&different_columns));

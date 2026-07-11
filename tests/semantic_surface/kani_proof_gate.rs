@@ -13,6 +13,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
     let resolver_row_harnesses = read("src/global/compiled/images/image/route_resolvers/kani.rs");
     let program_ref_harnesses = read("src/global/compiled/images/image/program_ref/kani.rs");
+    let program_blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
     let program_columns = read("src/global/compiled/images/image/columns.rs");
     let role_image_types = read("src/global/role_program/image_types.rs");
     let resolver_registration_harnesses =
@@ -28,7 +29,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("harnesses=38 backend=CBMC"));
+    assert!(script.contains("harnesses=41 backend=CBMC"));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
@@ -130,6 +131,9 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!resolver_row_harnesses.contains("kani::assume"));
 
     for harness in [
+        "program_image_columns_are_canonical_for_exact_count_domain",
+        "program_image_columns_reject_total_byte_overflow",
+        "scope_marker_identity_tag_is_exact_and_injective",
         "packed_column_range_construction_is_exact_for_resident_stride_domain",
         "compiled_program_column_range_rejects_stride_multiplication_overflow",
         "role_image_column_range_rejects_stride_multiplication_overflow",
@@ -161,9 +165,22 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         assert!(program_ref_harnesses.contains(stride));
     }
     assert!(program_columns.contains("let byte_len = match len.checked_mul(stride)"));
+    assert!(program_columns.contains("scope_marker_len: u16"));
+    assert!(
+        program_columns
+            .contains("ProgramImageColumns::new(atom_len, route_resolver_len, markers.len())")
+    );
+    assert!(program_blob_storage.contains("fn write_scope_marker("));
+    assert!(
+        program_blob_storage.contains("scope_marker_identity_tag(marker.event, marker.reentry)")
+    );
+    assert!(
+        program_blob_storage
+            .contains("out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);")
+    );
     assert!(role_image_types.contains("let byte_len = match len.checked_mul(stride)"));
-    assert!(program_ref_harnesses.contains("let left_bytes: [u8; 7] = kani::any();"));
-    assert!(program_ref_harnesses.contains("let right_bytes: [u8; 7] = kani::any();"));
+    assert!(program_ref_harnesses.contains("let left_bytes: [u8; 12] = kani::any();"));
+    assert!(program_ref_harnesses.contains("let right_bytes: [u8; 12] = kani::any();"));
     assert!(program_ref_harnesses.contains("let expected = left_bytes == right_bytes;"));
     assert!(program_ref_harnesses.contains("assert!(left.same_image(&right) == expected);"));
     assert!(program_ref_harnesses.contains("kani::cover!(expected);"));
@@ -187,6 +204,13 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         program_ref_harnesses
             .contains("kani::cover!(!canonical.same_image(&different_final_byte));")
     );
+    assert!(program_ref_harnesses.contains(
+        "assert!(canonical.columns.blob_len() == different_columns.columns.blob_len());"
+    ));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 1, 0)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 0, 1)"));
+    assert!(program_ref_harnesses.contains("let overflow = blob_len > usize::from(u16::MAX);"));
+    assert!(program_ref_harnesses.contains("(u16::MAX, u16::MAX, u16::MAX)"));
     assert!(!program_ref_harnesses.contains("kani::assume"));
 
     let harness = "resolver_registration_key_is_program_and_id";
