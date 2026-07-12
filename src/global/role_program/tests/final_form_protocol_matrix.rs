@@ -16,9 +16,12 @@ macro_rules! final_form_protocol {
         g::seq(
             g::route(
                 g::send::<0, 1, Msg<20, ()>>(),
-                g::par(
-                    g::send::<0, 1, Msg<21, ()>>(),
-                    g::send::<2, 3, Msg<22, ()>>(),
+                g::seq(
+                    g::send::<0, 2, Msg<24, ()>>(),
+                    g::par(
+                        g::send::<0, 1, Msg<21, ()>>(),
+                        g::send::<2, 3, Msg<22, ()>>(),
+                    ),
                 ),
             )
             .resolve::<0x9120>(),

@@ -281,8 +281,10 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
             && role_image.contains("RoleDescriptorRef::from_resident(image)")
             && role_descriptor_ref.contains("Self { resident: image }")
             && role_descriptor_ref.contains("self.resident.program")
-            && role_descriptor_ref.contains("fn has_dynamic_route_scope(&self) -> bool")
-            && role_descriptor_ref.contains("if !self.has_dynamic_route_scope()")
+            && role_descriptor_ref.contains("fn dynamic_route_scope_count(&self) -> usize")
+            && role_descriptor_ref.contains("self.dynamic_route_scope_count()")
+            && !role_descriptor_ref.contains(".active_lane_count")
+            && !role_descriptor_ref.contains("checked_mul(self.max_route_stack_depth")
             && role_image
                 .contains("pub(crate) const fn from_resident(image: &'static RoleImageRef)")
             && !role_image.contains("RoleDescriptorSource"),

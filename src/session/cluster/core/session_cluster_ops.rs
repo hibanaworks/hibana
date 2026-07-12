@@ -123,7 +123,6 @@ where
         } = request;
         let resident_budget = crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
             role_descriptor.route_table_frame_slots(),
-            role_descriptor.route_table_lane_slots(),
             crate::rendezvous::core::Rendezvous::<T>::frontier_workspace_guard_bytes(
                 role_descriptor.frontier_scratch_layout(),
             ),
@@ -191,6 +190,18 @@ where
                 .cast::<crate::endpoint::carrier::KernelEndpointHeader<'cfg>>()
         };
         crate::invariant_some(core::ptr::NonNull::new(ptr))
+    }
+
+    pub(crate) fn try_public_endpoint_operation_lease(
+        &self,
+        rv_id: RendezvousId,
+        slot: EndpointLeaseId,
+        generation: u32,
+    ) -> Option<crate::rendezvous::core::EndpointOperationLease<'_>> {
+        let rendezvous = self
+            .locals()
+            .published_endpoint_owner(rv_id, slot, generation)?;
+        rendezvous.try_endpoint_operation_lease()
     }
 
     #[inline]

@@ -1,6 +1,6 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
-    Arm, CursorEndpoint, EventCursor, EvidenceFingerprint, IngressEvidenceState, Lane,
+    Arm, CursorEndpoint, EventCursor, EvidenceFingerprint, IngressEvidenceState,
     OfferEntryEvidence, RouteArmToken, ScopeArmMaterializationMeta, ScopeEvidence, ScopeId,
     Transport, state_index_to_usize,
 };
@@ -267,11 +267,10 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn pending_scope_ack_lane_mask(
+    pub(in crate::endpoint::kernel) fn has_pending_scope_ack_on_port(
         &self,
         lane_idx: usize,
         scope_id: ScopeId,
-        offer_lane_idx: usize,
     ) -> bool {
         if self.cursor.route_scope_resolver(scope_id).is_none() {
             return false;
@@ -279,13 +278,7 @@ where
         self.ports
             .get(lane_idx)
             .and_then(|port| port.as_ref())
-            .is_some_and(|port| {
-                port.has_pending_route_arm_selection_for_lane(
-                    scope_id,
-                    ROLE,
-                    Lane::new(offer_lane_idx as u32),
-                )
-            })
+            .is_some_and(|port| port.has_pending_route_arm_selection(scope_id, ROLE))
     }
 
     #[inline]
@@ -301,7 +294,7 @@ where
         let lane_limit = self.cursor.logical_lane_count();
         let mut next = offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
-            if !self.pending_scope_ack_lane_mask(lane_idx, scope_id, lane_idx) {
+            if !self.has_pending_scope_ack_on_port(lane_idx, scope_id) {
                 next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                 continue;
             }
@@ -347,20 +340,6 @@ where
         let slot_idx = slot_mask.trailing_zeros() as usize;
         *slot_mask &= !(1u8 << slot_idx);
         Some(slot_idx)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn record_route_arm_selection_for_lane(
-        &mut self,
-        lane_idx: usize,
-        scope_id: ScopeId,
-        arm: u8,
-    ) {
-        if self.cursor.route_scope_resolver(scope_id).is_none() {
-            return;
-        }
-        self.port_for_lane(lane_idx)
-            .record_route_arm_selection(scope_id, arm);
     }
 
     pub(in crate::endpoint::kernel) fn arm_has_recv(&self, scope_id: ScopeId, arm: u8) -> bool {

@@ -248,9 +248,7 @@ impl EventCursor {
         if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
             return false;
         }
-        self.machine()
-            .route_controller_role(scope_id)
-            .is_some_and(|ctrl| ctrl == self.machine().role())
+        self.machine().route_controller_role(scope_id) == self.machine().role()
     }
 
     /// Scope ID stored on the current node (no parent traversal).

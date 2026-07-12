@@ -144,11 +144,11 @@ fn assoc_and_route_sidecar_replacement_publish_before_retire() {
     );
 
     let route_stage_pos = capacity
-        .find("self.routes.migrate_from_storage(")
+        .find(".migrate_from_storage(lease.ptr(), target_frame_slots);")
         .expect("route replacement must stage entries before release");
     let route_replacement = &capacity[route_stage_pos..];
     let route_commit_pos = route_replacement
-        .find("self.routes.rebind_from_storage(")
+        .find(".rebind_from_storage(lease.ptr(), target_frame_slots);")
         .expect("route replacement must publish staged columns");
     let route_root_pos = route_replacement
         .find("self.route_storage.set(lease);")
@@ -179,7 +179,7 @@ fn assoc_and_route_sidecar_replacement_publish_before_retire() {
             && !route.contains("WaiterSlot")
             && !route.contains("pending_frame_hint")
             && !route.contains("waiters"),
-        "route migration must own only session-keyed frames and lane/free-list roots"
+        "route migration must own only session/scope frames and active/free-list roots"
     );
     assert!(
         arena.contains("fn compact_live_sidecars(&self)")

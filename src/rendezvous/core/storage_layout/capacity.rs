@@ -296,24 +296,17 @@ where
     pub(crate) fn ensure_route_table_capacity(
         &self,
         required_frame_slots: usize,
-        required_lane_slots: usize,
     ) -> Result<(), ResourceScope> {
-        if required_frame_slots >= RouteTable::FRAME_LIST_END as usize
-            || (required_frame_slots != 0 && required_lane_slots == 0)
-        {
+        if required_frame_slots >= RouteTable::FRAME_LIST_END as usize {
             return Err(ResourceScope::RouteTable);
         }
-        if required_frame_slots == 0
-            || (self.routes.route_slots() >= required_frame_slots
-                && self.routes.lane_slots() >= required_lane_slots)
-        {
+        if required_frame_slots == 0 || self.routes.route_slots() >= required_frame_slots {
             return Ok(());
         }
         let target_frame_slots = required_frame_slots.max(self.routes.route_slots());
-        let target_lane_slots = required_lane_slots.max(self.routes.lane_slots());
         let lease = self
             .lease_sidecar::<u8>(
-                RouteTable::storage_bytes(target_frame_slots, target_lane_slots),
+                RouteTable::storage_bytes(target_frame_slots),
                 RouteTable::storage_align(),
             )
             .ok_or(ResourceScope::RouteTable)?;
@@ -321,14 +314,10 @@ where
         if self.routes.route_slots() == 0 {
             /* SAFETY: route storage is currently unbound. The fresh sidecar
             lease has route-table size/alignment, and binding initializes the
-            frame, lane-head, and free-list columns before publication. */
+            frame and list-head columns before publication. */
             unsafe {
-                self.routes.bind_from_storage_with_layout(
-                    lease.ptr(),
-                    target_frame_slots,
-                    self.lane_base(),
-                    target_lane_slots,
-                );
+                self.routes
+                    .bind_from_storage(lease.ptr(), target_frame_slots);
             }
             self.route_storage.set(lease);
             return Ok(());
@@ -338,35 +327,23 @@ where
         storage. Migration transfers initialized frame/list state before the
         new owner root is published and the source sidecar is retired. */
         unsafe {
-            self.routes.migrate_from_storage(
-                lease.ptr(),
-                target_frame_slots,
-                self.lane_base(),
-                target_lane_slots,
-            );
+            self.routes
+                .migrate_from_storage(lease.ptr(), target_frame_slots);
         }
         /* SAFETY: migration populated the replacement route-table columns before
         rebinding publishes them for the same rendezvous lane range. */
         unsafe {
-            self.routes.rebind_from_storage(
-                lease.ptr(),
-                target_frame_slots,
-                self.lane_base(),
-                target_lane_slots,
-            );
+            self.routes
+                .rebind_from_storage(lease.ptr(), target_frame_slots);
         }
         self.route_storage.set(lease);
         self.retire_sidecar(source_route);
         Ok(())
     }
 
-    pub(crate) fn shrink_route_table_capacity(
-        &self,
-        required_frame_slots: usize,
-        required_lane_slots: usize,
-    ) {
+    pub(crate) fn shrink_route_table_capacity(&self, required_frame_slots: usize) {
         let current_frames = self.routes.route_slots();
-        if required_frame_slots > current_frames || required_lane_slots > self.routes.lane_slots() {
+        if required_frame_slots > current_frames {
             crate::invariant();
         }
         if required_frame_slots == 0 {
@@ -379,11 +356,7 @@ where
             self.retire_persistent_sidecar(route_storage.cast::<u8>());
             return;
         }
-        if required_lane_slots == 0 {
-            crate::invariant();
-        }
-        if required_frame_slots == current_frames && required_lane_slots == self.routes.lane_slots()
-        {
+        if required_frame_slots == current_frames {
             return;
         }
         let route_storage = self.route_storage.get();
@@ -391,15 +364,12 @@ where
         after dead session frames have been reclaimed. The route owner compacts
         any remaining live frames before publishing the smaller in-place layout. */
         unsafe {
-            self.routes.shrink_storage_in_place(
-                route_storage.ptr(),
-                required_frame_slots,
-                required_lane_slots,
-            );
+            self.routes
+                .shrink_storage_in_place(route_storage.ptr(), required_frame_slots);
         }
         self.route_storage.set(Sidecar::from_raw_parts(
             route_storage.ptr(),
-            RouteTable::storage_bytes(required_frame_slots, required_lane_slots),
+            RouteTable::storage_bytes(required_frame_slots),
         ));
         self.compact_live_sidecars();
     }

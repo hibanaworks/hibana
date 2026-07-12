@@ -49,6 +49,20 @@ impl<'a> OfferStagedIngress<'a> {
     }
 
     #[inline]
+    fn transport_observation(
+        &self,
+        session_raw: u32,
+        target_role: u8,
+    ) -> Option<lane_port::FrameObservation> {
+        let frame = self.transport_payload.as_ref()?;
+        if frame.is_deterministic() {
+            None
+        } else {
+            Some(frame.observed_transport_frame(session_raw, frame.lane_wire(), target_role))
+        }
+    }
+
+    #[inline]
     pub(super) fn stage_transport(&mut self, frame: lane_port::PreambleFrame<'a>) {
         if self.transport_payload.is_some() {
             crate::invariant();
@@ -181,6 +195,16 @@ impl<'r> OfferState<'r> {
     #[inline]
     pub(super) fn carried_transport_frame_label_raw(&self) -> Option<u8> {
         self.carried_ingress.transport_frame_label_raw()
+    }
+
+    #[inline]
+    pub(super) fn carried_transport_observation(
+        &self,
+        session_raw: u32,
+        target_role: u8,
+    ) -> Option<lane_port::FrameObservation> {
+        self.carried_ingress
+            .transport_observation(session_raw, target_role)
     }
 
     #[inline]

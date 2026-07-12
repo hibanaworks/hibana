@@ -1,5 +1,5 @@
 use super::CompiledProgramRef;
-use super::columns::{PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE};
+use super::columns::PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE;
 use crate::global::const_dsl::{
     DynamicRouteResolver, INTRINSIC_ROUTE_RESOLVER_ID, ScopeId, ScopeKind,
 };
@@ -9,6 +9,7 @@ struct RouteResolverRow {
     scope: ScopeId,
     resolver_id: u16,
     controller_role: u8,
+    arm_participant_masks: [u16; 2],
 }
 
 impl RouteResolverRow {
@@ -16,6 +17,8 @@ impl RouteResolverRow {
         raw_scope: u16,
         resolver_id: u16,
         controller_role: u8,
+        left_participant_mask: u16,
+        right_participant_mask: u16,
         role_count: u8,
     ) -> Option<Self> {
         if role_count == 0 || role_count > crate::g::ROLE_DOMAIN_SIZE {
@@ -30,12 +33,17 @@ impl RouteResolverRow {
         {
             return None;
         }
-        if controller_role != PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT && controller_role >= role_count
-        {
-            return None;
-        }
-        if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID
-            && controller_role == PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT
+        let role_mask = if role_count == u16::BITS as u8 {
+            u16::MAX
+        } else {
+            (1u16 << role_count) - 1
+        };
+        if left_participant_mask == 0
+            || right_participant_mask == 0
+            || ((left_participant_mask | right_participant_mask) & !role_mask) != 0
+            || controller_role >= role_count
+            || (left_participant_mask & (1u16 << controller_role)) == 0
+            || (right_participant_mask & (1u16 << controller_role)) == 0
         {
             return None;
         }
@@ -43,6 +51,7 @@ impl RouteResolverRow {
             scope,
             resolver_id,
             controller_role,
+            arm_participant_masks: [left_participant_mask, right_participant_mask],
         })
     }
 
@@ -54,11 +63,15 @@ impl RouteResolverRow {
         }
     }
 
-    const fn controller_role(self) -> Option<u8> {
-        if self.controller_role == PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT {
-            None
-        } else {
-            Some(self.controller_role)
+    const fn controller_role(self) -> u8 {
+        self.controller_role
+    }
+
+    const fn participant_mask(self, arm: u8) -> u16 {
+        match arm {
+            0 => self.arm_participant_masks[0],
+            1 => self.arm_participant_masks[1],
+            _ => crate::invariant(),
         }
     }
 }
@@ -75,6 +88,8 @@ impl CompiledProgramRef {
             self.read_u16_at(offset),
             self.read_u16_at(offset + 2),
             self.byte_at(offset + 4),
+            self.read_u16_at(offset + 5),
+            self.read_u16_at(offset + 7),
             self.facts.role_count,
         ) {
             Some(row) => Some(row),
@@ -104,13 +119,18 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
+    pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> u8 {
         self.route_resolver_row(scope_id).controller_role()
     }
 
     #[inline(always)]
     pub(crate) fn route_resolver(&self, scope_id: ScopeId) -> Option<DynamicRouteResolver> {
         self.route_resolver_row(scope_id).resolver()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_participant_mask(&self, scope_id: ScopeId, arm: u8) -> u16 {
+        self.route_resolver_row(scope_id).participant_mask(arm)
     }
 
     #[inline(always)]

@@ -136,6 +136,19 @@ where
         let mut wire_turn = PassiveWireTurn::Unpolled;
         loop {
             frame_evidence.record(self.refresh_passive_scope_evidence(selection, &mut state)?);
+            if state.has_transport() {
+                break;
+            }
+            if !wire_turn.has_polled() {
+                frame_evidence.record(self.poll_passive_wire_turn(
+                    selection,
+                    pending_recv,
+                    &mut state,
+                    cx,
+                )?);
+                wire_turn = PassiveWireTurn::Polled;
+                continue;
+            }
             if let Some(arm) = self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes) {
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
                     route_token: RouteArmToken::from_ack(arm),
@@ -145,10 +158,6 @@ where
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
                     route_token: token,
                 }));
-            }
-
-            if state.has_transport() {
-                break;
             }
 
             if frame_evidence.is_resolved() && wire_turn.has_polled() {
@@ -161,17 +170,6 @@ where
                 if !needs_wire_turn_for_materialization {
                     break;
                 }
-            }
-
-            if !wire_turn.has_polled() {
-                frame_evidence.record(self.poll_passive_wire_turn(
-                    selection,
-                    pending_recv,
-                    &mut state,
-                    cx,
-                )?);
-                wire_turn = PassiveWireTurn::Polled;
-                continue;
             }
 
             match self.on_frontier_defer(

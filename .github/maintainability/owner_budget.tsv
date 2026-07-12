@@ -65,7 +65,7 @@ src/rendezvous/recv_frame_receipt.rs	120	1	recursive
 src/rendezvous/port.rs	470	1	recursive
 src/rendezvous/port/recv_frame.rs	700	1	recursive
 src/rendezvous/tables/route_table.rs	430	1	recursive
-src/rendezvous/tables/route_table/storage.rs	680	1	recursive
+src/rendezvous/tables/route_table/storage.rs	560	1	recursive
 src/session/cluster/core/cluster_storage.rs	120	1	recursive
 src/session/cluster/core/dynamic_resolvers.rs	380	1	recursive
 src/session/cluster/core/endpoint_attach.rs	460	1	recursive

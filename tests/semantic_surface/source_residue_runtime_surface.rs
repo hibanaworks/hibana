@@ -410,7 +410,7 @@ fn route_resolver_authority_is_complete_identity_keyed() {
     for required in [
         "type Item = DynamicRouteResolver;",
         "return Some(DynamicRouteResolver::new(scope, resolver_id));",
-        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 9",
         "PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5",
         "scope_marker_len: u16,",
         "pub(crate) const fn scope_markers(self) -> ProgramColumnRange",
@@ -419,8 +419,11 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "self.write_u16(out, scope.raw());",
         "self.write_u16(out + 2, resolver_id);",
         "self.write_u8(out + 4,",
+        "self.write_u16(out + 5, arm_participant_masks[0]);",
+        "self.write_u16(out + 7, arm_participant_masks[1]);",
         "struct RouteResolverRow",
         "RouteResolverRow::decode(",
+        "pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> u8",
         "if decoded.scope == scope_id",
         "pub(crate) struct DynamicRouteResolver",
         "pub(crate) struct RouteResolverMarker",
@@ -486,6 +489,9 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 12",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 7",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5",
+        "PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT",
         "decision_tag",
         "RouteResolver::Intrinsic",
         "read_u32_at",
@@ -610,7 +616,9 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "if !validate_receive_lane_causality(eff_list)",
         "if !validate_parallel_endpoint_selectors(eff_list)",
         "if !validate_roll_reentry_endpoint_selectors(eff_list)",
-        "if first_visible_endpoint_selector_conflicts_from_markers(",
+        "if !has_dynamic_resolver",
+        "&& first_visible_endpoint_selector_conflicts_from_markers(",
+        "if !has_exactly_one_bit(controller_mask)",
         "if local_route_observer_paths_mergeable(",
         "validate_route_scope(role, eff_list, scope_markers, marker_idx)",
         "while role < crate::g::ROLE_DOMAIN_SIZE",
@@ -670,12 +678,17 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
     let intrinsic_branch = seal
         .find("if !has_dynamic_resolver")
         .expect("intrinsic route branch must stay present");
+    let unique_controller_reject = seal
+        .find("if !has_exactly_one_bit(controller_mask)")
+        .expect("all route authorities must retain one first-visible controller");
     let overlap_reject = seal
-        .find("if first_visible_endpoint_selector_conflicts_from_markers(")
+        .find("&& first_visible_endpoint_selector_conflicts_from_markers(")
         .expect("intrinsic branch endpoint selector overlap rejection must stay present");
     assert!(
-        resolver_branch < intrinsic_branch && intrinsic_branch < overlap_reject,
-        "cross-branch endpoint selector overlap must be rejected only under intrinsic route authority"
+        resolver_branch < unique_controller_reject
+            && unique_controller_reject < intrinsic_branch
+            && intrinsic_branch < overlap_reject,
+        "resolved routes must reject competing controllers before intrinsic-only overlap checks"
     );
 
     for forbidden in [

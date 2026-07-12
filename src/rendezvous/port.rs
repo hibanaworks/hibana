@@ -6,14 +6,12 @@
 use core::{
     cell::{Cell, UnsafeCell},
     marker::PhantomData,
-    task::Poll,
 };
 
 use super::core::{EndpointLeaseRecord, RendezvousAccessState, Sidecar};
 use super::tables::RouteTable;
 use crate::{
     endpoint::kernel::FrontierScratchLayout,
-    global::const_dsl::ScopeId,
     observe::core::TapRing,
     session::types::{Lane, RendezvousId, SessionId},
     transport::Transport,
@@ -53,6 +51,7 @@ fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
 }
 
 mod recv_frame;
+mod route_publication;
 
 use self::recv_frame::RecvFrameReceiptState;
 pub(crate) use self::recv_frame::{
@@ -113,15 +112,16 @@ pub(crate) struct PortInit<'r, 'tap, T: Transport> {
 
 pub(crate) struct ScratchLease<'r> {
     state: &'r Cell<RendezvousAccessState>,
+    restore: RendezvousAccessState,
 }
 
 impl Drop for ScratchLease<'_> {
     #[inline]
     fn drop(&mut self) {
-        if self.state.get() != RendezvousAccessState::ScratchLease {
+        if self.state.get().finish_scratch() != Some(self.restore) {
             crate::invariant();
         }
-        self.state.set(RendezvousAccessState::Available);
+        self.state.set(self.restore);
     }
 }
 
@@ -192,26 +192,31 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
 
     #[inline]
     pub(crate) fn try_scratch_lease(&self) -> Option<ScratchLease<'r>> {
-        if self.access_state.get() != RendezvousAccessState::Available {
-            return None;
-        }
-        self.access_state.set(RendezvousAccessState::ScratchLease);
+        let (leased, restore) = self.access_state.get().begin_scratch()?;
+        self.access_state.set(leased);
         Some(ScratchLease {
             state: self.access_state,
+            restore,
         })
     }
 
     #[inline]
     pub(crate) fn require_access_barrier(&self) {
         match self.access_state.get() {
-            RendezvousAccessState::RegistryLease | RendezvousAccessState::ScratchLease => {}
+            RendezvousAccessState::RegistryLease
+            | RendezvousAccessState::ScratchLease
+            | RendezvousAccessState::EndpointOperation
+            | RendezvousAccessState::EndpointScratchLease => {}
             RendezvousAccessState::Available => crate::invariant(),
         }
     }
 
     #[inline]
     fn require_scratch_lease(&self) {
-        if self.access_state.get() != RendezvousAccessState::ScratchLease {
+        if !matches!(
+            self.access_state.get(),
+            RendezvousAccessState::ScratchLease | RendezvousAccessState::EndpointScratchLease
+        ) {
             crate::invariant();
         }
     }
@@ -254,54 +259,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     #[inline]
     pub(crate) fn has_unresolved_recv_frame(&self) -> bool {
         self.recv_frame_receipt.has_outstanding()
-    }
-
-    #[inline]
-    pub(crate) fn route_table(&self) -> &RouteTable {
-        // SAFETY: `routes` points to the rendezvous-local RouteTable bound for
-        // this port and outliving every lane port reference.
-        unsafe { &*self.routes }
-    }
-
-    #[inline]
-    pub(crate) fn record_route_arm_selection(&self, scope: ScopeId, arm: u8) {
-        self.route_table().record_with_role_count(
-            self.sid,
-            self.lane,
-            self.role_count,
-            self.role,
-            scope,
-            arm,
-        );
-        EndpointLeaseRecord::wake_session_waiters(self.endpoint_lease_storage, self.sid, self.role);
-    }
-
-    #[inline]
-    pub(crate) fn poll_route_arm_selection(&self, scope: ScopeId, role: u8) -> Poll<u8> {
-        self.route_table()
-            .poll_with_role_count(self.sid, self.lane, self.role_count, role, scope)
-    }
-
-    #[inline]
-    pub(crate) fn peek_route_arm_selection(&self, scope: ScopeId, role: u8) -> Option<u8> {
-        self.route_table()
-            .peek_with_role_count(self.sid, self.lane, self.role_count, role, scope)
-    }
-
-    #[inline]
-    pub(crate) fn has_pending_route_arm_selection_for_lane(
-        &self,
-        scope: ScopeId,
-        role: u8,
-        target_lane: Lane,
-    ) -> bool {
-        self.route_table().has_pending_lane_with_role_count(
-            self.sid,
-            self.role_count,
-            role,
-            scope,
-            target_lane,
-        )
     }
 
     #[inline]

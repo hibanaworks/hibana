@@ -111,6 +111,9 @@ pub(crate) enum ClusterError {
     /// Roles attached under one session ID came from different program images.
     SessionProgramMismatch { sid: u32 },
 
+    /// Dynamic resolution has frozen this runtime's local participant set.
+    SessionMembershipSealed { sid: u32 },
+
     /// Resource exhaustion in a specific cluster storage area.
     ResourceExhausted { resource: ResourceScope },
 

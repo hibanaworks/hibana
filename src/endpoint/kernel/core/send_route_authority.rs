@@ -38,3 +38,13 @@ impl SendRouteAuthority {
         }
     }
 }
+
+impl SendRouteAudit {
+    #[inline]
+    pub(crate) const fn fresh_route_start(self) -> Option<usize> {
+        match self {
+            Self::DirectPreview { start } => Some(start as usize),
+            Self::None => None,
+        }
+    }
+}

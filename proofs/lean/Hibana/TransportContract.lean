@@ -293,4 +293,73 @@ theorem distinct_carrier_generations_cannot_alias
   subst right
   exact different rfl
 
+/-- The carrier obligations used by Hibana's asynchronous monitor. This is a
+model profile, not a claim that an arbitrary Rust `Transport` implementation
+satisfies it without its conformance certificate. -/
+structure AffineTransportProfile : Prop where
+  receiveIsFifo :
+    ∀ {state next : TransportState} {frame : TransportFrame},
+      state.pollReceive = .delivered frame next ->
+      state.frames[state.delivered]? = some frame /\
+        next.channel = state.channel /\
+        next.frames = state.frames /\
+        next.delivered = state.delivered + 1
+  receiveHasNoReplay :
+    ∀ {state next : TransportState} {frame : TransportFrame},
+      state.WellFormed ->
+      state.pollReceive = .delivered frame next ->
+      ∀ futureFrame,
+        next.frames[next.delivered]? = some futureFrame ->
+        futureFrame.sequence ≠ frame.sequence
+  peerCloseObservableAfterDrain :
+    ∀ {state : TransportState},
+      state.delivered = state.frames.length ->
+      (state.closePeer).pollReceive = .peerClosed
+  peerClosePreservesBufferedHead :
+    ∀ {state : TransportState} {frame : TransportFrame},
+      state.frames[state.delivered]? = some frame ->
+      (state.closePeer).pollReceive =
+        .delivered frame { state.closePeer with delivered := state.delivered + 1 }
+  abortIsObservable :
+    ∀ state : TransportState, state.abortPeer.pollReceive = .peerClosed
+  closedSendRejected :
+    ∀ {state : TransportState} {frameLabel : Fin 256},
+      state.peerClosed = true -> state.send frameLabel = none
+  sendAfterDrainIsFresh :
+    ∀ {state sent : TransportState} {frameLabel : Fin 256},
+      state.WellFormed ->
+      state.delivered = state.frames.length ->
+      state.send frameLabel = some sent ->
+      ∃ frame after,
+        sent.pollReceive = .delivered frame after /\
+        frame.channel = state.channel /\
+        frame.sequence = state.frames.length /\
+        frame.frameLabel = frameLabel /\
+        (∀ old, old ∈ state.frames -> old.sequence < frame.sequence)
+
+theorem transport_state_establishes_affine_profile : AffineTransportProfile := by
+  refine {
+    receiveIsFifo := ?_
+    receiveHasNoReplay := ?_
+    peerCloseObservableAfterDrain := ?_
+    peerClosePreservesBufferedHead := ?_
+    abortIsObservable := ?_
+    closedSendRejected := ?_
+    sendAfterDrainIsFresh := ?_
+  }
+  · intro state next frame received
+    exact transport_receive_is_fifo received
+  · intro state next frame wellFormed received futureFrame future
+    exact well_formed_transport_has_no_replay wellFormed received futureFrame future
+  · intro state drained
+    exact peer_close_is_observable_after_fifo_drain drained
+  · intro state frame present
+    exact peer_close_does_not_skip_buffered_frame present
+  · intro state
+    exact abort_peer_is_immediately_observable state
+  · intro state frameLabel closed
+    exact closed_transport_rejects_send closed
+  · intro state sent frameLabel wellFormed drained accepted
+    exact transport_send_after_drain_is_fresh wellFormed drained accepted
+
 end Hibana

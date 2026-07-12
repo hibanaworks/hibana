@@ -265,6 +265,7 @@ where
         let selection = match self.select_scope(
             state.carried_transport_lane_wire(),
             state.carried_transport_frame_label_raw(),
+            state.carried_transport_observation(self.sid.raw(), ROLE),
         ) {
             Ok(selection) => selection,
             Err(err) => {

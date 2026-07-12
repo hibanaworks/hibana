@@ -287,7 +287,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
             && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
             && miri_gate.contains(
-                "public-runtime-owner \\\n  27 \\\n  27 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
+                "public-runtime-owner \\\n  28 \\\n  28 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
             )
             && miri_gate.contains(
                 "transport-requeue-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport_requeue_callback_reentry_revalidates_generation"
@@ -320,7 +320,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "transport-contract-owner \\\n  6 \\\n  6 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport::tests::transport_contract_"
             )
             && miri_gate.contains(
-                "route-authority-storage-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::tests::route_authority_storage_"
+                "route-authority-storage-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::tests::route_authority_storage_"
             )
             && miri_gate.contains(
                 "rolled-causal-exit-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  rolled_same_label_recv_requires_causal_exit_handoff"
@@ -329,13 +329,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "rolled-resolved-route-reentry-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_resolved_route_reenters_left_right_left_rows"
             )
             && miri_gate.contains(
+                "rolled-buffered-route-order-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_resolved_route_preserves_buffered_decision_order"
+            )
+            && miri_gate.contains(
                 "session-family-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  session_template_instances_interleave_and_fault_independently"
             )
             && miri_gate.contains(
                 "session-waiter-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  same_lane_session_waiters_are_isolated"
             )
             && miri_gate.contains(
-                "route-branch-send-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
+                "route-branch-send-owner \\\n  5 \\\n  5 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
             )
             && miri_gate.contains(
                 "resolved-send-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --test send_route_authority"
@@ -347,10 +350,13 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "resolver-reject-cancellation-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  resolver_reject_does_not_encode_or_stage_send_payload"
             )
             && miri_gate.contains(
+                "dynamic-membership-seal-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  dynamic_resolution_seals_runtime_local_membership_before_evaluation"
+            )
+            && miri_gate.contains(
                 "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
             )
             && miri_gate.contains(
-                "resident-sidecar-owner \\\n  20 \\\n  19 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
+                "resident-sidecar-owner \\\n  23 \\\n  22 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate.contains(
                 "resident-descriptor-validation \\\n  40 \\\n  40 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"

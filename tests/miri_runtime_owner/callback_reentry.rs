@@ -13,7 +13,7 @@ use std::rc::Rc;
 use hibana::{
     g::{self, Msg},
     runtime::{
-        SessionKitStorage,
+        RendezvousKit, SessionKitStorage,
         ids::SessionId,
         program::{RoleProgram, project},
         resolver::{DecisionArm, ResolverError, ResolverRef},
@@ -65,6 +65,48 @@ thread_local! {
     static ENCODER_DROP_STATE: Cell<*const DropEndpointState> = const {
         Cell::new(core::ptr::null())
     };
+}
+
+thread_local! {
+    static REENTRANT_ATTACH_RENDEZVOUS: Cell<*const ()> = const {
+        Cell::new(core::ptr::null())
+    };
+    static REENTRANT_ATTACH_PROGRAM: Cell<*const ()> = const {
+        Cell::new(core::ptr::null())
+    };
+    static REENTRANT_ATTACH_SESSION: Cell<u32> = const { Cell::new(0) };
+    static REENTRANT_ATTACH_REJECTED: Cell<bool> = const { Cell::new(false) };
+}
+
+static REENTRANT_ATTACH_RESOLVER_STATE: () = ();
+
+fn attempt_reentrant_attach_and_choose_left(_: &()) -> Result<DecisionArm, ResolverError> {
+    let rendezvous = REENTRANT_ATTACH_RENDEZVOUS.with(Cell::get);
+    let program = REENTRANT_ATTACH_PROGRAM.with(Cell::get);
+    let session = REENTRANT_ATTACH_SESSION.with(Cell::get);
+    if rendezvous.is_null() || program.is_null() || session == 0 {
+        panic!("reentrant attach state is not armed");
+    }
+    let result = unsafe {
+        /* SAFETY: the test arms both pointers immediately before polling the
+        resolver and clears them before either stack owner leaves scope. An
+        unexpectedly attached endpoint is dropped before this callback returns. */
+        (&*rendezvous.cast::<RendezvousKit<'static, 'static, NoopTransport>>())
+            .enter(SessionId::new(session), &*program.cast::<RoleProgram<1>>())
+    };
+    let error = match result {
+        Ok(endpoint) => {
+            drop(endpoint);
+            panic!("resolver callback reentrantly attached a local role")
+        }
+        Err(error) => error,
+    };
+    assert!(
+        format!("{error:?}").contains("rv-busy"),
+        "endpoint-operation barrier must reject callback attach: {error:?}"
+    );
+    REENTRANT_ATTACH_REJECTED.with(|rejected| rejected.set(true));
+    Ok(DecisionArm::Left)
 }
 
 impl WireEncode for CallbackEncodedU32 {
@@ -420,6 +462,52 @@ fn resolver_callback_reentry_cannot_prepare_send_after_peer_drop() {
     let error =
         result.expect_err("resolver callback must not prepare send after dropping its peer");
     assert!(format!("{error:?}").contains("EndpointDropped"));
+}
+
+#[test]
+fn resolver_callback_reentrant_attach_is_rejected_before_endpoint_image_read() {
+    let role0 = callback_resolver_program::<0>();
+    let role1 = callback_resolver_program::<1>();
+    let mut slab = AlignedSlab([0; 65_536]);
+    let mut storage = SessionKitStorage::<NoopTransport>::uninit();
+    let kit = storage.init();
+    let rendezvous = kit
+        .rendezvous(&mut slab.0, NoopTransport)
+        .expect("register rendezvous");
+    rendezvous
+        .set_resolver(
+            &role0,
+            ResolverRef::<CALLBACK_RESOLVER>::decision_state(
+                &REENTRANT_ATTACH_RESOLVER_STATE,
+                attempt_reentrant_attach_and_choose_left,
+            ),
+        )
+        .expect("install callback resolver");
+    let sid = SessionId::new(141);
+    let mut controller = rendezvous.enter(sid, &role0).expect("controller");
+
+    REENTRANT_ATTACH_RENDEZVOUS
+        .with(|slot| slot.set(core::ptr::from_ref(&rendezvous).cast::<()>()));
+    REENTRANT_ATTACH_PROGRAM.with(|slot| slot.set(core::ptr::from_ref(&role1).cast::<()>()));
+    REENTRANT_ATTACH_SESSION.with(|slot| slot.set(sid.raw()));
+    REENTRANT_ATTACH_REJECTED.with(|slot| slot.set(false));
+
+    futures::executor::block_on(controller.send::<Msg<44, u32>>(&141))
+        .expect("rejected callback attach must not reject the selected send");
+
+    REENTRANT_ATTACH_RENDEZVOUS.with(|slot| slot.set(core::ptr::null()));
+    REENTRANT_ATTACH_PROGRAM.with(|slot| slot.set(core::ptr::null()));
+    REENTRANT_ATTACH_SESSION.with(|slot| slot.set(0));
+    assert!(REENTRANT_ATTACH_REJECTED.with(Cell::get));
+
+    let error = match rendezvous.enter(sid, &role1) {
+        Ok(endpoint) => {
+            drop(endpoint);
+            panic!("dynamic resolution reopened local membership")
+        }
+        Err(error) => error,
+    };
+    assert!(format!("{error:?}").contains("session-membership-sealed"));
 }
 
 #[test]

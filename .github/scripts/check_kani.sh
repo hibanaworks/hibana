@@ -51,6 +51,8 @@ PY
 
 for harness in \
   endpoint_generation_advances_or_exhausts \
+  endpoint_membership_seal_is_published_and_idempotent \
+  endpoint_operation_and_nested_scratch_transitions_are_exact \
   endpoint_gap_placement_is_aligned_and_bounded \
   endpoint_lease_storage_layout_is_bounded_and_exact \
   association_storage_layout_is_bounded_and_exact \
@@ -84,6 +86,21 @@ for harness in \
   single_ready_mask_decoding_is_exact; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/endpoint/kernel/authority/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
+  selected_local_participant_mask_is_exact_intersection \
+  active_route_entry_cannot_be_overwritten \
+  empty_route_entry_begin_is_exact \
+  active_route_entry_rejects_conflicting_arm_observation \
+  active_route_entry_observation_is_arm_preserving_and_monotone \
+  route_role_consumption_is_affine_and_arm_preserving \
+  route_entry_initial_mask_is_exact_over_selected_participants; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/rendezvous/tables/route_table/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
     exit 1
   fi
@@ -239,6 +256,8 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --run-sanity-checks \
   --output-format terse \
   --harness endpoint_generation_advances_or_exhausts \
+  --harness endpoint_membership_seal_is_published_and_idempotent \
+  --harness endpoint_operation_and_nested_scratch_transitions_are_exact \
   --harness endpoint_gap_placement_is_aligned_and_bounded \
   --harness endpoint_lease_storage_layout_is_bounded_and_exact \
   --harness association_storage_layout_is_bounded_and_exact \
@@ -250,6 +269,13 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness resolver_storage_layout_is_bounded_and_exact \
   --harness route_arm_decoding_accepts_exact_binary_domain \
   --harness single_ready_mask_decoding_is_exact \
+  --harness selected_local_participant_mask_is_exact_intersection \
+  --harness active_route_entry_cannot_be_overwritten \
+  --harness empty_route_entry_begin_is_exact \
+  --harness active_route_entry_rejects_conflicting_arm_observation \
+  --harness active_route_entry_observation_is_arm_preserving_and_monotone \
+  --harness route_role_consumption_is_affine_and_arm_preserving \
+  --harness route_entry_initial_mask_is_exact_over_selected_participants \
   --harness frame_header_roundtrip_preserves_every_field \
   --harness frame_header_identity_is_exact_and_injective \
   --harness session_fault_encoding_roundtrip_is_exact \

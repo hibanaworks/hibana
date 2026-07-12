@@ -9,12 +9,18 @@ use crate::global::compiled::images::image::columns::{
 use crate::global::const_dsl::{EffList, ReentryMark, ScopeEvent};
 use crate::global::role_program::ColumnRange;
 
-static CANONICAL_IMAGE: [u8; 5] = [0, 1, 2, 3, 4];
-static SAME_IMAGE: [u8; 5] = [0, 1, 2, 3, 4];
-static LAST_BYTE_DIFFERENT: [u8; 5] = [0, 1, 2, 3, 5];
+static CANONICAL_IMAGE: [u8; 27] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26,
+];
+static SAME_IMAGE: [u8; 27] = CANONICAL_IMAGE;
+static LAST_BYTE_DIFFERENT: [u8; 27] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    27,
+];
 
 fn route_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 1, 0)
+    ProgramImageColumns::new(0, 3, 0)
 }
 
 fn identity_columns() -> ProgramImageColumns {
@@ -22,7 +28,7 @@ fn identity_columns() -> ProgramImageColumns {
 }
 
 fn alternate_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 0, 1)
+    ProgramImageColumns::new(2, 0, 1)
 }
 
 fn program<const N: usize>(

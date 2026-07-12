@@ -40,6 +40,12 @@ where
                 self.build_send_selected_route_rows(preview_idx, meta)?
             }
         };
+        let route_audit = route_authority.route_audit();
+        self.preflight_send_route_publications(
+            route_rows,
+            meta.lane,
+            route_audit.fresh_route_start(),
+        )?;
         let mut selected_arm = |scope| {
             let mut row_idx = 0usize;
             while row_idx < route_rows.len() {
@@ -106,7 +112,8 @@ where
         };
         Ok(SendProgressCommitPlan {
             delta,
-            route_audit: route_authority.route_audit(),
+            route_audit,
+            frame_target: meta.peer,
         })
     }
 
@@ -119,8 +126,16 @@ where
             }
             SendRouteAudit::None => {}
         }
-        self.publish_send_route_evidence_delta(&committed);
+        let route_selection_published = self.publish_send_route_evidence_delta(
+            &committed,
+            plan.frame_target,
+            plan.route_audit.fresh_route_start(),
+        );
         self.emit_send_after_transport_event(&committed);
+        if route_selection_published {
+            let route_lane = crate::invariant_some(committed.selected_route_lane());
+            self.wake_route_arm_selection_waiters(route_lane);
+        }
     }
 
     #[inline(never)]

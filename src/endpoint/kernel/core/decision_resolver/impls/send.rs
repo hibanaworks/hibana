@@ -208,6 +208,7 @@ where
     ) -> SendResult<crate::session::cluster::core::DecisionArm> {
         let scope_id = resolver.scope();
         let cluster = self.session.cluster();
+        self.port().seal_session_membership();
         let resolver_result = cluster.resolve_dynamic_resolver(
             self.rendezvous_id(),
             self.cursor.program_ref(),
@@ -236,6 +237,7 @@ where
             | crate::session::cluster::error::ClusterError::RendezvousUnregistered { .. }
             | crate::session::cluster::error::ClusterError::RendezvousBusy { .. }
             | crate::session::cluster::error::ClusterError::SessionProgramMismatch { .. }
+            | crate::session::cluster::error::ClusterError::SessionMembershipSealed { .. }
             | crate::session::cluster::error::ClusterError::ResourceExhausted { .. }
             | crate::session::cluster::error::ClusterError::DynamicResolverInvariant { .. } => {
                 SendError::PhaseInvariant

@@ -37,6 +37,7 @@ where
         &mut self,
         carried_lane: Option<u8>,
         carried_frame_label: Option<u8>,
+        carried_observation: Option<super::lane_port::FrameObservation>,
     ) -> RecvResult<Option<OfferScopeSelection>> {
         let (Some(lane), Some(frame_label)) = (carried_lane, carried_frame_label) else {
             return Ok(None);
@@ -100,7 +101,13 @@ where
         if let (Some(selected), Some(observed)) = (selected_arm_for_observed, observed_arm)
             && selected != observed
         {
-            return Ok(None);
+            let observation = carried_observation.ok_or(RecvError::PhaseInvariant)?;
+            self.emit_materialization_mismatch_observation(
+                usize::from(lane),
+                lane,
+                super::lane_port::FrameMismatch::label_mismatch(observation),
+            );
+            return Err(RecvError::PhaseInvariant);
         }
         if target_idx != current_idx {
             self.commit_cursor_realign_index(target_idx)

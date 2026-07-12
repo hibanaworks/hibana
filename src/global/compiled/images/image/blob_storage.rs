@@ -1,7 +1,7 @@
 use super::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT,
-    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
+    ROUTE_ORDINAL_BYTES, insert_route_ordinal,
 };
 use crate::{
     eff::{EffAtom, EffKind},
@@ -113,8 +113,9 @@ impl<const N: usize> ProgramImageBytes<N> {
         column: ProgramColumnRange,
         row: usize,
         scope: ScopeId,
-        controller_role: Option<u8>,
+        controller_role: u8,
         resolver: Option<DynamicRouteResolver>,
+        arm_participant_masks: [u16; 2],
     ) {
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
         self.write_u16(out, scope.raw());
@@ -123,13 +124,46 @@ impl<const N: usize> ProgramImageBytes<N> {
             None => INTRINSIC_ROUTE_RESOLVER_ID,
         };
         self.write_u16(out + 2, resolver_id);
-        self.write_u8(
-            out + 4,
-            match controller_role {
-                Some(role) => role,
-                None => PROGRAM_IMAGE_ROUTE_CONTROLLER_ABSENT,
-            },
-        );
+        self.write_u8(out + 4, controller_role);
+        self.write_u16(out + 5, arm_participant_masks[0]);
+        self.write_u16(out + 7, arm_participant_masks[1]);
+    }
+
+    const fn route_arm_participant_mask(eff_list: &EffList, start: usize, end: usize) -> u16 {
+        let mut mask = 0u16;
+        let mut idx = start;
+        while idx < end && idx < eff_list.len() {
+            if matches!(eff_list.node_at(idx).kind, EffKind::Atom) {
+                let atom = eff_list.node_at(idx).atom_data();
+                if atom.from >= crate::g::ROLE_DOMAIN_SIZE || atom.to >= crate::g::ROLE_DOMAIN_SIZE
+                {
+                    crate::invariant();
+                }
+                mask |= 1u16 << atom.from;
+                mask |= 1u16 << atom.to;
+            }
+            idx += 1;
+        }
+        if mask == 0 {
+            crate::invariant();
+        }
+        mask
+    }
+
+    const fn route_arm_participant_masks(
+        eff_list: &EffList,
+        route_enter_marker_idx: usize,
+    ) -> [u16; 2] {
+        let markers = eff_list.scope_markers();
+        if route_enter_marker_idx >= markers.len() {
+            crate::invariant();
+        }
+        let (_, left_start, left_end, _, right_start, right_end) =
+            route_arm_ranges_from_first_enter(markers, route_enter_marker_idx);
+        [
+            Self::route_arm_participant_mask(eff_list, left_start, left_end),
+            Self::route_arm_participant_mask(eff_list, right_start, right_end),
+        ]
     }
 
     const fn write_scope_marker(
@@ -163,10 +197,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn route_controller_role(
-        eff_list: &EffList,
-        route_enter_marker_idx: usize,
-    ) -> Option<u8> {
+    const fn route_controller_role(eff_list: &EffList, route_enter_marker_idx: usize) -> u8 {
         let scope_markers = eff_list.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
             crate::invariant();
@@ -175,7 +206,10 @@ impl<const N: usize> ProgramImageBytes<N> {
             route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
         let mask = Self::first_visible_controller_mask(eff_list, arm0_start, arm0_end)
             | Self::first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-        Self::unique_controller_role(mask)
+        match Self::unique_controller_role(mask) {
+            Some(role) => role,
+            None => crate::invariant(),
+        }
     }
 
     const fn first_visible_controller_mask(eff_list: &EffList, start: usize, end: usize) -> u16 {
@@ -324,12 +358,14 @@ impl<const N: usize> ProgramImageBytes<N> {
                 }
                 let controller = Self::route_controller_role(eff_list, idx);
                 let resolver = eff_list.resolver_for_scope(marker.scope_id);
+                let arm_participant_masks = Self::route_arm_participant_masks(eff_list, idx);
                 out.write_route_resolver(
                     columns.route_resolvers(),
                     route_row,
                     marker.scope_id,
                     controller,
                     resolver,
+                    arm_participant_masks,
                 );
                 route_row += 1;
             }

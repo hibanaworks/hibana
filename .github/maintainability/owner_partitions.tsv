@@ -177,6 +177,7 @@ src/rendezvous	src/rendezvous/recv_frame_receipt.rs
 src/rendezvous	src/rendezvous/tables
 src/rendezvous	src/rendezvous/tables.rs
 src/rendezvous/core	src/rendezvous/core/access_port.rs
+src/rendezvous/core	src/rendezvous/core/access_state.rs
 src/rendezvous/core	src/rendezvous/core/endpoint_leases
 src/rendezvous/core	src/rendezvous/core/endpoint_leases.rs
 src/rendezvous/core	src/rendezvous/core/endpoint_waiter.rs

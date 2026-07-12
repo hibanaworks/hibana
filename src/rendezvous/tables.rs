@@ -18,7 +18,7 @@ use core::{
 
 use crate::{
     global::const_dsl::{ScopeId, ScopeKind},
-    session::types::{Lane, SessionId},
+    session::types::SessionId,
 };
 
 const MAX_TRACKED_ROLES: usize = crate::g::ROLE_DOMAIN_SIZE as usize;

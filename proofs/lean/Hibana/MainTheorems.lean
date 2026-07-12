@@ -16,8 +16,11 @@ import Hibana.RollFreshness
 import Hibana.SessionComposition
 import Hibana.SessionLifecycle
 import Hibana.StaticProjectability
+import Hibana.IterationErasure
+import Hibana.AffineRoutePublication
 import Hibana.RuntimeRefinement
 import Hibana.ProtocolArtifact
+import Hibana.StaticProjectabilityExamples
 import Hibana.Layout
 import Hibana.Progress
 import Hibana.Refinement

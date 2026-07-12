@@ -5,7 +5,7 @@ namespace Hibana
 
 def productionProgramAtomStride : Nat := 11
 
-def productionProgramRouteResolverStride : Nat := 5
+def productionProgramRouteResolverStride : Nat := 9
 
 def productionProgramScopeMarkerStride : Nat := 5
 
@@ -51,6 +51,8 @@ structure DecodedRouteResolver where
   scope : Nat
   authority : RouteAuthority
   controller : Nat
+  leftParticipantMask : Nat
+  rightParticipantMask : Nat
   deriving Repr, DecidableEq
 
 structure DecodedScopeMarker where
@@ -143,6 +145,15 @@ def Choreo.firstVisibleSenders : Choreo -> List Nat
       (left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups
   | .roll body => body.firstVisibleSenders
 
+def Choreo.participants : Choreo -> List Nat
+  | .send sender receiver _ _ => [sender, receiver].eraseDups
+  | .seq left right | .par left right | .route _ left right =>
+      (left.participants ++ right.participants).eraseDups
+  | .roll body => body.participants
+
+def participantMask (roles : List Nat) : Nat :=
+  roles.eraseDups.foldl (fun mask role => mask + 2 ^ role) 0
+
 def uniqueController : List Nat -> Nat
   | [role] => role
   | _ => 255
@@ -208,7 +219,13 @@ def canonicalProgramSource : Choreo -> CanonicalProgramSource
         ((left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups)
       {
         atoms := leftSource.atoms ++ rightSource.atoms
-        resolvers := { scope := 0, authority, controller } ::
+        resolvers := {
+          scope := 0
+          authority
+          controller
+          leftParticipantMask := participantMask left.participants
+          rightParticipantMask := participantMask right.participants
+        } ::
           (leftSource.resolvers ++ rightSource.resolvers)
         markers := exitedRight
         scopeBudget := 1 + leftOriginal.scopeBudget + rightOriginal.scopeBudget
@@ -818,13 +835,18 @@ def RustDescriptorImage.decodeRouteResolverRow?
   let scope ← readU16LE? image.programBytes offset
   let resolver ← readU16LE? image.programBytes (offset + 2)
   let controller ← readByte? image.programBytes (offset + 4)
+  let leftParticipantMask ← readU16LE? image.programBytes (offset + 5)
+  let rightParticipantMask ← readU16LE? image.programBytes (offset + 7)
   if scope < productionMaxEffNodes ∧
-      (controller = 255 ∨ controller < image.roleCount) ∧
-      (resolver ≠ packedU16Absent ∨ controller ≠ 255) then
+      controller < image.roleCount ∧
+      0 < leftParticipantMask ∧ leftParticipantMask < 2 ^ image.roleCount ∧
+      0 < rightParticipantMask ∧ rightParticipantMask < 2 ^ image.roleCount ∧
+      (leftParticipantMask / 2 ^ controller) % 2 = 1 ∧
+      (rightParticipantMask / 2 ^ controller) % 2 = 1 then
     let authority :=
       if resolver = packedU16Absent then RouteAuthority.intrinsic
       else RouteAuthority.dynamic resolver
-    pure { scope, authority, controller }
+    pure { scope, authority, controller, leftParticipantMask, rightParticipantMask }
   else
     none
 

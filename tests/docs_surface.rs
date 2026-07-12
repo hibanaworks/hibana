@@ -98,6 +98,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Keep choreography terms local.",
         "### Routes",
         "Route choice is a protocol fact, not a transport guess.",
+        "Both forms require one first-visible controller",
+        "it is not a shared oracle that makes competing first senders projectable",
         "Prefer in-band choice",
         "mark the route with `.resolve::<ID>()`",
         "### Repeated Regions",

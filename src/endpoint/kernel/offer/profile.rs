@@ -184,7 +184,7 @@ impl OfferScopeProfile {
 
     #[inline]
     pub(super) const fn frame_evidence_is_branch_authority(self) -> bool {
-        matches!(self, Self::PassiveIntrinsic)
+        matches!(self, Self::PassiveIntrinsic | Self::PassiveDynamic)
     }
 
     #[inline]

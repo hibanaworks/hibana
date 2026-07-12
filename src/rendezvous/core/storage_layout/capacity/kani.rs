@@ -4,7 +4,10 @@ use super::{
     endpoint_lease::{endpoint_lease_storage_bytes, next_endpoint_lease_generation},
     resident_lease::sidecar_ranges_overlap,
 };
-use crate::rendezvous::core::{EndpointLeaseRecord, endpoint_leases::endpoint_offset_in_gap};
+use crate::rendezvous::core::{
+    EndpointLeaseRecord, EndpointLeaseState, RendezvousAccessState,
+    endpoint_leases::endpoint_offset_in_gap,
+};
 use crate::session::cluster::core::ResolverBucket;
 use crate::session::types::SessionId;
 
@@ -21,6 +24,66 @@ fn endpoint_generation_advances_or_exhausts() {
             assert!(next != 0);
         }
         None => assert!(current == u32::MAX),
+    }
+}
+
+#[kani::proof]
+fn endpoint_membership_seal_is_published_and_idempotent() {
+    let raw: u8 = kani::any();
+    kani::assume(raw <= EndpointLeaseState::MembershipSealed as u8);
+    let state = match raw {
+        0 => EndpointLeaseState::Vacant,
+        1 => EndpointLeaseState::Reserved,
+        2 => EndpointLeaseState::Published,
+        3 => EndpointLeaseState::MembershipSealed,
+        _ => crate::invariant(),
+    };
+    match state.seal_membership() {
+        Some(sealed) => {
+            assert!(state.is_published());
+            assert!(sealed == EndpointLeaseState::MembershipSealed);
+            assert!(sealed.is_published());
+            assert!(sealed.is_membership_sealed());
+            assert!(sealed.seal_membership() == Some(sealed));
+        }
+        None => assert!(!state.is_published()),
+    }
+}
+
+#[kani::proof]
+fn endpoint_operation_and_nested_scratch_transitions_are_exact() {
+    let raw: u8 = kani::any();
+    kani::assume(raw <= RendezvousAccessState::EndpointScratchLease as u8);
+    let state = match raw {
+        0 => RendezvousAccessState::Available,
+        1 => RendezvousAccessState::RegistryLease,
+        2 => RendezvousAccessState::ScratchLease,
+        3 => RendezvousAccessState::EndpointOperation,
+        4 => RendezvousAccessState::EndpointScratchLease,
+        _ => crate::invariant(),
+    };
+
+    let operation = state.begin_endpoint_operation();
+    assert!(operation.is_some() == (state == RendezvousAccessState::Available));
+    if let Some(active) = operation {
+        assert!(active == RendezvousAccessState::EndpointOperation);
+        assert!(active.finish_endpoint_operation() == Some(RendezvousAccessState::Available));
+    }
+
+    let scratch = state.begin_scratch();
+    assert!(
+        scratch.is_some()
+            == matches!(
+                state,
+                RendezvousAccessState::Available | RendezvousAccessState::EndpointOperation
+            )
+    );
+    if let Some((leased, restore)) = scratch {
+        assert!(leased.finish_scratch() == Some(restore));
+        if state == RendezvousAccessState::EndpointOperation {
+            assert!(leased == RendezvousAccessState::EndpointScratchLease);
+            assert!(restore == RendezvousAccessState::EndpointOperation);
+        }
     }
 }
 
@@ -86,27 +149,19 @@ fn association_storage_layout_is_bounded_and_exact() {
 #[kani::proof]
 fn route_storage_layout_is_bounded_and_exact() {
     let route_slots = usize::from(kani::any::<u16>());
-    let lane_slots = usize::from(kani::any::<u16>());
-    let empty_bytes = RouteTable::storage_bytes(0, 0);
-    let one_frame_bytes = RouteTable::storage_bytes(1, 0);
-    let frame_stride = one_frame_bytes - empty_bytes;
-    let frames_only = RouteTable::storage_bytes(route_slots, 0);
-    let storage_bytes = RouteTable::storage_bytes(route_slots, lane_slots);
-    let lane_bytes = core::mem::size_of::<u16>()
-        .checked_mul(lane_slots)
-        .expect("the full u16 lane capacity domain must fit route storage arithmetic");
+    let root_bytes = RouteTable::storage_bytes(0);
+    let frame_stride = RouteTable::storage_bytes(1) - root_bytes;
+    let expected_bytes = frame_stride
+        .checked_mul(route_slots)
+        .and_then(|frames| frames.checked_add(root_bytes))
+        .expect("the full u16 route capacity domain must fit route storage arithmetic");
+    let storage_bytes = RouteTable::storage_bytes(route_slots);
 
-    kani::cover!(route_slots == 0 && lane_slots == 0);
-    kani::cover!(route_slots == usize::from(u16::MAX) && lane_slots == usize::from(u16::MAX));
+    kani::cover!(route_slots == 0);
+    kani::cover!(route_slots == usize::from(u16::MAX));
     assert!(RouteTable::storage_align().is_power_of_two());
     assert!(frame_stride != 0);
-    assert!(
-        frame_stride
-            .checked_mul(route_slots)
-            .and_then(|frames| frames.checked_add(empty_bytes))
-            == Some(frames_only)
-    );
-    assert!(storage_bytes.checked_sub(frames_only) == Some(lane_bytes));
+    assert!(storage_bytes == expected_bytes);
     assert!(storage_bytes <= u32::MAX as usize);
 }
 

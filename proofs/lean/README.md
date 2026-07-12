@@ -152,6 +152,19 @@ The kernel-checked boundary covers:
   full global invariant, accepted protocol, fault, ambiguous-receive, and
   cancellation-observation transitions preserve it, while preview/drop/requeue
   are proved stutters;
+- one `MessageErasedAffineAsyncMonitor` composition proposition. An accepted
+  verified protocol artifact simultaneously supplies exact all-role descriptor
+  refinement including route participant masks, reachable-state subject
+  reduction and session fidelity, semantic unstuckness, injective transport
+  admission, the explicit FIFO/no-replay/close-observable affine transport
+  profile, FIFO-or-causal `.roll` reentry, exact intersection of selected and
+  locally attached participants, non-overwritable affine route publication,
+  at-most-once arm-preserving observation, sealed runtime-local membership before
+  dynamic resolution, callback attach exclusion while endpoint storage is
+  borrowed, and finite asynchronous cancellation retirement under its explicit
+  premises. The proposition is a machine-checkable
+  description of Hibana's combined boundary, not a claim of historical priority
+  over every other implementation;
 - fail-closed endpoint lease generation exhaustion, strict successful
   generation increase, first-fault authority, poisoned-attach rejection, and
   absence of poison-to-live revival before generation retirement. Publication
@@ -175,7 +188,7 @@ bytes rather than trusting that witness. General Lean theorems cover every
 accepted production-layout byte image, equate its action column with
 `projectGraph`, and join byte decoding, exact operation keys, and commit in one
 cursor-refinement result. The generated
-corpus contains 14 traces with 64 frames, nineteen exact-byte role projection
+corpus contains 14 traces with 66 frames, nineteen exact-byte role projection
 certificates, four focused local progress closures, eight all-role
 projectability closures, and eight verified protocol artifacts. It exercises
 all roles of every generated choreography, both
@@ -204,8 +217,8 @@ adds no runtime queues, endpoint types, descriptor rows, or wire fields.
 
 This is not a source-to-source proof of arbitrary downstream Rust. The general
 byte-decoder and transition theorems are quantified over accepted descriptor
-images; the sixteen generated role images are production witnesses used by the
-gate and are grouped into seven complete protocol artifacts.
+images; the nineteen generated role images are production witnesses used by the
+gate and are grouped into eight complete protocol artifacts.
 Every generated exact image also carries rejecting mutations for its first
 global message contract, local action lane, resident metadata and lane bitmap,
 plus dependency, route resolver, route child/lane-step/commit, local route, and
@@ -250,6 +263,9 @@ for peer binding, FIFO framing, requeue, cancellation, wakeup, generation
 isolation, and anti-replay. A protocol that exposes unauthenticated, unordered,
 or repeated observations retains local monitor safety, but its authentication,
 loss, retry, and freshness logic is outside the affine-delivery conclusion.
+Exact frame identity is part of that profile: rewriting one valid branch label
+into another is indistinguishable from an authentic alternate-branch frame to a
+message-erased monitor unless additional wire identity is introduced.
 
 This separation is what permits session families without contaminating the
 core. A lossy or reordering carrier can expose raw message observations while
@@ -260,14 +276,36 @@ template while keeping persistent state, membership, scheduling, and recovery
 policy outside the monitor. Session isolation is proved; algorithm-specific
 safety and liveness invariants require their own proofs.
 
-Dynamic resolver publication is atomic inside one rendezvous generation. Across
-independent runtimes, the resolver input or carrier must provide one agreed
-decision to roles that can act before receiving branch evidence; the model does
-not claim to synthesize cross-runtime agreement. Intrinsic routes keep this
-choice in band. Production shared route-table authority is reserved for these
-explicit resolver scopes; non-controller intrinsic route commits require
-endpoint-local frame evidence, and intrinsic-only descriptors allocate no
-shared route table.
+Dynamic resolver publication is scope-global and affine inside one rendezvous
+generation. Its selected-arm participant mask is descriptor-derived, an active
+decision cannot be replaced, and waiter callbacks run only after the complete
+endpoint and nested-route publication. Runtime-local membership is sealed before
+external resolver code, so a late attach cannot obtain a second evaluation of
+the same occurrence. Resolved and intrinsic routes both require one
+first-visible controller; the static checker rejects competing branch
+initiators rather than treating a resolver as a distributed agreement oracle.
+Across independent runtimes, the resolver input or carrier must still provide
+one agreed decision to observers that act before receiving branch evidence; the
+model does not claim to synthesize cross-runtime agreement. Intrinsic routes
+keep this choice in band. Production shared route-table authority is reserved
+for these explicit resolver scopes; non-controller intrinsic route commits
+require endpoint-local frame evidence, and intrinsic-only descriptors allocate
+no shared route table.
+
+The literature boundary is deliberate. [Multiparty Asynchronous Session
+Types](https://www.doc.ic.ac.uk/~yoshida/multiparty/multiparty.pdf) motivates
+global types, projection, FIFO queues, fidelity, and progress; [Stay Safe Under
+Panic](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2022.4)
+motivates at-most-once ownership and cancellation; the [mechanised 2025
+correction](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2025.31)
+motivates Hibana's stricter explicit causality and projectability checker.
+[Communicating-session-automata bounded
+compatibility](https://mrg.cs.ox.ac.uk/publications/verifying-asynchronous-interactions-via-communicating-session-automata/cav19.pdf)
+and [denotational precise asynchronous
+subtyping](https://arxiv.org/abs/2604.10646) are useful adjacent models, but
+Hibana does not claim their full language or optimization theorems. Its
+normative claim is exactly the checked finite-role, message-erased monitor
+criterion above.
 
 The normalized model separates the production cursor's candidate frontier from
 commit authority, so a dynamic route can expose candidate labels while remaining

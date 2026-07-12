@@ -24,7 +24,8 @@ fn allocator_snapshot_source(
         let state = match slot.state {
             crate::rendezvous::core::EndpointLeaseState::Vacant => 0,
             crate::rendezvous::core::EndpointLeaseState::Reserved => 1,
-            crate::rendezvous::core::EndpointLeaseState::Published => 2,
+            crate::rendezvous::core::EndpointLeaseState::Published
+            | crate::rendezvous::core::EndpointLeaseState::MembershipSealed => 2,
         };
         slots.push(format!(
             "    {{ generation := {}, session := {}, role := {}, offset := {}, bytes := {}, state := {state} }}",
@@ -165,7 +166,6 @@ fn allocation_failure_certificate_source() -> String {
                 core::mem::align_of::<usize>(),
                 crate::rendezvous::core::EndpointResidentBudget {
                     route_frame_slots: 1,
-                    route_lane_slots: 1,
                     frontier_workspace_bytes: 0,
                 },
             )
@@ -338,7 +338,6 @@ fn export_runtime_certificates_for_lean() {
     let rv = init_test_rendezvous(&mut slab);
     let resident_budget = crate::rendezvous::core::EndpointResidentBudget {
         route_frame_slots: 4,
-        route_lane_slots: 3,
         frontier_workspace_bytes: 32,
     };
     let (_lease, _generation, endpoint_offset, endpoint_bytes) = rv

@@ -96,6 +96,15 @@ where
                     id: rendezvous.registry_id().raw(),
                 });
             }
+            if rendezvous.session_membership_is_sealed(sid) {
+                if rendezvous.registry_id() != rv {
+                    return Err(ClusterError::RendezvousMismatch {
+                        expected: rendezvous.registry_id().raw(),
+                        actual: rv.raw(),
+                    });
+                }
+                return Err(ClusterError::SessionMembershipSealed { sid: sid.raw() });
+            }
             if let Some(bound_program) = rendezvous.endpoint_session_program(sid) {
                 if rendezvous.registry_id() != rv {
                     return Err(ClusterError::RendezvousMismatch {

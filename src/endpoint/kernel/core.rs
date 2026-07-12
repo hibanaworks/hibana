@@ -366,6 +366,17 @@ where
         crate::invariant_some(self.ports[self.primary_lane].as_ref())
     }
 
+    #[inline]
+    pub(crate) fn try_public_operation_lease(
+        &self,
+    ) -> Option<crate::rendezvous::core::EndpointOperationLease<'r>> {
+        self.session.cluster().try_public_endpoint_operation_lease(
+            self.public_rv,
+            self.public_slot,
+            self.public_generation,
+        )
+    }
+
     /// Get port for a specific lane.
     pub(crate) fn port_for_lane(&self, lane_idx: usize) -> &Port<'r, T> {
         if self.ports[lane_idx].is_none() {

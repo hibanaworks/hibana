@@ -65,6 +65,56 @@ hibana::g choreography
   -> send() / recv() / offer() / RouteBranch::send() / RouteBranch::recv()
 ```
 
+### Verified Composition Boundary
+
+Hibana's distinctive result is stated as a reproducible composition theorem,
+not as an uncheckable priority claim. Lean theorem
+`verified_protocol_establishes_message_erased_affine_async_monitor` packages
+the following properties for one accepted production artifact:
+
+- every role's exact descriptor bytes, including each route arm's participant
+  mask, refine one projectable choreography;
+- subject reduction and session fidelity hold in every reachable global state,
+  and every reachable unfinished live state has a successor;
+- the modeled carrier profile is FIFO, affine/no-replay, close-observable after
+  drain, abort-observable, closed-to-send, and fresh after a drained prefix;
+- one admitted transport observation identifies at most one global occurrence;
+- intrinsic and resolved routes both have one first-visible controller; a
+  resolver may disambiguate that controller's operation but cannot legalize
+  competing branch initiators;
+- a receive lane reused across `.roll` iterations keeps one sender FIFO or has
+  a concrete receive-to-send causal handoff;
+- an active dynamic route decision cannot be overwritten and each selected
+  participant attached to that runtime observes it at most once; roles on other
+  runtimes remain frame-evidence participants, not runtime-local waiters;
+- runtime-local membership is sealed before external dynamic resolution, so a
+  late local attach cannot re-evaluate the same decision occurrence;
+- every endpoint callback runs under a rendezvous operation barrier, so
+  reentrant attach rejects before reading a currently borrowed endpoint image;
+- once asynchronous cancellation satisfies the stated transport retirement
+  premises, its finite measure reaches complete resource retirement.
+
+The theorem is in
+[`ProtocolArtifact.lean`](proofs/lean/Hibana/ProtocolArtifact.lean); its route
+cell and iteration arguments are in
+[`AffineRoutePublication.lean`](proofs/lean/Hibana/AffineRoutePublication.lean)
+and [`IterationErasure.lean`](proofs/lean/Hibana/IterationErasure.lean).
+Kani checks the corresponding compact Rust route-cell operations over their
+symbolic input domains, Miri checks runtime ownership and callback boundaries,
+and the message-heavy matrix checks that this monitor remains message-erased
+instead of generating a Rust continuation type per state.
+
+This establishes the named Hibana criterion; it does not establish that no
+other system has the same combination. It also does not claim precise
+asynchronous subtyping, arbitrary message-reordering optimization, unbounded
+communicating-automata model checking, or correctness of an arbitrary
+downstream `Transport` implementation.
+
+The affine transport profile includes exact preservation of accepted frame
+identity. A carrier that rewrites one valid branch label into another violates
+that profile; a message-erased monitor cannot distinguish the rewritten frame
+from an authentic frame for that alternate branch without adding wire identity.
+
 There are only two public surfaces:
 
 | Surface | Used by | Main names |
@@ -253,6 +303,9 @@ bytes; local actions check the zero-byte encoding before committing progress.
 
 The first local attach binds a session generation to one exact compiled program
 image; later local roles with different bytes are rejected before allocation.
+Local roles needed by a dynamic resolver must attach before that session first
+evaluates one: the runtime seals its current local membership before entering
+external resolver code and rejects later local attaches before allocation.
 Across devices, one global protocol is an initial deployment agreement, not a
 `Transport` handshake. A verified host artifact binds every role descriptor to
 that choreography, while the live monitor checks each received frame against its
@@ -355,7 +408,9 @@ parallel progress.
 
 `g::route(left, right)` is binary. Intrinsic routes recover the branch from the
 first visible endpoint operation; resolved routes use the explicit resolver
-decision as branch authority.
+decision as branch authority. Both forms require one first-visible controller
+across the two arms. `.resolve::<ID>()` disambiguates that controller's branch;
+it is not a shared oracle that makes competing first senders projectable.
 
 ```rust
 use hibana::g;
@@ -762,9 +817,11 @@ alternate semantic path.
 
 Within one rendezvous generation, every attached role uses the same registered
 resolver authority. Across independent devices, a resolver does not synthesize
-cross-runtime agreement: the protocol or carrier must supply the same decision
-to every role that can act before receiving branch evidence. Otherwise use an
-intrinsic route whose first in-band message communicates the choice.
+cross-runtime agreement. Projection rejects route arms with competing
+first-visible controllers even when `.resolve::<ID>()` is present. The protocol
+or carrier must still supply the same decision to observers that act before
+receiving branch evidence; otherwise use an intrinsic route whose first in-band
+message communicates the choice.
 
 ```rust,ignore
 use hibana::g;

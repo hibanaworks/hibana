@@ -92,15 +92,19 @@ where
         let scope_id = selection.scope_id;
 
         let frame_evidence = FrameEvidenceResolution::unresolved();
-        if profile.frame_evidence_is_branch_authority()
-            && let Some(route_token) = self.staged_transport_passive_route_token(state, scope_id)
-        {
-            return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
-                RouteAuthorityResolution {
-                    route_token,
-                    commit_evidence: RouteArmCommitEvidence::PollFrame,
-                },
-            )));
+        if profile.frame_evidence_is_branch_authority() {
+            match self.staged_transport_passive_route_token(state, scope_id) {
+                Ok(Some(route_token)) => {
+                    return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
+                        RouteAuthorityResolution {
+                            route_token,
+                            commit_evidence: RouteArmCommitEvidence::PollFrame,
+                        },
+                    )));
+                }
+                Ok(None) => {}
+                Err(err) => return Poll::Ready(Err(err)),
+            }
         }
         if let Some(route_token) = self.peek_live_scope_ack(scope_id) {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
@@ -147,12 +151,18 @@ where
 
     fn staged_transport_passive_route_token(
         &mut self,
-        state: &OfferResolveState<'r>,
+        state: &mut OfferResolveState<'r>,
         scope_id: crate::global::const_dsl::ScopeId,
-    ) -> Option<RouteArmToken> {
-        let lane = state.ingress.transport_lane_wire()?;
-        let frame_label = state.ingress.transport_frame_label_raw()?;
-        let arm = if let Some(target_idx) = state.selection().observed_target_index() {
+    ) -> RecvResult<Option<RouteArmToken>> {
+        let Some(lane) = state.ingress.transport_lane_wire() else {
+            return Ok(None);
+        };
+        let Some(frame_label) = state.ingress.transport_frame_label_raw() else {
+            return Ok(None);
+        };
+        let (arm, marks_descendant) = if let Some(target_idx) =
+            state.selection().observed_target_index()
+        {
             let mut selected = None;
             self.cursor
                 .visit_route_arms_for_index(target_idx, |candidate_scope, candidate_arm| {
@@ -160,21 +170,43 @@ where
                         selected = Some(candidate_arm);
                     }
                 });
-            Arm::from_raw(selected?)
+            let Some(selected) = selected else {
+                return Ok(None);
+            };
+            (Arm::from_raw(selected), false)
         } else {
-            let arm = Arm::from_raw(
-                self.cursor
-                    .passive_descendant_dispatch_arm_from_exact_frame_label(
-                        scope_id,
-                        lane,
-                        frame_label,
-                    )?,
-            );
-            self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
-            arm
+            let Some(selected) = self
+                .cursor
+                .passive_descendant_dispatch_arm_from_exact_frame_label(
+                    scope_id,
+                    lane,
+                    frame_label,
+                )
+            else {
+                return Ok(None);
+            };
+            (Arm::from_raw(selected), true)
         };
+        if self
+            .preview_live_route_arm_selection_non_consuming(scope_id)
+            .is_some_and(|selected| selected != arm)
+        {
+            let frame = crate::invariant_some(state.ingress.take_transport());
+            let lane_idx = frame.lane_idx();
+            let observed = frame.observed_transport_frame(self.sid.raw(), lane, ROLE);
+            self.emit_materialization_mismatch_observation(
+                lane_idx,
+                lane,
+                super::lane_port::FrameMismatch::label_mismatch(observed),
+            );
+            frame.discard_uncommitted();
+            return Err(RecvError::PhaseInvariant);
+        }
+        if marks_descendant {
+            self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
+        }
         self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
-        Some(RouteArmToken::from_poll(arm))
+        Ok(Some(RouteArmToken::from_poll(arm)))
     }
 
     fn collect_passive_route_authority_after_ack_miss(
@@ -222,6 +254,21 @@ where
         cx: &mut core::task::Context<'_>,
         frame_evidence: FrameEvidenceResolution,
     ) -> Poll<RecvResult<RouteAuthorityOutcome>> {
+        let scope_id = state.selection().scope_id;
+        if state.facts.profile.frame_evidence_is_branch_authority() {
+            match self.staged_transport_passive_route_token(state, scope_id) {
+                Ok(Some(route_token)) => {
+                    return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(
+                        RouteAuthorityResolution {
+                            route_token,
+                            commit_evidence: RouteArmCommitEvidence::PollFrame,
+                        },
+                    )));
+                }
+                Ok(None) => {}
+                Err(err) => return Poll::Ready(Err(err)),
+            }
+        }
         self.poll_route_authority_after_local_sources_miss(
             state,
             pending_recv,

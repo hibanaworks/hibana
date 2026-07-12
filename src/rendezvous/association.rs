@@ -187,6 +187,24 @@ impl AssocTable {
         self.find_entry_by_offset(lane_offset, sid).is_some()
     }
 
+    #[inline]
+    pub(super) fn has_session(&self, sid: SessionId) -> bool {
+        /* SAFETY: the scan is bounded by `assoc_slots` and reads only initialized
+        session/state columns. */
+        unsafe {
+            let sids = self.entry_sids_ptr();
+            let states = self.entry_states_ptr();
+            let mut idx = 0usize;
+            while idx < self.assoc_slots() {
+                if Self::entry_count(*states.add(idx)) != 0 && *sids.add(idx) == sid {
+                    return true;
+                }
+                idx += 1;
+            }
+        }
+        false
+    }
+
     /// Register a session/lane claim in an empty association entry.
     #[inline]
     pub(super) fn register(&self, lane: Lane, sid: SessionId) -> bool {

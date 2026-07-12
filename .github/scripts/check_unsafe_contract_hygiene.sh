@@ -508,9 +508,9 @@ done
 for required in \
   'SAFETY: the caller provides exclusive, writable storage for one' \
   'SAFETY: `idx` is inside the owner-exclusive unpublished frame' \
-  'SAFETY: `lane_idx` is inside the owner-exclusive unpublished' \
-  'SAFETY: `free_head` is the owner bundle' \
-  'SAFETY: both lane-head ranges lie in the same current sidecar.' \
+  'SAFETY: both list roots belong to the owner-exclusive unpublished' \
+  'SAFETY: both roots belong to the unpublished replacement bundle.' \
+  'SAFETY: both list roots are inside the smaller layout and every' \
   'SAFETY: compacted live frames occupy `0..active_count`'
 do
   if [[ "${route_table_rs}" != *"${required}"* ]]; then

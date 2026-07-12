@@ -38,6 +38,8 @@ use crate::{
     transport::Transport,
 };
 pub(crate) use storage_layout::Sidecar;
+mod access_state;
+pub(crate) use access_state::{EndpointOperationLease, RendezvousAccessState};
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -109,14 +111,12 @@ pub(crate) enum LaneRelease {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointResidentBudget {
     pub(crate) route_frame_slots: u16,
-    pub(crate) route_lane_slots: u8,
     pub(crate) frontier_workspace_bytes: u16,
 }
 
 impl EndpointResidentBudget {
     pub(crate) const ZERO: Self = Self {
         route_frame_slots: 0,
-        route_lane_slots: 0,
         frontier_workspace_bytes: 0,
     };
 
@@ -129,22 +129,12 @@ impl EndpointResidentBudget {
     }
 
     #[inline]
-    const fn compact_u8(value: usize) -> u8 {
-        if value > u8::MAX as usize {
-            crate::invariant();
-        }
-        value as u8
-    }
-
-    #[inline]
     pub(crate) const fn with_route_storage(
         route_frame_slots: usize,
-        route_lane_slots: usize,
         frontier_workspace_bytes: usize,
     ) -> Self {
         Self {
             route_frame_slots: Self::compact_u16(route_frame_slots),
-            route_lane_slots: Self::compact_u8(route_lane_slots),
             frontier_workspace_bytes: Self::compact_u16(frontier_workspace_bytes),
         }
     }
@@ -184,7 +174,7 @@ impl EndpointLeaseSlot {
 }
 
 pub(crate) struct EndpointLeaseRecord {
-    slot: EndpointLeaseSlot,
+    slot: Cell<EndpointLeaseSlot>,
     waiter: endpoint_waiter::EndpointWaiter,
 }
 
@@ -192,14 +182,19 @@ impl EndpointLeaseRecord {
     #[inline]
     const fn empty() -> Self {
         Self {
-            slot: EndpointLeaseSlot::EMPTY,
+            slot: Cell::new(EndpointLeaseSlot::EMPTY),
             waiter: endpoint_waiter::EndpointWaiter::empty(),
         }
     }
 
     #[inline]
     pub(crate) const fn slot(&self) -> EndpointLeaseSlot {
-        self.slot
+        self.slot.get()
+    }
+
+    #[inline]
+    pub(crate) fn set_slot(&self, slot: EndpointLeaseSlot) {
+        self.slot.set(slot);
     }
 
     #[inline]
@@ -240,14 +235,7 @@ pub(crate) enum EndpointLeaseState {
     Vacant = 0,
     Reserved = 1,
     Published = 2,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RendezvousAccessState {
-    Available = 0,
-    RegistryLease = 1,
-    ScratchLease = 2,
+    MembershipSealed = 3,
 }
 
 impl EndpointLeaseState {
@@ -258,7 +246,20 @@ impl EndpointLeaseState {
 
     #[inline]
     const fn is_published(self) -> bool {
-        matches!(self, Self::Published)
+        matches!(self, Self::Published | Self::MembershipSealed)
+    }
+
+    #[inline]
+    const fn is_membership_sealed(self) -> bool {
+        matches!(self, Self::MembershipSealed)
+    }
+
+    #[inline]
+    const fn seal_membership(self) -> Option<Self> {
+        match self {
+            Self::Published | Self::MembershipSealed => Some(Self::MembershipSealed),
+            Self::Vacant | Self::Reserved => None,
+        }
     }
 }
 
@@ -314,6 +315,13 @@ where
     #[inline]
     pub(crate) fn access_is_busy(&self) -> bool {
         self.access_state.get() != RendezvousAccessState::Available
+    }
+
+    #[inline]
+    pub(crate) fn try_endpoint_operation_lease(&self) -> Option<EndpointOperationLease<'_>> {
+        let next = self.access_state.get().begin_endpoint_operation()?;
+        self.access_state.set(next);
+        Some(EndpointOperationLease::new(&self.access_state))
     }
 
     #[inline]

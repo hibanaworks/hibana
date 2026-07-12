@@ -65,7 +65,7 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
             panic!("g::route arms must begin with a visible action")
         }
         ProgramSourceError::RouteControllerMismatch => {
-            panic!("intrinsic route arms use different first visible controllers")
+            panic!("route arms use different first visible controllers")
         }
         ProgramSourceError::RollBodyAbsent => panic!("rolled body requires at least one step"),
         ProgramSourceError::ParallelArmAbsent => {

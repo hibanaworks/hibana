@@ -45,6 +45,22 @@ fn branch_send_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::route(left, right).resolve::<BRANCH_SEND_RESOLVER>())
 }
 
+fn rolled_branch_send_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let left = g::seq(
+        g::send::<2, 2, Msg<BRANCH_SEND_SELECT_LEFT, ()>>(),
+        g::send::<0, 1, Msg<BRANCH_SEND_LEFT, u32>>(),
+    );
+    let right = g::seq(
+        g::send::<2, 2, Msg<BRANCH_SEND_SELECT_RIGHT, ()>>(),
+        g::send::<0, 1, Msg<BRANCH_SEND_RIGHT, u32>>(),
+    );
+    project(
+        &g::route(left, right)
+            .resolve::<BRANCH_SEND_RESOLVER>()
+            .roll(),
+    )
+}
+
 fn choose_left(
     _: &(),
 ) -> Result<hibana::runtime::resolver::DecisionArm, hibana::runtime::resolver::ResolverError> {
@@ -209,6 +225,83 @@ fn branch_first_step_operation_mismatch_is_fail_closed() {
                 Err(err) => err,
             };
             assert!(format!("{err:?}").contains("operation: \"offer\""));
+        });
+    });
+}
+
+#[test]
+fn rolled_route_rejects_next_decision_before_selected_participants_observe() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let role0 = rolled_branch_send_program::<0>();
+            let role1 = rolled_branch_send_program::<1>();
+            let role2 = rolled_branch_send_program::<2>();
+            rv.set_resolver(
+                &role2,
+                ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
+                    &BRANCH_SEND_STATE,
+                    choose_left,
+                ),
+            )
+            .expect("install controller resolver");
+            let sid = SessionId::new(905);
+            let sender = rv.enter(sid, &role0).expect("attach sender");
+            let receiver = rv.enter(sid, &role1).expect("attach receiver");
+            let mut controller = rv.enter(sid, &role2).expect("attach controller");
+
+            futures::executor::block_on(async {
+                controller
+                    .send::<Msg<BRANCH_SEND_SELECT_LEFT, ()>>(&())
+                    .await
+                    .expect("publish first route decision");
+                let error = controller
+                    .send::<Msg<BRANCH_SEND_SELECT_LEFT, ()>>(&())
+                    .await
+                    .expect_err("a live affine route decision cannot be overwritten");
+                assert!(format!("{error:?}").contains("PhaseInvariant"));
+            });
+            assert!(transport.queue_is_empty());
+            drop(controller);
+            drop((receiver, sender));
+        });
+    });
+}
+
+#[test]
+fn rolled_route_does_not_wait_for_roles_absent_from_local_runtime() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let role2 = rolled_branch_send_program::<2>();
+            rv.set_resolver(
+                &role2,
+                ResolverRef::<BRANCH_SEND_RESOLVER>::decision_state(
+                    &BRANCH_SEND_STATE,
+                    choose_left,
+                ),
+            )
+            .expect("install controller resolver");
+            let sid = SessionId::new(906);
+            let mut controller = rv.enter(sid, &role2).expect("attach local controller");
+
+            futures::executor::block_on(async {
+                controller
+                    .send::<Msg<BRANCH_SEND_SELECT_LEFT, ()>>(&())
+                    .await
+                    .expect("publish first local route decision");
+                controller
+                    .send::<Msg<BRANCH_SEND_SELECT_LEFT, ()>>(&())
+                    .await
+                    .expect("remote roles must not retain a local route cell");
+            });
+            assert!(transport.queue_is_empty());
         });
     });
 }

@@ -62,6 +62,11 @@ where
         {
             return Err(RecvError::PhaseInvariant);
         }
+        if branch.route_token.is_resolver()
+            && !self.can_begin_route_arm_selection(scope_id, lane_wire)
+        {
+            return Err(RecvError::PhaseInvariant);
+        }
         if branch.route_token.is_poll() && branch.kind == BranchKind::WireRecv {
             if branch.profile.poll_wire_commit_requires_event() {
                 if !branch
@@ -114,6 +119,7 @@ where
         let selected_arm = branch.selected_arm;
         let lane_wire = branch.lane_wire;
         let route_token = branch.route_token;
+        let mut route_selection_published = false;
 
         if route_token.is_resolver() {
             let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
@@ -127,7 +133,8 @@ where
                 _ => crate::invariant(),
             };
             self.emit_dynamic_resolver_success_audit(decision_lane, scope_id, resolver_id, arm);
-            self.record_route_arm_selection_for_scope_lanes(scope_id, selected_arm, decision_lane);
+            route_selection_published =
+                self.begin_route_arm_selection(scope_id, selected_arm, decision_lane, None);
             self.record_scope_ack(scope_id, route_token);
             self.emit_route_arm_selection(scope_id, route_token, decision_lane);
         } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
@@ -135,30 +142,45 @@ where
             let token = RouteArmToken::from_ack(arm);
             if matches!(branch.kind, BranchKind::ArmSend) {
                 let lane = lane_wire;
-                self.record_route_arm_selection_for_lane(lane as usize, scope_id, selected_arm);
+                route_selection_published |=
+                    self.observe_active_route_arm_selection(scope_id, selected_arm, lane, None);
                 self.emit_route_arm_selection(scope_id, token, lane);
             } else {
                 let offer_lanes = self.offer_lane_set_for_scope(scope_id);
                 if offer_lanes.is_empty() {
                     let lane = lane_wire;
-                    self.record_route_arm_selection_for_lane(lane as usize, scope_id, selected_arm);
+                    route_selection_published |=
+                        self.observe_active_route_arm_selection(scope_id, selected_arm, lane, None);
                     self.emit_route_arm_selection(scope_id, token, lane);
                 } else {
                     let lane_limit = self.cursor.logical_lane_count();
                     let mut next = offer_lanes.first_set(lane_limit);
+                    let mut extended = false;
                     while let Some(lane_idx) = next {
                         let lane = lane_idx as u8;
-                        self.record_route_arm_selection_for_lane(
-                            lane as usize,
-                            scope_id,
-                            selected_arm,
-                        );
+                        if !extended {
+                            route_selection_published |= self.observe_active_route_arm_selection(
+                                scope_id,
+                                selected_arm,
+                                lane,
+                                None,
+                            );
+                            extended = true;
+                        }
                         self.emit_route_arm_selection(scope_id, token, lane);
                         next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
                     }
                 }
             }
         } else if route_token.is_poll() {
+            if self.cursor.route_scope_resolver(scope_id).is_some() {
+                route_selection_published |= self.observe_active_route_arm_selection(
+                    scope_id,
+                    selected_arm,
+                    self.offer_lane_for_scope(scope_id),
+                    None,
+                );
+            }
             self.emit_route_arm_selection(
                 scope_id,
                 route_token,
@@ -170,5 +192,8 @@ where
             self.consume_scope_ready_arm(scope_id, selected_arm);
         }
         self.clear_scope_evidence(scope_id);
+        if route_selection_published {
+            self.wake_route_arm_selection_waiters(lane_wire);
+        }
     }
 }

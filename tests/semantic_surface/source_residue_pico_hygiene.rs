@@ -152,9 +152,10 @@ fn rendezvous_scratch_borrows_are_scoped_and_offer_progress_is_endpoint_resident
             && public_ops.contains("fn retire_transport_handles(&mut self)")
             && public_ops.contains("retirement_port.require_access_barrier()")
             && port.contains("pub(crate) fn require_access_barrier(&self)")
-            && port.contains(
-                "RendezvousAccessState::RegistryLease | RendezvousAccessState::ScratchLease"
-            ),
+            && port.contains("RendezvousAccessState::RegistryLease")
+            && port.contains("RendezvousAccessState::ScratchLease")
+            && port.contains("RendezvousAccessState::EndpointOperation")
+            && port.contains("RendezvousAccessState::EndpointScratchLease"),
         "offer progress and external endpoint destructors must remain under a scoped rendezvous lease"
     );
     assert!(
@@ -585,7 +586,7 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
     for required in [
         "ROLE_IMAGE_EVENT_STRIDE: usize = 10",
         "ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2",
-        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 5",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 9",
     ] {
         assert!(
             descriptor_hot_path.contains(required),

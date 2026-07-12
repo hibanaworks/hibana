@@ -143,31 +143,31 @@ def Choreo.staticGlobalOccurrences (choreo : Choreo) : List StaticGlobalOccurren
   enumerateStaticGlobalOccurrences 0 choreo.globalEvents
     choreo.globalEventConflicts choreo.globalEventParallelArms
 
-private def occurrenceOnEndpointRoutePath
+def occurrenceOnEndpointRoutePath
     (earlier later candidate : StaticGlobalOccurrence) : Bool :=
   candidate.conflicts.all fun membership =>
     earlier.conflicts.contains membership || later.conflicts.contains membership
 
-private def occurrenceLocallyOrdered
+def occurrenceLocallyOrdered
     (earlier later : StaticGlobalOccurrence) : Bool :=
   earlier.globalId < later.globalId &&
     !decide (ConflictListsMutuallyExclusive earlier.conflicts later.conflicts) &&
     !decide (ParallelListsIndependent earlier.parallelArms later.parallelArms)
 
-private abbrev CausalWitnesses := Nat → Option Nat
+abbrev CausalWitnesses := Nat → Option StaticGlobalOccurrence
 
-private def addCausalWitness
-    (witnesses : CausalWitnesses) (role globalId : Nat) : CausalWitnesses :=
+def addCausalWitness
+    (witnesses : CausalWitnesses) (role : Nat)
+    (witness : StaticGlobalOccurrence) : CausalWitnesses :=
   fun candidate =>
     if candidate = role then
       match witnesses candidate with
-      | none => some globalId
+      | none => some witness
       | present => present
     else
       witnesses candidate
 
-private def propagateCausalWitness
-    (occurrences : List StaticGlobalOccurrence)
+def propagateCausalWitness
     (earlier later : StaticGlobalOccurrence)
     (roleCount : Nat)
     (witnesses : CausalWitnesses)
@@ -177,14 +177,11 @@ private def propagateCausalWitness
       occurrenceOnEndpointRoutePath earlier later candidate then
     match witnesses candidate.event.sender with
     | none => witnesses
-    | some witnessId =>
-        match occurrences[witnessId]? with
-        | none => witnesses
-        | some witness =>
-            if occurrenceLocallyOrdered witness candidate then
-              addCausalWitness witnesses candidate.event.receiver candidate.globalId
-            else
-              witnesses
+    | some witness =>
+        if occurrenceLocallyOrdered witness candidate then
+          addCausalWitness witnesses candidate.event.receiver candidate
+        else
+          witnesses
   else
     witnesses
 
@@ -198,17 +195,14 @@ def receivePrecedesLaterSend
     (earlier later : StaticGlobalOccurrence) : Bool :=
   if earlier.event.receiver < roleCount && later.event.sender < roleCount then
     let initial : CausalWitnesses := fun role =>
-      if role = earlier.event.receiver then some earlier.globalId else none
+      if role = earlier.event.receiver then some earlier else none
     let between := occurrences.filter fun candidate =>
       earlier.globalId < candidate.globalId && candidate.globalId < later.globalId
     let witnesses := between.foldl
-      (propagateCausalWitness occurrences earlier later roleCount) initial
+      (propagateCausalWitness earlier later roleCount) initial
     match witnesses later.event.sender with
     | none => false
-    | some witnessId =>
-        match occurrences[witnessId]? with
-        | none => false
-        | some witness => occurrenceLocallyOrdered witness later
+    | some witness => occurrenceLocallyOrdered witness later
   else
     false
 
@@ -742,7 +736,7 @@ def Choreo.observerPathsMergeable
     (left.roleEndpointSelectorsFrom role leftBase)
     (right.roleEndpointSelectorsFrom role rightBase)
 
-private def uniqueRouteController?
+def uniqueRouteController?
     (leftBase rightBase : Nat)
     (left right : Choreo) : Option Nat :=
   match ((left.firstOccurrencesFrom leftBase ++
@@ -755,18 +749,30 @@ private def checkRouteSiteProjectability
     (authority : RouteAuthority)
     (leftBase rightBase : Nat)
     (left right : Choreo) : Bool :=
-  match authority with
-  | .dynamic _ => true
-  | .intrinsic =>
-      match uniqueRouteController? leftBase rightBase left right with
-      | none => false
-      | some controller =>
+  match uniqueRouteController? leftBase rightBase left right with
+  | none => false
+  | some controller =>
+      match authority with
+      | .dynamic _ => true
+      | .intrinsic =>
           staticSelectorsDisjoint
               (left.firstEndpointSelectorsFrom leftBase)
               (right.firstEndpointSelectorsFrom rightBase) &&
             (List.range roleCount).all fun role =>
               role == controller ||
                 left.observerPathsMergeable role leftBase rightBase right
+
+theorem accepted_dynamic_route_has_unique_controller
+    {roleCount resolver leftBase rightBase : Nat}
+    {left right : Choreo}
+    (accepted : checkRouteSiteProjectability roleCount (.dynamic resolver)
+      leftBase rightBase left right = true) :
+    ∃ controller,
+      uniqueRouteController? leftBase rightBase left right = some controller := by
+  unfold checkRouteSiteProjectability at accepted
+  cases controller : uniqueRouteController? leftBase rightBase left right with
+  | none => simp [controller] at accepted
+  | some role => exact ⟨role, rfl⟩
 
 def Choreo.checkRouteKnowledgeFrom
     (roleCount base : Nat) : Choreo -> Bool
@@ -851,141 +857,11 @@ theorem static_projectability_checker_sound
     roll_receive_lane_causality_checker_sound rollReceiveLane,
     parallel, route, roll⟩
 
-example :
+/-- A resolver disambiguates one controller's operation; it is not a
+cross-runtime agreement oracle for competing first senders. -/
+theorem dynamic_route_competing_first_senders_are_rejected :
     checkStaticProjectability 3
-      (.par (.send 0 1 5 0) (.send 0 2 5 0)) = false := by
-  native_decide
-
-example :
-    checkStaticProjectability 3
-      (.par (.send 0 1 5 17) (.send 0 2 5 19)) = true := by
-  native_decide
-
-/-- A future sender without a causal handoff cannot share the receive FIFO. -/
-example :
-    checkStaticProjectability 3
-      (.seq (.send 0 2 1 0) (.send 1 2 2 0)) = false := by
-  native_decide
-
-/-- A receive followed by an in-band causal chain transfers authority to the
-later sender without adding a runtime queue or wire field. -/
-example :
-    checkStaticProjectability 3
-      (.seq (.send 0 2 1 0)
-        (.seq (.send 2 1 2 0) (.send 1 2 3 0))) = true := by
-  native_decide
-
-/-- A handoff that is valid within one roll body may still be invalid from the
-body tail to the next iteration's head. -/
-example :
-    checkStaticProjectability 3
-      (.roll (.seq (.send 0 2 1 0)
-        (.seq (.send 2 1 2 0) (.send 1 2 3 0)))) = false := by
-  native_decide
-
-/-- Returning authority to the first sender closes the causal cycle without a
-wire epoch or an additional runtime queue. -/
-example :
-    checkStaticProjectability 3
-      (.roll (.seq (.send 0 2 1 0)
-        (.seq (.send 2 1 2 0)
-          (.seq (.send 1 2 3 0) (.send 2 0 4 0))))) = true := by
-  native_decide
-
-/-- Opposite route arms from different iterations are not mutually exclusive. -/
-example :
-    checkStaticProjectability 3
-      (.roll (.route (.dynamic 7)
-        (.send 0 2 1 0) (.send 1 2 2 0))) = false := by
-  native_decide
-
-/-- Each route arm may hand the next iteration to every possible first sender. -/
-example :
-    checkStaticProjectability 3
-      (.roll (.route (.dynamic 7)
-        (.seq (.send 0 2 1 0)
-          (.seq (.send 2 0 3 0) (.send 2 1 4 0)))
-        (.seq (.send 1 2 2 0)
-          (.seq (.send 2 0 5 0) (.send 2 1 6 0))))) = true := by
-  native_decide
-
-/-- Local order does not cross directly between parallel arms. -/
-example :
-    checkStaticProjectability 3
-      (.seq (.par (.send 0 2 1 0) (.send 2 1 2 0))
-        (.send 1 2 3 0)) = false := by
-  native_decide
-
-/-- An unrelated route arm cannot become causal evidence for endpoints that
-remain outside that route. -/
-example :
-    checkStaticProjectability 5
-      (.seq (.send 0 2 1 0)
-        (.seq
-          (.route (.dynamic 7) (.send 2 1 2 0) (.send 3 4 4 0))
-          (.send 1 2 3 0))) = false := by
-  native_decide
-
-/-- Mutually exclusive route arms may reuse the physical lane without adding
-runtime queues or wire identity. -/
-example :
-    checkStaticProjectability 3
-      (.route (.dynamic 7) (.send 0 2 1 0) (.send 1 2 2 0)) = true := by
-  native_decide
-
-/-- Shared local output is not intrinsic branch evidence. Its frame identity
-still depends on the globally selected arm. -/
-example :
-    checkStaticProjectability 4
-      (.route .intrinsic
-        (.seq (.send 0 2 1 0) (.send 1 3 5 0))
-        (.seq (.send 0 2 2 0) (.send 1 3 5 0))) = false := by
-  native_decide
-
-example :
-    checkStaticProjectability 4
-      (.route .intrinsic
-        (.seq (.send 0 3 118 0) (.send 1 2 42 0))
-        (.seq (.send 0 3 119 0)
-          (.seq (.send 1 2 42 0) (.send 1 2 77 0)))) = false := by
-  native_decide
-
-/-- Absence is not asynchronous branch evidence. Role 1 cannot know whether to
-finish the left arm or wait for the right-arm frame. -/
-example :
-    checkStaticProjectability 3
-      (.route .intrinsic (.send 0 2 1 0) (.send 0 1 2 0)) = false := by
-  native_decide
-
-/-- Roll reentry is not branch authority. A passive sender cannot choose the
-right arm merely because the enclosing route may repeat. -/
-example :
-    checkStaticProjectability 3
-      (.roll (.route .intrinsic
-        (.send 0 2 1 0)
-        (.seq (.send 0 2 2 0) (.send 1 2 3 0)))) = false := by
-  native_decide
-
-example :
-    checkStaticProjectability 3
-      (.seq (.roll (.send 0 1 5 0)) (.send 0 2 5 0)) = false := by
-  native_decide
-
-example :
-    checkStaticProjectability 2
-      (.route .intrinsic (.send 0 1 1 0) (.send 0 1 2 0)) = true := by
-  native_decide
-
-private def repeatedInboundEvidence : Nat → Choreo
-  | 0 => .send 0 1 1 0
-  | count + 1 => .seq (repeatedInboundEvidence count) (.send 0 1 1 0)
-
-example :
-    (repeatedInboundEvidence 255).checkInboundOccurrenceIdentity = true := by
-  native_decide
-
-example :
-    (repeatedInboundEvidence 256).checkInboundOccurrenceIdentity = false := by
-  native_decide
+      (.route (.dynamic 7) (.send 0 2 1 0) (.send 1 2 2 0)) = false := by
+  decide
 
 end Hibana

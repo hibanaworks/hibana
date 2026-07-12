@@ -1133,6 +1133,52 @@ fn rolled_resolved_route_reenters_passive_offer_left_right_left() {
 }
 
 #[test]
+fn rolled_resolved_route_preserves_buffered_decision_order() {
+    set_script(
+        ScriptSlot::PassiveOffer,
+        &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
+    );
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let receiver_program = rolled_passive_offer_program::<0>();
+            let sender_program = rolled_passive_offer_program::<1>();
+            rv.set_resolver(
+                &sender_program,
+                ResolverRef::<PASSIVE_OFFER_RESOLVER>::decision_state(&UNIT, decide_passive_offer),
+            )
+            .expect("install passive-offer resolver");
+            let sid = SessionId::new(0x0009_3013);
+            let mut receiver = rv.enter(sid, &receiver_program).expect("attach receiver");
+            let mut sender = rv.enter(sid, &sender_program).expect("attach sender");
+
+            futures::executor::block_on(async {
+                sender
+                    .send::<Msg<PASSIVE_OFFER_LEFT, u32>>(&51)
+                    .await
+                    .expect("buffer first left decision");
+                sender
+                    .send::<Msg<PASSIVE_OFFER_RIGHT, u32>>(&52)
+                    .await
+                    .expect("buffer following right decision");
+                sender
+                    .send::<Msg<PASSIVE_OFFER_LEFT, u32>>(&53)
+                    .await
+                    .expect("buffer final left decision");
+
+                passive_offer_recv::<PASSIVE_OFFER_LEFT>(&mut receiver, 51).await;
+                passive_offer_recv::<PASSIVE_OFFER_RIGHT>(&mut receiver, 52).await;
+                passive_offer_recv::<PASSIVE_OFFER_LEFT>(&mut receiver, 53).await;
+            });
+        });
+    });
+    assert_eq!(calls(ScriptSlot::PassiveOffer), 3);
+}
+
+#[test]
 fn rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths() {
     set_script(
         ScriptSlot::Outer,

@@ -8,6 +8,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let workflow = read(".github/workflows/quality-gates.yml");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
+    let route_table_harnesses = read("src/rendezvous/tables/route_table/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
@@ -70,6 +71,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
 
     for harness in [
         "endpoint_generation_advances_or_exhausts",
+        "endpoint_membership_seal_is_published_and_idempotent",
+        "endpoint_operation_and_nested_scratch_transitions_are_exact",
         "endpoint_gap_placement_is_aligned_and_bounded",
         "endpoint_lease_storage_layout_is_bounded_and_exact",
         "association_storage_layout_is_bounded_and_exact",
@@ -92,6 +95,24 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(authority_harnesses.contains("Arm::decode_single_ready_mask(mask) == expected"));
     assert!(!authority_harnesses.contains("kani::assume"));
+    for harness in [
+        "selected_local_participant_mask_is_exact_intersection",
+        "active_route_entry_cannot_be_overwritten",
+        "empty_route_entry_begin_is_exact",
+        "active_route_entry_rejects_conflicting_arm_observation",
+        "active_route_entry_observation_is_arm_preserving_and_monotone",
+        "route_role_consumption_is_affine_and_arm_preserving",
+        "route_entry_initial_mask_is_exact_over_selected_participants",
+    ] {
+        assert!(route_table_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    assert!(route_table_harnesses.contains(".try_begin(replacement_observed, replacement_arm)"));
+    assert!(route_table_harnesses.contains("local == (selected_participants & attached_roles)"));
+    assert!(route_table_harnesses.contains(".try_observe(additional_observed, arm)"));
+    assert!(route_table_harnesses.contains(".try_observe(additional_observed, arm ^ 1)"));
+    assert!(route_table_harnesses.contains("consumed.try_consume_role(role_bit).is_none()"));
+    assert!(route_table_harnesses.contains("participant_mask & !observed_mask"));
     for harness in [
         "frame_header_roundtrip_preserves_every_field",
         "frame_header_identity_is_exact_and_injective",
@@ -193,6 +214,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(resolver_row_harnesses.contains("assert!(decoded.is_some() == expected)"));
     assert!(resolver_row_harnesses.contains("left_scope == right_scope && left_id == right_id"));
+    assert!(resolver_row_harnesses.contains("row.participant_mask(0) == left_participant_mask"));
+    assert!(resolver_row_harnesses.contains("row.participant_mask(1) == right_participant_mask"));
+    assert!(resolver_row_harnesses.contains("left_participant_mask & (1u16 << controller_role)"));
+    assert!(resolver_row_harnesses.contains("right_participant_mask & (1u16 << controller_role)"));
     assert!(!resolver_row_harnesses.contains("kani::assume"));
 
     for harness in [
@@ -277,8 +302,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_ref_harnesses.contains(
         "assert!(canonical.columns.blob_len() == different_columns.columns.blob_len());"
     ));
-    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 1, 0)"));
-    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 0, 1)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 3, 0)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(2, 0, 1)"));
     assert!(program_ref_harnesses.contains("let overflow = blob_len > usize::from(u16::MAX);"));
     assert!(program_ref_harnesses.contains("(u16::MAX, u16::MAX, u16::MAX)"));
     assert!(program_ref_harnesses.contains("ProgramImageBytes::<10>::from_image_if_fits"));

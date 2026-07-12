@@ -40,11 +40,11 @@ fn atom_columns() -> ProgramImageColumns {
 }
 
 fn route_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 1, 0)
+    ProgramImageColumns::new(0, 3, 0)
 }
 
 fn alternate_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 0, 1)
+    ProgramImageColumns::new(2, 0, 1)
 }
 
 #[test]
@@ -75,7 +75,7 @@ static VALID: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static VALID_COPY: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static SCHEMA_DIFFERENT: [u8; 11] = encoded_atom(2, 0, 1, 9, 0x7856_3413, 1, u8::MAX);
 static LAST_BYTE_DIFFERENT: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, 0);
-static SAME_COLUMN_BYTES: [u8; 5] = [0; 5];
+static SAME_COLUMN_BYTES: [u8; 27] = [0; 27];
 static EFF_INDEX_OUT_OF_RANGE: [u8; 11] = encoded_atom(
     crate::eff::meta::MAX_EFF_NODES as u16,
     0,

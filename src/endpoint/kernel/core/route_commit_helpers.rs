@@ -12,7 +12,6 @@ use crate::{
         typestate::{EventCursor, PackedEventConflict},
     },
     rendezvous::port::Port,
-    session::types::Lane,
     transport::Transport,
 };
 
@@ -189,13 +188,7 @@ fn preview_scope_ack_token_non_consuming_from_parts<'r, const ROLE: u8, T: Trans
         let pending = ports
             .get(lane_idx)
             .and_then(|port| port.as_ref())
-            .is_some_and(|port| {
-                port.has_pending_route_arm_selection_for_lane(
-                    scope_id,
-                    ROLE,
-                    Lane::new(lane_idx as u32),
-                )
-            });
+            .is_some_and(|port| port.has_pending_route_arm_selection(scope_id, ROLE));
         if !pending {
             next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
             continue;

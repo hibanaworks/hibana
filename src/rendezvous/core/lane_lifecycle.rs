@@ -154,7 +154,9 @@ where
         if remaining > 0 {
             return LaneRelease::StillHeld;
         }
-        self.routes.reset_session_lane(sid, lane);
+        if !self.assoc.has_session(sid) {
+            self.routes.reset_session(sid);
+        }
         LaneRelease::Released
     }
 

@@ -347,8 +347,11 @@ const fn validate_route_scope(
     let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
     let controller_mask = first_visible_controller_mask(eff_list, arm0_start, arm0_end)
         | first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-    if !has_dynamic_resolver {
-        if first_visible_endpoint_selector_conflicts_from_markers(
+    if !has_exactly_one_bit(controller_mask) {
+        return Some(ProgramSourceError::RouteControllerMismatch);
+    }
+    if !has_dynamic_resolver
+        && first_visible_endpoint_selector_conflicts_from_markers(
             eff_list,
             arm0_start,
             arm0_end,
@@ -356,12 +359,9 @@ const fn validate_route_scope(
             arm1_end,
             route_enter_marker_idx + 1,
             route_enter_marker_idx + 1,
-        ) {
-            return Some(ProgramSourceError::ProjectionRouteUnprojectable);
-        }
-        if !has_exactly_one_bit(controller_mask) {
-            return Some(ProgramSourceError::RouteControllerMismatch);
-        }
+        )
+    {
+        return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     }
     if matches!(unique_controller_role(controller_mask), Some(controller) if controller == role) {
         return None;

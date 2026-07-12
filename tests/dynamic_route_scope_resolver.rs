@@ -564,6 +564,45 @@ fn stateful_send_resolver_is_not_evaluated_twice() {
 }
 
 #[test]
+fn dynamic_resolution_seals_runtime_local_membership_before_evaluation() {
+    reset_counters();
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        let sid = SessionId::new(0x0009_1603);
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport)
+                .expect("register rendezvous");
+            let role0 = same_label_outbound_program_for::<0, FLIP_ROUTE_RESOLVER>();
+            let role1 = same_label_outbound_program_for::<1, FLIP_ROUTE_RESOLVER>();
+            rv.set_resolver(
+                &role0,
+                ResolverRef::<FLIP_ROUTE_RESOLVER>::decision_state(&UNIT, flip_left_then_right),
+            )
+            .expect("install flipping resolver");
+            let mut origin = rv.enter(sid, &role0).expect("attach origin");
+
+            futures::executor::block_on(origin.send::<Msg<SAME_LABEL, u32>>(&1603))
+                .expect("first resolver decision selects left");
+
+            let error = match rv.enter(sid, &role1) {
+                Ok(_) => panic!("dynamic resolution allowed a late local role attach"),
+                Err(error) => error,
+            };
+            assert!(
+                format!("{error:?}").contains("session-membership-sealed"),
+                "late attach must fail at the sealed membership boundary: {error:?}"
+            );
+        });
+    });
+    assert_eq!(
+        read_counters().flip_calls,
+        1,
+        "a rejected late attach must not re-evaluate the dynamic resolver"
+    );
+}
+
+#[test]
 fn nested_send_after_selected_prefix_audits_only_new_inner_decision() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();

@@ -274,6 +274,26 @@ theorem ambiguous_receive_fails_closed
         (config.beginCancellation reporter .protocolViolation)) := by
   simp [applyRuntimeEffect?, decoded]
 
+/-- Runtime access is available between operations. Endpoint callbacks execute
+under an operation barrier; scratch use is a nested barrier state rather than a
+return to registry-visible availability. -/
+inductive RuntimeAccessPhase where
+  | available
+  | registry
+  | endpointOperation
+  | endpointScratch
+  deriving Repr, DecidableEq
+
+def attachMayReadEndpointImage : RuntimeAccessPhase -> Bool
+  | .available => true
+  | .registry | .endpointOperation | .endpointScratch => false
+
+theorem active_endpoint_access_blocks_reentrant_attach
+    (phase : RuntimeAccessPhase)
+    (active : phase = .endpointOperation ∨ phase = .endpointScratch) :
+    attachMayReadEndpointImage phase = false := by
+  rcases active with rfl | rfl <;> rfl
+
 theorem poisoned_callback_reentry_cannot_publish (cause : SessionFault) :
     SessionGenerationState.publicationPermitted (.poisoned cause) = false :=
   poisoned_generation_publish_rejected cause

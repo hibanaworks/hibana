@@ -308,6 +308,9 @@ where
         }) else {
             return missing;
         };
+        let Some(_operation_lease) = endpoint.try_public_operation_lease() else {
+            return missing;
+        };
         f(endpoint)
     }
 

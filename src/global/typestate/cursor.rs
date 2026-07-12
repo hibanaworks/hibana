@@ -383,7 +383,7 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn route_controller_role(&self, scope_id: ScopeId) -> Option<u8> {
+    fn route_controller_role(&self, scope_id: ScopeId) -> u8 {
         self.program_ref().route_controller_role(scope_id)
     }
 

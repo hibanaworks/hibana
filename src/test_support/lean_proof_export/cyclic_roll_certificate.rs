@@ -9,29 +9,41 @@ use std::{string::String, vec::Vec};
 const RESOLVER: u16 = 906;
 
 type Left = g::Seq<
-    g::Send<0, 2, g::Msg<101, ()>>,
-    g::Seq<g::Send<2, 0, g::Msg<103, ()>>, g::Send<2, 1, g::Msg<104, ()>>>,
+    g::Send<2, 2, g::Msg<107, ()>>,
+    g::Seq<
+        g::Send<0, 2, g::Msg<101, ()>>,
+        g::Seq<g::Send<2, 0, g::Msg<103, ()>>, g::Send<2, 1, g::Msg<104, ()>>>,
+    >,
 >;
 type Right = g::Seq<
-    g::Send<1, 2, g::Msg<102, ()>>,
-    g::Seq<g::Send<2, 0, g::Msg<105, ()>>, g::Send<2, 1, g::Msg<106, ()>>>,
+    g::Send<2, 2, g::Msg<108, ()>>,
+    g::Seq<
+        g::Send<1, 2, g::Msg<102, ()>>,
+        g::Seq<g::Send<2, 0, g::Msg<105, ()>>, g::Send<2, 1, g::Msg<106, ()>>>,
+    >,
 >;
 pub(super) type Steps = g::Roll<g::Resolve<g::Route<Left, Right>, RESOLVER>>;
 
 pub(super) fn program() -> g::Program<Steps> {
     g::route(
         g::seq(
-            g::send::<0, 2, g::Msg<101, ()>>(),
+            g::send::<2, 2, g::Msg<107, ()>>(),
             g::seq(
-                g::send::<2, 0, g::Msg<103, ()>>(),
-                g::send::<2, 1, g::Msg<104, ()>>(),
+                g::send::<0, 2, g::Msg<101, ()>>(),
+                g::seq(
+                    g::send::<2, 0, g::Msg<103, ()>>(),
+                    g::send::<2, 1, g::Msg<104, ()>>(),
+                ),
             ),
         ),
         g::seq(
-            g::send::<1, 2, g::Msg<102, ()>>(),
+            g::send::<2, 2, g::Msg<108, ()>>(),
             g::seq(
-                g::send::<2, 0, g::Msg<105, ()>>(),
-                g::send::<2, 1, g::Msg<106, ()>>(),
+                g::send::<1, 2, g::Msg<102, ()>>(),
+                g::seq(
+                    g::send::<2, 0, g::Msg<105, ()>>(),
+                    g::send::<2, 1, g::Msg<106, ()>>(),
+                ),
             ),
         ),
     )
@@ -48,6 +60,7 @@ pub(super) fn trace(program: &g::Program<Steps>) -> Vec<(Vec<ProofKey>, ProofAct
                 resolver: RESOLVER,
                 arm: ProofArm::Left,
             },
+            ProductionStep::Commit(107),
             ProductionStep::Commit(101),
             ProductionStep::Commit(103),
             ProductionStep::Commit(104),
@@ -56,6 +69,7 @@ pub(super) fn trace(program: &g::Program<Steps>) -> Vec<(Vec<ProofKey>, ProofAct
                 resolver: RESOLVER,
                 arm: ProofArm::Right,
             },
+            ProductionStep::Commit(108),
             ProductionStep::Commit(102),
             ProductionStep::Commit(105),
             ProductionStep::Commit(106),

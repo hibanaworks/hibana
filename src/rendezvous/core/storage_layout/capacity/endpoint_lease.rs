@@ -25,6 +25,33 @@ pub(super) fn endpoint_lease_storage_bytes(capacity: usize) -> Option<usize> {
 }
 
 impl EndpointLeaseRecord {
+    pub(crate) fn seal_session_membership(
+        storage: &core::cell::Cell<Sidecar<Self>>,
+        sid: crate::session::types::SessionId,
+    ) {
+        let storage = storage.get();
+        let slot_count = Self::storage_slot_count(storage);
+        let records = storage.ptr();
+        let mut found = false;
+        let mut idx = 0usize;
+        while idx < slot_count {
+            /* SAFETY: the barrier bounds one initialized owner record without a mutable alias. */
+            let record = unsafe { &*records.add(idx) };
+            let slot = record.slot();
+            if slot.sid == sid && slot.is_published() {
+                record.set_slot(EndpointLeaseSlot {
+                    state: crate::invariant_some(slot.state.seal_membership()),
+                    ..slot
+                });
+                found = true;
+            }
+            idx += 1;
+        }
+        if !found {
+            crate::invariant();
+        }
+    }
+
     fn take_published_waiter(&self) -> Option<core::task::Waker> {
         if !self.slot().is_published() {
             crate::invariant();
@@ -105,13 +132,9 @@ where
         if idx >= self.endpoint_lease_slot_count() {
             crate::invariant();
         }
-        let records = self.endpoint_lease_records_ptr();
-        /* SAFETY: `idx` is inside the owner-bound record table. The local-only
-        rendezvous serializes metadata updates; writing only `slot` preserves
-        the record's independent wake owner. */
-        unsafe {
-            core::ptr::addr_of_mut!((*records.add(idx)).slot).write(slot);
-        }
+        crate::invariant_some(
+            self.with_endpoint_lease_record_at(idx, |record| record.set_slot(slot)),
+        );
     }
 
     #[inline]
@@ -338,21 +361,6 @@ where
                     peer_idx += 1;
                 }
                 required = crate::invariant_some(required.checked_add(session_required));
-            }
-            idx += 1;
-        }
-        required
-    }
-
-    #[inline]
-    pub(crate) fn resident_route_lane_slots_floor(&self) -> usize {
-        let slot_count = self.endpoint_lease_slot_count();
-        let mut required = 0usize;
-        let mut idx = 0usize;
-        while idx < slot_count {
-            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
-            if slot.is_occupied() {
-                required = core::cmp::max(required, slot.resident_budget.route_lane_slots as usize);
             }
             idx += 1;
         }

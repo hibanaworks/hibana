@@ -36,6 +36,7 @@ where
         if self.session_fault(sid).is_some() {
             return Err(RendezvousError::SessionPoisoned { sid });
         }
+        let first_session_attach = !self.assoc.has_session(sid);
         let first_attach = if self.assoc.has_entry(lane, sid) {
             if self.assoc.increment(lane, sid).is_none() {
                 return Err(RendezvousError::LaneAttachOverflow { lane });
@@ -48,8 +49,10 @@ where
             true
         };
 
+        if first_session_attach {
+            self.routes.reset_session(sid);
+        }
         if first_attach {
-            self.routes.reset_session_lane(sid, lane);
             emit(
                 self.tap(),
                 events::lane_acquire(

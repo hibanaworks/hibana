@@ -108,38 +108,22 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    fn has_dynamic_route_scope(&self) -> bool {
+    fn dynamic_route_scope_count(&self) -> usize {
         let program = self.program();
+        let mut count = 0usize;
         let mut row = 0usize;
         while row < program.route_resolver_row_count() {
             if program.route_resolver_id_at_row(row).is_some() {
-                return true;
+                count = crate::invariant_some(count.checked_add(1));
             }
             row += 1;
         }
-        false
+        count
     }
 
     #[inline(always)]
     pub(crate) fn route_table_frame_slots(&self) -> usize {
-        if !self.has_dynamic_route_scope() {
-            0
-        } else {
-            crate::invariant_some(
-                self.footprint()
-                    .active_lane_count
-                    .checked_mul(self.max_route_stack_depth().max(1)),
-            )
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_table_lane_slots(&self) -> usize {
-        if !self.has_dynamic_route_scope() {
-            0
-        } else {
-            self.endpoint_lane_slot_count()
-        }
+        self.dynamic_route_scope_count()
     }
 
     #[inline(always)]

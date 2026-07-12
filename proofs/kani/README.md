@@ -16,8 +16,9 @@ The pinned gate exhausts the production arithmetic for:
   logical-lane rows, route-arm lane-step rows, and binary route-arm indexing;
 - exact route-commit decision identity across scope, arm, and reentry metadata;
 - exact local-dependency decoding, including event-image range bounds;
-- exact compiled atom and route-resolver row decoding, plus complete dynamic
-  resolver identity over both route scope and resolver id;
+- exact compiled atom and route-resolver row decoding, including both per-arm
+  participant masks, plus complete dynamic resolver identity over route scope
+  and resolver id;
 - exact structural program-image identity across facts, canonical atom/resolver/
   scope-marker counts, and all blob bytes, including arbitrary scope-marker
   contents and equal images stored at distinct addresses;
@@ -43,13 +44,20 @@ The pinned gate exhausts the production arithmetic for:
 - resolver bucket replacement compaction over a real hole-bearing entry array,
   preserving both registration keys and typed callback dispatch;
 - fail-closed endpoint lease generation;
+- published-only, idempotent runtime-local membership sealing across every
+  endpoint lease state;
+- exact endpoint-operation and nested-scratch transitions, including restoration
+  to the operation barrier rather than registry-visible availability;
 - aligned endpoint placement inside a selected gap;
 - exact endpoint-lease table sizing and 32-bit bounds across the full `u16`
   capacity domain;
 - exact association-column sizing and 32-bit bounds across the full `u16`
   capacity domain;
-- exact route frame/lane-column sizing and 32-bit bounds across the full
-  `u16 x u16` capacity domain;
+- exact route-frame and scope-global list-root sizing and 32-bit bounds across
+  the full `u16` capacity domain;
+- exact selected/local participant-mask intersection, non-overwritable active
+  route publication, arm-preserving monotone observation, and exact initial
+  pending-mask complement;
 - aligned, monotonic resident-sidecar packing;
 - aligned, pairwise-disjoint sequential sidecar packing;
 - proof that compacted destinations for all four resident sidecar owners precede
@@ -58,7 +66,7 @@ The pinned gate exhausts the production arithmetic for:
 - exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
   capacity domain.
 
-The pinned inventory contains 48 CBMC harnesses. Transport FIFO,
+The pinned inventory contains 66 CBMC harnesses. Transport FIFO,
 exactly-once/no-replay delivery, and peer-close observation are modeled and
 proved in Lean, mirrored by the Rust conformance tests, and checked under Miri.
 

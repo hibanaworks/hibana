@@ -87,6 +87,7 @@ const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs",
     "tests/ui/g-route-passive-first-visible-ambiguous.rs",
     "tests/ui/g-route-controller-mismatch.rs",
+    "tests/ui/g-route-resolved-cross-arm-distinct-senders.rs",
     "tests/ui/g-route-roll-before-resolve.rs",
     "tests/ui/g-route-unprojectable.rs",
     "tests/ui/g-typed-route-duplicate-label-project.rs",
@@ -163,6 +164,10 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-route-passive-outbound-without-evidence.rs");
     compile_fail(&t, "tests/ui/g-route-roll-one-sided-observer.rs");
     compile_fail(&t, "tests/ui/g-route-controller-mismatch.rs");
+    compile_fail(
+        &t,
+        "tests/ui/g-route-resolved-cross-arm-distinct-senders.rs",
+    );
     compile_fail(&t, "tests/ui/g-route-roll-before-resolve.rs");
     compile_fail(&t, "tests/ui/g-route-unprojectable.rs");
     compile_fail(&t, "tests/ui/g-typed-route-duplicate-label-project.rs");
@@ -183,7 +188,6 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-route-resolver-scope-nested-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-label.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-endpoint-op.rs");
-    t.pass("tests/ui-pass/g-route-resolved-cross-arm-distinct-senders.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-overlap-after-left-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-intra-arm-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-route-resolved-nested-roll-same-endpoint-op.rs");

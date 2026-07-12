@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: route arms use different first visible contro
  --> src/g.rs
   |
   |             panic_choreography_error(error);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Send<2, 2, hibana::g::Msg<5, ()>>, hibana::g::Send<0, 0, hibana::g::Msg<6, ()>>>>::VALIDATION` failed inside this call
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Resolve<hibana::g::Route<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<1, 2, hibana::g::Msg<2, ()>>>, 7>>::VALIDATION` failed inside this call
   |
 note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
@@ -44,7 +44,7 @@ note: erroneous constant encountered
   | |     };
   | |_____^
 
-note: the above error was encountered while instantiating `fn g::project::<0, Route<hibana::g::Send<2, 2, Msg<5, ()>>, hibana::g::Send<0, 0, Msg<6, ()>>>>`
+note: the above error was encountered while instantiating `fn g::project::<0, Resolve<Route<hibana::g::Send<0, 2, Msg<1, ()>>, hibana::g::Send<1, 2, Msg<2, ()>>>, 7>>`
  --> src/global/program.rs
   |
   |         crate::g::project(self)

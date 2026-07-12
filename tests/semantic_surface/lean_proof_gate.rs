@@ -33,6 +33,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         read("proofs/lean/Hibana/AsyncCancellationTermination.lean");
     let global_progress = read("proofs/lean/Hibana/GlobalProgress.lean");
     let static_projectability = read("proofs/lean/Hibana/StaticProjectability.lean");
+    let static_projectability_examples =
+        read("proofs/lean/Hibana/StaticProjectabilityExamples.lean");
+    let iteration_erasure = read("proofs/lean/Hibana/IterationErasure.lean");
+    let affine_route_publication = read("proofs/lean/Hibana/AffineRoutePublication.lean");
     let global_coherence = read("proofs/lean/Hibana/GlobalCoherence.lean");
     let distributed_semantics = read("proofs/lean/Hibana/DistributedSemantics.lean");
     let roll_freshness = read("proofs/lean/Hibana/RollFreshness.lean");
@@ -82,6 +86,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         async_cancellation_termination.as_str(),
         global_progress.as_str(),
         static_projectability.as_str(),
+        static_projectability_examples.as_str(),
+        iteration_erasure.as_str(),
+        affine_route_publication.as_str(),
         global_coherence.as_str(),
         distributed_semantics.as_str(),
         roll_freshness.as_str(),
@@ -318,6 +325,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && !transport_contract.contains("schema : Nat")
             && transport_contract.contains("transport_receive_preserves_well_formed")
             && transport_contract.contains("peer_close_is_observable_after_fifo_drain")
+            && transport_contract.contains("structure AffineTransportProfile")
+            && transport_contract.contains("transport_state_establishes_affine_profile")
             && global_progress.contains("def Choreo.GuardedRolls")
             && global_progress.contains("def GlobalConfig.topLevelRollStep?")
             && global_progress.contains("top_level_roll_step_uses_global_roll_transition")
@@ -415,14 +424,27 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("transport_admission_produces_exact_admitted_message")
             && static_projectability.contains("checkParallelEndpointLinearityFrom")
             && static_projectability.contains("checkRouteKnowledgeFrom")
+            && static_projectability.contains("accepted_dynamic_route_has_unique_controller")
+            && static_projectability.contains("dynamic_route_competing_first_senders_are_rejected")
             && static_projectability.contains("checkRollReentryLinearityFrom")
             && static_projectability.contains("static_projectability_checker_sound")
+            && iteration_erasure.contains("inductive CausalHandoffPath")
+            && iteration_erasure.contains("structure CausalSchedule")
+            && iteration_erasure.contains("receive_precedes_later_send_has_causal_path")
+            && iteration_erasure.contains("causal_handoff_path_orders_receive_before_send")
+            && iteration_erasure.contains("roll_reentry_has_fifo_or_causal_order")
+            && affine_route_publication.contains("structure AffineRouteCell")
+            && affine_route_publication.contains("inductive LocalMembership")
+            && affine_route_publication.contains("sealed_local_membership_rejects_late_attach")
+            && affine_route_publication.contains("active_route_decision_cannot_be_overwritten")
+            && affine_route_publication.contains("route_observation_is_affine")
+            && affine_route_publication.contains("route_observation_rejects_duplicate")
             && static_projectability.contains("| [], _ :: _ | _ :: _, [] => false")
-            && static_projectability
+            && static_projectability_examples
                 .contains("Shared local output is not intrinsic branch evidence")
             && static_projectability.contains("observer_absence_is_not_branch_evidence")
             && static_projectability.contains("observer_outbound_heads_are_not_mergeable")
-            && static_projectability.contains("Roll reentry is not branch authority")
+            && static_projectability_examples.contains("Roll reentry is not branch authority")
             && !static_projectability.contains("reentry == .rolled ||")
             && distributed_semantics.contains("structure DistributedConfig")
             && distributed_semantics.contains("structure LocalConfig")
@@ -474,13 +496,33 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("runtime_cancellation_observation_preserves_global_invariant")
             && runtime_refinement.contains("runtime_stutter_effect_is_zero_transition")
             && runtime_refinement.contains("runtime_transition_certificate_sound")
+            && runtime_refinement.contains("inductive RuntimeAccessPhase")
+            && runtime_refinement.contains("active_endpoint_access_blocks_reentrant_attach")
             && runtime_refinement.contains("ambiguous_receive_fails_closed")
             && protocol_artifact.contains("structure VerifiedProtocolCertificate")
             && protocol_artifact.contains("checkDescriptorCertificates")
             && protocol_artifact
                 .contains("verified_protocol_certificate_establishes_all_role_refinement")
+            && protocol_artifact
+                .contains("verified_protocol_descriptor_route_participants_match_choreography")
+            && protocol_artifact.contains("verified_protocol_reachable_preserves_global_invariant")
+            && protocol_artifact.contains("verified_protocol_establishes_semantic_unstuckness")
+            && protocol_artifact.contains("affineTransport : AffineTransportProfile")
             && protocol_artifact.contains("verified_protocol_has_injective_inbound_evidence")
-            && protocol_artifact.contains("verified_protocol_transport_admission_is_unique"),
+            && protocol_artifact.contains("verified_protocol_transport_admission_is_unique")
+            && protocol_artifact
+                .contains("verified_protocol_roll_reentry_has_fifo_or_causal_order")
+            && protocol_artifact.contains("structure MessageErasedAffineAsyncMonitor")
+            && protocol_artifact.contains("routeControllerAuthority")
+            && protocol_artifact.contains("activeRoutePublicationIsAffine")
+            && protocol_artifact.contains("begunRoutePublicationTracksExactPending")
+            && protocol_artifact.contains("routeObservationIsAffine")
+            && protocol_artifact.contains("routeObservationRejectsDuplicate")
+            && protocol_artifact.contains("routeObservationPreservesArm")
+            && protocol_artifact.contains("localRouteParticipantsAreExact")
+            && protocol_artifact.contains("readyCancellationRetires")
+            && protocol_artifact
+                .contains("verified_protocol_establishes_message_erased_affine_async_monitor"),
         "asynchronous cancellation, projectability, distributed simulation, runtime refinement, and multi-session isolation must remain gate-owned"
     );
     assert!(
@@ -778,10 +820,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("Lean proof gate requires an axiom audit for every exported theorem")
             && proof_gate.contains("depends on axioms: [propext, Quot.sound]")
             && proof_gate.contains("Classical.choice")
-            && proof_gate.contains("!= \"165\"")
-            && proof_gate.contains("!= \"131\"")
-            && proof_gate.contains("!= \"26\"")
-            && proof_gate.contains("!= \"322\"")
+            && proof_gate.contains("!= \"177\"")
+            && proof_gate.contains("!= \"139\"")
+            && proof_gate.contains("!= \"30\"")
+            && proof_gate.contains("!= \"346\"")
             && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_completed_event")
             && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_selected_arm")
             && axiom_audit.contains("#print axioms Hibana.local_action_sender_projects_send")
@@ -812,6 +854,33 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && axiom_audit.contains("#print axioms Hibana.resolver_selection_exact_authority")
             && axiom_audit.contains("#print axioms Hibana.unresolved_dynamic_route_cannot_commit")
             && axiom_audit.contains("#print axioms Hibana.resolver_reject_is_terminal")
+            && axiom_audit
+                .contains("#print axioms Hibana.receive_precedes_later_send_has_causal_path")
+            && axiom_audit
+                .contains("#print axioms Hibana.roll_reentry_has_fifo_or_causal_order")
+            && axiom_audit
+                .contains("#print axioms Hibana.selected_local_route_participants_are_exact")
+            && axiom_audit
+                .contains("#print axioms Hibana.sealed_local_membership_rejects_late_attach")
+            && axiom_audit
+                .contains("#print axioms Hibana.route_observation_rejects_duplicate")
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_roll_reentry_has_fifo_or_causal_order"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_descriptor_route_participants_match_choreography"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_reachable_preserves_global_invariant"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_establishes_semantic_unstuckness"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_establishes_message_erased_affine_async_monitor"
+            )
+            && axiom_audit
+                .contains("#print axioms Hibana.active_endpoint_access_blocks_reentrant_attach")
             && axiom_audit.contains("#print axioms Hibana.projection_certificate_sound")
             && axiom_audit.contains("#print axioms Hibana.slab_layout_certificate_sound")
             && axiom_audit.contains("#print axioms Hibana.reachable_state_has_logical_progress")
@@ -841,6 +910,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && axiom_audit
                 .contains("#print axioms Hibana.cancellation_observation_preserves_well_formed")
             && axiom_audit.contains("#print axioms Hibana.well_formed_transport_has_no_replay")
+            && axiom_audit
+                .contains("#print axioms Hibana.transport_state_establishes_affine_profile")
             && axiom_audit.contains("#print axioms Hibana.transport_receive_preserves_well_formed")
             && axiom_audit.contains("#print axioms Hibana.transport_admission_is_unique")
             && axiom_audit
@@ -871,6 +942,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 "#print axioms Hibana.projectability_certificate_establishes_semantic_unstuckness"
             )
             && axiom_audit.contains("#print axioms Hibana.static_projectability_checker_sound")
+            && axiom_audit
+                .contains("#print axioms Hibana.accepted_dynamic_route_has_unique_controller")
+            && axiom_audit.contains(
+                "#print axioms Hibana.dynamic_route_competing_first_senders_are_rejected"
+            )
             && axiom_audit
                 .contains("#print axioms Hibana.inbound_occurrence_identity_checker_sound")
             && axiom_audit
@@ -946,7 +1022,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && commit.contains("rollReentryState?")
             && commit.contains("routeReentryState?")
             && proof_gate.contains(
-                "traces=14 frames=64 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8"
+                "traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8"
             )
             && proof_gate.contains("regions=5 poison=1 generation=1 atomic-failures=4")
             && proof_gate.contains("export_production_trace_for_lean")

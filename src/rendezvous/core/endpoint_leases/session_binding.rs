@@ -13,6 +13,20 @@ impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
+    #[inline]
+    pub(crate) fn session_membership_is_sealed(&self, sid: SessionId) -> bool {
+        let slot_count = self.endpoint_lease_slot_count();
+        let mut idx = 0usize;
+        while idx < slot_count {
+            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
+            if slot.sid == sid && slot.state.is_membership_sealed() {
+                return true;
+            }
+            idx += 1;
+        }
+        false
+    }
+
     /// Exact compiled-program binding for one published session generation.
     /// Reserved slots are unreachable because registry access is rejected
     /// while an attach lease is active.

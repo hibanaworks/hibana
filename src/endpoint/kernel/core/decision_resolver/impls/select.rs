@@ -435,50 +435,65 @@ where
     }
 
     #[inline]
-    pub(crate) fn record_route_arm_selection_for_scope_lanes(
+    pub(crate) fn can_begin_route_arm_selection(
+        &self,
+        scope_id: ScopeId,
+        decision_lane: u8,
+    ) -> bool {
+        let lane_idx = decision_lane as usize;
+        if lane_idx >= self.cursor.logical_lane_count() || !self.cursor.has_route_scope(scope_id) {
+            crate::invariant();
+        }
+        self.port_for_lane(lane_idx)
+            .can_begin_route_arm_selection(scope_id)
+    }
+
+    pub(crate) fn begin_route_arm_selection(
         &mut self,
         scope_id: ScopeId,
         arm: u8,
         decision_lane: u8,
-    ) {
-        if !self.cursor.has_route_scope(scope_id) {
-            self.record_route_arm_selection_for_lane(decision_lane as usize, scope_id, arm);
-            return;
+        frame_target: Option<u8>,
+    ) -> bool {
+        let lane_idx = decision_lane as usize;
+        if lane_idx >= self.cursor.logical_lane_count() || !self.cursor.has_route_scope(scope_id) {
+            crate::invariant();
         }
+        let participant_mask = self
+            .cursor
+            .program_ref()
+            .route_participant_mask(scope_id, arm);
+        self.port_for_lane(lane_idx).begin_route_arm_selection(
+            scope_id,
+            arm,
+            participant_mask,
+            frame_target,
+        )
+    }
 
-        let logical_lane_count = self.cursor.logical_lane_count();
-        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        let mut next_offer = offer_lanes.first_set(logical_lane_count);
-        let mut recorded = false;
-        while let Some(lane_idx) = next_offer {
-            self.record_route_arm_selection_for_lane(lane_idx, scope_id, arm);
-            recorded = true;
-            next_offer = offer_lanes.next_set_from(lane_idx + 1, logical_lane_count);
+    pub(crate) fn observe_active_route_arm_selection(
+        &mut self,
+        scope_id: ScopeId,
+        arm: u8,
+        decision_lane: u8,
+        frame_target: Option<u8>,
+    ) -> bool {
+        let lane_idx = decision_lane as usize;
+        if lane_idx >= self.cursor.logical_lane_count() || !self.cursor.has_route_scope(scope_id) {
+            crate::invariant();
         }
+        self.port_for_lane(lane_idx)
+            .observe_active_route_arm_selection(scope_id, arm, frame_target)
+    }
 
-        let Some(candidate_lanes) = self.route_scope_arm_lane_set_for_scope(scope_id, arm) else {
-            if !recorded && (decision_lane as usize) < logical_lane_count {
-                self.record_route_arm_selection_for_lane(decision_lane as usize, scope_id, arm);
-            }
-            return;
-        };
-        let mut next = candidate_lanes.first_set(logical_lane_count);
-        while let Some(lane_idx) = next {
-            if !offer_lanes.contains(lane_idx)
-                && self
-                    .cursor
-                    .route_arm_lane_last_eff(scope_id, arm, lane_idx as u8)
-                    .is_some()
-            {
-                self.record_route_arm_selection_for_lane(lane_idx, scope_id, arm);
-                recorded = true;
-            }
-            next = candidate_lanes.next_set_from(lane_idx + 1, logical_lane_count);
+    #[inline]
+    pub(crate) fn wake_route_arm_selection_waiters(&self, decision_lane: u8) {
+        let lane_idx = decision_lane as usize;
+        if lane_idx >= self.cursor.logical_lane_count() {
+            crate::invariant();
         }
-
-        if !recorded && (decision_lane as usize) < logical_lane_count {
-            self.record_route_arm_selection_for_lane(decision_lane as usize, scope_id, arm);
-        }
+        self.port_for_lane(lane_idx)
+            .wake_route_arm_selection_waiters();
     }
 
     pub(in crate::endpoint::kernel) fn prepare_route_arm_selection_from_resolver(
@@ -492,6 +507,7 @@ where
         let offer_lane = self.offer_lane_for_scope(scope_id);
         let cluster = self.session.cluster();
         let rv_id = RendezvousId::new(self.rendezvous_id().raw());
+        self.port().seal_session_membership();
         let resolver_result =
             cluster.resolve_dynamic_resolver(rv_id, self.cursor.program_ref(), resolver);
         if let Some(kind) = self.session_fault() {
@@ -508,6 +524,7 @@ where
                 | ClusterError::RendezvousUnregistered { .. }
                 | ClusterError::RendezvousBusy { .. }
                 | ClusterError::SessionProgramMismatch { .. }
+                | ClusterError::SessionMembershipSealed { .. }
                 | ClusterError::ResourceExhausted { .. }
                 | ClusterError::DynamicResolverInvariant { .. },
             ) => return Err(RecvError::PhaseInvariant),

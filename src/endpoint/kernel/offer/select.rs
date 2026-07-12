@@ -61,16 +61,28 @@ where
         &mut self,
         carried_lane: Option<u8>,
         carried_frame_label: Option<u8>,
+        carried_observation: Option<lane_port::FrameObservation>,
     ) -> RecvResult<OfferScopeSelection> {
-        if let Some(selection) =
-            self.select_observed_ingress_route_scope(carried_lane, carried_frame_label)?
-        {
+        if let Some(selection) = self.select_observed_ingress_route_scope(
+            carried_lane,
+            carried_frame_label,
+            carried_observation,
+        )? {
             return Ok(selection);
         }
         if let Some(selection) =
             self.select_current_materialized_ingress_scope(carried_lane, carried_frame_label)?
         {
             return Ok(selection);
+        }
+        if let Some(observed) = carried_observation {
+            let lane = carried_lane.ok_or(RecvError::PhaseInvariant)?;
+            self.emit_materialization_mismatch_observation(
+                usize::from(lane),
+                lane,
+                lane_port::FrameMismatch::label_mismatch(observed),
+            );
+            return Err(RecvError::PhaseInvariant);
         }
         if let Some(selection) = self.select_carried_ingress_scope(carried_lane)? {
             return Ok(selection);

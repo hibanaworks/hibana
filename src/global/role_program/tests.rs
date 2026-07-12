@@ -16,6 +16,7 @@ const LOCAL_STEP_STRESS_ROW_BUDGET: usize = 512;
 const _: () = assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
 const NESTED_PAR_ROUTE_RESOLVER: u16 = 0x91;
 const ROLL_ROUTE_INTERNAL_PARALLEL_RESOLVER: u16 = 0x92;
+const DISJOINT_PAR_ROUTE_RESOLVER: u16 = 0x93;
 
 const fn test_atom(label: u8, lane: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -66,8 +67,10 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
         program_ref.route_resolver_id_at_row(0),
         Some(NESTED_PAR_ROUTE_RESOLVER)
     );
-    assert_eq!(program_ref.route_controller_role(scope), Some(0));
+    assert_eq!(program_ref.route_controller_role(scope), 0);
     assert!(program_ref.route_resolver(scope).is_some());
+    assert_eq!(program_ref.route_participant_mask(scope, 0), 0b111);
+    assert_eq!(program_ref.route_participant_mask(scope, 1), 0b11);
 
     let events = LocalEventProgram::from_rows(role0.role_image_ref());
     let slot = events.route_scope_slot(scope).expect("route slot");
@@ -102,7 +105,6 @@ fn route_authority_storage_intrinsic_routes_allocate_no_shared_slots() {
         RoleDescriptorRef::from_resident(receiver.role_image_ref()),
     ] {
         assert_eq!(descriptor.route_table_frame_slots(), 0);
-        assert_eq!(descriptor.route_table_lane_slots(), 0);
     }
 }
 
@@ -120,9 +122,27 @@ fn route_authority_storage_dynamic_routes_derive_slots_from_descriptor() {
         RoleDescriptorRef::from_resident(controller.role_image_ref()),
         RoleDescriptorRef::from_resident(receiver.role_image_ref()),
     ] {
-        assert!(descriptor.route_table_frame_slots() > 0);
-        assert!(descriptor.route_table_lane_slots() > 0);
+        assert_eq!(descriptor.route_table_frame_slots(), 1);
     }
+}
+
+#[test]
+fn route_authority_storage_counts_program_wide_dynamic_scopes() {
+    let left = g::route(
+        g::send::<0, 1, Msg<44, u8>>(),
+        g::send::<0, 1, Msg<45, u8>>(),
+    )
+    .resolve::<NESTED_PAR_ROUTE_RESOLVER>();
+    let right = g::route(
+        g::send::<2, 3, Msg<46, u8>>(),
+        g::send::<2, 3, Msg<47, u8>>(),
+    )
+    .resolve::<DISJOINT_PAR_ROUTE_RESOLVER>();
+    let program: RoleProgram<0> = project(&g::par(left, right));
+    let descriptor = RoleDescriptorRef::from_resident(program.role_image_ref());
+
+    assert_eq!(descriptor.program().route_resolver_row_count(), 2);
+    assert_eq!(descriptor.route_table_frame_slots(), 2);
 }
 
 #[test]
@@ -139,6 +159,11 @@ fn role_projections_share_program_wide_resolver_identity() {
 
     assert!(program.same_image(role1.role_image_ref().program));
     assert!(program.same_image(role2.role_image_ref().program));
+    let scope = program
+        .route_resolver_scope_at_row(0)
+        .expect("route scope row");
+    assert_eq!(program.route_participant_mask(scope, 0), 0b11);
+    assert_eq!(program.route_participant_mask(scope, 1), 0b101);
 }
 
 #[test]

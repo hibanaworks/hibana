@@ -446,7 +446,7 @@ fn compact_route_arm_authority_fails_closed_before_publication() {
         "frontier recv metadata must not duplicate route authority that no consumer reads"
     );
     let validation = offer_resolve
-        .find("let arm = if let Some(target_idx)")
+        .find("let (arm, marks_descendant) = if let Some(target_idx)")
         .expect("staged passive route arm validation must remain present");
     let intrinsic_publication = offer_resolve
         .find("self.mark_intrinsic_passive_descendant_path_ready")

@@ -13,6 +13,9 @@ impl fmt::Display for ClusterError {
             Self::SessionProgramMismatch { sid } => {
                 write!(f, "session-program-mismatch {}", sid)
             }
+            Self::SessionMembershipSealed { sid } => {
+                write!(f, "session-membership-sealed {}", sid)
+            }
             Self::ResourceExhausted { resource } => write!(f, "exhausted {}", resource.as_str()),
             Self::ResolverReject { resolver_id } => {
                 write!(f, "resolver-reject {}", resolver_id)

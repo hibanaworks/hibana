@@ -65,8 +65,8 @@ run_miri_test() {
 
 run_miri_test \
   public-runtime-owner \
-  27 \
-  27 \
+  28 \
+  28 \
   0 \
   -p hibana \
   --test miri_runtime_owner
@@ -156,8 +156,8 @@ run_miri_test \
 
 run_miri_test \
   route-authority-storage-owner \
-  2 \
-  2 \
+  3 \
+  3 \
   0 \
   -p hibana \
   --lib \
@@ -182,6 +182,15 @@ run_miri_test \
   rolled_resolved_route_reenters_left_right_left_rows
 
 run_miri_test \
+  rolled-buffered-route-order-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_resolved_route_preserves_buffered_decision_order
+
+run_miri_test \
   session-family-isolation \
   1 \
   1 \
@@ -201,8 +210,8 @@ run_miri_test \
 
 run_miri_test \
   route-branch-send-owner \
-  3 \
-  3 \
+  5 \
+  5 \
   0 \
   -p hibana \
   --test route_branch_send
@@ -234,6 +243,15 @@ run_miri_test \
   resolver_reject_does_not_encode_or_stage_send_payload
 
 run_miri_test \
+  dynamic-membership-seal-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  dynamic_resolution_seals_runtime_local_membership_before_evaluation
+
+run_miri_test \
   offer-branch-owner \
   11 \
   11 \
@@ -243,8 +261,8 @@ run_miri_test \
 
 run_miri_test \
   resident-sidecar-owner \
-  20 \
-  19 \
+  23 \
+  22 \
   1 \
   -p hibana \
   --lib \
@@ -261,8 +279,8 @@ run_miri_test \
 
 run_miri_test \
   compiled-program-descriptor-validation \
-  10 \
-  10 \
+  13 \
+  13 \
   0 \
   -p hibana \
   --lib \
