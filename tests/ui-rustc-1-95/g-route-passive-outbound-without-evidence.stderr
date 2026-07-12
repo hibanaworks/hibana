@@ -1,0 +1,54 @@
+error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation
+ --> src/g.rs
+  |
+  |             panic_choreography_error(error);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<2, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>>>::VALIDATION` failed inside this call
+  |
+note: inside `g::panic_choreography_error`
+ --> $RUST/core/src/panic.rs
+  |
+  = note: the failure occurred here
+  |
+ ::: src/g.rs
+  |
+  |           ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
+  |  _____________________________________________________________-
+  | |             "Route unprojectable for this role: invalid, ambiguous endpoint operation, ",
+  | |             "or ambiguous first-visible endpoint operation",
+  | |         )),
+  | |__________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |         let () = Self::VALIDATION;
+  |                  ^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |         build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     &RoleProjection::<ROLE, Steps>::IMAGE_REF
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |       let image = const {
+  |  _________________^
+  | |         if ROLE >= ROLE_DOMAIN_SIZE {
+  | |             panic!("{}", ROLE_INDEX_ERROR);
+... |
+  | |     };
+  | |_____^
+
+note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 2, Msg<1, ()>>, hibana::g::Send<1, 3, Msg<5, ()>>>, Seq<hibana::g::Send<0, 2, Msg<2, ()>>, hibana::g::Send<1, 3, Msg<5, ()>>>>>`
+ --> src/global/program.rs
+  |
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

@@ -51,6 +51,7 @@ pub(crate) enum ProgramSourceError {
     RollBodyAbsent,
     ParallelArmAbsent,
     ParallelConflict,
+    ReceiveLaneCausalityConflict,
     ParallelAmbiguousEndpointSelector,
     ReentryAmbiguousEndpointSelector,
     ResolverIdOutOfDomain,
@@ -72,6 +73,9 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         }
         ProgramSourceError::ParallelConflict => {
             panic!("parallel lane ownership must be structurally disjoint")
+        }
+        ProgramSourceError::ReceiveLaneCausalityConflict => {
+            panic!("receive lane sender change requires a causal handoff or exclusive route arms")
         }
         ProgramSourceError::ParallelAmbiguousEndpointSelector => {
             panic!("parallel endpoint operations must be unambiguous")

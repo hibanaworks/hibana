@@ -11,9 +11,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
+    let endpoint_selector_harnesses = read("src/global/const_dsl/endpoint_selectors/kani.rs");
     let resolver_row_harnesses = read("src/global/compiled/images/image/route_resolvers/kani.rs");
     let program_ref_harnesses = read("src/global/compiled/images/image/program_ref/kani.rs");
     let transport_harnesses = read("src/transport/kani.rs");
+    let fault_harnesses = read("src/rendezvous/association/fault/kani.rs");
     let program_blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
     let program_columns = read("src/global/compiled/images/image/columns.rs");
     let role_image_types = read("src/global/role_program/image_types.rs");
@@ -30,7 +32,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("harnesses=48 backend=CBMC"));
+    assert!(script.contains("kani_harness_total=\"$(wc -l < \"${gate_inventory}\" | tr -d ' ')\""));
+    assert!(script.contains(
+        "Kani gate passed version=${EXPECTED_VERSION} harnesses=${kani_harness_total} backend=CBMC"
+    ));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
@@ -95,6 +100,17 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(transport_harnesses.contains("left_header == right_header"));
     assert!(!transport_harnesses.contains("kani::assume"));
+    assert!(fault_harnesses.contains("fn session_fault_encoding_roundtrip_is_exact()"));
+    assert!(fault_harnesses.contains("fn symbolic_fault(raw: u8) -> SessionFaultKind"));
+    assert!(fault_harnesses.contains("SessionFaultKind::decode(encoded) == Some(fault)"));
+    assert!(fault_harnesses.contains("fn session_fault_encoding_is_injective()"));
+    assert!(fault_harnesses.contains("fn invalid_session_fault_encoding_is_fail_fast()"));
+    assert!(fault_harnesses.contains("#[kani::should_panic]"));
+    assert!(fault_harnesses.contains("left.encode() == right.encode()"));
+    assert!(script.contains("--harness session_fault_encoding_roundtrip_is_exact"));
+    assert!(script.contains("--harness session_fault_encoding_is_injective"));
+    assert!(script.contains("--harness invalid_session_fault_encoding_is_fail_fast"));
+    assert!(!fault_harnesses.contains("kani::assume"));
     for harness in [
         "packed_event_conflict_decoding_accepts_exact_domain",
         "optional_route_arm_decoding_accepts_exact_domain",
@@ -141,6 +157,17 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(scope_harnesses.contains(&format!("fn {harness}()")));
     assert!(scope_harnesses.contains("scope.is_none() == (raw == u16::MAX)"));
     assert!(script.contains(&format!("--harness {harness}")));
+
+    for harness in [
+        "outbound_selector_identity_is_exact_public_send_contract",
+        "observer_path_decision_has_exact_merge_domain",
+    ] {
+        assert!(endpoint_selector_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    assert!(endpoint_selector_harnesses.contains("left.payload_schema == right.payload_schema"));
+    assert!(endpoint_selector_harnesses.contains("(Some(_), None) | (None, Some(_)) =>"));
+    assert!(!endpoint_selector_harnesses.contains("kani::assume"));
 
     for harness in [
         "route_resolver_row_decoding_accepts_exact_domain",

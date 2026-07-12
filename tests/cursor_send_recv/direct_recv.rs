@@ -463,6 +463,42 @@ fn zero_length_transport_frame_recv_unit_commits() {
 }
 
 #[test]
+fn rolled_raw_observations_commit_only_enabled_occurrences() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<32, u32>>().roll();
+            let target_program: RoleProgram<1> = project(&program);
+            let sid = SessionId::new(32);
+            let mut tx = TestTx {
+                session_id: sid,
+                local_role: 0,
+                pending_role: None,
+                pending_frame: None,
+            };
+            for value in [10u32, 20u32] {
+                transport.stage_send_with_session(&mut tx, sid, 1, 0, 0, &value.to_be_bytes());
+                assert!(matches!(
+                    transport.poll_send_staged(&mut tx),
+                    Poll::Ready(Ok(()))
+                ));
+            }
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let mut target_endpoint = rv.enter(sid, &target_program).expect("target endpoint");
+
+            let first = futures::executor::block_on(target_endpoint.recv::<Msg<32, u32>>())
+                .expect("first observation commits the initial occurrence");
+            let second = futures::executor::block_on(target_endpoint.recv::<Msg<32, u32>>())
+                .expect("second observation commits only after roll reentry");
+            assert_eq!((first, second), (10, 20));
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
 fn zero_length_transport_frame_recv_u8_fails_with_codec_truncated() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
@@ -554,7 +590,7 @@ fn transport_poll_recv_returns_framed_payload() {
         Poll::Ready(Ok(()))
     ));
 
-    let mut rx = transport.open_rx(1, 0);
+    let mut rx = transport.open_rx(sid, 1, 0);
     let waker = futures::task::noop_waker_ref();
     let mut context = Context::from_waker(waker);
     let received = match Transport::poll_recv(&transport, &mut rx, &mut context) {

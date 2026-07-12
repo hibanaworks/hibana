@@ -4,6 +4,9 @@ namespace Hibana
 
 structure TransportChannel where
   session : Nat
+  /-- Carrier-instance generation. It is not a core wire field; migration and
+  connection-identifier rotation preserve this value. -/
+  generation : Nat
   lane : Nat
   sender : Nat
   receiver : Nat
@@ -12,14 +15,14 @@ structure TransportChannel where
 structure TransportFrame where
   channel : TransportChannel
   sequence : Nat
-  epoch : Nat
-  globalId : Nat
-  label : Nat
-  schema : Nat
+  frameLabel : Fin 256
   deriving Repr, DecidableEq
 
-/-- Reference carrier state for one session/lane/peer direction. `delivered`
-is an affine cursor into the immutable append-only send history. -/
+/-- Strong affine-delivery profile for one session/lane/peer direction. The
+runtime monitor does not assume this profile merely to reject a mismatched
+observation; global fidelity and progress use it as a separate premise.
+`channel` is the carrier-authenticated peer binding, and `delivered` is an
+affine cursor into append-only send history. -/
 structure TransportState where
   channel : TransportChannel
   frames : List TransportFrame
@@ -36,22 +39,29 @@ def TransportState.initial (channel : TransportChannel) : TransportState := {
 
 def TransportState.send
     (state : TransportState)
-    (epoch globalId label schema : Nat) : Option TransportState :=
+    (frameLabel : Fin 256) : Option TransportState :=
   if state.peerClosed then
     none
   else
     let frame : TransportFrame := {
       channel := state.channel
       sequence := state.frames.length
-      epoch
-      globalId
-      label
-      schema
+      frameLabel
     }
     some { state with frames := state.frames ++ [frame] }
 
 def TransportState.closePeer (state : TransportState) : TransportState :=
   { state with peerClosed := true }
+
+/-- Abrupt carrier failure retires the whole direction immediately. A substream
+reset or connection failure may take this path; no prior or pending frame can be
+re-exposed as protocol traffic afterward. -/
+def TransportState.abortPeer (state : TransportState) : TransportState := {
+  state with
+  frames := []
+  delivered := 0
+  peerClosed := true
+}
 
 inductive TransportPoll where
   | pending
@@ -91,9 +101,9 @@ private theorem get_append_singleton
     omega
 
 theorem transport_send_preserves_well_formed
-    {state next : TransportState} {epoch globalId label schema : Nat}
+    {state next : TransportState} {frameLabel : Fin 256}
     (wellFormed : state.WellFormed)
-    (sent : state.send epoch globalId label schema = some next) :
+    (sent : state.send frameLabel = some next) :
     next.WellFormed := by
   unfold TransportState.send at sent
   by_cases closed : state.peerClosed
@@ -103,10 +113,7 @@ theorem transport_send_preserves_well_formed
           frames := state.frames ++ [{
             channel := state.channel
             sequence := state.frames.length
-            epoch
-            globalId
-            label
-            schema
+            frameLabel
           }] } = next := by
       exact Option.some.inj (by simpa [closed] using sent)
     subst next
@@ -215,10 +222,75 @@ theorem peer_close_does_not_skip_buffered_frame
       .delivered frame { state.closePeer with delivered := state.delivered + 1 } := by
   simp [TransportState.closePeer, TransportState.pollReceive, present]
 
+theorem abort_peer_is_immediately_observable (state : TransportState) :
+    state.abortPeer.pollReceive = .peerClosed := by
+  rfl
+
+theorem abort_peer_is_well_formed (state : TransportState) :
+    state.abortPeer.WellFormed := by
+  constructor
+  · exact Nat.le_refl _
+  · intro index frame present
+    simp [TransportState.abortPeer] at present
+
 theorem closed_transport_rejects_send
-    {state : TransportState} {epoch globalId label schema : Nat}
+    {state : TransportState} {frameLabel : Fin 256}
     (closed : state.peerClosed = true) :
-    state.send epoch globalId label schema = none := by
+    state.send frameLabel = none := by
   simp [TransportState.send, closed]
+
+/-- Once the accepted prefix is drained, the next accepted send is the unique
+next sequence and every frame from the prior iteration has a smaller sequence. -/
+theorem transport_send_after_drain_is_fresh
+    {state sent : TransportState}
+    {frameLabel : Fin 256}
+    (wellFormed : state.WellFormed)
+    (drained : state.delivered = state.frames.length)
+    (accepted : state.send frameLabel = some sent) :
+    ∃ frame after,
+      sent.pollReceive = .delivered frame after /\
+      frame.channel = state.channel /\
+      frame.sequence = state.frames.length /\
+      frame.frameLabel = frameLabel /\
+      (∀ old, old ∈ state.frames -> old.sequence < frame.sequence) := by
+  unfold TransportState.send at accepted
+  by_cases closed : state.peerClosed
+  · simp [closed] at accepted
+  · let frame : TransportFrame := {
+      channel := state.channel
+      sequence := state.frames.length
+      frameLabel
+    }
+    have sentEq :
+        { state with frames := state.frames ++ [frame] } = sent :=
+      Option.some.inj (by simpa [closed, frame] using accepted)
+    subst sent
+    let after : TransportState := {
+      state with
+      frames := state.frames ++ [frame]
+      delivered := state.delivered + 1
+    }
+    have present :
+        (state.frames ++ [frame])[state.delivered]? = some frame := by
+      simp [drained]
+    refine ⟨frame, after, ?_, rfl, rfl, rfl, ?_⟩
+    · simp [TransportState.pollReceive, present, after]
+    · intro old member
+      obtain ⟨index, bound, atIndex⟩ := List.mem_iff_getElem.mp member
+      have presentOld : state.frames[index]? = some old :=
+        List.getElem?_eq_some_iff.mpr ⟨bound, atIndex⟩
+      have sequence := (wellFormed.2 index old presentOld).2
+      rw [sequence]
+      exact bound
+
+/-- Reusing a session number in a fresh carrier instance cannot alias a frame
+from the retired generation, even when all protocol-visible fields coincide. -/
+theorem distinct_carrier_generations_cannot_alias
+    {left right : TransportFrame}
+    (different : left.channel.generation ≠ right.channel.generation) :
+    left ≠ right := by
+  intro same
+  subst right
+  exact different rfl
 
 end Hibana

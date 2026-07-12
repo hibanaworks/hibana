@@ -182,6 +182,7 @@ fn preview_scope_ack_token_non_consuming_from_parts<'r, const ROLE: u8, T: Trans
     {
         return Some(token);
     }
+    cursor.route_scope_resolver(scope_id)?;
     let lane_limit = cursor.logical_lane_count();
     let mut next = offer_lanes.first_set(lane_limit);
     while let Some(lane_idx) = next {

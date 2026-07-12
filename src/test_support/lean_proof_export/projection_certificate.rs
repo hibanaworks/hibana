@@ -96,15 +96,17 @@ fn lean_projection_routes(production: &ProductionCursorTrace) -> String {
 }
 
 fn lean_projection_rolls(production: &ProductionCursorTrace) -> String {
-    let mut rolls = Vec::new();
+    let mut rows = Vec::new();
     let mut slot = 0usize;
     while let Some((_scope, row)) = production.event_program.roll_scope_row_by_slot(slot) {
-        rolls.push(format!(
-            "    {{ events := {} }}",
-            lean_usize_list(row.start()..row.end())
-        ));
+        rows.push((row.start(), row.end()));
         slot += 1;
     }
+    rows.sort_unstable_by_key(|(start, end)| (*start, end - start));
+    let rolls = rows
+        .into_iter()
+        .map(|(start, end)| format!("    {{ events := {} }}", lean_usize_list(start..end)))
+        .collect::<Vec<_>>();
     format!("[\n{}\n  ]", rolls.join(",\n"))
 }
 
@@ -138,6 +140,10 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
     );
     let first_lane_offset =
         descriptor.local_len() * crate::global::role_program::ROLE_IMAGE_EVENT_STRIDE;
+    let first_active_lane = match descriptor.first_active_lane() {
+        Some(lane) => lane,
+        None => u16::MAX as usize,
+    };
     let mismatched_first_lane = descriptor.proof_byte_at(first_lane_offset).wrapping_add(1);
     let exact_name = format!("{name}Exact");
     let lane_mismatch_name = format!("{exact_name}LaneMismatch");
@@ -375,7 +381,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
         footprint.active_lane_count,
         descriptor.endpoint_lane_slot_count(),
         descriptor.max_route_stack_depth(),
-        descriptor.first_active_lane().unwrap_or(u16::MAX as usize),
+        first_active_lane,
         resident.active_lane_row.start(),
         resident.active_lane_row.len(),
         program.proof_atom_count(),
@@ -404,5 +410,46 @@ pub(super) fn progress_certificate_source(choreo: &str, role: u8, name: &str) ->
          (reachable : Hibana.CompactReachable (Hibana.projectGraph {role} {choreo}) state) :\n    \
          Hibana.LogicalProgress (Hibana.projectGraph {role} {choreo}) state :=\n  \
          Hibana.reachable_state_has_logical_progress (certificate := {name}) (by decide) reachable\n"
+    )
+}
+
+pub(super) fn projectability_certificate_source(
+    choreo: &str,
+    role_count: u8,
+    name: &str,
+) -> String {
+    format!(
+        "def {name} : Hibana.ProjectabilityCertificate :=\n  \
+         Hibana.buildProjectabilityCertificate 0 {role_count} {choreo}\n\n\
+         example : {name}.check 0 {role_count} {choreo} = true := by\n  native_decide\n\n\
+         example {{state : Hibana.CompactGlobalState}}\n    \
+         (reachable : Hibana.CompactGlobalReachable 0 {role_count} {choreo} state) :\n    \
+         ∃ config,\n    \
+           state.decode? 0 {role_count} {choreo} = some config ∧\n    \
+           Hibana.GlobalLogicalProgress config :=\n  \
+         Hibana.projectability_certificate_removes_global_progress_premise\n    \
+           (certificate := {name}) (by native_decide) reachable\n"
+    )
+}
+
+pub(super) fn verified_protocol_certificate_source(
+    choreo: &str,
+    role_count: u8,
+    projectability: &str,
+    descriptors: &[&str],
+    name: &str,
+) -> String {
+    assert_eq!(descriptors.len(), usize::from(role_count));
+    let descriptor_list = descriptors
+        .iter()
+        .map(|descriptor| format!("{descriptor}Exact"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "def {name} : Hibana.VerifiedProtocolCertificate := {{\n  \
+         projectability := {projectability}\n  descriptors := [{descriptor_list}]\n}}\n\n\
+         example : {name}.check 0 {role_count} {choreo} = true := by\n  native_decide\n\n\
+         example : {name}.AllRolesRefine 0 {role_count} {choreo} :=\n  \
+         Hibana.verified_protocol_certificate_establishes_all_role_refinement (by native_decide)\n"
     )
 }

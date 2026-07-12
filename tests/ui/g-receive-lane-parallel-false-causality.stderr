@@ -1,0 +1,51 @@
+error[E0080]: evaluation panicked: receive lane sender change requires a causal handoff or exclusive route arms
+ --> src/g.rs
+  |
+  |             panic_choreography_error(error);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Par<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<2, 1, hibana::g::Msg<2, ()>>>, hibana::g::Send<1, 2, hibana::g::Msg<3, ()>>>>::VALIDATION` failed inside this call
+  |
+note: inside `g::panic_choreography_error`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/g.rs
+  |
+  |             panic!("receive lane sender change requires a causal handoff or exclusive route arms")
+  |             -------------------------------------------------------------------------------------- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |         let () = Self::VALIDATION;
+  |                  ^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |         build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)
+  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g/role_projection.rs
+  |
+  |     &RoleProjection::<ROLE, Steps>::IMAGE_REF
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+ --> src/g.rs
+  |
+  |       let image = const {
+  |  _________________^
+  | |         if ROLE >= ROLE_DOMAIN_SIZE {
+  | |             panic!("{}", ROLE_INDEX_ERROR);
+... |
+  | |     };
+  | |_____^
+
+note: the above error was encountered while instantiating `fn g::project::<2, Seq<Par<hibana::g::Send<0, 2, Msg<1, ()>>, hibana::g::Send<2, 1, Msg<2, ()>>>, hibana::g::Send<1, 2, Msg<3, ()>>>>`
+ --> src/global/program.rs
+  |
+  |         crate::g::project(self)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^

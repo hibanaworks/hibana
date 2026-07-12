@@ -391,6 +391,14 @@ fn compact_route_arm_authority_fails_closed_before_publication() {
         format!("{scope_evidence}\n{route_commit}\n{offer_select}\n{offer_resolve}");
 
     assert!(
+        scope_evidence.contains("if self.cursor.route_scope_resolver(scope_id).is_none()")
+            && scope_evidence.contains("self.cursor.route_scope_resolver(scope_id)?;")
+            && route_commit.contains("cursor.route_scope_resolver(scope_id)?;")
+            && offer_select.contains("self.cursor.route_scope_resolver(scope_id)?;"),
+        "shared route-table authority must remain exclusive to explicit resolver scopes"
+    );
+
+    assert!(
         authority.contains("pub(super) const fn decode_raw(value: u8) -> Option<Self>")
             && authority.contains("pub(super) const fn from_raw(value: u8) -> Self")
             && authority

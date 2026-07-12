@@ -157,7 +157,7 @@ private def eventCommitEnabled
     (graph : EventGraph) (state : CommitState) (event : Event) : Bool :=
   (eventBaseState? graph state event).isSome
 
-private def applyConflicts
+def applyConflictArms
     (memberships : List ConflictArm)
     (selected : Nat -> Option RouteArm) : Nat -> Option RouteArm :=
   memberships.foldl
@@ -177,7 +177,7 @@ def commitEvent
       | some base =>
         some {
           done := fun candidate => if candidate == id then true else base.done candidate
-          selected := applyConflicts event.conflicts base.selected
+          selected := applyConflictArms event.conflicts base.selected
         }
 
 private def selectRouteArm
@@ -418,7 +418,7 @@ theorem commit_exact_successor
       eventBaseState? graph state event = some base /\
       next.done id = true /\
       (∀ candidate, candidate ≠ id -> next.done candidate = base.done candidate) /\
-      next.selected = applyConflicts event.conflicts base.selected := by
+      next.selected = applyConflictArms event.conflicts base.selected := by
   cases eventCase : graph.events[id]? with
   | none => simp [commitEvent, eventCase] at committed
   | some event =>

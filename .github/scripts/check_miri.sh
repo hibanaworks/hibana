@@ -31,6 +31,9 @@ if ! command -v timeout >/dev/null 2>&1; then
   exit 1
 fi
 
+miri_passed_total=0
+miri_ignored_total=0
+
 run_miri_test() {
   local label="$1"
   local expected_listed="$2"
@@ -56,6 +59,8 @@ run_miri_test() {
     return 1
   fi
   rm -f "${output}"
+  miri_passed_total=$((miri_passed_total + expected_passed))
+  miri_ignored_total=$((miri_ignored_total + expected_ignored))
 }
 
 run_miri_test \
@@ -94,8 +99,8 @@ run_miri_test \
 
 run_miri_test \
   direct-recv-owner \
-  10 \
-  10 \
+  11 \
+  11 \
   0 \
   -p hibana \
   --test cursor_send_recv_direct_recv
@@ -142,12 +147,39 @@ run_miri_test \
 
 run_miri_test \
   transport-contract-owner \
+  6 \
+  6 \
+  0 \
+  -p hibana \
+  --lib \
+  transport::tests::transport_contract_
+
+run_miri_test \
+  route-authority-storage-owner \
   2 \
   2 \
   0 \
   -p hibana \
   --lib \
-  transport::tests::transport_contract_
+  global::role_program::tests::route_authority_storage_
+
+run_miri_test \
+  rolled-causal-exit-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  rolled_same_label_recv_requires_causal_exit_handoff
+
+run_miri_test \
+  protocol-family-session-isolation \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  protocol_template_sessions_interleave_and_fault_independently
 
 run_miri_test \
   route-branch-send-owner \
@@ -236,4 +268,4 @@ run_miri_test \
   --lib \
   global::compiled::images::image::program_ref::tests::program_image_
 
-echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=151 ignored=1"
+echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"

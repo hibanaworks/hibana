@@ -100,6 +100,17 @@ for harness in \
 done
 
 for harness in \
+  session_fault_encoding_roundtrip_is_exact \
+  session_fault_encoding_is_injective \
+  invalid_session_fault_encoding_is_fail_fast; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/rendezvous/association/fault/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
   packed_event_conflict_decoding_accepts_exact_domain \
   optional_route_arm_decoding_accepts_exact_domain \
   packed_local_dependency_decoding_accepts_exact_domain \
@@ -133,6 +144,16 @@ done
 for harness in scope_id_decoding_accepts_exact_compact_domain; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/const_dsl/scope/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
+  outbound_selector_identity_is_exact_public_send_contract \
+  observer_path_decision_has_exact_merge_domain; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/global/const_dsl/endpoint_selectors/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
     exit 1
   fi
@@ -197,6 +218,7 @@ if ! diff -u "${proof_inventory}" "${gate_inventory}"; then
   echo "Kani gate harness inventory does not match production proof inventory" >&2
   exit 1
 fi
+kani_harness_total="$(wc -l < "${gate_inventory}" | tr -d ' ')"
 
 RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --manifest-path "${MANIFEST}" \
@@ -218,6 +240,9 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness single_ready_mask_decoding_is_exact \
   --harness frame_header_roundtrip_preserves_every_field \
   --harness frame_header_identity_is_exact_and_injective \
+  --harness session_fault_encoding_roundtrip_is_exact \
+  --harness session_fault_encoding_is_injective \
+  --harness invalid_session_fault_encoding_is_fail_fast \
   --harness packed_event_conflict_decoding_accepts_exact_domain \
   --harness optional_route_arm_decoding_accepts_exact_domain \
   --harness packed_local_dependency_decoding_accepts_exact_domain \
@@ -234,6 +259,8 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness role_image_fit_probe_rejects_undersized_storage \
   --harness role_image_fit_probe_rejects_plan_mismatch \
   --harness scope_id_decoding_accepts_exact_compact_domain \
+  --harness outbound_selector_identity_is_exact_public_send_contract \
+  --harness observer_path_decision_has_exact_merge_domain \
   --harness route_resolver_row_decoding_accepts_exact_domain \
   --harness dynamic_route_resolver_identity_is_scope_and_id \
   --harness resolver_registration_key_is_program_and_id \
@@ -253,4 +280,4 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness program_atom_row_decoding_accepts_exact_domain \
   --harness compiled_program_atom_blob_decoding_preserves_every_schema_bit
 
-echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=48 backend=CBMC"
+echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=${kani_harness_total} backend=CBMC"

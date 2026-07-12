@@ -36,6 +36,8 @@ const ROUTE_PAR_C: u8 = 223;
 const ROUTE_PAR_D: u8 = 224;
 const ROUTE_PAR_R: u8 = 225;
 const ROUTE_PAR_POST: u8 = 226;
+const ROUTE_PAR_RIGHT_SIDE: u8 = 233;
+const ROUTE_PAR_RIGHT_OBSERVER: u8 = 234;
 const DEAD_RIGHT_A: u8 = 227;
 const DEAD_RIGHT_B: u8 = 228;
 const DEAD_RIGHT_C: u8 = 229;
@@ -89,7 +91,13 @@ fn route_left_nested_parallel_program<const ROLE: u8>() -> RoleProgram<ROLE> {
         nested_join,
         g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAR_D, u8>>(),
     );
-    let right = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAR_R, u8>>();
+    let right = g::par(
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<ROUTE_PAR_R, u8>>(),
+        g::par(
+            g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<ROUTE_PAR_RIGHT_SIDE, u8>>(),
+            g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ROUTE_PAR_RIGHT_OBSERVER, u8>>(),
+        ),
+    );
     project(&g::seq(
         g::route(left, right),
         g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<ROUTE_PAR_POST, u8>>(),
@@ -100,7 +108,7 @@ fn route_right_parallel_dead_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_A, u8>>();
     let right = g::par(
         g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_B, u8>>(),
-        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
     );
     project(&g::seq(
         g::route(left, right),
@@ -112,7 +120,7 @@ fn parallel_route_right_parallel_dead_program<const ROLE: u8>() -> RoleProgram<R
     let left = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_A, u8>>();
     let right = g::par(
         g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_B, u8>>(),
-        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
     );
     let routed = g::route(left, right);
     let sibling = g::send::<LOCAL_ROLE, OBSERVER_ROLE, Msg<DEAD_RIGHT_E, u8>>();
@@ -126,7 +134,7 @@ fn outer_left_kills_nested_right_route_program<const ROLE: u8>() -> RoleProgram<
     let left = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_A, u8>>();
     let inner_left = g::par(
         g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_B, u8>>(),
-        g::send::<LOCAL_ROLE, SIDE_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
+        g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_C, u8>>(),
     );
     let inner_right = g::send::<LOCAL_ROLE, WORKER_ROLE, Msg<DEAD_RIGHT_D, u8>>();
     let right = g::route(inner_left, inner_right);

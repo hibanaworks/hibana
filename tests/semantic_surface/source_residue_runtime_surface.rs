@@ -548,6 +548,7 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
     let source = read("src/g/source.rs");
     let const_dsl = read("src/global/const_dsl.rs");
     let endpoint_selectors = read("src/global/const_dsl/endpoint_selectors.rs");
+    let receive_lane_causality = read("src/global/const_dsl/receive_lane_causality.rs");
     let frame_labels = read("src/global/frame_labels.rs");
     let scope_ranges = read("src/global/const_dsl/scope_ranges.rs");
     let eff_list = read("src/global/const_dsl/eff_list.rs");
@@ -564,6 +565,7 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         source.as_str(),
         const_dsl.as_str(),
         endpoint_selectors.as_str(),
+        receive_lane_causality.as_str(),
         frame_labels.as_str(),
         scope_ranges.as_str(),
         eff_list.as_str(),
@@ -585,18 +587,28 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "pub(crate) const fn validate_parallel_endpoint_selectors(eff_list: &EffList) -> bool",
         "pub(crate) const fn validate_roll_reentry_endpoint_selectors(eff_list: &EffList) -> bool",
         "const fn parallel_endpoint_selector_conflicts(",
-        "struct EndpointSelector(u32);",
+        "struct EndpointSelector(u64);",
         "EndpointSelector::inbound_evidence(",
         "const fn inbound_selector_at(",
-        "atom_idx as u32",
+        "atom_idx as u64",
+        "atom.payload_schema as u64",
         "pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers(",
         "pub(crate) const fn local_route_observer_paths_mergeable",
+        "enum ObserverPathDecision",
+        "const fn observer_path_decision(",
+        "(Some(_), None) | (None, Some(_)) => ObserverPathDecision::Reject",
         "ProgramSourceError::ParallelAmbiguousEndpointSelector",
         "ProgramSourceError::ReentryAmbiguousEndpointSelector",
+        "ProgramSourceError::ReceiveLaneCausalityConflict",
+        "pub(crate) const fn validate_receive_lane_causality(eff_list: &EffList) -> bool",
+        "const fn mutually_exclusive_route_arms(",
+        "const fn receive_precedes_later_send(",
+        "if !validate_receive_lane_causality(eff_list)",
         "if !validate_parallel_endpoint_selectors(eff_list)",
         "if !validate_roll_reentry_endpoint_selectors(eff_list)",
         "if first_visible_endpoint_selector_conflicts_from_markers(",
         "if local_route_observer_paths_mergeable(",
+        "validate_route_scope(role, eff_list, scope_markers, marker_idx)",
         "while role < crate::g::ROLE_DOMAIN_SIZE",
         "validate_compiled_layout(role, eff_list)",
         "pub(crate) const fn parallel_arm_ranges_from_enter(",
@@ -634,12 +646,19 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "recv_frame_label_at(eff_list, atom_idx, atom)",
         "const fn recv_frame_label_at(",
         "frame_label_from_prior_count(count)",
+        "let mut left_seen = false;",
+        "let mut right_seen = false;",
+        "struct EndpointSelector(u32);",
     ] {
         assert!(
             !combined.contains(forbidden),
             "projection validation must not reintroduce const-generic all-role expansion: {forbidden}"
         );
     }
+    assert!(
+        !seal.contains("reentry: ReentryMark") && !seal.contains("if reentry.is_reentrant()"),
+        "roll reentry must not bypass intrinsic-route observer knowledge"
+    );
 
     let resolver_branch = seal
         .find("let has_dynamic_resolver = scope_has_dynamic_resolver")

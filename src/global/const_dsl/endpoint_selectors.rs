@@ -7,12 +7,12 @@ use super::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct EndpointSelector(u32);
+struct EndpointSelector(u64);
 
 impl EndpointSelector {
-    const OUTBOUND: u32 = 0;
-    const INBOUND_EVIDENCE: u32 = 1;
-    const KIND_SHIFT: u32 = 24;
+    const OUTBOUND: u64 = 0;
+    const INBOUND_EVIDENCE: u64 = 1;
+    const KIND_SHIFT: u32 = 56;
 
     const fn outbound(atom: eff::EffAtom) -> Option<Self> {
         if atom.from >= crate::g::ROLE_DOMAIN_SIZE {
@@ -20,8 +20,9 @@ impl EndpointSelector {
         } else {
             Some(Self(
                 (Self::OUTBOUND << Self::KIND_SHIFT)
-                    | ((atom.from as u32) << 16)
-                    | atom.label as u32,
+                    | ((atom.from as u64) << 48)
+                    | ((atom.label as u64) << 40)
+                    | atom.payload_schema as u64,
             ))
         }
     }
@@ -38,7 +39,7 @@ impl EndpointSelector {
             // projection validation the atom index is the same descriptor
             // identity without re-counting prior atoms for every comparison.
             Some(Self(
-                (Self::INBOUND_EVIDENCE << Self::KIND_SHIFT) | atom_idx as u32,
+                (Self::INBOUND_EVIDENCE << Self::KIND_SHIFT) | atom_idx as u64,
             ))
         }
     }
@@ -53,6 +54,34 @@ impl EndpointSelector {
 
     const fn same(self, other: Self) -> bool {
         self.0 == other.0
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObserverPathDecision {
+    Continue,
+    Accept,
+    Reject,
+}
+
+const fn observer_path_decision(
+    left: Option<EndpointSelector>,
+    right: Option<EndpointSelector>,
+) -> ObserverPathDecision {
+    match (left, right) {
+        (Some(selector), Some(other)) => {
+            if selector.is_inbound_evidence() && other.is_inbound_evidence() {
+                if selector.same(other) {
+                    ObserverPathDecision::Continue
+                } else {
+                    ObserverPathDecision::Accept
+                }
+            } else {
+                ObserverPathDecision::Reject
+            }
+        }
+        (None, None) => ObserverPathDecision::Accept,
+        (Some(_), None) | (None, Some(_)) => ObserverPathDecision::Reject,
     }
 }
 
@@ -343,26 +372,14 @@ pub(crate) const fn local_route_observer_paths_mergeable(
 ) -> bool {
     let mut left_idx = left_start;
     let mut right_idx = right_start;
-    let mut left_seen = false;
-    let mut right_seen = false;
     loop {
         let left = next_local_endpoint_selector(eff_list, &mut left_idx, left_end, role);
         let right = next_local_endpoint_selector(eff_list, &mut right_idx, right_end, role);
-        if let Some(selector) = left {
-            left_seen = true;
-            if let Some(other) = right {
-                right_seen = true;
-                if selector.same(other) {
-                    continue;
-                }
-                return selector.is_inbound_evidence() && other.is_inbound_evidence();
-            }
-            return !right_seen;
+        match observer_path_decision(left, right) {
+            ObserverPathDecision::Continue => {}
+            ObserverPathDecision::Accept => return true,
+            ObserverPathDecision::Reject => return false,
         }
-        if right.is_some() {
-            return !left_seen;
-        }
-        return true;
     }
 }
 
@@ -407,3 +424,6 @@ const fn atom_matches_selector(
     }
     matches!(inbound_selector_at(atom_idx, atom), Some(selector) if selector.same(target))
 }
+
+#[cfg(kani)]
+mod kani;

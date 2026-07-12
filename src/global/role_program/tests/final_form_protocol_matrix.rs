@@ -46,7 +46,10 @@ macro_rules! final_form_protocol {
             g::send::<0, 1, Msg<41, ()>>(),
         );
         let outer_left = g::seq(inner, g::send::<0, 2, Msg<42, ()>>());
-        let outer_right = g::send::<0, 1, Msg<43, ()>>();
+        let outer_right = g::seq(
+            g::send::<0, 1, Msg<43, ()>>(),
+            g::send::<0, 2, Msg<45, ()>>(),
+        );
         g::seq(
             g::route(outer_left, outer_right),
             g::send::<0, 3, Msg<44, ()>>(),
@@ -61,7 +64,11 @@ macro_rules! final_form_protocol {
             g::par(inner, g::send::<0, 2, Msg<52, ()>>()),
             g::send::<0, 1, Msg<53, ()>>(),
         );
-        let routed = g::route(outer_left, g::send::<0, 1, Msg<54, ()>>());
+        let outer_right = g::seq(
+            g::send::<0, 1, Msg<54, ()>>(),
+            g::send::<0, 2, Msg<59, ()>>(),
+        );
+        let routed = g::route(outer_left, outer_right);
         g::seq(
             g::par(routed, g::send::<0, 3, Msg<55, ()>>()),
             g::send::<0, 3, Msg<56, ()>>(),

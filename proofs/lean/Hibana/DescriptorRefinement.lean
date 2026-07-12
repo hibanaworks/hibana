@@ -136,6 +136,19 @@ theorem exact_descriptor_certificate_sound
   simp [ExactDescriptorCertificate.check] at accepted
   exact ⟨accepted.1.1, accepted.2, artifact_checker_sound accepted.1.2⟩
 
+/-- An accepted resident image decodes the canonical global occurrence list,
+including each production lane. This exposes the program-image component of
+the exact descriptor certificate as a reusable refinement theorem. -/
+theorem accepted_descriptor_global_events_bind_canonical_lanes
+    {certificate : ExactDescriptorCertificate}
+    (accepted : certificate.check = true) :
+    certificate.image.decodeGlobalEvents? =
+      some certificate.choreo.globalEvents := by
+  have refines := exact_descriptor_certificate_sound accepted
+  have agreement := refines.2.1
+  unfold ExactDescriptorCertificate.Matches at agreement
+  exact agreement.2.2.1.1
+
 /-- Every accepted resident image has exactly the action column projected from
 its normalized choreography, for every role and choreography accepted by the
 checker rather than only for the generated witness corpus. -/

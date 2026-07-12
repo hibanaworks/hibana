@@ -189,11 +189,15 @@ fn recv_future_records_waker_and_wakes() {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ContractFrame {
+    session: u32,
+    generation: u32,
     sequence: usize,
     value: u8,
 }
 
 struct ContractCarrier {
+    session: u32,
+    generation: u32,
     frames: Vec<ContractFrame>,
     delivered: usize,
     closed: bool,
@@ -202,7 +206,13 @@ struct ContractCarrier {
 
 impl ContractCarrier {
     fn new() -> Self {
+        Self::for_generation(0, 0)
+    }
+
+    fn for_generation(session: u32, generation: u32) -> Self {
         Self {
+            session,
+            generation,
             frames: Vec::new(),
             delivered: 0,
             closed: false,
@@ -210,12 +220,17 @@ impl ContractCarrier {
         }
     }
 
-    fn send(&mut self, value: u8) {
-        assert!(!self.closed, "closed carrier rejects later sends");
+    fn send(&mut self, value: u8) -> Result<(), TransportError> {
+        if self.closed {
+            return Err(TransportError::Offline);
+        }
         self.frames.push(ContractFrame {
+            session: self.session,
+            generation: self.generation,
             sequence: self.frames.len(),
             value,
         });
+        Ok(())
     }
 
     fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Result<ContractFrame, TransportError>> {
@@ -236,14 +251,29 @@ impl ContractCarrier {
             waiter.wake();
         }
     }
+
+    fn abort_peer(&mut self) {
+        self.frames.truncate(self.delivered);
+        self.close_peer();
+    }
+}
+
+struct ContractHandle<'a> {
+    remote: &'a mut ContractCarrier,
+}
+
+impl Drop for ContractHandle<'_> {
+    fn drop(&mut self) {
+        self.remote.close_peer();
+    }
 }
 
 #[test]
 fn transport_contract_fifo_exactly_once_and_no_replay() {
     let mut carrier = ContractCarrier::new();
-    carrier.send(11);
-    carrier.send(22);
-    carrier.send(33);
+    carrier.send(11).expect("accept frame 11");
+    carrier.send(22).expect("accept frame 22");
+    carrier.send(33).expect("accept frame 33");
 
     let wake_flag = Cell::new(false);
     let waker = unsafe { flag_waker(&wake_flag) };
@@ -252,7 +282,15 @@ fn transport_contract_fifo_exactly_once_and_no_replay() {
         let Poll::Ready(Ok(frame)) = carrier.poll_recv(&mut cx) else {
             panic!("accepted frames must remain FIFO-ready");
         };
-        assert_eq!(frame, ContractFrame { sequence, value });
+        assert_eq!(
+            frame,
+            ContractFrame {
+                session: 0,
+                generation: 0,
+                sequence,
+                value,
+            }
+        );
     }
 
     assert!(matches!(carrier.poll_recv(&mut cx), Poll::Pending));
@@ -273,4 +311,105 @@ fn transport_contract_peer_close_wakes_and_is_observable_after_drain() {
         carrier.poll_recv(&mut cx),
         Poll::Ready(Err(TransportError::Offline))
     ));
+}
+
+#[test]
+fn transport_contract_handle_retirement_wakes_remote_receiver() {
+    let mut remote = ContractCarrier::for_generation(5, 8);
+    let wake_flag = Cell::new(false);
+    let waker = unsafe { flag_waker(&wake_flag) };
+    let mut cx = Context::from_waker(&waker);
+
+    assert!(matches!(remote.poll_recv(&mut cx), Poll::Pending));
+    drop(ContractHandle {
+        remote: &mut remote,
+    });
+
+    assert!(
+        wake_flag.get(),
+        "retiring handles must wake the remote receiver"
+    );
+    assert!(matches!(
+        remote.poll_recv(&mut cx),
+        Poll::Ready(Err(TransportError::Offline))
+    ));
+}
+
+#[test]
+fn transport_contract_close_drains_accepted_prefix_and_rejects_later_send() {
+    let mut carrier = ContractCarrier::for_generation(7, 11);
+    carrier.send(41).expect("accept first frame");
+    carrier.send(43).expect("accept second frame");
+    carrier.close_peer();
+
+    let wake_flag = Cell::new(false);
+    let waker = unsafe { flag_waker(&wake_flag) };
+    let mut cx = Context::from_waker(&waker);
+    for (sequence, value) in [41, 43].into_iter().enumerate() {
+        let Poll::Ready(Ok(frame)) = carrier.poll_recv(&mut cx) else {
+            panic!("close must not skip an accepted frame");
+        };
+        assert_eq!(
+            frame,
+            ContractFrame {
+                session: 7,
+                generation: 11,
+                sequence,
+                value,
+            }
+        );
+    }
+    assert!(matches!(
+        carrier.poll_recv(&mut cx),
+        Poll::Ready(Err(TransportError::Offline))
+    ));
+    assert_eq!(carrier.send(47), Err(TransportError::Offline));
+}
+
+#[test]
+fn transport_contract_abort_retires_undelivered_tail_and_closes() {
+    let mut carrier = ContractCarrier::for_generation(19, 1);
+    carrier.send(71).expect("accept first frame");
+    carrier.send(73).expect("accept second frame");
+
+    let wake_flag = Cell::new(false);
+    let waker = unsafe { flag_waker(&wake_flag) };
+    let mut cx = Context::from_waker(&waker);
+    let Poll::Ready(Ok(first)) = carrier.poll_recv(&mut cx) else {
+        panic!("first accepted frame must be ready");
+    };
+    assert_eq!(first.sequence, 0);
+    carrier.abort_peer();
+
+    assert_eq!(carrier.delivered, carrier.frames.len());
+    assert!(matches!(
+        carrier.poll_recv(&mut cx),
+        Poll::Ready(Err(TransportError::Offline))
+    ));
+    assert_eq!(carrier.send(79), Err(TransportError::Offline));
+}
+
+#[test]
+fn transport_contract_carrier_generation_isolates_session_reuse() {
+    let mut retired = ContractCarrier::for_generation(23, 5);
+    retired.send(61).expect("accept retired-connection frame");
+    retired.close_peer();
+
+    let mut replacement = ContractCarrier::for_generation(23, 6);
+    replacement
+        .send(67)
+        .expect("accept replacement-connection frame");
+
+    let wake_flag = Cell::new(false);
+    let waker = unsafe { flag_waker(&wake_flag) };
+    let mut cx = Context::from_waker(&waker);
+    let Poll::Ready(Ok(old_frame)) = retired.poll_recv(&mut cx) else {
+        panic!("retired connection retains only its accepted prefix");
+    };
+    let Poll::Ready(Ok(new_frame)) = replacement.poll_recv(&mut cx) else {
+        panic!("replacement connection exposes only its own prefix");
+    };
+    assert_eq!(old_frame.session, new_frame.session);
+    assert_ne!(old_frame.generation, new_frame.generation);
+    assert_ne!(old_frame, new_frame);
 }

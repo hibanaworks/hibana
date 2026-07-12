@@ -74,6 +74,13 @@ const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-role-out-of-range.rs",
     "tests/ui/g-self-send-non-unit.rs",
     "tests/ui/g-roleprogram-witness-mismatch.rs",
+    "tests/ui/g-receive-lane-multiple-senders.rs",
+    "tests/ui/g-receive-lane-parallel-false-causality.rs",
+    "tests/ui/g-receive-lane-route-false-causality.rs",
+    "tests/ui/g-roll-same-label-distinct-inbound-evidence.rs",
+    "tests/ui/g-route-one-sided-observer.rs",
+    "tests/ui/g-route-passive-outbound-without-evidence.rs",
+    "tests/ui/g-route-roll-one-sided-observer.rs",
     "tests/ui/g-par-ambiguous-endpoint-op.rs",
     "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs",
     "tests/ui/g-route-passive-first-visible-ambiguous.rs",
@@ -138,9 +145,19 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-role-out-of-range.rs");
     compile_fail(&t, "tests/ui/g-self-send-non-unit.rs");
     compile_fail(&t, "tests/ui/g-roleprogram-witness-mismatch.rs");
+    compile_fail(&t, "tests/ui/g-receive-lane-multiple-senders.rs");
+    compile_fail(&t, "tests/ui/g-receive-lane-parallel-false-causality.rs");
+    compile_fail(&t, "tests/ui/g-receive-lane-route-false-causality.rs");
+    compile_fail(
+        &t,
+        "tests/ui/g-roll-same-label-distinct-inbound-evidence.rs",
+    );
     compile_fail(&t, "tests/ui/g-par-ambiguous-endpoint-op.rs");
     compile_fail(&t, "tests/ui/g-roll-ambiguous-reentry-exit-outbound.rs");
     compile_fail(&t, "tests/ui/g-route-passive-first-visible-ambiguous.rs");
+    compile_fail(&t, "tests/ui/g-route-one-sided-observer.rs");
+    compile_fail(&t, "tests/ui/g-route-passive-outbound-without-evidence.rs");
+    compile_fail(&t, "tests/ui/g-route-roll-one-sided-observer.rs");
     compile_fail(&t, "tests/ui/g-route-controller-mismatch.rs");
     compile_fail(&t, "tests/ui/g-route-roll-before-resolve.rs");
     compile_fail(&t, "tests/ui/g-route-unprojectable.rs");
@@ -149,15 +166,18 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-par-many.rs");
     t.pass("tests/ui-pass/g-par-same-role-auto-lanes.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-local-endpoints.rs");
+    t.pass("tests/ui-pass/g-par-same-label-distinct-outbound-schema.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-same-endpoint.rs");
-    t.pass("tests/ui-pass/g-roll-same-label-distinct-inbound-evidence.rs");
+    t.pass("tests/ui-pass/g-protocol-family-templates.rs");
+    t.pass("tests/ui-pass/g-receive-lane-causal-handoff.rs");
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
     t.pass("tests/ui-pass/g-route-intrinsic-passive-same-label-frame-evidence.rs");
     t.pass("tests/ui-pass/g-route-merged.rs");
     t.pass("tests/ui-pass/g-route-resolver-scope-nested-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-label.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-same-endpoint-op.rs");
+    t.pass("tests/ui-pass/g-route-resolved-cross-arm-distinct-senders.rs");
     t.pass("tests/ui-pass/g-route-resolved-cross-arm-overlap-after-left-par.rs");
     t.pass("tests/ui-pass/g-route-resolved-intra-arm-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-route-resolved-nested-roll-same-endpoint-op.rs");

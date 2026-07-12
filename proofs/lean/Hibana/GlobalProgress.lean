@@ -332,8 +332,17 @@ theorem parallel_global_event_id_ranges_are_disjoint
     leftId ≠ left.globalEvents.length + rightId /\
     left.globalEvents.length + rightId <
       (Choreo.par left right).globalEvents.length := by
-  simp [Choreo.globalEvents]
-  constructor <;> omega
+  have parLength :
+      (Choreo.par left right).globalEvents.length =
+        left.globalEvents.length + right.globalEvents.length := by
+    unfold Choreo.globalEvents
+    simp only [Choreo.globalEventsFrom, List.length_append]
+    simp only [Nat.zero_add]
+    rw [global_events_from_length_eq right left.laneSpan 0]
+  constructor
+  · omega
+  · rw [parLength]
+    omega
 
 /-- One checked protocol run. `none` is an explicit scheduler stutter; every
 scheduled operation must be a real global transition. -/

@@ -8,7 +8,16 @@ import Hibana.GlobalFidelity
 import Hibana.DescriptorRefinement
 import Hibana.Cancellation
 import Hibana.TransportContract
+import Hibana.AsyncCancellationTermination
 import Hibana.GlobalProgress
+import Hibana.GlobalCoherence
+import Hibana.DistributedSemantics
+import Hibana.RollFreshness
+import Hibana.SessionComposition
+import Hibana.SessionLifecycle
+import Hibana.StaticProjectability
+import Hibana.RuntimeRefinement
+import Hibana.ProtocolArtifact
 import Hibana.Layout
 import Hibana.Progress
 import Hibana.Refinement

@@ -299,7 +299,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "affine-send-owner \\\n  4 \\\n  4 \\\n  0 \\\n  -p hibana \\\n  --test affine_progression"
             )
             && miri_gate.contains(
-                "direct-recv-owner \\\n  10 \\\n  10 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_direct_recv"
+                "direct-recv-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_direct_recv"
             )
             && miri_gate.contains(
                 "forgotten-recv-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_forget_recv"
@@ -317,7 +317,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "local-action-owner \\\n  4 \\\n  4 \\\n  0 \\\n  -p hibana \\\n  --test local_action"
             )
             && miri_gate.contains(
-                "transport-contract-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport::tests::transport_contract_"
+                "transport-contract-owner \\\n  6 \\\n  6 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport::tests::transport_contract_"
+            )
+            && miri_gate.contains(
+                "route-authority-storage-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::tests::route_authority_storage_"
+            )
+            && miri_gate.contains(
+                "rolled-causal-exit-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  rolled_same_label_recv_requires_causal_exit_handoff"
+            )
+            && miri_gate.contains(
+                "protocol-family-session-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  protocol_template_sessions_interleave_and_fault_independently"
             )
             && miri_gate.contains(
                 "route-branch-send-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
@@ -350,8 +359,11 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains(
                 "program-image-storage-validation \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::program_image_"
             )
-            && miri_gate
-                .contains("miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=151 ignored=1")
+            && miri_gate.contains("miri_passed_total=$((miri_passed_total + expected_passed))")
+            && miri_gate.contains("miri_ignored_total=$((miri_ignored_total + expected_ignored))")
+            && miri_gate.contains(
+                "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"
+            )
             && miri_gate.contains("local expected_listed=\"$2\"")
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")

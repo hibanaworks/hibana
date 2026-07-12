@@ -15,6 +15,7 @@ mod protocol_matrix;
 const LOCAL_STEP_STRESS_ROW_BUDGET: usize = 512;
 const _: () = assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
 const NESTED_PAR_ROUTE_RESOLVER: u16 = 0x91;
+const ROLL_ROUTE_INTERNAL_PARALLEL_RESOLVER: u16 = 0x92;
 
 const fn test_atom(label: u8, lane: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -85,6 +86,43 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
         "right route arm row must be nonempty"
     );
     assert_ne!(left, right, "route arm rows must stay arm-distinct");
+}
+
+#[test]
+fn route_authority_storage_intrinsic_routes_allocate_no_shared_slots() {
+    let route = g::route(
+        g::send::<0, 1, Msg<40, u8>>(),
+        g::send::<0, 1, Msg<41, u8>>(),
+    );
+    let controller: RoleProgram<0> = project(&route);
+    let receiver: RoleProgram<1> = project(&route);
+
+    for descriptor in [
+        RoleDescriptorRef::from_resident(controller.role_image_ref()),
+        RoleDescriptorRef::from_resident(receiver.role_image_ref()),
+    ] {
+        assert_eq!(descriptor.route_table_frame_slots(), 0);
+        assert_eq!(descriptor.route_table_lane_slots(), 0);
+    }
+}
+
+#[test]
+fn route_authority_storage_dynamic_routes_derive_slots_from_descriptor() {
+    let route = g::route(
+        g::send::<0, 1, Msg<42, u8>>(),
+        g::send::<0, 1, Msg<43, u8>>(),
+    )
+    .resolve::<NESTED_PAR_ROUTE_RESOLVER>();
+    let controller: RoleProgram<0> = project(&route);
+    let receiver: RoleProgram<1> = project(&route);
+
+    for descriptor in [
+        RoleDescriptorRef::from_resident(controller.role_image_ref()),
+        RoleDescriptorRef::from_resident(receiver.role_image_ref()),
+    ] {
+        assert!(descriptor.route_table_frame_slots() > 0);
+        assert!(descriptor.route_table_lane_slots() > 0);
+    }
 }
 
 #[test]
@@ -691,7 +729,7 @@ fn roll_route_internal_parallel_program() -> impl Projectable {
         g::send::<1, 1, Msg<146, ()>>(),
         g::send::<1, 2, Msg<11, u8>>(),
     );
-    let routed = g::route(left, right);
+    let routed = g::route(left, right).resolve::<ROLL_ROUTE_INTERNAL_PARALLEL_RESOLVER>();
     g::seq(
         g::send::<1, 2, Msg<1, u8>>(),
         g::seq(

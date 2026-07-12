@@ -28,7 +28,18 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     .join("\n");
     let cancellation = read("proofs/lean/Hibana/Cancellation.lean");
     let transport_contract = read("proofs/lean/Hibana/TransportContract.lean");
+    let async_cancellation = read("proofs/lean/Hibana/AsyncCancellation.lean");
+    let async_cancellation_termination =
+        read("proofs/lean/Hibana/AsyncCancellationTermination.lean");
     let global_progress = read("proofs/lean/Hibana/GlobalProgress.lean");
+    let static_projectability = read("proofs/lean/Hibana/StaticProjectability.lean");
+    let global_coherence = read("proofs/lean/Hibana/GlobalCoherence.lean");
+    let distributed_semantics = read("proofs/lean/Hibana/DistributedSemantics.lean");
+    let roll_freshness = read("proofs/lean/Hibana/RollFreshness.lean");
+    let session_composition = read("proofs/lean/Hibana/SessionComposition.lean");
+    let session_lifecycle = read("proofs/lean/Hibana/SessionLifecycle.lean");
+    let runtime_refinement = read("proofs/lean/Hibana/RuntimeRefinement.lean");
+    let protocol_artifact = read("proofs/lean/Hibana/ProtocolArtifact.lean");
     let allocation = read("proofs/lean/Hibana/Allocation.lean");
     let authority = read("proofs/lean/Hibana/Authority.lean");
     let main_theorems = read("proofs/lean/Hibana/MainTheorems.lean");
@@ -58,7 +69,17 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         descriptor_refinement.as_str(),
         cancellation.as_str(),
         transport_contract.as_str(),
+        async_cancellation.as_str(),
+        async_cancellation_termination.as_str(),
         global_progress.as_str(),
+        static_projectability.as_str(),
+        global_coherence.as_str(),
+        distributed_semantics.as_str(),
+        roll_freshness.as_str(),
+        session_composition.as_str(),
+        session_lifecycle.as_str(),
+        runtime_refinement.as_str(),
+        protocol_artifact.as_str(),
         allocation.as_str(),
         authority.as_str(),
         main_theorems.as_str(),
@@ -121,8 +142,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && exporter.contains("resolver rejection must terminate the production proof trace")
             && exporter.contains("let trace_count = trace_sources.len();")
             && exporter.contains(
-                "passed traces={} frames={} projections={} exact-descriptors={} progress={}"
+                "passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} verified-protocols={}"
             )
+            && exporter.contains("projectability_certificate_source")
+            && exporter.contains("generatedProjectability")
+            && exporter.contains("verified_protocol_certificate_source")
+            && exporter.contains("generatedVerifiedProtocol")
             && !exporter.contains("passed traces=13 frames={}")
             && exporter.contains("env!(\"CARGO_MANIFEST_DIR\")")
             && !exporter.contains("std::env")
@@ -161,6 +186,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && projection_exporter.contains("key.schema")
             && projection_exporter.contains("payload_schema")
             && projection_exporter.contains("progress_certificate_source")
+            && projection_exporter.contains("state.decode?")
+            && !projection_exporter.contains("toGlobalConfig")
             && projection_exporter.contains("ExactDescriptorCertificate")
             && projection_exporter.contains("program.proof_blob_len()")
             && projection_exporter.contains("descriptor.proof_blob_len()")
@@ -187,6 +214,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && descriptor_refinement.contains("productionRoleEventStride : Nat := 10")
             && descriptor_refinement.contains("def RustDescriptorImage.decodeActions?")
             && descriptor_refinement.contains("def RustDescriptorImage.decodeGlobalEvents?")
+            && descriptor_refinement.contains("theorem canonical_program_source_lane_span")
+            && descriptor_refinement.contains("theorem canonical_program_atoms_global_events")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_global_events_bind_canonical_lanes")
             && descriptor_refinement.contains("def RustDescriptorImage.decodeRouteAuthorities?")
             && descriptor_refinement.contains("def Choreo.canonicalProgramAtoms")
             && descriptor_refinement.contains("def Choreo.canonicalRoleDependencies")
@@ -210,9 +241,19 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && descriptor_refinement.contains("def applyDescriptorCursorStep")
             && !descriptor_refinement.contains("| none => True")
             && global_semantics.contains("routeSelection : Nat -> Option RouteArm")
+            && global_semantics.contains("structure AdmittedMessage")
+            && !lean_sources.contains("WireMessage")
+            && global_syntax.contains("lane : Nat")
+            && global_syntax.contains("def Choreo.laneSpan")
+            && global_syntax.contains("def Choreo.globalEventsFrom")
+            && global_syntax.contains("right.globalEventsFrom (laneBase + left.laneSpan)")
+            && global_syntax.contains("theorem global_events_from_lane_bounds")
+            && global_syntax.contains("theorem parallel_global_event_lanes_are_disjoint")
             && global_syntax.contains("def Choreo.globalEventConflictsFrom")
             && global_syntax.contains("theorem global_event_conflicts_from_length")
-            && global_semantics.contains("queue : Nat -> Option WireMessage")
+            && global_semantics.contains("queue : Nat -> Option AdmittedMessage")
+            && global_semantics.contains("lane := event.lane")
+            && global_semantics.contains("def GlobalConfig.queueForChannel")
             && global_semantics.contains("structure ParticipantResourceOwners")
             && global_semantics.contains("transports : List Nat")
             && global_semantics.contains("waiters : List Nat")
@@ -255,6 +296,15 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && transport_contract.contains("def TransportState.pollReceive")
             && transport_contract.contains("well_formed_transport_has_no_replay")
             && transport_contract.contains("consecutive_transport_receives_are_exactly_once")
+            && transport_contract.contains("def TransportState.abortPeer")
+            && transport_contract.contains("abort_peer_is_immediately_observable")
+            && transport_contract.contains("abort_peer_is_well_formed")
+            && transport_contract.contains("generation : Nat")
+            && !transport_contract.contains("connection : Nat")
+            && transport_contract.contains("frameLabel : Fin 256")
+            && !transport_contract.contains("globalId : Nat")
+            && !transport_contract.contains("epoch : Nat")
+            && !transport_contract.contains("schema : Nat")
             && transport_contract.contains("transport_receive_preserves_well_formed")
             && transport_contract.contains("peer_close_is_observable_after_fifo_drain")
             && global_progress.contains("def Choreo.GuardedRolls")
@@ -279,6 +329,141 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && !global_progress.contains("queuedEventuallyReceived")
             && !global_progress.contains("fairness_schedules_each_enabled_roll"),
         "global cancellation, transport, fairness, and roll obligations must remain explicit"
+    );
+    assert!(
+        async_cancellation.contains("inductive AsyncCancellationStep")
+            && async_cancellation.contains("structure AcceptedChannelQueue")
+            && async_cancellation.contains("channel : TransportChannel")
+            && !async_cancellation.contains("structure AcceptedRoleQueue")
+            && async_cancellation.contains("AcceptedChannelAuthority")
+            && async_cancellation.contains("transport_snapshot_has_accepted_channel_authority")
+            && async_cancellation.contains("| drain")
+            && async_cancellation.contains("| close")
+            && async_cancellation.contains("roleTransportRetired")
+            && async_cancellation.contains("async_close_and_drain_commute")
+            && async_cancellation_termination.contains("retirement_ready_reaches_full_retirement")
+            && async_cancellation_termination.contains("firstTransportRetirementAction")
+            && global_coherence.contains("structure CompactGlobalState")
+            && global_coherence.contains("def CompactGlobalState.decode?")
+            && global_coherence.contains("if accepted : state.canonical roleCount choreo = true")
+            && global_coherence.contains(
+                "if programAccepted : checkGlobalProgramWellFormed roleCount choreo = true"
+            )
+            && global_coherence.contains("compact_global_decode_acceptance_implies_canonical")
+            && global_coherence
+                .contains("compact_global_decode_acceptance_implies_program_checker")
+            && global_coherence.contains("compact_global_decode_rejects_noncanonical")
+            && global_coherence.contains("compact_global_decode_rejects_invalid_program")
+            && !global_coherence.contains("toGlobalConfig")
+            && !global_coherence.contains("| none => .ready")
+            && !global_coherence.contains("| none => .initial")
+            && global_coherence.contains("structure ProjectabilityCertificate")
+            && global_coherence.contains("buildProjectabilityCertificate")
+            && global_coherence.contains("globalProgressExplorationFuel")
+            && !exporter.contains("65536")
+            && global_coherence.contains("checkStaticProjectability roleCount choreo")
+            && global_coherence
+                .contains("projectability_certificate_removes_global_progress_premise")
+            && global_coherence
+                .contains("projectability_certificate_all_roles_have_well_formed_projection")
+            && global_coherence
+                .contains("projectability_certificate_establishes_semantic_unstuckness")
+            && global_coherence.contains("def SemanticallyUnstuck")
+            && static_projectability.contains("inductive StaticEndpointSelector")
+            && static_projectability.contains("| outbound (role label schema : Nat)")
+            && static_projectability.contains("structure StaticInboundEvidence")
+            && static_projectability.contains("checkInboundOccurrenceIdentity")
+            && static_projectability.contains("inbound_occurrence_identity_checker_sound")
+            && static_projectability.contains("def Choreo.ReceiveLaneCausalSafety")
+            && static_projectability.contains("def Choreo.checkReceiveLaneCausality")
+            && static_projectability.contains("receive_lane_causality_checker_sound")
+            && static_projectability
+                .contains("receive_lane_sender_change_requires_exclusion_or_causal_handoff")
+            && static_projectability.contains("ConflictListsMutuallyExclusive")
+            && static_projectability.contains("ParallelListsIndependent")
+            && static_projectability.contains("receivePrecedesLaterSend")
+            && static_projectability.contains("structure TransportAdmission")
+            && static_projectability.contains("def Choreo.transportAdmission?")
+            && static_projectability.contains("def GlobalConfig.admitTransportFrame?")
+            && static_projectability.contains("transport_admission_is_unique")
+            && static_projectability.contains("transport_admission_checker_sound")
+            && static_projectability.contains("global_transport_admission_checker_sound")
+            && static_projectability.contains("transport_admission_depends_only_on_observation")
+            && static_projectability
+                .contains("observed_transport_admission_ignores_carrier_history")
+            && static_projectability
+                .contains("transport_admission_binds_exact_descriptor_occurrence")
+            && static_projectability
+                .contains("transport_admission_produces_exact_admitted_message")
+            && static_projectability.contains("checkParallelEndpointLinearityFrom")
+            && static_projectability.contains("checkRouteKnowledgeFrom")
+            && static_projectability.contains("checkRollReentryLinearityFrom")
+            && static_projectability.contains("static_projectability_checker_sound")
+            && static_projectability.contains("| [], _ :: _ | _ :: _, [] => false")
+            && static_projectability
+                .contains("Shared local output is not intrinsic branch evidence")
+            && static_projectability.contains("observer_absence_is_not_branch_evidence")
+            && static_projectability.contains("observer_outbound_heads_are_not_mergeable")
+            && static_projectability.contains("Roll reentry is not branch authority")
+            && !static_projectability.contains("reentry == .rolled ||")
+            && distributed_semantics.contains("structure DistributedConfig")
+            && distributed_semantics.contains("structure LocalConfig")
+            && distributed_semantics.contains("structure LocalQueuedFrame")
+            && distributed_semantics.contains("localQueue?")
+            && distributed_semantics.contains("message.globalId = globalId")
+            && distributed_semantics.contains("message.lane = globalEvent.lane")
+            && distributed_semantics.contains("wrongLaneLocalQueueWitness")
+            && distributed_semantics.contains("local_queued_frame_has_canonical_lane")
+            && distributed_semantics.contains("operationOwner?")
+            && distributed_semantics.contains("fromGlobalSuccessor")
+            && distributed_semantics.contains("inductive DistributedCommitAuthority")
+            && distributed_semantics.contains("observeQueuedRouteEvidence?")
+            && !distributed_semantics.contains("observePublishedSelection?")
+            && distributed_semantics.contains("routeEvidenceCompatible")
+            && distributed_semantics.contains("localCommitAuthority?")
+            && distributed_semantics.contains("distributed_protocol_step_is_role_owned")
+            && distributed_semantics
+                .contains("route_selection_observation_has_exact_queued_evidence")
+            && distributed_semantics.contains("role_selection_observation_is_global_stutter")
+            && distributed_semantics.contains("distributed_step_weakly_simulates_global")
+            && roll_freshness.contains("roll_step_with_drained_transport_has_fresh_next_frame")
+            && roll_freshness
+                .contains("roll_step_with_admitted_transport_frame_is_fresh_occurrence")
+            && session_composition.contains("structure SessionPool")
+            && session_composition.contains("runtime_fault_classification_is_total")
+            && session_composition.contains("session_pool_step_preserves_other_session_state")
+            && session_composition.contains("session_pool_step_preserves_well_formed")
+            && session_lifecycle.contains("def SessionPool.attachInitial?")
+            && session_lifecycle.contains("def SessionPool.retire?")
+            && session_lifecycle.contains("attach_initial_preserves_invariant")
+            && session_lifecycle.contains("retire_session_preserves_invariant")
+            && session_lifecycle.contains("retired_session_allows_fresh_attach")
+            && session_lifecycle.contains("session_pool_step_is_target_local")
+            && session_lifecycle.contains("distinct_session_steps_commute")
+            && session_lifecycle.contains("| fault sessionId reporter fault =>")
+            && session_lifecycle.contains("| observeCancellation sessionId role =>")
+            && runtime_refinement.contains("inductive RuntimeEffect")
+            && runtime_refinement.contains("match before.decode? session roleCount choreo with")
+            && runtime_refinement.contains("runtime_effect_acceptance_requires_canonical")
+            && runtime_refinement
+                .contains("runtime_effect_acceptance_requires_well_formed_program")
+            && runtime_refinement
+                .contains("runtime_protocol_transition_preserves_global_invariant")
+            && runtime_refinement.contains("runtime_fault_transition_preserves_global_invariant")
+            && runtime_refinement
+                .contains("runtime_ambiguous_receive_transition_preserves_global_invariant")
+            && runtime_refinement
+                .contains("runtime_cancellation_observation_preserves_global_invariant")
+            && runtime_refinement.contains("runtime_stutter_effect_is_zero_transition")
+            && runtime_refinement.contains("runtime_transition_certificate_sound")
+            && runtime_refinement.contains("ambiguous_receive_fails_closed")
+            && protocol_artifact.contains("structure VerifiedProtocolCertificate")
+            && protocol_artifact.contains("checkDescriptorCertificates")
+            && protocol_artifact
+                .contains("verified_protocol_certificate_establishes_all_role_refinement")
+            && protocol_artifact.contains("verified_protocol_has_injective_inbound_evidence")
+            && protocol_artifact.contains("verified_protocol_transport_admission_is_unique"),
+        "asynchronous cancellation, projectability, distributed simulation, runtime refinement, and multi-session isolation must remain gate-owned"
     );
     assert!(
         runtime_monitor.contains("structure MonitorRequest")
@@ -430,6 +615,24 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem monitor_rejects_missing_event",
         "theorem monitor_rejection_preserves_state",
         "theorem global_event_conflicts_from_length",
+        "theorem global_event_parallel_arms_from_length",
+        "theorem global_event_parallel_arms_length",
+        "theorem global_events_from_length_eq",
+        "theorem global_events_from_projected_actions_eq",
+        "theorem global_events_from_lane_bounds",
+        "theorem parallel_global_event_lanes_are_disjoint",
+        "theorem canonical_program_atoms_global_events",
+        "theorem accepted_descriptor_global_events_bind_canonical_lanes",
+        "theorem transport_admission_is_unique",
+        "theorem transport_admission_checker_sound",
+        "theorem transport_admission_depends_only_on_observation",
+        "theorem global_transport_admission_checker_sound",
+        "theorem observed_transport_admission_ignores_carrier_history",
+        "theorem transport_admission_binds_exact_descriptor_occurrence",
+        "theorem transport_admission_produces_exact_admitted_message",
+        "theorem receive_lane_causality_checker_sound",
+        "theorem receive_lane_sender_change_requires_exclusion_or_causal_handoff",
+        "theorem local_queued_frame_has_canonical_lane",
         "theorem initial_route_selection_fidelity",
         "theorem global_step_preserves_route_selection_fidelity",
         "theorem reject_resolver_step_preserves_protocol_identity",
@@ -438,6 +641,66 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem roll_ready_of_consumed_or_excluded",
         "theorem executable_operation_sound",
         "theorem fairness_schedules_recurrently_enabled_operation",
+        "theorem async_close_and_drain_commute",
+        "theorem accepted_channel_authority_checker_sound",
+        "theorem accepted_channel_authority_frames_match",
+        "theorem accepted_channel_queue_checker_complete",
+        "theorem accepted_channel_queue_checker_sound",
+        "theorem transport_snapshot_has_accepted_channel_authority",
+        "theorem retirement_ready_reaches_full_retirement",
+        "theorem begin_cancellation_preserves_global_invariant",
+        "theorem cancellation_observation_preserves_global_invariant",
+        "theorem compact_global_decode_acceptance_implies_canonical",
+        "theorem compact_global_decode_acceptance_implies_program_checker",
+        "theorem compact_global_decode_rejects_noncanonical",
+        "theorem compact_global_decode_rejects_invalid_program",
+        "theorem projectability_certificate_sound",
+        "theorem projectability_certificate_removes_global_progress_premise",
+        "theorem projectability_certificate_establishes_static_projectability",
+        "theorem projectability_certificate_all_roles_have_well_formed_projection",
+        "theorem projectability_certificate_establishes_semantic_unstuckness",
+        "theorem static_projectability_checker_sound",
+        "theorem distributed_step_weakly_simulates_global",
+        "theorem distributed_protocol_step_is_role_owned",
+        "theorem distributed_protocol_step_has_local_authority",
+        "theorem route_selection_observation_has_exact_queued_evidence",
+        "theorem distributed_successor_abstraction",
+        "theorem distributed_roll_step_simulates_global",
+        "theorem roll_step_with_drained_transport_has_fresh_next_frame",
+        "theorem roll_step_with_admitted_transport_frame_is_fresh_occurrence",
+        "theorem abort_peer_is_immediately_observable",
+        "theorem abort_peer_is_well_formed",
+        "theorem distinct_carrier_generations_cannot_alias",
+        "theorem reused_session_on_new_carrier_generation_excludes_old_frame",
+        "theorem runtime_fault_classification_is_total",
+        "theorem runtime_effect_acceptance_requires_canonical",
+        "theorem runtime_effect_acceptance_requires_well_formed_program",
+        "theorem runtime_protocol_transition_preserves_global_invariant",
+        "theorem runtime_fault_transition_preserves_global_invariant",
+        "theorem runtime_ambiguous_receive_transition_preserves_global_invariant",
+        "theorem runtime_cancellation_observation_preserves_global_invariant",
+        "theorem runtime_stutter_effect_is_zero_transition",
+        "theorem session_pool_step_preserves_other_session_state",
+        "theorem session_pool_step_preserves_well_formed",
+        "theorem attach_initial_exact",
+        "theorem with_initial_preserves_other_session",
+        "theorem with_initial_preserves_well_formed",
+        "theorem attach_initial_preserves_invariant",
+        "theorem retire_session_exact",
+        "theorem without_session_clears_identity",
+        "theorem without_session_preserves_other_session",
+        "theorem without_session_preserves_well_formed",
+        "theorem retire_session_preserves_invariant",
+        "theorem retired_session_allows_fresh_attach",
+        "theorem with_session_updates_commute",
+        "theorem session_pool_step_is_target_local",
+        "theorem distinct_session_steps_commute",
+        "theorem runtime_transition_certificate_sound",
+        "theorem ambiguous_receive_fails_closed",
+        "theorem verified_protocol_certificate_establishes_all_role_refinement",
+        "theorem verified_protocol_descriptor_actions_match_projection",
+        "theorem verified_protocol_has_injective_inbound_evidence",
+        "theorem verified_protocol_transport_admission_is_unique",
     ] {
         assert!(
             syntax.contains(theorem)
@@ -457,7 +720,17 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || descriptor_refinement.contains(theorem)
                 || cancellation.contains(theorem)
                 || transport_contract.contains(theorem)
+                || async_cancellation.contains(theorem)
+                || async_cancellation_termination.contains(theorem)
                 || global_progress.contains(theorem)
+                || static_projectability.contains(theorem)
+                || global_coherence.contains(theorem)
+                || distributed_semantics.contains(theorem)
+                || roll_freshness.contains(theorem)
+                || session_composition.contains(theorem)
+                || session_lifecycle.contains(theorem)
+                || runtime_refinement.contains(theorem)
+                || protocol_artifact.contains(theorem)
                 || main_theorems.contains(theorem),
             "Lean proof kernel missing {theorem}"
         );
@@ -484,10 +757,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("Lean proof gate requires an axiom audit for every exported theorem")
             && proof_gate.contains("depends on axioms: [propext, Quot.sound]")
             && proof_gate.contains("Classical.choice")
-            && proof_gate.contains("!= \"78\"")
-            && proof_gate.contains("!= \"92\"")
-            && proof_gate.contains("!= \"22\"")
-            && proof_gate.contains("!= \"192\"")
+            && proof_gate.contains("!= \"163\"")
+            && proof_gate.contains("!= \"130\"")
+            && proof_gate.contains("!= \"26\"")
+            && proof_gate.contains("!= \"319\"")
             && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_completed_event")
             && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_selected_arm")
             && axiom_audit.contains("#print axioms Hibana.local_action_sender_projects_send")
@@ -497,6 +770,19 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && axiom_audit.contains("#print axioms Hibana.monitor_rejects_send_schema_mismatch")
             && axiom_audit.contains("#print axioms Hibana.monitor_rejects_send_peer_mismatch")
             && axiom_audit.contains("#print axioms Hibana.monitor_rejects_wrong_direction")
+            && axiom_audit.contains("#print axioms Hibana.global_events_from_length_eq")
+            && axiom_audit.contains("#print axioms Hibana.global_events_from_lane_bounds")
+            && axiom_audit
+                .contains("#print axioms Hibana.parallel_global_event_lanes_are_disjoint")
+            && axiom_audit
+                .contains("#print axioms Hibana.global_event_parallel_arms_from_length")
+            && axiom_audit
+                .contains("#print axioms Hibana.global_event_parallel_arms_length")
+            && axiom_audit
+                .contains("#print axioms Hibana.canonical_program_atoms_global_events")
+            && axiom_audit.contains(
+                "#print axioms Hibana.accepted_descriptor_global_events_bind_canonical_lanes"
+            )
             && axiom_audit.contains("#print axioms Hibana.mixed_program_session_attach_rejected")
             && axiom_audit
                 .contains("#print axioms Hibana.cross_rendezvous_session_attach_rejected")
@@ -535,6 +821,17 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("#print axioms Hibana.cancellation_observation_preserves_well_formed")
             && axiom_audit.contains("#print axioms Hibana.well_formed_transport_has_no_replay")
             && axiom_audit.contains("#print axioms Hibana.transport_receive_preserves_well_formed")
+            && axiom_audit.contains("#print axioms Hibana.transport_admission_is_unique")
+            && axiom_audit
+                .contains("#print axioms Hibana.transport_admission_checker_sound")
+            && axiom_audit
+                .contains("#print axioms Hibana.global_transport_admission_checker_sound")
+            && axiom_audit.contains(
+                "#print axioms Hibana.transport_admission_binds_exact_descriptor_occurrence"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.transport_admission_produces_exact_admitted_message"
+            )
             && axiom_audit
                 .contains("#print axioms Hibana.top_level_roll_step_uses_global_roll_transition")
             && axiom_audit
@@ -546,10 +843,83 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && axiom_audit
                 .contains("#print axioms Hibana.global_reachable_preserves_global_invariant")
             && axiom_audit.contains("#print axioms Hibana.global_step_preserves_global_invariant")
+            && axiom_audit
+                .contains("#print axioms Hibana.retirement_ready_reaches_full_retirement")
+            && axiom_audit.contains("#print axioms Hibana.projectability_certificate_sound")
+            && axiom_audit.contains(
+                "#print axioms Hibana.projectability_certificate_establishes_semantic_unstuckness"
+            )
+            && axiom_audit.contains("#print axioms Hibana.static_projectability_checker_sound")
+            && axiom_audit
+                .contains("#print axioms Hibana.inbound_occurrence_identity_checker_sound")
+            && axiom_audit
+                .contains("#print axioms Hibana.receive_lane_causality_checker_sound")
+            && axiom_audit.contains(
+                "#print axioms Hibana.receive_lane_sender_change_requires_exclusion_or_causal_handoff"
+            )
+            && axiom_audit
+                .contains("#print axioms Hibana.distributed_step_weakly_simulates_global")
+            && axiom_audit
+                .contains("#print axioms Hibana.distributed_protocol_step_is_role_owned")
+            && axiom_audit
+                .contains("#print axioms Hibana.distributed_protocol_step_has_local_authority")
+            && axiom_audit
+                .contains("#print axioms Hibana.local_queued_frame_has_canonical_lane")
+            && axiom_audit.contains(
+                "#print axioms Hibana.route_selection_observation_has_exact_queued_evidence"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.roll_step_with_drained_transport_has_fresh_next_frame"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.roll_step_with_admitted_transport_frame_is_fresh_occurrence"
+            )
+            && axiom_audit
+                .contains("#print axioms Hibana.session_pool_step_preserves_other_session_state")
+            && axiom_audit.contains(
+                "#print axioms Hibana.compact_global_decode_acceptance_implies_canonical"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.compact_global_decode_acceptance_implies_program_checker"
+            )
+            && axiom_audit
+                .contains("#print axioms Hibana.compact_global_decode_rejects_noncanonical")
+            && axiom_audit
+                .contains("#print axioms Hibana.compact_global_decode_rejects_invalid_program")
+            && axiom_audit
+                .contains("#print axioms Hibana.runtime_effect_acceptance_requires_canonical")
+            && axiom_audit.contains(
+                "#print axioms Hibana.runtime_effect_acceptance_requires_well_formed_program"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.runtime_protocol_transition_preserves_global_invariant"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.runtime_fault_transition_preserves_global_invariant"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.runtime_ambiguous_receive_transition_preserves_global_invariant"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.runtime_cancellation_observation_preserves_global_invariant"
+            )
+            && axiom_audit
+                .contains("#print axioms Hibana.runtime_stutter_effect_is_zero_transition")
+            && axiom_audit.contains("#print axioms Hibana.runtime_transition_certificate_sound")
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_certificate_establishes_all_role_refinement"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_has_injective_inbound_evidence"
+            )
+            && axiom_audit.contains(
+                "#print axioms Hibana.verified_protocol_transport_admission_is_unique"
+            )
             && commit.contains("rollReentryState?")
             && commit.contains("routeReentryState?")
-            && proof_gate
-                .contains("traces=13 frames=55 projections=7 exact-descriptors=7 progress=4")
+            && proof_gate.contains(
+                "traces=13 frames=55 projections=16 exact-descriptors=16 progress=4 projectability=7 verified-protocols=7"
+            )
             && proof_gate.contains("regions=5 poison=1 generation=1 atomic-failures=4")
             && proof_gate.contains("export_production_trace_for_lean")
             && proof_gate.contains("export_runtime_certificates_for_lean")

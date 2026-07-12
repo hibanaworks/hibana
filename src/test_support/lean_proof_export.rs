@@ -13,7 +13,10 @@ use std::{
 
 #[path = "lean_proof_export/projection_certificate.rs"]
 mod projection_certificate;
-use projection_certificate::{progress_certificate_source, projection_certificate_source};
+use projection_certificate::{
+    progress_certificate_source, projectability_certificate_source, projection_certificate_source,
+    verified_protocol_certificate_source,
+};
 
 trait LeanChoreo {
     fn lean_source() -> String;
@@ -668,15 +671,60 @@ fn export_production_trace_for_lean() {
             "generatedRolledChoreo",
             "generatedRolledProjectionRole0",
         ),
+        projection_certificate_source::<1>(
+            &rolled,
+            "generatedRolledChoreo",
+            "generatedRolledProjectionRole1",
+        ),
+        projection_certificate_source::<0>(
+            &nested_rolled,
+            "generatedNestedRolledChoreo",
+            "generatedNestedRolledProjectionRole0",
+        ),
+        projection_certificate_source::<1>(
+            &nested_rolled,
+            "generatedNestedRolledChoreo",
+            "generatedNestedRolledProjectionRole1",
+        ),
+        projection_certificate_source::<0>(
+            &resolved,
+            "generatedResolvedChoreo",
+            "generatedResolvedProjectionRole0",
+        ),
+        projection_certificate_source::<1>(
+            &resolved,
+            "generatedResolvedChoreo",
+            "generatedResolvedProjectionRole1",
+        ),
         projection_certificate_source::<0>(
             &nested_resolved,
             "generatedNestedResolvedChoreo",
             "generatedNestedResolvedProjectionRole0",
         ),
+        projection_certificate_source::<1>(
+            &nested_resolved,
+            "generatedNestedResolvedChoreo",
+            "generatedNestedResolvedProjectionRole1",
+        ),
         projection_certificate_source::<0>(
             &rolled_resolved,
             "generatedRolledResolvedChoreo",
             "generatedRolledResolvedProjectionRole0",
+        ),
+        projection_certificate_source::<1>(
+            &rolled_resolved,
+            "generatedRolledResolvedChoreo",
+            "generatedRolledResolvedProjectionRole1",
+        ),
+        projection_certificate_source::<0>(
+            &rejecting,
+            "generatedRejectingChoreo",
+            "generatedRejectingProjectionRole0",
+        ),
+        projection_certificate_source::<1>(
+            &rejecting,
+            "generatedRejectingChoreo",
+            "generatedRejectingProjectionRole1",
         ),
     ];
     let projection_count = projection_sources.len();
@@ -697,6 +745,117 @@ fn export_production_trace_for_lean() {
     ];
     let progress_count = progress_sources.len();
     let progress = progress_sources.join("\n");
+    let projectability_sources = [
+        projectability_certificate_source("generatedChoreo", 4, "generatedProjectability"),
+        projectability_certificate_source(
+            "generatedRolledChoreo",
+            2,
+            "generatedRolledProjectability",
+        ),
+        projectability_certificate_source(
+            "generatedNestedRolledChoreo",
+            2,
+            "generatedNestedRolledProjectability",
+        ),
+        projectability_certificate_source(
+            "generatedResolvedChoreo",
+            2,
+            "generatedResolvedProjectability",
+        ),
+        projectability_certificate_source(
+            "generatedNestedResolvedChoreo",
+            2,
+            "generatedNestedResolvedProjectability",
+        ),
+        projectability_certificate_source(
+            "generatedRolledResolvedChoreo",
+            2,
+            "generatedRolledResolvedProjectability",
+        ),
+        projectability_certificate_source(
+            "generatedRejectingChoreo",
+            2,
+            "generatedRejectingProjectability",
+        ),
+    ];
+    let projectability_count = projectability_sources.len();
+    let projectability = projectability_sources.join("\n");
+    let verified_protocol_sources = [
+        verified_protocol_certificate_source(
+            "generatedChoreo",
+            4,
+            "generatedProjectability",
+            &[
+                "generatedProjectionRole0",
+                "generatedProjectionRole1",
+                "generatedProjectionRole2",
+                "generatedProjectionRole3",
+            ],
+            "generatedVerifiedProtocol",
+        ),
+        verified_protocol_certificate_source(
+            "generatedRolledChoreo",
+            2,
+            "generatedRolledProjectability",
+            &[
+                "generatedRolledProjectionRole0",
+                "generatedRolledProjectionRole1",
+            ],
+            "generatedRolledVerifiedProtocol",
+        ),
+        verified_protocol_certificate_source(
+            "generatedNestedRolledChoreo",
+            2,
+            "generatedNestedRolledProjectability",
+            &[
+                "generatedNestedRolledProjectionRole0",
+                "generatedNestedRolledProjectionRole1",
+            ],
+            "generatedNestedRolledVerifiedProtocol",
+        ),
+        verified_protocol_certificate_source(
+            "generatedResolvedChoreo",
+            2,
+            "generatedResolvedProjectability",
+            &[
+                "generatedResolvedProjectionRole0",
+                "generatedResolvedProjectionRole1",
+            ],
+            "generatedResolvedVerifiedProtocol",
+        ),
+        verified_protocol_certificate_source(
+            "generatedNestedResolvedChoreo",
+            2,
+            "generatedNestedResolvedProjectability",
+            &[
+                "generatedNestedResolvedProjectionRole0",
+                "generatedNestedResolvedProjectionRole1",
+            ],
+            "generatedNestedResolvedVerifiedProtocol",
+        ),
+        verified_protocol_certificate_source(
+            "generatedRolledResolvedChoreo",
+            2,
+            "generatedRolledResolvedProjectability",
+            &[
+                "generatedRolledResolvedProjectionRole0",
+                "generatedRolledResolvedProjectionRole1",
+            ],
+            "generatedRolledResolvedVerifiedProtocol",
+        ),
+        verified_protocol_certificate_source(
+            "generatedRejectingChoreo",
+            2,
+            "generatedRejectingProjectability",
+            &[
+                "generatedRejectingProjectionRole0",
+                "generatedRejectingProjectionRole1",
+            ],
+            "generatedRejectingVerifiedProtocol",
+        ),
+    ];
+    let verified_protocol_count = verified_protocol_sources.len();
+    let verified_protocols = verified_protocol_sources.join("\n");
     let generated = format!(
         "import Hibana.MainTheorems\n\n\
          def generatedChoreo : Hibana.Choreo :=\n  {}\n\n\
@@ -709,7 +868,9 @@ fn export_production_trace_for_lean() {
          {}\n\
          {}\n\
          {}\n\
-         #eval IO.println \"hibana Lean generated proof passed traces={} frames={} projections={} exact-descriptors={} progress={}\"\n",
+         {}\n\
+         {}\n\
+         #eval IO.println \"hibana Lean generated proof passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} verified-protocols={}\"\n",
         Steps::lean_source(),
         RolledSteps::lean_source(),
         NestedRolledSteps::lean_source(),
@@ -720,11 +881,15 @@ fn export_production_trace_for_lean() {
         traces,
         projections,
         progress,
+        projectability,
+        verified_protocols,
         trace_count,
         total_frames,
         projection_count,
         projection_count,
         progress_count,
+        projectability_count,
+        verified_protocol_count,
     );
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");
     fs::create_dir_all(&output_dir).expect("create generated Lean proof artifact directory");

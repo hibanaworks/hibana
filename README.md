@@ -19,9 +19,34 @@
 
 # HIBANA
 
-`hibana` is a Rust 2024, `#![no_std]`, no-alloc-oriented runtime for
-session-typed choreographic programming, inspired by affine multiparty session
-types (AMPST).
+`hibana` is a Rust 2024, `#![no_std]`, no-alloc-oriented affine multiparty
+asynchronous session runtime monitor for choreographic programming. Its design
+combines affine endpoint ownership with asynchronous multiparty queues; it is a
+message-erased runtime monitor, not a Rust continuation-typestate encoding.
+The design draws from [Multiparty Asynchronous Session
+Types](https://www.doc.ic.ac.uk/~yoshida/multiparty/multiparty.pdf), [Affine
+Multiparty Session Types](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2022.4),
+and the explicit-channel constraints of the [mechanised subject-reduction
+development](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2025.31).
+Those calculi are inputs, not Hibana's normative implementation. Hibana keeps
+its compact descriptor monitor, affine Rust ownership, fixed eight-byte core
+header, and Pico-class resource bounds where copying a paper calculus would
+weaken the runtime.
+
+The monitored calculus is Hibana's finite-role, non-delegating core: `send`,
+`seq`, `par`, binary `route`, guarded `roll`, and zero-byte local effects. It
+does not implement higher-order session/channel passing. Progress is proved per
+session under the stated carrier and fairness assumptions; multi-session proofs
+establish isolation, not deadlock freedom for arbitrary application code that
+blocks one session on another. A descriptor is a finite protocol template, not
+a whole deployment: the same projected program may back as many concurrent
+`SessionId` instances as descriptor-derived slab capacity permits.
+
+[Explicit connection actions](https://www.doc.ic.ac.uk/~rhu/scribble/explicit.html)
+motivate optional and dynamic participants, but Hibana does not mutate the role
+set of a live descriptor. Reconfiguration creates a fresh finite session and
+verified artifact. This keeps topology replacement atomic and avoids turning
+runtime membership into generated Rust continuation types.
 
 Hibana's concrete model is direct: a protocol crate describes communication
 once as a global choreography, projects each participant into a compact local
@@ -125,6 +150,10 @@ proof work:
 - route shape, ambiguous simultaneous endpoint operations, malformed
   choreography paths, and lane ownership errors are rejected before endpoint
   execution;
+- one physical receive lane may change sender only across mutually exclusive
+  route arms or after an in-band communication chain proves that the earlier
+  frame was consumed; operations from another parallel arm or an unrelated
+  route arm are not accepted as causal evidence;
 - runtime cursor progress is one-way and affine;
 - failed endpoint and route branch operations do not authorize hidden progress;
 - payload decode is exact;
@@ -222,10 +251,20 @@ bytes; local actions check the zero-byte encoding before committing progress.
 
 The first local attach binds a session generation to one exact compiled program
 image; later local roles with different bytes are rejected before allocation.
-Across devices, the `Transport` implementation must bind a `SessionId` to the
-same protocol image during its own connection setup. Hibana's compact core
-header does not claim to prove cross-binary Rust type identity or carry a
-program image.
+Across devices, one global protocol is an initial deployment agreement, not a
+`Transport` handshake. A verified host artifact binds every role descriptor to
+that choreography, while the live monitor checks each received frame against its
+local descriptor and fails closed at the first divergence. The `Transport`
+trait neither receives descriptor bytes nor negotiates program images.
+
+A QUIC carrier therefore needs no custom transport parameter, TLS extension, or
+extra round trip for Hibana. A deployment may use an existing versioned
+application profile such as ALPN, or an explicit application-level bootstrap,
+when it needs runtime version negotiation. QUIC 0-RTT may carry Hibana-visible
+traffic only when the resumed application configuration and replay policy make
+that traffic safe; otherwise early data must be rejected or delayed. Hibana's
+compact core header does not claim to prove cross-binary Rust type identity or
+carry a program image.
 
 Custom payloads implement the two halves directly:
 
@@ -590,7 +629,9 @@ The transport owns:
   view from transport-managed receive storage, carrying payload bytes and
   carrier observation as one receive value;
 - `cancel_send(...)` for transport cleanup when a send future is dropped after
-  staging carrier state;
+  staging carrier state. It must make the staged frame unobservable; if a byte
+  stream has already accepted an irrevocable partial frame, it retires that
+  logical direction instead of resuming with corrupt framing;
 - `requeue(...)` as the required return path for an accepted staged frame
   that descriptor checks cannot commit.
 
@@ -604,6 +645,43 @@ not invent route authority or mutate Hibana's endpoint state.
 borrow, so an embedded carrier can keep buffers, wakers, and DMA bookkeeping
 inside the transport owner without allocating or exporting a separate context.
 
+Every `ReceivedFrame` is checked as one carrier observation against exact
+session/lane/role/frame-label descriptor authority. Reordering or repetition is
+never silently repaired: the observation names a currently enabled event or the
+session fails closed. `poll_send(...) -> Ready(Ok(()))` transfers ownership to
+the carrier but does not prove that a remote endpoint received the bytes. Hibana
+does not authenticate carrier-supplied role identity.
+
+Global fidelity and progress require the stronger affine-delivery premise:
+each observation is authentically bound to its mapped peer/direction, logical
+events arrive FIFO without unsolicited replay, and eventually arrive or end in
+observable terminal closure. A raw carrier may omit that premise only when the
+protocol explicitly owns authentication, loss, retry, and freshness. It retains
+exact local monitor safety, but not the global affine-delivery conclusion.
+Explicit `requeue(...)` restores one staged observation and never creates
+another commit.
+
+Fresh transport-instance state is a sufficient carrier generation. For QUIC,
+connection migration and connection-ID rotation remain inside that same
+generation; a new connection instance starts a new one. Reliable ordered QUIC
+streams can implement Hibana lanes directly or through an internal demux.
+Unordered datagrams may instead be admitted as protocol-owned raw observations;
+packet numbers, replay rejection, loss recovery, and ordering then remain in the
+protocol rather than becoming false `Transport` guarantees. A QUIC
+implementation can bind such input to an untrusted-network role until packet
+protection and connection identity have been validated.
+
+Under the strong affine-delivery profile, peer closure is scoped to the mapped
+Hibana direction, not necessarily to the physical carrier connection. A
+multiplexed QUIC implementation may use stream FIN, reset, or stop state and
+must leave unrelated sessions and streams intact.
+
+Lean proves exact observation admission and a separate strong affine carrier
+profile, not arbitrary `Transport` implementations. A carrier claiming global
+fidelity must gate authenticated peer binding, FIFO framing, explicit requeue,
+cancelled-send invisibility, close wakeup, generation isolation, and replay
+policy. This conformance work does not enlarge Hibana's runtime API.
+
 The canonical receive-side observation is the `ReceivedFrame` returned by
 `poll_recv(...)`. Payload and carrier observation cross the transport boundary
 together; there is no separate receive-observation hook.
@@ -615,6 +693,44 @@ the transport supplies one carrier-owned eight-byte observation and Hibana
 performs the session/lane/role/label comparison internally before any endpoint
 progress can consume the payload. Route/session/progress authority remains in
 Hibana.
+
+### Protocol Families
+
+Hibana is protocol-neutral, but not limited to one static connection. Dynamic
+streams, requests, and rounds are separate `SessionId` values instantiated from
+the same finite descriptor. Distinct session transitions commute in the Lean
+model, fresh attach cannot overwrite live authority, and retired identities may
+be reused only through a fresh transport generation. Production tests interleave
+two instances of one descriptor and prove that an endpoint fault in one does not
+poison the other. No protocol state becomes a Rust continuation type, so this
+composition does not create type explosion.
+
+A QUIC implementation can expose each UDP datagram as a generic packet
+observation and keep packet numbers, encryption levels, stream state, loss
+recovery, congestion control, and migration in protocol-owned payload and local
+state. Once a reliable ordered stream exists, its logical events may satisfy the
+strong affine-delivery premise. Concurrent streams use separate sessions or
+descriptor-derived lanes; closing one mapped direction must not close unrelated
+streams. The relevant carrier obligations come from [QUIC transport](https://www.rfc-editor.org/rfc/rfc9000.html),
+[QUIC TLS](https://www.rfc-editor.org/rfc/rfc9001.html), and [loss detection and
+congestion control](https://www.rfc-editor.org/rfc/rfc9002.html).
+
+A Raft implementation can instantiate one repeated request/reply template per
+peer and RPC attempt. Terms, logs, quorum counts, persistence, and randomized
+timers remain application state; fresh sessions isolate retries and peer faults.
+Membership change is an explicit old-to-joint-to-new protocol transition with a
+fresh verified artifact for the new finite role set. Hibana proves communication
+conformance and session isolation, not Raft's Election Safety, Log Matching, or
+agreement of applied log entries at each index; those algorithm invariants
+require a Raft-specific proof.
+They are the safety properties defined by the [Raft
+paper](https://raft.github.io/raft.pdf), not generic session-fidelity facts.
+
+One session has at most sixteen declared roles and no channel delegation. A
+protocol requiring an unbounded role set in one atomic choreography is outside
+this core. Dynamic deployments remain expressible when their communication can
+be factored into finite verified templates and explicit reconfiguration
+sessions.
 
 ### Ingress Demux
 
@@ -649,6 +765,12 @@ evidence. Resolver state is the external input owner: use
 `ResolverRef::decision_state(...)` when a resolver needs protocol-specific
 observations. Resolver failure rejects the step; it does not authorize any
 alternate semantic path.
+
+Within one rendezvous generation, every attached role uses the same registered
+resolver authority. Across independent devices, a resolver is not an implicit
+consensus protocol: the protocol or carrier must supply the same decision to
+every role that can act before receiving branch evidence. Otherwise use an
+intrinsic route whose first in-band message communicates the choice.
 
 ```rust,ignore
 use hibana::g;

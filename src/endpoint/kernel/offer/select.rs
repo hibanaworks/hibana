@@ -435,6 +435,7 @@ where
         scope_id: ScopeId,
         offer_lanes: LaneSetView,
     ) -> Option<Arm> {
+        self.cursor.route_scope_resolver(scope_id)?;
         let lane_limit = self.cursor.logical_lane_count();
         let mut next = offer_lanes.first_set(lane_limit);
         let mut arm = None;

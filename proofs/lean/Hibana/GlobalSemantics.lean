@@ -22,12 +22,16 @@ inductive GlobalSessionStatus where
   | retired (cause : SessionFault)
   deriving DecidableEq
 
-structure WireMessage where
+/-- A descriptor-admitted protocol occurrence. `globalId`, logical label,
+schema, and epoch are monitor facts reconstructed after raw transport evidence
+matches the exact resident descriptor; they are not claimed as wire fields. -/
+structure AdmittedMessage where
   session : Nat
   epoch : Nat
   globalId : Nat
   sender : Nat
   receiver : Nat
+  lane : Nat
   label : Nat
   schema : Nat
   deriving Repr, DecidableEq
@@ -58,7 +62,7 @@ structure GlobalConfig where
   choreo : Choreo
   epoch : Nat
   phase : Nat -> EventPhase
-  queue : Nat -> Option WireMessage
+  queue : Nat -> Option AdmittedMessage
   localState : Nat -> CommitState
   routeSelection : Nat -> Option RouteArm
   resources : ParticipantResourceOwners
@@ -130,12 +134,13 @@ def GlobalConfig.eventRetired (config : GlobalConfig) (globalId : Nat) : Bool :=
   config.eventSettled globalId && decide (config.queue globalId = none)
 
 def GlobalConfig.expectedMessage
-    (config : GlobalConfig) (globalId : Nat) (event : GlobalEvent) : WireMessage := {
+    (config : GlobalConfig) (globalId : Nat) (event : GlobalEvent) : AdmittedMessage := {
   session := config.session
   epoch := config.epoch
   globalId
   sender := event.sender
   receiver := event.receiver
+  lane := event.lane
   label := event.label
   schema := event.schema
 }
@@ -143,18 +148,21 @@ def GlobalConfig.expectedMessage
 /-- Event-indexed communication queue. A queue entry cannot exist without its
 exact global descriptor occurrence. -/
 def GlobalConfig.queuedMessage?
-    (config : GlobalConfig) (globalId : Nat) : Option WireMessage :=
+    (config : GlobalConfig) (globalId : Nat) : Option AdmittedMessage :=
   match config.status, config.phase globalId with
   | .live, .queued epoch =>
       if epoch = config.epoch then config.queue globalId else none
   | _, _ => none
 
-def GlobalConfig.queueFor
-    (config : GlobalConfig) (sender receiver : Nat) : List WireMessage :=
+def GlobalConfig.queueForChannel
+    (config : GlobalConfig) (sender receiver lane : Nat) : List AdmittedMessage :=
   (List.range config.choreo.globalEvents.length).filterMap fun globalId =>
     match config.queuedMessage? globalId with
     | some message =>
-        if message.sender = sender /\ message.receiver = receiver then some message else none
+        if message.sender = sender /\ message.receiver = receiver /\ message.lane = lane then
+          some message
+        else
+          none
     | none => none
 
 def GlobalConfig.withPhase
@@ -163,7 +171,7 @@ def GlobalConfig.withPhase
     phase := fun candidate => if candidate = globalId then next else config.phase candidate }
 
 def GlobalConfig.withQueue
-    (config : GlobalConfig) (globalId : Nat) (next : Option WireMessage) : GlobalConfig :=
+    (config : GlobalConfig) (globalId : Nat) (next : Option AdmittedMessage) : GlobalConfig :=
   { config with
     queue := fun candidate => if candidate = globalId then next else config.queue candidate }
 
@@ -199,7 +207,7 @@ theorem with_phase_preserves_protocol_identity
 
 @[simp]
 theorem with_queue_preserves_protocol_identity
-    (config : GlobalConfig) (globalId : Nat) (message : Option WireMessage) :
+    (config : GlobalConfig) (globalId : Nat) (message : Option AdmittedMessage) :
     (config.withQueue globalId message).protocolIdentity = config.protocolIdentity := rfl
 
 @[simp]
@@ -394,7 +402,7 @@ def GlobalConfig.localStep? (config : GlobalConfig) (globalId : Nat) : Option Gl
 
 theorem send_step_rejects_occupied_queue
     {config : GlobalConfig} {globalId : Nat} {event : GlobalEvent}
-    {message : WireMessage}
+    {message : AdmittedMessage}
     (live : config.status = .live)
     (present : config.event? globalId = some event)
     (ready : config.phase globalId = .ready)
@@ -404,7 +412,7 @@ theorem send_step_rejects_occupied_queue
 
 theorem recv_step_rejects_wrong_message
     {config : GlobalConfig} {globalId epoch : Nat} {event : GlobalEvent}
-    {message : WireMessage}
+    {message : AdmittedMessage}
     (live : config.status = .live)
     (present : config.event? globalId = some event)
     (queued : config.phase globalId = .queued epoch)

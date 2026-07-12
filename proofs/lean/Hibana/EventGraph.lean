@@ -199,18 +199,23 @@ private theorem project_into_actions_append
   | send sender receiver label schema =>
       cases actionCase : Choreo.localAction? role sender receiver label schema <;>
         simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+          Choreo.globalEventsFrom,
           GlobalEvent.action?, ProjectionBuilder.addEvent, actionCase]
   | seq left right leftIH rightIH =>
       simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+        Choreo.globalEventsFrom,
         leftIH, rightIH, List.append_assoc]
   | par left right leftIH rightIH =>
-      simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
-        leftIH, rightIH, List.append_assoc]
+      simpa [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+        Choreo.globalEventsFrom, leftIH, rightIH, List.append_assoc] using
+        global_events_from_projected_actions_eq role right 0 left.laneSpan
   | route authority left right leftIH rightIH =>
       simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+        Choreo.globalEventsFrom,
         leftIH, rightIH, List.append_assoc]
   | roll body bodyIH =>
-      simp [projectInto, Choreo.projectedActions, Choreo.globalEvents, bodyIH]
+      simp [projectInto, Choreo.projectedActions, Choreo.globalEvents,
+        Choreo.globalEventsFrom, bodyIH]
 
 /-- General, trace-independent projection refinement: for every normalized
 choreography and role, the EventGraph action column is exactly the global event

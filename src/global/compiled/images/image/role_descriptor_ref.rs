@@ -108,8 +108,21 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
+    fn has_dynamic_route_scope(&self) -> bool {
+        let program = self.program();
+        let mut row = 0usize;
+        while row < program.route_resolver_row_count() {
+            if program.route_resolver_id_at_row(row).is_some() {
+                return true;
+            }
+            row += 1;
+        }
+        false
+    }
+
+    #[inline(always)]
     pub(crate) fn route_table_frame_slots(&self) -> usize {
-        if self.route_scope_count() == 0 {
+        if !self.has_dynamic_route_scope() {
             0
         } else {
             crate::invariant_some(
@@ -122,7 +135,7 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn route_table_lane_slots(&self) -> usize {
-        if self.route_scope_count() == 0 {
+        if !self.has_dynamic_route_scope() {
             0
         } else {
             self.endpoint_lane_slot_count()
@@ -134,7 +147,7 @@ impl RoleDescriptorRef {
         self.footprint().max_route_stack_depth
     }
 
-    #[inline(always)]
+    #[cfg(all(test, hibana_repo_tests))]
     pub(crate) fn route_scope_count(&self) -> usize {
         self.footprint().route_scope_count
     }

@@ -450,6 +450,44 @@ theorem cancellation_observation_preserves_well_formed
             exact ⟨by simp, rfl, currentWellFormed.2.2⟩
       · simp [statusCase, member] at observed
 
+theorem cancellation_observation_preserves_global_invariant
+    {config next : GlobalConfig} {role : Nat}
+    (invariant : GlobalInvariant config)
+    (observed : config.observeCancellation? role = some next) :
+    GlobalInvariant next := by
+  unfold GlobalConfig.observeCancellation? at observed
+  cases statusCase : config.status with
+  | live => simp [statusCase] at observed
+  | retired cause => simp [statusCase] at observed
+  | cancelling cause awaiting =>
+      have queueEmpty : ∀ globalId, config.queue globalId = none := by
+        simpa [SessionFidelity, statusCase] using invariant.2.1
+      by_cases member : role ∈ awaiting
+      · cases remainingCase : removeAwaitingRole awaiting role with
+        | nil =>
+            have nextEq :
+                { config with status := .retired cause, resources := .empty } = next :=
+              Option.some.inj (by
+                simpa [statusCase, member, remainingCase] using observed)
+            subst next
+            refine ⟨?_, ?_, ?_⟩
+            · simpa [GlobalConfig.WellFormed] using invariant.1
+            · simp [SessionFidelity, queueEmpty]
+            · simpa [RouteSelectionFidelity] using invariant.2.2
+        | cons head tail =>
+            have nextEq :
+                { config with
+                  status := .cancelling cause (head :: tail)
+                  resources := .forRoles (head :: tail) } = next :=
+              Option.some.inj (by
+                simpa [statusCase, member, remainingCase] using observed)
+            subst next
+            refine ⟨?_, ?_, ?_⟩
+            · simpa [GlobalConfig.WellFormed] using invariant.1
+            · simp [SessionFidelity, queueEmpty]
+            · simpa [RouteSelectionFidelity] using invariant.2.2
+      · simp [statusCase, member] at observed
+
 /-- Fair cancellation delivery is stated explicitly: if every pending role is
 eventually allowed to observe, the strictly decreasing finite measure reaches
 the retired state. -/

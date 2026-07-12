@@ -273,6 +273,9 @@ where
         scope_id: ScopeId,
         offer_lane_idx: usize,
     ) -> bool {
+        if self.cursor.route_scope_resolver(scope_id).is_none() {
+            return false;
+        }
         self.ports
             .get(lane_idx)
             .and_then(|port| port.as_ref())
@@ -294,6 +297,7 @@ where
         if let Some(token) = self.peek_live_scope_ack(scope_id) {
             return Some(token);
         }
+        self.cursor.route_scope_resolver(scope_id)?;
         let lane_limit = self.cursor.logical_lane_count();
         let mut next = offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
@@ -318,6 +322,7 @@ where
         if let Some(token) = self.peek_live_scope_ack(scope_id) {
             return Some(token.arm());
         }
+        self.cursor.route_scope_resolver(scope_id)?;
         let lane_limit = self.cursor.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {
@@ -351,6 +356,9 @@ where
         scope_id: ScopeId,
         arm: u8,
     ) {
+        if self.cursor.route_scope_resolver(scope_id).is_none() {
+            return;
+        }
         self.port_for_lane(lane_idx)
             .record_route_arm_selection(scope_id, arm);
     }

@@ -32,3 +32,6 @@ impl SessionFaultKind {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani;

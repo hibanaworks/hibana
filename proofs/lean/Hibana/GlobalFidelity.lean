@@ -61,7 +61,7 @@ theorem initial_global_invariant
 
 theorem session_fidelity_queue_slot_is_exact
     {config : GlobalConfig} (fidelity : SessionFidelity config)
-    {globalId : Nat} {message : WireMessage}
+    {globalId : Nat} {message : AdmittedMessage}
     (queued : config.queue globalId = some message) :
     ∃ event,
       config.event? globalId = some event /\
@@ -117,7 +117,7 @@ private theorem session_fidelity_after_slot_update
     {config : GlobalConfig}
     (fidelity : SessionFidelity config)
     (live : config.status = .live)
-    (globalId : Nat) (phase : EventPhase) (message : Option WireMessage)
+    (globalId : Nat) (phase : EventPhase) (message : Option AdmittedMessage)
     (slot :
       match phase with
       | .ready | .consumed _ => message = none
@@ -179,7 +179,7 @@ private theorem commit_local_establishes_route_selection_fidelity
 private theorem slot_update_preserves_route_selection_fidelity
     {config : GlobalConfig}
     (fidelity : RouteSelectionFidelity config)
-    (globalId : Nat) (phase : EventPhase) (message : Option WireMessage) :
+    (globalId : Nat) (phase : EventPhase) (message : Option AdmittedMessage) :
     RouteSelectionFidelity
       ((config.withPhase globalId phase).withQueue globalId message) := by
   intro role bound
@@ -409,7 +409,7 @@ theorem global_step_preserves_route_selection_fidelity
   | roll rollId => exact roll_step_establishes_route_selection_fidelity stepped
 
 theorem queued_message_has_exact_contract
-    {config : GlobalConfig} {globalId : Nat} {message : WireMessage}
+    {config : GlobalConfig} {globalId : Nat} {message : AdmittedMessage}
     (fidelity : SessionFidelity config)
     (queued : config.queuedMessage? globalId = some message) :
     ∃ event,
@@ -720,6 +720,21 @@ private theorem begin_cancellation_preserves_session_fidelity
   | cancelling existing awaiting | retired existing =>
       simpa [GlobalConfig.beginCancellation, statusCase] using fidelity
 
+theorem begin_cancellation_preserves_global_invariant
+    {config : GlobalConfig} {reporter : Nat} {cause : SessionFault}
+    (invariant : GlobalInvariant config) :
+    GlobalInvariant (config.beginCancellation reporter cause) := by
+  refine ⟨?_, begin_cancellation_preserves_session_fidelity invariant.2.1,
+    begin_cancellation_preserves_route_selection_fidelity invariant.2.2⟩
+  have wellFormed := invariant.1
+  unfold GlobalConfig.WellFormed at wellFormed ⊢
+  cases statusCase : config.status with
+  | live =>
+      cases pendingCase : removeAwaitingRole (List.range config.roleCount) reporter <;>
+        simpa [GlobalConfig.beginCancellation, statusCase, pendingCase] using wellFormed
+  | cancelling existing awaiting | retired existing =>
+      simpa [GlobalConfig.beginCancellation, statusCase] using wellFormed
+
 private theorem reject_resolver_step_preserves_session_fidelity
     {config next : GlobalConfig} {role conflict resolver : Nat}
     (fidelity : SessionFidelity config)
@@ -809,7 +824,7 @@ theorem initial_global_reachable_preserves_global_invariant
 /-- A queued token has one receiver action with the exact peer, label, and
 schema from its globally unique event identity. -/
 theorem queued_message_has_unique_receive
-    {config : GlobalConfig} {globalId : Nat} {message : WireMessage}
+    {config : GlobalConfig} {globalId : Nat} {message : AdmittedMessage}
     (fidelity : SessionFidelity config)
     (queued : config.queuedMessage? globalId = some message)
     (distinct : Nat.beq message.sender message.receiver = false) :

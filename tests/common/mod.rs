@@ -222,10 +222,10 @@ impl TestState {
         role_state.take_waiters()
     }
 
-    fn dequeue(&mut self, role: u8, lane: u8) -> Option<FrameOwned> {
+    fn dequeue(&mut self, role: u8, session_id: SessionId, lane: u8) -> Option<FrameOwned> {
         self.role_mut(role)
             .queue
-            .pop_front_matching(|frame| frame.lane == lane)
+            .pop_front_matching(|frame| frame.session_id == session_id && frame.lane == lane)
     }
 
     fn requeue(&mut self, role: u8, frame: FrameOwned) {
@@ -249,6 +249,7 @@ pub(crate) struct TestTx {
 
 pub(crate) struct TestRx<'a> {
     state: &'a RefCell<TestState>,
+    session_id: SessionId,
     role: u8,
     lane: u8,
     current: Option<FrameOwned>,
@@ -350,7 +351,7 @@ impl TestTransport {
         if rx.current.is_none() {
             let dequeued = {
                 let mut state = rx.state.borrow_mut();
-                if let Some(frame) = state.dequeue(rx.role, rx.lane) {
+                if let Some(frame) = state.dequeue(rx.role, rx.session_id, rx.lane) {
                     Some(frame)
                 } else {
                     state.add_waiter(rx.role, rx.lane, cx.waker().clone());
@@ -376,10 +377,11 @@ impl TestTransport {
         Poll::Ready(Ok(ReceivedFrame::framed(header, Payload::new(bytes))))
     }
 
-    pub(crate) fn open_rx(&self, role: u8, lane: u8) -> TestRx<'_> {
+    pub(crate) fn open_rx(&self, session_id: SessionId, role: u8, lane: u8) -> TestRx<'_> {
         self.state.borrow().ensure_role(role);
         TestRx {
             state: self.state.as_ref(),
+            session_id,
             role,
             lane,
             current: None,
@@ -398,7 +400,7 @@ impl Clone for TestTransport {
 
 const _: fn(&TestTransport) -> bool = TestTransport::queue_is_empty;
 const _: fn(&TestTransport, u8, usize) = TestTransport::truncate_next_payload;
-const _: for<'a> fn(&'a TestTransport, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
+const _: for<'a> fn(&'a TestTransport, SessionId, u8, u8) -> TestRx<'a> = TestTransport::open_rx;
 const _: fn(&TestTransport, &mut TestTx, SessionId, u8, u8, u8, &[u8]) =
     TestTransport::stage_send_with_session;
 
@@ -429,6 +431,7 @@ impl Transport for TestTransport {
             },
             TestRx {
                 state: self.state.as_ref(),
+                session_id,
                 role: local_role,
                 lane,
                 current: None,

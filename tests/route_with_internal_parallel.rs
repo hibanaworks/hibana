@@ -17,6 +17,8 @@ type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const ROUTE_LEFT: u8 = 145;
 const ROUTE_RIGHT: u8 = 146;
+const ROUTE_RIGHT_HUMAN: u8 = 147;
+const ROUTE_RIGHT_SENSOR: u8 = 148;
 const CONTROLLER_ROLE: u8 = 1;
 const LOCAL_ROLE: u8 = 2;
 const HUMAN_ROLE: u8 = 3;
@@ -52,7 +54,13 @@ fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
     );
     let right = g::seq(
         g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<ROUTE_RIGHT, ()>>(),
-        g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<11, u8>>(),
+        g::seq(
+            g::send::<CONTROLLER_ROLE, LOCAL_ROLE, Msg<11, u8>>(),
+            g::par(
+                g::send::<CONTROLLER_ROLE, HUMAN_ROLE, Msg<ROUTE_RIGHT_HUMAN, ()>>(),
+                g::send::<CONTROLLER_ROLE, PICO2W_SENSOR_ROLE, Msg<ROUTE_RIGHT_SENSOR, ()>>(),
+            ),
+        ),
     );
     let routed = g::route(left, right);
     let prefix = g::seq(

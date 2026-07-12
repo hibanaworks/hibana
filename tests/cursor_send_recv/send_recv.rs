@@ -95,6 +95,89 @@ fn cursor_send_and_recv_roundtrip() {
 }
 
 #[test]
+fn protocol_template_sessions_interleave_and_fault_independently() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::seq(
+                g::send::<0, 1, Msg<90, u32>>(),
+                g::send::<0, 1, Msg<91, u32>>(),
+            );
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let left_sid = SessionId::new(0x5100);
+            let right_sid = SessionId::new(0x5101);
+            let mut left_origin = rv
+                .enter(left_sid, &origin_program)
+                .expect("left origin endpoint");
+            let mut left_target = rv
+                .enter(left_sid, &target_program)
+                .expect("left target endpoint");
+            let mut right_origin = rv
+                .enter(right_sid, &origin_program)
+                .expect("right origin endpoint");
+            let mut right_target = rv
+                .enter(right_sid, &target_program)
+                .expect("right target endpoint");
+
+            futures::executor::block_on(async {
+                left_origin
+                    .send::<Msg<90, u32>>(&11)
+                    .await
+                    .expect("left first send");
+                right_origin
+                    .send::<Msg<90, u32>>(&22)
+                    .await
+                    .expect("right first send");
+                assert_eq!(
+                    right_target
+                        .recv::<Msg<90, u32>>()
+                        .await
+                        .expect("right first receive"),
+                    22
+                );
+                assert_eq!(
+                    left_target
+                        .recv::<Msg<90, u32>>()
+                        .await
+                        .expect("left first receive"),
+                    11
+                );
+
+                drop(left_target);
+
+                right_origin
+                    .send::<Msg<91, u32>>(&33)
+                    .await
+                    .expect("other session survives peer drop");
+                assert_eq!(
+                    right_target
+                        .recv::<Msg<91, u32>>()
+                        .await
+                        .expect("other session completes"),
+                    33
+                );
+
+                let fault = left_origin
+                    .send::<Msg<91, u32>>(&44)
+                    .await
+                    .expect_err("dropped peer terminates only its session");
+                let rendered = format!("{fault:?}");
+                assert!(
+                    rendered.contains("EndpointDropped"),
+                    "first session retains exact fault: {rendered}"
+                );
+            });
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
 fn direct_recv_same_label_parallel_frames_commit_by_observed_evidence() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
@@ -146,12 +229,19 @@ fn direct_recv_same_label_parallel_frames_commit_by_observed_evidence() {
 }
 
 #[test]
-fn rolled_same_label_recv_commits_reentry_or_exit_by_observed_evidence() {
+fn rolled_same_label_recv_requires_causal_exit_handoff() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
             let body = g::send::<1, 0, Msg<56, u32>>().roll();
-            let program = g::seq(body, g::send::<2, 0, Msg<56, u32>>());
+            let exit = g::seq(
+                g::send::<0, 1, Msg<76, ()>>(),
+                g::seq(
+                    g::send::<1, 2, Msg<77, ()>>(),
+                    g::send::<2, 0, Msg<56, u32>>(),
+                ),
+            );
+            let program = g::seq(body, exit);
             let target_program: RoleProgram<0> = project(&program);
             let body_source_program: RoleProgram<1> = project(&program);
             let exit_source_program: RoleProgram<2> = project(&program);
@@ -193,10 +283,26 @@ fn rolled_same_label_recv_commits_reentry_or_exit_by_observed_evidence() {
                     202
                 );
 
+                target
+                    .send::<Msg<76, ()>>(&())
+                    .await
+                    .expect("target selects the causal exit path");
+                body_source
+                    .recv::<Msg<76, ()>>()
+                    .await
+                    .expect("body source observes roll exit");
+                body_source
+                    .send::<Msg<77, ()>>(&())
+                    .await
+                    .expect("body source hands exit authority to final sender");
+                exit_source
+                    .recv::<Msg<77, ()>>()
+                    .await
+                    .expect("exit source receives causal authority");
                 exit_source
                     .send::<Msg<56, u32>>(&303)
                     .await
-                    .expect("exit sends same logical label");
+                    .expect("exit sends same logical label after handoff");
                 assert_eq!(
                     target
                         .recv::<Msg<56, u32>>()
@@ -214,11 +320,11 @@ fn rolled_same_label_recv_commits_reentry_or_exit_by_observed_evidence() {
 fn intrinsic_route_passive_same_label_recv_commits_by_frame_evidence() {
     fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
         let left = g::seq(
-            g::send::<0, 2, Msg<61, u32>>(),
+            g::send::<0, 1, Msg<61, u32>>(),
             g::send::<1, 3, Msg<63, u32>>(),
         );
         let right = g::seq(
-            g::send::<0, 2, Msg<62, u32>>(),
+            g::send::<0, 1, Msg<62, u32>>(),
             g::send::<1, 3, Msg<63, u32>>(),
         );
         project(&g::route(left, right))
@@ -236,7 +342,6 @@ fn intrinsic_route_passive_same_label_recv_commits_by_frame_evidence() {
             let mut shared_sender = rv
                 .enter(sid, &program::<1>())
                 .expect("shared sender endpoint");
-            let mut observer = rv.enter(sid, &program::<2>()).expect("observer endpoint");
             let mut passive = rv.enter(sid, &program::<3>()).expect("passive endpoint");
 
             futures::executor::block_on(async {
@@ -245,10 +350,10 @@ fn intrinsic_route_passive_same_label_recv_commits_by_frame_evidence() {
                     .await
                     .expect("controller selects right arm");
                 assert_eq!(
-                    observer
+                    shared_sender
                         .recv::<Msg<62, u32>>()
                         .await
-                        .expect("observer commits controller frame"),
+                        .expect("shared sender commits controller frame evidence"),
                     808
                 );
 

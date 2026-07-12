@@ -126,6 +126,14 @@ def rebaseProgramSource
   laneSpan := source.laneSpan
 }
 
+@[simp]
+theorem rebase_program_source_lane_span
+    (source : CanonicalProgramSource)
+    (atomOffset laneOffset scopeOffset : Nat)
+    (markRouteEnters : Bool) :
+    (rebaseProgramSource source atomOffset laneOffset scopeOffset markRouteEnters).laneSpan =
+      source.laneSpan := rfl
+
 def Choreo.firstVisibleSenders : Choreo -> List Nat
   | .send sender _ _ _ => [sender]
   | .seq left right =>
@@ -386,7 +394,82 @@ def DecodedProgramAtom.globalEvent
   receiver := atom.receiver
   label := atom.label
   schema := atom.schema
+  lane := atom.lane
 }
+
+def ProgramAtomBody.globalEventFrom
+    (atom : ProgramAtomBody) (laneBase : Nat) : GlobalEvent := {
+  sender := atom.sender
+  receiver := atom.receiver
+  label := atom.label
+  schema := atom.schema
+  lane := atom.lane + laneBase
+}
+
+theorem rebase_program_source_global_events
+    (source : CanonicalProgramSource)
+    (atomOffset laneOffset scopeOffset laneBase : Nat)
+    (markRouteEnters : Bool) :
+    (rebaseProgramSource source atomOffset laneOffset scopeOffset markRouteEnters).atoms.map
+        (·.globalEventFrom laneBase) =
+      source.atoms.map (·.globalEventFrom (laneBase + laneOffset)) := by
+  simp [rebaseProgramSource, ProgramAtomBody.withLaneOffset,
+    ProgramAtomBody.globalEventFrom, List.map_map,
+    Nat.add_comm, Nat.add_left_comm]
+
+theorem canonical_program_source_lane_span (choreo : Choreo) :
+    (canonicalProgramSource choreo).laneSpan = choreo.laneSpan := by
+  induction choreo with
+  | send => rfl
+  | seq left right leftIH rightIH =>
+      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, leftIH, rightIH]
+  | par left right leftIH rightIH =>
+      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, leftIH, rightIH]
+  | route authority left right leftIH rightIH =>
+      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, leftIH, rightIH]
+  | roll body bodyIH =>
+      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, bodyIH]
+
+theorem canonical_program_source_global_events_from
+    (choreo : Choreo) (laneBase : Nat) :
+    (canonicalProgramSource choreo).atoms.map (·.globalEventFrom laneBase) =
+      choreo.globalEventsFrom laneBase := by
+  induction choreo generalizing laneBase with
+  | send =>
+      simp [canonicalProgramSource, Choreo.globalEventsFrom,
+        ProgramAtomBody.globalEventFrom]
+  | seq left right leftIH rightIH =>
+      simp [canonicalProgramSource, Choreo.globalEventsFrom,
+        rebase_program_source_global_events, leftIH, rightIH]
+  | par left right leftIH rightIH =>
+      simp [canonicalProgramSource, Choreo.globalEventsFrom,
+        rebase_program_source_global_events, leftIH, rightIH,
+        canonical_program_source_lane_span]
+  | route authority left right leftIH rightIH =>
+      simp [canonicalProgramSource, Choreo.globalEventsFrom,
+        rebase_program_source_global_events, leftIH, rightIH]
+  | roll body bodyIH =>
+      simp [canonicalProgramSource, Choreo.globalEventsFrom,
+        rebase_program_source_global_events, bodyIH]
+
+theorem enumerate_program_atoms_global_events
+    (index : Nat) (atoms : List ProgramAtomBody) :
+    (enumerateProgramAtoms index atoms).map DecodedProgramAtom.globalEvent =
+      atoms.map (·.globalEventFrom 0) := by
+  induction atoms generalizing index with
+  | nil => rfl
+  | cons head tail tailIH =>
+      simp [enumerateProgramAtoms, DecodedProgramAtom.globalEvent,
+        ProgramAtomBody.globalEventFrom, tailIH]
+
+/-- The host-side canonical compiler assigns exactly the physical lanes used
+by the global asynchronous semantics for every normalized choreography. -/
+theorem canonical_program_atoms_global_events (choreo : Choreo) :
+    choreo.canonicalProgramAtoms.map DecodedProgramAtom.globalEvent =
+      choreo.globalEvents := by
+  rw [Choreo.canonicalProgramAtoms, enumerate_program_atoms_global_events]
+  simpa [Choreo.globalEvents] using
+    canonical_program_source_global_events_from choreo 0
 
 def RustDescriptorImage.decodeGlobalEvents?
     (image : RustDescriptorImage) : Option (List GlobalEvent) :=

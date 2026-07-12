@@ -32,3 +32,5 @@ mod source_residue_runtime_surface;
 mod source_residue_support;
 #[path = "semantic_surface/source_residue_unsafe_contract.rs"]
 mod source_residue_unsafe_contract;
+#[path = "semantic_surface/transport_contract.rs"]
+mod transport_contract;

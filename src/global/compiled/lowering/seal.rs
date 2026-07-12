@@ -4,10 +4,11 @@ use crate::{
     global::{
         compiled::lowering::CompiledProgramImage,
         const_dsl::{
-            EffList, ReentryMark, ScopeEvent, ScopeKind, ScopeMarker,
-            first_visible_controller_mask, first_visible_endpoint_selector_conflicts_from_markers,
+            EffList, ScopeEvent, ScopeKind, ScopeMarker, first_visible_controller_mask,
+            first_visible_endpoint_selector_conflicts_from_markers,
             local_route_observer_paths_mergeable, route_arm_ranges_from_first_enter,
-            validate_parallel_endpoint_selectors, validate_roll_reentry_endpoint_selectors,
+            validate_parallel_endpoint_selectors, validate_receive_lane_causality,
+            validate_roll_reentry_endpoint_selectors,
         },
         role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
@@ -324,8 +325,7 @@ const fn validate_route_projection_guarantees(
                 return Some(ProgramSourceError::ProjectionRouteUnprojectable);
             }
             if insert_scope_ordinal(&mut seen_routes, ordinal)
-                && let Some(error) =
-                    validate_route_scope(role, eff_list, scope_markers, marker_idx, marker.reentry)
+                && let Some(error) = validate_route_scope(role, eff_list, scope_markers, marker_idx)
             {
                 return Some(error);
             }
@@ -340,7 +340,6 @@ const fn validate_route_scope(
     eff_list: &EffList,
     scope_markers: &[crate::global::const_dsl::ScopeMarker],
     route_enter_marker_idx: usize,
-    reentry: ReentryMark,
 ) -> Option<ProgramSourceError> {
     let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
@@ -364,10 +363,6 @@ const fn validate_route_scope(
             return Some(ProgramSourceError::RouteControllerMismatch);
         }
     }
-    if reentry.is_reentrant() {
-        return None;
-    }
-
     if matches!(unique_controller_role(controller_mask), Some(controller) if controller == role) {
         return None;
     }
@@ -418,6 +413,9 @@ pub(crate) const fn projection_error_all_roles(
         return Some(error);
     }
     validate_scope_capacity(eff_list);
+    if !validate_receive_lane_causality(eff_list) {
+        return Some(ProgramSourceError::ReceiveLaneCausalityConflict);
+    }
     if !validate_parallel_endpoint_selectors(eff_list) {
         return Some(ProgramSourceError::ParallelAmbiguousEndpointSelector);
     }

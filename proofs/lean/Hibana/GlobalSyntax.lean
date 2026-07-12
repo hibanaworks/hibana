@@ -9,6 +9,7 @@ structure GlobalEvent where
   receiver : Nat
   label : Nat
   schema : Nat
+  lane : Nat
   deriving Repr, DecidableEq
 
 /-- One global route-membership fact. Conflict ordinals are assigned by the
@@ -18,16 +19,138 @@ structure ConflictArm where
   arm : RouteArm
   deriving Repr, DecidableEq, BEq
 
+/-- One canonical parallel-arm membership. Unlike route conflicts, both arms
+execute, but local order never crosses directly between them. -/
+structure ParallelArm where
+  parallel : Nat
+  arm : RouteArm
+  deriving Repr, DecidableEq, BEq
+
 def GlobalEvent.action? (event : GlobalEvent) (role : Nat) : Option LocalAction :=
   Choreo.localAction? role event.sender event.receiver event.label event.schema
 
+def Choreo.laneSpan : Choreo -> Nat
+  | .send _ _ _ _ => 1
+  | .seq left right | .route _ left right => max left.laneSpan right.laneSpan
+  | .par left right => left.laneSpan + right.laneSpan
+  | .roll body => body.laneSpan
+
+/-- Canonical production lane assignment. Sequential and exclusive route arms
+reuse lanes; parallel arms receive disjoint contiguous lane spans. -/
+def Choreo.globalEventsFrom (laneBase : Nat) : Choreo -> List GlobalEvent
+  | .send sender receiver label schema =>
+      [{ sender, receiver, label, schema, lane := laneBase }]
+  | .seq left right | .route _ left right =>
+      left.globalEventsFrom laneBase ++ right.globalEventsFrom laneBase
+  | .par left right =>
+      left.globalEventsFrom laneBase ++
+        right.globalEventsFrom (laneBase + left.laneSpan)
+  | .roll body => body.globalEventsFrom laneBase
+
 /-- Canonical preorder of global communication occurrences. Route arms and
 parallel branches retain distinct event identities even when contracts match. -/
-def Choreo.globalEvents : Choreo -> List GlobalEvent
-  | .send sender receiver label schema => [{ sender, receiver, label, schema }]
-  | .seq left right | .par left right => left.globalEvents ++ right.globalEvents
-  | .route _ left right => left.globalEvents ++ right.globalEvents
-  | .roll body => body.globalEvents
+def Choreo.globalEvents (choreo : Choreo) : List GlobalEvent :=
+  choreo.globalEventsFrom 0
+
+theorem global_events_from_lane_bounds
+    (choreo : Choreo)
+    (laneBase : Nat)
+    {event : GlobalEvent}
+    (member : event ∈ choreo.globalEventsFrom laneBase) :
+    laneBase ≤ event.lane /\ event.lane < laneBase + choreo.laneSpan := by
+  induction choreo generalizing laneBase with
+  | send sender receiver label schema =>
+      simp only [Choreo.globalEventsFrom, List.mem_singleton] at member
+      subst event
+      simp [Choreo.laneSpan]
+  | seq left right leftIH rightIH =>
+      rcases List.mem_append.mp member with leftMember | rightMember
+      · have bounds := leftIH laneBase leftMember
+        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
+          simp [Choreo.laneSpan]
+          omega)⟩
+      · have bounds := rightIH laneBase rightMember
+        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
+          simp [Choreo.laneSpan]
+          omega)⟩
+  | par left right leftIH rightIH =>
+      rcases List.mem_append.mp member with leftMember | rightMember
+      · have bounds := leftIH laneBase leftMember
+        exact ⟨bounds.1, by
+          simp [Choreo.laneSpan]
+          omega⟩
+      · have bounds := rightIH (laneBase + left.laneSpan) rightMember
+        exact ⟨Nat.le_trans (by omega) bounds.1, by
+          simp [Choreo.laneSpan]
+          omega⟩
+  | route authority left right leftIH rightIH =>
+      rcases List.mem_append.mp member with leftMember | rightMember
+      · have bounds := leftIH laneBase leftMember
+        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
+          simp [Choreo.laneSpan]
+          omega)⟩
+      · have bounds := rightIH laneBase rightMember
+        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
+          simp [Choreo.laneSpan]
+          omega)⟩
+  | roll body bodyIH =>
+      simpa [Choreo.globalEventsFrom, Choreo.laneSpan] using bodyIH laneBase member
+
+/-- Canonical parallel arms occupy disjoint physical lane intervals. This is the
+lane-level noninterference fact used by the message-erased endpoint monitor. -/
+theorem parallel_global_event_lanes_are_disjoint
+    (left right : Choreo)
+    (laneBase : Nat)
+    {leftEvent rightEvent : GlobalEvent}
+    (leftMember : leftEvent ∈ left.globalEventsFrom laneBase)
+    (rightMember : rightEvent ∈
+      right.globalEventsFrom (laneBase + left.laneSpan)) :
+    leftEvent.lane ≠ rightEvent.lane := by
+  have leftBounds := global_events_from_lane_bounds left laneBase leftMember
+  have rightBounds := global_events_from_lane_bounds right
+    (laneBase + left.laneSpan) rightMember
+  omega
+
+@[simp]
+theorem global_events_from_length_eq
+    (choreo : Choreo) (leftBase rightBase : Nat) :
+    (choreo.globalEventsFrom leftBase).length =
+      (choreo.globalEventsFrom rightBase).length := by
+  induction choreo generalizing leftBase rightBase with
+  | send => rfl
+  | seq left right leftIH rightIH =>
+      simp only [Choreo.globalEventsFrom, List.length_append]
+      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
+  | par left right leftIH rightIH =>
+      simp only [Choreo.globalEventsFrom, List.length_append]
+      rw [leftIH leftBase rightBase,
+        rightIH (leftBase + left.laneSpan) (rightBase + left.laneSpan)]
+  | route authority left right leftIH rightIH =>
+      simp only [Choreo.globalEventsFrom, List.length_append]
+      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
+  | roll body bodyIH =>
+      exact bodyIH leftBase rightBase
+
+theorem global_events_from_projected_actions_eq
+    (role : Nat) (choreo : Choreo) (leftBase rightBase : Nat) :
+    (choreo.globalEventsFrom leftBase).filterMap (·.action? role) =
+      (choreo.globalEventsFrom rightBase).filterMap (·.action? role) := by
+  induction choreo generalizing leftBase rightBase with
+  | send sender receiver label schema =>
+      cases actionCase : Choreo.localAction? role sender receiver label schema <;>
+        simp [Choreo.globalEventsFrom, GlobalEvent.action?, actionCase]
+  | seq left right leftIH rightIH =>
+      simp only [Choreo.globalEventsFrom, List.filterMap_append]
+      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
+  | par left right leftIH rightIH =>
+      simp only [Choreo.globalEventsFrom, List.filterMap_append]
+      rw [leftIH leftBase rightBase,
+        rightIH (leftBase + left.laneSpan) (rightBase + left.laneSpan)]
+  | route authority left right leftIH rightIH =>
+      simp only [Choreo.globalEventsFrom, List.filterMap_append]
+      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
+  | roll body bodyIH =>
+      exact bodyIH leftBase rightBase
 
 def Choreo.projectedActions (role : Nat) (choreo : Choreo) : List LocalAction :=
   choreo.globalEvents.filterMap (·.action? role)
@@ -76,17 +199,72 @@ theorem global_event_conflicts_from_length
   induction choreo generalizing conflictBase with
   | send => rfl
   | seq left right leftIH rightIH =>
-      simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents, leftIH, rightIH]
+      simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, leftIH, rightIH]
   | par left right leftIH rightIH =>
-      simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents, leftIH, rightIH]
+      simpa [Choreo.globalEventConflictsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, leftIH, rightIH] using
+        global_events_from_length_eq right 0 left.laneSpan
   | route authority left right leftIH rightIH =>
-      simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents, leftIH, rightIH]
+      simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, leftIH, rightIH]
   | roll body bodyIH =>
       simpa [Choreo.globalEventConflictsFrom, Choreo.globalEvents] using bodyIH conflictBase
 
 theorem global_event_conflicts_length (choreo : Choreo) :
     choreo.globalEventConflicts.length = choreo.globalEvents.length :=
   global_event_conflicts_from_length choreo 0
+
+def Choreo.parallelCount : Choreo -> Nat
+  | .send _ _ _ _ => 0
+  | .seq left right | .route _ left right =>
+      left.parallelCount + right.parallelCount
+  | .par left right => 1 + left.parallelCount + right.parallelCount
+  | .roll body => body.parallelCount
+
+/-- Parallel memberships aligned one-for-one with `globalEvents`. These rows
+are proof metadata only; production already encodes the same distinction in
+canonical disjoint physical lanes. -/
+def Choreo.globalEventParallelArmsFrom
+    (parallelBase : Nat) : Choreo -> List (List ParallelArm)
+  | .send _ _ _ _ => [[]]
+  | .seq left right | .route _ left right =>
+      left.globalEventParallelArmsFrom parallelBase ++
+        right.globalEventParallelArmsFrom (parallelBase + left.parallelCount)
+  | .par left right =>
+      (left.globalEventParallelArmsFrom (parallelBase + 1)).map
+          ({ parallel := parallelBase, arm := .left } :: ·) ++
+        (right.globalEventParallelArmsFrom
+          (parallelBase + 1 + left.parallelCount)).map
+          ({ parallel := parallelBase, arm := .right } :: ·)
+  | .roll body => body.globalEventParallelArmsFrom parallelBase
+
+def Choreo.globalEventParallelArms (choreo : Choreo) : List (List ParallelArm) :=
+  choreo.globalEventParallelArmsFrom 0
+
+theorem global_event_parallel_arms_from_length
+    (choreo : Choreo) (parallelBase : Nat) :
+    (choreo.globalEventParallelArmsFrom parallelBase).length =
+      choreo.globalEvents.length := by
+  induction choreo generalizing parallelBase with
+  | send => rfl
+  | seq left right leftIH rightIH =>
+      simp [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, leftIH, rightIH]
+  | par left right leftIH rightIH =>
+      simpa [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, leftIH, rightIH] using
+        global_events_from_length_eq right 0 left.laneSpan
+  | route authority left right leftIH rightIH =>
+      simp [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, leftIH, rightIH]
+  | roll body bodyIH =>
+      simpa [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents] using
+        bodyIH parallelBase
+
+theorem global_event_parallel_arms_length (choreo : Choreo) :
+    choreo.globalEventParallelArms.length = choreo.globalEvents.length :=
+  global_event_parallel_arms_from_length choreo 0
 
 def Choreo.globalRollsFrom
     (eventBase conflictBase : Nat) : Choreo -> List GlobalRoll

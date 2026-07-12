@@ -298,25 +298,44 @@ impl PortOpen {
 /// in transport-owned handles instead of leaking transport future types into
 /// higher layers.
 ///
-/// # Required carrier semantics
+/// # Monitor boundary and delivery premise
+/// Every successful [`poll_recv`](Transport::poll_recv) yields one carrier
+/// observation. Hibana checks its session, lane, roles, frame label, and exact
+/// descriptor occurrence before commit but cannot authenticate carrier identity. An
+/// unexpected or repeated observation names an enabled event or fails closed; it is
+/// never normalized into progress. A successful `poll_send` does not prove delivery.
+/// Global fidelity and progress additionally assume affine delivery: accepted
+/// observations are bound to the mapped peer/direction, FIFO without unsolicited
+/// replay, and eventually arrive or end in terminal closure. Otherwise the
+/// protocol must make loss, retry, and freshness explicit. Exact local safety remains,
+/// but global theorems require that premise; `requeue` never creates a commit.
+/// A terminal carrier fault may abandon sends that were accepted locally but
+/// never exposed to the receiver. Those frames must not appear after closure or
+/// in another transport generation. A reused `SessionId` therefore needs fresh
+/// carrier-owned receive state. The lifetime of a fresh transport instance can
+/// provide that generation. Address migration or identifier rotation within the
+/// same instance preserves it; a fresh instance begins a new generation.
 ///
-/// For each `(session, lane, source, target)` direction, implementations must
-/// deliver accepted sends in FIFO order, exactly once, without replay. A medium
-/// that can reorder, duplicate, or replay frames must enforce sequencing inside
-/// the transport. Hibana deliberately does not enlarge its eight-byte core
-/// header with carrier-specific sequence state.
+/// This trait neither receives nor negotiates compiled protocol images. Initial
+/// all-role protocol agreement belongs to the protocol deployment or an
+/// application-level bootstrap, while Hibana checks every received frame against
+/// the local descriptor. A carrier must not add a transport handshake merely to
+/// implement this trait. Replayable early data may be exposed only after the
+/// carrier or application profile has made it safe for Hibana's no-replay
+/// contract; otherwise it must be rejected or delayed.
 ///
-/// Connection setup must bind each `SessionId` to the same compiled protocol
-/// image at every remote participant and reject a mismatch before exposing
-/// frames. Local Hibana attaches already enforce exact image equality; this
-/// cross-device image binding remains the transport's trust boundary.
-///
-/// Peer closure must be observable: after already accepted FIFO frames are
-/// drained, a parked or later [`poll_recv`](Transport::poll_recv) for that peer
-/// must be woken and return [`TransportError::Offline`] or
-/// [`TransportError::Failed`]. This closure contract is the distributed
-/// cancellation boundary when a faulted endpoint retires its transport handles.
-/// Returning `Pending` forever after peer closure violates this trait.
+/// The strong affine-delivery profile also requires observable peer closure:
+/// after accepted FIFO frames drain, a parked or later
+/// [`poll_recv`](Transport::poll_recv) must wake and return
+/// [`TransportError::Offline`] or [`TransportError::Failed`]. This is the
+/// distributed cancellation boundary when a faulted endpoint retires handles.
+/// It is a logical Hibana direction, not necessarily the physical connection:
+/// a multiplexed carrier can retire one substream and leave others alive.
+/// Retiring every handle for that direction must signal the remote direction.
+/// Returning `Pending` forever after known peer closure violates the strong
+/// profile. A raw carrier may instead expose protocol-defined close or timeout
+/// as ordinary observations; without either, no global cancellation-termination
+/// conclusion applies.
 pub trait Transport {
     type Tx<'a>: 'a
     where
@@ -357,7 +376,10 @@ pub trait Transport {
     /// `poll_send` parks. When a transport stages frame state inside `Tx` or
     /// transport-owned shared state before returning `Poll::Pending`, it must
     /// discard that staged state here so cancelled payload bytes cannot be
-    /// flushed by a subsequent operation.
+    /// flushed by a subsequent operation. If carrier bytes have already become
+    /// irrevocable, cancellation must retire that logical direction so a later
+    /// send reports a terminal [`TransportError`]; it must not resume after a
+    /// partial frame or publish the cancelled frame.
     fn cancel_send<'a>(&self, tx: &'a mut Self::Tx<'a>);
 
     /// Progress a receive operation using the provided Rx handle.
