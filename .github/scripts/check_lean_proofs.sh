@@ -6,7 +6,7 @@ PROOF_DIR="${ROOT_DIR}/proofs/lean"
 GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
-EXPECTED_MARKER="hibana Lean generated proof passed traces=13 frames=55 projections=16 exact-descriptors=16 progress=4 projectability=7 verified-protocols=7"
+EXPECTED_MARKER="hibana Lean generated proof passed traces=14 frames=64 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8"
 EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=5 poison=1 generation=1 atomic-failures=4"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
@@ -57,11 +57,11 @@ fi
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
-if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "163" ]] \
+if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "165" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "130" ]] \
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "131" ]] \
   || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "26" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "319" ]]; then
+  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "322" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi
@@ -102,4 +102,4 @@ if [[ "${runtime_lean_output}" != *"${EXPECTED_RUNTIME_MARKER}"* ]]; then
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=13 frames=55 projections=16 exact-descriptors=16 progress=4 projectability=7 verified-protocols=7 runtime-regions=5 atomic-failures=4"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=64 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8 runtime-regions=5 atomic-failures=4"

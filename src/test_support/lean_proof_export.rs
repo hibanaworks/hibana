@@ -1,106 +1,25 @@
 use super::{ProductionCursorTrace, selected_arm};
-use crate::{
-    g,
-    global::{Message, const_dsl::ScopeId},
-};
+use crate::{g, global::const_dsl::ScopeId};
 use std::{
     format, fs,
     path::PathBuf,
     println,
     string::{String, ToString},
+    vec,
     vec::Vec,
 };
 
+#[path = "lean_proof_export/choreo_source.rs"]
+mod choreo_source;
+#[path = "lean_proof_export/cyclic_roll_certificate.rs"]
+mod cyclic_roll_certificate;
 #[path = "lean_proof_export/projection_certificate.rs"]
 mod projection_certificate;
+use choreo_source::LeanChoreo;
 use projection_certificate::{
     progress_certificate_source, projectability_certificate_source, projection_certificate_source,
     verified_protocol_certificate_source,
 };
-
-trait LeanChoreo {
-    fn lean_source() -> String;
-}
-
-impl<const FROM: u8, const TO: u8, M> LeanChoreo for g::Send<FROM, TO, M>
-where
-    M: Message,
-    M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
-{
-    fn lean_source() -> String {
-        format!(
-            "Hibana.Choreo.send {FROM} {TO} {} {}",
-            M::LOGICAL_LABEL,
-            crate::global::payload_schema::<M>()
-        )
-    }
-}
-
-impl<Left, Right> LeanChoreo for g::Seq<Left, Right>
-where
-    Left: LeanChoreo,
-    Right: LeanChoreo,
-{
-    fn lean_source() -> String {
-        format!(
-            "Hibana.Choreo.seq ({}) ({})",
-            Left::lean_source(),
-            Right::lean_source()
-        )
-    }
-}
-
-impl<Left, Right> LeanChoreo for g::Par<Left, Right>
-where
-    Left: LeanChoreo,
-    Right: LeanChoreo,
-{
-    fn lean_source() -> String {
-        format!(
-            "Hibana.Choreo.par ({}) ({})",
-            Left::lean_source(),
-            Right::lean_source()
-        )
-    }
-}
-
-impl<Left, Right> LeanChoreo for g::Route<Left, Right>
-where
-    Left: LeanChoreo,
-    Right: LeanChoreo,
-{
-    fn lean_source() -> String {
-        format!(
-            "Hibana.Choreo.route .intrinsic ({}) ({})",
-            Left::lean_source(),
-            Right::lean_source()
-        )
-    }
-}
-
-impl<Left, Right, const RESOLVER_ID: u16> LeanChoreo
-    for g::Resolve<g::Route<Left, Right>, RESOLVER_ID>
-where
-    Left: LeanChoreo,
-    Right: LeanChoreo,
-{
-    fn lean_source() -> String {
-        format!(
-            "Hibana.Choreo.route (.dynamic {RESOLVER_ID}) ({}) ({})",
-            Left::lean_source(),
-            Right::lean_source()
-        )
-    }
-}
-
-impl<Inner> LeanChoreo for g::Roll<Inner>
-where
-    Inner: LeanChoreo,
-{
-    fn lean_source() -> String {
-        format!("Hibana.Choreo.roll ({})", Inner::lean_source())
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ProofKey {
@@ -516,6 +435,7 @@ fn export_production_trace_for_lean() {
         g::send::<0, 1, g::Msg<92, ()>>(),
     )
     .resolve::<REJECTING_RESOLVER>();
+    let cyclic_roll = cyclic_roll_certificate::program();
     let nested_rolled_role0 = record_trace::<0>(&nested_rolled, &[71, 72, 73, 71, 72, 73]);
     let resolved_left_role0 = record_production_steps::<0>(
         &resolved,
@@ -586,6 +506,7 @@ fn export_production_trace_for_lean() {
             resolver: REJECTING_RESOLVER,
         }],
     );
+    let cyclic_roll_role2 = cyclic_roll_certificate::trace(&cyclic_roll);
     let total_frames = role0.len()
         + role1.len()
         + role2.len()
@@ -598,7 +519,8 @@ fn export_production_trace_for_lean() {
         + resolved_right_role0.len()
         + nested_resolved_role0.len()
         + rolled_resolved_role0.len()
-        + rejected_role0.len();
+        + rejected_role0.len()
+        + cyclic_roll_role2.len();
     let trace_sources = [
         trace_proof_source("generatedChoreo", "generatedTraceRole0", 0, &role0),
         trace_proof_source("generatedChoreo", "generatedTraceRole1", 1, &role1),
@@ -658,10 +580,11 @@ fn export_production_trace_for_lean() {
             0,
             &rejected_role0,
         ),
+        cyclic_roll_certificate::trace_source(&cyclic_roll_role2),
     ];
     let trace_count = trace_sources.len();
     let traces = trace_sources.join("\n");
-    let projection_sources = [
+    let mut projection_sources = vec![
         projection_certificate_source::<0>(&program, "generatedChoreo", "generatedProjectionRole0"),
         projection_certificate_source::<1>(&program, "generatedChoreo", "generatedProjectionRole1"),
         projection_certificate_source::<2>(&program, "generatedChoreo", "generatedProjectionRole2"),
@@ -727,6 +650,7 @@ fn export_production_trace_for_lean() {
             "generatedRejectingProjectionRole1",
         ),
     ];
+    projection_sources.extend(cyclic_roll_certificate::projection_sources(&cyclic_roll));
     let projection_count = projection_sources.len();
     let projections = projection_sources.join("\n");
     let progress_sources = [
@@ -745,7 +669,7 @@ fn export_production_trace_for_lean() {
     ];
     let progress_count = progress_sources.len();
     let progress = progress_sources.join("\n");
-    let projectability_sources = [
+    let mut projectability_sources = vec![
         projectability_certificate_source("generatedChoreo", 4, "generatedProjectability"),
         projectability_certificate_source(
             "generatedRolledChoreo",
@@ -778,9 +702,10 @@ fn export_production_trace_for_lean() {
             "generatedRejectingProjectability",
         ),
     ];
+    projectability_sources.push(cyclic_roll_certificate::projectability_source());
     let projectability_count = projectability_sources.len();
     let projectability = projectability_sources.join("\n");
-    let verified_protocol_sources = [
+    let mut verified_protocol_sources = vec![
         verified_protocol_certificate_source(
             "generatedChoreo",
             4,
@@ -854,6 +779,7 @@ fn export_production_trace_for_lean() {
             "generatedRejectingVerifiedProtocol",
         ),
     ];
+    verified_protocol_sources.push(cyclic_roll_certificate::verified_protocol_source());
     let verified_protocol_count = verified_protocol_sources.len();
     let verified_protocols = verified_protocol_sources.join("\n");
     let generated = format!(
@@ -865,6 +791,7 @@ fn export_production_trace_for_lean() {
          def generatedNestedResolvedChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedRolledResolvedChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedRejectingChoreo : Hibana.Choreo :=\n  {}\n\n\
+         def generatedCyclicRollChoreo : Hibana.Choreo :=\n  {}\n\n\
          {}\n\
          {}\n\
          {}\n\
@@ -878,6 +805,7 @@ fn export_production_trace_for_lean() {
         NestedResolvedSteps::lean_source(),
         RolledResolvedSteps::lean_source(),
         RejectSteps::lean_source(),
+        cyclic_roll_certificate::lean_source(),
         traces,
         projections,
         progress,

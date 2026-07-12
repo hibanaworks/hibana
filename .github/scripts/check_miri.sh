@@ -173,6 +173,15 @@ run_miri_test \
   rolled_same_label_recv_requires_causal_exit_handoff
 
 run_miri_test \
+  rolled-resolved-route-reentry-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_resolved_route_reenters_left_right_left_rows
+
+run_miri_test \
   session-family-isolation \
   1 \
   1 \

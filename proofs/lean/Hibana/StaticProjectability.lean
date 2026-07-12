@@ -276,6 +276,141 @@ theorem receive_lane_causality_checker_sound
     choreo.ReceiveLaneCausalSafety roleCount :=
   of_decide_eq_true accepted
 
+inductive StaticRollIteration where
+  | current
+  | next
+  deriving Repr, DecidableEq
+
+def StaticRollIteration.ordinal : StaticRollIteration -> Nat
+  | .current => 0
+  | .next => 1
+
+private def ConflictArm.inRollIteration
+    (iteration : StaticRollIteration) (membership : ConflictArm) : ConflictArm := {
+  conflict := membership.conflict * 2 + iteration.ordinal
+  arm := membership.arm
+}
+
+private def ParallelArm.inRollIteration
+    (iteration : StaticRollIteration) (membership : ParallelArm) : ParallelArm := {
+  parallel := membership.parallel * 2 + iteration.ordinal
+  arm := membership.arm
+}
+
+/-- A static occurrence renamed into one copy of a one-step roll unfolding.
+The event contract is unchanged; event, route, and parallel identities are
+fresh between iterations. -/
+def StaticGlobalOccurrence.inRollIteration
+    (eventCount : Nat) (iteration : StaticRollIteration)
+    (occurrence : StaticGlobalOccurrence) : StaticGlobalOccurrence := {
+  globalId := eventCount * iteration.ordinal + occurrence.globalId
+  event := occurrence.event
+  conflicts := occurrence.conflicts.map (ConflictArm.inRollIteration iteration)
+  parallelArms := occurrence.parallelArms.map
+    (ParallelArm.inRollIteration iteration)
+}
+
+/-- One explicit unfolding is sufficient to expose every receive-lane sender
+change from the tail of a roll body to the next iteration's head. -/
+def Choreo.rollUnfoldedOccurrences
+    (body : Choreo) : List StaticGlobalOccurrence :=
+  let occurrences := body.staticGlobalOccurrences
+  let eventCount := body.globalEvents.length
+  occurrences.map (StaticGlobalOccurrence.inRollIteration eventCount .current) ++
+    occurrences.map (StaticGlobalOccurrence.inRollIteration eventCount .next)
+
+def Choreo.RollBodyReceiveLaneCausalSafety
+    (body : Choreo) (roleCount : Nat) : Prop :=
+  let occurrences := body.staticGlobalOccurrences
+  occurrences.length = body.globalEvents.length /\
+    body.rollUnfoldedOccurrences.Pairwise
+      (ReceiveLanePairCausallySafe body.rollUnfoldedOccurrences roleCount)
+
+instance (body : Choreo) (roleCount : Nat) :
+    Decidable (body.RollBodyReceiveLaneCausalSafety roleCount) := by
+  unfold Choreo.RollBodyReceiveLaneCausalSafety
+  infer_instance
+
+def Choreo.rollBodies : Choreo -> List Choreo
+  | .send _ _ _ _ => []
+  | .seq left right | .par left right | .route _ left right =>
+      left.rollBodies ++ right.rollBodies
+  | .roll body => body :: body.rollBodies
+
+def Choreo.RollReceiveLaneCausalSafety
+    (choreo : Choreo) (roleCount : Nat) : Prop :=
+  ∀ body, body ∈ choreo.rollBodies ->
+    body.RollBodyReceiveLaneCausalSafety roleCount
+
+instance (choreo : Choreo) (roleCount : Nat) :
+    Decidable (choreo.RollReceiveLaneCausalSafety roleCount) := by
+  unfold Choreo.RollReceiveLaneCausalSafety
+  exact List.decidableBAll
+    (fun body => body.RollBodyReceiveLaneCausalSafety roleCount)
+    choreo.rollBodies
+
+def Choreo.checkRollReceiveLaneCausality
+    (choreo : Choreo) (roleCount : Nat) : Bool :=
+  decide (choreo.RollReceiveLaneCausalSafety roleCount)
+
+theorem roll_receive_lane_causality_checker_sound
+    {choreo : Choreo} {roleCount : Nat}
+    (accepted : choreo.checkRollReceiveLaneCausality roleCount = true) :
+    choreo.RollReceiveLaneCausalSafety roleCount :=
+  of_decide_eq_true accepted
+
+private theorem roll_iteration_conflicts_are_distinct
+    (left right : StaticGlobalOccurrence) :
+    ¬ ConflictListsMutuallyExclusive
+        (left.inRollIteration 0 .current).conflicts
+        (right.inRollIteration 0 .next).conflicts := by
+  intro exclusive
+  rcases exclusive with
+    ⟨leftArm, leftMember, rightArm, rightMember, sameConflict, _⟩
+  rcases List.mem_map.mp leftMember with ⟨leftOriginal, _, leftEq⟩
+  rcases List.mem_map.mp rightMember with ⟨rightOriginal, _, rightEq⟩
+  subst leftArm
+  subst rightArm
+  simp only [ConflictArm.inRollIteration, StaticRollIteration.ordinal] at sameConflict
+  omega
+
+theorem roll_body_occurrences_cross_iteration_safe
+    {body : Choreo} {roleCount : Nat}
+    {left right : StaticGlobalOccurrence}
+    (safe : body.RollBodyReceiveLaneCausalSafety roleCount)
+    (leftMember : left ∈ body.staticGlobalOccurrences)
+    (rightMember : right ∈ body.staticGlobalOccurrences) :
+    ReceiveLanePairCausallySafe body.rollUnfoldedOccurrences roleCount
+      (left.inRollIteration body.globalEvents.length .current)
+      (right.inRollIteration body.globalEvents.length .next) := by
+  apply safe.2.rel_of_mem_append
+  · exact List.mem_map.mpr ⟨left, leftMember, rfl⟩
+  · exact List.mem_map.mpr ⟨right, rightMember, rfl⟩
+
+/-- Across two roll iterations route exclusions are fresh, so a physical-lane
+sender change can be accepted only by a real causal handoff. -/
+theorem roll_reentry_sender_change_requires_causal_handoff
+    {body : Choreo} {roleCount : Nat}
+    {left right : StaticGlobalOccurrence}
+    (safe : body.RollBodyReceiveLaneCausalSafety roleCount)
+    (leftMember : left ∈ body.staticGlobalOccurrences)
+    (rightMember : right ∈ body.staticGlobalOccurrences)
+    (leftNonlocal : left.event.sender ≠ left.event.receiver)
+    (rightNonlocal : right.event.sender ≠ right.event.receiver)
+    (sameReceiver : left.event.receiver = right.event.receiver)
+    (sameLane : left.event.lane = right.event.lane)
+    (differentSender : left.event.sender ≠ right.event.sender) :
+    receivePrecedesLaterSend body.rollUnfoldedOccurrences roleCount
+      (left.inRollIteration body.globalEvents.length .current)
+      (right.inRollIteration body.globalEvents.length .next) = true := by
+  have pairSafe := roll_body_occurrences_cross_iteration_safe safe
+    leftMember rightMember
+  have consequence := receive_lane_sender_change_requires_exclusion_or_causal_handoff
+    pairSafe leftNonlocal rightNonlocal sameReceiver sameLane differentSender
+  rcases consequence with excluded | causal
+  · exact False.elim (roll_iteration_conflicts_are_distinct left right excluded)
+  · exact causal
+
 /-- The exact fields that production can observe in Hibana's fixed core
 header. Session is checked separately because it identifies the surrounding
 protocol artifact; connection sequence remains carrier-private. -/
@@ -691,6 +826,7 @@ structure Choreo.StaticProjectable
     (roleCount : Nat) (choreo : Choreo) : Prop where
   inboundOccurrenceIdentity : choreo.InboundOccurrenceIdentity
   receiveLaneCausality : choreo.ReceiveLaneCausalSafety roleCount
+  rollReceiveLaneCausality : choreo.RollReceiveLaneCausalSafety roleCount
   parallelEndpointLinear : choreo.checkParallelEndpointLinearityFrom 0 = true
   routeKnowledge : choreo.checkRouteKnowledgeFrom roleCount 0 = true
   rollReentryLinear : choreo.checkRollReentryLinearityFrom 0 [] = true
@@ -698,6 +834,7 @@ structure Choreo.StaticProjectable
 def checkStaticProjectability (roleCount : Nat) (choreo : Choreo) : Bool :=
     choreo.checkInboundOccurrenceIdentity &&
     choreo.checkReceiveLaneCausality roleCount &&
+    choreo.checkRollReceiveLaneCausality roleCount &&
     choreo.checkParallelEndpointLinearityFrom 0 &&
     choreo.checkRouteKnowledgeFrom roleCount 0 &&
     choreo.checkRollReentryLinearityFrom 0 []
@@ -707,9 +844,11 @@ theorem static_projectability_checker_sound
     (accepted : checkStaticProjectability roleCount choreo = true) :
     choreo.StaticProjectable roleCount := by
   simp only [checkStaticProjectability, Bool.and_eq_true] at accepted
-  rcases accepted with ⟨⟨⟨⟨inbound, receiveLane⟩, parallel⟩, route⟩, roll⟩
+  rcases accepted with
+    ⟨⟨⟨⟨⟨inbound, receiveLane⟩, rollReceiveLane⟩, parallel⟩, route⟩, roll⟩
   exact ⟨inbound_occurrence_identity_checker_sound inbound,
     receive_lane_causality_checker_sound receiveLane,
+    roll_receive_lane_causality_checker_sound rollReceiveLane,
     parallel, route, roll⟩
 
 example :
@@ -734,6 +873,40 @@ example :
     checkStaticProjectability 3
       (.seq (.send 0 2 1 0)
         (.seq (.send 2 1 2 0) (.send 1 2 3 0))) = true := by
+  native_decide
+
+/-- A handoff that is valid within one roll body may still be invalid from the
+body tail to the next iteration's head. -/
+example :
+    checkStaticProjectability 3
+      (.roll (.seq (.send 0 2 1 0)
+        (.seq (.send 2 1 2 0) (.send 1 2 3 0)))) = false := by
+  native_decide
+
+/-- Returning authority to the first sender closes the causal cycle without a
+wire epoch or an additional runtime queue. -/
+example :
+    checkStaticProjectability 3
+      (.roll (.seq (.send 0 2 1 0)
+        (.seq (.send 2 1 2 0)
+          (.seq (.send 1 2 3 0) (.send 2 0 4 0))))) = true := by
+  native_decide
+
+/-- Opposite route arms from different iterations are not mutually exclusive. -/
+example :
+    checkStaticProjectability 3
+      (.roll (.route (.dynamic 7)
+        (.send 0 2 1 0) (.send 1 2 2 0))) = false := by
+  native_decide
+
+/-- Each route arm may hand the next iteration to every possible first sender. -/
+example :
+    checkStaticProjectability 3
+      (.roll (.route (.dynamic 7)
+        (.seq (.send 0 2 1 0)
+          (.seq (.send 2 0 3 0) (.send 2 1 4 0)))
+        (.seq (.send 1 2 2 0)
+          (.seq (.send 2 0 5 0) (.send 2 1 6 0))))) = true := by
   native_decide
 
 /-- Local order does not cross directly between parallel arms. -/

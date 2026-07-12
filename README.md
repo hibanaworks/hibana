@@ -153,7 +153,9 @@ proof work:
 - one physical receive lane may change sender only across mutually exclusive
   route arms or after an in-band communication chain proves that the earlier
   frame was consumed; operations from another parallel arm or an unrelated
-  route arm are not accepted as causal evidence;
+  route arm are not accepted as causal evidence, and every `roll` is checked
+  through one explicit unfolding so its tail cannot hand the next iteration's
+  FIFO to a different sender without closing the causal cycle;
 - runtime cursor progress is one-way and affine;
 - failed endpoint and route branch operations do not authorize hidden progress;
 - payload decode is exact;

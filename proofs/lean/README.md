@@ -175,16 +175,17 @@ bytes rather than trusting that witness. General Lean theorems cover every
 accepted production-layout byte image, equate its action column with
 `projectGraph`, and join byte decoding, exact operation keys, and commit in one
 cursor-refinement result. The generated
-corpus contains 13 traces with 55 frames, sixteen exact-byte role projection
-certificates, four focused local progress closures, seven all-role
-projectability closures, and seven verified protocol artifacts. It exercises
+corpus contains 14 traces with 64 frames, nineteen exact-byte role projection
+certificates, four focused local progress closures, eight all-role
+projectability closures, and eight verified protocol artifacts. It exercises
 all roles of every generated choreography, both
 intrinsic route arms, nonzero `u32`/`i32` schema separation, send/receive
 projections, nested and repeated roll
 restart, resolved left/right arms, nested resolver sites, alternating resolved
-roll reentry, and resolver rejection. A separate production runtime export
-checks a five-region live slab, poison retirement, lease-generation exhaustion,
-and four allocation-failure atomicity certificates.
+roll reentry, resolver rejection, and a three-role cyclic sender handoff across
+alternating roll arms. A separate production runtime export checks a five-region
+live slab, poison retirement, lease-generation exhaustion, and four
+allocation-failure atomicity certificates.
 
 The static projectability boundary also matches production's single receive
 FIFO per `(role, lane)`. A sender change is accepted only when the sender is
@@ -195,7 +196,11 @@ their memberships prevent list order across concurrent arms from masquerading
 as local order. Route-local traffic can contribute to a causal closure only when
 one endpoint fixes that arm, so an unrelated branch cannot silently authorize a
 later sender. The production const checker and the Lean checker use the same
-three cases without adding runtime queues, endpoint types, or wire fields.
+three cases. Every roll body is additionally checked through one explicit
+unfolding with fresh per-iteration route and parallel identities. A sender
+change from the body tail to the next head therefore requires a causal handoff;
+route exclusion from the previous iteration cannot be reused as evidence. This
+adds no runtime queues, endpoint types, descriptor rows, or wire fields.
 
 This is not a source-to-source proof of arbitrary downstream Rust. The general
 byte-decoder and transition theorems are quantified over accepted descriptor

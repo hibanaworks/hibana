@@ -44,7 +44,16 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let authority = read("proofs/lean/Hibana/Authority.lean");
     let main_theorems = read("proofs/lean/Hibana/MainTheorems.lean");
     let axiom_audit = read("proofs/lean/Hibana/AxiomAudit.lean");
-    let exporter = read("src/test_support/lean_proof_export.rs");
+    let exporter_root = read("src/test_support/lean_proof_export.rs");
+    let choreo_exporter = read("src/test_support/lean_proof_export/choreo_source.rs");
+    let cyclic_roll_exporter =
+        read("src/test_support/lean_proof_export/cyclic_roll_certificate.rs");
+    let exporter = [
+        exporter_root.as_str(),
+        choreo_exporter.as_str(),
+        cyclic_roll_exporter.as_str(),
+    ]
+    .join("\n");
     let projection_exporter = read("src/test_support/lean_proof_export/projection_certificate.rs");
     let runtime_exporter =
         read("src/rendezvous/core/storage_layout/capacity/tests/formal_certificate_export.rs");
@@ -139,6 +148,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && exporter.contains("generatedNestedResolvedTraceRole0")
             && exporter.contains("generatedRolledResolvedTraceRole0")
             && exporter.contains("generatedRejectedTraceRole0")
+            && exporter.contains("generatedCyclicRollTraceRole2")
+            && exporter.contains("generatedCyclicRollVerifiedProtocol")
             && exporter.contains("resolver rejection must terminate the production proof trace")
             && exporter.contains("let trace_count = trace_sources.len();")
             && exporter.contains(
@@ -148,7 +159,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && exporter.contains("generatedProjectability")
             && exporter.contains("verified_protocol_certificate_source")
             && exporter.contains("generatedVerifiedProtocol")
-            && !exporter.contains("passed traces=13 frames={}")
+            && !exporter.contains("passed traces=14 frames={}")
             && exporter.contains("env!(\"CARGO_MANIFEST_DIR\")")
             && !exporter.contains("std::env")
             && event_graph.contains("reentry : ReentryMode")
@@ -379,6 +390,13 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && static_projectability.contains("receive_lane_causality_checker_sound")
             && static_projectability
                 .contains("receive_lane_sender_change_requires_exclusion_or_causal_handoff")
+            && static_projectability.contains("def Choreo.rollUnfoldedOccurrences")
+            && static_projectability.contains("def Choreo.RollBodyReceiveLaneCausalSafety")
+            && static_projectability.contains("def Choreo.RollReceiveLaneCausalSafety")
+            && static_projectability.contains("def Choreo.checkRollReceiveLaneCausality")
+            && static_projectability.contains("roll_receive_lane_causality_checker_sound")
+            && static_projectability.contains("roll_body_occurrences_cross_iteration_safe")
+            && static_projectability.contains("roll_reentry_sender_change_requires_causal_handoff")
             && static_projectability.contains("ConflictListsMutuallyExclusive")
             && static_projectability.contains("ParallelListsIndependent")
             && static_projectability.contains("receivePrecedesLaterSend")
@@ -632,6 +650,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem transport_admission_produces_exact_admitted_message",
         "theorem receive_lane_causality_checker_sound",
         "theorem receive_lane_sender_change_requires_exclusion_or_causal_handoff",
+        "theorem roll_receive_lane_causality_checker_sound",
+        "theorem roll_body_occurrences_cross_iteration_safe",
+        "theorem roll_reentry_sender_change_requires_causal_handoff",
         "theorem local_queued_frame_has_canonical_lane",
         "theorem initial_route_selection_fidelity",
         "theorem global_step_preserves_route_selection_fidelity",
@@ -757,10 +778,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("Lean proof gate requires an axiom audit for every exported theorem")
             && proof_gate.contains("depends on axioms: [propext, Quot.sound]")
             && proof_gate.contains("Classical.choice")
-            && proof_gate.contains("!= \"163\"")
-            && proof_gate.contains("!= \"130\"")
+            && proof_gate.contains("!= \"165\"")
+            && proof_gate.contains("!= \"131\"")
             && proof_gate.contains("!= \"26\"")
-            && proof_gate.contains("!= \"319\"")
+            && proof_gate.contains("!= \"322\"")
             && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_completed_event")
             && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_selected_arm")
             && axiom_audit.contains("#print axioms Hibana.local_action_sender_projects_send")
@@ -858,6 +879,13 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 "#print axioms Hibana.receive_lane_sender_change_requires_exclusion_or_causal_handoff"
             )
             && axiom_audit
+                .contains("#print axioms Hibana.roll_receive_lane_causality_checker_sound")
+            && axiom_audit
+                .contains("#print axioms Hibana.roll_body_occurrences_cross_iteration_safe")
+            && axiom_audit.contains(
+                "#print axioms Hibana.roll_reentry_sender_change_requires_causal_handoff"
+            )
+            && axiom_audit
                 .contains("#print axioms Hibana.distributed_step_weakly_simulates_global")
             && axiom_audit
                 .contains("#print axioms Hibana.distributed_protocol_step_is_role_owned")
@@ -918,7 +946,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && commit.contains("rollReentryState?")
             && commit.contains("routeReentryState?")
             && proof_gate.contains(
-                "traces=13 frames=55 projections=16 exact-descriptors=16 progress=4 projectability=7 verified-protocols=7"
+                "traces=14 frames=64 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8"
             )
             && proof_gate.contains("regions=5 poison=1 generation=1 atomic-failures=4")
             && proof_gate.contains("export_production_trace_for_lean")

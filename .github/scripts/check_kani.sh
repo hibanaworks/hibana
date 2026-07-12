@@ -161,7 +161,9 @@ done
 
 for harness in \
   three_event_causal_handoff_accepts_every_valid_role_assignment \
-  sender_change_without_causal_handoff_is_rejected; do
+  sender_change_without_causal_handoff_is_rejected \
+  roll_reentry_causal_closure_rejects_open_cycle \
+  roll_reentry_causal_closure_accepts_closed_cycle; do
   if ! grep -Eq "^fn ${harness}\\(\\)" \
     "${ROOT_DIR}/src/global/const_dsl/receive_lane_causality/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
@@ -273,6 +275,8 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness observer_path_decision_has_exact_merge_domain \
   --harness three_event_causal_handoff_accepts_every_valid_role_assignment \
   --harness sender_change_without_causal_handoff_is_rejected \
+  --harness roll_reentry_causal_closure_rejects_open_cycle \
+  --harness roll_reentry_causal_closure_accepts_closed_cycle \
   --harness route_resolver_row_decoding_accepts_exact_domain \
   --harness dynamic_route_resolver_identity_is_scope_and_id \
   --harness resolver_registration_key_is_program_and_id \

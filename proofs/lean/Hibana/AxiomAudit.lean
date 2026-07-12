@@ -253,6 +253,9 @@ import Hibana.MainTheorems
 #print axioms Hibana.inbound_occurrence_identity_checker_sound
 #print axioms Hibana.receive_lane_causality_checker_sound
 #print axioms Hibana.receive_lane_sender_change_requires_exclusion_or_causal_handoff
+#print axioms Hibana.roll_receive_lane_causality_checker_sound
+#print axioms Hibana.roll_body_occurrences_cross_iteration_safe
+#print axioms Hibana.roll_reentry_sender_change_requires_causal_handoff
 #print axioms Hibana.transport_admission_is_unique
 #print axioms Hibana.transport_admission_checker_sound
 #print axioms Hibana.transport_admission_depends_only_on_observation

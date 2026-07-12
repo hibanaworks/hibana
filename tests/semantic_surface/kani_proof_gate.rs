@@ -173,6 +173,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     for harness in [
         "three_event_causal_handoff_accepts_every_valid_role_assignment",
         "sender_change_without_causal_handoff_is_rejected",
+        "roll_reentry_causal_closure_rejects_open_cycle",
+        "roll_reentry_causal_closure_accepts_closed_cycle",
     ] {
         assert!(receive_lane_harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));
@@ -180,6 +182,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(receive_lane_harnesses.contains("earlier_source != later_source"));
     assert!(receive_lane_harnesses.contains("event(receiver, later_source, lane)"));
     assert!(receive_lane_harnesses.contains("assert!(!validate_receive_lane_causality(&events))"));
+    assert!(receive_lane_harnesses.contains("receive_precedes_after_roll_reentry"));
 
     for harness in [
         "route_resolver_row_decoding_accepts_exact_domain",

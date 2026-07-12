@@ -77,6 +77,8 @@ const RUSTC_1_95_STDERR_CASES: &[&str] = &[
     "tests/ui/g-receive-lane-multiple-senders.rs",
     "tests/ui/g-receive-lane-parallel-false-causality.rs",
     "tests/ui/g-receive-lane-route-false-causality.rs",
+    "tests/ui/g-roll-reentry-false-causality.rs",
+    "tests/ui/g-roll-route-cross-iteration-causality.rs",
     "tests/ui/g-roll-same-label-distinct-inbound-evidence.rs",
     "tests/ui/g-route-one-sided-observer.rs",
     "tests/ui/g-route-passive-outbound-without-evidence.rs",
@@ -148,6 +150,8 @@ fn g_compile_fails() {
     compile_fail(&t, "tests/ui/g-receive-lane-multiple-senders.rs");
     compile_fail(&t, "tests/ui/g-receive-lane-parallel-false-causality.rs");
     compile_fail(&t, "tests/ui/g-receive-lane-route-false-causality.rs");
+    compile_fail(&t, "tests/ui/g-roll-reentry-false-causality.rs");
+    compile_fail(&t, "tests/ui/g-roll-route-cross-iteration-causality.rs");
     compile_fail(
         &t,
         "tests/ui/g-roll-same-label-distinct-inbound-evidence.rs",
@@ -171,6 +175,8 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-same-endpoint.rs");
     t.pass("tests/ui-pass/g-session-template-instances.rs");
     t.pass("tests/ui-pass/g-receive-lane-causal-handoff.rs");
+    t.pass("tests/ui-pass/g-roll-reentry-causal-handoff.rs");
+    t.pass("tests/ui-pass/g-roll-route-cross-iteration-handoff.rs");
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
     t.pass("tests/ui-pass/g-route-intrinsic-passive-same-label-frame-evidence.rs");
     t.pass("tests/ui-pass/g-route-merged.rs");

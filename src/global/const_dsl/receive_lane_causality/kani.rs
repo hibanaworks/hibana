@@ -1,4 +1,4 @@
-use super::validate_receive_lane_causality;
+use super::{RollBodyRange, receive_precedes_after_roll_reentry, validate_receive_lane_causality};
 use crate::{
     eff::{EffAtom, EffStruct, EventOrigin},
     global::const_dsl::EffList,
@@ -17,6 +17,20 @@ fn event(from: u8, to: u8, lane: u8) -> EffStruct {
         origin: EventOrigin::User,
         lane,
     })
+}
+
+fn distinct_role_permutation() -> (u8, u8, u8) {
+    let permutation = kani::any::<u8>();
+    kani::assume(permutation < 6);
+    match permutation {
+        0 => (0, 1, 2),
+        1 => (0, 2, 1),
+        2 => (1, 0, 2),
+        3 => (1, 2, 0),
+        4 => (2, 0, 1),
+        5 => (2, 1, 0),
+        _ => unreachable!(),
+    }
 }
 
 #[kani::proof]
@@ -52,4 +66,39 @@ fn sender_change_without_causal_handoff_is_rejected() {
         .push(event(later_source, receiver, lane));
 
     assert!(!validate_receive_lane_causality(&events));
+}
+
+#[kani::proof]
+fn roll_reentry_causal_closure_rejects_open_cycle() {
+    let (first_source, receiver, last_source) = distinct_role_permutation();
+
+    let events = EffList::new()
+        .push(event(first_source, receiver, 0))
+        .push(event(receiver, last_source, 0))
+        .push(event(last_source, receiver, 0));
+
+    assert!(!receive_precedes_after_roll_reentry(
+        &events,
+        RollBodyRange::new(0, 3),
+        2,
+        0,
+    ));
+}
+
+#[kani::proof]
+fn roll_reentry_causal_closure_accepts_closed_cycle() {
+    let (first_source, receiver, last_source) = distinct_role_permutation();
+
+    let events = EffList::new()
+        .push(event(first_source, receiver, 0))
+        .push(event(receiver, last_source, 0))
+        .push(event(last_source, receiver, 0))
+        .push(event(receiver, first_source, 0));
+
+    assert!(receive_precedes_after_roll_reentry(
+        &events,
+        RollBodyRange::new(0, 4),
+        2,
+        0,
+    ));
 }
