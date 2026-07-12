@@ -169,7 +169,7 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/g-par-same-label-distinct-outbound-schema.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-evidence.rs");
     t.pass("tests/ui-pass/g-par-same-label-distinct-inbound-same-endpoint.rs");
-    t.pass("tests/ui-pass/g-protocol-family-templates.rs");
+    t.pass("tests/ui-pass/g-session-template-instances.rs");
     t.pass("tests/ui-pass/g-receive-lane-causal-handoff.rs");
     t.pass("tests/ui-pass/g-route-first-visible-passive-dispatch.rs");
     t.pass("tests/ui-pass/g-route-intrinsic-passive-same-label-frame-evidence.rs");

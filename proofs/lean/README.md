@@ -13,8 +13,9 @@ The modeled language is the finite-role, non-delegating Hibana core. It does not
 claim higher-order channel/session passing. Progress is per session under the
 stated fairness and live-carrier premises; session-pool results prove isolation,
 not deadlock freedom for arbitrary host code that interleaves multiple sessions.
-The descriptor is a finite template; dynamic streams and RPC rounds are runtime
-`SessionId` instances rather than new continuation types.
+The descriptor is a finite template; dynamic interaction instances and
+coordination rounds are runtime `SessionId` values rather than new continuation
+types.
 
 The kernel-checked boundary covers:
 
@@ -95,8 +96,8 @@ The kernel-checked boundary covers:
   affine receive cursors, no unsolicited
   replay, consecutive exactly-once delivery, post-drain graceful close, immediate
   abort retirement, and rejection of sends after close. A generation identifies
-  a carrier instance, not a QUIC connection ID; migration and connection-ID
-  rotation preserve it;
+  a carrier instance, not an application-visible identifier; logical address
+  migration and identifier rotation preserve it;
 - guarded nested or top-level roll reset through one global transition, with
   atomic owned-queue, local-cursor, and route-authority reset. The logical epoch
   remains unchanged. An end-to-end composition theorem joins roll queue clearing
@@ -234,10 +235,9 @@ program-image binding closes this boundary for roles attached to one local
 session generation. A verified protocol artifact proves that every exported
 role descriptor refines the same choreography; it does not prove that remote
 machines exchanged that artifact. Initial all-role agreement is a deployment or
-application-bootstrap premise, not a `Transport` handshake. A QUIC carrier needs
-no custom transport parameter, TLS extension, or additional round trip. Its
-replayable 0-RTT data must be rejected, delayed, or admitted under an
-application-profile replay policy before becoming Hibana protocol evidence.
+application-bootstrap premise, not a `Transport` handshake. Replayable early
+traffic must be rejected, delayed, or admitted under an application-profile
+replay policy before becoming Hibana protocol evidence.
 Lean proves exact admission for every observation and separately proves the
 strong affine-delivery profile; it does not prove arbitrary Rust `Transport`
 implementations. A carrier claiming global fidelity retains conformance proof
@@ -246,19 +246,19 @@ isolation, and anti-replay. A protocol that exposes unauthenticated, unordered,
 or repeated observations retains local monitor safety, but its authentication,
 loss, retry, and freshness logic is outside the affine-delivery conclusion.
 
-This separation is what permits protocol families without contaminating the
-core. A QUIC implementation can treat raw datagrams as generic packet events and
-keep packet numbers, stream state, loss recovery, and congestion control in
-protocol-owned data; established ordered streams may use the strong profile. A
-Raft implementation can use one repeated request/reply template per peer and
-attempt, keeping terms, logs, quorum, persistence, and timers in application
-state. Session isolation is proved, but QUIC cryptographic/transport correctness
-and Raft consensus invariants require their own protocol-specific proofs.
+This separation is what permits session families without contaminating the
+core. A lossy or reordering carrier can expose raw message observations while
+keeping authentication, sequence identity, retry, recovery, and ordering in
+algorithm-owned state; authenticated ordered subchannels may use the strong
+profile. A stateful distributed algorithm can repeat one finite interaction
+template while keeping persistent state, membership, scheduling, and recovery
+policy outside the monitor. Session isolation is proved; algorithm-specific
+safety and liveness invariants require their own proofs.
 
 Dynamic resolver publication is atomic inside one rendezvous generation. Across
 independent runtimes, the resolver input or carrier must provide one agreed
 decision to roles that can act before receiving branch evidence; the model does
-not claim to synthesize distributed consensus. Intrinsic routes keep this
+not claim to synthesize cross-runtime agreement. Intrinsic routes keep this
 choice in band. Production shared route-table authority is reserved for these
 explicit resolver scopes; non-controller intrinsic route commits require
 endpoint-local frame evidence, and intrinsic-only descriptors allocate no

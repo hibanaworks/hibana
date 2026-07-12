@@ -326,7 +326,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "rolled-causal-exit-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  rolled_same_label_recv_requires_causal_exit_handoff"
             )
             && miri_gate.contains(
-                "protocol-family-session-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  protocol_template_sessions_interleave_and_fault_independently"
+                "session-family-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  session_template_instances_interleave_and_fault_independently"
+            )
+            && miri_gate.contains(
+                "session-waiter-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  same_lane_session_waiters_are_isolated"
             )
             && miri_gate.contains(
                 "route-branch-send-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"

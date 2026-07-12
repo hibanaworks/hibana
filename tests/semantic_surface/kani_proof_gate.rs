@@ -12,6 +12,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
     let endpoint_selector_harnesses = read("src/global/const_dsl/endpoint_selectors/kani.rs");
+    let receive_lane_harnesses = read("src/global/const_dsl/receive_lane_causality/kani.rs");
     let resolver_row_harnesses = read("src/global/compiled/images/image/route_resolvers/kani.rs");
     let program_ref_harnesses = read("src/global/compiled/images/image/program_ref/kani.rs");
     let transport_harnesses = read("src/transport/kani.rs");
@@ -168,6 +169,17 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(endpoint_selector_harnesses.contains("left.payload_schema == right.payload_schema"));
     assert!(endpoint_selector_harnesses.contains("(Some(_), None) | (None, Some(_)) =>"));
     assert!(!endpoint_selector_harnesses.contains("kani::assume"));
+
+    for harness in [
+        "three_event_causal_handoff_accepts_every_valid_role_assignment",
+        "sender_change_without_causal_handoff_is_rejected",
+    ] {
+        assert!(receive_lane_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    assert!(receive_lane_harnesses.contains("earlier_source != later_source"));
+    assert!(receive_lane_harnesses.contains("event(receiver, later_source, lane)"));
+    assert!(receive_lane_harnesses.contains("assert!(!validate_receive_lane_causality(&events))"));
 
     for harness in [
         "route_resolver_row_decoding_accepts_exact_domain",

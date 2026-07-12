@@ -1,4 +1,32 @@
 use super::*;
+use std::task::{RawWaker, RawWakerVTable, Waker};
+
+unsafe fn clone_count_waker(data: *const ()) -> RawWaker {
+    RawWaker::new(data, &COUNT_WAKER_VTABLE)
+}
+
+unsafe fn wake_count_waker(data: *const ()) {
+    // SAFETY: `counting_waker` stores a live `Cell` pointer and this test drops
+    // every generated Waker before the cell leaves scope.
+    let count = unsafe { &*data.cast::<core::cell::Cell<usize>>() };
+    count.set(count.get() + 1);
+}
+
+unsafe fn drop_count_waker(_: *const ()) {}
+
+static COUNT_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    clone_count_waker,
+    wake_count_waker,
+    wake_count_waker,
+    drop_count_waker,
+);
+
+fn counting_waker(count: &core::cell::Cell<usize>) -> Waker {
+    let data = core::ptr::from_ref(count).cast::<()>();
+    // SAFETY: the vtable interprets `data` as this live `Cell`; no callback is
+    // retained after the test transport has delivered both frames.
+    unsafe { Waker::from_raw(RawWaker::new(data, &COUNT_WAKER_VTABLE)) }
+}
 
 #[derive(Clone, Copy)]
 struct CapacitySendTransport(());
@@ -95,7 +123,7 @@ fn cursor_send_and_recv_roundtrip() {
 }
 
 #[test]
-fn protocol_template_sessions_interleave_and_fault_independently() {
+fn session_template_instances_interleave_and_fault_independently() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -172,6 +200,79 @@ fn protocol_template_sessions_interleave_and_fault_independently() {
                     "first session retains exact fault: {rendered}"
                 );
             });
+            assert!(transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn same_lane_session_waiters_are_isolated() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let program = g::send::<0, 1, Msg<92, u32>>();
+            let origin_program: RoleProgram<0> = project(&program);
+            let target_program: RoleProgram<1> = project(&program);
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+
+            let left_sid = SessionId::new(0x5200);
+            let right_sid = SessionId::new(0x5201);
+            let mut left_origin = rv
+                .enter(left_sid, &origin_program)
+                .expect("left origin endpoint");
+            let mut left_target = rv
+                .enter(left_sid, &target_program)
+                .expect("left target endpoint");
+            let mut right_origin = rv
+                .enter(right_sid, &origin_program)
+                .expect("right origin endpoint");
+            let mut right_target = rv
+                .enter(right_sid, &target_program)
+                .expect("right target endpoint");
+
+            let left_counter = core::cell::Cell::new(0);
+            let right_counter = core::cell::Cell::new(0);
+            let left_waker = counting_waker(&left_counter);
+            let right_waker = counting_waker(&right_counter);
+            let mut left_context = Context::from_waker(&left_waker);
+            let mut right_context = Context::from_waker(&right_waker);
+            let mut left_recv = Box::pin(left_target.recv::<Msg<92, u32>>());
+            let mut right_recv = Box::pin(right_target.recv::<Msg<92, u32>>());
+
+            assert!(matches!(
+                Future::poll(left_recv.as_mut(), &mut left_context),
+                Poll::Pending
+            ));
+            assert!(matches!(
+                Future::poll(right_recv.as_mut(), &mut right_context),
+                Poll::Pending
+            ));
+
+            futures::executor::block_on(left_origin.send::<Msg<92, u32>>(&17))
+                .expect("left send succeeds");
+            assert!(left_counter.get() > 0, "left send must wake left waiter");
+            assert_eq!(
+                right_counter.get(),
+                0,
+                "left send must not wake or replace right-session authority"
+            );
+            assert!(matches!(
+                Future::poll(left_recv.as_mut(), &mut left_context),
+                Poll::Ready(Ok(17))
+            ));
+
+            futures::executor::block_on(right_origin.send::<Msg<92, u32>>(&19))
+                .expect("right send succeeds");
+            assert!(
+                right_counter.get() > 0,
+                "right waiter must survive the left-session delivery"
+            );
+            assert!(matches!(
+                Future::poll(right_recv.as_mut(), &mut right_context),
+                Poll::Ready(Ok(19))
+            ));
             assert!(transport.queue_is_empty());
         });
     });

@@ -173,13 +173,22 @@ run_miri_test \
   rolled_same_label_recv_requires_causal_exit_handoff
 
 run_miri_test \
-  protocol-family-session-isolation \
+  session-family-isolation \
   1 \
   1 \
   0 \
   -p hibana \
   --test cursor_send_recv_send_recv \
-  protocol_template_sessions_interleave_and_fault_independently
+  session_template_instances_interleave_and_fault_independently
+
+run_miri_test \
+  session-waiter-isolation \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  same_lane_session_waiters_are_isolated
 
 run_miri_test \
   route-branch-send-owner \

@@ -810,9 +810,10 @@ check_absent "\\b(RouteLabelBits|BitEq|BitsEqual|BitsCons|BitsNil|Bit0|Bit1)\\b"
   "route label bit-table forbidden path" \
   src/global.rs
 bash ./.github/scripts/check_projection_surface_hygiene.sh
-check_absent "(?i)\\b(quic|h3|hq|qpack|alpn)\\b|http/3" \
-  "protocol-specific vocabulary in hibana/src" \
-  src
+check_absent "(?i)\\b(quic|raft|h3|hq|qpack|alpn|oauth|smtp)\\b|http/[0-9]" \
+  "protocol-specific vocabulary in Hibana canonical surface" \
+  src tests README.md proofs/lean Cargo.toml .github/scripts \
+  --glob '!.github/scripts/check_surface_hygiene.sh'
 check_absent "FrameHeader\\(u64\\)|from_raw\\(raw:[[:space:]]*u64\\)|raw\\(self\\)[[:space:]]*->[[:space:]]*u64|pack_frame_header|raw_header|carrier-owned \`u64\`" \
   "u64 FrameHeader public/raw header surface detected" \
   src/transport.rs README.md .github/allowlists/runtime-public-api.txt

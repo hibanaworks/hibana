@@ -11,7 +11,6 @@ use std::{
 
 const TEST_ROLE_CAPACITY: usize = 5;
 const TEST_QUEUE_CAPACITY: usize = 16;
-const TEST_LANE_CAPACITY: usize = 256;
 const TEST_FRAME_PAYLOAD_CAPACITY: usize = 128;
 
 pub(crate) const fn frame_header_from_parts(
@@ -135,59 +134,47 @@ impl FrameOwned {
     }
 }
 
-struct WaiterBatch {
-    waiters: [Option<Waker>; TEST_LANE_CAPACITY],
-}
-
-impl WaiterBatch {
-    fn new() -> Self {
-        Self {
-            waiters: core::array::from_fn(|_| None),
-        }
-    }
-
-    fn push(&mut self, waker: Waker) {
-        for slot in &mut self.waiters {
-            if slot.is_none() {
-                *slot = Some(waker);
-                return;
-            }
-        }
-        panic!("test transport waiter capacity exceeded");
-    }
-
-    fn wake_all(self) {
-        for waker in self.waiters.into_iter().flatten() {
-            waker.wake();
-        }
-    }
+struct SessionWaiter {
+    session_id: SessionId,
+    lane: u8,
+    waker: Waker,
 }
 
 pub(crate) struct RoleState {
     pub(crate) queue: FixedQueue<FrameOwned, TEST_QUEUE_CAPACITY>,
-    waiters: [Option<Waker>; TEST_LANE_CAPACITY],
+    waiters: Vec<SessionWaiter>,
 }
 
 impl RoleState {
     fn new() -> Self {
         Self {
             queue: FixedQueue::new(),
-            waiters: core::array::from_fn(|_| None),
+            waiters: Vec::new(),
         }
     }
 
-    fn add_waiter(&mut self, lane: u8, waker: Waker) {
-        self.waiters[lane as usize] = Some(waker);
+    fn add_waiter(&mut self, session_id: SessionId, lane: u8, waker: Waker) {
+        if let Some(waiter) = self
+            .waiters
+            .iter_mut()
+            .find(|waiter| waiter.session_id == session_id && waiter.lane == lane)
+        {
+            waiter.waker = waker;
+        } else {
+            self.waiters.push(SessionWaiter {
+                session_id,
+                lane,
+                waker,
+            });
+        }
     }
 
-    fn take_waiters(&mut self) -> WaiterBatch {
-        let mut batch = WaiterBatch::new();
-        for slot in &mut self.waiters {
-            if let Some(waker) = slot.take() {
-                batch.push(waker);
-            }
-        }
-        batch
+    fn take_waiter(&mut self, session_id: SessionId, lane: u8) -> Option<Waker> {
+        let index = self
+            .waiters
+            .iter()
+            .position(|waiter| waiter.session_id == session_id && waiter.lane == lane)?;
+        Some(self.waiters.swap_remove(index).waker)
     }
 }
 
@@ -216,10 +203,12 @@ impl TestState {
         }
     }
 
-    fn enqueue(&mut self, role: u8, frame: FrameOwned) -> WaiterBatch {
+    fn enqueue(&mut self, role: u8, frame: FrameOwned) -> Option<Waker> {
         let role_state = self.role_mut(role);
+        let session_id = frame.session_id;
+        let lane = frame.lane;
         role_state.queue.push_back(frame);
-        role_state.take_waiters()
+        role_state.take_waiter(session_id, lane)
     }
 
     fn dequeue(&mut self, role: u8, session_id: SessionId, lane: u8) -> Option<FrameOwned> {
@@ -232,8 +221,8 @@ impl TestState {
         self.role_mut(role).queue.push_front(frame);
     }
 
-    fn add_waiter(&mut self, role: u8, lane: u8, waker: Waker) {
-        self.role_mut(role).add_waiter(lane, waker);
+    fn add_waiter(&mut self, role: u8, session_id: SessionId, lane: u8, waker: Waker) {
+        self.role_mut(role).add_waiter(session_id, lane, waker);
     }
     fn ensure_role(&self, role: u8) {
         let _ = self.role(role);
@@ -330,8 +319,9 @@ impl TestTransport {
     pub(crate) fn poll_send_staged(&self, tx: &mut TestTx) -> Poll<Result<(), TransportError>> {
         let role = tx.pending_role.take().expect("queued role");
         let frame = tx.pending_frame.take().expect("queued frame");
-        let waiters = self.state.borrow_mut().enqueue(role, frame);
-        waiters.wake_all();
+        if let Some(waiter) = self.state.borrow_mut().enqueue(role, frame) {
+            waiter.wake();
+        }
         Poll::Ready(Ok(()))
     }
 
@@ -354,7 +344,7 @@ impl TestTransport {
                 if let Some(frame) = state.dequeue(rx.role, rx.session_id, rx.lane) {
                     Some(frame)
                 } else {
-                    state.add_waiter(rx.role, rx.lane, cx.waker().clone());
+                    state.add_waiter(rx.role, rx.session_id, rx.lane, cx.waker().clone());
                     None
                 }
             };

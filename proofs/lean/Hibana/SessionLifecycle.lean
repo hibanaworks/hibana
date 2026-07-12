@@ -324,8 +324,8 @@ theorem session_pool_step_is_target_local
               · simp [currentAt, replacementAt, identity] at stepped
 
 /-- Every operation on distinct session instances commutes, including protocol
-progress, first fault, and cancellation observation. Dynamic streams and RPC
-rounds are runtime `SessionId` values, not new Rust continuation types. -/
+progress, first fault, and cancellation observation. Dynamic interaction
+instances are runtime `SessionId` values, not new Rust continuation types. -/
 theorem distinct_session_steps_commute
     {pool leftNext rightNext : SessionPool}
     {leftOperation rightOperation : SessionPoolOperation}

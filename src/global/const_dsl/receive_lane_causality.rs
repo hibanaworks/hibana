@@ -214,3 +214,6 @@ pub(crate) const fn validate_receive_lane_causality(eff_list: &EffList) -> bool 
     }
     true
 }
+
+#[cfg(kani)]
+mod kani;

@@ -257,14 +257,12 @@ that choreography, while the live monitor checks each received frame against its
 local descriptor and fails closed at the first divergence. The `Transport`
 trait neither receives descriptor bytes nor negotiates program images.
 
-A QUIC carrier therefore needs no custom transport parameter, TLS extension, or
-extra round trip for Hibana. A deployment may use an existing versioned
-application profile such as ALPN, or an explicit application-level bootstrap,
-when it needs runtime version negotiation. QUIC 0-RTT may carry Hibana-visible
-traffic only when the resumed application configuration and replay policy make
-that traffic safe; otherwise early data must be rejected or delayed. Hibana's
-compact core header does not claim to prove cross-binary Rust type identity or
-carry a program image.
+A deployment may use a versioned application profile or an explicit
+application-level bootstrap when it needs runtime version negotiation.
+Replayable early traffic may become Hibana protocol evidence only when the
+resumed application configuration and replay policy make that traffic safe;
+otherwise it must be rejected or delayed. Hibana's compact core header does not
+claim to prove cross-binary Rust type identity or carry a program image.
 
 Custom payloads implement the two halves directly:
 
@@ -506,7 +504,7 @@ time in the choreography itself: use a timer or clock role whose first visible
 route action carries the decision.
 
 Protocol-invisible liveness detection belongs inside the transport
-implementation. A UDP, serial, or custom carrier that decides an I/O wait is
+implementation. A datagram, serial, or custom carrier that decides an I/O wait is
 terminal must return `TransportError` from `poll_send(...)` or `poll_recv(...)`;
 Hibana converts that transport failure into terminal session evidence. Such
 watchdogs do not create hidden route authority or an alternate branch inside the
@@ -661,20 +659,19 @@ exact local monitor safety, but not the global affine-delivery conclusion.
 Explicit `requeue(...)` restores one staged observation and never creates
 another commit.
 
-Fresh transport-instance state is a sufficient carrier generation. For QUIC,
-connection migration and connection-ID rotation remain inside that same
-generation; a new connection instance starts a new one. Reliable ordered QUIC
-streams can implement Hibana lanes directly or through an internal demux.
-Unordered datagrams may instead be admitted as protocol-owned raw observations;
-packet numbers, replay rejection, loss recovery, and ordering then remain in the
-protocol rather than becoming false `Transport` guarantees. A QUIC
-implementation can bind such input to an untrusted-network role until packet
-protection and connection identity have been validated.
+Fresh transport-instance state is a sufficient carrier generation. Logical
+address migration and identifier rotation remain inside that generation; a new
+carrier instance starts a new one. Authenticated ordered subchannels can
+implement Hibana lanes directly or through an internal demux. Unordered messages
+may instead be admitted as protocol-owned raw observations; sequence identity,
+replay rejection, loss recovery, and ordering then remain in the protocol rather
+than becoming false `Transport` guarantees. Input may remain bound to an
+untrusted ingress role until peer identity has been validated.
 
 Under the strong affine-delivery profile, peer closure is scoped to the mapped
 Hibana direction, not necessarily to the physical carrier connection. A
-multiplexed QUIC implementation may use stream FIN, reset, or stop state and
-must leave unrelated sessions and streams intact.
+multiplexed carrier may retire one mapped subchannel while leaving unrelated
+sessions and subchannels intact.
 
 Lean proves exact observation admission and a separate strong affine carrier
 profile, not arbitrary `Transport` implementations. A carrier claiming global
@@ -694,37 +691,32 @@ performs the session/lane/role/label comparison internally before any endpoint
 progress can consume the payload. Route/session/progress authority remains in
 Hibana.
 
-### Protocol Families
+### Session Templates
 
 Hibana is protocol-neutral, but not limited to one static connection. Dynamic
-streams, requests, and rounds are separate `SessionId` values instantiated from
-the same finite descriptor. Distinct session transitions commute in the Lean
-model, fresh attach cannot overwrite live authority, and retired identities may
-be reused only through a fresh transport generation. Production tests interleave
-two instances of one descriptor and prove that an endpoint fault in one does not
-poison the other. No protocol state becomes a Rust continuation type, so this
-composition does not create type explosion.
+interaction instances, request/reply attempts, and coordination rounds are
+separate `SessionId` values instantiated from the same finite descriptor.
+Distinct session transitions commute in the Lean model, fresh attach cannot
+overwrite live authority, and retired identities may be reused only through a
+fresh transport generation. Production tests interleave two instances of one
+descriptor and prove that an endpoint fault in one does not poison the other.
+No protocol state becomes a Rust continuation type, so this composition does not
+create type explosion.
 
-A QUIC implementation can expose each UDP datagram as a generic packet
-observation and keep packet numbers, encryption levels, stream state, loss
-recovery, congestion control, and migration in protocol-owned payload and local
-state. Once a reliable ordered stream exists, its logical events may satisfy the
-strong affine-delivery premise. Concurrent streams use separate sessions or
+A lossy or reordering carrier can expose raw message observations while keeping
+authentication, sequence identity, retry, timers, recovery, and ordering in
+algorithm-owned payload and local state. Once an authenticated ordered
+subchannel exists, its logical events may satisfy the strong affine-delivery
+premise. Concurrent logical channels use separate sessions or
 descriptor-derived lanes; closing one mapped direction must not close unrelated
-streams. The relevant carrier obligations come from [QUIC transport](https://www.rfc-editor.org/rfc/rfc9000.html),
-[QUIC TLS](https://www.rfc-editor.org/rfc/rfc9001.html), and [loss detection and
-congestion control](https://www.rfc-editor.org/rfc/rfc9002.html).
+instances.
 
-A Raft implementation can instantiate one repeated request/reply template per
-peer and RPC attempt. Terms, logs, quorum counts, persistence, and randomized
-timers remain application state; fresh sessions isolate retries and peer faults.
-Membership change is an explicit old-to-joint-to-new protocol transition with a
-fresh verified artifact for the new finite role set. Hibana proves communication
-conformance and session isolation, not Raft's Election Safety, Log Matching, or
-agreement of applied log entries at each index; those algorithm invariants
-require a Raft-specific proof.
-They are the safety properties defined by the [Raft
-paper](https://raft.github.io/raft.pdf), not generic session-fidelity facts.
+A stateful distributed algorithm can instantiate repeated finite interaction
+templates while keeping persistent state, membership, scheduling, and recovery
+policy outside the monitor. Fresh sessions isolate retries and peer faults;
+reconfiguration creates a fresh verified artifact for the new finite role set.
+Hibana proves communication conformance and session isolation. Algorithm-specific
+safety and liveness invariants require their own proofs.
 
 One session has at most sixteen declared roles and no channel delegation. A
 protocol requiring an unbounded role set in one atomic choreography is outside
@@ -767,9 +759,9 @@ observations. Resolver failure rejects the step; it does not authorize any
 alternate semantic path.
 
 Within one rendezvous generation, every attached role uses the same registered
-resolver authority. Across independent devices, a resolver is not an implicit
-consensus protocol: the protocol or carrier must supply the same decision to
-every role that can act before receiving branch evidence. Otherwise use an
+resolver authority. Across independent devices, a resolver does not synthesize
+cross-runtime agreement: the protocol or carrier must supply the same decision
+to every role that can act before receiving branch evidence. Otherwise use an
 intrinsic route whose first in-band message communicates the choice.
 
 ```rust,ignore
