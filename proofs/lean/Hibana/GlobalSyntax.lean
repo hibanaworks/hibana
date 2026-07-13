@@ -97,7 +97,7 @@ theorem global_events_from_lane_bounds
       simpa [Choreo.globalEventsFrom, Choreo.laneSpan] using bodyIH laneBase member
 
 /-- Canonical parallel arms occupy disjoint physical lane intervals. This is the
-lane-level noninterference fact used by the message-erased endpoint monitor. -/
+lane-level noninterference fact used by the message-erased endpoint runtime. -/
 theorem parallel_global_event_lanes_are_disjoint
     (left right : Choreo)
     (laneBase : Nat)
@@ -172,6 +172,63 @@ def Choreo.routeCount : Choreo -> Nat
   | .seq left right | .par left right => left.routeCount + right.routeCount
   | .route _ left right => 1 + left.routeCount + right.routeCount
   | .roll body => body.routeCount
+
+/-- Roles that can perform the first externally visible send in a branch. A
+dynamic or intrinsic route has one controller exactly when both arms expose
+the same unique first sender. -/
+def Choreo.firstVisibleSenders : Choreo -> List Nat
+  | .send sender _ _ _ => [sender]
+  | .seq left right =>
+      let visible := left.firstVisibleSenders
+      if visible.isEmpty then right.firstVisibleSenders else visible
+  | .par left right | .route _ left right =>
+      (left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups
+  | .roll body => body.firstVisibleSenders
+
+def Choreo.routeController? (left right : Choreo) : Option Nat :=
+  match (left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups with
+  | [controller] => some controller
+  | _ => none
+
+/-- Controller rows follow the same preorder as route conflict identifiers. -/
+def Choreo.routeControllers : Choreo -> List (Option Nat)
+  | .send _ _ _ _ => []
+  | .seq left right | .par left right =>
+      left.routeControllers ++ right.routeControllers
+  | .route _ left right =>
+      routeController? left right ::
+        (left.routeControllers ++ right.routeControllers)
+  | .roll body => body.routeControllers
+
+def Choreo.controllerForConflict?
+    (choreo : Choreo) (conflict : Nat) : Option Nat :=
+  (choreo.routeControllers[conflict]?).join
+
+/-- Route authorities follow the global conflict preorder directly. Deployment
+reasoning must not nominate one role projection as a surrogate global registry. -/
+def Choreo.routeAuthorities : Choreo -> List RouteAuthority
+  | .send _ _ _ _ => []
+  | .seq left right | .par left right =>
+      left.routeAuthorities ++ right.routeAuthorities
+  | .route authority left right =>
+      authority :: (left.routeAuthorities ++ right.routeAuthorities)
+  | .roll body => body.routeAuthorities
+
+def Choreo.authorityForConflict?
+    (choreo : Choreo) (conflict : Nat) : Option RouteAuthority :=
+  choreo.routeAuthorities[conflict]?
+
+theorem Choreo.routeAuthorities_length (choreo : Choreo) :
+    choreo.routeAuthorities.length = choreo.routeCount := by
+  induction choreo with
+  | send sender receiver label schema => rfl
+  | seq left right leftIH rightIH | par left right leftIH rightIH =>
+      simp [Choreo.routeAuthorities, Choreo.routeCount, leftIH, rightIH]
+  | route authority left right leftIH rightIH =>
+      simp [Choreo.routeAuthorities, Choreo.routeCount, leftIH, rightIH,
+        Nat.add_assoc, Nat.add_comm]
+  | roll body bodyIH =>
+      simpa [Choreo.routeAuthorities, Choreo.routeCount] using bodyIH
 
 /-- Route memberships aligned one-for-one with `globalEvents`. The conflict
 base follows the same preorder as role projection, so global exclusion never

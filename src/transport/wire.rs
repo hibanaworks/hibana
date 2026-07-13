@@ -332,3 +332,6 @@ impl<'a> fmt::Debug for Payload<'a> {
             .finish()
     }
 }
+
+#[cfg(kani)]
+mod kani;

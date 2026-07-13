@@ -68,6 +68,7 @@ fn collect_source_files(root: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn readme_stays_self_contained_and_hibana_scoped() {
     let readme = read("README.md");
+    let searchable_readme = readme.split_whitespace().collect::<Vec<_>>().join(" ");
 
     for required in [
         "hibana-header.svg",
@@ -148,7 +149,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "let server: RoleProgram<1> = project(&program);",
         "let endpoint = rv.enter(SessionId::new(1), &client)?;",
         "runtime::SessionKitStorage::uninit().init()",
-        "kit.rendezvous(&mut slab, transport)",
+        "kit.rendezvous(runtime_slab, transport)",
         "registered rendezvous.enter(..., ...)",
         "`runtime::wire::{Payload, WireEncode, WirePayload}`",
         "Every choreography payload implements both `WireEncode` and `WirePayload`",
@@ -171,6 +172,10 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`PortOpen` exposes the descriptor-derived `local_role`, `session_id`, and",
         "`Outgoing` exposes the projected",
         "Fresh transport-instance state is a sufficient carrier generation.",
+        "The responsibility boundary is strict:",
+        "| Hibana establishes | A deployment supplies |",
+        "External premises are inputs to stronger deployment-indexed theorems, not missing Hibana runtime features.",
+        "must not absorb carrier, cryptography, failure detection, or application algorithms",
         "address migration and identifier rotation remain inside that generation",
         "Under the strong affine-delivery profile, peer closure is scoped",
         "leaving unrelated",
@@ -213,7 +218,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "`hibana_repo_tests`",
     ] {
         assert!(
-            readme.contains(required),
+            searchable_readme.contains(required),
             "README must stay self-contained and hibana-scoped: {required}"
         );
     }
@@ -304,6 +309,106 @@ fn readme_stays_self_contained_and_hibana_scoped() {
             "README must not pin forbidden toolchain or smoke-helper lanes",
         );
     }
+}
+
+#[test]
+fn onboarding_starts_with_one_gated_runnable_example() {
+    let readme = read("README.md");
+    let install = readme
+        .find("## Install")
+        .expect("README must install first");
+    let quick_start = readme
+        .find("## Quick Start")
+        .expect("README must have a quick start");
+    let verification = readme
+        .find("## Verification Boundary")
+        .expect("README must separate the verification boundary");
+
+    assert!(
+        install < quick_start && quick_start < verification,
+        "README onboarding must precede proof details"
+    );
+    assert!(
+        readme[..quick_start].lines().count() < 100,
+        "Quick Start must stay in the first 100 README lines"
+    );
+    assert!(
+        readme.lines().count() < 1_000,
+        "README must not become a proof inventory again"
+    );
+
+    let quick_start = &readme[quick_start..verification];
+    for required in [
+        "cargo run --example ping_pong",
+        "examples/ping_pong.rs",
+        "ping=7, pong=8",
+        "host-only and example-local",
+        "### Pico / `no_std`",
+        "examples/pico/Cargo.toml",
+        "examples/pico/src/lib.rs",
+        "--target thumbv6m-none-eabi",
+        "projected-program input",
+    ] {
+        assert!(
+            quick_start.contains(required),
+            "Quick Start must use the runnable canonical example: {required}"
+        );
+    }
+    for forbidden in ["```rust,ignore", "endpoint.send::<"] {
+        assert!(
+            !quick_start.contains(forbidden),
+            "Quick Start must not return to an incomplete ignored fragment: {forbidden}"
+        );
+    }
+
+    let example = read("examples/ping_pong.rs");
+    assert!(
+        example.contains("fn main()")
+            && example.contains("assert_eq!((ping, pong), (7, 8))")
+            && example.contains("println!(\"ping={ping}, pong={pong}\")"),
+        "ping_pong must remain a self-checking executable"
+    );
+
+    let pico_manifest = read("examples/pico/Cargo.toml");
+    let pico_example = read("examples/pico/src/lib.rs");
+    assert!(
+        pico_manifest.contains("hibana = { path = \"../..\", default-features = false }")
+            && pico_example.starts_with("#![no_std]")
+            && pico_example.contains("pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)")
+            && pico_example.contains("g::send::<0, 1, Msg<1, u32>>()")
+            && pico_example.contains("g::send::<1, 0, Msg<2, u32>>()"),
+        "the tracked Pico example must compile the canonical public projection surface"
+    );
+
+    let crate_docs = read("src/lib.rs");
+    assert!(
+        crate_docs.contains("cargo run --example ping_pong")
+            && !crate_docs.contains("endpoint.send::<g::Msg<1, u32>>"),
+        "crate docs must route onboarding to the executable example"
+    );
+
+    let final_gate = read(".github/scripts/run_final_form_gates.sh");
+    assert!(
+        final_gate.contains("cargo +\"${TOOLCHAIN}\" run --quiet --example ping_pong")
+            && final_gate.contains("ping_pong example output mismatch"),
+        "the final gate must execute and validate the onboarding example"
+    );
+
+    let package_gate = read(".github/scripts/check_package_artifact.sh");
+    for required in ["examples/ping_pong.rs", "examples/support/in_memory.rs"] {
+        assert!(
+            package_gate.contains(required),
+            "published package must contain the runnable example: {required}"
+        );
+    }
+
+    let no_std_gate = read(".github/scripts/check_no_std_build.sh");
+    assert!(
+        no_std_gate.contains("--manifest-path examples/pico/Cargo.toml")
+            && no_std_gate.matches("--target thumbv6m-none-eabi").count() == 2
+            && no_std_gate.contains("pico-example=1"),
+        "the no_std gate must compile both Hibana and its tracked Pico example for thumbv6m"
+    );
 }
 
 #[test]

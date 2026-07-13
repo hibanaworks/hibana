@@ -517,7 +517,7 @@ fn offer_headerless_demux_frame_fails_closed_not_pending() {
 fn offer_materialized_label_mismatch_fails_closed() {
     with_runtime_workspace(|slab| {
         // A valid alternate-arm label would be an undetectable violation of the
-        // carrier's exact-frame contract, not a monitor-level label mismatch.
+        // carrier's exact-frame contract, not an endpoint-level label mismatch.
         let transport = LabelRewriteTransport::new(u8::MAX);
         with_resident_tls_ref(&LABEL_REWRITE_SESSION_SLOT, |cluster| {
             let rv = cluster

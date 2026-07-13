@@ -7,13 +7,15 @@ use crate::{
             EffList, ScopeEvent, ScopeKind, ScopeMarker, first_visible_controller_mask,
             first_visible_endpoint_selector_conflicts_from_markers,
             local_route_observer_paths_mergeable, route_arm_ranges_from_first_enter,
-            validate_parallel_endpoint_selectors, validate_receive_lane_causality,
-            validate_roll_reentry_endpoint_selectors,
+            unique_controller_role, validate_parallel_endpoint_selectors,
+            validate_receive_lane_causality, validate_roll_reentry_endpoint_selectors,
         },
         role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
 };
 
+#[cfg(kani)]
+mod kani;
 mod passive_child;
 
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
@@ -347,9 +349,10 @@ const fn validate_route_scope(
     let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
     let controller_mask = first_visible_controller_mask(eff_list, arm0_start, arm0_end)
         | first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-    if !has_exactly_one_bit(controller_mask) {
-        return Some(ProgramSourceError::RouteControllerMismatch);
-    }
+    let controller = match unique_controller_role(controller_mask) {
+        Some(controller) => controller,
+        None => return Some(ProgramSourceError::RouteControllerMismatch),
+    };
     if !has_dynamic_resolver
         && first_visible_endpoint_selector_conflicts_from_markers(
             eff_list,
@@ -363,19 +366,22 @@ const fn validate_route_scope(
     {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     }
-    if matches!(unique_controller_role(controller_mask), Some(controller) if controller == role) {
-        return None;
-    }
-
-    if local_route_observer_paths_mergeable(
+    let observer_paths_mergeable = local_route_observer_paths_mergeable(
         eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role,
-    ) {
-        return None;
-    }
-    if has_dynamic_resolver {
+    );
+    if route_role_has_branch_knowledge(role, controller, observer_paths_mergeable) {
         return None;
     }
     Some(ProgramSourceError::ProjectionRouteUnprojectable)
+}
+
+#[inline(always)]
+const fn route_role_has_branch_knowledge(
+    role: u8,
+    controller: u8,
+    observer_paths_mergeable: bool,
+) -> bool {
+    role == controller || observer_paths_mergeable
 }
 
 #[inline(always)]
@@ -384,25 +390,6 @@ const fn scope_has_dynamic_resolver(
     route_scope: crate::global::const_dsl::ScopeId,
 ) -> bool {
     eff_list.resolver_for_scope(route_scope).is_some()
-}
-
-const fn unique_controller_role(mask: u16) -> Option<u8> {
-    if !has_exactly_one_bit(mask) {
-        return None;
-    }
-    let mut role = 0u8;
-    while role < u16::BITS as u8 {
-        if (mask & (1u16 << role)) != 0 {
-            return Some(role);
-        }
-        role += 1;
-    }
-    None
-}
-
-#[inline(always)]
-const fn has_exactly_one_bit(mask: u16) -> bool {
-    mask != 0 && (mask & (mask - 1)) == 0
 }
 
 pub(crate) const fn projection_error_all_roles(

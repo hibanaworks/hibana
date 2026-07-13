@@ -33,7 +33,15 @@ run_package_clean() {
 PACKAGE_LIST="$(run_package_clean "cargo package --list" \
   env -u RUSTFLAGS cargo +"${TOOLCHAIN}" package --list --allow-dirty)"
 
-for required in Cargo.toml README.md src/lib.rs tests/ui.rs tests/lane_lifecycle_tap.rs; do
+for required in \
+  Cargo.toml \
+  README.md \
+  examples/ping_pong.rs \
+  examples/support/in_memory.rs \
+  src/lib.rs \
+  tests/ui.rs \
+  tests/lane_lifecycle_tap.rs
+do
   if ! grep -qx "${required}" <<<"${PACKAGE_LIST}"; then
     echo "package artifact check failed: ${required} must ship in the published crate package" >&2
     exit 1

@@ -247,9 +247,11 @@ fn single_slab_config_is_runtime_resource_authority() {
     );
     assert!(
         readme.contains("let kit = kit_storage.init();")
-            && readme.contains("let rv = kit.rendezvous(&mut slab, transport)?;")
+            && readme.contains("let rv = kit.rendezvous(runtime_slab, transport)?;")
             && crate_docs.contains("let kit = kit_storage.init();")
-            && crate_docs.contains("let rv = kit.rendezvous(&mut slab, transport)?;")
+            && crate_docs.contains("let rv = kit.rendezvous(runtime_slab, transport)?;")
+            && readme.contains("deployment-owned region selected from measured")
+            && crate_docs.contains("supplied from the measured deployment budget")
             && !readme.contains("CounterClock")
             && !readme.contains("tap_buf")
             && !readme.contains("Config::from_resources")

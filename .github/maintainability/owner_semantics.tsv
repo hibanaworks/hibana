@@ -11,6 +11,7 @@ src/endpoint/kernel/core	endpoint-kernel-core-ops	kernel public ops, send ops, r
 src/endpoint/kernel/offer	offer-frontier-lifecycle	offer ingress, resolution, selection, materialization, and restore ownership
 src/global	choreography-compile-root	global choreography DSL, program image, role program, and typestate ownership
 src/global/compiled	compiled-program-image	compiled image and lowering ownership
+src/global/const_dsl	const-choreography-semantics	const choreography construction, controller discovery, projectability, and scope fact ownership
 src/global/role_program	role-program-event-image	role projection handle, resident event rows, lane rows, and row access ownership
 src/global/role_program/image_impl	role-resident-column-access	resident role blob construction, event row access, lane set views, and scope row lookup ownership
 src/global/typestate	typestate-cursor-authority	cursor, facts, lane progress, navigation, and scope-route ownership

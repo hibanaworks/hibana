@@ -2,10 +2,14 @@
 mod common;
 #[path = "semantic_surface/descriptor_measurement.rs"]
 mod descriptor_measurement;
+#[path = "semantic_surface/end_to_end_refinement.rs"]
+mod end_to_end_refinement;
 #[path = "semantic_surface/endpoint_active_leases.rs"]
 mod endpoint_active_leases;
 #[path = "semantic_surface/kani_proof_gate.rs"]
 mod kani_proof_gate;
+#[path = "semantic_surface/lean_ci_gate.rs"]
+mod lean_ci_gate;
 #[path = "semantic_surface/lean_proof_gate.rs"]
 mod lean_proof_gate;
 #[path = "semantic_surface/lease_owner.rs"]

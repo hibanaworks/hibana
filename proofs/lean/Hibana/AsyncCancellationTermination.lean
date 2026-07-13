@@ -320,6 +320,28 @@ theorem retirement_ready_reaches_full_retirement
     config.retirementMeasure ready (Nat.le_refl _)
   exact ⟨retired, result.1, result.2⟩
 
+/-- End-to-end abstract cancellation: the first live fault, a well-formed
+covered carrier snapshot, and the finite retirement transition system suffice
+to retire every accepted frame, close direction, and protocol resource. -/
+theorem live_fault_snapshot_reaches_full_retirement
+    {protocol : GlobalConfig}
+    {reporter : Nat}
+    {cause : SessionFault}
+    {transports : List TransportState}
+    (live : protocol.status = .live)
+    (channelsUnique : (transports.map TransportState.channel).Nodup)
+    (wellFormed : ∀ state, state ∈ transports -> state.WellFormed)
+    (covers : ∀ role, role < protocol.roleCount -> role ≠ reporter ->
+      role ∈ transports.map fun state => state.channel.receiver) :
+    ∃ retired,
+      AsyncCancellationReachable
+        (AsyncCancellationConfig.fromTransportSnapshot
+          (protocol.beginCancellation reporter cause) transports) retired /\
+      retired.fullyRetired :=
+  retirement_ready_reaches_full_retirement <|
+    fault_transport_snapshot_is_retirement_ready
+      live channelsUnique wellFormed covers
+
 theorem async_cancellation_step_cannot_enable_protocol
     {current next : AsyncCancellationConfig}
     (nonLive : current.protocol.status ≠ .live)

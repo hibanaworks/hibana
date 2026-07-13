@@ -27,7 +27,7 @@ fn wide_roll_topology_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::seq(
         g::route(
             g::send::<0, 1, Msg<TOPOLOGY_LEFT, u32>>(),
-            g::send::<0, 2, Msg<TOPOLOGY_RIGHT, u32>>(),
+            g::send::<0, 1, Msg<TOPOLOGY_RIGHT, u32>>(),
         )
         .resolve::<ROUTE_RESOLVER>(),
         g::seq(
@@ -42,7 +42,7 @@ fn narrow_roll_topology_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(&g::seq(
         g::route(
             g::send::<0, 1, Msg<TOPOLOGY_LEFT, u32>>(),
-            g::send::<0, 2, Msg<TOPOLOGY_RIGHT, u32>>(),
+            g::send::<0, 1, Msg<TOPOLOGY_RIGHT, u32>>(),
         )
         .resolve::<ROUTE_RESOLVER>(),
         g::seq(
@@ -66,49 +66,36 @@ fn assert_same_label_route_send_uses_selected_arm(
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program::<0>();
             let role1 = same_label_outbound_program::<1>();
-            let role2 = same_label_outbound_program::<2>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<SAME_LABEL_ROUTE_RESOLVER>::decision_state(resolver_arm, choose_arm),
             )
             .expect("install sender resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
-            let mut left_peer = rv.enter(sid, &role1).expect("attach left peer");
-            let mut right_peer = rv.enter(sid, &role2).expect("attach right peer");
+            let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
             futures::executor::block_on(async {
-                origin
-                    .send::<Msg<SAME_LABEL, u32>>(&value)
-                    .await
-                    .expect("same-label resolved route send");
                 if expected_arm == 0 {
-                    assert!(
-                        right_peer
-                            .recv::<Msg<SAME_LABEL, u32>>()
-                            .now_or_never()
-                            .is_none(),
-                        "right peer must not receive the unselected left-arm send"
-                    );
+                    origin
+                        .send::<Msg<SAME_LABEL, u32>>(&value)
+                        .await
+                        .expect("same-label left-schema route send");
                     assert_eq!(
-                        left_peer
-                            .recv::<Msg<SAME_LABEL, u32>>()
+                        peer.recv::<Msg<SAME_LABEL, u32>>()
                             .await
-                            .expect("left peer receives selected arm"),
+                            .expect("peer receives selected left schema"),
                         value
                     );
                 } else {
-                    assert!(
-                        left_peer
-                            .recv::<Msg<SAME_LABEL, u32>>()
-                            .now_or_never()
-                            .is_none(),
-                        "left peer must not receive the unselected right-arm send"
-                    );
+                    let value = u64::from(value);
+                    origin
+                        .send::<Msg<SAME_LABEL, u64>>(&value)
+                        .await
+                        .expect("same-label right-schema route send");
                     assert_eq!(
-                        right_peer
-                            .recv::<Msg<SAME_LABEL, u32>>()
+                        peer.recv::<Msg<SAME_LABEL, u64>>()
                             .await
-                            .expect("right peer receives selected arm"),
+                            .expect("peer receives selected right schema"),
                         value
                     );
                 }
@@ -200,12 +187,12 @@ fn left_decision_materializes_nested_parallel_arm_once() {
 }
 
 #[test]
-fn same_label_resolved_outbound_left_sends_to_left_peer_only() {
+fn same_label_resolved_outbound_left_uses_left_schema() {
     assert_same_label_route_send_uses_selected_arm(&LEFT_ARM, 0, 5501);
 }
 
 #[test]
-fn same_label_resolved_outbound_right_sends_to_right_peer_only() {
+fn same_label_resolved_outbound_right_uses_right_schema() {
     assert_same_label_route_send_uses_selected_arm(&RIGHT_ARM, 1, 5502);
 }
 
@@ -221,31 +208,21 @@ fn resolved_route_send_calls_resolver_once_per_progress() {
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program_for::<0, COUNTING_ROUTE_RESOLVER>();
             let role1 = same_label_outbound_program_for::<1, COUNTING_ROUTE_RESOLVER>();
-            let role2 = same_label_outbound_program_for::<2, COUNTING_ROUTE_RESOLVER>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<COUNTING_ROUTE_RESOLVER>::decision_state(&UNIT, counting_left),
             )
             .expect("install counting resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
-            let mut left_peer = rv.enter(sid, &role1).expect("attach left peer");
-            let mut right_peer = rv.enter(sid, &role2).expect("attach right peer");
+            let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
             futures::executor::block_on(async {
                 origin
                     .send::<Msg<SAME_LABEL, u32>>(&1601)
                     .await
                     .expect("resolved send");
-                assert!(
-                    right_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "unselected right peer must not receive"
-                );
                 assert_eq!(
-                    left_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
+                    peer.recv::<Msg<SAME_LABEL, u32>>()
                         .await
                         .expect("selected peer recv"),
                     1601
@@ -272,10 +249,8 @@ fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
                 .expect("register rendezvous");
             let left_role0 = same_label_outbound_program_for::<0, SAME_LABEL_ROUTE_RESOLVER>();
             let left_role1 = same_label_outbound_program_for::<1, SAME_LABEL_ROUTE_RESOLVER>();
-            let left_role2 = same_label_outbound_program_for::<2, SAME_LABEL_ROUTE_RESOLVER>();
             let right_role0 = same_label_outbound_program_for::<0, COUNTING_ROUTE_RESOLVER>();
             let right_role1 = same_label_outbound_program_for::<1, COUNTING_ROUTE_RESOLVER>();
-            let right_role2 = same_label_outbound_program_for::<2, COUNTING_ROUTE_RESOLVER>();
 
             rv.set_resolver(
                 &left_role0,
@@ -290,15 +265,11 @@ fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
 
             let mut left_origin = rv.enter(left_sid, &left_role0).expect("attach left origin");
             let mut left_peer = rv.enter(left_sid, &left_role1).expect("attach left peer");
-            let mut left_other = rv.enter(left_sid, &left_role2).expect("attach left other");
             let mut right_origin = rv
                 .enter(right_sid, &right_role0)
                 .expect("attach right origin");
-            let mut right_other = rv
-                .enter(right_sid, &right_role1)
-                .expect("attach right other");
             let mut right_peer = rv
-                .enter(right_sid, &right_role2)
+                .enter(right_sid, &right_role1)
                 .expect("attach right peer");
 
             futures::executor::block_on(async {
@@ -306,13 +277,6 @@ fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
                     .send::<Msg<SAME_LABEL, u32>>(&1606)
                     .await
                     .expect("first resolver id keeps left authority");
-                assert!(
-                    left_other
-                        .recv::<Msg<SAME_LABEL, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "second registration must not overwrite the first resolver id"
-                );
                 assert_eq!(
                     left_peer
                         .recv::<Msg<SAME_LABEL, u32>>()
@@ -322,19 +286,12 @@ fn same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority() {
                 );
 
                 right_origin
-                    .send::<Msg<SAME_LABEL, u32>>(&1607)
+                    .send::<Msg<SAME_LABEL, u64>>(&1607)
                     .await
                     .expect("second resolver id keeps right authority");
-                assert!(
-                    right_other
-                        .recv::<Msg<SAME_LABEL, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "first registration must not shadow the second resolver id"
-                );
                 assert_eq!(
                     right_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .recv::<Msg<SAME_LABEL, u64>>()
                         .await
                         .expect("right resolver peer receives"),
                     1607
@@ -359,7 +316,6 @@ fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
             let nested_role2 = program::<2>();
             let direct_role0 = same_label_outbound_program_for::<0, ROUTE_RESOLVER>();
             let direct_role1 = same_label_outbound_program_for::<1, ROUTE_RESOLVER>();
-            let direct_role2 = same_label_outbound_program_for::<2, ROUTE_RESOLVER>();
 
             rv.set_resolver(
                 &nested_role0,
@@ -384,11 +340,8 @@ fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
             let mut direct_origin = rv
                 .enter(direct_sid, &direct_role0)
                 .expect("attach direct origin");
-            let mut direct_other = rv
-                .enter(direct_sid, &direct_role1)
-                .expect("attach direct other");
             let mut direct_peer = rv
-                .enter(direct_sid, &direct_role2)
+                .enter(direct_sid, &direct_role1)
                 .expect("attach direct peer");
 
             futures::executor::block_on(async {
@@ -405,19 +358,12 @@ fn same_scope_and_resolver_id_in_distinct_programs_keep_distinct_authority() {
                 );
 
                 direct_origin
-                    .send::<Msg<SAME_LABEL, u32>>(&1609)
+                    .send::<Msg<SAME_LABEL, u64>>(&1609)
                     .await
                     .expect("second program keeps its right resolver authority");
-                assert!(
-                    direct_other
-                        .recv::<Msg<SAME_LABEL, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "first program resolver must not overwrite the second program"
-                );
                 assert_eq!(
                     direct_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
+                        .recv::<Msg<SAME_LABEL, u64>>()
                         .await
                         .expect("direct right peer receives"),
                     1609
@@ -441,10 +387,8 @@ fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority()
                 .expect("register rendezvous");
             let wide_role0 = wide_roll_topology_program::<0>();
             let wide_role1 = wide_roll_topology_program::<1>();
-            let wide_role2 = wide_roll_topology_program::<2>();
             let narrow_role0 = narrow_roll_topology_program::<0>();
             let narrow_role1 = narrow_roll_topology_program::<1>();
-            let narrow_role2 = narrow_roll_topology_program::<2>();
 
             rv.set_resolver(
                 &wide_role0,
@@ -458,32 +402,21 @@ fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority()
             .expect("install narrow-roll resolver");
 
             let mut wide_origin = rv.enter(wide_sid, &wide_role0).expect("attach wide origin");
-            let mut wide_left = rv.enter(wide_sid, &wide_role1).expect("attach wide left");
-            let mut wide_right = rv.enter(wide_sid, &wide_role2).expect("attach wide right");
+            let mut wide_peer = rv.enter(wide_sid, &wide_role1).expect("attach wide peer");
             let mut narrow_origin = rv
                 .enter(narrow_sid, &narrow_role0)
                 .expect("attach narrow origin");
-            let mut narrow_left = rv
+            let mut narrow_peer = rv
                 .enter(narrow_sid, &narrow_role1)
-                .expect("attach narrow left");
-            let mut narrow_right = rv
-                .enter(narrow_sid, &narrow_role2)
-                .expect("attach narrow right");
+                .expect("attach narrow peer");
 
             futures::executor::block_on(async {
                 wide_origin
                     .send::<Msg<TOPOLOGY_LEFT, u32>>(&1610)
                     .await
                     .expect("wide-roll topology keeps left resolver authority");
-                assert!(
-                    wide_right
-                        .recv::<Msg<TOPOLOGY_RIGHT, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "narrow-roll topology must not overwrite the wide-roll resolver"
-                );
                 assert_eq!(
-                    wide_left
+                    wide_peer
                         .recv::<Msg<TOPOLOGY_LEFT, u32>>()
                         .await
                         .expect("wide-roll left peer receives"),
@@ -494,15 +427,8 @@ fn same_atoms_and_resolver_rows_with_distinct_topology_keep_distinct_authority()
                     .send::<Msg<TOPOLOGY_RIGHT, u32>>(&1611)
                     .await
                     .expect("narrow-roll topology keeps right resolver authority");
-                assert!(
-                    narrow_left
-                        .recv::<Msg<TOPOLOGY_LEFT, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "wide-roll topology must not shadow the narrow-roll resolver"
-                );
                 assert_eq!(
-                    narrow_right
+                    narrow_peer
                         .recv::<Msg<TOPOLOGY_RIGHT, u32>>()
                         .await
                         .expect("narrow-roll right peer receives"),
@@ -525,30 +451,20 @@ fn stateful_send_resolver_is_not_evaluated_twice() {
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program_for::<0, FLIP_ROUTE_RESOLVER>();
             let role1 = same_label_outbound_program_for::<1, FLIP_ROUTE_RESOLVER>();
-            let role2 = same_label_outbound_program_for::<2, FLIP_ROUTE_RESOLVER>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<FLIP_ROUTE_RESOLVER>::decision_state(&UNIT, flip_left_then_right),
             )
             .expect("install flipping resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
-            let mut left_peer = rv.enter(sid, &role1).expect("attach left peer");
-            let mut right_peer = rv.enter(sid, &role2).expect("attach right peer");
+            let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
             futures::executor::block_on(async {
                 origin.send::<Msg<SAME_LABEL, u32>>(&1602).await.expect(
                     "first resolver decision selects left and must not be rechecked as right",
                 );
-                assert!(
-                    right_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "second resolver arm must not materialize"
-                );
                 assert_eq!(
-                    left_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
+                    peer.recv::<Msg<SAME_LABEL, u32>>()
                         .await
                         .expect("left recv"),
                     1602
@@ -739,15 +655,13 @@ fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program_for::<0, DROP_ROUTE_RESOLVER>();
             let role1 = same_label_outbound_program_for::<1, DROP_ROUTE_RESOLVER>();
-            let role2 = same_label_outbound_program_for::<2, DROP_ROUTE_RESOLVER>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<DROP_ROUTE_RESOLVER>::decision_state(&UNIT, drop_left),
             )
             .expect("install drop resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
-            let mut left_peer = rv.enter(sid, &role1).expect("attach left peer");
-            let mut right_peer = rv.enter(sid, &role2).expect("attach right peer");
+            let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
             let value = 1604u32;
             let future = origin.send::<Msg<SAME_LABEL, u32>>(&value);
@@ -772,16 +686,8 @@ fn dropped_resolved_send_future_does_not_publish_runtime_evidence() {
                     .send::<Msg<SAME_LABEL, u32>>(&value)
                     .await
                     .expect("send state must reset after dropped future");
-                assert!(
-                    right_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
-                        .now_or_never()
-                        .is_none(),
-                    "dropped preview must not leave right arm materialized"
-                );
                 assert_eq!(
-                    left_peer
-                        .recv::<Msg<SAME_LABEL, u32>>()
+                    peer.recv::<Msg<SAME_LABEL, u32>>()
                         .await
                         .expect("left recv after reset"),
                     value

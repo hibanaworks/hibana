@@ -18,6 +18,19 @@ pub(in crate::endpoint) enum PublicActiveOp {
     BranchSend,
 }
 
+impl PublicActiveOp {
+    #[inline(always)]
+    pub(in crate::endpoint::kernel) fn transition_lease(self, expected: Self) -> PublicOpLease {
+        if self == Self::Poisoned {
+            PublicOpLease::Faulted
+        } else if self == expected {
+            PublicOpLease::Held
+        } else {
+            PublicOpLease::Rejected
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PublicOpLease {
@@ -25,6 +38,12 @@ pub(crate) enum PublicOpLease {
     Held = 1,
     Faulted = 2,
 }
+
+#[cfg(kani)]
+mod kani;
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

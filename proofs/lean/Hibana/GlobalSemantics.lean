@@ -1,6 +1,6 @@
 import Hibana.Generation
 import Hibana.GlobalSyntax
-import Hibana.RuntimeMonitor
+import Hibana.OperationAdmission
 
 namespace Hibana
 
@@ -23,7 +23,7 @@ inductive GlobalSessionStatus where
   deriving DecidableEq
 
 /-- A descriptor-admitted protocol occurrence. `globalId`, logical label,
-schema, and epoch are monitor facts reconstructed after raw transport evidence
+schema, and epoch are protocol facts reconstructed after raw transport evidence
 matches the exact resident descriptor; they are not claimed as wire fields. -/
 structure AdmittedMessage where
   session : Nat
@@ -243,18 +243,18 @@ def GlobalConfig.commitLocal?
     (config : GlobalConfig)
     (role globalId : Nat)
     (action : LocalAction) : Option GlobalConfig :=
-  let request : MonitorRequest := {
+  let request : OperationRequest := {
     eventId := config.choreo.localEventId role globalId
     action
   }
   let graph := projectGraph role config.choreo
-  match matchingMonitorEvent? graph request with
+  match matchingOperationEvent? graph request with
   | none => none
   | some event =>
       match mergeRouteSelection? event.conflicts config.routeSelection with
       | none => none
       | some routeSelection =>
-          match monitorStep graph (config.localState role) request with
+          match admitOperation graph (config.localState role) request with
           | .rejected => none
           | .accepted next =>
               some ((config.withLocalState role next).withRouteSelection routeSelection)
@@ -264,7 +264,7 @@ private theorem commit_local_preserves_protocol_identity
     (committed : config.commitLocal? role globalId action = some next) :
     next.protocolIdentity = config.protocolIdentity := by
   unfold GlobalConfig.commitLocal? at committed
-  cases matchCase : matchingMonitorEvent?
+  cases matchCase : matchingOperationEvent?
       (projectGraph role config.choreo)
       { eventId := config.choreo.localEventId role globalId, action } with
   | none => simp [matchCase] at committed
@@ -272,17 +272,17 @@ private theorem commit_local_preserves_protocol_identity
       cases mergeCase : mergeRouteSelection? event.conflicts config.routeSelection with
       | none => simp [matchCase, mergeCase] at committed
       | some routeSelection =>
-          cases monitorCase : monitorStep
+          cases admissionCase : admitOperation
               (projectGraph role config.choreo)
               (config.localState role)
               { eventId := config.choreo.localEventId role globalId, action } with
-          | rejected => simp [matchCase, mergeCase, monitorCase] at committed
+          | rejected => simp [matchCase, mergeCase, admissionCase] at committed
           | accepted localState =>
               have nextEq :
                   (config.withLocalState role localState).withRouteSelection
                     routeSelection = next := by
                 exact Option.some.inj (by
-                  simpa [matchCase, mergeCase, monitorCase] using committed)
+                  simpa [matchCase, mergeCase, admissionCase] using committed)
               subst next
               rfl
 
@@ -290,11 +290,11 @@ theorem commit_local_success_shape
     {config next : GlobalConfig} {role globalId : Nat} {action : LocalAction}
     (committed : config.commitLocal? role globalId action = some next) :
     ∃ event localState routeSelection,
-      matchingMonitorEvent?
+      matchingOperationEvent?
           (projectGraph role config.choreo)
           { eventId := config.choreo.localEventId role globalId, action } = some event /\
       mergeRouteSelection? event.conflicts config.routeSelection = some routeSelection /\
-      monitorStep
+      admitOperation
           (projectGraph role config.choreo)
           (config.localState role)
           { eventId := config.choreo.localEventId role globalId, action } =
@@ -302,7 +302,7 @@ theorem commit_local_success_shape
       next =
         (config.withLocalState role localState).withRouteSelection routeSelection := by
   unfold GlobalConfig.commitLocal? at committed
-  cases matchCase : matchingMonitorEvent?
+  cases matchCase : matchingOperationEvent?
       (projectGraph role config.choreo)
       { eventId := config.choreo.localEventId role globalId, action } with
   | none => simp [matchCase] at committed
@@ -310,21 +310,21 @@ theorem commit_local_success_shape
       cases mergeCase : mergeRouteSelection? event.conflicts config.routeSelection with
       | none => simp [matchCase, mergeCase] at committed
       | some routeSelection =>
-          cases monitorCase : monitorStep
+          cases admissionCase : admitOperation
               (projectGraph role config.choreo)
               (config.localState role)
               { eventId := config.choreo.localEventId role globalId, action } with
-          | rejected => simp [matchCase, mergeCase, monitorCase] at committed
+          | rejected => simp [matchCase, mergeCase, admissionCase] at committed
           | accepted localState =>
               have nextEq :
                   (config.withLocalState role localState).withRouteSelection
                     routeSelection = next := by
                 exact Option.some.inj (by
-                  simpa [matchCase, mergeCase, monitorCase] using committed)
+                  simpa [matchCase, mergeCase, admissionCase] using committed)
               exact ⟨event, localState, routeSelection, rfl, mergeCase,
                 rfl, nextEq.symm⟩
 
-/-- A local monitor commit may update only local commit and route-selection
+/-- A local endpoint commit may update only local commit and route-selection
 state. It cannot mutate session identity, event phases, wire queue, or resource
 ownership. -/
 theorem commit_local_preserves_global_frame
@@ -427,38 +427,173 @@ def GlobalConfig.resolveStep?
     (config : GlobalConfig)
     (role conflict resolver : Nat)
     (arm : RouteArm) : Option GlobalConfig :=
-  match config.status, config.routeSelection conflict with
-  | .live, none =>
-      match applyResolver
-          (projectGraph role config.choreo)
-          (config.localState role)
-          conflict
-          resolver
-          (.select arm) with
-      | some (.selected localState) =>
-          let routeSelection := fun candidate =>
-            if candidate = conflict then some arm else config.routeSelection candidate
-          some ((config.withLocalState role localState).withRouteSelection routeSelection)
-      | none | some .rejected => none
-  | _, _ => none
+  match config.status, config.routeSelection conflict,
+      config.choreo.controllerForConflict? conflict with
+  | .live, none, some controller =>
+      if role = controller then
+        match applyResolver
+            (projectGraph role config.choreo)
+            (config.localState role)
+            conflict
+            resolver
+            (.select arm) with
+        | some (.selected localState) =>
+            let routeSelection := fun candidate =>
+              if candidate = conflict then some arm else config.routeSelection candidate
+            some ((config.withLocalState role localState).withRouteSelection routeSelection)
+        | none | some .rejected => none
+      else
+        none
+  | _, _, _ => none
 
 /-- Resolver rejection is a protocol fault, not scheduler stutter. The same
 operation that observes rejection begins distributed cancellation. -/
 def GlobalConfig.rejectResolverStep?
     (config : GlobalConfig)
     (role conflict resolver : Nat) : Option GlobalConfig :=
-  match config.status, config.routeSelection conflict with
-  | .live, none =>
-      match applyResolver
+  match config.status, config.routeSelection conflict,
+      config.choreo.controllerForConflict? conflict with
+  | .live, none, some controller =>
+      if role = controller then
+        match applyResolver
+            (projectGraph role config.choreo)
+            (config.localState role)
+            conflict
+            resolver
+            .reject with
+        | some .rejected =>
+            some (config.beginCancellation role .protocolViolation)
+        | none | some (.selected _) => none
+      else
+        none
+  | _, _, _ => none
+
+theorem resolve_step_has_exact_controller_successor
+    {config next : GlobalConfig}
+    {role conflict resolver : Nat}
+    {arm : RouteArm}
+    (stepped : config.resolveStep? role conflict resolver arm = some next) :
+    ∃ localState,
+      config.status = .live /\
+      config.routeSelection conflict = none /\
+      config.choreo.controllerForConflict? conflict = some role /\
+      applyResolver
           (projectGraph role config.choreo)
           (config.localState role)
-          conflict
-          resolver
-          .reject with
-      | some .rejected =>
-          some (config.beginCancellation role .protocolViolation)
-      | none | some (.selected _) => none
-  | _, _ => none
+          conflict resolver (.select arm) = some (.selected localState) /\
+      (config.withLocalState role localState).withRouteSelection
+        (fun candidate =>
+          if candidate = conflict then some arm
+          else config.routeSelection candidate) = next := by
+  unfold GlobalConfig.resolveStep? at stepped
+  cases statusCase : config.status with
+  | cancelling cause awaiting => simp [statusCase] at stepped
+  | retired cause => simp [statusCase] at stepped
+  | live =>
+      cases selectionCase : config.routeSelection conflict with
+      | some selected => simp [statusCase, selectionCase] at stepped
+      | none =>
+          cases controllerCase : config.choreo.controllerForConflict? conflict with
+          | none => simp [statusCase, selectionCase, controllerCase] at stepped
+          | some controller =>
+              by_cases controllerExact : role = controller
+              · subst controller
+                cases resolverCase : applyResolver
+                    (projectGraph role config.choreo)
+                    (config.localState role)
+                    conflict resolver (.select arm) with
+                | none =>
+                    simp [statusCase, selectionCase, controllerCase,
+                      resolverCase] at stepped
+                | some result =>
+                    cases result with
+                    | rejected =>
+                        simp [statusCase, selectionCase, controllerCase,
+                          resolverCase] at stepped
+                    | selected localState =>
+                        have nextExact :
+                            (config.withLocalState role localState).withRouteSelection
+                                (fun candidate =>
+                                  if candidate = conflict then some arm
+                                  else config.routeSelection candidate) = next :=
+                          Option.some.inj (by
+                            simpa [statusCase, selectionCase, controllerCase,
+                              resolverCase] using stepped)
+                        exact ⟨localState, rfl, rfl, rfl, rfl, nextExact⟩
+              · simp [statusCase, selectionCase, controllerCase,
+                  controllerExact] at stepped
+
+theorem reject_resolver_step_has_exact_controller_successor
+    {config next : GlobalConfig}
+    {role conflict resolver : Nat}
+    (stepped : config.rejectResolverStep? role conflict resolver = some next) :
+    config.status = .live /\
+    config.routeSelection conflict = none /\
+    config.choreo.controllerForConflict? conflict = some role /\
+    applyResolver
+        (projectGraph role config.choreo)
+        (config.localState role)
+        conflict resolver .reject = some .rejected /\
+    config.beginCancellation role .protocolViolation = next := by
+  unfold GlobalConfig.rejectResolverStep? at stepped
+  cases statusCase : config.status with
+  | cancelling cause awaiting => simp [statusCase] at stepped
+  | retired cause => simp [statusCase] at stepped
+  | live =>
+      cases selectionCase : config.routeSelection conflict with
+      | some selected => simp [statusCase, selectionCase] at stepped
+      | none =>
+          cases controllerCase : config.choreo.controllerForConflict? conflict with
+          | none => simp [statusCase, selectionCase, controllerCase] at stepped
+          | some controller =>
+              by_cases controllerExact : role = controller
+              · subst controller
+                cases resolverCase : applyResolver
+                    (projectGraph role config.choreo)
+                    (config.localState role)
+                    conflict resolver .reject with
+                | none =>
+                    simp [statusCase, selectionCase, controllerCase,
+                      resolverCase] at stepped
+                | some result =>
+                    cases result with
+                    | selected localState =>
+                        simp [statusCase, selectionCase, controllerCase,
+                          resolverCase] at stepped
+                    | rejected =>
+                        have nextExact :
+                            config.beginCancellation role .protocolViolation = next :=
+                          Option.some.inj (by
+                            simpa [statusCase, selectionCase, controllerCase,
+                              resolverCase] using stepped)
+                        exact ⟨rfl, rfl, rfl, rfl, nextExact⟩
+              · simp [statusCase, selectionCase, controllerCase,
+                  controllerExact] at stepped
+
+theorem non_controller_resolve_is_rejected
+    (config : GlobalConfig)
+    {role controller conflict resolver : Nat}
+    {arm : RouteArm}
+    (controllerExact :
+      config.choreo.controllerForConflict? conflict = some controller)
+    (wrongRole : role ≠ controller) :
+    config.resolveStep? role conflict resolver arm = none := by
+  unfold GlobalConfig.resolveStep?
+  rw [controllerExact]
+  cases config.status <;> cases config.routeSelection conflict <;>
+    simp [wrongRole]
+
+theorem non_controller_rejection_is_rejected
+    (config : GlobalConfig)
+    {role controller conflict resolver : Nat}
+    (controllerExact :
+      config.choreo.controllerForConflict? conflict = some controller)
+    (wrongRole : role ≠ controller) :
+    config.rejectResolverStep? role conflict resolver = none := by
+  unfold GlobalConfig.rejectResolverStep?
+  rw [controllerExact]
+  cases config.status <;> cases config.routeSelection conflict <;>
+    simp [wrongRole]
 
 def GlobalConfig.rollReady
     (config : GlobalConfig) (roll : GlobalRoll) : Bool :=
@@ -671,107 +806,36 @@ theorem resolve_step_preserves_protocol_identity
     {config next : GlobalConfig} {role conflict resolver : Nat} {arm : RouteArm}
     (stepped : config.resolveStep? role conflict resolver arm = some next) :
     next.protocolIdentity = config.protocolIdentity := by
-  unfold GlobalConfig.resolveStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict
-              resolver
-              (.select arm) with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | rejected => simp [statusCase, selectionCase, resolverCase] at stepped
-              | selected localState =>
-                  have nextEq :
-                      (config.withLocalState role localState).withRouteSelection
-                          (fun candidate =>
-                            if candidate = conflict then
-                              some arm
-                            else
-                              config.routeSelection candidate) = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  rfl
+  obtain ⟨localState, _, _, _, _, nextExact⟩ :=
+    resolve_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  rfl
 
 theorem reject_resolver_step_preserves_protocol_identity
     {config next : GlobalConfig} {role conflict resolver : Nat}
     (stepped : config.rejectResolverStep? role conflict resolver = some next) :
     next.protocolIdentity = config.protocolIdentity := by
-  unfold GlobalConfig.rejectResolverStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict resolver .reject with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | selected localState =>
-                  simp [statusCase, selectionCase, resolverCase] at stepped
-              | rejected =>
-                  have nextEq : config.beginCancellation role .protocolViolation = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  cases pendingCase : removeAwaitingRole
-                      (List.range config.roleCount) role <;>
-                    simp [GlobalConfig.beginCancellation, statusCase, pendingCase,
-                      GlobalConfig.protocolIdentity]
+  obtain ⟨statusLive, _, _, _, nextExact⟩ :=
+    reject_resolver_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  cases pendingCase : removeAwaitingRole
+      (List.range config.roleCount) role <;>
+    simp [GlobalConfig.beginCancellation, statusLive, pendingCase,
+      GlobalConfig.protocolIdentity]
 
 theorem resolve_step_publishes_one_arm_and_rejects_reselection
     {config next : GlobalConfig} {role conflict resolver : Nat} {arm : RouteArm}
     (stepped : config.resolveStep? role conflict resolver arm = some next) :
     next.routeSelection conflict = some arm /\
     ∀ requested, next.resolveStep? role conflict resolver requested = none := by
-  unfold GlobalConfig.resolveStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict
-              resolver
-              (.select arm) with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | rejected => simp [statusCase, selectionCase, resolverCase] at stepped
-              | selected localState =>
-                  have nextEq :
-                      (config.withLocalState role localState).withRouteSelection
-                          (fun candidate =>
-                            if candidate = conflict then
-                              some arm
-                            else
-                              config.routeSelection candidate) = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  constructor
-                  · simp [GlobalConfig.withLocalState, GlobalConfig.withRouteSelection]
-                  · intro requested
-                    simp [GlobalConfig.resolveStep?, GlobalConfig.withLocalState,
-                      GlobalConfig.withRouteSelection, statusCase]
+  obtain ⟨localState, statusLive, _, controller, _, nextExact⟩ :=
+    resolve_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  constructor
+  · simp [GlobalConfig.withLocalState, GlobalConfig.withRouteSelection]
+  · intro requested
+    simp [GlobalConfig.resolveStep?, GlobalConfig.withLocalState,
+      GlobalConfig.withRouteSelection, statusLive, controller]
 
 theorem roll_step_preserves_protocol_identity
     {config next : GlobalConfig} {rollId : Nat}

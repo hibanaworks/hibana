@@ -1,7 +1,7 @@
 use super::common::*;
 
 #[test]
-fn transport_contract_separates_monitor_safety_from_affine_delivery() {
+fn transport_contract_separates_local_protocol_safety_from_affine_delivery() {
     let transport = read("src/transport.rs");
     let contract_tests = read("src/transport/tests.rs");
     let integration_transport = read("tests/common/mod.rs");
@@ -25,7 +25,7 @@ fn transport_contract_separates_monitor_safety_from_affine_delivery() {
     ] {
         assert!(
             transport.contains(required) || contract_tests.contains(required),
-            "transport contract must preserve protocol-neutral monitor semantics: {required}"
+            "transport contract must preserve protocol-neutral endpoint semantics: {required}"
         );
     }
     for forbidden in [

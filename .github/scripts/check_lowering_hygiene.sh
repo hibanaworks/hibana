@@ -203,6 +203,7 @@ done
 capture_rg LOWERING_MACRO_HITS \
   "macro_rules owner scan" \
   -n "macro_rules![[:space:]]+[A-Za-z_][A-Za-z0-9_]*" src \
+  -g '!src/**/kani.rs' \
   -g '!src/**/tests/**' \
   -g '!src/**/tests.rs'
 while IFS= read -r hit; do

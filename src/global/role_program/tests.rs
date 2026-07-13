@@ -54,7 +54,10 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
         g::send::<0, 1, Msg<31, u8>>(),
         g::send::<0, 2, Msg<32, u8>>(),
     );
-    let right = g::send::<0, 1, Msg<33, u8>>();
+    let right = g::seq(
+        g::send::<0, 1, Msg<33, u8>>(),
+        g::send::<0, 2, Msg<34, u8>>(),
+    );
     let route = g::route(left, right).resolve::<NESTED_PAR_ROUTE_RESOLVER>();
     let role0: RoleProgram<0> = project(&route);
     let program_ref = role0.role_image_ref().program;
@@ -70,7 +73,7 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
     assert_eq!(program_ref.route_controller_role(scope), 0);
     assert!(program_ref.route_resolver(scope).is_some());
     assert_eq!(program_ref.route_participant_mask(scope, 0), 0b111);
-    assert_eq!(program_ref.route_participant_mask(scope, 1), 0b11);
+    assert_eq!(program_ref.route_participant_mask(scope, 1), 0b111);
 
     let events = LocalEventProgram::from_rows(role0.role_image_ref());
     let slot = events.route_scope_slot(scope).expect("route slot");
@@ -148,8 +151,14 @@ fn route_authority_storage_counts_program_wide_dynamic_scopes() {
 #[test]
 fn role_projections_share_program_wide_resolver_identity() {
     let route = g::route(
-        g::send::<0, 1, Msg<34, u8>>(),
-        g::send::<0, 2, Msg<35, u8>>(),
+        g::seq(
+            g::send::<0, 1, Msg<34, u8>>(),
+            g::send::<0, 2, Msg<36, u8>>(),
+        ),
+        g::seq(
+            g::send::<0, 2, Msg<35, u8>>(),
+            g::send::<0, 1, Msg<37, u8>>(),
+        ),
     )
     .resolve::<NESTED_PAR_ROUTE_RESOLVER>();
     let role0: RoleProgram<0> = project(&route);
@@ -162,16 +171,22 @@ fn role_projections_share_program_wide_resolver_identity() {
     let scope = program
         .route_resolver_scope_at_row(0)
         .expect("route scope row");
-    assert_eq!(program.route_participant_mask(scope, 0), 0b11);
-    assert_eq!(program.route_participant_mask(scope, 1), 0b101);
+    assert_eq!(program.route_participant_mask(scope, 0), 0b111);
+    assert_eq!(program.route_participant_mask(scope, 1), 0b111);
 }
 
 #[test]
 fn resolver_identity_distinguishes_equal_count_scope_topology() {
     let wide_roll = g::seq(
         g::route(
-            g::send::<0, 1, Msg<36, u8>>(),
-            g::send::<0, 2, Msg<37, u8>>(),
+            g::seq(
+                g::send::<0, 1, Msg<36, u8>>(),
+                g::send::<0, 2, Msg<76, u8>>(),
+            ),
+            g::seq(
+                g::send::<0, 2, Msg<37, u8>>(),
+                g::send::<0, 1, Msg<77, u8>>(),
+            ),
         )
         .resolve::<NESTED_PAR_ROUTE_RESOLVER>(),
         g::seq(
@@ -182,8 +197,14 @@ fn resolver_identity_distinguishes_equal_count_scope_topology() {
     );
     let narrow_roll = g::seq(
         g::route(
-            g::send::<0, 1, Msg<36, u8>>(),
-            g::send::<0, 2, Msg<37, u8>>(),
+            g::seq(
+                g::send::<0, 1, Msg<36, u8>>(),
+                g::send::<0, 2, Msg<76, u8>>(),
+            ),
+            g::seq(
+                g::send::<0, 2, Msg<37, u8>>(),
+                g::send::<0, 1, Msg<77, u8>>(),
+            ),
         )
         .resolve::<NESTED_PAR_ROUTE_RESOLVER>(),
         g::seq(
@@ -752,7 +773,13 @@ fn roll_route_internal_parallel_program() -> impl Projectable {
     );
     let right = g::seq(
         g::send::<1, 1, Msg<146, ()>>(),
-        g::send::<1, 2, Msg<11, u8>>(),
+        g::seq(
+            g::send::<1, 2, Msg<11, u8>>(),
+            g::seq(
+                g::send::<1, 3, Msg<155, u8>>(),
+                g::send::<1, 4, Msg<156, u8>>(),
+            ),
+        ),
     );
     let routed = g::route(left, right).resolve::<ROLL_ROUTE_INTERNAL_PARALLEL_RESOLVER>();
     g::seq(
@@ -930,42 +957,6 @@ fn parallel_route_projection_keeps_resident_descriptor_without_public_step_surfa
             "route projection should preserve resident route scope facts"
         );
     });
-}
-
-#[test]
-fn lane_resident_route_rows_do_not_restore_full_domain_copies() {
-    let packed_route_lane_rows = MAX_ROUTE_ARM_LANE_ROWS
-        * core::mem::size_of::<PackedRouteArmRow>()
-        + MAX_ROUTE_SCOPE_LANE_ROWS * core::mem::size_of::<PackedLaneRange>();
-    let full_domain_route_lane_rows = (MAX_ROUTE_ARM_LANE_ROWS + MAX_ROUTE_SCOPE_LANE_ROWS)
-        * LANE_SET_VIEW_WORDS
-        * core::mem::size_of::<LaneWord>();
-
-    assert!(
-        packed_route_lane_rows < full_domain_route_lane_rows,
-        "route lane rows must stay packed and must not restore full-domain lane-set copies: current={} full_domain={}",
-        packed_route_lane_rows,
-        full_domain_route_lane_rows
-    );
-    assert!(
-        core::mem::size_of::<RouteArmLaneStepRow>()
-            < LANE_SET_VIEW_WORDS * core::mem::size_of::<LaneWord>(),
-        "one sparse first/last row must stay smaller than a full-domain lane-set row"
-    );
-}
-
-#[test]
-fn route_arm_row_keeps_exact_ranges_in_compact_scalar_limbs() {
-    let separate_exact_range_columns =
-        (core::mem::size_of::<PackedLaneRange>() * 2) + core::mem::size_of::<u8>();
-    assert_eq!(
-        core::mem::size_of::<PackedRouteArmRow>(),
-        ROLE_IMAGE_ROUTE_ARM_STRIDE
-    );
-    assert!(
-        ROLE_IMAGE_ROUTE_ARM_STRIDE < separate_exact_range_columns,
-        "route arm row should keep event range, child delta, and lane-step range in one compact scalar row"
-    );
 }
 
 type SparseMultiLaneLeft = g::Seq<

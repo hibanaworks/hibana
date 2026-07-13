@@ -94,11 +94,11 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_types.contains("Rejected = 0")
             && public_types.contains("Held = 1")
             && public_types.contains("Faulted = 2")
-            && public_runtime.contains("fn start_public_op(\n        &mut self,\n        op: PublicActiveOp,\n    ) -> super::core::PublicOpLease")
-            && public_runtime.contains("PublicActiveOp::Idle => {")
-            && public_runtime.contains(
-                "PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted"
-            )
+            && public_types.contains("fn transition_lease(self, expected: Self)")
+            && public_types.contains("if self == Self::Poisoned")
+            && public_types.contains("else if self == expected")
+            && public_runtime.contains("self.public_active_op.transition_lease(from)")
+            && !public_runtime.contains("fn start_public_op")
             && public_runtime.contains("self.public_active_op = PublicActiveOp::Poisoned;")
             && public_runtime.contains("SessionFaultKind::ProgressInvariantViolated")
             && !public_runtime.contains("fn enter_public_op(&mut self, op: PublicActiveOp) -> bool")
@@ -108,14 +108,18 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
             && public_runtime.contains("self.public_active_op != PublicActiveOp::Poisoned")
             && public_runtime.contains("fn clear_public_op_if_current(&mut self, op: PublicActiveOp)")
             && public_runtime.contains("fn init_public_send_state(\n        &mut self,\n        init: &SendInit,\n    ) -> super::core::PublicOpLease")
-            && public_runtime.contains("PublicActiveOp::Idle => self.start_public_op(PublicActiveOp::Send)")
+            && public_runtime.contains(
+                "self.transition_public_op(PublicActiveOp::Idle, PublicActiveOp::Send)"
+            )
             && public_runtime.contains("PublicActiveOp::RouteBranch =>")
             && public_runtime.contains(
                 "self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::BranchSend)"
             )
             && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
             && public_runtime.contains("fn init_public_recv_state(&mut self) -> super::core::PublicOpLease")
-            && public_runtime.contains("let lease = self.start_public_op(PublicActiveOp::Recv);")
+            && public_runtime.contains(
+                "let lease = self.transition_public_op(PublicActiveOp::Idle, PublicActiveOp::Recv);"
+            )
             && public_runtime.contains("fn init_public_offer_state(&mut self) -> super::core::PublicOpLease")
             && public_runtime.contains("PublicActiveOp::RestoredRouteBranch if self.public_route_branch.is_some()")
             && public_runtime.contains("transition_public_op(PublicActiveOp::RestoredRouteBranch, PublicActiveOp::Offer)")

@@ -15,7 +15,13 @@ macro_rules! final_form_protocol {
     (route_with_unselected_nested_par) => {
         g::seq(
             g::route(
-                g::send::<0, 1, Msg<20, ()>>(),
+                g::seq(
+                    g::send::<0, 1, Msg<20, ()>>(),
+                    g::seq(
+                        g::send::<0, 2, Msg<25, ()>>(),
+                        g::send::<0, 3, Msg<26, ()>>(),
+                    ),
+                ),
                 g::seq(
                     g::send::<0, 2, Msg<24, ()>>(),
                     g::par(

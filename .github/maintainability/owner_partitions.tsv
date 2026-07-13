@@ -80,6 +80,7 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_select.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/offer_refresh.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/public_types.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/public_types
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_commit_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver.rs
@@ -137,6 +138,17 @@ src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
+src/global/const_dsl	src/global/const_dsl/eff_list.rs
+src/global/const_dsl	src/global/const_dsl/endpoint_controller
+src/global/const_dsl	src/global/const_dsl/endpoint_controller.rs
+src/global/const_dsl	src/global/const_dsl/endpoint_selectors
+src/global/const_dsl	src/global/const_dsl/endpoint_selectors.rs
+src/global/const_dsl	src/global/const_dsl/receive_lane_causality
+src/global/const_dsl	src/global/const_dsl/receive_lane_causality.rs
+src/global/const_dsl	src/global/const_dsl/route.rs
+src/global/const_dsl	src/global/const_dsl/scope
+src/global/const_dsl	src/global/const_dsl/scope.rs
+src/global/const_dsl	src/global/const_dsl/scope_ranges.rs
 src/global/role_program	src/global/role_program/image_impl
 src/global/role_program	src/global/role_program/image_impl.rs
 src/global/role_program	src/global/role_program/image_types.rs
@@ -174,6 +186,7 @@ src/rendezvous	src/rendezvous/error.rs
 src/rendezvous	src/rendezvous/port
 src/rendezvous	src/rendezvous/port.rs
 src/rendezvous	src/rendezvous/recv_frame_receipt.rs
+src/rendezvous	src/rendezvous/recv_frame_receipt
 src/rendezvous	src/rendezvous/tables
 src/rendezvous	src/rendezvous/tables.rs
 src/rendezvous/core	src/rendezvous/core/access_port.rs
@@ -232,7 +245,9 @@ tests	tests/ui.rs
 tests/semantic_surface	tests/semantic_surface/common.rs
 tests/semantic_surface	tests/semantic_surface/descriptor_measurement.rs
 tests/semantic_surface	tests/semantic_surface/endpoint_active_leases.rs
+tests/semantic_surface	tests/semantic_surface/end_to_end_refinement.rs
 tests/semantic_surface	tests/semantic_surface/kani_proof_gate.rs
+tests/semantic_surface	tests/semantic_surface/lean_ci_gate.rs
 tests/semantic_surface	tests/semantic_surface/lean_proof_gate.rs
 tests/semantic_surface	tests/semantic_surface/lease_owner.rs
 tests/semantic_surface	tests/semantic_surface/measurement_gates.rs

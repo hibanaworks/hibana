@@ -451,12 +451,13 @@ for required in \
   "received transport frames must be committed, explicitly requeued, or explicitly discarded" \
   "impl Drop for ReceivedFrameCore" \
   "if self.receipt.is_current()" \
-  "if self.outstanding.replace(true)" \
-  "if !self.outstanding.get()" \
+  "RecvFrameReceiptPhase::Outstanding" \
+  "owner: Option<RecvFrameReceiptOwner>" \
+  "None => crate::invariant()" \
   "crate::invariant()" \
   "if self.lane_wire() != port.lane().as_wire()" \
-  "if self.port_key != port_key" \
-  "if self.state != receipt_state" \
+  "if owner.port_key != port_key" \
+  "if owner.state != receipt_state" \
   "fn issue(&self, port_key" \
   "assert_matches_port" \
   "fn requeue_on" \
@@ -468,6 +469,12 @@ do
     exit 1
   fi
 done
+
+if [[ "${port_rs}" == *"if self.state.is_null()"* ]] \
+  || [[ "${port_rs}" == *"if self.outstanding.replace(true)"* ]]; then
+  echo "transport receive-frame authority must not use raw-null or boolean phase fallback" >&2
+  exit 1
+fi
 
 if [[ "${port_rs}" == *"fn discard_terminal(mut self)"* ]] \
   || [[ "${port_rs}" == *"fn discard_nonsemantic(mut self)"* ]]; then

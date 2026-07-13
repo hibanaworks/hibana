@@ -298,7 +298,7 @@ impl PortOpen {
 /// in transport-owned handles instead of leaking transport future types into
 /// higher layers.
 ///
-/// # Monitor boundary and delivery premise
+/// # Endpoint enforcement boundary and delivery premise
 /// Every successful [`poll_recv`](Transport::poll_recv) yields one carrier
 /// observation. Hibana checks its session, lane, roles, frame label, and exact
 /// descriptor occurrence before commit but cannot authenticate carrier identity. An

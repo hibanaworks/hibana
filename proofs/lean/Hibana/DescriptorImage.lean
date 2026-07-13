@@ -1,5 +1,5 @@
 import Hibana.Refinement
-import Hibana.RuntimeMonitor
+import Hibana.OperationAdmission
 
 namespace Hibana
 
@@ -135,15 +135,6 @@ theorem rebase_program_source_lane_span
     (markRouteEnters : Bool) :
     (rebaseProgramSource source atomOffset laneOffset scopeOffset markRouteEnters).laneSpan =
       source.laneSpan := rfl
-
-def Choreo.firstVisibleSenders : Choreo -> List Nat
-  | .send sender _ _ _ => [sender]
-  | .seq left right =>
-      let visible := left.firstVisibleSenders
-      if visible.isEmpty then right.firstVisibleSenders else visible
-  | .par left right | .route _ left right =>
-      (left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups
-  | .roll body => body.firstVisibleSenders
 
 def Choreo.participants : Choreo -> List Nat
   | .send sender receiver _ _ => [sender, receiver].eraseDups

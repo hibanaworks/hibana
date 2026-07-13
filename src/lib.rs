@@ -7,8 +7,9 @@
 #![doc(html_no_source)]
 #![recursion_limit = "256"]
 
-//! Hibana is a Rust 2024 `no_std` / no-alloc-oriented runtime for affine
-//! multiparty session types.
+//! Hibana is a Rust 2024 `no_std` / no-alloc-oriented runtime whose
+//! choreography-derived enforcement kernel executes compact per-role protocol
+//! descriptors.
 //!
 //! The crate intentionally has two faces:
 //!
@@ -24,20 +25,16 @@
 //!
 //! ## App path
 //!
-//! Application code writes choreography with [`g`] and drives an endpoint that a
-//! protocol crate has already attached.
+//! Start with the complete two-role example from a Hibana repository checkout:
 //!
-//! ```rust,ignore
-//! use hibana::g;
-//!
-//! let app = g::seq(
-//!     g::send::<0, 1, g::Msg<1, u32>>(),
-//!     g::send::<1, 0, g::Msg<2, u32>>(),
-//! );
-//!
-//! endpoint.send::<g::Msg<1, u32>>(&7).await?;
-//! let reply = endpoint.recv::<g::Msg<2, u32>>().await?;
+//! ```text
+//! cargo run --example ping_pong
 //! ```
+//!
+//! The [runnable source](https://github.com/hibanaworks/hibana/blob/main/examples/ping_pong.rs)
+//! defines one [`g`] choreography, projects both roles, attaches their endpoints,
+//! and executes the protocol. Application code then drives the endpoint that its
+//! protocol crate attached.
 //!
 //! The localside API is deliberately small:
 //!
@@ -79,10 +76,10 @@
 //! let program = g::seq(transport_prefix, app);
 //! let role0: RoleProgram<0> = project(&program);
 //!
-//! let mut slab = [0u8; 4096];
+//! // `runtime_slab: &mut [u8]` is supplied from the measured deployment budget.
 //! let mut kit_storage = runtime::SessionKitStorage::<MyTransport>::uninit();
 //! let kit = kit_storage.init();
-//! let rv = kit.rendezvous(&mut slab, transport)?;
+//! let rv = kit.rendezvous(runtime_slab, transport)?;
 //! let endpoint = rv.enter(sid, &role0)?;
 //! ```
 //!

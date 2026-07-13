@@ -8,7 +8,6 @@ use core::cell::UnsafeCell;
 use std::cell::RefCell;
 
 use common::TestTransport;
-use futures::FutureExt;
 use hibana::{
     Endpoint,
     g::{self, Message, Msg},
@@ -282,7 +281,7 @@ fn rolled_same_label_target_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(
         &g::route(
             g::send::<0, 1, Msg<SAME_REQ, u32>>(),
-            g::send::<0, 2, Msg<SAME_REQ, u32>>(),
+            g::send::<0, 1, Msg<SAME_REQ, u64>>(),
         )
         .resolve::<SAME_LABEL_RESOLVER>()
         .roll(),
@@ -293,7 +292,7 @@ fn rolled_nested_resolved_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let inner = g::route(
         g::send::<0, 1, Msg<INNER_SAME_REQ, u32>>(),
         g::seq(
-            g::send::<0, 2, Msg<INNER_SAME_REQ, u32>>(),
+            g::send::<0, 1, Msg<INNER_SAME_REQ, u64>>(),
             g::send::<0, 1, Msg<INNER_NOTIFY, u32>>(),
         ),
     )
@@ -310,7 +309,7 @@ fn rolled_mirrored_nested_resolved_program<const ROLE: u8>() -> RoleProgram<ROLE
     let inner = g::route(
         g::send::<0, 1, Msg<MIRROR_INNER_SAME_REQ, u32>>(),
         g::seq(
-            g::send::<0, 2, Msg<MIRROR_INNER_SAME_REQ, u32>>(),
+            g::send::<0, 1, Msg<MIRROR_INNER_SAME_REQ, u64>>(),
             g::send::<0, 1, Msg<MIRROR_INNER_NOTIFY, u32>>(),
         ),
     )
@@ -530,7 +529,7 @@ fn rolled_resolved_route_reenters_left_right_left_rows() {
 }
 
 #[test]
-fn rolled_resolved_same_label_reenters_and_targets_selected_peer_only() {
+fn rolled_resolved_same_label_reenters_with_selected_schema() {
     set_script(
         ScriptSlot::SameLabel,
         &[DecisionArm::Left, DecisionArm::Right, DecisionArm::Left],
@@ -543,7 +542,6 @@ fn rolled_resolved_same_label_reenters_and_targets_selected_peer_only() {
                 .expect("register rendezvous");
             let role0 = rolled_same_label_target_program::<0>();
             let role1 = rolled_same_label_target_program::<1>();
-            let role2 = rolled_same_label_target_program::<2>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<SAME_LABEL_RESOLVER>::decision_state(&UNIT, decide_same_label),
@@ -551,61 +549,39 @@ fn rolled_resolved_same_label_reenters_and_targets_selected_peer_only() {
             .expect("install same-label resolver");
             let sid = SessionId::new(0x0009_3002);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
-            let mut left_peer = rv.enter(sid, &role1).expect("attach left peer");
-            let mut right_peer = rv.enter(sid, &role2).expect("attach right peer");
+            let mut peer = rv.enter(sid, &role1).expect("attach peer");
 
             futures::executor::block_on(async {
                 origin
                     .send::<Msg<SAME_REQ, u32>>(&11)
                     .await
-                    .expect("left selected same-label send");
-                assert!(
-                    right_peer
-                        .recv::<Msg<SAME_REQ, u32>>()
-                        .now_or_never()
-                        .is_none()
-                );
+                    .expect("left schema selected");
                 assert_eq!(
-                    left_peer
-                        .recv::<Msg<SAME_REQ, u32>>()
+                    peer.recv::<Msg<SAME_REQ, u32>>()
                         .await
-                        .expect("left recv"),
+                        .expect("left schema recv"),
                     11
                 );
 
                 origin
-                    .send::<Msg<SAME_REQ, u32>>(&12)
+                    .send::<Msg<SAME_REQ, u64>>(&12)
                     .await
-                    .expect("right selected same-label send");
-                assert!(
-                    left_peer
-                        .recv::<Msg<SAME_REQ, u32>>()
-                        .now_or_never()
-                        .is_none()
-                );
+                    .expect("right schema selected");
                 assert_eq!(
-                    right_peer
-                        .recv::<Msg<SAME_REQ, u32>>()
+                    peer.recv::<Msg<SAME_REQ, u64>>()
                         .await
-                        .expect("right recv"),
+                        .expect("right schema recv"),
                     12
                 );
 
                 origin
                     .send::<Msg<SAME_REQ, u32>>(&13)
                     .await
-                    .expect("left selected same-label reentry");
-                assert!(
-                    right_peer
-                        .recv::<Msg<SAME_REQ, u32>>()
-                        .now_or_never()
-                        .is_none()
-                );
+                    .expect("left schema reentry");
                 assert_eq!(
-                    left_peer
-                        .recv::<Msg<SAME_REQ, u32>>()
+                    peer.recv::<Msg<SAME_REQ, u32>>()
                         .await
-                        .expect("left recv"),
+                        .expect("left schema reentry recv"),
                     13
                 );
             });
@@ -629,7 +605,6 @@ fn rolled_nested_resolved_route_reenters_asymmetric_paths() {
                 .expect("register rendezvous");
             let role0 = rolled_nested_resolved_program::<0>();
             let role1 = rolled_nested_resolved_program::<1>();
-            let role2 = rolled_nested_resolved_program::<2>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
@@ -643,7 +618,6 @@ fn rolled_nested_resolved_route_reenters_asymmetric_paths() {
             let sid = SessionId::new(0x0009_3003);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
-            let mut alternate_peer = rv.enter(sid, &role2).expect("attach alternate peer");
 
             futures::executor::block_on(async {
                 origin
@@ -657,19 +631,13 @@ fn rolled_nested_resolved_route_reenters_asymmetric_paths() {
                     21
                 );
                 origin
-                    .send::<Msg<INNER_SAME_REQ, u32>>(&22)
+                    .send::<Msg<INNER_SAME_REQ, u64>>(&22)
                     .await
-                    .expect("inner right selected send");
-                assert!(
-                    peer.recv::<Msg<INNER_SAME_REQ, u32>>()
-                        .now_or_never()
-                        .is_none()
-                );
+                    .expect("inner right schema selected");
                 assert_eq!(
-                    alternate_peer
-                        .recv::<Msg<INNER_SAME_REQ, u32>>()
+                    peer.recv::<Msg<INNER_SAME_REQ, u64>>()
                         .await
-                        .expect("inner right selected recv"),
+                        .expect("inner right schema recv"),
                     22
                 );
                 origin
@@ -705,17 +673,11 @@ fn rolled_nested_resolved_route_reenters_asymmetric_paths() {
                 origin
                     .send::<Msg<INNER_SAME_REQ, u32>>(&25)
                     .await
-                    .expect("inner left selected send");
-                assert!(
-                    alternate_peer
-                        .recv::<Msg<INNER_SAME_REQ, u32>>()
-                        .now_or_never()
-                        .is_none()
-                );
+                    .expect("inner left schema selected");
                 assert_eq!(
                     peer.recv::<Msg<INNER_SAME_REQ, u32>>()
                         .await
-                        .expect("inner left selected recv"),
+                        .expect("inner left schema recv"),
                     25
                 );
             });
@@ -740,7 +702,6 @@ fn rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths() {
                 .expect("register rendezvous");
             let role0 = rolled_mirrored_nested_resolved_program::<0>();
             let role1 = rolled_mirrored_nested_resolved_program::<1>();
-            let role2 = rolled_mirrored_nested_resolved_program::<2>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<OUTER_RESOLVER>::decision_state(&UNIT, decide_outer),
@@ -754,7 +715,6 @@ fn rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths() {
             let sid = SessionId::new(0x0009_3007);
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
             let mut peer = rv.enter(sid, &role1).expect("attach peer");
-            let mut alternate_peer = rv.enter(sid, &role2).expect("attach alternate peer");
 
             futures::executor::block_on(async {
                 origin
@@ -768,19 +728,13 @@ fn rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths() {
                     61
                 );
                 origin
-                    .send::<Msg<MIRROR_INNER_SAME_REQ, u32>>(&62)
+                    .send::<Msg<MIRROR_INNER_SAME_REQ, u64>>(&62)
                     .await
-                    .expect("inner right selected send");
-                assert!(
-                    peer.recv::<Msg<MIRROR_INNER_SAME_REQ, u32>>()
-                        .now_or_never()
-                        .is_none()
-                );
+                    .expect("inner right schema selected");
                 assert_eq!(
-                    alternate_peer
-                        .recv::<Msg<MIRROR_INNER_SAME_REQ, u32>>()
+                    peer.recv::<Msg<MIRROR_INNER_SAME_REQ, u64>>()
                         .await
-                        .expect("inner right selected recv"),
+                        .expect("inner right schema recv"),
                     62
                 );
                 origin
@@ -818,17 +772,11 @@ fn rolled_mirrored_nested_resolved_route_reenters_asymmetric_paths() {
                 origin
                     .send::<Msg<MIRROR_INNER_SAME_REQ, u32>>(&65)
                     .await
-                    .expect("inner left selected send");
-                assert!(
-                    alternate_peer
-                        .recv::<Msg<MIRROR_INNER_SAME_REQ, u32>>()
-                        .now_or_never()
-                        .is_none()
-                );
+                    .expect("inner left schema selected");
                 assert_eq!(
                     peer.recv::<Msg<MIRROR_INNER_SAME_REQ, u32>>()
                         .await
-                        .expect("inner left selected recv"),
+                        .expect("inner left schema recv"),
                     65
                 );
             });

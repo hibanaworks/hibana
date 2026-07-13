@@ -8,8 +8,8 @@ use crate::{
     global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
         DynamicRouteResolver, EffList, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, ScopeEvent,
-        ScopeId, ScopeKind, ScopeMarker, parallel_arm_ranges_from_enter,
-        route_arm_ranges_from_first_enter,
+        ScopeId, ScopeKind, ScopeMarker, first_visible_controller_mask,
+        route_arm_ranges_from_first_enter, unique_controller_role,
     },
 };
 
@@ -182,21 +182,6 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn unique_controller_role(mask: u16) -> Option<u8> {
-        if mask == 0 || (mask & (mask - 1)) != 0 {
-            return None;
-        }
-        let mut role = 0u8;
-        while role < u16::BITS as u8 {
-            if (mask & (1u16 << role)) != 0 {
-                return Some(role);
-            }
-            role += 1;
-        }
-        None
-    }
-
-    #[inline(always)]
     const fn route_controller_role(eff_list: &EffList, route_enter_marker_idx: usize) -> u8 {
         let scope_markers = eff_list.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
@@ -204,42 +189,12 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
         let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
             route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
-        let mask = Self::first_visible_controller_mask(eff_list, arm0_start, arm0_end)
-            | Self::first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-        match Self::unique_controller_role(mask) {
+        let mask = first_visible_controller_mask(eff_list, arm0_start, arm0_end)
+            | first_visible_controller_mask(eff_list, arm1_start, arm1_end);
+        match unique_controller_role(mask) {
             Some(role) => role,
             None => crate::invariant(),
         }
-    }
-
-    const fn first_visible_controller_mask(eff_list: &EffList, start: usize, end: usize) -> u16 {
-        let markers = eff_list.scope_markers();
-        let mut idx = start;
-        while idx < end && idx < eff_list.len() {
-            if let Some(route_enter) = Self::route_enter_at(markers, idx, end) {
-                let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
-                    route_arm_ranges_from_first_enter(markers, route_enter);
-                return Self::first_visible_controller_mask(eff_list, arm0_start, arm0_end)
-                    | Self::first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-            }
-            if let Some(par_enter) = Self::parallel_enter_at(markers, idx, end) {
-                let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
-                    parallel_arm_ranges_from_enter(markers, par_enter)
-                else {
-                    return 0;
-                };
-                return Self::first_visible_controller_mask(eff_list, arm0_start, arm0_end)
-                    | Self::first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-            }
-            if let Some(atom) = Self::atom_at(eff_list, idx) {
-                if atom.from >= crate::g::ROLE_DOMAIN_SIZE {
-                    return 0;
-                }
-                return 1u16 << atom.from;
-            }
-            idx += 1;
-        }
-        0
     }
 
     #[inline(always)]
@@ -253,70 +208,6 @@ impl<const N: usize> ProgramImageBytes<N> {
         } else {
             None
         }
-    }
-
-    const fn route_enter_at(
-        markers: &[crate::global::const_dsl::ScopeMarker],
-        start: usize,
-        end: usize,
-    ) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < markers.len() {
-            let marker = markers[idx];
-            if marker.offset() == start
-                && matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-                && Self::first_enter_for_scope(markers, idx)
-            {
-                let (_, _, _, _, _, arm1_end) = route_arm_ranges_from_first_enter(markers, idx);
-                if arm1_end <= end {
-                    return Some(idx);
-                }
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    const fn first_enter_for_scope(
-        markers: &[crate::global::const_dsl::ScopeMarker],
-        marker_idx: usize,
-    ) -> bool {
-        let marker = markers[marker_idx];
-        let mut idx = 0usize;
-        while idx < marker_idx {
-            let candidate = markers[idx];
-            if matches!(candidate.event, ScopeEvent::Enter)
-                && candidate.scope_id.same(marker.scope_id)
-            {
-                return false;
-            }
-            idx += 1;
-        }
-        true
-    }
-
-    const fn parallel_enter_at(
-        markers: &[crate::global::const_dsl::ScopeMarker],
-        start: usize,
-        end: usize,
-    ) -> Option<usize> {
-        let mut idx = 0usize;
-        while idx < markers.len() {
-            let marker = markers[idx];
-            if marker.offset() == start
-                && matches!(marker.event, ScopeEvent::Enter)
-                && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
-                && matches!(
-                    parallel_arm_ranges_from_enter(markers, idx),
-                    Some((_, _, _, right_end)) if right_end <= end
-                )
-            {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
     }
 
     pub(crate) const fn from_image(eff_list: &EffList, columns: ProgramImageColumns) -> Self {

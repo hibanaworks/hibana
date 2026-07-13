@@ -8,15 +8,18 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let workflow = read(".github/workflows/quality-gates.yml");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
+    let public_operation_harnesses = read("src/endpoint/kernel/core/public_types/kani.rs");
     let route_table_harnesses = read("src/rendezvous/tables/route_table/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
     let endpoint_selector_harnesses = read("src/global/const_dsl/endpoint_selectors/kani.rs");
+    let route_knowledge_harnesses = read("src/global/compiled/lowering/seal/kani.rs");
     let receive_lane_harnesses = read("src/global/const_dsl/receive_lane_causality/kani.rs");
     let resolver_row_harnesses = read("src/global/compiled/images/image/route_resolvers/kani.rs");
     let program_ref_harnesses = read("src/global/compiled/images/image/program_ref/kani.rs");
     let transport_harnesses = read("src/transport/kani.rs");
+    let receive_receipt_harnesses = read("src/rendezvous/recv_frame_receipt/kani.rs");
     let fault_harnesses = read("src/rendezvous/association/fault/kani.rs");
     let program_blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
     let program_columns = read("src/global/compiled/images/image/columns.rs");
@@ -43,6 +46,16 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(workflow.contains("cargo install --locked kani-verifier"));
     assert!(workflow.contains("cargo kani setup"));
     assert!(workflow.contains("bash ./.github/scripts/check_kani.sh"));
+    for harness in [
+        "receive_frame_receipt_resolution_is_affine",
+        "receive_frame_receipt_rejects_duplicate_issue",
+        "receive_frame_receipt_rejects_duplicate_resolution",
+        "receive_frame_receipt_rejects_foreign_port",
+        "receive_frame_receipt_rejects_foreign_state",
+    ] {
+        assert!(receive_receipt_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
     assert!(!script.contains("rg -q"));
     assert!(script.contains("hibana-kani-proofs.XXXXXX"));
     assert!(script.contains("hibana-kani-gate.XXXXXX"));
@@ -95,6 +108,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(authority_harnesses.contains("Arm::decode_single_ready_mask(mask) == expected"));
     assert!(!authority_harnesses.contains("kani::assume"));
+    let harness = "public_operation_transition_classifier_is_exact";
+    assert!(public_operation_harnesses.contains(&format!("fn {harness}()")));
+    assert!(public_operation_harnesses.contains("current == PublicActiveOp::Poisoned"));
+    assert!(public_operation_harnesses.contains("current == expected"));
+    assert!(!public_operation_harnesses.contains("kani::assume"));
+    assert!(script.contains(&format!("--harness {harness}")));
     for harness in [
         "selected_local_participant_mask_is_exact_intersection",
         "active_route_entry_cannot_be_overwritten",
@@ -180,6 +199,13 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(scope_harnesses.contains("scope.is_none() == (raw == u16::MAX)"));
     assert!(script.contains(&format!("--harness {harness}")));
 
+    let controller_harnesses = read("src/global/const_dsl/endpoint_controller/kani.rs");
+    let harness = "unique_controller_role_accepts_exact_single_bit_domain";
+    assert!(controller_harnesses.contains(&format!("fn {harness}()")));
+    assert!(controller_harnesses.contains("assert_eq!(mask, 1u16 << role)"));
+    assert!(!controller_harnesses.contains("kani::assume"));
+    assert!(script.contains(&format!("--harness {harness}")));
+
     for harness in [
         "outbound_selector_identity_is_exact_public_send_contract",
         "observer_path_decision_has_exact_merge_domain",
@@ -190,6 +216,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(endpoint_selector_harnesses.contains("left.payload_schema == right.payload_schema"));
     assert!(endpoint_selector_harnesses.contains("(Some(_), None) | (None, Some(_)) =>"));
     assert!(!endpoint_selector_harnesses.contains("kani::assume"));
+    let harness = "route_controller_or_in_band_evidence_is_exact_acceptance_domain";
+    assert!(route_knowledge_harnesses.contains(&format!("fn {harness}()")));
+    assert!(route_knowledge_harnesses.contains("role == controller || observer_paths_mergeable"));
+    assert!(route_knowledge_harnesses.contains("role != controller && !observer_paths_mergeable"));
+    assert!(script.contains(&format!("--harness {harness}")));
+    assert!(!route_knowledge_harnesses.contains("kani::assume"));
 
     for harness in [
         "three_event_causal_handoff_accepts_every_valid_role_assignment",

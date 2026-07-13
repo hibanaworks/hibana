@@ -85,31 +85,12 @@ theorem reject_resolver_step_begins_cancellation
     ((∃ awaiting, next.status = .cancelling .protocolViolation awaiting) \/
       next.status = .retired .protocolViolation) /\
     ∀ globalId, next.queue globalId = none := by
-  unfold GlobalConfig.rejectResolverStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict resolver .reject with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | selected localState =>
-                  simp [statusCase, selectionCase, resolverCase] at stepped
-              | rejected =>
-                  have nextEq : config.beginCancellation role .protocolViolation = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  cases pendingCase : removeAwaitingRole
-                      (List.range config.roleCount) role <;>
-                    simp [GlobalConfig.beginCancellation, statusCase, pendingCase]
+  obtain ⟨statusLive, _, _, _, nextExact⟩ :=
+    reject_resolver_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  cases pendingCase : removeAwaitingRole
+      (List.range config.roleCount) role <;>
+    simp [GlobalConfig.beginCancellation, statusLive, pendingCase]
 theorem cancellation_observation_preserves_protocol
     {config next : GlobalConfig} {role : Nat}
     (observed : config.observeCancellation? role = some next) :

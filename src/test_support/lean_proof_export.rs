@@ -13,6 +13,8 @@ use std::{
 mod choreo_source;
 #[path = "lean_proof_export/cyclic_roll_certificate.rs"]
 mod cyclic_roll_certificate;
+#[path = "lean_proof_export/production_kernel_artifact.rs"]
+mod production_kernel_artifact;
 #[path = "lean_proof_export/projection_certificate.rs"]
 mod projection_certificate;
 use choreo_source::LeanChoreo;
@@ -782,6 +784,7 @@ fn export_production_trace_for_lean() {
     verified_protocol_sources.push(cyclic_roll_certificate::verified_protocol_source());
     let verified_protocol_count = verified_protocol_sources.len();
     let verified_protocols = verified_protocol_sources.join("\n");
+    let production_kernel_artifact = production_kernel_artifact::source();
     let generated = format!(
         "import Hibana.MainTheorems\n\n\
          def generatedChoreo : Hibana.Choreo :=\n  {}\n\n\
@@ -797,7 +800,8 @@ fn export_production_trace_for_lean() {
          {}\n\
          {}\n\
          {}\n\
-         #eval IO.println \"hibana Lean generated proof passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} verified-protocols={}\"\n",
+         {}\n\
+         #eval IO.println \"hibana Lean generated proof passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} distributed-progress={} verified-protocols={}\"\n",
         Steps::lean_source(),
         RolledSteps::lean_source(),
         NestedRolledSteps::lean_source(),
@@ -811,12 +815,14 @@ fn export_production_trace_for_lean() {
         progress,
         projectability,
         verified_protocols,
+        production_kernel_artifact,
         trace_count,
         total_frames,
         projection_count,
         projection_count,
         progress_count,
         projectability_count,
+        verified_protocol_count,
         verified_protocol_count,
     );
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/lean-proof");

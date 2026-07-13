@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn lane_resident_route_rows_do_not_restore_full_domain_copies() {
+    let packed_route_lane_rows = MAX_ROUTE_ARM_LANE_ROWS
+        * core::mem::size_of::<PackedRouteArmRow>()
+        + MAX_ROUTE_SCOPE_LANE_ROWS * core::mem::size_of::<PackedLaneRange>();
+    let full_domain_route_lane_rows = (MAX_ROUTE_ARM_LANE_ROWS + MAX_ROUTE_SCOPE_LANE_ROWS)
+        * LANE_SET_VIEW_WORDS
+        * core::mem::size_of::<LaneWord>();
+
+    assert!(
+        packed_route_lane_rows < full_domain_route_lane_rows,
+        "route lane rows must stay packed and must not restore full-domain lane-set copies: current={} full_domain={}",
+        packed_route_lane_rows,
+        full_domain_route_lane_rows
+    );
+    assert!(
+        core::mem::size_of::<RouteArmLaneStepRow>()
+            < LANE_SET_VIEW_WORDS * core::mem::size_of::<LaneWord>(),
+        "one sparse first/last row must stay smaller than a full-domain lane-set row"
+    );
+}
+
+#[test]
+fn route_arm_row_keeps_exact_ranges_in_compact_scalar_limbs() {
+    let separate_exact_range_columns =
+        (core::mem::size_of::<PackedLaneRange>() * 2) + core::mem::size_of::<u8>();
+    assert_eq!(
+        core::mem::size_of::<PackedRouteArmRow>(),
+        ROLE_IMAGE_ROUTE_ARM_STRIDE
+    );
+    assert!(
+        ROLE_IMAGE_ROUTE_ARM_STRIDE < separate_exact_range_columns,
+        "route arm row should keep event range, child delta, and lane-step range in one compact scalar row"
+    );
+}
+
+#[test]
 fn route_arm_lane_steps_are_sparse_over_actual_lanes_not_logical_lanes() {
     let program: RoleProgram<0> = project(&sparse_route_high_lane_program());
     with_role_descriptor(&program, |descriptor| {

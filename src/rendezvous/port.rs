@@ -6,6 +6,7 @@
 use core::{
     cell::{Cell, UnsafeCell},
     marker::PhantomData,
+    ptr::NonNull,
 };
 
 use super::core::{EndpointLeaseRecord, RendezvousAccessState, Sidecar};
@@ -181,8 +182,8 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
-    fn port_key(port: &Self) -> *const () {
-        core::ptr::from_ref(port).cast()
+    fn port_key(port: &Self) -> NonNull<()> {
+        NonNull::from(port).cast()
     }
 
     #[inline]

@@ -152,6 +152,20 @@ fn production_cursor_reenters_completed_rolled_seq_head() {
 }
 
 #[test]
+fn production_cursor_pipelines_rolled_send_before_remote_receive() {
+    let program = crate::g::send::<0, 1, crate::g::Msg<94, ()>>().roll();
+    let mut runtime = ProductionCursorTrace::new::<0>(&program);
+
+    runtime.commit_label(94);
+
+    assert!(
+        runtime.enabled_commit_at(0).is_some(),
+        "FIFO output may reenter before the remote role consumes the prior iteration"
+    );
+    runtime.commit_label(94);
+}
+
+#[test]
 fn production_cursor_reenters_rolled_route_scope_inside_sequence() {
     let inner = crate::g::route(
         crate::g::send::<0, 1, crate::g::Msg<162, ()>>(),
@@ -1149,7 +1163,7 @@ where
 {
     reference: ReferenceState<'static>,
     _reference_program: &'static ReferenceLocalProgram,
-    production: ProductionCursorTrace,
+    production: Box<ProductionCursorTrace>,
     _marker: core::marker::PhantomData<Steps>,
 }
 
@@ -1206,8 +1220,7 @@ struct ProductionCursorTrace {
     descriptor: RoleDescriptorRef,
     event_program: LocalEventProgram,
     selected: Vec<(ScopeId, u8)>,
-    cursor: *mut EventCursor,
-    _cursor_storage: Box<MaybeUninit<EventCursor>>,
+    cursor_storage: Box<MaybeUninit<EventCursor>>,
     _state_storage: Box<MaybeUninit<EventCursorState>>,
     _lane_cursors: Vec<u16>,
     _current_labels: Vec<u16>,
@@ -1215,51 +1228,50 @@ struct ProductionCursorTrace {
 }
 
 impl ProductionCursorTrace {
-    fn new<const ROLE: u8>(program: &impl Projectable) -> Self {
+    fn new<const ROLE: u8>(program: &impl Projectable) -> Box<Self> {
         let projected: crate::runtime::program::RoleProgram<ROLE> =
             crate::runtime::program::project(program);
         let descriptor = RoleDescriptorRef::from_resident(projected.role_image_ref());
         let event_program = LocalEventProgram::from_rows(descriptor.local_event_rows());
-        let mut cursor_storage = Box::new(MaybeUninit::<EventCursor>::uninit());
-        let mut state_storage = Box::new(MaybeUninit::<EventCursorState>::uninit());
-        let mut lane_cursors = vec![0u16; descriptor.logical_lane_count()];
-        let mut current_labels = vec![0u16; descriptor.logical_lane_count()];
+        let cursor_storage = Box::new(MaybeUninit::<EventCursor>::uninit());
+        let state_storage = Box::new(MaybeUninit::<EventCursorState>::uninit());
+        let lane_cursors = vec![0u16; descriptor.logical_lane_count()];
+        let current_labels = vec![0u16; descriptor.logical_lane_count()];
         let completed_word_count = descriptor
             .local_len()
             .checked_add(31)
             .expect("completed word count overflow")
             / 32;
-        let mut completed_words = vec![0u32; completed_word_count];
-        let cursor = cursor_storage.as_mut_ptr();
-        unsafe {
-            EventCursor::init_from_compiled(
-                cursor,
-                state_storage.as_mut_ptr(),
-                lane_cursors.as_mut_ptr(),
-                current_labels.as_mut_ptr(),
-                completed_words.as_mut_ptr(),
-                descriptor,
-            );
-        }
-        Self {
+        let completed_words = vec![0u32; completed_word_count];
+        let mut trace = Box::new(Self {
             descriptor,
             event_program,
             selected: Vec::new(),
-            cursor,
-            _cursor_storage: cursor_storage,
+            cursor_storage,
             _state_storage: state_storage,
             _lane_cursors: lane_cursors,
             _current_labels: current_labels,
             _completed_words: completed_words,
+        });
+        unsafe {
+            EventCursor::init_from_compiled(
+                trace.cursor_storage.as_mut_ptr(),
+                trace._state_storage.as_mut_ptr(),
+                trace._lane_cursors.as_mut_ptr(),
+                trace._current_labels.as_mut_ptr(),
+                trace._completed_words.as_mut_ptr(),
+                descriptor,
+            );
         }
+        trace
     }
 
     fn cursor(&self) -> &EventCursor {
-        unsafe { &*self.cursor }
+        unsafe { self.cursor_storage.assume_init_ref() }
     }
 
     fn cursor_mut(&mut self) -> &mut EventCursor {
-        unsafe { &mut *self.cursor }
+        unsafe { self.cursor_storage.assume_init_mut() }
     }
 
     fn enabled_labels(&self) -> Vec<u8> {

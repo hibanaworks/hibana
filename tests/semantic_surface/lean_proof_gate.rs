@@ -9,7 +9,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let global_syntax = read("proofs/lean/Hibana/GlobalSyntax.lean");
     let event_graph = read("proofs/lean/Hibana/EventGraph.lean");
     let commit = read("proofs/lean/Hibana/Commit.lean");
-    let runtime_monitor = read("proofs/lean/Hibana/RuntimeMonitor.lean");
+    let operation_admission = read("proofs/lean/Hibana/OperationAdmission.lean");
     let refinement = read("proofs/lean/Hibana/Refinement.lean");
     let layout = read("proofs/lean/Hibana/Layout.lean");
     let progress = read("proofs/lean/Hibana/Progress.lean");
@@ -39,15 +39,26 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let affine_route_publication = read("proofs/lean/Hibana/AffineRoutePublication.lean");
     let global_coherence = read("proofs/lean/Hibana/GlobalCoherence.lean");
     let distributed_semantics = read("proofs/lean/Hibana/DistributedSemantics.lean");
+    let distributed_progress = read("proofs/lean/Hibana/DistributedProgress.lean");
     let roll_freshness = read("proofs/lean/Hibana/RollFreshness.lean");
+    let distributed_roll_refinement = read("proofs/lean/Hibana/DistributedRollRefinement.lean");
+    let elastic_iteration_queue = read("proofs/lean/Hibana/ElasticIterationQueue.lean");
+    let elastic_route_history = read("proofs/lean/Hibana/ElasticRouteHistory.lean");
+    let elastic_admission_history = read("proofs/lean/Hibana/ElasticAdmissionHistory.lean");
     let session_composition = read("proofs/lean/Hibana/SessionComposition.lean");
     let session_lifecycle = read("proofs/lean/Hibana/SessionLifecycle.lean");
     let runtime_refinement = read("proofs/lean/Hibana/RuntimeRefinement.lean");
     let protocol_artifact = read("proofs/lean/Hibana/ProtocolArtifact.lean");
+    let carrier_refinement = read("proofs/lean/Hibana/CarrierRefinement.lean");
+    let mediated_carrier = read("proofs/lean/Hibana/MediatedCarrier.lean");
+    let deployment = read("proofs/lean/Hibana/Deployment.lean");
     let allocation = read("proofs/lean/Hibana/Allocation.lean");
     let authority = read("proofs/lean/Hibana/Authority.lean");
+    let lowering_seal = read("src/global/compiled/lowering/seal.rs");
+    let dynamic_observer_rejection = read("tests/ui/g-route-passive-outbound-without-evidence.rs");
+    let production_cursor_tests = read("src/global/event_program_cursor_tests.rs");
+    let route_branch_send = read("tests/route_branch_send.rs");
     let main_theorems = read("proofs/lean/Hibana/MainTheorems.lean");
-    let axiom_audit = read("proofs/lean/Hibana/AxiomAudit.lean");
     let exporter_root = read("src/test_support/lean_proof_export.rs");
     let choreo_exporter = read("src/test_support/lean_proof_export/choreo_source.rs");
     let cyclic_roll_exporter =
@@ -63,15 +74,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         read("src/rendezvous/core/storage_layout/capacity/tests/formal_certificate_export.rs");
     let lease_generation = read("src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs");
     let lease_allocator = read("src/rendezvous/core/endpoint_leases.rs");
-    let proof_gate = read(".github/scripts/check_lean_proofs.sh");
-    let final_gate = read(".github/scripts/run_final_form_gates.sh");
-    let workflow = read(".github/workflows/quality-gates.yml");
     let lean_sources = [
         syntax.as_str(),
         global_syntax.as_str(),
         event_graph.as_str(),
         commit.as_str(),
-        runtime_monitor.as_str(),
+        operation_admission.as_str(),
         refinement.as_str(),
         layout.as_str(),
         progress.as_str(),
@@ -91,15 +99,22 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         affine_route_publication.as_str(),
         global_coherence.as_str(),
         distributed_semantics.as_str(),
+        distributed_progress.as_str(),
         roll_freshness.as_str(),
+        distributed_roll_refinement.as_str(),
+        elastic_iteration_queue.as_str(),
+        elastic_route_history.as_str(),
+        elastic_admission_history.as_str(),
         session_composition.as_str(),
         session_lifecycle.as_str(),
         runtime_refinement.as_str(),
         protocol_artifact.as_str(),
+        carrier_refinement.as_str(),
+        mediated_carrier.as_str(),
+        deployment.as_str(),
         allocation.as_str(),
         authority.as_str(),
         main_theorems.as_str(),
-        axiom_audit.as_str(),
     ]
     .join("\n");
 
@@ -160,7 +175,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && exporter.contains("resolver rejection must terminate the production proof trace")
             && exporter.contains("let trace_count = trace_sources.len();")
             && exporter.contains(
-                "passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} verified-protocols={}"
+                "passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} distributed-progress={} verified-protocols={}"
             )
             && exporter.contains("projectability_certificate_source")
             && exporter.contains("generatedProjectability")
@@ -253,7 +268,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && descriptor_refinement
                 .contains("theorem accepted_descriptor_actions_match_projection")
             && descriptor_refinement.contains("theorem exact_descriptor_certificate_sound")
-            && descriptor_refinement.contains("theorem descriptor_cursor_step_simulates_monitor")
+            && descriptor_refinement.contains("theorem descriptor_cursor_step_simulates_admission")
             && descriptor_refinement
                 .contains("theorem accepted_descriptor_cursor_step_refines_projection")
             && descriptor_refinement.contains("def applyDescriptorCursorStep")
@@ -296,7 +311,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && global_semantics.contains("def GlobalConfig.rollStep?")
             && global_semantics.contains("roll_step_clears_owned_queue")
             && !global_fidelity.contains("every_global_config_has_session_fidelity"),
-        "exact descriptor actions and all-role route authority must refine one monitor transition"
+        "exact descriptor actions and all-role route authority must refine one endpoint transition"
     );
     assert!(
         cancellation.contains("inductive CancellationReachable")
@@ -325,8 +340,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && !transport_contract.contains("schema : Nat")
             && transport_contract.contains("transport_receive_preserves_well_formed")
             && transport_contract.contains("peer_close_is_observable_after_fifo_drain")
-            && transport_contract.contains("structure AffineTransportProfile")
-            && transport_contract.contains("transport_state_establishes_affine_profile")
+            && transport_contract.contains("transport_send_after_drain_is_fresh")
+            && !transport_contract.contains("structure AffineTransportProfile")
             && global_progress.contains("def Choreo.GuardedRolls")
             && global_progress.contains("def GlobalConfig.topLevelRollStep?")
             && global_progress.contains("top_level_roll_step_uses_global_roll_transition")
@@ -362,6 +377,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && async_cancellation.contains("roleTransportRetired")
             && async_cancellation.contains("async_close_and_drain_commute")
             && async_cancellation_termination.contains("retirement_ready_reaches_full_retirement")
+            && async_cancellation.contains("fault_transport_snapshot_is_retirement_ready")
+            && async_cancellation_termination
+                .contains("live_fault_snapshot_reaches_full_retirement")
             && async_cancellation_termination.contains("firstTransportRetirementAction")
             && global_coherence.contains("structure CompactGlobalState")
             && global_coherence.contains("def CompactGlobalState.decode?")
@@ -388,7 +406,19 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("projectability_certificate_all_roles_have_well_formed_projection")
             && global_coherence
                 .contains("projectability_certificate_establishes_semantic_unstuckness")
-            && global_coherence.contains("def SemanticallyUnstuck")
+            && global_coherence.contains("def GlobalSemanticallyUnstuck")
+            && distributed_semantics.contains("routeEvidenceAddsKnowledge")
+            && distributed_semantics.contains("duplicateRouteEvidenceRegression")
+            && distributed_progress.contains("structure CompactDistributedState")
+            && distributed_progress.contains("def CompactDistributedState.decode?")
+            && distributed_progress
+                .contains("if accepted : state.canonical roleCount choreo = true")
+            && !distributed_progress.contains("(selections[conflict]?).getD none")
+            && distributed_progress.contains("structure DistributedProgressCertificate")
+            && distributed_progress.contains("buildDistributedProgressCertificate")
+            && distributed_progress.contains("def DistributedSemanticallyUnstuck")
+            && distributed_progress
+                .contains("distributed_progress_certificate_establishes_unstuckness")
             && static_projectability.contains("inductive StaticEndpointSelector")
             && static_projectability.contains("| outbound (role label schema : Nat)")
             && static_projectability.contains("structure StaticInboundEvidence")
@@ -507,12 +537,13 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("verified_protocol_descriptor_route_participants_match_choreography")
             && protocol_artifact.contains("verified_protocol_reachable_preserves_global_invariant")
             && protocol_artifact.contains("verified_protocol_establishes_semantic_unstuckness")
-            && protocol_artifact.contains("affineTransport : AffineTransportProfile")
+            && !protocol_artifact.contains("affineTransport : AffineTransportProfile")
             && protocol_artifact.contains("verified_protocol_has_injective_inbound_evidence")
             && protocol_artifact.contains("verified_protocol_transport_admission_is_unique")
             && protocol_artifact
                 .contains("verified_protocol_roll_reentry_has_fifo_or_causal_order")
-            && protocol_artifact.contains("structure MessageErasedAffineAsyncMonitor")
+            && protocol_artifact.contains("structure ProtocolExecutionGuarantees")
+            && protocol_artifact.contains("rollPostLinearizationMaterialization")
             && protocol_artifact.contains("routeControllerAuthority")
             && protocol_artifact.contains("activeRoutePublicationIsAffine")
             && protocol_artifact.contains("begunRoutePublicationTracksExactPending")
@@ -520,23 +551,128 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && protocol_artifact.contains("routeObservationRejectsDuplicate")
             && protocol_artifact.contains("routeObservationPreservesArm")
             && protocol_artifact.contains("localRouteParticipantsAreExact")
-            && protocol_artifact.contains("readyCancellationRetires")
+            && protocol_artifact.contains("abstractRetirementAfterLiveFault")
+            && protocol_artifact.contains("verified_protocol_establishes_execution_guarantees")
+            && carrier_refinement.contains("inductive TransportBoundaryState")
+            && carrier_refinement.contains("| offered")
+            && carrier_refinement.contains("inductive ReceiptResolution")
+            && carrier_refinement.contains("polled_receipt_requeue_restores_exact_state")
+            && carrier_refinement.contains("resolved_receipt_cannot_resolve_again")
+            && carrier_refinement.contains("close_and_receipt_requeue_commute")
+            && carrier_refinement.contains("structure AffineCarrierRefinement")
+            && mediated_carrier.contains("structure MediatedCarrierContract")
+            && mediated_carrier.contains("pollOwnsExclusiveReceipt")
+            && mediated_carrier.contains("requeueReoffersExactObservation")
+            && mediated_carrier.contains("resolutionIsAffine")
+            && mediated_carrier.contains("abortInvalidatesReceipt")
+            && mediated_carrier.contains("affine_carrier_refinement_establishes_mediated_contract")
+            && mediated_carrier.contains("dropping_carrier_satisfies_mediated_contract")
+            && mediated_carrier.contains("dropping_carrier_has_no_affine_refinement")
+            && deployment.contains("def RoleImagesExact")
+            && deployment.contains("structure DeploymentEvidence")
+            && deployment.contains("codecs : List VerifiedCodec")
+            && deployment.contains("structure AssumptionIndexedDeploymentContract")
+            && !deployment.contains("structure RuntimeDeployment")
+            && !deployment.contains("structure AffineAsyncRuntimeDeployment")
+            && !deployment.contains("structure MediatedAsyncDeploymentContract")
+            && !deployment.contains("structure AffineAsyncDeploymentContract")
+            && deployment.contains("roleImagesExact")
+            && deployment.contains("carrierProfile")
+            && !deployment.contains("DynamicDecisionKey")
+            && !deployment.contains("DynamicResolverAgreement")
+            && !deployment.contains("resolverOutcomes")
+            && !deployment.contains("dynamicResolverAgreement")
+            && deployment.contains("verified_protocol_and_deployment_evidence_establish_profile")
+            && deployment
+                .contains("assumption_indexed_deployment_duplicate_receipt_resolution_rejected")
+            && deployment.contains("ordered_deployment_requeue_is_exact_stutter")
+            && deployment.contains("assumption_indexed_deployment_live_fault_snapshot_retires")
+            && global_semantics.contains("controllerForConflict?")
+            && global_semantics.contains("non_controller_resolve_is_rejected")
+            && !distributed_semantics.contains("observeDynamicResolverOutcome?")
+            && !distributed_semantics.contains("observeResolverOutcome")
+            && static_projectability
+                .contains("dynamic_route_outbound_observer_without_evidence_is_rejected")
+            && static_projectability.contains("dynamic_route_inbound_observers_are_projectable")
+            && !lowering_seal.contains("if has_dynamic_resolver {\n        return None;")
+            && dynamic_observer_rejection.contains(".resolve::<7>()")
+            && distributed_roll_refinement.contains("structure DistributedRollMaterialization")
+            && distributed_roll_refinement.contains("materializeRole?")
+            && distributed_roll_refinement
+                .contains("distributed_roll_materialization_duplicate_rejected")
+            && distributed_roll_refinement
+                .contains("distributed_roll_materialization_measure_decreases")
+            && distributed_roll_refinement
+                .contains("distributed_roll_materialization_distinct_roles_commute")
+            && distributed_roll_refinement
+                .contains("distributed_roll_linearization_has_materialization_refinement")
+            && distributed_roll_refinement
+                .contains("global_atomic_roll_cannot_model_pipelined_single_send_reentry")
+            && elastic_iteration_queue.contains("structure ElasticIterationQueue")
+            && !elastic_iteration_queue.contains("rollId : Nat")
+            && elastic_iteration_queue
+                .contains("elastic_iteration_queue_models_pipelined_roll_reentry")
+            && elastic_iteration_queue.contains("structure ElasticConflictKey")
+            && !elastic_iteration_queue.contains("ElasticRouteSelections")
+            && elastic_route_history.contains("structure ElasticRouteHistory")
+            && elastic_route_history.contains("structure ElasticRoutePublication")
+            && elastic_route_history
+                .contains("elastic_route_history_models_alternating_pipelining")
+            && elastic_route_history.contains("elastic_route_publication_binds_static_membership")
+            && elastic_admission_history.contains("structure ElasticAdmissionHistory")
+            && elastic_admission_history.contains("channel : TransportChannel")
+            && elastic_admission_history.contains("nextIteration : Nat -> Nat")
+            && !elastic_admission_history.contains("nextIteration : Nat -> Nat -> Nat")
+            && elastic_admission_history.contains("MatchesEventChannel")
+            && elastic_admission_history.contains("structure ElasticPipelinedSemantics")
+            && elastic_admission_history.contains("transportAdmissionExtends : forall")
+            && elastic_admission_history
+                .contains("elastic_admission_history_models_mixed_pipelining")
+            && elastic_admission_history
+                .contains("transport_admission_extends_exact_elastic_occurrence")
+            && elastic_admission_history.contains("elastic_admission_tracks_transport_send")
             && protocol_artifact
-                .contains("verified_protocol_establishes_message_erased_affine_async_monitor"),
+                .contains("accepted_descriptor_pipelined_send_extends_elastic_history")
+            && protocol_artifact.contains("channelMatches : history.MatchesEventChannel event")
+            && protocol_artifact.contains("descriptorPipelinedSendRefinement")
+            && protocol_artifact.contains("elasticPipelining : ElasticPipelinedSemantics")
+            && production_cursor_tests
+                .contains("production_cursor_pipelines_rolled_send_before_remote_receive")
+            && production_cursor_tests
+                .matches("runtime.commit_label(94);")
+                .count()
+                == 2
+            && route_branch_send
+                .contains("let left = g::send::<0, 1, Msg<BRANCH_SEND_LEFT, u32>>();")
+            && route_branch_send
+                .contains("rolled_route_pipelines_next_decision_before_receiver_observes")
+            && !route_branch_send.contains("g::send::<2, 2")
+            && main_theorems.contains("import Hibana.DistributedRollRefinement")
+            && main_theorems.contains("import Hibana.ElasticIterationQueue")
+            && main_theorems.contains("import Hibana.ElasticRouteHistory")
+            && main_theorems.contains("import Hibana.ElasticAdmissionHistory")
+            && main_theorems.contains("import Hibana.ElasticErasure")
+            && main_theorems.contains("import Hibana.RustKernelRefinement")
+            && main_theorems.contains("import Hibana.EndToEndRefinement"),
         "asynchronous cancellation, projectability, distributed simulation, runtime refinement, and multi-session isolation must remain gate-owned"
     );
     assert!(
-        runtime_monitor.contains("structure MonitorRequest")
-            && runtime_monitor.contains("eventId : Nat")
-            && runtime_monitor.contains("action : LocalAction")
-            && runtime_monitor.contains("def matchingMonitorEvent?")
-            && runtime_monitor.contains("event.id = request.eventId")
-            && runtime_monitor.contains("event.action = request.action")
-            && runtime_monitor.contains("def monitorStep")
-            && runtime_monitor.contains("def applyMonitor")
-            && runtime_monitor.contains("theorem monitor_rejects_send_schema_mismatch")
-            && runtime_monitor.contains("theorem monitor_rejects_send_peer_mismatch")
-            && runtime_monitor.contains("theorem monitor_rejects_wrong_direction"),
+        operation_admission.contains("structure OperationRequest")
+            && operation_admission.contains("eventId : Nat")
+            && operation_admission.contains("action : LocalAction")
+            && operation_admission.contains("def matchingOperationEvent?")
+            && operation_admission.contains("event.id = request.eventId")
+            && operation_admission.contains("event.action = request.action")
+            && operation_admission.contains("def admitOperation")
+            && operation_admission.contains("def applyAdmission")
+            && operation_admission.contains("def OperationAdmissible")
+            && operation_admission.contains("theorem admission_acceptance_iff_admissible")
+            && operation_admission.contains("theorem admission_rejection_iff_not_admissible")
+            && operation_admission.contains("not black-box")
+            && operation_admission.contains("process monitorability")
+            && operation_admission.contains("theorem admission_rejects_send_schema_mismatch")
+            && operation_admission.contains("theorem admission_rejects_send_peer_mismatch")
+            && operation_admission.contains("theorem admission_rejects_wrong_direction"),
         "runtime-erased endpoint operations must be proved against exact descriptor event identity"
     );
     assert!(
@@ -665,15 +801,15 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem mixed_program_session_attach_rejected",
         "theorem cross_rendezvous_session_attach_rejected",
         "theorem accepted_session_reattach_is_exact",
-        "theorem matching_monitor_event_is_exact",
-        "theorem monitor_rejects_descriptor_id_mismatch",
-        "theorem monitor_rejects_action_mismatch",
-        "theorem monitor_acceptance_is_exact_commit",
-        "theorem monitor_rejects_send_schema_mismatch",
-        "theorem monitor_rejects_send_peer_mismatch",
-        "theorem monitor_rejects_wrong_direction",
-        "theorem monitor_rejects_missing_event",
-        "theorem monitor_rejection_preserves_state",
+        "theorem matching_operation_event_is_exact",
+        "theorem admission_rejects_descriptor_id_mismatch",
+        "theorem admission_rejects_action_mismatch",
+        "theorem admission_acceptance_is_exact_commit",
+        "theorem admission_rejects_send_schema_mismatch",
+        "theorem admission_rejects_send_peer_mismatch",
+        "theorem admission_rejects_wrong_direction",
+        "theorem admission_rejects_missing_event",
+        "theorem admission_rejection_preserves_state",
         "theorem global_event_conflicts_from_length",
         "theorem global_event_parallel_arms_from_length",
         "theorem global_event_parallel_arms_length",
@@ -731,6 +867,33 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem distributed_roll_step_simulates_global",
         "theorem roll_step_with_drained_transport_has_fresh_next_frame",
         "theorem roll_step_with_admitted_transport_frame_is_fresh_occurrence",
+        "theorem distributed_roll_materialization_initial_valid",
+        "theorem distributed_roll_materialization_duplicate_rejected",
+        "theorem distributed_roll_materialization_measure_decreases",
+        "theorem distributed_roll_materialization_progress",
+        "theorem distributed_roll_materialization_complete_is_exact",
+        "theorem distributed_roll_materialization_distinct_roles_commute",
+        "theorem distributed_roll_linearization_has_materialization_refinement",
+        "theorem global_atomic_roll_cannot_model_pipelined_single_send_reentry",
+        "theorem elastic_iteration_queue_send_preserves_well_formed",
+        "theorem elastic_iteration_queue_receive_preserves_well_formed",
+        "theorem elastic_iteration_queue_received_generation_cannot_replay",
+        "theorem elastic_iteration_queue_models_pipelined_roll_reentry",
+        "theorem elastic_route_next_publication_is_fresh",
+        "theorem elastic_route_publish_preserves_well_formed",
+        "theorem elastic_route_publish_appends_exact_publication",
+        "theorem elastic_route_publication_binds_static_membership",
+        "theorem elastic_route_history_models_alternating_pipelining",
+        "theorem elastic_admission_next_occurrence_is_fresh",
+        "theorem elastic_admission_preserves_well_formed",
+        "theorem elastic_admission_receive_preserves_well_formed",
+        "theorem elastic_admission_consecutive_receives_are_distinct",
+        "theorem transport_admission_extends_exact_elastic_occurrence",
+        "theorem elastic_admission_tracks_transport_send",
+        "theorem elastic_admission_history_models_mixed_pipelining",
+        "theorem elastic_pipelined_semantics_holds",
+        "theorem accepted_descriptor_pipelined_send_extends_elastic_history",
+        "theorem accepted_descriptor_establishes_pipelined_send_refinement",
         "theorem abort_peer_is_immediately_observable",
         "theorem abort_peer_is_well_formed",
         "theorem distinct_carrier_generations_cannot_alias",
@@ -775,7 +938,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || generation.contains(theorem)
                 || allocation.contains(theorem)
                 || authority.contains(theorem)
-                || runtime_monitor.contains(theorem)
+                || operation_admission.contains(theorem)
                 || global_syntax.contains(theorem)
                 || global_semantics.contains(theorem)
                 || global_message_transitions.contains(theorem)
@@ -790,10 +953,16 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || global_coherence.contains(theorem)
                 || distributed_semantics.contains(theorem)
                 || roll_freshness.contains(theorem)
+                || distributed_roll_refinement.contains(theorem)
+                || elastic_iteration_queue.contains(theorem)
+                || elastic_route_history.contains(theorem)
+                || elastic_admission_history.contains(theorem)
                 || session_composition.contains(theorem)
                 || session_lifecycle.contains(theorem)
                 || runtime_refinement.contains(theorem)
                 || protocol_artifact.contains(theorem)
+                || carrier_refinement.contains(theorem)
+                || deployment.contains(theorem)
                 || main_theorems.contains(theorem),
             "Lean proof kernel missing {theorem}"
         );
@@ -810,233 +979,4 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             "Lean program identity must retain exact Rust image field: {identity_field}"
         );
     }
-    assert!(
-        proof_gate.contains("forbids sorry, admit, and custom axioms")
-            && proof_gate.contains("must remain Core/Std-only")
-            && proof_gate.contains("Lean proof gate axiom set changed")
-            && proof_gate.contains("hibana-lean-theorems.XXXXXX")
-            && proof_gate.contains("hibana-lean-audit.XXXXXX")
-            && proof_gate
-                .contains("Lean proof gate requires an axiom audit for every exported theorem")
-            && proof_gate.contains("depends on axioms: [propext, Quot.sound]")
-            && proof_gate.contains("Classical.choice")
-            && proof_gate.contains("!= \"177\"")
-            && proof_gate.contains("!= \"139\"")
-            && proof_gate.contains("!= \"30\"")
-            && proof_gate.contains("!= \"346\"")
-            && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_completed_event")
-            && axiom_audit.contains("#print axioms Hibana.initial_state_has_no_selected_arm")
-            && axiom_audit.contains("#print axioms Hibana.local_action_sender_projects_send")
-            && axiom_audit.contains("#print axioms Hibana.local_action_receiver_projects_recv")
-            && axiom_audit.contains("#print axioms Hibana.local_action_preserves_schema")
-            && axiom_audit.contains("#print axioms Hibana.local_action_preserves_key")
-            && axiom_audit.contains("#print axioms Hibana.monitor_rejects_send_schema_mismatch")
-            && axiom_audit.contains("#print axioms Hibana.monitor_rejects_send_peer_mismatch")
-            && axiom_audit.contains("#print axioms Hibana.monitor_rejects_wrong_direction")
-            && axiom_audit.contains("#print axioms Hibana.global_events_from_length_eq")
-            && axiom_audit.contains("#print axioms Hibana.global_events_from_lane_bounds")
-            && axiom_audit
-                .contains("#print axioms Hibana.parallel_global_event_lanes_are_disjoint")
-            && axiom_audit
-                .contains("#print axioms Hibana.global_event_parallel_arms_from_length")
-            && axiom_audit
-                .contains("#print axioms Hibana.global_event_parallel_arms_length")
-            && axiom_audit
-                .contains("#print axioms Hibana.canonical_program_atoms_global_events")
-            && axiom_audit.contains(
-                "#print axioms Hibana.accepted_descriptor_global_events_bind_canonical_lanes"
-            )
-            && axiom_audit.contains("#print axioms Hibana.mixed_program_session_attach_rejected")
-            && axiom_audit
-                .contains("#print axioms Hibana.cross_rendezvous_session_attach_rejected")
-            && axiom_audit.contains("#print axioms Hibana.progress_certificate_covers_reachable")
-            && axiom_audit.contains("#print axioms Hibana.program_trace_checker_sound")
-            && axiom_audit.contains("#print axioms Hibana.resolver_selection_exact_authority")
-            && axiom_audit.contains("#print axioms Hibana.unresolved_dynamic_route_cannot_commit")
-            && axiom_audit.contains("#print axioms Hibana.resolver_reject_is_terminal")
-            && axiom_audit
-                .contains("#print axioms Hibana.receive_precedes_later_send_has_causal_path")
-            && axiom_audit
-                .contains("#print axioms Hibana.roll_reentry_has_fifo_or_causal_order")
-            && axiom_audit
-                .contains("#print axioms Hibana.selected_local_route_participants_are_exact")
-            && axiom_audit
-                .contains("#print axioms Hibana.sealed_local_membership_rejects_late_attach")
-            && axiom_audit
-                .contains("#print axioms Hibana.route_observation_rejects_duplicate")
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_roll_reentry_has_fifo_or_causal_order"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_descriptor_route_participants_match_choreography"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_reachable_preserves_global_invariant"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_establishes_semantic_unstuckness"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_establishes_message_erased_affine_async_monitor"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.active_endpoint_access_blocks_reentrant_attach")
-            && axiom_audit.contains("#print axioms Hibana.projection_certificate_sound")
-            && axiom_audit.contains("#print axioms Hibana.slab_layout_certificate_sound")
-            && axiom_audit.contains("#print axioms Hibana.reachable_state_has_logical_progress")
-            && axiom_audit.contains("#print axioms Hibana.poisoned_generation_trace_never_revives")
-            && axiom_audit.contains("#print axioms Hibana.poisoned_generation_publish_rejected")
-            && axiom_audit.contains("#print axioms Hibana.publication_permitted_implies_live")
-            && axiom_audit
-                .contains("#print axioms Hibana.lease_allocation_failure_certificate_sound")
-            && axiom_audit
-                .contains("#print axioms Hibana.poisoned_generation_aborts_lease_publication")
-            && axiom_audit
-                .contains("#print axioms Hibana.lease_allocation_abort_certificate_sound")
-            && axiom_audit.contains("#print axioms Hibana.dynamic_resolver_site_key_injective")
-            && axiom_audit
-                .contains("#print axioms Hibana.resolver_registration_key_is_program_and_id")
-            && axiom_audit.contains(
-                "#print axioms Hibana.distinct_program_images_have_distinct_registration_keys"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.scope_topology_difference_has_distinct_registration_keys"
-            )
-            && axiom_audit.contains("#print axioms Hibana.exact_descriptor_certificate_sound")
-            && axiom_audit
-                .contains("#print axioms Hibana.begun_cancellation_has_finite_retirement_trace")
-            && axiom_audit
-                .contains("#print axioms Hibana.begun_cancellation_reaches_resource_retirement")
-            && axiom_audit
-                .contains("#print axioms Hibana.cancellation_observation_preserves_well_formed")
-            && axiom_audit.contains("#print axioms Hibana.well_formed_transport_has_no_replay")
-            && axiom_audit
-                .contains("#print axioms Hibana.transport_state_establishes_affine_profile")
-            && axiom_audit.contains("#print axioms Hibana.transport_receive_preserves_well_formed")
-            && axiom_audit.contains("#print axioms Hibana.transport_admission_is_unique")
-            && axiom_audit
-                .contains("#print axioms Hibana.transport_admission_checker_sound")
-            && axiom_audit
-                .contains("#print axioms Hibana.global_transport_admission_checker_sound")
-            && axiom_audit.contains(
-                "#print axioms Hibana.transport_admission_binds_exact_descriptor_occurrence"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.transport_admission_produces_exact_admitted_message"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.top_level_roll_step_uses_global_roll_transition")
-            && axiom_audit
-                .contains("#print axioms Hibana.fairness_schedules_recurrently_enabled_operation")
-            && axiom_audit.contains("#print axioms Hibana.executable_operation_sound")
-            && axiom_audit
-                .contains("#print axioms Hibana.reject_resolver_step_begins_cancellation")
-            && axiom_audit.contains("#print axioms Hibana.roll_ready_of_consumed_or_excluded")
-            && axiom_audit
-                .contains("#print axioms Hibana.global_reachable_preserves_global_invariant")
-            && axiom_audit.contains("#print axioms Hibana.global_step_preserves_global_invariant")
-            && axiom_audit
-                .contains("#print axioms Hibana.retirement_ready_reaches_full_retirement")
-            && axiom_audit.contains("#print axioms Hibana.projectability_certificate_sound")
-            && axiom_audit.contains(
-                "#print axioms Hibana.projectability_certificate_establishes_semantic_unstuckness"
-            )
-            && axiom_audit.contains("#print axioms Hibana.static_projectability_checker_sound")
-            && axiom_audit
-                .contains("#print axioms Hibana.accepted_dynamic_route_has_unique_controller")
-            && axiom_audit.contains(
-                "#print axioms Hibana.dynamic_route_competing_first_senders_are_rejected"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.inbound_occurrence_identity_checker_sound")
-            && axiom_audit
-                .contains("#print axioms Hibana.receive_lane_causality_checker_sound")
-            && axiom_audit.contains(
-                "#print axioms Hibana.receive_lane_sender_change_requires_exclusion_or_causal_handoff"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.roll_receive_lane_causality_checker_sound")
-            && axiom_audit
-                .contains("#print axioms Hibana.roll_body_occurrences_cross_iteration_safe")
-            && axiom_audit.contains(
-                "#print axioms Hibana.roll_reentry_sender_change_requires_causal_handoff"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.distributed_step_weakly_simulates_global")
-            && axiom_audit
-                .contains("#print axioms Hibana.distributed_protocol_step_is_role_owned")
-            && axiom_audit
-                .contains("#print axioms Hibana.distributed_protocol_step_has_local_authority")
-            && axiom_audit
-                .contains("#print axioms Hibana.local_queued_frame_has_canonical_lane")
-            && axiom_audit.contains(
-                "#print axioms Hibana.route_selection_observation_has_exact_queued_evidence"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.roll_step_with_drained_transport_has_fresh_next_frame"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.roll_step_with_admitted_transport_frame_is_fresh_occurrence"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.session_pool_step_preserves_other_session_state")
-            && axiom_audit.contains(
-                "#print axioms Hibana.compact_global_decode_acceptance_implies_canonical"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.compact_global_decode_acceptance_implies_program_checker"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.compact_global_decode_rejects_noncanonical")
-            && axiom_audit
-                .contains("#print axioms Hibana.compact_global_decode_rejects_invalid_program")
-            && axiom_audit
-                .contains("#print axioms Hibana.runtime_effect_acceptance_requires_canonical")
-            && axiom_audit.contains(
-                "#print axioms Hibana.runtime_effect_acceptance_requires_well_formed_program"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.runtime_protocol_transition_preserves_global_invariant"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.runtime_fault_transition_preserves_global_invariant"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.runtime_ambiguous_receive_transition_preserves_global_invariant"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.runtime_cancellation_observation_preserves_global_invariant"
-            )
-            && axiom_audit
-                .contains("#print axioms Hibana.runtime_stutter_effect_is_zero_transition")
-            && axiom_audit.contains("#print axioms Hibana.runtime_transition_certificate_sound")
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_certificate_establishes_all_role_refinement"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_has_injective_inbound_evidence"
-            )
-            && axiom_audit.contains(
-                "#print axioms Hibana.verified_protocol_transport_admission_is_unique"
-            )
-            && commit.contains("rollReentryState?")
-            && commit.contains("routeReentryState?")
-            && proof_gate.contains(
-                "traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8"
-            )
-            && proof_gate.contains("regions=5 poison=1 generation=1 atomic-failures=4")
-            && proof_gate.contains("export_production_trace_for_lean")
-            && proof_gate.contains("export_runtime_certificates_for_lean")
-            && proof_gate.contains("rm -f \"${GENERATED}\" \"${RUNTIME_GENERATED}\"")
-            && proof_gate.contains("[[ ! -s \"${GENERATED}\" ]]")
-            && proof_gate.contains("[[ ! -s \"${RUNTIME_GENERATED}\" ]]")
-            && final_gate.contains("bash ./.github/scripts/check_lean_proofs.sh")
-            && workflow.contains("ELAN_VERSION=\"4.2.3\"")
-            && workflow.contains("elan-aarch64-unknown-linux-gnu.tar.gz")
-            && workflow
-                .contains("cb69af0803b04157bc30201c29c12fca882bb3ad8b43476b8d2d3064810bc3ac")
-            && workflow.contains("sha256sum --check -")
-            && workflow.contains("leanprover/elan/releases/download/v${ELAN_VERSION}"),
-        "final-form CI must execute the pinned nonempty Lean proof and production-trace gate"
-    );
 }

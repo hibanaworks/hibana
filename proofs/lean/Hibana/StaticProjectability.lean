@@ -736,31 +736,24 @@ def Choreo.observerPathsMergeable
     (left.roleEndpointSelectorsFrom role leftBase)
     (right.roleEndpointSelectorsFrom role rightBase)
 
-def uniqueRouteController?
-    (leftBase rightBase : Nat)
-    (left right : Choreo) : Option Nat :=
-  match ((left.firstOccurrencesFrom leftBase ++
-      right.firstOccurrencesFrom rightBase).map StaticOccurrence.sender).eraseDups with
-  | [controller] => some controller
-  | _ => none
-
 private def checkRouteSiteProjectability
     (roleCount : Nat)
     (authority : RouteAuthority)
     (leftBase rightBase : Nat)
     (left right : Choreo) : Bool :=
-  match uniqueRouteController? leftBase rightBase left right with
+  match Choreo.routeController? left right with
   | none => false
   | some controller =>
+      let observersKnow := (List.range roleCount).all fun role =>
+        role == controller ||
+          left.observerPathsMergeable role leftBase rightBase right
       match authority with
-      | .dynamic _ => true
+      | .dynamic _ => observersKnow
       | .intrinsic =>
           staticSelectorsDisjoint
               (left.firstEndpointSelectorsFrom leftBase)
               (right.firstEndpointSelectorsFrom rightBase) &&
-            (List.range roleCount).all fun role =>
-              role == controller ||
-                left.observerPathsMergeable role leftBase rightBase right
+            observersKnow
 
 theorem accepted_dynamic_route_has_unique_controller
     {roleCount resolver leftBase rightBase : Nat}
@@ -768,9 +761,9 @@ theorem accepted_dynamic_route_has_unique_controller
     (accepted : checkRouteSiteProjectability roleCount (.dynamic resolver)
       leftBase rightBase left right = true) :
     ∃ controller,
-      uniqueRouteController? leftBase rightBase left right = some controller := by
+      Choreo.routeController? left right = some controller := by
   unfold checkRouteSiteProjectability at accepted
-  cases controller : uniqueRouteController? leftBase rightBase left right with
+  cases controller : Choreo.routeController? left right with
   | none => simp [controller] at accepted
   | some role => exact ⟨role, rfl⟩
 
@@ -862,6 +855,20 @@ cross-runtime agreement oracle for competing first senders. -/
 theorem dynamic_route_competing_first_senders_are_rejected :
     checkStaticProjectability 3
       (.route (.dynamic 7) (.send 0 2 1 0) (.send 1 2 2 0)) = false := by
+  decide
+
+theorem dynamic_route_outbound_observer_without_evidence_is_rejected :
+    checkStaticProjectability 3
+      (.route (.dynamic 7)
+        (.seq (.send 2 2 1 0) (.send 0 2 3 0))
+        (.seq (.send 2 2 2 0) (.send 1 2 4 0))) = false := by
+  decide
+
+theorem dynamic_route_inbound_observers_are_projectable :
+    checkStaticProjectability 3
+      (.route (.dynamic 7)
+        (.seq (.send 2 0 1 0) (.send 0 2 3 0))
+        (.seq (.send 2 0 2 0) (.send 0 2 4 0))) = true := by
   decide
 
 end Hibana

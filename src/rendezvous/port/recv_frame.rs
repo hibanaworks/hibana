@@ -4,7 +4,7 @@
 //! received from a specific port/Rx handle and must be committed, requeued, or
 //! explicitly discarded.
 
-use super::Port;
+use super::{NonNull, Port};
 use crate::{
     observe::{core::TapEvent, events, ids},
     transport::{FrameHeader, Transport, wire::Payload},
@@ -439,7 +439,7 @@ impl<'r> ReceivedFrameCore<'r> {
         }
         self.receipt.assert_matches(
             Port::port_key(port),
-            core::ptr::from_ref(&port.recv_frame_receipt),
+            NonNull::from(&port.recv_frame_receipt),
         );
     }
 }

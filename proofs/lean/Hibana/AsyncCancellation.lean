@@ -4,7 +4,7 @@ import Hibana.TransportContract
 namespace Hibana
 
 /-- Frames accepted by one exact transport channel but not yet offered to the
-receiver's runtime monitor. The list order is the carrier FIFO order. -/
+receiver's endpoint runtime. The list order is the carrier FIFO order. -/
 structure AcceptedChannelQueue where
   channel : TransportChannel
   frames : List TransportFrame
@@ -151,6 +151,54 @@ structure AsyncCancellationConfig.RetirementReady
   nonLive : config.protocol.status ≠ .live
   acceptedChannelAuthority : config.AcceptedChannelAuthority
   coversAwaitingRoles : config.coversAwaitingRoles
+
+/-- A live fault snapshot establishes the exact retirement invariant when each
+still-participating role retains one covered receive direction. This separates
+the carrier's concrete coverage obligation from the protocol theorem. -/
+theorem fault_transport_snapshot_is_retirement_ready
+    {protocol : GlobalConfig}
+    {reporter : Nat}
+    {cause : SessionFault}
+    {transports : List TransportState}
+    (live : protocol.status = .live)
+    (channelsUnique : (transports.map TransportState.channel).Nodup)
+    (wellFormed : ∀ state, state ∈ transports -> state.WellFormed)
+    (covers : ∀ role, role < protocol.roleCount -> role ≠ reporter ->
+      role ∈ transports.map fun state => state.channel.receiver) :
+    (AsyncCancellationConfig.fromTransportSnapshot
+      (protocol.beginCancellation reporter cause) transports).RetirementReady := by
+  refine {
+    protocolWellFormed := begin_cancellation_is_well_formed live
+    nonLive := ?_
+    acceptedChannelAuthority :=
+      transport_snapshot_has_accepted_channel_authority channelsUnique wellFormed
+    coversAwaitingRoles := ?_
+  }
+  · cases pendingCase : removeAwaitingRole
+        (List.range protocol.roleCount) reporter <;>
+      simp [AsyncCancellationConfig.fromTransportSnapshot,
+        GlobalConfig.beginCancellation, live, pendingCase]
+  · cases pendingCase : removeAwaitingRole
+        (List.range protocol.roleCount) reporter with
+    | nil =>
+        simp [AsyncCancellationConfig.fromTransportSnapshot,
+          GlobalConfig.beginCancellation, live, pendingCase,
+          AsyncCancellationConfig.coversAwaitingRoles]
+    | cons head tail =>
+        unfold AsyncCancellationConfig.coversAwaitingRoles
+        simp only [AsyncCancellationConfig.fromTransportSnapshot]
+        rw [show (protocol.beginCancellation reporter cause).status =
+            .cancelling cause (head :: tail) by
+          simp [GlobalConfig.beginCancellation, live, pendingCase]]
+        intro role member
+        have pendingMember :
+            role ∈ removeAwaitingRole
+              (List.range protocol.roleCount) reporter := by
+          simpa [pendingCase] using member
+        have facts : role < protocol.roleCount /\ role ≠ reporter := by
+          simpa [removeAwaitingRole] using pendingMember
+        have covered := covers role facts.1 facts.2
+        simpa [List.map_map, AcceptedChannelQueue.fromTransport] using covered
 
 /-- The post-fault transition system has no protocol-delivery constructor.
 Accepted frames are discarded in FIFO order, and a role may observe peer close

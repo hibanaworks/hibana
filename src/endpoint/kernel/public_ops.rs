@@ -22,41 +22,22 @@ where
 
     #[inline]
     #[must_use]
-    pub(in crate::endpoint::kernel) fn start_public_op(
-        &mut self,
-        op: PublicActiveOp,
-    ) -> super::core::PublicOpLease {
-        match self.public_active_op {
-            PublicActiveOp::Idle => {
-                self.public_active_op = op;
-                super::core::PublicOpLease::Held
-            }
-            PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
-            _ => {
-                self.public_op_busy_fault();
-                super::core::PublicOpLease::Rejected
-            }
-        }
-    }
-
-    #[inline]
-    #[must_use]
     fn transition_public_op(
         &mut self,
         from: PublicActiveOp,
         to: PublicActiveOp,
     ) -> super::core::PublicOpLease {
-        match self.public_active_op {
-            active if active == from => {
+        let lease = self.public_active_op.transition_lease(from);
+        match lease {
+            super::core::PublicOpLease::Held => {
                 self.public_active_op = to;
-                super::core::PublicOpLease::Held
             }
-            PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
-            _ => {
+            super::core::PublicOpLease::Faulted => {}
+            super::core::PublicOpLease::Rejected => {
                 self.public_op_busy_fault();
-                super::core::PublicOpLease::Rejected
             }
         }
+        lease
     }
 
     #[inline]
@@ -140,7 +121,7 @@ where
     pub(in crate::endpoint) fn init_public_offer_state(&mut self) -> super::core::PublicOpLease {
         let lease = match self.public_active_op {
             PublicActiveOp::Idle if self.public_route_branch.is_none() => {
-                self.start_public_op(PublicActiveOp::Offer)
+                self.transition_public_op(PublicActiveOp::Idle, PublicActiveOp::Offer)
             }
             PublicActiveOp::RestoredRouteBranch if self.public_route_branch.is_some() => self
                 .transition_public_op(PublicActiveOp::RestoredRouteBranch, PublicActiveOp::Offer),
@@ -176,7 +157,9 @@ where
         init: &SendInit,
     ) -> super::core::PublicOpLease {
         let lease = match self.public_active_op {
-            PublicActiveOp::Idle => self.start_public_op(PublicActiveOp::Send),
+            PublicActiveOp::Idle => {
+                self.transition_public_op(PublicActiveOp::Idle, PublicActiveOp::Send)
+            }
             PublicActiveOp::RouteBranch if self.public_route_branch.is_some() => {
                 self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::BranchSend)
             }
@@ -242,7 +225,7 @@ where
     #[inline]
     #[must_use]
     pub(in crate::endpoint) fn init_public_recv_state(&mut self) -> super::core::PublicOpLease {
-        let lease = self.start_public_op(PublicActiveOp::Recv);
+        let lease = self.transition_public_op(PublicActiveOp::Idle, PublicActiveOp::Recv);
         match lease {
             super::core::PublicOpLease::Held => {}
             super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => {

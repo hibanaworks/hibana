@@ -69,7 +69,10 @@ fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
         g::send::<0, 1, Msg<11, u8>>(),
         g::send::<0, 2, Msg<12, u8>>(),
     );
-    let right = g::send::<0, 1, Msg<13, u8>>();
+    let right = g::seq(
+        g::send::<0, 1, Msg<13, u8>>(),
+        g::send::<0, 2, Msg<14, u8>>(),
+    );
     project(&g::route(left, right).resolve::<ROUTE_RESOLVER>())
 }
 

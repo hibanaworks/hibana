@@ -447,7 +447,9 @@ pub(super) fn verified_protocol_certificate_source(
         .join(", ");
     format!(
         "def {name} : Hibana.VerifiedProtocolCertificate := {{\n  \
-         projectability := {projectability}\n  descriptors := [{descriptor_list}]\n}}\n\n\
+         projectability := {projectability}\n  \
+         distributedProgress := Hibana.buildDistributedProgressCertificate 0 {role_count} {choreo}\n  \
+         descriptors := [{descriptor_list}]\n}}\n\n\
          example : {name}.check 0 {role_count} {choreo} = true := by\n  native_decide\n\n\
          example : {name}.AllRolesRefine 0 {role_count} {choreo} :=\n  \
          Hibana.verified_protocol_certificate_establishes_all_role_refinement (by native_decide)\n"

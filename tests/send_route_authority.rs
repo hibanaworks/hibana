@@ -77,7 +77,7 @@ fn drop_left(_: &()) -> Result<DecisionArm, ResolverError> {
 
 fn same_label_outbound_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left = g::send::<0, 1, Msg<SAME_LABEL, u32>>();
-    let right = g::send::<0, 2, Msg<SAME_LABEL, u32>>();
+    let right = g::send::<0, 1, Msg<SAME_LABEL, u64>>();
     project(&g::route(left, right).resolve::<DROP_ROUTE_RESOLVER>())
 }
 
@@ -224,15 +224,13 @@ fn dropping_pending_resolved_send_future_does_not_publish_success_evidence() {
                 .expect("register rendezvous");
             let role0 = same_label_outbound_program::<0>();
             let role1 = same_label_outbound_program::<1>();
-            let role2 = same_label_outbound_program::<2>();
             rv.set_resolver(
                 &role0,
                 ResolverRef::<DROP_ROUTE_RESOLVER>::decision_state(&UNIT, drop_left),
             )
             .expect("install drop resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
-            let left_peer = rv.enter(sid, &role1).expect("attach left peer");
-            let right_peer = rv.enter(sid, &role2).expect("attach right peer");
+            let peer = rv.enter(sid, &role1).expect("attach peer");
 
             {
                 let value = 2702u32;
@@ -257,7 +255,7 @@ fn dropping_pending_resolved_send_future_does_not_publish_success_evidence() {
                 }),
                 "dropping after transport pending must not publish success evidence: {after_drop:?}"
             );
-            drop((left_peer, right_peer));
+            drop(peer);
         });
     });
 }

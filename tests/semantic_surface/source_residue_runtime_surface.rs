@@ -61,6 +61,39 @@ fn production_large_functions_do_not_force_inline_always() {
 }
 
 #[test]
+fn route_controller_discovery_has_one_production_authority() {
+    let production = read_production_rs_tree("src");
+    assert_eq!(
+        production
+            .matches("const fn first_visible_controller_mask(")
+            .count(),
+        1,
+        "first-visible route controller discovery must have one production implementation"
+    );
+    assert_eq!(
+        production
+            .matches("const fn unique_controller_role(")
+            .count(),
+        1,
+        "controller-mask decoding must have one production implementation"
+    );
+
+    let image_writer = read("src/global/compiled/images/image/blob_storage.rs");
+    let lowering_seal = read("src/global/compiled/lowering/seal.rs");
+    for consumer in [image_writer, lowering_seal] {
+        assert!(
+            consumer.contains("first_visible_controller_mask(eff_list"),
+            "descriptor writing and projectability sealing must share controller discovery"
+        );
+        assert!(
+            consumer.contains("unique_controller_role(controller_mask)")
+                || consumer.contains("unique_controller_role(mask)"),
+            "descriptor writing and projectability sealing must share controller decoding"
+        );
+    }
+}
+
+#[test]
 fn production_and_gates_do_not_reintroduce_std_feature_branches() {
     let production = read_production_rs_tree("src");
     let readme = read("README.md");
@@ -618,8 +651,11 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "if !validate_roll_reentry_endpoint_selectors(eff_list)",
         "if !has_dynamic_resolver",
         "&& first_visible_endpoint_selector_conflicts_from_markers(",
-        "if !has_exactly_one_bit(controller_mask)",
-        "if local_route_observer_paths_mergeable(",
+        "let controller = match unique_controller_role(controller_mask)",
+        "None => return Some(ProgramSourceError::RouteControllerMismatch)",
+        "let observer_paths_mergeable = local_route_observer_paths_mergeable(",
+        "if route_role_has_branch_knowledge(role, controller, observer_paths_mergeable)",
+        "role == controller || observer_paths_mergeable",
         "validate_route_scope(role, eff_list, scope_markers, marker_idx)",
         "while role < crate::g::ROLE_DOMAIN_SIZE",
         "validate_compiled_layout(role, eff_list)",
@@ -679,7 +715,7 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         .find("if !has_dynamic_resolver")
         .expect("intrinsic route branch must stay present");
     let unique_controller_reject = seal
-        .find("if !has_exactly_one_bit(controller_mask)")
+        .find("let controller = match unique_controller_role(controller_mask)")
         .expect("all route authorities must retain one first-visible controller");
     let overlap_reject = seal
         .find("&& first_visible_endpoint_selector_conflicts_from_markers(")

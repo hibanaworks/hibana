@@ -6,6 +6,9 @@ use super::{
     },
 };
 
+#[cfg(kani)]
+mod kani;
+
 pub(crate) const fn first_visible_controller_mask(
     eff_list: &EffList,
     start: usize,
@@ -41,4 +44,19 @@ pub(crate) const fn first_visible_controller_mask(
         idx += 1;
     }
     0
+}
+
+#[inline(always)]
+pub(crate) const fn unique_controller_role(mask: u16) -> Option<u8> {
+    if mask == 0 || (mask & (mask - 1)) != 0 {
+        return None;
+    }
+    let mut role = 0u8;
+    while role < u16::BITS as u8 {
+        if (mask & (1u16 << role)) != 0 {
+            return Some(role);
+        }
+        role += 1;
+    }
+    None
 }

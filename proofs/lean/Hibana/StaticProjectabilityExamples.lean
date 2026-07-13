@@ -9,7 +9,9 @@ example :
 
 example :
     checkStaticProjectability 3
-      (.route (.dynamic 7) (.send 0 1 1 0) (.send 0 2 2 0)) = true := by
+      (.route (.dynamic 7)
+        (.seq (.send 0 1 1 0) (.send 0 2 3 0))
+        (.seq (.send 0 1 2 0) (.send 0 2 4 0))) = true := by
   native_decide
 
 example :

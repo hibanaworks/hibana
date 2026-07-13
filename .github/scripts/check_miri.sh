@@ -81,6 +81,44 @@ run_miri_test \
   transport_requeue_callback_reentry_revalidates_generation
 
 run_miri_test \
+  receive-frame-receipt-owner \
+  6 \
+  6 \
+  0 \
+  -p hibana \
+  --lib \
+  rendezvous::recv_frame_receipt::tests
+
+run_miri_test \
+  public-operation-kernel \
+  2 \
+  1 \
+  1 \
+  -p hibana \
+  --lib \
+  endpoint::kernel::core::public_types::tests
+
+MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
+  production-proof-artifact-exporter \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean \
+  -- \
+  --ignored
+
+run_miri_test \
+  rolled-output-pipeline-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  global::event_program_cursor_tests::production_cursor_pipelines_rolled_send_before_remote_receive
+
+run_miri_test \
   endpoint-waiter-owner \
   2 \
   2 \
@@ -189,6 +227,24 @@ run_miri_test \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_resolved_route_preserves_buffered_decision_order
+
+run_miri_test \
+  rolled-same-label-schema-reentry-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_resolved_same_label_reenters_with_selected_schema
+
+run_miri_test \
+  rolled-nested-resolver-reentry-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_nested_resolved_route_reenters_asymmetric_paths
 
 run_miri_test \
   session-family-isolation \

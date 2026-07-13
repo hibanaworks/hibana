@@ -27,6 +27,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let final_gate_with_helpers =
         format!("{final_gate}\n{thumb_header_gate}\n{thumb_mask_gate}\n{run_final_gate}");
     let snapshot = read(".github/measurement_snapshots/hibana-size-snapshot.json");
+    let pico_example_manifest = read("examples/pico/Cargo.toml");
+    let pico_example = read("examples/pico/src/lib.rs");
     let workflow = read(".github/workflows/quality-gates.yml");
     let endpoint_kernel = read("src/endpoint/kernel/core.rs")
         + &read_production_dir_rs("src/endpoint/kernel")
@@ -193,9 +195,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "CURRENT_REF=\"${HIBANA_SIZE_CURRENT_REF:-HEAD}\"",
         "git worktree add --detach \"${CURRENT_WORKTREE}\" \"${CURRENT_REF}\"",
         "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\"",
-        "hibana-projected-measure",
-        "program_import = \"hibana::runtime::program::{project, RoleProgram}\"",
-        "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)",
+        "local pico_example_manifest=\"${tree}/examples/pico/Cargo.toml\"",
+        "missing tracked Pico projection example",
+        "--manifest-path \"${pico_example_manifest}\"",
+        "libhibana_pico_projection_example.rlib",
         "projected_sections",
         "current runtime snapshot missing shapes",
         "current runtime snapshot shape={shape} missing metrics",
@@ -239,12 +242,26 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "hibana::integration",
         "metrics[\"localside_peak_stack_bytes\"] = metrics.get(\"peak_stack_bytes\", 0)",
         "published baseline",
+        "send_signatures",
+        "lane_send",
+        "projected_crate",
     ] {
         assert!(
             !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
             "size gate must not contain current-tree self-patching or CI fixed-snapshot coupling: {forbidden}"
         );
     }
+
+    assert!(
+        pico_example_manifest.contains("name = \"hibana-pico-projection-example\"")
+            && pico_example_manifest
+                .contains("hibana = { path = \"../..\", default-features = false }")
+            && pico_example.starts_with("#![no_std]")
+            && pico_example.contains("pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)")
+            && pico_example.contains("g::send::<0, 1, Msg<1, u32>>()")
+            && pico_example.contains("g::send::<1, 0, Msg<2, u32>>()"),
+        "Pico measurement must use one tracked no_std projection example instead of generated compatibility source"
+    );
 
     assert!(
         workflow.contains("fetch-depth: 0")
@@ -361,6 +378,21 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains(
                 "resident-descriptor-validation \\\n  40 \\\n  40 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"
             )
+            && miri_gate.contains("receive-frame-receipt-owner")
+            && miri_gate.contains("public-operation-kernel")
+            && miri_gate.contains("production-proof-artifact-exporter")
+            && miri_gate.contains(
+                "MIRIFLAGS=\"${MIRIFLAGS} -Zmiri-disable-isolation\" run_miri_test"
+            )
+            && miri_gate.contains(
+                "global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean"
+            )
+            && miri_gate.contains("endpoint::kernel::core::public_types::tests")
+            && miri_gate.contains("rolled-output-pipeline-owner")
+            && miri_gate.contains(
+                "global::event_program_cursor_tests::production_cursor_pipelines_rolled_send_before_remote_receive"
+            )
+            && miri_gate.contains("rendezvous::recv_frame_receipt::tests")
             && miri_gate.contains("compiled-program-descriptor-validation")
             && miri_gate.contains(
                 "global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_"
@@ -372,6 +404,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "program-image-storage-validation \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::program_image_"
             )
             && miri_gate.contains("miri_passed_total=$((miri_passed_total + expected_passed))")
+            && miri_gate.contains("rolled-same-label-schema-reentry-owner")
+            && miri_gate.contains("rolled_resolved_same_label_reenters_with_selected_schema")
+            && miri_gate.contains("rolled-nested-resolver-reentry-owner")
+            && miri_gate.contains("rolled_nested_resolved_route_reenters_asymmetric_paths")
             && miri_gate.contains("miri_ignored_total=$((miri_ignored_total + expected_ignored))")
             && miri_gate.contains(
                 "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"

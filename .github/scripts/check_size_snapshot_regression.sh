@@ -97,79 +97,25 @@ measure_tree() {
       ')"
   printf '%s\n' "${section_output}"
 
-  local projected_crate="${WORK_ROOT}/projected-${label}"
-  mkdir -p "${projected_crate}/src"
-  cat >"${projected_crate}/Cargo.toml" <<EOF
-[package]
-name = "hibana-projected-measure"
-version = "0.0.0"
-edition = "2024"
-publish = false
-
-[lib]
-name = "hibana_projected_measure"
-
-[dependencies]
-hibana = { path = "${tree}", default-features = false }
-EOF
-  python3 - "${tree}" "${projected_crate}/src/lib.rs" <<'PY'
-import sys
-import re
-from pathlib import Path
-
-tree = Path(sys.argv[1])
-dst = sys.argv[2]
-g_source = (tree / "src" / "g.rs").read_text(encoding="utf-8")
-send_signatures = re.findall(
-    r"pub\s+const\s+fn\s+send\s*<(?P<generics>[^>]*)>",
-    g_source,
-    flags=re.S,
-)
-if not any("const FROM" in sig and "const TO" in sig for sig in send_signatures):
-    raise SystemExit("size snapshot generator requires the canonical const-role g::send API")
-program_import = "hibana::runtime::program::{project, RoleProgram}"
-lane_send = any("const LANE" in sig for sig in send_signatures)
-
-def send_expr(idx: int) -> str:
-    label = 1 + (idx % 46)
-    lane = idx % 4
-    if lane_send:
-        return f"g::send::<0, 1, g::Msg<{label}, ()>, {lane}>()"
-    return f"g::send::<0, 1, g::Msg<{label}, ()>>()"
-
-def seq_expr(start: int, end: int) -> str:
-    if end - start == 1:
-        return send_expr(start)
-    mid = start + ((end - start) // 2)
-    return f"g::seq({seq_expr(start, mid)}, {seq_expr(mid, end)})"
-
-program = seq_expr(0, 32)
-with open(dst, "w", encoding="utf-8") as f:
-    f.write(
-        "#![no_std]\n"
-        "use hibana::g;\n"
-        f"use {program_import};\n\n"
-        "#[inline(never)]\n"
-        "pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>) {\n"
-        f"    let program = {program};\n"
-        "    (project(&program), project(&program))\n"
-        "}\n"
-    )
-PY
+  local pico_example_manifest="${tree}/examples/pico/Cargo.toml"
+  if [[ ! -f "${pico_example_manifest}" ]]; then
+    echo "missing tracked Pico projection example for ${label}: ${pico_example_manifest}" >&2
+    exit 1
+  fi
   CARGO_TERM_COLOR=never \
   CARGO_TERM_PROGRESS_WHEN=never \
   TERM=dumb \
   PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
   CARGO_TARGET_DIR="${target_dir}" \
     "${TOOLCHAIN_CARGO}" build \
-      --manifest-path "${projected_crate}/Cargo.toml" \
+      --manifest-path "${pico_example_manifest}" \
       --no-default-features \
       --target thumbv6m-none-eabi \
       --release \
       --lib \
       >/dev/null
 
-  local projected_rlib="${target_dir}/thumbv6m-none-eabi/release/libhibana_projected_measure.rlib"
+  local projected_rlib="${target_dir}/thumbv6m-none-eabi/release/libhibana_pico_projection_example.rlib"
   if [[ ! -f "${projected_rlib}" ]]; then
     echo "missing projected RoleProgram measurement artifact for ${label}: ${projected_rlib}" >&2
     exit 1

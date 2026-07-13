@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, a
  --> src/g.rs
   |
   |             panic_choreography_error(error);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<2, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>>>::VALIDATION` failed inside this call
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Resolve<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<2, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>>, 7>>::VALIDATION` failed inside this call
   |
 note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
@@ -48,7 +48,7 @@ note: erroneous constant encountered
   | |     };
   | |_____^
 
-note: the above error was encountered while instantiating `fn g::project::<1, Route<Seq<hibana::g::Send<0, 2, Msg<1, ()>>, hibana::g::Send<1, 3, Msg<5, ()>>>, Seq<hibana::g::Send<0, 2, Msg<2, ()>>, hibana::g::Send<1, 3, Msg<5, ()>>>>>`
+note: the above error was encountered while instantiating `fn g::project::<1, Resolve<Route<Seq<hibana::g::Send<0, 2, Msg<1, ()>>, hibana::g::Send<1, 3, Msg<5, ()>>>, Seq<hibana::g::Send<0, 2, Msg<2, ()>>, hibana::g::Send<1, 3, Msg<5, ()>>>>, 7>>`
  --> src/global/program.rs
   |
   |         crate::g::project(self)

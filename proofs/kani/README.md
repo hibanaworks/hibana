@@ -8,6 +8,8 @@ The pinned gate exhausts the production arithmetic for:
 
 - exact binary decoding of every compact route-arm byte and every valid
   two-bit ready mask;
+- exact public-operation prepare classification over the complete endpoint
+  operation-state product, including fail-closed rejection and poison reuse;
 - exact acceptance domains for packed event-conflict rows and optional
   descriptor route-arm bytes;
 - exact packed lane-range round trips with formal rejection of the reserved
@@ -30,6 +32,9 @@ The pinned gate exhausts the production arithmetic for:
   storage, and injective packing of scope event/reentry tags;
 - exact preservation of every 32-bit payload-schema value through packed atom
   decoding, including the concrete little-endian blob layout;
+- exact canonical bytes, widths, schema identities, and rejection domains for
+  every built-in scalar and borrowed-byte codec, plus zero-, one-, and
+  four-byte representatives of the const-generic fixed-array codec;
 - exact round-trip preservation and injective identity of all eight core frame
   header bytes across the complete input domain;
 - independent fail-closed fit-probe and direct-constructor obligations for
@@ -66,9 +71,10 @@ The pinned gate exhausts the production arithmetic for:
 - exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
   capacity domain.
 
-The pinned inventory contains 66 CBMC harnesses. Transport FIFO,
-exactly-once/no-replay delivery, and peer-close observation are modeled and
-proved in Lean, mirrored by the Rust conformance tests, and checked under Miri.
+The pinned inventory contains 83 CBMC harnesses. Transport FIFO,
+exactly-once/no-replay delivery, peer-close observation, and one-shot receive
+receipt resolution are modeled and proved in Lean, mirrored by the Rust
+conformance tests, and checked under Miri.
 
 The harnesses cover both successful and rejected symbolic inputs. They use no
 arbitrary role, lane, descriptor, or slab capacity bound. Lean proves the

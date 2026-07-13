@@ -8,7 +8,7 @@ version       = "0.9.4"
 edition       = "2024"
 rust-version  = "1.95"
 autotests     = false
-description   = "Affine multiparty asynchronous session runtime monitor for no_std Rust choreography"
+description   = "Choreography-derived runtime enforcement kernel for no_std Rust multiparty protocols"
 license       = "MIT OR Apache-2.0"
 repository    = "https://github.com/hibanaworks/hibana"
 homepage      = "https://github.com/hibanaworks/hibana"
@@ -22,6 +22,7 @@ include       = [
     "/LICENSE-APACHE",
     "/LICENSE-MIT",
     "/hibana-header.svg",
+    "/examples/**",
     "/src/**",
     "/tests/**",
     "!/tests/docs_surface.rs",

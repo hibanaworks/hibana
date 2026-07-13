@@ -477,7 +477,7 @@ theorem projectable_reachable_state_has_global_logical_progress
 /-- Hibana's semantic counterpart of asynchronous-MPST unstuckness. Because a
 normalized descriptor has a finite state image, closure is checked directly:
 every reachable live state with unfinished work has a concrete successor. -/
-def SemanticallyUnstuck
+def GlobalSemanticallyUnstuck
     (session roleCount : Nat)
     (choreo : Choreo) : Prop :=
   ∀ state config,
@@ -492,7 +492,7 @@ theorem projectability_certificate_establishes_semantic_unstuckness
     {session roleCount : Nat}
     {choreo : Choreo}
     (accepted : certificate.check session roleCount choreo = true) :
-    SemanticallyUnstuck session roleCount choreo := by
+    GlobalSemanticallyUnstuck session roleCount choreo := by
   intro state config reachable decoded statusLive unfinished
   obtain ⟨verifiedConfig, verifiedDecoded, progress⟩ :=
     projectable_reachable_state_has_global_logical_progress accepted reachable

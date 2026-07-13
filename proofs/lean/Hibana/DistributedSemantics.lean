@@ -31,7 +31,7 @@ structure LocalConfig where
   roleCount : Nat
   choreo : Choreo
   epoch : Nat
-  monitor : CommitState
+  commitState : CommitState
   queue : List LocalQueuedFrame
   status : GlobalSessionStatus
 
@@ -127,7 +127,7 @@ def DistributedConfig.localConfig?
       roleCount := config.roleCount
       choreo := config.choreo
       epoch := config.epoch
-      monitor := config.roleState role
+      commitState := config.roleState role
       queue
       status := config.status
     }
@@ -320,9 +320,15 @@ private def DistributedConfig.routeEvidenceCompatible
     | none => true
     | some selected => selected == membership.arm
 
-/-- A role may learn route membership only from an exact queued frame addressed
-to that role. Empty membership and contradictory local/global evidence fail
-closed; there is no global-selection observation shortcut. -/
+private def DistributedConfig.routeEvidenceAddsKnowledge
+    (config : DistributedConfig) (role : Nat)
+    (memberships : List ConflictArm) : Bool :=
+  memberships.any fun membership =>
+    (config.roleState role).selected membership.conflict |>.isNone
+
+/-- A role may learn route membership only once from an exact queued frame
+addressed to that role. Empty membership, contradictory evidence, and replay of
+already-known evidence fail closed; there is no global-selection shortcut. -/
 def DistributedConfig.observeQueuedRouteEvidence?
     (config : DistributedConfig)
     (role globalId : Nat) : Option DistributedConfig :=
@@ -332,7 +338,8 @@ def DistributedConfig.observeQueuedRouteEvidence?
     | some (some _), some memberships =>
         if memberships.isEmpty then
           none
-        else if memberships.all (config.routeEvidenceCompatible role) then
+        else if memberships.all (config.routeEvidenceCompatible role) &&
+            config.routeEvidenceAddsKnowledge role memberships then
           let selected := applyConflictArms memberships (config.roleState role).selected
           some {
             config with
@@ -410,8 +417,9 @@ theorem role_selection_observation_is_global_stutter
             | some memberships =>
                 by_cases empty : memberships.isEmpty
                 · simp [bound, frameCase, conflictsCase, empty] at observed
-                · by_cases compatible :
-                      memberships.all (config.routeEvidenceCompatible role)
+                · by_cases accepted :
+                      memberships.all (config.routeEvidenceCompatible role) &&
+                        config.routeEvidenceAddsKnowledge role memberships
                   · let selected :=
                       applyConflictArms memberships (config.roleState role).selected
                     have nextEq :
@@ -422,11 +430,11 @@ theorem role_selection_observation_is_global_stutter
                             else
                               config.roleState candidate } = next :=
                       Option.some.inj (by
-                        simpa [bound, frameCase, conflictsCase, empty, compatible,
+                        simpa [bound, frameCase, conflictsCase, empty, accepted,
                           selected] using observed)
                     subst next
                     exact role_selection_update_is_global_stutter config bound selected
-                  · simp [bound, frameCase, conflictsCase, empty, compatible] at observed
+                  · simp [bound, frameCase, conflictsCase, empty, accepted] at observed
   · simp [bound] at observed
 
 theorem route_selection_observation_has_exact_queued_evidence
@@ -437,7 +445,8 @@ theorem route_selection_observation_has_exact_queued_evidence
       config.localQueuedFrame? role globalId = some (some frame) /\
       config.choreo.globalEventConflicts[globalId]? = some memberships /\
       memberships ≠ [] /\
-      memberships.all (config.routeEvidenceCompatible role) = true := by
+      memberships.all (config.routeEvidenceCompatible role) = true /\
+      config.routeEvidenceAddsKnowledge role memberships = true := by
   unfold DistributedConfig.observeQueuedRouteEvidence? at observed
   by_cases bound : role < config.roleCount
   · cases frameCase : config.localQueuedFrame? role globalId with
@@ -451,11 +460,13 @@ theorem route_selection_observation_has_exact_queued_evidence
             | some memberships =>
                 by_cases empty : memberships.isEmpty
                 · simp [bound, frameCase, conflictsCase, empty] at observed
-                · by_cases compatible :
-                      memberships.all (config.routeEvidenceCompatible role)
-                  · refine ⟨frame, memberships, rfl, rfl, ?_, compatible⟩
+                · by_cases accepted :
+                      memberships.all (config.routeEvidenceCompatible role) &&
+                        config.routeEvidenceAddsKnowledge role memberships
+                  · have parts := Bool.and_eq_true_iff.mp accepted
+                    refine ⟨frame, memberships, rfl, rfl, ?_, parts.1, parts.2⟩
                     simpa using empty
-                  · simp [bound, frameCase, conflictsCase, empty, compatible] at observed
+                  · simp [bound, frameCase, conflictsCase, empty, accepted] at observed
   · simp [bound] at observed
 
 def DistributedConfig.operationOwner?
@@ -511,6 +522,9 @@ def DistributedConfig.protocolStep?
       | none => none
       | some next => some (config.fromGlobalSuccessor next authority)
 
+/-- Abstract linearization point for one completed roll. A source-level runtime
+refinement must show how independent endpoint reentry and carrier draining
+establish this atomic transition before claiming distributed roll correctness. -/
 def DistributedConfig.rollStep?
     (config : DistributedConfig) (rollId : Nat) : Option DistributedConfig :=
   match config.abstract.step? (.roll rollId) with
@@ -595,7 +609,7 @@ inductive DistributedStep : DistributedConfig -> DistributedConfig -> Prop where
       {operation : GlobalOperation}
       (stepped : current.protocolStep? role operation = some next) :
       DistributedStep current next
-  | roll
+  | rollLinearization
       {current next : DistributedConfig}
       {rollId : Nat}
       (stepped : current.rollStep? rollId = some next) :
@@ -615,7 +629,7 @@ theorem distributed_step_weakly_simulates_global
   | @protocol role operation stepped =>
       exact Or.inr ⟨operation,
         distributed_protocol_step_simulates_global fidelity stepped⟩
-  | @roll rollId stepped =>
+  | @rollLinearization rollId stepped =>
       exact Or.inr ⟨.roll rollId,
         distributed_roll_step_simulates_global fidelity stepped⟩
 
@@ -657,6 +671,21 @@ private def wrongRouteEvidenceRegression : Bool :=
   | some queued => (queued.observeQueuedRouteEvidence? 1 1).isSome
 
 example : wrongRouteEvidenceRegression = false := by
+  native_decide
+
+private def duplicateRouteEvidenceRegression : Bool :=
+  let initial := DistributedConfig.fromGlobalConfig
+    (GlobalConfig.initial 7 2 routeEvidenceRegressionChoreo)
+  match initial.protocolStep? 0 (.send 0) with
+  | none => false
+  | some queued =>
+      match queued.observeQueuedRouteEvidence? 1 0 with
+      | none => false
+      | some observed => (observed.observeQueuedRouteEvidence? 1 0).isSome
+
+/-- Route evidence is affine: the same accepted occurrence cannot publish the
+same route knowledge to one endpoint twice. -/
+example : duplicateRouteEvidenceRegression = false := by
   native_decide
 
 end Hibana

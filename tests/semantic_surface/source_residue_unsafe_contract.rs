@@ -8,9 +8,12 @@ fn unsafe_contract_gate_covers_receive_frame_receipt_owner() {
 
     assert!(
         gate.contains("cat src/rendezvous/recv_frame_receipt.rs")
-            && gate.contains("if self.outstanding.replace(true)")
-            && receipt.contains("if self.outstanding.replace(true)")
-            && receipt.contains("if !self.outstanding.get()")
+            && gate.contains("RecvFrameReceiptPhase::Outstanding")
+            && receipt.contains("enum RecvFrameReceiptPhase")
+            && receipt.contains("owner: Option<RecvFrameReceiptOwner>")
+            && receipt.contains("None => crate::invariant()")
+            && !receipt.contains("if self.state.is_null()")
+            && !receipt.contains("if self.outstanding.replace(true)")
             && port_recv.contains("impl Drop for ReceivedFrameCore"),
         "unsafe contract gate must scan both the receive-frame value owner and its receipt authority owner"
     );

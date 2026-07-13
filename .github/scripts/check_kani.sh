@@ -91,6 +91,14 @@ for harness in \
   fi
 done
 
+for harness in public_operation_transition_classifier_is_exact; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/endpoint/kernel/core/public_types/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
 for harness in \
   selected_local_participant_mask_is_exact_intersection \
   active_route_entry_cannot_be_overwritten \
@@ -111,6 +119,37 @@ for harness in \
   frame_header_identity_is_exact_and_injective; do
   if ! grep -Eq "^fn ${harness}\\(\\)" \
     "${ROOT_DIR}/src/transport/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
+  builtin_u8_i8_codecs_are_exact \
+  builtin_u16_i16_codecs_are_exact \
+  builtin_u32_i32_codecs_are_exact \
+  builtin_u64_i64_codecs_are_exact \
+  builtin_u128_i128_codecs_are_exact \
+  builtin_bool_codec_accepts_exact_canonical_bytes \
+  builtin_unit_codec_is_exact \
+  builtin_borrowed_bytes_roundtrip_is_exact \
+  builtin_borrowed_bytes_truncation_is_exact \
+  builtin_fixed_array_schema_and_bytes_are_exact; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/transport/wire/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
+  receive_frame_receipt_resolution_is_affine \
+  receive_frame_receipt_rejects_duplicate_issue \
+  receive_frame_receipt_rejects_duplicate_resolution \
+  receive_frame_receipt_rejects_foreign_port \
+  receive_frame_receipt_rejects_foreign_state; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/rendezvous/recv_frame_receipt/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
     exit 1
   fi
@@ -166,11 +205,27 @@ for harness in scope_id_decoding_accepts_exact_compact_domain; do
   fi
 done
 
+for harness in unique_controller_role_accepts_exact_single_bit_domain; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/global/const_dsl/endpoint_controller/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
 for harness in \
   outbound_selector_identity_is_exact_public_send_contract \
   observer_path_decision_has_exact_merge_domain; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/const_dsl/endpoint_selectors/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in route_controller_or_in_band_evidence_is_exact_acceptance_domain; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/global/compiled/lowering/seal/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
     exit 1
   fi
@@ -269,6 +324,7 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness resolver_storage_layout_is_bounded_and_exact \
   --harness route_arm_decoding_accepts_exact_binary_domain \
   --harness single_ready_mask_decoding_is_exact \
+  --harness public_operation_transition_classifier_is_exact \
   --harness selected_local_participant_mask_is_exact_intersection \
   --harness active_route_entry_cannot_be_overwritten \
   --harness empty_route_entry_begin_is_exact \
@@ -278,6 +334,21 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness route_entry_initial_mask_is_exact_over_selected_participants \
   --harness frame_header_roundtrip_preserves_every_field \
   --harness frame_header_identity_is_exact_and_injective \
+  --harness builtin_u8_i8_codecs_are_exact \
+  --harness builtin_u16_i16_codecs_are_exact \
+  --harness builtin_u32_i32_codecs_are_exact \
+  --harness builtin_u64_i64_codecs_are_exact \
+  --harness builtin_u128_i128_codecs_are_exact \
+  --harness builtin_bool_codec_accepts_exact_canonical_bytes \
+  --harness builtin_unit_codec_is_exact \
+  --harness builtin_borrowed_bytes_roundtrip_is_exact \
+  --harness builtin_borrowed_bytes_truncation_is_exact \
+  --harness builtin_fixed_array_schema_and_bytes_are_exact \
+  --harness receive_frame_receipt_resolution_is_affine \
+  --harness receive_frame_receipt_rejects_duplicate_issue \
+  --harness receive_frame_receipt_rejects_duplicate_resolution \
+  --harness receive_frame_receipt_rejects_foreign_port \
+  --harness receive_frame_receipt_rejects_foreign_state \
   --harness session_fault_encoding_roundtrip_is_exact \
   --harness session_fault_encoding_is_injective \
   --harness invalid_session_fault_encoding_is_fail_fast \
@@ -297,8 +368,10 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness role_image_fit_probe_rejects_undersized_storage \
   --harness role_image_fit_probe_rejects_plan_mismatch \
   --harness scope_id_decoding_accepts_exact_compact_domain \
+  --harness unique_controller_role_accepts_exact_single_bit_domain \
   --harness outbound_selector_identity_is_exact_public_send_contract \
   --harness observer_path_decision_has_exact_merge_domain \
+  --harness route_controller_or_in_band_evidence_is_exact_acceptance_domain \
   --harness three_event_causal_handoff_accepts_every_valid_role_assignment \
   --harness sender_change_without_causal_handoff_is_rejected \
   --harness roll_reentry_causal_closure_rejects_open_cycle \

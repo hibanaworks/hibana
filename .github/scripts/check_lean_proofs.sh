@@ -5,9 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROOF_DIR="${ROOT_DIR}/proofs/lean"
 GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
+PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
-EXPECTED_MARKER="hibana Lean generated proof passed traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8"
+EXPECTED_MARKER="hibana Lean generated proof passed traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
+EXPECTED_PRODUCTION_MARKER="hibana Lean production evidence passed transitions=7 operations=6 owners=8 codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
 EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=5 poison=1 generation=1 atomic-failures=4"
+EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof passed states=9 transitions=81"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
 if [[ ! -f "${PROOF_DIR}/lean-toolchain" ]] \
@@ -57,11 +60,17 @@ fi
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
-if [[ "$(grep -Fc "depends on axioms: [propext, Quot.sound]" <<<"${axiom_output}")" != "177" ]] \
+axiom_both_count="$(awk '
+  /depends on axioms: \[propext, Quot\.sound\]/ { count += 1 }
+  /depends on axioms: \[propext,$/ { count += 1 }
+  END { print count + 0 }
+' <<<"${axiom_output}")"
+if [[ "${axiom_both_count}" != "258" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "139" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "30" ]] \
-  || [[ "$(wc -l <<<"${axiom_output}" | tr -d ' ')" != "346" ]]; then
+  || [[ "$(grep -Fc "native_decide.ax" <<<"${axiom_output}")" != "0" ]] \
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "189" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "47" ]] \
+  || [[ "$(grep -Ec "^'Hibana\\." <<<"${axiom_output}")" != "494" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi
@@ -69,7 +78,7 @@ fi
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 mkdir -p "$(dirname "${GENERATED}")"
-rm -f "${GENERATED}" "${RUNTIME_GENERATED}"
+rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}"
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \
@@ -88,11 +97,24 @@ if [[ ! -s "${RUNTIME_GENERATED}" ]]; then
   echo "Lean proof gate runtime exporter did not create a nonempty artifact" >&2
   exit 1
 fi
+CARGO_BUILD_JOBS=1 \
+  RUST_TEST_THREADS=1 \
+  cargo +"${TOOLCHAIN}" test -p hibana --lib \
+    endpoint::kernel::core::public_types::tests::export_public_operation_kernel_for_lean \
+    -- --ignored --exact
+if [[ ! -s "${PUBLIC_OPERATION_GENERATED}" ]]; then
+  echo "Lean proof gate public-operation exporter did not create a nonempty artifact" >&2
+  exit 1
+fi
 
 lean_output="$(cd "${PROOF_DIR}" && lake env lean "${GENERATED}")"
 printf '%s\n' "${lean_output}"
 if [[ "${lean_output}" != *"${EXPECTED_MARKER}"* ]]; then
   echo "Lean proof gate generated certificate mismatch" >&2
+  exit 1
+fi
+if [[ "${lean_output}" != *"${EXPECTED_PRODUCTION_MARKER}"* ]]; then
+  echo "Lean proof gate production evidence mismatch" >&2
   exit 1
 fi
 runtime_lean_output="$(cd "${PROOF_DIR}" && lake env lean "${RUNTIME_GENERATED}")"
@@ -101,5 +123,11 @@ if [[ "${runtime_lean_output}" != *"${EXPECTED_RUNTIME_MARKER}"* ]]; then
   echo "Lean proof gate runtime certificate mismatch" >&2
   exit 1
 fi
+public_operation_lean_output="$(cd "${PROOF_DIR}" && lake env lean "${PUBLIC_OPERATION_GENERATED}")"
+printf '%s\n' "${public_operation_lean_output}"
+if [[ "${public_operation_lean_output}" != *"${EXPECTED_PUBLIC_OPERATION_MARKER}"* ]]; then
+  echo "Lean proof gate public-operation certificate mismatch" >&2
+  exit 1
+fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 verified-protocols=8 runtime-regions=5 atomic-failures=4"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=5 atomic-failures=4 public-operation-transitions=81"

@@ -167,10 +167,10 @@ def descriptorCursorStep
     (image : RustDescriptorImage)
     (graph : EventGraph)
     (state : CommitState)
-    (eventId : Nat) : MonitorResult :=
+    (eventId : Nat) : AdmissionResult :=
   match image.eventAction? eventId with
   | none => .rejected
-  | some action => monitorStep graph state { eventId, action }
+  | some action => admitOperation graph state { eventId, action }
 
 def applyDescriptorCursorStep
     (image : RustDescriptorImage)
@@ -181,15 +181,15 @@ def applyDescriptorCursorStep
   | .accepted next => next
   | .rejected => state
 
-/-- Every accepted byte-decoded cursor transition is exactly one monitor
+/-- Every accepted byte-decoded cursor transition is exactly one admission
 transition carrying event identity, direction, peer, label, and schema. -/
-theorem descriptor_cursor_step_simulates_monitor
+theorem descriptor_cursor_step_simulates_admission
     {image : RustDescriptorImage} {graph : EventGraph}
     {state next : CommitState} {eventId : Nat}
     (stepped : descriptorCursorStep image graph state eventId = .accepted next) :
     ∃ action,
       image.eventAction? eventId = some action ∧
-      monitorStep graph state { eventId, action } = .accepted next := by
+      admitOperation graph state { eventId, action } = .accepted next := by
   unfold descriptorCursorStep at stepped
   cases actionCase : image.eventAction? eventId with
   | none => simp [actionCase] at stepped
@@ -217,10 +217,10 @@ theorem accepted_descriptor_cursor_step_refines_projection
           (projectGraph certificate.image.role certificate.choreo)
           state eventId = some next := by
   refine ⟨accepted_descriptor_actions_match_projection certificateAccepted, ?_⟩
-  obtain ⟨action, actionAt, monitored⟩ :=
-    descriptor_cursor_step_simulates_monitor stepped
+  obtain ⟨action, actionAt, admitted⟩ :=
+    descriptor_cursor_step_simulates_admission stepped
   obtain ⟨event, _, eventAt, eventIdExact, actionExact, committed⟩ :=
-    monitor_acceptance_is_exact_commit monitored
+    admission_acceptance_is_exact_commit admitted
   exact ⟨action, event, actionAt, eventAt, eventIdExact, actionExact, committed⟩
 
 theorem descriptor_cursor_rejection_preserves_commit_state

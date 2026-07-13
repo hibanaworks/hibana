@@ -1,6 +1,5 @@
 use core::cell::UnsafeCell;
 
-pub(crate) use futures::FutureExt;
 use hibana::{
     g::{self, Msg},
     runtime::{
@@ -24,6 +23,7 @@ pub(crate) const INNER_ROUTE_RESOLVER: u16 = 0x93;
 pub(crate) const LEFT_A: u8 = 31;
 pub(crate) const LEFT_B: u8 = 32;
 pub(crate) const RIGHT: u8 = 33;
+pub(crate) const RIGHT_B: u8 = 34;
 pub(crate) const NESTED_LEFT: u8 = 41;
 pub(crate) const NESTED_INNER_RIGHT: u8 = 42;
 pub(crate) const NESTED_OUTER_RIGHT: u8 = 43;
@@ -98,7 +98,10 @@ pub(crate) fn program<const ROLE: u8>() -> RoleProgram<ROLE> {
         g::send::<0, 1, Msg<LEFT_A, u8>>(),
         g::send::<0, 2, Msg<LEFT_B, u8>>(),
     );
-    let right = g::send::<0, 1, Msg<RIGHT, u8>>();
+    let right = g::par(
+        g::send::<0, 1, Msg<RIGHT, u8>>(),
+        g::send::<0, 2, Msg<RIGHT_B, u8>>(),
+    );
     project(&g::route(left, right).resolve::<ROUTE_RESOLVER>())
 }
 
@@ -121,7 +124,7 @@ pub(crate) fn same_label_outbound_program<const ROLE: u8>() -> RoleProgram<ROLE>
 pub(crate) fn same_label_outbound_program_for<const ROLE: u8, const RESOLVER: u16>()
 -> RoleProgram<ROLE> {
     let left = g::send::<0, 1, Msg<SAME_LABEL, u32>>();
-    let right = g::send::<0, 2, Msg<SAME_LABEL, u32>>();
+    let right = g::send::<0, 1, Msg<SAME_LABEL, u64>>();
     project(&g::route(left, right).resolve::<RESOLVER>())
 }
 
@@ -158,7 +161,7 @@ impl hibana::runtime::wire::WirePayload for RejectCountedPayload {
 
 pub(crate) fn same_label_reject_payload_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     let left = g::send::<0, 1, Msg<SAME_LABEL, RejectCountedPayload>>();
-    let right = g::send::<0, 2, Msg<SAME_LABEL, RejectCountedPayload>>();
+    let right = g::send::<0, 1, Msg<SAME_LABEL, u64>>();
     project(&g::route(left, right).resolve::<REJECT_ROUTE_RESOLVER>())
 }
 

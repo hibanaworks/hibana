@@ -36,12 +36,24 @@ bash ./.github/scripts/check_no_custom_target_json.sh
 bash ./.github/scripts/check_no_std_build.sh
 bash ./.github/scripts/check_warning_free.sh
 cargo +"${TOOLCHAIN}" doc -p hibana --no-deps --document-private-items
+PING_PONG_OUTPUT="$(
+  (
+    hibana_disable_repo_tests_cfg
+    cargo +"${TOOLCHAIN}" run --quiet --example ping_pong 2>&1
+  )
+)"
+if [[ "${PING_PONG_OUTPUT}" != "ping=7, pong=8" ]]; then
+  echo "ping_pong example output mismatch: ${PING_PONG_OUTPUT}" >&2
+  exit 1
+fi
 bash ./.github/scripts/check_hibana_public_api.sh --surface-only
 bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_unsafe_contract_hygiene.sh
 bash ./.github/scripts/check_manifest_tests.sh
 bash ./.github/scripts/check_miri.sh
 bash ./.github/scripts/check_lean_proofs.sh
+bash ./.github/scripts/check_unix_carrier_proof.sh
+bash ./.github/scripts/check_proof_erasure_surface.sh
 bash ./.github/scripts/check_boundary_contracts.sh --local-only
 bash ./.github/scripts/check_plane_boundaries.sh
 bash ./.github/scripts/check_mgmt_boundary.sh

@@ -306,33 +306,11 @@ private theorem resolve_step_establishes_route_selection_fidelity
     {config next : GlobalConfig} {role conflict resolver : Nat} {arm : RouteArm}
     (stepped : config.resolveStep? role conflict resolver arm = some next) :
     RouteSelectionFidelity next := by
-  unfold GlobalConfig.resolveStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict resolver (.select arm) with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | rejected => simp [statusCase, selectionCase, resolverCase] at stepped
-              | selected localState =>
-                  have nextEq :
-                      (config.withLocalState role localState).withRouteSelection
-                        (fun candidate =>
-                          if candidate = conflict then some arm
-                          else config.routeSelection candidate) = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  intro candidate bound
-                  rfl
+  obtain ⟨localState, _, _, _, _, nextExact⟩ :=
+    resolve_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  intro candidate bound
+  rfl
 
 private theorem roll_step_establishes_route_selection_fidelity
     {config next : GlobalConfig} {rollId : Nat}
@@ -369,29 +347,10 @@ private theorem reject_resolver_step_preserves_route_selection_fidelity
     (fidelity : RouteSelectionFidelity config)
     (stepped : config.rejectResolverStep? role conflict resolver = some next) :
     RouteSelectionFidelity next := by
-  unfold GlobalConfig.rejectResolverStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict resolver .reject with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | selected localState =>
-                  simp [statusCase, selectionCase, resolverCase] at stepped
-              | rejected =>
-                  have nextEq : config.beginCancellation role .protocolViolation = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  exact begin_cancellation_preserves_route_selection_fidelity fidelity
+  obtain ⟨_, _, _, _, nextExact⟩ :=
+    reject_resolver_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  exact begin_cancellation_preserves_route_selection_fidelity fidelity
 
 theorem global_step_preserves_route_selection_fidelity
     {config next : GlobalConfig} {operation : GlobalOperation}
@@ -623,34 +582,12 @@ private theorem resolve_step_preserves_session_fidelity
     (fidelity : SessionFidelity config)
     (stepped : config.resolveStep? role conflict resolver arm = some next) :
     SessionFidelity next := by
-  unfold GlobalConfig.resolveStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict resolver (.select arm) with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | rejected => simp [statusCase, selectionCase, resolverCase] at stepped
-              | selected localState =>
-                  have nextEq :
-                      (config.withLocalState role localState).withRouteSelection
-                        (fun candidate =>
-                          if candidate = conflict then some arm
-                          else config.routeSelection candidate) = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  simpa [SessionFidelity, GlobalConfig.withLocalState,
-                    GlobalConfig.withRouteSelection, GlobalConfig.event?,
-                    GlobalConfig.expectedMessage] using fidelity
+  obtain ⟨localState, _, _, _, _, nextExact⟩ :=
+    resolve_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  simpa [SessionFidelity, GlobalConfig.withLocalState,
+    GlobalConfig.withRouteSelection, GlobalConfig.event?,
+    GlobalConfig.expectedMessage] using fidelity
 
 private theorem roll_step_preserves_session_fidelity
     {config next : GlobalConfig} {rollId : Nat}
@@ -740,29 +677,10 @@ private theorem reject_resolver_step_preserves_session_fidelity
     (fidelity : SessionFidelity config)
     (stepped : config.rejectResolverStep? role conflict resolver = some next) :
     SessionFidelity next := by
-  unfold GlobalConfig.rejectResolverStep? at stepped
-  cases statusCase : config.status with
-  | cancelling cause awaiting => simp [statusCase] at stepped
-  | retired cause => simp [statusCase] at stepped
-  | live =>
-      cases selectionCase : config.routeSelection conflict with
-      | some selected => simp [statusCase, selectionCase] at stepped
-      | none =>
-          cases resolverCase : applyResolver
-              (projectGraph role config.choreo)
-              (config.localState role)
-              conflict resolver .reject with
-          | none => simp [statusCase, selectionCase, resolverCase] at stepped
-          | some result =>
-              cases result with
-              | selected localState =>
-                  simp [statusCase, selectionCase, resolverCase] at stepped
-              | rejected =>
-                  have nextEq : config.beginCancellation role .protocolViolation = next := by
-                    exact Option.some.inj (by
-                      simpa [statusCase, selectionCase, resolverCase] using stepped)
-                  subst next
-                  exact begin_cancellation_preserves_session_fidelity fidelity
+  obtain ⟨_, _, _, _, nextExact⟩ :=
+    reject_resolver_step_has_exact_controller_successor stepped
+  rw [← nextExact]
+  exact begin_cancellation_preserves_session_fidelity fidelity
 
 theorem global_step_preserves_session_fidelity
     {config next : GlobalConfig} {operation : GlobalOperation}
