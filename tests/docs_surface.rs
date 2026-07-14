@@ -89,14 +89,19 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Hibana lets Rust programs execute a finite multiparty protocol",
         "choreography-derived runtime enforcement kernel",
         "cargo add hibana",
+        "requires stable Rust `1.95` or newer",
         "cargo run --example ping_pong",
         "https://docs.rs/hibana",
         "[`examples/ping_pong.rs`](examples/ping_pong.rs)",
         "the same public API on hosted and embedded targets",
-        "### Messages And Endpoints",
+        "### Messages And Payloads",
+        "### Endpoint Operations",
         "### Route Choice",
+        "### Parallel And Repeated Regions",
         "### Transport",
-        "### Failure And Observation",
+        "### External Route Resolvers",
+        "### Sessions, Reconfiguration, And Observation",
+        "### Failure Semantics",
         "### When Deadlock Freedom Holds",
         "[`examples/pico/src/lib.rs`](examples/pico/src/lib.rs)",
         "| Modeled runtime SRAM envelope | 5,920 B | 8,954 B |",
@@ -105,6 +110,8 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Component maxima may come from different shapes",
         "Application state, concrete transport buffers, executor state, interrupt",
         "bash ./.github/scripts/run_final_form_gates.sh",
+        "bash ./.github/scripts/check_kani.sh",
+        "cargo +1.95.0 check --manifest-path examples/pico/Cargo.toml",
         "Successful projection alone is not a distributed deadlock-freedom guarantee.",
         "eventually delivers each accepted frame or reports terminal closure",
         "The [Lean proof boundary](https://github.com/hibanaworks/hibana/blob/main/proofs/lean/README.md)",
@@ -120,7 +127,6 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "## Constitution",
         "Phase 7",
         "Phase 0a",
-        ".github/scripts/check_",
         "final-form",
         "route frontier",
         "`WireDecode`",
@@ -258,8 +264,8 @@ fn onboarding_links_one_gated_runnable_example_without_copying_it() {
     assert!(
         !runnable_section.contains("fn main()")
             && !runnable_section.contains("#[path =")
-            && readme.matches("```rust\n").count() == 1,
-        "README must show one concise protocol excerpt and link the executable source"
+            && runnable_section.matches("```rust\n").count() == 1,
+        "Quick Start must show one concise protocol excerpt and link the executable source"
     );
 
     let example = read("examples/ping_pong.rs");
@@ -316,6 +322,68 @@ fn onboarding_links_one_gated_runnable_example_without_copying_it() {
             && no_std_gate.matches("--target thumbv6m-none-eabi").count() == 2
             && no_std_gate.contains("projection-example=1"),
         "the no_std gate must compile both Hibana and its tracked projection example for thumbv6m"
+    );
+}
+
+#[test]
+fn readme_covers_role_protocol_and_integration_without_a_second_guide() {
+    let readme = read("README.md");
+    let searchable = compact_ws(&readme);
+
+    for required in [
+        "`WireEncode::encode_into` writes deterministic bytes",
+        "`WirePayload::validate_payload` accepts the exact canonical byte shape",
+        "`WirePayload::decode_validated_payload` decodes bytes already validated",
+        "async fn client(endpoint: &mut Endpoint<'_, 0>)",
+        "async fn receive_choice(",
+        "Dropping an unpolled send publishes no progress.",
+        "The reverse call order is unavailable",
+        "`RendezvousKit::enter(...)` attaches a projected role",
+        "implementations provide two associated handle types and five operations",
+        "`open(PortOpen)`",
+        "`poll_send(tx, Outgoing, cx)`",
+        "`cancel_send(tx)`",
+        "`poll_recv(rx, cx)`",
+        "`requeue(rx)`",
+        "`ReceivedFrame::deterministic",
+        "`ReceivedFrame::framed",
+        "session id (4 bytes, big endian) | lane | source role | target role | frame label",
+        "let state = RouteState { accept: true };",
+        "rendezvous.set_resolver(&role_program, resolver)?;",
+        "Distinct `SessionId` values have independent cursors",
+        "`RendezvousKit::tap()` returns a read-only iterator",
+        "There is no public same-generation retry, reselection, timeout, or cancellation",
+        "Each public boundary reports its own error instead of widening all failures",
+        "| `rendezvous` / `enter` | `AttachError` |",
+        "| `set_resolver` / resolver callback | `ResolverError` |",
+        "| `poll_send` / `poll_recv` / `requeue` | `TransportError` |",
+        "| `send` / `recv` / `offer` / branch operation | `EndpointError` |",
+        "## Build And Release",
+    ] {
+        assert!(
+            searchable.contains(required),
+            "README must remain a complete public guide: {required}"
+        );
+    }
+
+    assert!(
+        !readme.contains("```rust,ignore")
+            && !readme.contains("See the full contract")
+            && !readme.contains("documented on [`Transport`"),
+        "README must contain concrete public examples and must not outsource missing contracts"
+    );
+
+    let documented_repo_gates = readme
+        .lines()
+        .filter(|line| line.starts_with("bash ./.github/scripts/"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        documented_repo_gates,
+        [
+            "bash ./.github/scripts/run_final_form_gates.sh",
+            "bash ./.github/scripts/check_kani.sh",
+        ],
+        "README must expose only the two complete release gates, not internal phase scripts"
     );
 }
 
