@@ -92,7 +92,9 @@ fn transport_resolver_signal_surface_stays_minimal() {
         "Transport must not expose resolver input, metrics, or telemetry extra hooks"
     );
     assert!(
-        !readme_src.contains("ResolverAttrs") && readme_src.contains("ResolverRef::decision_state"),
+        !readme_src.contains("ResolverAttrs")
+            && readme_src.contains("`ResolverRef::<ID>::decision_state(...)`")
+            && readme_src.contains("Resolver state is local input"),
         "README must keep replay attrs out of the canonical path and describe resolver-state owned input"
     );
     for forbidden in [

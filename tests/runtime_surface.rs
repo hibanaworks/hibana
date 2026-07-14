@@ -218,7 +218,9 @@ fn single_slab_config_is_runtime_resource_authority() {
     let cluster_rs = read("src/session/cluster/core.rs");
     let allowlist = compact_ws(&read(".github/allowlists/runtime-public-api.txt"));
     let readme = read("README.md");
+    let searchable_readme = compact_ws(&readme);
     let crate_docs = read("src/lib.rs");
+    let example = read("examples/ping_pong.rs");
 
     assert!(
         runtime_rs.contains("pub struct SessionKitStorage")
@@ -246,11 +248,13 @@ fn single_slab_config_is_runtime_resource_authority() {
         "SessionCluster must not retain a separate clock authority"
     );
     assert!(
-        readme.contains("let kit = kit_storage.init();")
-            && readme.contains("let rv = kit.rendezvous(runtime_slab, transport)?;")
+        searchable_readme
+            .contains("`SessionKitStorage::uninit().init()` is the single construction path")
+            && searchable_readme.contains("`SessionKit::rendezvous(...)` binds the storage")
+            && example.contains("let kit = storage.init();")
+            && example.contains(".rendezvous(&mut slab, InMemoryTransport::new())")
             && crate_docs.contains("let kit = kit_storage.init();")
             && crate_docs.contains("let rv = kit.rendezvous(runtime_slab, transport)?;")
-            && readme.contains("deployment-owned region selected from measured")
             && crate_docs.contains("supplied from the measured deployment budget")
             && !readme.contains("CounterClock")
             && !readme.contains("tap_buf")

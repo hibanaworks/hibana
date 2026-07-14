@@ -486,6 +486,7 @@ fn packed_endpoint_handle_does_not_pack_rendezvous_or_slot() {
 #[test]
 fn transport_docs_do_not_teach_u64_header() {
     let docs = read("README.md");
+    let transport = read("src/transport.rs");
     for forbidden in [
         "FrameHeader::from_raw",
         "raw_header",
@@ -498,8 +499,8 @@ fn transport_docs_do_not_teach_u64_header() {
         );
     }
     assert!(
-        docs.contains("FrameHeader::from_bytes(header_bytes)"),
-        "transport docs must teach byte-based FrameHeader construction"
+        transport.contains("pub const fn from_bytes(bytes: [u8; 8]) -> Self"),
+        "FrameHeader rustdoc source must expose only byte-based construction"
     );
 }
 

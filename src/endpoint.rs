@@ -1,8 +1,8 @@
-//! Localside endpoint facade.
+//! Role-local endpoint facade.
 //!
 //! An [`Endpoint`] is the app-facing affine executor for one projected role. It
 //! is created by [`crate::runtime::SessionKit`] and then advanced with the
-//! localside operations: [`Endpoint::send`], [`Endpoint::recv`],
+//! role-local operations: [`Endpoint::send`], [`Endpoint::recv`],
 //! [`Endpoint::offer`], [`RouteBranch::send`], and [`RouteBranch::recv`].
 //!
 //! `offer` is a non-consuming route preview.
@@ -19,7 +19,7 @@
 //!
 //! This module owns only the app-facing raw future and route-branch handles.
 //! Unsafe operations dereference the carrier header installed by the rendezvous
-//! endpoint owner; the endpoint borrow guarantees exclusive localside access,
+//! endpoint owner; the endpoint borrow guarantees exclusive role-local access,
 //! and every raw future either completes, restores preview state, or fails fast
 //! on post-ready reuse.
 

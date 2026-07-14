@@ -3,7 +3,7 @@
 // This fragment owns only the public endpoint facade's carrier dispatch
 // boundary. Each unsafe call dereferences the rendezvous-installed endpoint
 // carrier header and forwards the packed handle to the kernel owner. The
-// endpoint borrow keeps localside aliasing exclusive; this fragment must not
+// endpoint borrow keeps role-local aliasing exclusive; this fragment must not
 // cache raw kernel pointers or publish progress without the carrier operation.
 
 use super::{

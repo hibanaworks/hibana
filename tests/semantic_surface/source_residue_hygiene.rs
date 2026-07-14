@@ -821,7 +821,7 @@ fn resolver_registration_has_only_stateful_entry() {
     }
     assert!(
         resolver.contains("pub fn decision_state<S: 'cfg>")
-            && readme.contains("ResolverRef::<ROUTE_RESOLVER>::decision_state("),
+            && readme.contains("`ResolverRef::<ID>::decision_state(...)`"),
         "resolver registration must document and expose only the stateful entry"
     );
 }

@@ -16,11 +16,11 @@
 //! - app authors use [`g`] and [`Endpoint`];
 //! - protocol implementors use [`runtime`] and [`runtime::program`].
 //!
-//! Everything starts from one global choreography and ends in a small localside
-//! endpoint:
+//! Everything starts from one global choreography and ends in a compact
+//! role-local endpoint:
 //!
 //! ```text
-//! g choreography -> project role program -> attach endpoint -> drive localside
+//! g choreography -> project role program -> attach endpoint -> drive endpoint
 //! ```
 //!
 //! ## App path
@@ -36,7 +36,7 @@
 //! and executes the protocol. Application code then drives the endpoint that its
 //! protocol crate attached.
 //!
-//! The localside API is deliberately small:
+//! The endpoint API is deliberately small:
 //!
 //! - [`Endpoint::send`] sends the next projected message;
 //! - [`Endpoint::recv`] receives a message after descriptor evidence matches;
