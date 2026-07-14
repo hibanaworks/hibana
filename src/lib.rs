@@ -52,13 +52,13 @@
 //! progress.
 //!
 //! ```rust,ignore
-//! let branch = endpoint.offer().await?;
+//! let branch = server.offer().await?;
 //! match branch.label() {
 //!     10 => {
 //!         let value = branch.recv::<g::Msg<10, [u8; 4]>>().await?;
 //!     }
 //!     11 => {
-//!         branch.send::<g::Msg<11, ()>>(&()).await?;
+//!         branch.recv::<g::Msg<11, ()>>().await?;
 //!     }
 //!     label => panic!("unexpected route label {label}"),
 //! }

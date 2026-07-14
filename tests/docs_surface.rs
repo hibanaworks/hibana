@@ -82,26 +82,30 @@ fn collect_source_files(root: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn readme_stays_self_contained_and_hibana_scoped() {
     let readme = read("README.md");
+    let header = read("hibana-header.svg");
     let searchable_readme = compact_ws(&readme);
 
     for required in [
         "hibana-header.svg",
+        "alt=\"HIBANA - Choreography-Derived Runtime Enforcement for Rust\"",
         "## Install And Run",
         "## How Hibana Works",
         "## Application Guide",
         "## Protocol Runtime Guide",
-        "## Guarantees And Assumptions",
+        "## Guarantees And Requirements",
         "## Build And Test",
         "choreography-derived runtime enforcement kernel",
         "cargo add hibana",
         "cargo run --example ping_pong",
+        "<a href=\"#guarantees-and-requirements\">Guarantees</a>",
+        "https://docs.rs/hibana",
         "<!-- ping-pong-example:start -->",
         "<!-- ping-pong-example:end -->",
         "### Measured `no_std` Resource Envelope",
         "examples/pico/Cargo.toml",
         "--target thumbv6m-none-eabi",
         "| Modeled runtime SRAM envelope | 5,920 B | 8,954 B |",
-        "| Localside runtime stack high-water | 2,831 B | 3,663 B |",
+        "| Runtime operation stack high-water | 2,831 B | 3,663 B |",
         "| Largest linked artifact in the tracked protocol matrix | 1,852 B | 16,384 B |",
         "Component maxima in the table may come from different shapes",
         "application, concrete transport buffers, executor, interrupt stacks, codec",
@@ -132,18 +136,14 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Ingress demux state belongs inside the transport owner.",
         "FrameHeader::from_bytes(header_bytes)",
         "ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision)",
-        "### Protocol Artifact Guarantee",
-        "`VerifiedProtocolCertificate` accepted by the independent checker",
-        "semantic per-session deadlock freedom",
-        "### Deployed Execution Guarantee",
-        "`GlobalFairnessAssumptions`",
-        "**per-session protocol deadlock freedom under the stated deployment premises**",
-        "| Hibana establishes | A deployment supplies |",
-        "Mediated -> Authentic -> Ordered -> Closing -> Fair",
-        "### Elastic Re-entry And Erasure",
-        "### Cross-tool Evidence",
-        "### What Hibana Does Not Claim",
-        "assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement",
+        "### Local Enforcement",
+        "### When Deadlock Freedom Holds",
+        "A choreography that projects successfully is not, by itself",
+        "eventually delivers each accepted frame or reports terminal closure",
+        "| Hibana enforces | Integration requirement |",
+        "### Verification",
+        "The [Lean proof boundary](proofs/lean/README.md)",
+        "### Scope",
         "bash ./.github/scripts/run_final_form_gates.sh",
     ] {
         assert!(
@@ -198,6 +198,25 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "workspace_smoke",
         "Pico-class",
         "Pico class",
+        "### Research Context",
+        "research direction",
+        "Novelty is a research claim",
+        "assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement",
+        "Mediated -> Authentic -> Ordered -> Closing -> Fair",
+        "### Elastic Re-entry And Erasure",
+        "### Cross-tool Evidence",
+        "### What Hibana Does Not Claim",
+        "message-erased",
+        "localside",
+        "Localside",
+        "#guarantees-and-assumptions",
+        "`GlobalFairnessAssumptions`",
+        "`CarrierProfile`",
+        "`RustKernelRefinement`",
+        "assumption-indexed",
+        "epoch-erased",
+        "Novelty",
+        "world first",
     ] {
         assert_absent(
             &readme,
@@ -205,6 +224,13 @@ fn readme_stays_self_contained_and_hibana_scoped() {
             "README must not publish removed or internal-only vocabulary",
         );
     }
+
+    assert!(
+        header.contains("Choreography-Derived Runtime Enforcement for Rust")
+            && header.contains("Compact descriptors")
+            && !header.contains("Session-Typed Choreographic Programming"),
+        "README header must use the same public positioning as the README"
+    );
 }
 
 #[test]
@@ -223,8 +249,8 @@ fn onboarding_starts_with_one_gated_runnable_example() {
         .find("## Protocol Runtime Guide")
         .expect("README must explain runtime integration");
     let guarantees = readme
-        .find("## Guarantees And Assumptions")
-        .expect("README must separate guarantees from assumptions");
+        .find("## Guarantees And Requirements")
+        .expect("README must separate kernel guarantees from integration requirements");
     let build = readme
         .find("## Build And Test")
         .expect("README must close with verification commands");
@@ -243,12 +269,12 @@ fn onboarding_starts_with_one_gated_runnable_example() {
         "cargo run --example ping_pong",
         "examples/ping_pong.rs",
         "ping=7, pong=8",
-        "The documentation gate requires this block and the executable source to remain",
+        "CI executes this exact example.",
         "### Measured `no_std` Resource Envelope",
         "examples/pico/Cargo.toml",
         "examples/pico/src/lib.rs",
         "--target thumbv6m-none-eabi",
-        "projected-program input",
+        "`no_std`\nprojection sample compiled by the resource checks",
         "Modeled runtime SRAM envelope",
         "It is a Hibana-owned runtime envelope, not a whole-device memory claim.",
     ] {
@@ -529,6 +555,7 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "branch authority.",
         "`RouteBranch::label()` reports the selected arm's first logical message label",
         "For resolved routes this label is not branch authority",
+        "branch.recv::<g::Msg<33, ()>>().await?",
     ] {
         assert!(
             searchable_readme.contains(required),
@@ -550,6 +577,7 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "duplicate branch labels rejected",
         "label is branch authority",
         "selected choreography branch label",
+        "branch.send::<g::Msg<33, ()>>(&()).await?",
     ] {
         assert!(
             !readme.contains(forbidden),

@@ -1,10 +1,10 @@
 <div align="center">
-  <img src="hibana-header.svg" width="600" alt="HIBANA - Session-Typed Choreographic Programming for Rust" />
+  <img src="hibana-header.svg" width="600" alt="HIBANA - Choreography-Derived Runtime Enforcement for Rust" />
 
   <p>
     <img src="https://img.shields.io/badge/rust-2024-orange.svg" alt="Rust 2024" />
     <img src="https://img.shields.io/badge/no__std-yes-success.svg" alt="no_std" />
-    <img src="https://img.shields.io/badge/no__alloc-oriented-blue.svg" alt="no_alloc oriented" />
+    <img src="https://img.shields.io/badge/allocator-not_required-success.svg" alt="Allocator not required" />
   </p>
 
   <p>
@@ -12,27 +12,25 @@
     <a href="#how-hibana-works">How It Works</a> |
     <a href="#application-guide">Application Guide</a> |
     <a href="#protocol-runtime-guide">Protocol Runtime Guide</a> |
-    <a href="#guarantees-and-assumptions">Guarantees</a> |
+    <a href="#guarantees-and-requirements">Guarantees</a> |
     <a href="#build-and-test">Build and Test</a>
   </p>
 </div>
 
 # HIBANA
 
-`hibana` is a Rust 2024, `#![no_std]`, no-alloc-oriented runtime for executing
-finite-role affine asynchronous multiparty protocols. A protocol is written
-once as a global choreography, projected into compact per-role descriptor
-programs, and enforced as each endpoint sends, receives, or enters a route.
+`hibana` is a **choreography-derived runtime enforcement kernel** for Rust 2024.
+Write a finite multiparty protocol once as a global choreography, project it
+into compact per-role programs, and execute each role through one affine
+`Endpoint`. Every send, receive, and route operation is checked against the
+next permitted descriptor event before progress commits.
 
-Hibana is a **choreography-derived runtime enforcement kernel**. It is not a
-generated Rust continuation type system and it does not turn a protocol into a
-large family of endpoint types. Choreography structure ends at projection;
-production endpoints execute message-erased descriptor rows with a fixed
-eight-byte core frame header and caller-provided storage. Release gates compile
-the public surface for `thumbv6m-none-eabi` and enforce the quantitative
-resource envelope below.
+Hibana is `#![no_std]`, requires no allocator, uses caller-provided storage, and
+keeps protocol state out of per-state continuation types. The runtime uses a
+fixed eight-byte core frame header; the measured code, SRAM, and stack envelope
+is published below.
 
-The supported protocol core is deliberately finite and protocol-neutral:
+The protocol language is finite and transport-neutral:
 
 - up to sixteen declared roles per session;
 - asynchronous `send`, sequential `seq`, independent `par`, binary `route`,
@@ -41,10 +39,10 @@ The supported protocol core is deliberately finite and protocol-neutral:
 - multiple isolated `SessionId` instances of one projected descriptor;
 - explicit reconfiguration through a fresh finite session and artifact.
 
-Hibana does not provide channel delegation, an unbounded live role set,
-carrier authentication, cryptography, failure detection, or an application
-algorithm. Those concerns may be implemented around Hibana, but they do not
-become vocabulary or hidden authority inside its protocol kernel.
+Transport security, failure detection, scheduling, and application algorithms
+remain deployment concerns. They integrate through `Transport`, explicit route
+resolvers, and application state without adding protocol-specific concepts to
+the Hibana core.
 
 ## Install And Run
 
@@ -55,7 +53,9 @@ cargo add hibana
 ```
 
 The library itself has no external dependencies. Runtime code is `no_std` and
-no-alloc-oriented; host-only dependencies are used only by tests and examples.
+requires no allocator; host-only dependencies are used only by tests and
+examples.
+The complete API reference is available on [docs.rs](https://docs.rs/hibana).
 
 ### Complete Runnable Example
 
@@ -71,9 +71,8 @@ Output:
 ping=7, pong=8
 ```
 
-The complete source below is [`examples/ping_pong.rs`](examples/ping_pong.rs).
-The documentation gate requires this block and the executable source to remain
-byte-for-byte identical.
+The complete source below is [`examples/ping_pong.rs`](examples/ping_pong.rs),
+and CI executes this exact example.
 
 <!-- ping-pong-example:start -->
 ```rust
@@ -153,16 +152,16 @@ cargo +1.95.0 check --manifest-path examples/pico/Cargo.toml \
   --target thumbv6m-none-eabi
 ```
 
-[`examples/pico/src/lib.rs`](examples/pico/src/lib.rs) is the canonical
-projected-program input to the resource gate. With Rust `1.95.0`, the current
-tree and checked-in release ceilings are:
+[`examples/pico/src/lib.rs`](examples/pico/src/lib.rs) is the `no_std`
+projection sample compiled by the resource checks. With Rust `1.95.0`, the
+repository records these measurements and release ceilings:
 
 | Hibana-owned quantity | Current measurement | Release ceiling |
 | --- | ---: | ---: |
 | `SessionKitStorage` | 24 B | 32 B |
 | Fixed per-rendezvous storage, including the 512 B tap ring | 720 B | 952 B |
 | Peak live runtime slab across tracked heavy shapes | 2,425 B | 4,323 B |
-| Localside runtime stack high-water | 2,831 B | 3,663 B |
+| Runtime operation stack high-water | 2,831 B | 3,663 B |
 | Modeled runtime SRAM envelope | 5,920 B | 8,954 B |
 | Minimal linked protocol artifact | 356 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,852 B | 16,384 B |
@@ -177,7 +176,7 @@ modeled SRAM envelope is:
 
 ```text
 thumb .data/.bss + SessionKitStorage + fixed per-rendezvous storage
-  + peak live runtime slab + localside runtime stack
+  + peak live runtime slab + runtime operation stack
 ```
 
 Each modeled SRAM total is computed within one measured shape before the
@@ -188,9 +187,7 @@ It is a Hibana-owned runtime envelope, not a whole-device memory claim. The
 application, concrete transport buffers, executor, interrupt stacks, codec
 scratch, and platform startup remain deployment-owned and must be budgeted
 separately. `bash ./.github/scripts/run_final_form_gates.sh` regenerates the
-measurements and rejects a release above any ceiling. Public capacities
-must come from role, lane, descriptor, slab, and tap requirements rather than an
-unrelated fixed budget.
+measurements and rejects a release above any ceiling.
 
 ## How Hibana Works
 
@@ -222,7 +219,7 @@ There are two public surfaces:
 
 | Surface | Owner | Main names |
 | --- | --- | --- |
-| Application | localside protocol code | `hibana::g`, `Endpoint`, `RouteBranch`, `EndpointError` |
+| Application | role implementation | `hibana::g`, `Endpoint`, `RouteBranch`, `EndpointError` |
 | Protocol runtime | protocol and carrier integration | `hibana::runtime`, `runtime::program`, `SessionKitStorage`, `Transport` |
 
 If you are writing an application, stay on `hibana::g` and `Endpoint`. If you
@@ -401,7 +398,7 @@ At a route, `offer()` previews the selected arm. The first send or receive is
 performed through the returned branch:
 
 ```rust,ignore
-let branch = endpoint.offer().await?;
+let branch = server.offer().await?;
 
 match branch.label() {
     31 => {
@@ -409,7 +406,7 @@ match branch.label() {
         handle_accept(value);
     }
     33 => {
-        branch.send::<g::Msg<33, ()>>(&()).await?;
+        branch.recv::<g::Msg<33, ()>>().await?;
     }
     label => panic!("unexpected route label {label}"),
 }
@@ -439,27 +436,32 @@ let parallel = g::par(left, right);
 
 ```rust,ignore
 let body = g::seq(
-    g::send::<0, 1, g::Msg<30, Chunk>>(),
-    g::send::<1, 0, g::Msg<31, Ack>>(),
+    g::send::<0, 1, g::Msg<30, u32>>(),
+    g::send::<1, 0, g::Msg<31, ()>>(),
 ).roll();
 
-let program = g::seq(body, g::send::<0, 1, g::Msg<32, Done>>());
+let program = g::seq(body, g::send::<0, 1, g::Msg<32, ()>>());
 ```
 
 For a resolved repeated route, resolve the route and then roll the surrounding
 region:
 
 ```rust,ignore
-let repeated = g::route(left, right)
+const ROUTE_DECISION: u16 = 7;
+
+let repeated = g::route(
+    g::send::<0, 1, g::Msg<40, u32>>(),
+    g::send::<0, 1, g::Msg<41, ()>>(),
+)
     .resolve::<ROUTE_DECISION>()
     .roll();
 ```
 
 The reverse order is rejected by the Rust type shape because
 `resolve::<ID>()` belongs to `Program<Route<...>>`, not to the resulting
-`Program<Roll<Route<...>>>`. Nested rolls follow the same rule. The formal
-elastic history distinguishes occurrences across nested iterations; production
-descriptors, endpoint types, and wire frames carry no iteration ordinal.
+`Program<Roll<Route<...>>>`. Nested rolls follow the same rule. Repeated regions
+add no iteration field to endpoint types, descriptors, or wire frames, so a
+transport must prevent frames from a retired generation from reappearing.
 
 ### Failure And Cancellation
 
@@ -520,13 +522,11 @@ let server: RoleProgram<1> = project(&program);
 ```
 
 `project(&program)` is the boundary between the temporary typed choreography
-and the compact runtime descriptor. Facades that cannot name a choreography's
-concrete `Program<_>` type may return sealed `impl Projectable`; callers still
-use the same projection function.
+and the compact runtime descriptor.
 
 ### Storage And Attach
 
-The canonical runtime path is borrowed and caller-provided. In this fragment,
+Runtime storage is borrowed and caller-provided. In this fragment,
 `runtime_slab: &mut [u8]` is a deployment-owned region selected from measured
 descriptor and runtime requirements:
 
@@ -600,8 +600,8 @@ Route offer and unresolved route demux require
 Hibana checks the carrier-owned eight bytes before any endpoint progress.
 
 `poll_send(...) -> Ready(Ok(()))` transfers a frame to the carrier. It does not
-prove remote receipt. A raw carrier provides exact local operation monitoring,
-but global fidelity and progress require stronger deployment evidence:
+prove remote receipt. Hibana still validates each observed operation against
+the local descriptor, but global fidelity and progress additionally require:
 authenticated peer/direction binding, FIFO delivery, no unsolicited replay,
 generation isolation, and eventual delivery or observable terminal closure.
 
@@ -636,6 +636,8 @@ fn route_decision(state: &RouteState) -> Result<DecisionArm, ResolverError> {
     }
 }
 
+let accept_body = g::send::<0, 1, g::Msg<60, u32>>();
+let reject_body = g::send::<0, 1, g::Msg<61, ()>>();
 let routed = g::route(accept_body, reject_body).resolve::<ROUTE_RESOLVER>();
 let role0: RoleProgram<0> = project(&routed);
 let state = RouteState { accept: true };
@@ -656,14 +658,13 @@ protocol or carrier design.
 
 A descriptor is a finite session template, not a singleton deployment. Distinct
 `SessionId` instances have independent cursors, queues, leases, resolver state,
-and failure domains. Their transitions commute in the Lean model. Retrying an
-interaction or changing the finite participant set creates a fresh session and,
-when the choreography changes, a fresh verified artifact.
+and failure domains. Retrying an interaction or changing the finite participant
+set creates a fresh session and, when the choreography changes, a fresh
+projected artifact.
 
-Persistent application state, membership policy, scheduling policy, recovery
-policy, and algorithm invariants stay outside Hibana. The application can build
-larger distributed systems from repeated finite session families without
-placing those algorithms or their names in Hibana core.
+Persistent application state, membership, scheduling, recovery, and algorithm
+invariants remain application-owned. Larger distributed systems can be built
+from explicit families of finite sessions.
 
 `RendezvousKit::tap()` returns a read-only `TapPort` over the retained evidence
 ring. Tap is not a logger or route input. Each `TapEvent` is an immutable
@@ -672,163 +673,87 @@ transport observations, faults, lanes, route selection, and resolver decisions.
 Public code can read events but cannot construct or push them. The ring retains
 the latest 32 events and supports postmortem reads after a failure.
 
-## Guarantees And Assumptions
+## Guarantees And Requirements
 
-Hibana separates protocol facts from deployment premises. This distinction is
-essential: compiling a Rust choreography with `project(&program)` is not by
-itself a Lean proof artifact, and implementing `Transport` does not by itself
-claim network behavior.
+Hibana enforces protocol progress locally; a deployment supplies the properties
+of the medium and scheduler. Keeping that boundary explicit makes the guarantee
+useful without assuming a particular network stack.
 
-### Protocol Artifact Guarantee
+### Local Enforcement
 
-For a `VerifiedProtocolCertificate` accepted by the independent checker, Lean
-proves that:
+For every attached endpoint:
 
-- all exact role descriptor images refine one projectable choreography;
-- every admitted operation uses the complete operation key and preserves
-  subject reduction and session fidelity;
-- wrong peer, direction, lane, event, label, schema, orphan delivery, and
-  duplicate consumption cannot become ordinary progress;
-- rejection and preview restoration are zero-transition behavior;
-- route publication is affine, repeated occurrences remain fresh, and
-  cancellation preserves first fault and reaches finite model retirement under
-  its explicit transport-state premises;
-- every reachable live, unfinished distributed model state has at least one
-  enabled transition.
+- a successful operation commits exactly one permitted descriptor transition;
+- a dropped preview, rejected operation, or `requeue(...)` commits no
+  transition;
+- peer, direction, lane, event, label, schema, and payload mismatches fail
+  closed;
+- one endpoint owner cannot publish the same progress twice;
+- a committed codec or transport fault terminates that session generation.
 
-The last statement is **semantic per-session deadlock freedom**, also called
-semantic unstuckness. It begins with an accepted certificate, not merely with a
-Rust choreography that projects successfully.
+`project(&program)` rejects unsupported or ambiguous choreographies and emits
+the compact role programs used by this enforcement. The repository's
+machine-checked global theorems apply to exact role images accepted by the
+independent protocol artifact checker.
 
-### Deployed Execution Guarantee
+### When Deadlock Freedom Holds
 
-The stronger end-to-end result additionally requires:
+A choreography that projects successfully is not, by itself, a distributed
+deadlock-freedom guarantee. Hibana provides per-session protocol deadlock
+freedom when all of the following hold:
 
-1. exact role-image and canonical schema agreement across the deployment;
-2. the carrier properties selected by its `CarrierProfile`;
-3. `GlobalFairnessAssumptions` for execution scheduling;
-4. the explicit cross-tool Rust kernel refinement premise.
+1. every role runs the exact image accepted for the same projectable
+   choreography;
+2. peers agree on each canonical wire schema and use conforming codecs;
+3. the transport binds the expected peers and directions, preserves FIFO order,
+   excludes replay across session generations, and eventually delivers each
+   accepted frame or reports terminal closure;
+4. the executor eventually polls operations that remain enabled.
 
-Under exact deployment agreement, the strong affine-delivery contract, and
-`GlobalFairnessAssumptions`, every operation that remains recurrently enabled is
-eventually scheduled. Together with semantic unstuckness, this gives
-**per-session protocol deadlock freedom under the stated deployment premises**.
+The accepted artifact establishes that every reachable live, unfinished model
+state has an enabled protocol transition. The transport and scheduling
+requirements connect that semantic result to deployed execution. An intentional
+infinite `.roll` may continue forever, and application cycles spanning separate
+sessions remain application-level scheduling concerns.
 
-This is not a termination theorem. An infinite `.roll` may continue forever.
-Hibana cannot force host code to poll an endpoint and does not prove deadlock
-freedom for arbitrary application cycles spanning multiple sessions.
-
-The responsibility boundary is strict:
-
-| Hibana establishes | A deployment supplies |
+| Hibana enforces | Integration requirement |
 | --- | --- |
-| Exact projection and descriptor admission | The concrete carrier implementation |
-| Affine endpoint ownership and fail-closed local progress | Peer authenticity and the delivery properties it claims |
-| Canonical wire schema identity | Correct downstream codec implementations |
-| Static exact-image certificate checking | Evidence that certified role images were installed |
-| Conditional progress and retirement theorems | Fair scheduling and observable terminal closure when claimed |
+| Exact descriptor admission and affine endpoint progress | All roles install the accepted images |
+| Complete operation-key and payload-schema checks | Codecs implement the declared canonical schemas |
+| First-fault preservation and local waiter wakeup | Terminal peer closure becomes observable |
+| Conditional fidelity, progress, and retirement | Peer-bound FIFO delivery, no replay, and fair polling |
 
-External premises are inputs to stronger deployment-indexed theorems, not
-missing Hibana runtime features. A mandatory core handshake, cryptographic
-scheme, or carrier-specific sequence field would weaken protocol neutrality and
-inflate the core runtime. Exact deployment agreement may instead come from a
-static certificate, authenticated manifest, or a separate verified bootstrap
-session.
+The [Unix datagram carrier](proofs/unix-carrier/README.md) is an executable
+conformance example for peer binding, FIFO delivery, replay exclusion, closure
+wakeup, and generation isolation. Other transports provide the same contract in
+the way appropriate to their medium.
 
-### Carrier Profiles
+### Verification
 
-Lean orders carrier evidence in a strict chain:
+The repository checks different parts of this boundary with complementary
+tools:
 
-```text
-Mediated -> Authentic -> Ordered -> Closing -> Fair
-```
-
-Each step adds a premise; it does not alter `Endpoint`, descriptor rows, or the
-wire header. The weakest profile supports exact local monitoring. Stronger
-profiles add peer binding, ordering and replay exclusion, observable closure and
-finite retirement, then fair delivery. A concrete carrier must establish the
-profile it claims. Hibana does not prove an arbitrary `Transport`
-implementation.
-
-The repository's [Unix datagram proof carrier](proofs/unix-carrier/README.md)
-shows that the contract can be implemented by a real OS transport. It is an
-example and proof target, not a required production carrier.
-
-### Elastic Re-entry And Erasure
-
-An atomic reset model cannot represent legal asynchronous pre-receive traffic
-across repeated regions. Hibana's Lean model therefore records elastic
-occurrence history, including nested `roll` occurrences, long enough to prove
-freshness, affinity, and fidelity. A general erasure theorem removes occurrence
-ordinals from the production trace.
-
-The result is proof-visible freshness with no epoch in endpoint types,
-descriptor rows, runtime operation keys, or the fixed core header. A deployment
-still needs carrier generation isolation and replay exclusion before it can
-claim that old physical frames cannot enter a fresh session generation.
-
-### Cross-tool Evidence
-
-The end-to-end argument divides responsibilities without presenting one tool's
-result as another tool's proof:
-
-| Evidence | Responsibility |
+| Tool | Checked responsibility |
 | --- | --- |
-| Lean | global/local semantics, artifact checking, fidelity, progress, cancellation, carrier assumptions, and erasure |
-| Kani/CBMC | bounded exhaustive checks of compact production prepare/commit kernels and owner inventories |
+| Lean | global and role-local semantics, projection artifacts, fidelity, progress, cancellation, and repeated-region freshness |
+| Kani/CBMC | bounded exhaustive checks of compact prepare/commit kernels and ownership state |
 | Miri | strict provenance, borrowing, drop, cancellation, waiter, and callback re-entry behavior |
-| Rust tests and gates | executable examples, UI rejection, transport conformance, package surface, and target resource regressions |
+| Rust tests and release gates | executable examples, compile-time rejection, carrier conformance, package contents, and resource regressions |
 
-The main composition theorem is
-`assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement`. It combines
-accepted descriptor bytes, deployment agreement, codec coverage, the selected
-carrier profile, elastic trace erasure, and an explicit
-`RustKernelRefinement` premise.
+The [Lean proof boundary](proofs/lean/README.md) lists the exact theorems,
+requirements, and generated artifacts. Each tool remains evidence for the part
+it actually checks.
 
-This is a conditional cross-tool refinement. It is not a source-level Lean
-proof of every Rust statement. The generated witness covers the finite
-production operation and owner inventory enforced by repository gates. Kani and
-Miri remain named evidence boundaries. The complete theorem inventory,
-assumptions, counterexamples, and generated artifact coverage are documented in
-the [Lean proof boundary](proofs/lean/README.md).
+### Scope
 
-### What Hibana Does Not Claim
-
-Hibana does not claim:
-
-- termination of an intentionally infinite repeated protocol;
-- progress when application code withholds an endpoint operation;
-- deadlock freedom for arbitrary cycles across independent sessions;
-- correctness of every carrier, codec, scheduler, or installed binary;
-- authentication, secrecy, denial-of-service resistance, or correct failure
-  detection;
-- safety or liveness of an application algorithm merely because its messages
-  follow a choreography;
-- cross-binary equality of nominal Rust types;
-- channel delegation, an unbounded role set, arbitrary message reordering, or
-  complete monitoring of code that bypasses the endpoint API;
-- that no other system has the same combination of ideas.
-
-These exclusions keep claims precise. They are not alternate runtime paths.
-
-### Research Context
-
-The design draws from [Multiparty Asynchronous Session
-Types](https://www.doc.ic.ac.uk/~yoshida/multiparty/multiparty.pdf), [Affine
-Multiparty Session Types](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2022.4),
-and the explicit-channel constraints of the [mechanised subject-reduction
-development](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2025.31).
-Those calculi inform Hibana but do not override its compact runtime constraints.
-
-Hibana's research direction is the composition of assumption-indexed carrier
-guarantees, byte-exact translation validation, affine cancellation, in-band
-choice knowledge, elastic proof-only iteration history, and erasure into one
-resource-bounded message-erased runtime. Novelty is a research claim to be
-established by comparison and review, not by README wording.
+Hibana covers finite-role sessions executed through its endpoint API. Carrier
+authentication and cryptography, failure-detector accuracy, application
+algorithm correctness, unbounded role sets, channel delegation, and code that
+bypasses the endpoint are outside the kernel's guarantee.
 
 ## Build And Test
 
-Published-crate checks use ordinary Cargo commands:
+From a repository checkout, the main Cargo checks are:
 
 ```bash
 cargo +1.95.0 check --no-default-features --lib -p hibana
@@ -838,9 +763,9 @@ cargo +1.95.0 test -p hibana --test lane_lifecycle_tap
 cargo +1.95.0 doc -p hibana --no-deps --no-default-features
 ```
 
-The package ships self-contained compile, UI, API, and runtime behavior tests.
-Repository-only checks for source hygiene, proof inventories, generated
-artifacts, and measured resource budgets stay outside the crate package.
+The published package contains the runnable example and its compile, UI, API,
+and runtime behavior tests. Repository release checks additionally cover proof
+artifacts and measured resource budgets.
 
 For release decisions from a repository checkout, run:
 
@@ -848,9 +773,8 @@ For release decisions from a repository checkout, run:
 bash ./.github/scripts/run_final_form_gates.sh
 ```
 
-The repository gate executes the runnable example, all explicit Rust test
-targets, `no_std` target checks, docs and package checks, Miri owner tests,
-Lean proofs, artifact generation, public-surface guards, compile-pressure and
-resource measurements. The quality workflow runs the pinned Kani/CBMC inventory
-as a separate required job because it has different host dependencies. A
-missing harness or zero-test selection fails its gate.
+The repository gate executes the runnable example, Rust tests, `no_std` target
+checks, documentation and package checks, Miri, Lean, and resource measurements.
+CI runs the pinned Kani/CBMC inventory as a separate required job.
+
+Hibana is licensed under either Apache-2.0 or MIT, at your option.
