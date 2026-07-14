@@ -358,7 +358,6 @@ where
         let nested_scope = self.rebase_passive_descendant_scope(scope_id, nested_scope);
         let (target_index, route_rows) = {
             let Self {
-                ports,
                 cursor,
                 decision_state,
                 route_commit_rows,
@@ -372,8 +371,7 @@ where
                     nested_scope,
                     selected_arm,
                     |target_scope| {
-                        preview_selected_arm_for_scope_from_parts::<ROLE, T>(
-                            ports,
+                        preview_selected_arm_for_scope_from_parts(
                             decision_state,
                             cursor,
                             target_scope,
@@ -432,68 +430,6 @@ where
             token.arm().as_u8(),
         );
         emit(port.tap(), event);
-    }
-
-    #[inline]
-    pub(crate) fn can_begin_route_arm_selection(
-        &self,
-        scope_id: ScopeId,
-        decision_lane: u8,
-    ) -> bool {
-        let lane_idx = decision_lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() || !self.cursor.has_route_scope(scope_id) {
-            crate::invariant();
-        }
-        self.port_for_lane(lane_idx)
-            .can_begin_route_arm_selection(scope_id)
-    }
-
-    pub(crate) fn begin_route_arm_selection(
-        &mut self,
-        scope_id: ScopeId,
-        arm: u8,
-        decision_lane: u8,
-        frame_target: Option<u8>,
-    ) -> bool {
-        let lane_idx = decision_lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() || !self.cursor.has_route_scope(scope_id) {
-            crate::invariant();
-        }
-        let participant_mask = self
-            .cursor
-            .program_ref()
-            .route_participant_mask(scope_id, arm);
-        self.port_for_lane(lane_idx).begin_route_arm_selection(
-            scope_id,
-            arm,
-            participant_mask,
-            frame_target,
-        )
-    }
-
-    pub(crate) fn observe_active_route_arm_selection(
-        &mut self,
-        scope_id: ScopeId,
-        arm: u8,
-        decision_lane: u8,
-        frame_target: Option<u8>,
-    ) -> bool {
-        let lane_idx = decision_lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() || !self.cursor.has_route_scope(scope_id) {
-            crate::invariant();
-        }
-        self.port_for_lane(lane_idx)
-            .observe_active_route_arm_selection(scope_id, arm, frame_target)
-    }
-
-    #[inline]
-    pub(crate) fn wake_route_arm_selection_waiters(&self, decision_lane: u8) {
-        let lane_idx = decision_lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
-            crate::invariant();
-        }
-        self.port_for_lane(lane_idx)
-            .wake_route_arm_selection_waiters();
     }
 
     pub(in crate::endpoint::kernel) fn prepare_route_arm_selection_from_resolver(

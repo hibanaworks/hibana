@@ -34,9 +34,6 @@ use core::marker::PhantomData;
 pub use crate::global::Message;
 pub(crate) use source::{ProgramSourceData, ProgramTerm};
 
-pub(crate) const ROLE_DOMAIN_SIZE: u8 = 16;
-const ROLE_INDEX_ERROR: &str = "role index must be < 16";
-
 mod role_projection;
 
 /// Canonical message descriptor.
@@ -50,7 +47,6 @@ pub(crate) enum ProgramSourceError {
     RouteControllerMismatch,
     RollBodyAbsent,
     ParallelArmAbsent,
-    ParallelConflict,
     ReceiveLaneCausalityConflict,
     ParallelAmbiguousEndpointSelector,
     ReentryAmbiguousEndpointSelector,
@@ -70,9 +66,6 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         ProgramSourceError::RollBodyAbsent => panic!("rolled body requires at least one step"),
         ProgramSourceError::ParallelArmAbsent => {
             panic!("g::par(left, right) arms require protocol steps")
-        }
-        ProgramSourceError::ParallelConflict => {
-            panic!("parallel lane ownership must be structurally disjoint")
         }
         ProgramSourceError::ReceiveLaneCausalityConflict => {
             panic!("receive lane sender change requires a causal handoff or exclusive route arms")
@@ -118,14 +111,6 @@ impl<Steps> Program<Steps> {
     }
 }
 
-pub(crate) const fn role_pair_contract_error<const FROM: u8, const TO: u8>() -> Option<&'static str>
-{
-    if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
-        return Some(ROLE_INDEX_ERROR);
-    }
-    None
-}
-
 /// Construct a single send step from `FROM` to `TO` carrying `M`.
 ///
 /// A self-role step is endpoint-local control and therefore carries only the
@@ -137,9 +122,6 @@ where
     M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
     const {
-        if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
-            panic!("{}", ROLE_INDEX_ERROR);
-        }
         if FROM == TO
             && <M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID
                 != <() as crate::transport::wire::WirePayload>::SCHEMA_ID
@@ -265,8 +247,8 @@ where
 {
     let _ = program;
     let image = const {
-        if ROLE >= ROLE_DOMAIN_SIZE {
-            panic!("{}", ROLE_INDEX_ERROR);
+        if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE) {
+            panic!("projected role is outside the choreography role range");
         }
         role_projection::role_projection_image_for::<ROLE, Steps>()
     };

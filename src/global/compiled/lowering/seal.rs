@@ -4,11 +4,11 @@ use crate::{
     global::{
         compiled::lowering::CompiledProgramImage,
         const_dsl::{
-            EffList, ScopeEvent, ScopeKind, ScopeMarker, first_visible_controller_mask,
+            EffList, ScopeEvent, ScopeKind, first_visible_controller,
             first_visible_endpoint_selector_conflicts_from_markers,
             local_route_observer_paths_mergeable, route_arm_ranges_from_first_enter,
-            unique_controller_role, validate_parallel_endpoint_selectors,
-            validate_receive_lane_causality, validate_roll_reentry_endpoint_selectors,
+            validate_parallel_endpoint_selectors, validate_receive_lane_causality,
+            validate_roll_reentry_endpoint_selectors,
         },
         role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
     },
@@ -30,10 +30,8 @@ const fn validate_route_stack_depth(summary: &CompiledProgramImage) -> Option<Pr
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ExactRoleResidentRowFacts {
-    pub(super) resident_row_count: u16,
-    pub(super) resident_row_lane_entry_count: u16,
-    pub(super) resident_row_lane_word_count: u16,
+pub(super) struct ExactRoleFacts {
+    pub(super) local_step_count: u16,
     pub(super) active_lane_count: u16,
     pub(super) endpoint_lane_slot_count: u16,
     pub(super) logical_lane_count: u16,
@@ -78,93 +76,7 @@ const fn insert_scope_ordinal(words: &mut [u8; SCOPE_ORDINAL_BYTES], ordinal: us
     !seen
 }
 
-#[derive(Clone, Copy)]
-struct ResidentRowRange {
-    start_eff: usize,
-    end_eff: usize,
-}
-
-struct ResidentRowFactTotals {
-    row_count: usize,
-    lane_entry_count: usize,
-    lane_word_count: usize,
-}
-
-const fn accumulate_resident_row_range_facts(
-    eff_list: &EffList,
-    role: u8,
-    range: ResidentRowRange,
-    totals: &mut ResidentRowFactTotals,
-) {
-    if range.start_eff >= range.end_eff {
-        return;
-    }
-    let mut seen_lanes = [0usize; LANE_FACT_WORDS];
-    let mut resident_row_max_lane_plus_one = 0usize;
-    let mut any = false;
-    let mut distinct_lane_count = 0usize;
-    let mut eff_idx = range.start_eff;
-    while eff_idx < range.end_eff && eff_idx < eff_list.len() {
-        let node = eff_list.node_at(eff_idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            if atom.from == role || atom.to == role {
-                any = true;
-                let lane = atom.lane as usize;
-                let lane_plus_one = lane + 1;
-                if lane_plus_one > resident_row_max_lane_plus_one {
-                    resident_row_max_lane_plus_one = lane_plus_one;
-                }
-                if insert_lane(&mut seen_lanes, lane) {
-                    distinct_lane_count += 1;
-                }
-            }
-        }
-        eff_idx += 1;
-    }
-    if !any {
-        return;
-    }
-    totals.row_count += 1;
-    totals.lane_entry_count += distinct_lane_count;
-    totals.lane_word_count += lane_word_count(resident_row_max_lane_plus_one);
-    if totals.row_count > u16::MAX as usize
-        || totals.lane_entry_count > u16::MAX as usize
-        || totals.lane_word_count > u16::MAX as usize
-    {
-        panic!("compiled role resident-row capacity exceeded");
-    }
-}
-
-const fn parallel_exit_offset(
-    scope_markers: &[ScopeMarker],
-    enter_marker_idx: usize,
-) -> Option<usize> {
-    let marker = scope_markers[enter_marker_idx];
-    if !matches!(marker.event, ScopeEvent::Enter)
-        || !matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
-    {
-        return None;
-    }
-    let mut exit_idx = enter_marker_idx + 1;
-    while exit_idx < scope_markers.len() {
-        let exit_marker = scope_markers[exit_idx];
-        if matches!(exit_marker.scope_id.kind(), Some(ScopeKind::Parallel))
-            && matches!(exit_marker.event, ScopeEvent::Exit)
-            && exit_marker.scope_id.raw() == marker.scope_id.raw()
-        {
-            return Some(exit_marker.offset());
-        }
-        exit_idx += 1;
-    }
-    None
-}
-
-pub(super) const fn exact_role_resident_row_facts(
-    eff_list: &EffList,
-    scope_markers: &[ScopeMarker],
-    role: u8,
-) -> ExactRoleResidentRowFacts {
+pub(super) const fn exact_role_facts(eff_list: &EffList, role: u8) -> ExactRoleFacts {
     let mut active_lanes = [0usize; LANE_FACT_WORDS];
     let mut local_len = 0usize;
     let mut active_lane_count = 0usize;
@@ -195,88 +107,8 @@ pub(super) const fn exact_role_resident_row_facts(
     let logical_lane_count =
         logical_lane_count_for_role(active_lane_count, endpoint_lane_slot_count);
 
-    if local_len == 0 {
-        return ExactRoleResidentRowFacts {
-            resident_row_count: 0,
-            resident_row_lane_entry_count: 0,
-            resident_row_lane_word_count: 0,
-            active_lane_count: encode_u16_count(active_lane_count),
-            endpoint_lane_slot_count: encode_u16_count(endpoint_lane_slot_count),
-            logical_lane_count: encode_u16_count(logical_lane_count),
-        };
-    }
-
-    let mut totals = ResidentRowFactTotals {
-        row_count: 0,
-        lane_entry_count: 0,
-        lane_word_count: 0,
-    };
-    let mut current_eff = 0usize;
-    let mut marker_idx = 0usize;
-    while marker_idx < scope_markers.len() {
-        let marker = scope_markers[marker_idx];
-        if matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
-            && matches!(marker.event, ScopeEvent::Enter)
-        {
-            let Some(exit_eff) = parallel_exit_offset(scope_markers, marker_idx) else {
-                panic!("parallel scope exit missing");
-            };
-            accumulate_resident_row_range_facts(
-                eff_list,
-                role,
-                ResidentRowRange {
-                    start_eff: current_eff,
-                    end_eff: marker.offset(),
-                },
-                &mut totals,
-            );
-            let parallel_start = if marker.offset() > current_eff {
-                marker.offset()
-            } else {
-                current_eff
-            };
-            accumulate_resident_row_range_facts(
-                eff_list,
-                role,
-                ResidentRowRange {
-                    start_eff: parallel_start,
-                    end_eff: exit_eff,
-                },
-                &mut totals,
-            );
-            current_eff = if exit_eff > current_eff {
-                exit_eff
-            } else {
-                current_eff
-            };
-        }
-        marker_idx += 1;
-    }
-    accumulate_resident_row_range_facts(
-        eff_list,
-        role,
-        ResidentRowRange {
-            start_eff: current_eff,
-            end_eff: eff_list.len(),
-        },
-        &mut totals,
-    );
-    if totals.row_count == 0 {
-        accumulate_resident_row_range_facts(
-            eff_list,
-            role,
-            ResidentRowRange {
-                start_eff: 0,
-                end_eff: eff_list.len(),
-            },
-            &mut totals,
-        );
-    }
-
-    ExactRoleResidentRowFacts {
-        resident_row_count: encode_u16_count(totals.row_count),
-        resident_row_lane_entry_count: encode_u16_count(totals.lane_entry_count),
-        resident_row_lane_word_count: encode_u16_count(totals.lane_word_count),
+    ExactRoleFacts {
+        local_step_count: encode_u16_count(local_len),
         active_lane_count: encode_u16_count(active_lane_count),
         endpoint_lane_slot_count: encode_u16_count(endpoint_lane_slot_count),
         logical_lane_count: encode_u16_count(logical_lane_count),
@@ -347,9 +179,10 @@ const fn validate_route_scope(
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
     let route_scope = scope_markers[route_enter_marker_idx].scope_id;
     let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
-    let controller_mask = first_visible_controller_mask(eff_list, arm0_start, arm0_end)
-        | first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-    let controller = match unique_controller_role(controller_mask) {
+    let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)
+        .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
+        .unique()
+    {
         Some(controller) => controller,
         None => return Some(ProgramSourceError::RouteControllerMismatch),
     };
@@ -414,9 +247,9 @@ pub(crate) const fn projection_error_all_roles(
     {
         return Some(error);
     }
-    let mut role = 0u8;
-    while role < crate::g::ROLE_DOMAIN_SIZE {
-        if let Some(error) = validate_compiled_layout(role, eff_list) {
+    let mut role = 0usize;
+    while role < summary.compiled_program_role_count() {
+        if let Some(error) = validate_compiled_layout(role as u8, eff_list) {
             return Some(error);
         }
         role += 1;

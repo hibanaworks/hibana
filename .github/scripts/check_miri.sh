@@ -194,15 +194,6 @@ run_miri_test \
   transport::tests::transport_contract_
 
 run_miri_test \
-  route-authority-storage-owner \
-  3 \
-  3 \
-  0 \
-  -p hibana \
-  --lib \
-  global::role_program::tests::route_authority_storage_
-
-run_miri_test \
   rolled-causal-exit-owner \
   1 \
   1 \
@@ -210,6 +201,15 @@ run_miri_test \
   -p hibana \
   --test cursor_send_recv_send_recv \
   rolled_same_label_recv_requires_causal_exit_handoff
+
+run_miri_test \
+  intrinsic-route-in-band-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test cursor_send_recv_send_recv \
+  intrinsic_route_passive_same_label_recv_commits_by_frame_evidence
 
 run_miri_test \
   rolled-resolved-route-reentry-owner \
@@ -267,8 +267,8 @@ run_miri_test \
 
 run_miri_test \
   route-branch-send-owner \
-  5 \
-  5 \
+  6 \
+  6 \
   0 \
   -p hibana \
   --test route_branch_send
@@ -318,8 +318,8 @@ run_miri_test \
 
 run_miri_test \
   resident-sidecar-owner \
-  23 \
-  22 \
+  16 \
+  15 \
   1 \
   -p hibana \
   --lib \
@@ -350,7 +350,7 @@ run_miri_test \
   0 \
   -p hibana \
   --lib \
-  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_
 
 run_miri_test \
   program-image-storage-validation \

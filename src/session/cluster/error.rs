@@ -129,7 +129,6 @@ pub(crate) enum ResourceScope {
     RendezvousTable,
     LaneStorage,
     ResolverTable,
-    RouteTable,
     EndpointLease,
 }
 
@@ -139,7 +138,6 @@ impl ResourceScope {
             Self::RendezvousTable => "rv",
             Self::LaneStorage => "lane",
             Self::ResolverTable => "resolver",
-            Self::RouteTable => "route",
             Self::EndpointLease => "ep-lease",
         }
     }

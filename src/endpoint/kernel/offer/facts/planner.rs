@@ -28,15 +28,13 @@ where
         selection: OfferScopeSelection,
         entry: OfferEntryPosition,
         profile: OfferScopeProfile,
-        offer_lanes: crate::global::role_program::LaneSetView,
     ) -> OfferIngressEvidence {
         let scope_id = selection.scope_id;
         let input = OfferIngressPlannerInput {
             selection,
             entry,
             materialization: self.selection_materialization_meta(selection),
-            preview_route_arm_selection: self
-                .preview_scope_ack_token_non_consuming(scope_id, offer_lanes),
+            preview_route_arm_selection: self.peek_live_scope_ack(scope_id),
             cursor: if self.cursor.is_recv() {
                 OfferCursorReadiness::Recv
             } else {

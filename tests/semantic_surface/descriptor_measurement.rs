@@ -201,9 +201,9 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     );
     assert!(
         rendezvous_fault.contains("EndpointDropped")
-            && rendezvous_lifecycle.contains("self.routes.reset_session(sid);")
             && rendezvous_lifecycle
                 .contains("self.wake_session_endpoint_waiters(sid, source_role);")
+            && !rendezvous_lifecycle.contains("self.routes")
             && rendezvous_core.contains("pub(crate) struct EndpointLeaseRecord")
             && rendezvous_core.contains("waiter: endpoint_waiter::EndpointWaiter")
             && endpoint_lease_owner.contains("impl EndpointLeaseRecord")
@@ -281,8 +281,7 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
             && role_image.contains("RoleDescriptorRef::from_resident(image)")
             && role_descriptor_ref.contains("Self { resident: image }")
             && role_descriptor_ref.contains("self.resident.program")
-            && role_descriptor_ref.contains("fn dynamic_route_scope_count(&self) -> usize")
-            && role_descriptor_ref.contains("self.dynamic_route_scope_count()")
+            && role_descriptor_ref.contains("self.resident.footprint()")
             && !role_descriptor_ref.contains(".active_lane_count")
             && !role_descriptor_ref.contains("checked_mul(self.max_route_stack_depth")
             && role_image

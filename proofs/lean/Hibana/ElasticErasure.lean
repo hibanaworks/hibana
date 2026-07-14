@@ -149,7 +149,7 @@ theorem elastic_transport_erasure_preserved_by_receive
     by rw [erasedExact, transportExact.2.2.1, traceAligned]
   ⟩
 
-/-- Erased route publication identity. Production retains conflict and branch
+/-- Erased route-decision identity. Production retains conflict and branch
 evidence but not the proof ordinal. -/
 def ElasticRoutePublication.erase
     (publication : ElasticRoutePublication) : Nat × RouteArm :=

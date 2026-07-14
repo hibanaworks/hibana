@@ -206,12 +206,12 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && decision_state.contains("pub(in crate::endpoint::kernel) fn seal(")
             && !decision_state.contains("fn release_sealed(")
             && !commit_delta.contains("MAX_ROUTE_COMMIT_ROWS")
-            && commit_delta.contains(
-                "fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteCommitRows) -> Self"
-            )
+            && commit_delta.contains("fn from_preflighted(")
+            && commit_delta.contains("fresh_route_start: Option<usize>")
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
+            && prepared_commit_delta_row.contains("fresh_route_start: u8")
             && !prepared_commit_delta_row.contains("roll_row: RollCommitRow")
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
@@ -244,9 +244,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && decision_state.contains("range_lane_len: u32")
             && !decision_state.contains("fn from_slice_for_lane(")
             && endpoint_init.contains("role_descriptor.max_route_stack_depth().max(1)")
-            && !endpoint_init.contains(
-                "route_scope_count().saturating_add(1)",
-            )
+            && !endpoint_init.contains("route_scope_count().saturating_add(1)",)
             && runtime_types.contains("fn route_rows(rows: RouteOnlyCommitRowsRef")
             && !runtime_types.contains("fn route_rows(rows: SelectedRouteCommitRowsRef")
             && !commit_delta_row.contains("route_lane")
@@ -371,10 +369,10 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
         .and_then(|tail| tail.split("        }").next())
         .expect("branch recv arm must stay inside shared recv commit publish");
     let branch_recv_commit_pos = branch_recv_arm
-        .find("self.commit_prepared_delta(delta);")
+        .find("let committed = self.commit_prepared_delta(delta);")
         .expect("branch-recv publish must commit a prepared delta");
     let branch_recv_branch_publish_pos = branch_recv_arm
-        .find("self.publish_branch_preview_commit_plan(branch);")
+        .find("self.publish_branch_preview_commit_plan(branch, &committed);")
         .expect("branch-recv publish must publish branch preview");
     let branch_recv_event_publish_pos = branch_recv_arm
         .find("self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);")
@@ -402,7 +400,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
         (
             "branch-recv",
             branch_recv_arm,
-            "self.commit_prepared_delta(delta);",
+            "let committed = self.commit_prepared_delta(delta);",
         ),
     ] {
         assert!(
@@ -495,8 +493,9 @@ fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
             && recv_commit_plan.contains("fn publish_recv_commit_plan<F>(")
             && recv_commit_plan.contains("frame.validated_payload(validate)")
             && recv_commit_plan.contains("frame.into_payload()")
-            && recv_commit_plan.contains("self.commit_prepared_delta(delta);")
-            && recv_commit_plan.contains("self.publish_branch_preview_commit_plan(branch);")
+            && recv_commit_plan.contains("let committed = self.commit_prepared_delta(delta);")
+            && recv_commit_plan
+                .contains("self.publish_branch_preview_commit_plan(branch, &committed);")
             && !branch_recv_surface.contains("struct DecodePublishPlan")
             && branch_recv_finish.contains("fn build_wire_branch_recv_commit_plan(")
             && branch_recv_finish.contains("fn build_non_wire_branch_recv_commit_plan(")

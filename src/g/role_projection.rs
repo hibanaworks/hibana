@@ -72,7 +72,8 @@ where
     Steps: ProgramTerm,
 {
     const COUNTS: crate::global::compiled::lowering::RoleCompiledCounts =
-        ProgramProjection::<Steps>::IMAGE.role_lowering_counts(ROLE);
+        ProgramProjection::<Steps>::IMAGE
+            .role_lowering_counts(ProgramProjection::<Steps>::SOURCE_EFF_LIST, ROLE);
     const FACTS: crate::global::role_program::RuntimeRoleFacts =
         crate::global::role_program::RuntimeRoleFacts::from_counts(Self::COUNTS);
     const PLAN: crate::global::role_program::RoleImagePlan =

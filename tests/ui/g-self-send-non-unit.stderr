@@ -1,8 +1,7 @@
 error[E0080]: evaluation panicked: self-role actions require the unit payload
  --> $RUST/core/src/panic.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<0, 0, hibana::g::Msg<1, u8>>::{constant#0}` failed here
+  = note: evaluation of `hibana::g::send::<0, 0, hibana::g::Msg<1, u8>>::{constant#0}` failed here
   |
  ::: src/g.rs
   |
@@ -13,8 +12,9 @@ note: erroneous constant encountered
  --> src/g.rs
   |
   | /     const {
-  | |         if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
-  | |             panic!("{}", ROLE_INDEX_ERROR);
+  | |         if FROM == TO
+  | |             && <M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID
+  | |                 != <() as crate::transport::wire::WirePayload>::SCHEMA_ID
 ... |
   | |     }
   | |_____^

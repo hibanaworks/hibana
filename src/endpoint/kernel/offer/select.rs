@@ -1,10 +1,10 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
-    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, LaneSetView,
-    OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll,
-    RecvError, RecvResult, RouteArmToken, ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId,
-    Transport, frontier_snapshot_from_scratch, lane_port, state_index_to_usize,
+    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, OfferEvidenceOutcome,
+    OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
+    RouteArmToken, ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId, Transport,
+    frontier_snapshot_from_scratch, lane_port, state_index_to_usize,
 };
 use crate::global::typestate::PackedEventConflict;
 
@@ -441,25 +441,5 @@ where
             );
         }
         Poll::Ready(Ok(()))
-    }
-    pub(super) fn try_poll_route_arm_selection_immediate(
-        &self,
-        scope_id: ScopeId,
-        offer_lanes: LaneSetView,
-    ) -> Option<Arm> {
-        self.cursor.route_scope_resolver(scope_id)?;
-        let lane_limit = self.cursor.logical_lane_count();
-        let mut next = offer_lanes.first_set(lane_limit);
-        let mut arm = None;
-        while let Some(lane_idx) = next {
-            let lane = lane_idx as u8;
-            let port = self.port_for_lane(lane as usize);
-            if let Poll::Ready(route_arm) = port.poll_route_arm_selection(scope_id, ROLE) {
-                arm = Some(route_arm);
-                break;
-            }
-            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        }
-        Some(Arm::from_raw(arm?))
     }
 }

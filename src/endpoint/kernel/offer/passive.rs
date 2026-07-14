@@ -4,9 +4,8 @@ use super::{
     OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult, ResolvePendingState,
     ResolveTokenOutcome, RouteArmToken, ScopeFrameLabelScratch, Transport, lane_port,
 };
-pub(super) struct PassiveRouteEvidenceInput<'a> {
+pub(super) struct PassiveRouteEvidenceInput {
     pub(super) selection: OfferScopeSelection,
-    pub(super) offer_lanes: crate::global::role_program::LaneSetView<'a>,
     pub(super) frame_evidence: FrameEvidenceResolution,
 }
 
@@ -121,14 +120,13 @@ where
 
     pub(super) fn poll_passive_route_evidence(
         &mut self,
-        input: PassiveRouteEvidenceInput<'_>,
+        input: PassiveRouteEvidenceInput,
         mut state: PassiveRouteEvidenceContext<'_, 'r>,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<PassiveRouteEvidenceOutcome>> {
         let PassiveRouteEvidenceInput {
             selection,
-            offer_lanes,
             mut frame_evidence,
         } = input;
         let scope_id = selection.scope_id;
@@ -148,11 +146,6 @@ where
                 )?);
                 wire_turn = PassiveWireTurn::Polled;
                 continue;
-            }
-            if let Some(arm) = self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes) {
-                return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
-                    route_token: RouteArmToken::from_ack(arm),
-                }));
             }
             if let Some(token) = self.peek_live_scope_ack(scope_id) {
                 return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {

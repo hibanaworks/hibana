@@ -1,6 +1,5 @@
 use super::*;
 use crate::{
-    global::const_dsl::{ScopeId, ScopeKind},
     runtime_core::resources::RuntimeResources,
     session::types::RendezvousId,
     transport::{Outgoing, PortOpen, ReceivedFrame, TransportError},
@@ -80,12 +79,11 @@ fn bind_endpoint_lease_capacity(rv: &Rendezvous<'_, '_, FailingTransport>, requi
 fn populate_non_endpoint_sidecars(rv: &Rendezvous<'_, '_, FailingTransport>) {
     rv.ensure_core_lane_tables_for_assoc_entries(1, 1)
         .expect("association storage");
-    rv.ensure_route_table_capacity(1).expect("route storage");
     rv.ensure_dynamic_resolver_capacity(1)
         .expect("resolver storage");
 }
 
-fn resident_owner_capacities(rv: &Rendezvous<'_, '_, FailingTransport>) -> [usize; 4] {
+fn resident_owner_capacities(rv: &Rendezvous<'_, '_, FailingTransport>) -> [usize; 3] {
     rv.live_sidecars().map(|resident| resident.storage.bytes())
 }
 
@@ -164,221 +162,43 @@ fn assoc_shrink_returns_storage_to_active_claim_count() {
 }
 
 #[test]
-fn route_replacement_retires_old_root_without_history_growth() {
+fn association_accepts_256_attachments_without_corrupting_fault_state() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_route_table_capacity(1)
-        .expect("initial route storage");
-    let mut slots = 2usize;
-    while slots <= 24 {
-        let before = rv.route_storage.get();
-        rv.ensure_route_table_capacity(slots)
-            .expect("grown route storage");
-        let current = rv.route_storage.get();
-        assert_eq!(current.ptr(), before.ptr());
-        assert!(current.bytes() > before.bytes());
-        let replacement_bound = current
-            .bytes()
-            .checked_add(RouteTable::storage_align() - 1)
-            .expect("replacement bound");
-        assert!(
-            rv.image_frontier.get() as usize <= replacement_bound,
-            "route frontier must depend on live/replacement bytes, not growth count"
-        );
-        slots += 1;
+    rv.ensure_core_lane_tables_for_assoc_entries(1, 1)
+        .expect("association storage");
+    let lane = crate::session::types::Lane::new(0);
+    let sid = crate::session::types::SessionId::new(1);
+
+    let mut attached = 0u16;
+    while attached < 256 {
+        rv.activate_lane_attachment(sid, lane)
+            .expect("full u8 role-domain attachment");
+        attached += 1;
     }
-    assert_eq!(rv.routes.route_slots(), 24);
-}
-
-#[test]
-fn route_growth_preserves_session_isolation() {
-    let mut slab = [0u8; 4096];
-    let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_route_table_capacity(2).expect("route storage");
-    let sid_a = crate::session::types::SessionId::new(1);
-    let sid_b = crate::session::types::SessionId::new(2);
-    let scope = ScopeId::new(ScopeKind::Route, 0);
-    assert!(
-        rv.routes
-            .poll_with_role_count(sid_a, 2, 0, scope)
-            .is_pending()
-    );
-    assert!(
-        rv.routes
-            .poll_with_role_count(sid_b, 2, 0, scope)
-            .is_pending()
-    );
-
-    rv.ensure_route_table_capacity(4)
-        .expect("grown route storage");
-    rv.routes
-        .begin_with_role_count(sid_a, 2, 0b11, 0b10, scope, 0);
-    rv.routes
-        .begin_with_role_count(sid_b, 2, 0b11, 0b10, scope, 1);
     assert_eq!(
-        rv.routes.poll_with_role_count(sid_a, 2, 0, scope),
-        Poll::Ready(0)
+        rv.activate_lane_attachment(sid, lane),
+        Err(crate::rendezvous::error::RendezvousError::LaneAttachOverflow { lane })
     );
-    assert_eq!(
-        rv.routes.poll_with_role_count(sid_b, 2, 0, scope),
-        Poll::Ready(1)
-    );
-}
 
-#[test]
-fn route_poll_without_publication_does_not_allocate_authority() {
-    let mut slab = [0u8; 4096];
-    let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_route_table_capacity(1).expect("route storage");
-    let sid = crate::session::types::SessionId::new(1);
-    let scope = ScopeId::new(ScopeKind::Route, 0);
+    let fault = crate::rendezvous::SessionFaultKind::ProtocolViolation;
+    assert_eq!(rv.poison_session(sid, u8::MAX, fault), fault);
+    assert_eq!(rv.session_fault(sid), Some(fault));
 
-    assert!(rv.routes.can_begin(sid, scope));
-    assert!(
-        rv.routes
-            .poll_with_role_count(sid, 2, 0, scope)
-            .is_pending()
-    );
-    assert!(rv.routes.can_begin(sid, scope));
-}
-
-#[test]
-#[should_panic]
-fn route_begin_rejects_unobserved_active_decision() {
-    let mut slab = [0u8; 4096];
-    let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_route_table_capacity(1).expect("route storage");
-    let sid = crate::session::types::SessionId::new(1);
-    let scope = ScopeId::new(ScopeKind::Route, 0);
-
-    rv.routes
-        .begin_with_role_count(sid, 3, 0b111, 0b001, scope, 0);
-    rv.routes
-        .begin_with_role_count(sid, 3, 0b111, 0b001, scope, 1);
-}
-
-#[test]
-fn active_route_observation_preserves_arm_and_retires_after_selected_participants_observe() {
-    let mut slab = [0u8; 4096];
-    let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_route_table_capacity(1).expect("route storage");
-    let sid = crate::session::types::SessionId::new(1);
-    let scope = ScopeId::new(ScopeKind::Route, 0);
-
-    rv.routes
-        .begin_with_role_count(sid, 3, 0b111, 0b001, scope, 1);
-    assert!(
-        rv.routes
-            .observe_active_with_role_count(sid, 3, 0b010, scope, 1)
-    );
-    assert_eq!(rv.routes.peek_with_role_count(sid, 3, 2, scope), Some(1));
-    assert_eq!(rv.routes.peek_with_role_count(sid, 3, 1, scope), None);
-    assert!(
-        rv.routes
-            .observe_active_with_role_count(sid, 3, 0b100, scope, 1)
-    );
-    assert!(rv.routes.can_begin(sid, scope));
-    assert!(
-        !rv.routes
-            .observe_active_with_role_count(sid, 3, 0b001, scope, 1)
-    );
-}
-
-#[test]
-fn route_shrink_compacts_live_frames_without_losing_session_keys() {
-    let mut slab = [0u8; 4096];
-    let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_route_table_capacity(6).expect("route storage");
-    let scope = ScopeId::new(ScopeKind::Route, 0);
-    let mut raw_sid = 1u32;
-    while raw_sid <= 6 {
-        rv.routes.begin_with_role_count(
-            crate::session::types::SessionId::new(raw_sid),
-            2,
-            0b11,
-            0b10,
-            scope,
-            (raw_sid & 1) as u8,
-        );
-        raw_sid += 1;
-    }
-    raw_sid = 1;
-    while raw_sid <= 3 {
-        let sid = crate::session::types::SessionId::new(raw_sid);
+    let mut released = 0u16;
+    while released < 255 {
         assert_eq!(
-            rv.routes.poll_with_role_count(sid, 2, 0, scope),
-            Poll::Ready((raw_sid & 1) as u8)
+            rv.release_lane(sid, lane),
+            crate::rendezvous::core::LaneRelease::StillHeld
         );
-        raw_sid += 1;
+        assert_eq!(rv.session_fault(sid), Some(fault));
+        released += 1;
     }
-
-    rv.shrink_route_table_capacity(3);
-    assert_eq!(rv.routes.route_slots(), 3);
-    assert_eq!(rv.route_storage.get().bytes(), RouteTable::storage_bytes(3));
-
-    raw_sid = 4;
-    while raw_sid <= 6 {
-        let sid = crate::session::types::SessionId::new(raw_sid);
-        let arm = (raw_sid & 1) as u8;
-        assert_eq!(
-            rv.routes.poll_with_role_count(sid, 2, 0, scope),
-            Poll::Ready(arm)
-        );
-        raw_sid += 1;
-    }
-}
-
-#[test]
-fn route_reset_and_shrink_preserve_other_sessions_and_free_slots() {
-    let mut slab = [0u8; 4096];
-    let rv = init_test_rendezvous(&mut slab);
-    rv.ensure_route_table_capacity(6).expect("route storage");
-    let scope = ScopeId::new(ScopeKind::Route, 0);
-    let removed_sid = crate::session::types::SessionId::new(1);
-    let retained_sid = crate::session::types::SessionId::new(2);
-
-    rv.routes
-        .begin_with_role_count(removed_sid, 2, 0b11, 0b10, scope, 0);
-    rv.routes
-        .begin_with_role_count(retained_sid, 2, 0b11, 0b10, scope, 1);
-
-    rv.routes.reset_session(removed_sid);
     assert_eq!(
-        rv.routes.peek_with_role_count(removed_sid, 2, 0, scope),
-        None
+        rv.release_lane(sid, lane),
+        crate::rendezvous::core::LaneRelease::Released
     );
-    assert_eq!(
-        rv.routes.peek_with_role_count(retained_sid, 2, 0, scope),
-        Some(1)
-    );
-
-    rv.shrink_route_table_capacity(3);
-    assert_eq!(rv.routes.route_slots(), 3);
-    assert_eq!(
-        rv.routes.peek_with_role_count(retained_sid, 2, 0, scope),
-        Some(1)
-    );
-
-    let first_reused_sid = crate::session::types::SessionId::new(3);
-    let second_reused_sid = crate::session::types::SessionId::new(4);
-    rv.routes
-        .begin_with_role_count(first_reused_sid, 2, 0b11, 0b10, scope, 0);
-    rv.routes
-        .begin_with_role_count(second_reused_sid, 2, 0b11, 0b10, scope, 1);
-    assert_eq!(
-        rv.routes.poll_with_role_count(retained_sid, 2, 0, scope),
-        Poll::Ready(1)
-    );
-    assert_eq!(
-        rv.routes
-            .poll_with_role_count(first_reused_sid, 2, 0, scope),
-        Poll::Ready(0)
-    );
-    assert_eq!(
-        rv.routes
-            .poll_with_role_count(second_reused_sid, 2, 0, scope),
-        Poll::Ready(1)
-    );
+    assert_eq!(rv.session_fault(sid), None);
 }
 
 #[test]
@@ -485,7 +305,6 @@ fn endpoint_lease_capacity_plan_is_read_only_until_commit() {
     let rv = init_test_rendezvous(&mut slab);
     let endpoint_before = rv.endpoint_lease_storage.get();
     let assoc_before = rv.assoc_storage.get();
-    let route_before = rv.route_storage.get();
     let resolver_before = rv.resolver_storage_sidecar();
     let frontier_before = rv.image_frontier.get();
 
@@ -496,7 +315,6 @@ fn endpoint_lease_capacity_plan_is_read_only_until_commit() {
     assert!(endpoint_before.is_empty());
     assert_eq!(rv.endpoint_lease_storage.get().ptr(), endpoint_before.ptr());
     assert_eq!(rv.assoc_storage.get().ptr(), assoc_before.ptr());
-    assert_eq!(rv.route_storage.get().ptr(), route_before.ptr());
     assert_eq!(rv.resolver_storage_sidecar().ptr(), resolver_before.ptr());
     assert_eq!(rv.endpoint_lease_slot_count(), 0);
     assert_eq!(rv.image_frontier.get(), frontier_before);
@@ -512,17 +330,12 @@ fn first_endpoint_table_commit_preserves_existing_sidecar_owners() {
     let rv = init_test_rendezvous(&mut slab);
     let sid = crate::session::types::SessionId::new(1);
     let lane = crate::session::types::Lane::new(0);
-    let scope = ScopeId::new(ScopeKind::Route, 0);
     rv.ensure_core_lane_tables_for_assoc_entries(1, 1)
         .expect("association storage");
     rv.activate_lane_attachment(sid, lane)
         .expect("live association");
-    rv.ensure_route_table_capacity(2).expect("route storage");
-    assert!(
-        rv.routes
-            .poll_with_role_count(sid, 2, 0, scope)
-            .is_pending()
-    );
+    rv.ensure_dynamic_resolver_capacity(2)
+        .expect("resolver storage");
 
     rv.allocate_endpoint_lease(
         crate::session::types::SessionId::new(2),
@@ -534,12 +347,7 @@ fn first_endpoint_table_commit_preserves_existing_sidecar_owners() {
     .expect("first endpoint lease");
 
     assert!(rv.has_lane_attachment(sid, lane));
-    assert_eq!(rv.routes.route_slots(), 2);
-    assert!(
-        rv.routes
-            .poll_with_role_count(sid, 2, 0, scope)
-            .is_pending()
-    );
+    assert!(!rv.resolver_storage_sidecar().is_empty());
 }
 
 #[test]
@@ -601,7 +409,6 @@ fn aborted_endpoint_reservation_restores_generation_and_owner_capacities() {
             64,
             core::mem::align_of::<usize>(),
             crate::rendezvous::core::EndpointResidentBudget {
-                route_frame_slots: 1,
                 frontier_workspace_bytes: 0,
             },
         )
@@ -666,62 +473,10 @@ fn published_endpoint_lease_cannot_be_published_twice() {
 }
 
 #[test]
-fn route_budget_sums_distinct_sessions_and_maxes_roles() {
-    let mut slab = [0u8; 4096];
-    let rv = init_test_rendezvous(&mut slab);
-    bind_endpoint_lease_capacity(rv, 3);
-    let budget = |route_frame_slots| crate::rendezvous::core::EndpointResidentBudget {
-        route_frame_slots,
-        frontier_workspace_bytes: 0,
-    };
-    let occupied = |sid, role, resident_budget| crate::rendezvous::core::EndpointLeaseSlot {
-        generation: 1,
-        sid,
-        role,
-        offset: 0,
-        len: 1,
-        resident_budget,
-        state: crate::rendezvous::core::EndpointLeaseState::Reserved,
-    };
-    let sid_a = crate::session::types::SessionId::new(1);
-    let sid_b = crate::session::types::SessionId::new(2);
-    rv.write_endpoint_lease_slot(0, occupied(sid_a, 0, budget(3)));
-    rv.write_endpoint_lease_slot(1, occupied(sid_a, 1, budget(5)));
-    rv.write_endpoint_lease_slot(2, occupied(sid_b, 0, budget(4)));
-
-    assert_eq!(rv.resident_route_frame_slots_floor(), 9);
-    rv.write_endpoint_lease_slot(
-        1,
-        crate::rendezvous::core::EndpointLeaseSlot {
-            generation: 1,
-            ..crate::rendezvous::core::EndpointLeaseSlot::EMPTY
-        },
-    );
-    assert_eq!(rv.resident_route_frame_slots_floor(), 7);
-    rv.write_endpoint_lease_slot(1, occupied(sid_a, 1, budget(5)));
-    rv.write_endpoint_lease_slot(
-        0,
-        crate::rendezvous::core::EndpointLeaseSlot {
-            generation: 1,
-            ..crate::rendezvous::core::EndpointLeaseSlot::EMPTY
-        },
-    );
-    assert_eq!(rv.resident_route_frame_slots_floor(), 9);
-    rv.write_endpoint_lease_slot(
-        2,
-        crate::rendezvous::core::EndpointLeaseSlot {
-            generation: 1,
-            ..crate::rendezvous::core::EndpointLeaseSlot::EMPTY
-        },
-    );
-    assert_eq!(rv.resident_route_frame_slots_floor(), 5);
-}
-
-#[test]
 fn endpoint_lease_shrink_preserves_owner_generation_across_rebind() {
     assert_eq!(
         core::mem::size_of::<crate::rendezvous::core::EndpointLeaseSlot>(),
-        24,
+        20,
         "endpoint lease ledger must stay compact on Pico"
     );
     let mut slab = [0u8; 4096];
@@ -769,9 +524,7 @@ fn repeated_reserved_release_restores_all_resident_high_water() {
     let rv = init_test_rendezvous(&mut slab);
     let lane0 = crate::session::types::Lane::new(0);
     let lane2 = crate::session::types::Lane::new(2);
-    let scope = ScopeId::new(ScopeKind::Route, 0);
     let resident_budget = crate::rendezvous::core::EndpointResidentBudget {
-        route_frame_slots: 4,
         frontier_workspace_bytes: 32,
     };
 
@@ -782,19 +535,13 @@ fn repeated_reserved_release_restores_all_resident_high_water() {
             .allocate_endpoint_lease(sid, 0, 128, core::mem::align_of::<usize>(), resident_budget)
             .expect("reserved endpoint lease");
         rv.ensure_endpoint_resident_capacity()
-            .expect("resident route/frontier capacity");
+            .expect("resident frontier capacity");
         rv.ensure_core_lane_tables_for_assoc_entries(3, 2)
             .expect("association capacity");
         rv.activate_lane_attachment(sid, lane0)
             .expect("lane 0 claim");
         rv.activate_lane_attachment(sid, lane2)
             .expect("lane 2 claim");
-        assert!(
-            rv.routes
-                .poll_with_role_count(sid, 2, 0, scope)
-                .is_pending()
-        );
-
         assert_eq!(
             rv.release_lane(sid, lane2),
             crate::rendezvous::core::LaneRelease::Released
@@ -807,13 +554,11 @@ fn repeated_reserved_release_restores_all_resident_high_water() {
 
         assert_eq!(rv.endpoint_lease_slot_count(), 0);
         assert_eq!(rv.assoc.assoc_slots(), 0);
-        assert_eq!(rv.routes.route_slots(), 0);
         assert_eq!(rv.lane_slot_count(), 0);
         assert_eq!(rv.frontier_workspace_bytes.get(), 0);
         assert_eq!(rv.image_frontier.get(), 0);
         assert!(rv.endpoint_lease_storage.get().is_empty());
         assert!(rv.assoc_storage.get().is_empty());
-        assert!(rv.route_storage.get().is_empty());
         cycle += 1;
     }
 }

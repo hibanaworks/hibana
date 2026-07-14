@@ -4,7 +4,7 @@ import Hibana.DistributedRollRefinement
 import Hibana.ElasticAdmissionHistory
 import Hibana.GlobalCoherence
 import Hibana.IterationErasure
-import Hibana.AffineRoutePublication
+import Hibana.InBandChoiceKnowledge
 import Hibana.AsyncCancellationTermination
 import Hibana.RuntimeRefinement
 
@@ -111,9 +111,8 @@ theorem verified_protocol_descriptor_actions_match_projection
     descriptorVerified.1
   simpa [descriptorVerified.2.2.1, descriptorVerified.2.2.2] using actions
 
-/-- Every accepted role image carries the canonical per-arm participant masks
-derived from the shared choreography. This is the descriptor-to-publication
-bridge used by the resident affine route cell. -/
+/-- Every accepted role image carries the canonical per-arm participant lists
+derived from the shared choreography. -/
 theorem verified_protocol_descriptor_route_participants_match_choreography
     {certificate : VerifiedProtocolCertificate}
     {session roleCount : Nat}
@@ -350,7 +349,7 @@ structure ProtocolExecutionGuarantees
   globalSemanticUnstuck : GlobalSemanticallyUnstuck session roleCount choreo
   distributedSemanticUnstuck :
     DistributedSemanticallyUnstuck session roleCount choreo
-  routeControllerAuthority :
+  routeKnowledgeIsControllerOrInbound :
     choreo.checkRouteKnowledgeFrom roleCount 0 = true
   descriptorRouteParticipantsExact :
     ∀ {role : Nat} {descriptor : ExactDescriptorCertificate},
@@ -395,35 +394,6 @@ structure ProtocolExecutionGuarantees
         state.abstract = after.abstract /\
         state.pending.length = after.roleCount
   elasticPipelining : ElasticPipelinedSemantics
-  activeRoutePublicationIsAffine :
-    ∀ (cell : AffineRouteCell) (arm : RouteArm)
-      (participants observed : List Nat),
-      beginRouteDecision? (some cell) arm participants observed = none
-  begunRoutePublicationTracksExactPending :
-    ∀ {arm : RouteArm} {participants observed : List Nat}
-      {next : Option AffineRouteCell},
-      beginRouteDecision? none arm participants observed = some next ->
-      next =
-        let pending := pendingRouteParticipants participants observed
-        if pending.isEmpty then none else some { arm, pending }
-  routeObservationIsAffine :
-    ∀ {role : Nat} {cell : AffineRouteCell}
-      {next : Option AffineRouteCell},
-      observeRouteDecision? role (some cell) = some next ->
-      routeRolePending role next = false
-  routeObservationRejectsDuplicate :
-    ∀ {role : Nat} {cell : AffineRouteCell}
-      {next : Option AffineRouteCell},
-      observeRouteDecision? role (some cell) = some next ->
-      observeRouteDecision? role next = none
-  routeObservationPreservesArm :
-    ∀ {role : Nat} {cell next : AffineRouteCell},
-      observeRouteDecision? role (some cell) = some (some next) ->
-      next.arm = cell.arm
-  localRouteParticipantsAreExact :
-    ∀ (role : Nat) (selectedParticipants attachedRoles : List Nat),
-      role ∈ selectedLocalRouteParticipants selectedParticipants attachedRoles ↔
-        role ∈ selectedParticipants ∧ role ∈ attachedRoles
   dynamicResolutionSealsLocalMembership :
     ∀ (membership : LocalMembership) (role : Nat),
       attachLocalRole? (sealLocalMembership membership) role = none
@@ -447,9 +417,9 @@ structure ProtocolExecutionGuarantees
             (protocol.beginCancellation reporter cause) transports) retired /\
         retired.fullyRetired
 
-/-- One accepted production artifact establishes the exact descriptor,
-asynchronous admission, iteration-erasure, and affine route-publication
-properties together. -/
+/-- One accepted production artifact establishes exact descriptors,
+asynchronous admission, iteration erasure, and in-band choice knowledge
+together. -/
 theorem verified_protocol_establishes_execution_guarantees
     {certificate : VerifiedProtocolCertificate}
     {session roleCount : Nat}
@@ -463,7 +433,7 @@ theorem verified_protocol_establishes_execution_guarantees
     globalSemanticUnstuck := verified_protocol_establishes_semantic_unstuckness accepted
     distributedSemanticUnstuck :=
       verified_protocol_establishes_distributed_semantic_unstuckness accepted
-    routeControllerAuthority := verified.1.2.2.2.routeKnowledge
+    routeKnowledgeIsControllerOrInbound := verified.1.2.2.2.routeKnowledge
     descriptorRouteParticipantsExact := ?_
     descriptorPipelinedSendRefinement := ?_
     inboundIdentity := verified.1.2.2.2.inboundOccurrenceIdentity
@@ -471,12 +441,6 @@ theorem verified_protocol_establishes_execution_guarantees
     rollReentryOrder := ?_
     rollPostLinearizationMaterialization := ?_
     elasticPipelining := elastic_pipelined_semantics_holds
-    activeRoutePublicationIsAffine := ?_
-    begunRoutePublicationTracksExactPending := ?_
-    routeObservationIsAffine := ?_
-    routeObservationRejectsDuplicate := ?_
-    routeObservationPreservesArm := ?_
-    localRouteParticipantsAreExact := ?_
     dynamicResolutionSealsLocalMembership := sealed_local_membership_rejects_late_attach
     callbackAttachCannotReadBorrowedEndpoint := active_endpoint_access_blocks_reentrant_attach
     abstractRetirementAfterLiveFault := ?_
@@ -500,18 +464,6 @@ theorem verified_protocol_establishes_execution_guarantees
   · intro before after rollId transports linearized drained
     exact distributed_roll_linearization_has_materialization_refinement
       linearized drained
-  · intro cell arm participants observed
-    exact active_route_decision_cannot_be_overwritten cell arm participants observed
-  · intro arm participants observed next begun
-    exact begun_route_decision_tracks_exact_unobserved_participants begun
-  · intro role cell next observed
-    exact route_observation_is_affine observed
-  · intro role cell next observed
-    exact route_observation_rejects_duplicate observed
-  · intro role cell next observed
-    exact route_observation_preserves_selected_arm observed
-  · intro role selectedParticipants attachedRoles
-    exact selected_local_route_participants_are_exact
   · intro protocol reporter cause transports live unique wellFormed covers
     exact live_fault_snapshot_reaches_full_retirement
       live unique wellFormed covers

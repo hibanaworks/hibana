@@ -38,7 +38,6 @@ use super::frontier::{
 use super::lane_port;
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::{ReentryMark, ScopeId};
-use crate::global::role_program::LaneSetView;
 use crate::global::typestate::state_index_to_usize;
 use crate::transport::Transport;
 

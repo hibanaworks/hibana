@@ -64,9 +64,6 @@ impl EndpointLeaseRecord {
         sid: crate::session::types::SessionId,
         excluded_role: u8,
     ) {
-        if excluded_role >= crate::g::ROLE_DOMAIN_SIZE {
-            crate::invariant();
-        }
         let mut idx = 0usize;
         loop {
             let current = storage.get();
@@ -325,46 +322,6 @@ where
     ) -> Option<(usize, usize)> {
         let slot = self.endpoint_lease(lease_slot, generation)?;
         Some((slot.offset as usize, slot.len as usize))
-    }
-
-    pub(crate) fn resident_route_frame_slots_floor(&self) -> usize {
-        let slot_count = self.endpoint_lease_slot_count();
-        let mut required = 0usize;
-        let mut idx = 0usize;
-        while idx < slot_count {
-            let slot = crate::invariant_some(self.endpoint_lease_slot_by_index(idx));
-            if !slot.is_occupied() {
-                idx += 1;
-                continue;
-            }
-            let mut prior_idx = 0usize;
-            let mut is_session_leader = true;
-            while prior_idx < idx {
-                let prior = crate::invariant_some(self.endpoint_lease_slot_by_index(prior_idx));
-                if prior.is_occupied() && prior.sid == slot.sid {
-                    is_session_leader = false;
-                    break;
-                }
-                prior_idx += 1;
-            }
-            if is_session_leader {
-                let mut session_required = 0usize;
-                let mut peer_idx = idx;
-                while peer_idx < slot_count {
-                    let peer = crate::invariant_some(self.endpoint_lease_slot_by_index(peer_idx));
-                    if peer.is_occupied() && peer.sid == slot.sid {
-                        session_required = core::cmp::max(
-                            session_required,
-                            peer.resident_budget.route_frame_slots as usize,
-                        );
-                    }
-                    peer_idx += 1;
-                }
-                required = crate::invariant_some(required.checked_add(session_required));
-            }
-            idx += 1;
-        }
-        required
     }
 
     #[inline]

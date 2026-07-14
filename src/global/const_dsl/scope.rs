@@ -18,8 +18,8 @@ pub(crate) enum ScopeEvent {
     Exit,
 }
 
-/// Encoded scope identifier carried by lowering, route tables, resolver sites,
-/// and endpoint evidence.
+/// Encoded scope identifier carried by lowering, descriptor rows, resolver
+/// sites, and endpoint evidence.
 ///
 /// `u16::MAX` is the absent sentinel. Present scopes use the packed layout
 /// `reserved:1 | kind:2 | local:13`; the reserved bit is always zero.

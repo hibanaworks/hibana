@@ -2,12 +2,13 @@ use crate::{
     eff::EffKind,
     global::{
         compiled::lowering::CompiledProgramImage,
-        const_dsl::{EffList, ScopeEvent, ScopeKind},
+        const_dsl::{EffList, ScopeEvent, ScopeKind, route_arm_ranges_from_first_enter},
     },
 };
 
 pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 11;
-pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 9;
+pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8;
+pub(crate) const PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE: usize = 1;
 pub(crate) const PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5;
 pub(super) const ROUTE_ORDINAL_BYTES: usize = crate::eff::meta::MAX_EFF_NODES.div_ceil(8);
 
@@ -76,6 +77,7 @@ impl ProgramColumnRange {
 pub(crate) struct ProgramImageColumns {
     atom_len: u16,
     route_resolver_len: u16,
+    route_participant_len: u16,
     scope_marker_len: u16,
 }
 
@@ -83,10 +85,12 @@ impl ProgramImageColumns {
     pub(crate) const fn new(
         atom_len: usize,
         route_resolver_len: usize,
+        route_participant_len: usize,
         scope_marker_len: usize,
     ) -> Self {
         if atom_len > u16::MAX as usize
             || route_resolver_len > u16::MAX as usize
+            || route_participant_len > u16::MAX as usize
             || scope_marker_len > u16::MAX as usize
         {
             crate::invariant();
@@ -94,6 +98,7 @@ impl ProgramImageColumns {
         let columns = Self {
             atom_len: atom_len as u16,
             route_resolver_len: route_resolver_len as u16,
+            route_participant_len: route_participant_len as u16,
             scope_marker_len: scope_marker_len as u16,
         };
         let _ = columns.scope_markers();
@@ -117,10 +122,20 @@ impl ProgramImageColumns {
     #[inline(always)]
     pub(crate) const fn scope_markers(self) -> ProgramColumnRange {
         ProgramColumnRange::new(
-            self.route_resolvers()
-                .end_offset(PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE),
+            self.route_participants()
+                .end_offset(PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE),
             self.scope_marker_len as usize,
             PROGRAM_IMAGE_SCOPE_MARKER_STRIDE,
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_participants(self) -> ProgramColumnRange {
+        ProgramColumnRange::new(
+            self.route_resolvers()
+                .end_offset(PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE),
+            self.route_participant_len as usize,
+            PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
         )
     }
 
@@ -137,6 +152,11 @@ impl ProgramImageColumns {
     #[inline(always)]
     pub(crate) const fn scope_marker_count(self) -> usize {
         self.scope_marker_len as usize
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_participant_count(self) -> usize {
+        self.route_participant_len as usize
     }
 
     #[inline(always)]
@@ -185,6 +205,7 @@ const fn program_image_columns(eff_list: &EffList) -> ProgramImageColumns {
     let markers = eff_list.scope_markers();
     let mut seen_route_ordinals = [0u8; ROUTE_ORDINAL_BYTES];
     let mut route_resolver_len = 0usize;
+    let mut route_participant_len = 0usize;
     idx = 0;
     while idx < markers.len() {
         let marker = markers[idx];
@@ -194,24 +215,72 @@ const fn program_image_columns(eff_list: &EffList) -> ProgramImageColumns {
             let ordinal = marker.scope_id.local_ordinal() as usize;
             if insert_route_ordinal(&mut seen_route_ordinals, ordinal) {
                 route_resolver_len += 1;
+                let (_, left_start, left_end, _, right_start, right_end) =
+                    route_arm_ranges_from_first_enter(markers, idx);
+                route_participant_len +=
+                    route_arm_participant_count(eff_list, left_start, left_end);
+                route_participant_len +=
+                    route_arm_participant_count(eff_list, right_start, right_end);
             }
         }
         idx += 1;
     }
 
-    ProgramImageColumns::new(atom_len, route_resolver_len, markers.len())
+    ProgramImageColumns::new(
+        atom_len,
+        route_resolver_len,
+        route_participant_len,
+        markers.len(),
+    )
+}
+
+const fn role_occurs_before(eff_list: &EffList, start: usize, end: usize, role: u8) -> bool {
+    let mut idx = start;
+    while idx < end && idx < eff_list.len() {
+        let node = eff_list.node_at(idx);
+        if matches!(node.kind, EffKind::Atom) {
+            let atom = node.atom_data();
+            if atom.from == role || atom.to == role {
+                return true;
+            }
+        }
+        idx += 1;
+    }
+    false
+}
+
+const fn route_arm_participant_count(eff_list: &EffList, start: usize, end: usize) -> usize {
+    let mut count = 0usize;
+    let mut idx = start;
+    while idx < end && idx < eff_list.len() {
+        let node = eff_list.node_at(idx);
+        if matches!(node.kind, EffKind::Atom) {
+            let atom = node.atom_data();
+            if !role_occurs_before(eff_list, start, idx, atom.from) {
+                count += 1;
+            }
+            if atom.to != atom.from && !role_occurs_before(eff_list, start, idx, atom.to) {
+                count += 1;
+            }
+        }
+        idx += 1;
+    }
+    if count == 0 {
+        crate::invariant();
+    }
+    count
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProgramImageFacts {
-    pub(crate) role_count: u8,
+    pub(crate) max_role: u8,
 }
 
 impl ProgramImageFacts {
     #[inline(always)]
     pub(crate) const fn from_image(image: &CompiledProgramImage) -> Self {
         Self {
-            role_count: image.compiled_program_role_count() as u8,
+            max_role: image.max_role(),
         }
     }
 }

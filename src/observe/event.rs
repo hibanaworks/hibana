@@ -8,8 +8,8 @@ use crate::observe::ids;
 /// - `ts`: Timestamp (monotonic counter or wall-clock tick)
 /// - `id`: Event identifier (from `crate::observe::ids::*`)
 /// - `causal_key`: Causal key for reversible evidence correlation
-///   - High 8 bits: role/lane index
-///   - Low 8 bits: sequence number within the route-table generation
+///   - High 8 bits: role or lane discriminator
+///   - Low 8 bits: event-specific sequence, result, or reason code
 /// - `arg0`, `arg1`: Context-dependent diagnostic words.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]

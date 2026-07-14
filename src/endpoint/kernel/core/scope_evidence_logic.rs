@@ -267,69 +267,11 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn has_pending_scope_ack_on_port(
-        &self,
-        lane_idx: usize,
-        scope_id: ScopeId,
-    ) -> bool {
-        if self.cursor.route_scope_resolver(scope_id).is_none() {
-            return false;
-        }
-        self.ports
-            .get(lane_idx)
-            .and_then(|port| port.as_ref())
-            .is_some_and(|port| port.has_pending_route_arm_selection(scope_id, ROLE))
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn preview_scope_ack_token_non_consuming(
-        &self,
-        scope_id: ScopeId,
-        offer_lanes: crate::global::role_program::LaneSetView,
-    ) -> Option<RouteArmToken> {
-        if let Some(token) = self.peek_live_scope_ack(scope_id) {
-            return Some(token);
-        }
-        self.cursor.route_scope_resolver(scope_id)?;
-        let lane_limit = self.cursor.logical_lane_count();
-        let mut next = offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            if !self.has_pending_scope_ack_on_port(lane_idx, scope_id) {
-                next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-                continue;
-            }
-            let arm = crate::invariant_some(
-                self.port_for_lane(lane_idx)
-                    .peek_route_arm_selection(scope_id, ROLE),
-            );
-            return Some(RouteArmToken::from_ack(Arm::from_raw(arm)));
-        }
-        None
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn preview_live_route_arm_selection_non_consuming(
         &self,
         scope_id: ScopeId,
     ) -> Option<Arm> {
-        if let Some(token) = self.peek_live_scope_ack(scope_id) {
-            return Some(token.arm());
-        }
-        self.cursor.route_scope_resolver(scope_id)?;
-        let lane_limit = self.cursor.logical_lane_count();
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if let Some(arm) = self
-                .ports
-                .get(lane_idx)
-                .and_then(|port| port.as_ref())
-                .and_then(|port| port.peek_route_arm_selection(scope_id, ROLE))
-            {
-                return Some(Arm::from_raw(arm));
-            }
-            lane_idx += 1;
-        }
-        None
+        self.peek_live_scope_ack(scope_id).map(RouteArmToken::arm)
     }
 
     #[inline]

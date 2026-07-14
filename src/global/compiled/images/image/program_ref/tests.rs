@@ -31,20 +31,20 @@ const fn encoded_atom(
     ]
 }
 
-fn forged_program_ref(bytes: &'static [u8; 11], role_count: u8) -> CompiledProgramRef {
-    CompiledProgramRef::compact(ProgramImageFacts { role_count }, atom_columns(), bytes)
+fn forged_program_ref(bytes: &'static [u8; 11], max_role: u8) -> CompiledProgramRef {
+    CompiledProgramRef::compact(ProgramImageFacts { max_role }, atom_columns(), bytes)
 }
 
 fn atom_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(1, 0, 0)
+    ProgramImageColumns::new(1, 0, 0, 0)
 }
 
 fn route_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 3, 0)
+    ProgramImageColumns::new(0, 1, 3, 0)
 }
 
 fn alternate_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(2, 0, 1)
+    ProgramImageColumns::new(1, 0, 0, 0)
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn compiled_program_column_range_rejects_stride_multiplication_overflow() {
 #[test]
 fn program_image_fit_probe_rejects_undersized_storage() {
     let source = EffList::new();
-    let columns = ProgramImageColumns::new(1, 0, 0);
+    let columns = ProgramImageColumns::new(1, 0, 0, 0);
     assert!(ProgramImageBytes::<10>::from_image_if_fits(&source, columns).is_none());
 }
 
@@ -66,7 +66,7 @@ fn program_image_fit_probe_rejects_undersized_storage() {
 #[should_panic]
 fn program_image_constructor_rejects_undersized_storage() {
     let source = EffList::new();
-    let columns = ProgramImageColumns::new(1, 0, 0);
+    let columns = ProgramImageColumns::new(1, 0, 0, 0);
     let _ = ProgramImageBytes::<10>::from_image(&source, columns);
 }
 
@@ -75,7 +75,7 @@ static VALID: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static VALID_COPY: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static SCHEMA_DIFFERENT: [u8; 11] = encoded_atom(2, 0, 1, 9, 0x7856_3413, 1, u8::MAX);
 static LAST_BYTE_DIFFERENT: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, 0);
-static SAME_COLUMN_BYTES: [u8; 27] = [0; 27];
+static SAME_COLUMN_BYTES: [u8; 11] = [0; 11];
 static EFF_INDEX_OUT_OF_RANGE: [u8; 11] = encoded_atom(
     crate::eff::meta::MAX_EFF_NODES as u16,
     0,
@@ -91,7 +91,7 @@ static ORIGIN_OUT_OF_RANGE: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 2,
 
 #[test]
 fn compiled_program_atom_descriptor_decodes_canonical_row() {
-    let atom = forged_program_ref(&VALID, 2).atom_at(2).expect("atom row");
+    let atom = forged_program_ref(&VALID, 1).atom_at(2).expect("atom row");
     assert_eq!(atom.from, 0);
     assert_eq!(atom.to, 1);
     assert_eq!(atom.label, 9);
@@ -102,21 +102,21 @@ fn compiled_program_atom_descriptor_decodes_canonical_row() {
 
 #[test]
 fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
-    let canonical = forged_program_ref(&VALID, 2);
-    let same_image_at_another_address = forged_program_ref(&VALID_COPY, 2);
-    let different_facts = forged_program_ref(&VALID_COPY, 3);
+    let canonical = forged_program_ref(&VALID, 1);
+    let same_image_at_another_address = forged_program_ref(&VALID_COPY, 1);
+    let different_facts = forged_program_ref(&VALID_COPY, 2);
     let canonical_columns = CompiledProgramRef::compact(
-        ProgramImageFacts { role_count: 2 },
+        ProgramImageFacts { max_role: 1 },
         route_columns(),
         &SAME_COLUMN_BYTES,
     );
     let different_columns = CompiledProgramRef::compact(
-        ProgramImageFacts { role_count: 2 },
+        ProgramImageFacts { max_role: 1 },
         alternate_columns(),
         &SAME_COLUMN_BYTES,
     );
-    let different_schema = forged_program_ref(&SCHEMA_DIFFERENT, 2);
-    let different_final_byte = forged_program_ref(&LAST_BYTE_DIFFERENT, 2);
+    let different_schema = forged_program_ref(&SCHEMA_DIFFERENT, 1);
+    let different_final_byte = forged_program_ref(&LAST_BYTE_DIFFERENT, 1);
 
     assert_eq!(
         canonical_columns.columns.blob_len(),
@@ -141,54 +141,53 @@ fn compiled_program_atom_decoder_rejects_exact_invalid_boundaries() {
         origin,
         lane: 0,
     };
-    assert!(ProgramAtomRow::decode(0, fields(0, 0, 0), 1).is_some());
+    assert!(ProgramAtomRow::decode(0, fields(0, 0, 0), 0).is_some());
     assert!(
-        ProgramAtomRow::decode(crate::eff::meta::MAX_EFF_NODES as u16, fields(0, 0, 0), 1,)
+        ProgramAtomRow::decode(crate::eff::meta::MAX_EFF_NODES as u16, fields(0, 0, 0), 0,)
             .is_none()
     );
-    assert!(ProgramAtomRow::decode(0, fields(0, 0, 2), 1).is_none());
-    assert!(ProgramAtomRow::decode(0, fields(1, 0, 0), 1).is_none());
-    assert!(ProgramAtomRow::decode(0, fields(0, 1, 0), 1).is_none());
+    assert!(ProgramAtomRow::decode(0, fields(0, 0, 2), 0).is_none());
+    assert!(ProgramAtomRow::decode(0, fields(1, 0, 0), 0).is_none());
+    assert!(ProgramAtomRow::decode(0, fields(0, 1, 0), 0).is_none());
+    assert!(ProgramAtomRow::decode(0, fields(u8::MAX, u8::MAX, 0), u8::MAX).is_some());
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_atom_descriptor_rejects_effect_index_out_of_range() {
-    let _ = forged_program_ref(&EFF_INDEX_OUT_OF_RANGE, 2).atom_at(0);
+    let _ = forged_program_ref(&EFF_INDEX_OUT_OF_RANGE, 1).atom_at(0);
 }
 
 #[test]
-#[should_panic]
-fn compiled_program_atom_descriptor_rejects_zero_role_count() {
-    let _ = forged_program_ref(&VALID, 0).atom_at(2);
-}
-
-#[test]
-#[should_panic]
-fn compiled_program_atom_descriptor_rejects_role_count_out_of_domain() {
-    let _ = forged_program_ref(&VALID, crate::g::ROLE_DOMAIN_SIZE + 1).atom_at(2);
+fn compiled_program_atom_descriptor_accepts_full_u8_role_domain() {
+    static HIGH: [u8; 11] = encoded_atom(2, u8::MAX, u8::MAX, 9, VALID_SCHEMA, 1, 0);
+    let atom = forged_program_ref(&HIGH, u8::MAX)
+        .atom_at(2)
+        .expect("role 255 atom");
+    assert_eq!((atom.from, atom.to), (u8::MAX, u8::MAX));
+    assert_eq!(forged_program_ref(&HIGH, u8::MAX).role_count(), 256);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_atom_descriptor_rejects_from_role_out_of_range() {
-    let _ = forged_program_ref(&FROM_OUT_OF_RANGE, 2).atom_at(2);
+    let _ = forged_program_ref(&FROM_OUT_OF_RANGE, 1).atom_at(2);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_atom_descriptor_rejects_to_role_out_of_range() {
-    let _ = forged_program_ref(&TO_OUT_OF_RANGE, 2).atom_at(2);
+    let _ = forged_program_ref(&TO_OUT_OF_RANGE, 1).atom_at(2);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_atom_descriptor_rejects_origin_out_of_range() {
-    let _ = forged_program_ref(&ORIGIN_OUT_OF_RANGE, 2).atom_at(2);
+    let _ = forged_program_ref(&ORIGIN_OUT_OF_RANGE, 1).atom_at(2);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_atom_descriptor_rejects_effect_index_query_out_of_range() {
-    let _ = forged_program_ref(&VALID, 2).atom_at(crate::eff::meta::MAX_EFF_NODES);
+    let _ = forged_program_ref(&VALID, 1).atom_at(crate::eff::meta::MAX_EFF_NODES);
 }

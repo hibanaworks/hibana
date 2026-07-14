@@ -10,7 +10,6 @@ use core::{
 };
 
 use super::core::{EndpointLeaseRecord, RendezvousAccessState, Sidecar};
-use super::tables::RouteTable;
 use crate::{
     endpoint::kernel::FrontierScratchLayout,
     observe::core::TapRing,
@@ -51,8 +50,8 @@ fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
     }
 }
 
+mod membership;
 mod recv_frame;
-mod route_publication;
 
 use self::recv_frame::RecvFrameReceiptState;
 pub(crate) use self::recv_frame::{
@@ -79,15 +78,11 @@ pub(crate) struct Port<'r, T: Transport> {
     scratch_marker: PhantomData<&'r mut [u8]>,
     sid: SessionId,
     pub(crate) lane: Lane,
-    role: u8,
-    role_count: u8,
     rv_id: RendezvousId,
     _no_send_sync: PhantomData<*mut ()>,
     tap: *const TapRing<'static>,
     tap_marker: PhantomData<&'r TapRing<'r>>,
     tap_counter: &'r Cell<u32>,
-    routes: *const RouteTable,
-    routes_marker: PhantomData<&'r RouteTable>,
     recv_frame_receipt: RecvFrameReceiptState,
 }
 
@@ -95,7 +90,6 @@ pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub(crate) transport: &'r T,
     pub(crate) tap: &'tap TapRing<'tap>,
     pub(crate) tap_counter: &'tap Cell<u32>,
-    pub(crate) routes: &'tap RouteTable,
     pub(crate) slab_ptr: *mut u8,
     pub(crate) slab_len: usize,
     pub(crate) access_state: &'tap Cell<RendezvousAccessState>,
@@ -104,8 +98,6 @@ pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub(crate) endpoint_lease_storage: &'tap Cell<Sidecar<EndpointLeaseRecord>>,
     pub(crate) sid: SessionId,
     pub(crate) lane: Lane,
-    pub(crate) role: u8,
-    pub(crate) role_count: u8,
     pub(crate) rv_id: RendezvousId,
     pub(crate) tx: T::Tx<'r>,
     pub(crate) rx: T::Rx<'r>,
@@ -140,7 +132,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             transport,
             tap,
             tap_counter,
-            routes,
             slab_ptr,
             slab_len,
             access_state,
@@ -149,8 +140,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             endpoint_lease_storage,
             sid,
             lane,
-            role,
-            role_count,
             rv_id,
             tx,
             rx,
@@ -168,15 +157,11 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             scratch_marker: PhantomData,
             sid,
             lane,
-            role,
-            role_count,
             rv_id,
             _no_send_sync: PhantomData,
             tap: (tap as *const TapRing<'tap>).cast::<TapRing<'static>>(),
             tap_marker: PhantomData,
             tap_counter,
-            routes: routes as *const RouteTable,
-            routes_marker: PhantomData,
             recv_frame_receipt: RecvFrameReceiptState::new(),
         }
     }

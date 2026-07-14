@@ -1,5 +1,34 @@
 use super::*;
 
+type SparseMultiLaneLeft = g::Seq<
+    g::Send<0, 1, Msg<109, ()>>,
+    g::Par<g::Send<0, 2, Msg<110, ()>>, g::Send<0, 3, Msg<111, ()>>>,
+>;
+type SparseMultiLaneRight = g::Seq<
+    g::Send<0, 1, Msg<112, ()>>,
+    g::Par<g::Send<0, 2, Msg<113, ()>>, g::Send<0, 3, Msg<114, ()>>>,
+>;
+type SparseMultiLaneRoute = g::Route<SparseMultiLaneLeft, SparseMultiLaneRight>;
+
+fn sparse_multi_lane_route_program() -> Program<SparseMultiLaneRoute> {
+    g::route(
+        g::seq(
+            g::send::<0, 1, Msg<109, ()>>(),
+            g::par(
+                g::send::<0, 2, Msg<110, ()>>(),
+                g::send::<0, 3, Msg<111, ()>>(),
+            ),
+        ),
+        g::seq(
+            g::send::<0, 1, Msg<112, ()>>(),
+            g::par(
+                g::send::<0, 2, Msg<113, ()>>(),
+                g::send::<0, 3, Msg<114, ()>>(),
+            ),
+        ),
+    )
+}
+
 #[test]
 fn lane_resident_route_rows_do_not_restore_full_domain_copies() {
     let packed_route_lane_rows = MAX_ROUTE_ARM_LANE_ROWS

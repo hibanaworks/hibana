@@ -31,8 +31,8 @@ private theorem route_publication_iterations_append
   · simp [routePublicationIterations, same]
   · simp [routePublicationIterations, same]
 
-/-- Append-only proof history for route publications. Production stores only
-its compact affine route cell and descriptor-admitted branch evidence. -/
+/-- Append-only proof history for route decisions. Production stores only
+endpoint-local selected arms and descriptor-admitted branch evidence. -/
 structure ElasticRouteHistory where
   published : List ElasticRoutePublication
   nextIteration : Nat -> Nat

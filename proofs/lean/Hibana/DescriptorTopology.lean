@@ -886,6 +886,7 @@ private def decodedRouteScopesUnique (image : RustDescriptorImage) : Bool :=
 def RustDescriptorImage.check (image : RustDescriptorImage) : Bool :=
   decide (
     0 < image.roleCount ∧
+    image.roleCount ≤ 256 ∧
     image.role < image.roleCount ∧
     0 < image.logicalLaneCount ∧
     image.logicalLaneCount ≤ 256 ∧
@@ -895,6 +896,8 @@ def RustDescriptorImage.check (image : RustDescriptorImage) : Bool :=
     (image.firstActiveLane = packedU16Absent ∨
       image.firstActiveLane < image.logicalLaneCount) ∧
     image.activeLaneStart + image.activeLaneLength ≤ image.laneBitCount ∧
+    image.routeParticipantCount ≤ packedU16Absent ∧
+    (image.routeResolverCount = 0 ↔ image.routeParticipantCount = 0) ∧
     image.programBytes.length = image.programBlobLen ∧
     image.roleBytes.length = image.roleBlobLen ∧
     image.programBytes.all (· < 256) ∧

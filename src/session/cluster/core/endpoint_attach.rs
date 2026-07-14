@@ -10,7 +10,6 @@ where
     dst: *mut crate::endpoint::kernel::CursorEndpoint<'lease, ROLE, T>,
     rv_id: RendezvousId,
     sid: SessionId,
-    role_count: u8,
     role_image: RoleImageSlice<ROLE>,
     logical_lane_count: usize,
     occupied_lane_index: usize,
@@ -32,7 +31,6 @@ where
             dst,
             rv_id,
             sid,
-            role_count,
             role_image,
             logical_lane_count,
             occupied_lane_index,
@@ -46,7 +44,7 @@ where
 
             let physical_lane = Lane::new(logical_idx as u32);
             let lease = self
-                .lease_port(rv_id, sid, physical_lane, ROLE, role_count)
+                .lease_port(rv_id, sid, physical_lane, ROLE)
                 .map_err(AttachError::from)?;
             let access = lease.into_port_guard().map_err(AttachError::from)?;
             /* SAFETY: secondary-lane attach owns the endpoint slot before
@@ -88,14 +86,12 @@ where
             public_ops,
             public_slot_ownership,
         } = args;
-        let program_image = role_image.program();
-        let role_count = crate::invariant_ok(u8::try_from(program_image.role_count()));
         let logical_lane_count = role_image.logical_lane_count().max(1);
         let primary_lane_index = Self::primary_endpoint_lane_index(role_image, logical_lane_count);
         let session_lane_index = 0usize;
         let session_wire_lane = Lane::new(session_lane_index as u32);
         let session_lease = self
-            .lease_port(rv_id, sid, session_wire_lane, ROLE, role_count)
+            .lease_port(rv_id, sid, session_wire_lane, ROLE)
             .map_err(AttachError::from)?;
         let session_access = session_lease.into_port_guard().map_err(AttachError::from)?;
         let owner: crate::session::brand::Owner<'r> = /* SAFETY: the port guard
@@ -150,7 +146,6 @@ where
                 dst,
                 rv_id,
                 sid,
-                role_count,
                 role_image,
                 logical_lane_count,
                 occupied_lane_index: session_lane_index,

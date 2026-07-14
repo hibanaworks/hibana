@@ -3,8 +3,6 @@
 //! This module exposes the primitives needed to assemble global choreographies
 //! as local choreography witnesses and project them to role-local views.
 
-pub(crate) use types::ROLE_DOMAIN_SIZE;
-
 /// Crate-private lowering owners for unified compilation.
 pub(crate) mod compiled;
 /// Const-evaluated DSL and effect list plumbing.
@@ -24,10 +22,6 @@ pub(crate) use role_program::RoleProgramView;
 mod event_program_cursor_tests;
 #[cfg(all(test, hibana_repo_tests))]
 mod event_program_tests;
-/// Type-level step combinators.
-pub(crate) mod steps;
-/// Role-domain constants consumed by lowering/runtime internals.
-mod types;
 /// Typestate graph and cursor infrastructure.
 pub(crate) mod typestate;
 

@@ -23,7 +23,7 @@ import Hibana.SessionComposition
 import Hibana.SessionLifecycle
 import Hibana.StaticProjectability
 import Hibana.IterationErasure
-import Hibana.AffineRoutePublication
+import Hibana.InBandChoiceKnowledge
 import Hibana.RuntimeRefinement
 import Hibana.PublicOperationKernel
 import Hibana.RustKernelRefinement

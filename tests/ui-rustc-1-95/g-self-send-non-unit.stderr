@@ -12,8 +12,9 @@ note: erroneous constant encountered
  --> src/g.rs
   |
   | /     const {
-  | |         if FROM >= ROLE_DOMAIN_SIZE || TO >= ROLE_DOMAIN_SIZE {
-  | |             panic!("{}", ROLE_INDEX_ERROR);
+  | |         if FROM == TO
+  | |             && <M::Payload as crate::transport::wire::WirePayload>::SCHEMA_ID
+  | |                 != <() as crate::transport::wire::WirePayload>::SCHEMA_ID
 ... |
   | |     }
   | |_____^

@@ -20,7 +20,7 @@ impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
 where
     'cfg: 'rv,
 {
-    fn sort_resident_sidecars(&self, sidecars: &mut [super::ResidentSidecar; 4]) {
+    fn sort_resident_sidecars(&self, sidecars: &mut [super::ResidentSidecar; 3]) {
         let mut idx = 1usize;
         while idx < sidecars.len() {
             let candidate = sidecars[idx];
@@ -50,7 +50,7 @@ where
 
     pub(super) fn packed_sidecar_frontier(
         &self,
-        mut sidecars: [super::ResidentSidecar; 4],
+        mut sidecars: [super::ResidentSidecar; 3],
     ) -> Option<usize> {
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr.addr();
@@ -120,14 +120,6 @@ where
                         self.assoc.relocate_storage(compacted.ptr());
                     }
                     self.assoc_storage.set(compacted);
-                }
-                ResidentSidecarKind::Routes => {
-                    /* SAFETY: bytes were moved intact with the current route
-                    shape; rebinding publishes the relocated column roots. */
-                    unsafe {
-                        self.routes.relocate_storage(compacted.ptr());
-                    }
-                    self.route_storage.set(compacted);
                 }
                 ResidentSidecarKind::Resolvers => {
                     /* SAFETY: resolver entries are moved intact and capacity is

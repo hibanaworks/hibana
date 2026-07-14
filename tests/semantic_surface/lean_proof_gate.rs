@@ -17,10 +17,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let global_semantics = read("proofs/lean/Hibana/GlobalSemantics.lean");
     let global_message_transitions = read("proofs/lean/Hibana/GlobalMessageTransitions.lean");
     let global_fidelity = read("proofs/lean/Hibana/GlobalFidelity.lean");
+    let descriptor_participants = read("proofs/lean/Hibana/DescriptorParticipants.lean");
     let descriptor_image = read("proofs/lean/Hibana/DescriptorImage.lean");
     let descriptor_topology = read("proofs/lean/Hibana/DescriptorTopology.lean");
     let descriptor_refinement_leaf = read("proofs/lean/Hibana/DescriptorRefinement.lean");
     let descriptor_refinement = [
+        descriptor_participants.as_str(),
         descriptor_image.as_str(),
         descriptor_topology.as_str(),
         descriptor_refinement_leaf.as_str(),
@@ -36,7 +38,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let static_projectability_examples =
         read("proofs/lean/Hibana/StaticProjectabilityExamples.lean");
     let iteration_erasure = read("proofs/lean/Hibana/IterationErasure.lean");
-    let affine_route_publication = read("proofs/lean/Hibana/AffineRoutePublication.lean");
+    let in_band_choice_knowledge = read("proofs/lean/Hibana/InBandChoiceKnowledge.lean");
     let global_coherence = read("proofs/lean/Hibana/GlobalCoherence.lean");
     let distributed_semantics = read("proofs/lean/Hibana/DistributedSemantics.lean");
     let distributed_progress = read("proofs/lean/Hibana/DistributedProgress.lean");
@@ -96,7 +98,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         static_projectability.as_str(),
         static_projectability_examples.as_str(),
         iteration_erasure.as_str(),
-        affine_route_publication.as_str(),
+        in_band_choice_knowledge.as_str(),
         global_coherence.as_str(),
         distributed_semantics.as_str(),
         distributed_progress.as_str(),
@@ -238,12 +240,25 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && !exporter.contains("4096")
             && exporter.contains("generatedProjectionRole0")
             && exporter.contains("generatedRolledResolvedProjectionRole0")
+            && exporter.contains("generatedFullRoleDomainChoreo")
+            && exporter.contains("generatedFullRoleDomainProjectionRole254")
+            && exporter.contains("generatedFullRoleDomainProjectionRole255")
             && exporter.contains("generatedNestedResolvedProgressRole0"),
         "Rust-to-Lean refinement must compare canonical program bytes, role bytes, and resident metadata"
     );
     assert!(
         descriptor_refinement.contains("structure RustDescriptorImage")
             && descriptor_refinement.contains("productionProgramAtomStride : Nat := 11")
+            && descriptor_refinement.contains("productionProgramRouteResolverStride : Nat := 8")
+            && descriptor_refinement.contains("productionProgramRouteParticipantStride : Nat := 1")
+            && descriptor_refinement.contains("routeParticipantCount : Nat")
+            && descriptor_refinement.contains("leftParticipants : List Nat")
+            && descriptor_refinement.contains("rightParticipants : List Nat")
+            && descriptor_refinement.contains("image.roleCount ≤ 256")
+            && descriptor_topology.contains("image.routeParticipantCount ≤ packedU16Absent")
+            && descriptor_topology
+                .contains("image.routeResolverCount = 0 ↔ image.routeParticipantCount = 0")
+            && !descriptor_refinement.contains("ParticipantMask")
             && descriptor_refinement.contains("productionRoleEventStride : Nat := 10")
             && descriptor_refinement.contains("def RustDescriptorImage.decodeActions?")
             && descriptor_refinement.contains("def RustDescriptorImage.decodeGlobalEvents?")
@@ -455,6 +470,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && static_projectability.contains("checkParallelEndpointLinearityFrom")
             && static_projectability.contains("checkRouteKnowledgeFrom")
             && static_projectability.contains("accepted_dynamic_route_has_unique_controller")
+            && static_projectability
+                .contains("accepted_dynamic_route_knowledge_is_controller_or_inbound")
+            && static_projectability.contains("observerPathsMergeable")
             && static_projectability.contains("dynamic_route_competing_first_senders_are_rejected")
             && static_projectability.contains("checkRollReentryLinearityFrom")
             && static_projectability.contains("static_projectability_checker_sound")
@@ -463,12 +481,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && iteration_erasure.contains("receive_precedes_later_send_has_causal_path")
             && iteration_erasure.contains("causal_handoff_path_orders_receive_before_send")
             && iteration_erasure.contains("roll_reentry_has_fifo_or_causal_order")
-            && affine_route_publication.contains("structure AffineRouteCell")
-            && affine_route_publication.contains("inductive LocalMembership")
-            && affine_route_publication.contains("sealed_local_membership_rejects_late_attach")
-            && affine_route_publication.contains("active_route_decision_cannot_be_overwritten")
-            && affine_route_publication.contains("route_observation_is_affine")
-            && affine_route_publication.contains("route_observation_rejects_duplicate")
+            && in_band_choice_knowledge.contains("inductive LocalMembership")
+            && in_band_choice_knowledge.contains("sealLocalMembership")
+            && in_band_choice_knowledge.contains("sealed_local_membership_rejects_late_attach")
+            && protocol_artifact.contains("routeKnowledgeIsControllerOrInbound")
+            && !protocol_artifact.contains("AffineRouteCell")
             && static_projectability.contains("| [], _ :: _ | _ :: _, [] => false")
             && static_projectability_examples
                 .contains("Shared local output is not intrinsic branch evidence")
@@ -544,13 +561,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("verified_protocol_roll_reentry_has_fifo_or_causal_order")
             && protocol_artifact.contains("structure ProtocolExecutionGuarantees")
             && protocol_artifact.contains("rollPostLinearizationMaterialization")
-            && protocol_artifact.contains("routeControllerAuthority")
-            && protocol_artifact.contains("activeRoutePublicationIsAffine")
-            && protocol_artifact.contains("begunRoutePublicationTracksExactPending")
-            && protocol_artifact.contains("routeObservationIsAffine")
-            && protocol_artifact.contains("routeObservationRejectsDuplicate")
-            && protocol_artifact.contains("routeObservationPreservesArm")
-            && protocol_artifact.contains("localRouteParticipantsAreExact")
+            && protocol_artifact.contains("routeKnowledgeIsControllerOrInbound")
+            && protocol_artifact.contains("descriptorRouteParticipantsExact")
+            && protocol_artifact.contains("dynamicResolutionSealsLocalMembership")
             && protocol_artifact.contains("abstractRetirementAfterLiveFault")
             && protocol_artifact.contains("verified_protocol_establishes_execution_guarantees")
             && carrier_refinement.contains("inductive TransportBoundaryState")
@@ -720,9 +733,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && allocation.contains("PreservesAuthorityAndCapacity")
             && allocation.contains("activeLaneAttachments : Nat")
             && allocation.contains("associationWitnesses : List LeaseAssociationWitness")
+            && allocation.contains("tableBytes : Nat")
             && allocation.contains("assocBytes : Nat")
-            && allocation.contains("routeBytes : Nat")
             && allocation.contains("resolverBytes : Nat")
+            && allocation.contains("workspaceBytes : Nat")
+            && !allocation.contains("routeBytes : Nat")
             && runtime_exporter.contains("generatedInitialAllocationFailure")
             && runtime_exporter.contains("generatedGrowthAllocationFailure")
             && runtime_exporter.contains("generatedAbortedAllocation")
@@ -730,7 +745,6 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && runtime_exporter.contains("rv.active_lane_attachment_count()")
             && runtime_exporter.contains("rv.has_lane_attachment(*sid, *lane)")
             && runtime_exporter.contains("rv.assoc_storage.get()")
-            && runtime_exporter.contains("rv.route_storage.get()")
             && runtime_exporter.contains("rv.resolver_storage_sidecar()"),
         "lease generations must not wrap and poisoned session generations must remain fail-closed until retirement"
     );
@@ -971,6 +985,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "roleCount : Nat",
         "atomCount : Nat",
         "routeResolverCount : Nat",
+        "routeParticipantCount : Nat",
         "scopeMarkerCount : Nat",
         "blob : List Nat",
     ] {

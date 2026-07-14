@@ -178,97 +178,40 @@ fn dynamic_resolver_seals_local_membership_before_external_evaluation() {
 }
 
 #[test]
-fn route_waiter_callbacks_run_only_after_complete_publication() {
-    let port = read("src/rendezvous/port/route_publication.rs");
-    let route_table = read("src/rendezvous/tables/route_table.rs");
-    let route_storage = read("src/rendezvous/tables/route_table/storage.rs");
-    let send = read("src/endpoint/kernel/core/send_ops.rs");
-    let offer = read("src/endpoint/kernel/offer/commit.rs");
-    let offer_select = read("src/endpoint/kernel/offer/select.rs");
-    let offer_select_observed = read("src/endpoint/kernel/offer/select_observed.rs");
-    let offer_resolve = read("src/endpoint/kernel/offer/resolve.rs");
-    let begin = port
-        .split("pub(crate) fn begin_route_arm_selection(")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split("pub(crate) fn observe_active_route_arm_selection(")
-                .next()
-        })
-        .expect("route begin publication boundary");
-    let observe = port
-        .split("pub(crate) fn observe_active_route_arm_selection(")
-        .nth(1)
-        .and_then(|tail| {
-            tail.split("pub(crate) fn wake_route_arm_selection_waiters(")
-                .next()
-        })
-        .expect("route observation publication boundary");
-    let send_publish = send
-        .split("fn publish_send_progress_commit_plan(")
-        .nth(1)
-        .and_then(|tail| tail.split("fn build_send_commit_plan(").next())
-        .expect("send route publication boundary");
-    let offer_publish = offer
-        .split("fn publish_branch_preview_commit_plan(")
-        .nth(1)
-        .expect("offer route publication boundary");
+fn route_choice_has_one_in_band_authority_without_shared_runtime_state() {
+    let rendezvous = read("src/rendezvous.rs");
+    let core = read("src/rendezvous/core.rs");
+    let port = read("src/rendezvous/port.rs");
+    let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
+    let projectability = read("src/global/compiled/lowering/seal.rs");
+    let selectors = read("src/global/const_dsl/endpoint_selectors.rs");
+    let send_route = read("src/endpoint/kernel/core/send_ops/route_evidence.rs");
+    let offer_commit = read("src/endpoint/kernel/offer/commit.rs");
+    let rolled = read("tests/rolled_resolver_reentry.rs");
 
-    assert!(!begin.contains("wake_session_waiters"));
-    assert!(!observe.contains("wake_session_waiters"));
-    assert!(port.contains("fn route_observed_mask(&self, peer: Option<u8>) -> u16"));
-    assert!(port.contains("fn attached_session_role_mask(&self) -> u16"));
-    assert!(port.contains("RouteTable::selected_local_participant_mask("));
-    assert!(route_table.contains("selected_participants & attached_roles"));
-    let prepared_entry = route_table
-        .find("RouteEntry::EMPTY.try_begin(initial_observed, arm)")
-        .expect("route entry must be prepared before publication");
-    let published_entry = route_table
-        .find("self.publish_slot(coord, entry)")
-        .expect("prepared route entry publication");
-    assert!(prepared_entry < published_entry);
-    assert!(route_table.contains("RouteFrame::assign(coord, entry, head)"));
-    assert!(!route_table.contains("begin_frame_entry"));
-    for stale in ["lane_heads", "lane_base", "lane_slots"] {
-        assert!(!route_table.contains(stale));
-        assert!(!route_storage.contains(stale));
+    assert!(!std::path::Path::new("src/rendezvous/tables.rs").exists());
+    assert!(!std::path::Path::new("src/rendezvous/tables/route_table.rs").exists());
+    for source in [&rendezvous, &core, &port, &capacity] {
+        for forbidden in ["RouteTable", "route_storage", "route_frame_slots"] {
+            assert!(
+                !source.contains(forbidden),
+                "shared route residue: {forbidden}"
+            );
+        }
     }
-    let send_route = send_publish
-        .find("publish_send_route_evidence_delta(")
-        .expect("send route publication");
-    let send_event = send_publish
-        .find("emit_send_after_transport_event(")
-        .expect("send event publication");
-    let send_wake = send_publish
-        .find("wake_route_arm_selection_waiters(")
-        .expect("send route waiter notification");
-    assert!(send_route < send_event && send_event < send_wake);
-    let offer_clear = offer_publish
-        .rfind("clear_scope_evidence(scope_id)")
-        .expect("offer evidence retirement");
-    let offer_wake = offer_publish
-        .rfind("wake_route_arm_selection_waiters(lane_wire)")
-        .expect("offer route waiter notification");
-    assert!(offer_clear < offer_wake);
-    assert!(offer_publish.contains("route_token.is_poll()"));
-    assert!(offer_publish.contains("self.cursor.route_scope_resolver(scope_id).is_some()"));
-    assert!(offer_publish.contains("self.observe_active_route_arm_selection("));
-    let framed_reject = offer_select
-        .find("if let Some(observed) = carried_observation")
-        .expect("unmatched framed ingress rejection");
-    let lane_only = offer_select
-        .find("self.select_carried_ingress_scope(carried_lane)")
-        .expect("deterministic lane-only selection");
-    assert!(framed_reject < lane_only);
-    assert!(offer_select.contains("FrameMismatch::label_mismatch(observed)"));
-    let arm_conflict = offer_select_observed
-        .find("selected != observed")
-        .expect("framed arm conflict");
-    let cursor_realign = offer_select_observed
-        .find("self.commit_cursor_realign_index(target_idx)")
-        .expect("observed target cursor realignment");
-    assert!(arm_conflict < cursor_realign);
-    assert!(offer_select_observed.contains("return Err(RecvError::PhaseInvariant)"));
-    assert!(offer_resolve.contains("preview_live_route_arm_selection_non_consuming(scope_id)"));
-    assert!(offer_resolve.contains("state.ingress.take_transport()"));
-    assert!(offer_resolve.contains("frame.discard_uncommitted()"));
+    assert!(projectability.contains("route_role_has_branch_knowledge"));
+    assert!(projectability.contains("role == controller || observer_paths_mergeable"));
+    assert!(selectors.contains("selector.is_inbound_evidence() && other.is_inbound_evidence()"));
+    assert!(selectors.contains("ObserverPathDecision::Reject"));
+    for forbidden in [
+        "begin_route_arm_selection",
+        "observe_active_route_arm_selection",
+        "wake_route_arm_selection_waiters",
+    ] {
+        assert!(!send_route.contains(forbidden));
+        assert!(!offer_commit.contains(forbidden));
+    }
+    assert!(send_route.contains("delta.route_is_fresh(idx)"));
+    assert!(offer_commit.contains("committed.route_is_fresh(route_idx)"));
+    assert!(rolled.contains("rolled_resolved_route_preserves_buffered_decision_order"));
 }

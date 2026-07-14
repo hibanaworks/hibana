@@ -121,12 +121,12 @@ where
             required_assoc_slots,
             role_descriptor,
         } = request;
-        let resident_budget = crate::rendezvous::core::EndpointResidentBudget::with_route_storage(
-            role_descriptor.route_table_frame_slots(),
-            crate::rendezvous::core::Rendezvous::<T>::frontier_workspace_guard_bytes(
-                role_descriptor.frontier_scratch_layout(),
-            ),
-        );
+        let resident_budget =
+            crate::rendezvous::core::EndpointResidentBudget::with_frontier_workspace(
+                crate::rendezvous::core::Rendezvous::<T>::frontier_workspace_guard_bytes(
+                    role_descriptor.frontier_scratch_layout(),
+                ),
+            );
         let (slot, generation, offset, _len) = self
             .locals()
             .allocate_endpoint_lease_for_session_role(EndpointLeaseRequest {
@@ -386,7 +386,6 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
-        role_count: u8,
     ) -> Result<LaneLease<'lease, 'cfg, T>, RendezvousError>
     where
         'cfg: 'lease,
@@ -409,8 +408,6 @@ where
 
         let brand = lease.brand();
 
-        Ok(LaneLease::new(
-            lease, sid, lane, role, role_count, active, brand,
-        ))
+        Ok(LaneLease::new(lease, sid, lane, role, active, brand))
     }
 }

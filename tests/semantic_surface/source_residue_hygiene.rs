@@ -334,7 +334,6 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
         "TapFrameMeta::default",
         "LaneStorageLeaseSet::default",
         "EffList::default",
-        "RouteTable::default",
         "AssocTable::default",
         "RendezvousTable::default",
         "ArrayMap::default",
@@ -352,7 +351,7 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
 }
 
 #[test]
-fn route_arm_selection_consumes_only_at_resolve_authority() {
+fn route_arm_selection_uses_only_endpoint_or_in_band_authority() {
     let production = read_production_rs_tree("src");
     for forbidden in [
         "ack_route_arm_selection",
@@ -367,17 +366,18 @@ fn route_arm_selection_consumes_only_at_resolve_authority() {
 
     let resolve = read("src/endpoint/kernel/offer/resolve.rs");
     assert!(
-        resolve.contains("fn poll_route_authority_from_offer_lanes(")
-            && resolve.contains("RouteArmToken::from_ack(arm)")
-            && resolve.contains("RouteArmCommitEvidence::CachedOrDemux")
+        resolve.contains("fn poll_route_authority(")
+            && resolve.contains("let is_dynamic_route_scope")
+            && resolve.contains("if is_dynamic_route_scope {\n            return None;")
             && resolve.contains("RouteArmToken::from_poll(arm)")
-            && resolve.contains("RouteArmCommitEvidence::PollFrame"),
-        "offer resolve must keep route-table ack and local poll authority/evidence distinct"
+            && resolve.contains("RouteArmCommitEvidence::PollFrame")
+            && !resolve.contains("RouteArmToken::from_ack(arm)"),
+        "offer resolve must derive passive route authority from in-band frame evidence"
     );
 }
 
 #[test]
-fn compact_route_arm_authority_fails_closed_before_publication() {
+fn compact_route_arm_authority_fails_closed_before_commit() {
     let authority = read("src/endpoint/kernel/authority.rs");
     let evidence = read("src/endpoint/kernel/evidence.rs");
     let evidence_store = read("src/endpoint/kernel/evidence_store.rs");
@@ -390,13 +390,16 @@ fn compact_route_arm_authority_fails_closed_before_publication() {
     let route_authority_paths =
         format!("{scope_evidence}\n{route_commit}\n{offer_select}\n{offer_resolve}");
 
-    assert!(
-        scope_evidence.contains("if self.cursor.route_scope_resolver(scope_id).is_none()")
-            && scope_evidence.contains("self.cursor.route_scope_resolver(scope_id)?;")
-            && route_commit.contains("cursor.route_scope_resolver(scope_id)?;")
-            && offer_select.contains("self.cursor.route_scope_resolver(scope_id)?;"),
-        "shared route-table authority must remain exclusive to explicit resolver scopes"
-    );
+    for forbidden in [
+        "RouteTable",
+        "peek_route_arm_selection",
+        "poll_route_arm_selection",
+    ] {
+        assert!(
+            !route_authority_paths.contains(forbidden),
+            "route authority must not regain shared runtime state: {forbidden}"
+        );
+    }
 
     assert!(
         authority.contains("pub(super) const fn decode_raw(value: u8) -> Option<Self>")
@@ -423,10 +426,8 @@ fn compact_route_arm_authority_fails_closed_before_publication() {
     }
     assert!(
         scope_evidence.contains("Arm::from_single_ready_mask(mask)")
-            && scope_evidence.contains("let arm = crate::invariant_some(")
             && route_commit.contains("Arm::from_single_ready_mask(mask).map(Arm::as_u8)")
-            && route_commit
-                .contains("crate::invariant_some(port.peek_route_arm_selection(scope_id, ROLE))")
+            && route_commit.contains("decision_state.scope_evidence.peek_ack(slot)")
             && evidence_store.contains("arm: Arm")
             && evidence.contains("fn controller_evidence_excluded(self, arm: Arm")
             && first_recv_dispatch.contains("if arm_mask & !0b11 != 0")
@@ -655,7 +656,6 @@ fn production_sources_keep_absence_codes_named_by_meaning() {
         "EVENT_CURSOR_NO_STATE",
         "NO_SELECTED_ARM",
         "NO_ACTIVE_LANE",
-        "RouteTable::NO_FRAME",
         "Self::NO_FRAME",
         "clamped to the",
         "u16::MAX, 0",

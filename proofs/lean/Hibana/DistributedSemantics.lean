@@ -59,7 +59,7 @@ def DistributedConfig.fromGlobalConfig
   status := config.status
 }
 
-/-- Global abstraction forgets role-local route-publication lag. Outside the
+/-- Global abstraction forgets role-local choice-observation lag. Outside the
 declared role domain it preserves the total function exactly. -/
 def DistributedConfig.abstract
     (config : DistributedConfig) : GlobalConfig := {

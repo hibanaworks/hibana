@@ -1,16 +1,10 @@
 use super::super::*;
 
 impl CompiledProgramImage {
-    const fn compact_role_count(role_count: usize) -> u8 {
-        if role_count > crate::g::ROLE_DOMAIN_SIZE as usize {
-            panic!("lowering role count exceeds choreography role domain");
-        }
-        role_count as u8
-    }
-
     const fn scan_into(summary: &mut Self, eff_list: &EffList) {
         let mut scope_count = 0u16;
-        let mut role_count = 0usize;
+        let mut max_role = 0u8;
+        let mut has_atom = false;
         let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];
         summary.program.lowering_facts.eff_count = eff_list.len() as u16;
         let mut idx = 0usize;
@@ -18,19 +12,12 @@ impl CompiledProgramImage {
             let node = eff_list.node_at(idx);
             if matches!(node.kind, EffKind::Atom) {
                 let atom = node.atom_data();
-                let from = checked_role_index(atom.from);
-                let to = checked_role_index(atom.to);
-                summary.roles.facts[from].local_step_count =
-                    increment_compact_count(summary.roles.facts[from].local_step_count);
-                if to != from {
-                    summary.roles.facts[to].local_step_count =
-                        increment_compact_count(summary.roles.facts[to].local_step_count);
+                has_atom = true;
+                if atom.from > max_role {
+                    max_role = atom.from;
                 }
-                if from + 1 > role_count {
-                    role_count = from + 1;
-                }
-                if to + 1 > role_count {
-                    role_count = to + 1;
+                if atom.to > max_role {
+                    max_role = atom.to;
                 }
             }
             idx += 1;
@@ -111,24 +98,8 @@ impl CompiledProgramImage {
             scope_idx += 1;
         }
 
-        let mut role_idx = 0usize;
-        while role_idx < role_count {
-            let exact_facts =
-                crate::global::compiled::lowering::seal::exact_role_resident_row_facts(
-                    eff_list,
-                    src_scope_markers,
-                    role_idx as u8,
-                );
-            summary.roles.facts[role_idx].resident_row_count = exact_facts.resident_row_count;
-            summary.roles.facts[role_idx].resident_row_lane_entry_count =
-                exact_facts.resident_row_lane_entry_count;
-            summary.roles.facts[role_idx].resident_row_lane_word_count =
-                exact_facts.resident_row_lane_word_count;
-            summary.roles.facts[role_idx].active_lane_count = exact_facts.active_lane_count;
-            summary.roles.facts[role_idx].endpoint_lane_slot_count =
-                exact_facts.endpoint_lane_slot_count;
-            summary.roles.facts[role_idx].logical_lane_count = exact_facts.logical_lane_count;
-            role_idx += 1;
+        if !has_atom {
+            panic!("compiled choreography requires at least one event");
         }
 
         summary.program.lowering_facts.scope_count = scope_count;
@@ -138,7 +109,7 @@ impl CompiledProgramImage {
         } else {
             increment_compact_count(max_route_depth)
         };
-        summary.roles.count = Self::compact_role_count(role_count);
+        summary.max_role = max_role;
     }
 
     const fn scan_impl(eff_list: &EffList) -> Self {
@@ -150,10 +121,7 @@ impl CompiledProgramImage {
                 },
                 lowering_facts: ProgramLoweringFacts::EMPTY,
             },
-            roles: ProgramRoleImageData {
-                facts: [RoleCompiledFacts::EMPTY; MAX_TRACKED_ROLE_FACTS],
-                count: 0,
-            },
+            max_role: 0,
         };
         Self::scan_into(&mut summary, eff_list);
         summary
@@ -173,13 +141,37 @@ impl CompiledProgramImage {
 
     #[inline(always)]
     pub(crate) const fn compiled_program_role_count(&self) -> usize {
-        self.roles.count as usize
+        self.max_role as usize + 1
     }
 
     #[inline(always)]
-    pub(crate) const fn role_lowering_counts(&self, role: u8) -> RoleCompiledCounts {
-        self.roles
-            .lowering_counts(self.program.lowering_facts, role)
+    pub(crate) const fn contains_role(&self, role: u8) -> bool {
+        role <= self.max_role
+    }
+
+    #[inline(always)]
+    pub(crate) const fn max_role(&self) -> u8 {
+        self.max_role
+    }
+
+    #[inline(always)]
+    pub(crate) const fn role_lowering_counts(
+        &self,
+        eff_list: &EffList,
+        role: u8,
+    ) -> RoleCompiledCounts {
+        if !self.contains_role(role) {
+            panic!("projected role is outside the choreography role range");
+        }
+        let role = crate::global::compiled::lowering::seal::exact_role_facts(eff_list, role);
+        RoleCompiledCounts {
+            max_route_stack_depth: self.program.lowering_facts.max_route_stack_depth as usize,
+            local_step_count: role.local_step_count as usize,
+            route_scope_count: self.program.lowering_facts.route_scope_count as usize,
+            active_lane_count: role.active_lane_count as usize,
+            endpoint_lane_slot_count: role.endpoint_lane_slot_count as usize,
+            logical_lane_count: role.logical_lane_count as usize,
+        }
     }
 
     #[inline(always)]

@@ -1,32 +1,7 @@
-use crate::eff::EffAtom;
-
-const LANE_DOMAIN_SIZE: usize = u8::MAX as usize + 1;
-const FRAME_LABEL_COUNTERS: usize = crate::g::ROLE_DOMAIN_SIZE as usize * LANE_DOMAIN_SIZE;
-
-#[derive(Clone, Copy)]
-pub(crate) struct FrameLabelKey {
-    target: u8,
-    lane: u8,
-}
-
-impl FrameLabelKey {
-    #[inline(always)]
-    pub(crate) const fn from_atom(atom: EffAtom) -> Self {
-        Self {
-            target: atom.to,
-            lane: atom.lane,
-        }
-    }
-
-    #[inline(always)]
-    const fn counter_index(self) -> usize {
-        let target = self.target as usize;
-        if target >= crate::g::ROLE_DOMAIN_SIZE as usize {
-            panic!("frame label target role out of domain");
-        }
-        target * LANE_DOMAIN_SIZE + self.lane as usize
-    }
-}
+use crate::{
+    eff::{EffAtom, EffKind},
+    global::const_dsl::EffList,
+};
 
 #[inline(always)]
 pub(crate) const fn frame_label_from_prior_count(count: u16) -> u8 {
@@ -36,21 +11,28 @@ pub(crate) const fn frame_label_from_prior_count(count: u16) -> u8 {
     count as u8
 }
 
-pub(crate) struct FrameLabelAssigner {
-    counts: [u16; FRAME_LABEL_COUNTERS],
-}
-
-impl FrameLabelAssigner {
-    pub(crate) const EMPTY: Self = Self {
-        counts: [0; FRAME_LABEL_COUNTERS],
-    };
-
-    #[inline(always)]
-    pub(crate) const fn assign(&mut self, atom: EffAtom) -> u8 {
-        let key = FrameLabelKey::from_atom(atom);
-        let idx = key.counter_index();
-        let label = frame_label_from_prior_count(self.counts[idx]);
-        self.counts[idx] += 1;
-        label
+/// Derive a frame label from prior events with the same target and lane.
+///
+/// The event list is the sole authority. No role-domain-sized counter table is
+/// retained in const evaluation or in the compiled image.
+pub(crate) const fn frame_label_at(eff_list: &EffList, eff_idx: usize, atom: EffAtom) -> u8 {
+    if eff_idx >= eff_list.len() {
+        panic!("frame label event offset out of bounds");
     }
+    let mut count = 0u16;
+    let mut prior_idx = 0usize;
+    while prior_idx < eff_idx {
+        let prior = eff_list.node_at(prior_idx);
+        if matches!(prior.kind, EffKind::Atom) {
+            let prior = prior.atom_data();
+            if prior.to == atom.to && prior.lane == atom.lane {
+                if count == u16::MAX {
+                    panic!("frame label count overflow");
+                }
+                count += 1;
+            }
+        }
+        prior_idx += 1;
+    }
+    frame_label_from_prior_count(count)
 }

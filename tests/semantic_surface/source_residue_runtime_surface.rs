@@ -65,29 +65,27 @@ fn route_controller_discovery_has_one_production_authority() {
     let production = read_production_rs_tree("src");
     assert_eq!(
         production
-            .matches("const fn first_visible_controller_mask(")
+            .matches("const fn first_visible_controller(")
             .count(),
         1,
         "first-visible route controller discovery must have one production implementation"
     );
     assert_eq!(
-        production
-            .matches("const fn unique_controller_role(")
-            .count(),
+        production.matches("enum FirstVisibleController").count(),
         1,
-        "controller-mask decoding must have one production implementation"
+        "controller identity merge must have one production implementation"
     );
 
     let image_writer = read("src/global/compiled/images/image/blob_storage.rs");
     let lowering_seal = read("src/global/compiled/lowering/seal.rs");
     for consumer in [image_writer, lowering_seal] {
         assert!(
-            consumer.contains("first_visible_controller_mask(eff_list"),
+            consumer.contains("first_visible_controller(eff_list"),
             "descriptor writing and projectability sealing must share controller discovery"
         );
         assert!(
-            consumer.contains("unique_controller_role(controller_mask)")
-                || consumer.contains("unique_controller_role(mask)"),
+            consumer.contains(".merge(first_visible_controller(eff_list")
+                && consumer.contains(".unique()"),
             "descriptor writing and projectability sealing must share controller decoding"
         );
     }
@@ -337,7 +335,6 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
     let route_dsl = read("src/global/const_dsl/route.rs");
     let dynamic_resolvers = read("src/session/cluster/core/dynamic_resolvers.rs");
     let session_effects = read("src/session/cluster/core/session_effect_steps.rs");
-    let route_table = read("src/rendezvous/tables/route_table.rs");
     let production_scope = [
         scope.as_str(),
         const_dsl.as_str(),
@@ -348,7 +345,6 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
         route_dsl.as_str(),
         dynamic_resolvers.as_str(),
         session_effects.as_str(),
-        route_table.as_str(),
     ]
     .join("\n");
 
@@ -370,7 +366,6 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
         "scope: ScopeId,",
         "pub(crate) const fn scope(self) -> ScopeId",
         "pub(crate) struct DynamicRouteResolver {\n    resolver_id: u16,\n    scope: ScopeId,\n}",
-        "struct RouteFrame {\n    sid: SessionId,\n    scope: ScopeId,",
     ] {
         assert!(
             production_scope.contains(required),
@@ -443,17 +438,22 @@ fn route_resolver_authority_is_complete_identity_keyed() {
     for required in [
         "type Item = DynamicRouteResolver;",
         "return Some(DynamicRouteResolver::new(scope, resolver_id));",
-        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 9",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8",
+        "PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE: usize = 1",
         "PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5",
         "scope_marker_len: u16,",
+        "route_participant_len: u16,",
         "pub(crate) const fn scope_markers(self) -> ProgramColumnRange",
         "scope_marker_identity_tag(marker.event, marker.reentry)",
         "out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);",
         "self.write_u16(out, scope.raw());",
         "self.write_u16(out + 2, resolver_id);",
         "self.write_u8(out + 4,",
-        "self.write_u16(out + 5, arm_participant_masks[0]);",
-        "self.write_u16(out + 7, arm_participant_masks[1]);",
+        "self.write_u16(out + 5, participant_boundaries[0]);",
+        "self.write_u8(out + 7, (left_len - 1) as u8);",
+        "right_len == 0 || right_len > 256",
+        "const fn write_route_arm_participants(",
+        "const fn next_route_arm_participant(",
         "struct RouteResolverRow",
         "RouteResolverRow::decode(",
         "pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> u8",
@@ -519,7 +519,8 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "with_scope_controller",
         "with_scope_controller_role",
         "eff_index: EffIndex",
-        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 9",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 11",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 12",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 6",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 7",
@@ -651,14 +652,16 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "if !validate_roll_reentry_endpoint_selectors(eff_list)",
         "if !has_dynamic_resolver",
         "&& first_visible_endpoint_selector_conflicts_from_markers(",
-        "let controller = match unique_controller_role(controller_mask)",
+        "let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)",
+        ".merge(first_visible_controller(eff_list, arm1_start, arm1_end))",
+        ".unique()",
         "None => return Some(ProgramSourceError::RouteControllerMismatch)",
         "let observer_paths_mergeable = local_route_observer_paths_mergeable(",
         "if route_role_has_branch_knowledge(role, controller, observer_paths_mergeable)",
         "role == controller || observer_paths_mergeable",
         "validate_route_scope(role, eff_list, scope_markers, marker_idx)",
-        "while role < crate::g::ROLE_DOMAIN_SIZE",
-        "validate_compiled_layout(role, eff_list)",
+        "while role < summary.compiled_program_role_count()",
+        "validate_compiled_layout(role as u8, eff_list)",
         "pub(crate) const fn parallel_arm_ranges_from_enter(",
         "const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);",
         "let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];",
@@ -678,6 +681,7 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "validate_compiled_layout::<0>",
         "validate_compiled_layout::<1>",
         "validate_compiled_layout::<15>",
+        "validate_compiled_layout::<255>",
         "local_route_observer_paths_mergeable::<ROLE>",
         "const fn validate_compiled_layout<const ROLE: u8>",
         "RoleLaneScratch::from_program::<ROLE>",
@@ -693,7 +697,6 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "let source_data = <Steps as ProgramTerm>::PROGRAM_SOURCE;",
         "recv_frame_label_at(eff_list, atom_idx, atom)",
         "const fn recv_frame_label_at(",
-        "frame_label_from_prior_count(count)",
         "let mut left_seen = false;",
         "let mut right_seen = false;",
         "struct EndpointSelector(u32);",
@@ -715,7 +718,7 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         .find("if !has_dynamic_resolver")
         .expect("intrinsic route branch must stay present");
     let unique_controller_reject = seal
-        .find("let controller = match unique_controller_role(controller_mask)")
+        .find("let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)")
         .expect("all route authorities must retain one first-visible controller");
     let overlap_reject = seal
         .find("&& first_visible_endpoint_selector_conflicts_from_markers(")
@@ -791,49 +794,23 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
 }
 
 #[test]
-fn role_lane_mask_stays_lane_indexed_projection_only() {
-    let steps = read("src/global/steps.rs");
-    assert!(
-        steps.contains("struct RoleLaneMask {\n    lanes: [u16; ROLE_LANE_COUNT],\n}"),
-        "RoleLaneMask must stay lane-indexed u16 storage"
-    );
-    for required in [
-        "fn union(self, other: Self, active_span: u16) -> Self",
-        "fn intersects(&self, other: &Self, active_span: u16) -> bool",
-        "fn shift_lanes(self, offset: u16, active_span: u16) -> Self",
-    ] {
-        assert!(
-            steps.contains(required),
-            "RoleLaneMask ops must be bounded by active lane span: {required}"
-        );
-    }
-    for forbidden in [
-        "ROLE_LANE_WORDS",
-        "words: [u64",
-        "bits: [u64",
-        "1u64 <<",
-        "0..=u8::MAX",
-        "while lane <= u8::MAX",
-    ] {
-        assert!(
-            !steps.contains(forbidden),
-            "RoleLaneMask must not re-grow flattened u64 or fixed full-lane scans: {forbidden}"
-        );
-    }
-
+fn projection_ownership_does_not_scale_with_the_role_domain() {
     let source = read("src/g/source.rs");
-    for required in [
-        "shift_lanes(left.lane_span, right.lane_span)",
-        "intersects(&right_role_lane_mask, combined_lane_span)",
-        "union(right_role_lane_mask, combined_lane_span)",
+    for forbidden in [
+        "parallel_role_lane_conflict",
+        "ProgramSourceError::ParallelConflict",
+        "while left_idx < left.len()",
+        "while right_idx < right.len()",
     ] {
         assert!(
-            source.contains(required),
-            "ProgramSourceData::par must pass the right/computed lane span: {required}"
+            !source.contains(forbidden),
+            "parallel composition already assigns disjoint lane ranges and must not rescan event pairs: {forbidden}"
         );
     }
 
     for (path, contents) in [
+        ("src/g", read_production_rs_tree("src/g")),
+        ("src/global", read_production_rs_tree("src/global")),
         ("src/runtime", read_production_rs_tree("src/runtime")),
         (
             "src/runtime_core",
@@ -845,9 +822,29 @@ fn role_lane_mask_stays_lane_indexed_projection_only() {
         ("src/session", read_production_rs_tree("src/session")),
     ] {
         assert!(
-            !contents.contains("RoleLaneMask"),
-            "RoleLaneMask must stay confined to projection layers, found in {path}"
+            !contents.contains("RoleLaneMask") && !contents.contains("ROLE_DOMAIN_SIZE"),
+            "fixed role-domain masks or bounds must stay absent, found in {path}"
         );
+    }
+
+    let projection_tests = read("src/global/role_program/tests/full_role_domain.rs");
+    for required in [
+        "projection_accepts_role_16_and_full_u8_role_domain",
+        "high_role_parallel_projection_uses_disjoint_derived_lanes",
+        "high_role_route_participants_are_canonical_sorted_lists",
+        "high_role_roll_projection_keeps_role_identity_without_runtime_epoch",
+        "assert_eq!(role255.role_image_ref().program.role_count(), 256)",
+    ] {
+        assert!(projection_tests.contains(required));
+    }
+
+    let runtime_test = read("tests/route_branch_send.rs");
+    for required in [
+        "const HIGH_CONTROLLER: u8 = 254;",
+        "const HIGH_PEER: u8 = 255;",
+        "full_u8_role_domain_route_roll_runs_without_role_domain_storage",
+    ] {
+        assert!(runtime_test.contains(required));
     }
 }
 

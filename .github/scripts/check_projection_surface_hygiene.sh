@@ -28,7 +28,7 @@ check_absent "\\bParallelFragment\\b" \
   src/global/program.rs
 check_absent "\\bStepNonEmpty\\b" \
   "parallel empty-arm witness forbidden path" \
-  src/global/steps.rs
+  src/global
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1

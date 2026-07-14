@@ -13,11 +13,13 @@ def encodeRouteArm : RouteArm -> Nat
   | .right => 1
 
 /-- Structural identity of the sealed Rust `CompiledProgramRef`: one program
-fact, canonical atom/resolver/scope-marker counts, and the exact resident blob. -/
+fact, canonical atom/resolver/participant/scope-marker counts, and the exact
+resident blob. -/
 structure ProgramImageIdentity where
   roleCount : Nat
   atomCount : Nat
   routeResolverCount : Nat
+  routeParticipantCount : Nat
   scopeMarkerCount : Nat
   blob : List Nat
   deriving DecidableEq

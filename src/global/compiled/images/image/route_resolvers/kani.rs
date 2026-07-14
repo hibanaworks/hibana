@@ -1,54 +1,94 @@
 use super::RouteResolverRow;
-use crate::global::const_dsl::{DynamicRouteResolver, INTRINSIC_ROUTE_RESOLVER_ID, ScopeId};
+use crate::global::compiled::images::image::columns::ProgramImageFacts;
+use crate::global::{
+    compiled::images::image::{CompiledProgramRef, ProgramImageColumns},
+    const_dsl::{DynamicRouteResolver, INTRINSIC_ROUTE_RESOLVER_ID, ScopeId},
+};
 
 #[kani::proof]
-fn route_resolver_row_decoding_accepts_exact_domain() {
+fn route_resolver_row_decoding_accepts_exact_range_domain() {
     let raw_scope: u16 = kani::any();
     let resolver_id: u16 = kani::any();
     let controller_role: u8 = kani::any();
-    let left_participant_mask: u16 = kani::any();
-    let right_participant_mask: u16 = kani::any();
-    let role_count: u8 = kani::any();
+    let participant_start: u16 = kani::any();
+    let left_len_minus_one: u8 = kani::any();
+    let participant_end: u16 = kani::any();
+    let participant_count: u16 = kani::any();
 
-    let scope_valid = (raw_scope as usize) < crate::eff::meta::MAX_EFF_NODES;
-    let role_count_valid = role_count != 0 && role_count <= crate::g::ROLE_DOMAIN_SIZE;
-    let role_mask = if role_count == u16::BITS as u8 {
-        u16::MAX
-    } else if role_count_valid {
-        (1u16 << role_count) - 1
-    } else {
-        0
-    };
-    let participant_mask = left_participant_mask | right_participant_mask;
-    let participants_valid = left_participant_mask != 0
-        && right_participant_mask != 0
-        && (participant_mask & !role_mask) == 0;
-    let controller_valid = role_count_valid
-        && controller_role < role_count
-        && (left_participant_mask & (1u16 << controller_role)) != 0
-        && (right_participant_mask & (1u16 << controller_role)) != 0;
-    let expected = scope_valid && role_count_valid && participants_valid && controller_valid;
+    let participant_mid = participant_start.checked_add(u16::from(left_len_minus_one) + 1);
+    let expected = (raw_scope as usize) < crate::eff::meta::MAX_EFF_NODES
+        && participant_mid.is_some_and(|mid| {
+            mid < participant_end
+                && participant_end - mid <= 256
+                && participant_end <= participant_count
+        });
+    kani::cover!(
+        participant_start == 0
+            && left_len_minus_one == u8::MAX
+            && participant_end == 257
+            && participant_count == 257
+    );
     let decoded = RouteResolverRow::decode(
         raw_scope,
         resolver_id,
         controller_role,
-        left_participant_mask,
-        right_participant_mask,
-        role_count,
+        participant_start,
+        left_len_minus_one,
+        participant_end,
+        participant_count as usize,
     );
 
     assert!(decoded.is_some() == expected);
     if let Some(row) = decoded {
         assert!(row.scope.raw() == raw_scope);
-        assert!(row.controller_role() == controller_role);
-        assert!(row.participant_mask(0) == left_participant_mask);
-        assert!(row.participant_mask(1) == right_participant_mask);
+        assert!(row.controller_role == controller_role);
+        assert!(row.participant_range(0).start == participant_start);
+        assert!(row.participant_range(0).end == participant_mid.unwrap());
+        assert!(row.participant_range(1).start == participant_mid.unwrap());
+        assert!(row.participant_range(1).end == participant_end);
         assert!(row.resolver().is_some() == (resolver_id != INTRINSIC_ROUTE_RESOLVER_ID));
         if let Some(resolver) = row.resolver() {
             assert!(resolver.scope() == row.scope);
             assert!(resolver.resolver_id() == resolver_id);
         }
     }
+}
+
+#[kani::proof]
+fn canonical_route_participant_identity_accepts_full_u8_role_domain() {
+    let controller: u8 = kani::any();
+    let bytes = [
+        0,
+        0,
+        u8::MAX,
+        u8::MAX,
+        controller,
+        0,
+        0,
+        0,
+        controller,
+        controller,
+    ];
+    let bytes: &'static [u8; 10] = unsafe {
+        /* SAFETY: `bytes` remains live until the descriptor has completed every
+        query and the forged program reference does not escape this harness. */
+        core::mem::transmute(&bytes)
+    };
+    let columns = ProgramImageColumns::new(0, 1, 2, 0);
+    let program =
+        CompiledProgramRef::compact(ProgramImageFacts { max_role: u8::MAX }, columns, bytes);
+    let scope = ScopeId::route(0);
+
+    kani::cover!(controller == u8::MAX);
+    assert!(program.role_count() == 256);
+    assert!(program.route_controller_role(scope) == controller);
+    assert!(program.route_participant_count(scope, 0) == 1);
+    assert!(program.route_participant_count(scope, 1) == 1);
+    assert!(program.route_participant_at(scope, 0, 0) == Some(controller));
+    assert!(program.route_participant_at(scope, 1, 0) == Some(controller));
+    assert!(program.route_participant_at(scope, 0, 1).is_none());
+    assert!(program.route_has_participant(scope, 0, controller));
+    assert!(program.route_has_participant(scope, 1, controller));
 }
 
 #[kani::proof]

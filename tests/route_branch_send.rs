@@ -21,9 +21,12 @@ use tls_ref_support::with_resident_tls_ref;
 type TestKitStorage = SessionKitStorage<'static, TestTransport>;
 
 const BRANCH_SEND_RESOLVER: u16 = 42;
+const FULL_ROLE_DOMAIN_RESOLVER: u16 = 43;
 static BRANCH_SEND_STATE: () = ();
 const BRANCH_SEND_LEFT: u8 = 63;
 const BRANCH_SEND_RIGHT: u8 = 64;
+const HIGH_CONTROLLER: u8 = 254;
+const HIGH_PEER: u8 = 255;
 
 std::thread_local! {
     static SESSION_SLOT: UnsafeCell<TestKitStorage> = const {
@@ -43,6 +46,16 @@ fn rolled_branch_send_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     project(
         &g::route(left, right)
             .resolve::<BRANCH_SEND_RESOLVER>()
+            .roll(),
+    )
+}
+
+fn full_role_domain_rolled_program<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let left = g::send::<HIGH_CONTROLLER, HIGH_PEER, Msg<BRANCH_SEND_LEFT, u32>>();
+    let right = g::send::<HIGH_CONTROLLER, HIGH_PEER, Msg<BRANCH_SEND_RIGHT, u32>>();
+    project(
+        &g::route(left, right)
+            .resolve::<FULL_ROLE_DOMAIN_RESOLVER>()
             .roll(),
     )
 }
@@ -260,6 +273,53 @@ fn rolled_route_does_not_wait_for_roles_absent_from_local_runtime() {
                     .expect("remote roles must not retain a local route cell");
             });
             assert!(!transport.queue_is_empty());
+        });
+    });
+}
+
+#[test]
+fn full_u8_role_domain_route_roll_runs_without_role_domain_storage() {
+    with_runtime_workspace(|slab| {
+        let transport = TestTransport::new();
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster
+                .rendezvous(slab, transport.clone())
+                .expect("register rendezvous");
+            let controller_program = full_role_domain_rolled_program::<HIGH_CONTROLLER>();
+            let peer_program = full_role_domain_rolled_program::<HIGH_PEER>();
+            rv.set_resolver(
+                &controller_program,
+                ResolverRef::<FULL_ROLE_DOMAIN_RESOLVER>::decision_state(
+                    &BRANCH_SEND_STATE,
+                    choose_left,
+                ),
+            )
+            .expect("install high-role controller resolver");
+            let sid = SessionId::new(907);
+            let mut controller = rv.enter(sid, &controller_program).expect("attach role 254");
+            let mut peer = rv.enter(sid, &peer_program).expect("attach role 255");
+
+            futures::executor::block_on(async {
+                for expected in [254u32, 255] {
+                    controller
+                        .offer()
+                        .await
+                        .expect("select high-role left arm")
+                        .send::<Msg<BRANCH_SEND_LEFT, u32>>(&expected)
+                        .await
+                        .expect("send from role 254");
+                    assert_eq!(
+                        peer.offer()
+                            .await
+                            .expect("observe high-role left arm")
+                            .recv::<Msg<BRANCH_SEND_LEFT, u32>>()
+                            .await
+                            .expect("receive at role 255"),
+                        expected
+                    );
+                }
+            });
+            assert!(transport.queue_is_empty());
         });
     });
 }

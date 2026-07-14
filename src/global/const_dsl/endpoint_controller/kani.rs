@@ -1,14 +1,13 @@
-use super::unique_controller_role;
+use super::FirstVisibleController;
 
 #[kani::proof]
-fn unique_controller_role_accepts_exact_single_bit_domain() {
-    let mask = kani::any::<u16>();
-    let role = unique_controller_role(mask);
-    let exact = mask != 0 && (mask & (mask - 1)) == 0;
+fn controller_merge_accepts_exact_single_role_domain() {
+    let left = kani::any::<u8>();
+    let right = kani::any::<u8>();
+    let merged = FirstVisibleController::Unique(left).merge(FirstVisibleController::Unique(right));
 
-    assert_eq!(role.is_some(), exact);
-    if let Some(role) = role {
-        assert!(role < u16::BITS as u8);
-        assert_eq!(mask, 1u16 << role);
+    assert_eq!(merged.unique().is_some(), left == right);
+    if left == right {
+        assert_eq!(merged.unique(), Some(left));
     }
 }

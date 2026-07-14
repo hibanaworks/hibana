@@ -41,8 +41,8 @@ note: erroneous constant encountered
   |
   |       let image = const {
   |  _________________^
-  | |         if ROLE >= ROLE_DOMAIN_SIZE {
-  | |             panic!("{}", ROLE_INDEX_ERROR);
+  | |         if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE) {
+  | |             panic!("projected role is outside the choreography role range");
 ... |
   | |     };
   | |_____^

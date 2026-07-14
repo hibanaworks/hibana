@@ -1,11 +1,14 @@
 import Hibana.Refinement
 import Hibana.OperationAdmission
+import Hibana.DescriptorParticipants
 
 namespace Hibana
 
 def productionProgramAtomStride : Nat := 11
 
-def productionProgramRouteResolverStride : Nat := 9
+def productionProgramRouteResolverStride : Nat := 8
+
+def productionProgramRouteParticipantStride : Nat := 1
 
 def productionProgramScopeMarkerStride : Nat := 5
 
@@ -47,14 +50,6 @@ structure DecodedProgramAtom where
   lane : Nat
   deriving Repr, DecidableEq
 
-structure DecodedRouteResolver where
-  scope : Nat
-  authority : RouteAuthority
-  controller : Nat
-  leftParticipantMask : Nat
-  rightParticipantMask : Nat
-  deriving Repr, DecidableEq
-
 structure DecodedScopeMarker where
   offset : Nat
   scope : Nat
@@ -90,10 +85,6 @@ def DecodedScopeMarker.rebase
     scope := marker.scope + scopeOffset
     tag := if markRouteEnters && routeEnter then marker.tag % 4 + 4 else marker.tag
   }
-
-def DecodedRouteResolver.rebase
-    (resolver : DecodedRouteResolver) (scopeOffset : Nat) : DecodedRouteResolver :=
-  { resolver with scope := resolver.scope + scopeOffset }
 
 /-- Insert with the stable ordering used by `EffList::push_scope_marker_full_mut`:
 equal-offset rows already present remain before the new row. -/
@@ -135,19 +126,6 @@ theorem rebase_program_source_lane_span
     (markRouteEnters : Bool) :
     (rebaseProgramSource source atomOffset laneOffset scopeOffset markRouteEnters).laneSpan =
       source.laneSpan := rfl
-
-def Choreo.participants : Choreo -> List Nat
-  | .send sender receiver _ _ => [sender, receiver].eraseDups
-  | .seq left right | .par left right | .route _ left right =>
-      (left.participants ++ right.participants).eraseDups
-  | .roll body => body.participants
-
-def participantMask (roles : List Nat) : Nat :=
-  roles.eraseDups.foldl (fun mask role => mask + 2 ^ role) 0
-
-def uniqueController : List Nat -> Nat
-  | [role] => role
-  | _ => 255
 
 def canonicalProgramSource : Choreo -> CanonicalProgramSource
   | .send sender receiver label schema => {
@@ -214,8 +192,8 @@ def canonicalProgramSource : Choreo -> CanonicalProgramSource
           scope := 0
           authority
           controller
-          leftParticipantMask := participantMask left.participants
-          rightParticipantMask := participantMask right.participants
+          leftParticipants := canonicalParticipants left.participants
+          rightParticipants := canonicalParticipants right.participants
         } ::
           (leftSource.resolvers ++ rightSource.resolvers)
         markers := exitedRight
@@ -271,6 +249,7 @@ structure RustDescriptorImage where
   activeLaneLength : Nat
   atomCount : Nat
   routeResolverCount : Nat
+  routeParticipantCount : Nat
   scopeMarkerCount : Nat
   eventCount : Nat
   dependencyRowCount : Nat
@@ -300,12 +279,23 @@ def readU32LE? (bytes : List Nat) (offset : Nat) : Option Nat := do
   let high ← readU16LE? bytes (offset + 2)
   pure (low + high * 65536)
 
+def readByteRange?
+    (bytes : List Nat) (offset start finish : Nat) : Option (List Nat) := do
+  if start ≤ finish then pure () else none
+  (List.range (finish - start)).mapM fun index =>
+    readByte? bytes (offset + start + index)
+
 def RustDescriptorImage.programRouteResolverOffset (image : RustDescriptorImage) : Nat :=
   image.atomCount * productionProgramAtomStride
 
-def RustDescriptorImage.programScopeMarkerOffset (image : RustDescriptorImage) : Nat :=
+def RustDescriptorImage.programRouteParticipantOffset
+    (image : RustDescriptorImage) : Nat :=
   image.programRouteResolverOffset +
     image.routeResolverCount * productionProgramRouteResolverStride
+
+def RustDescriptorImage.programScopeMarkerOffset (image : RustDescriptorImage) : Nat :=
+  image.programRouteParticipantOffset +
+    image.routeParticipantCount * productionProgramRouteParticipantStride
 
 def RustDescriptorImage.programBlobLen (image : RustDescriptorImage) : Nat :=
   image.programScopeMarkerOffset +
@@ -826,18 +816,40 @@ def RustDescriptorImage.decodeRouteResolverRow?
   let scope ← readU16LE? image.programBytes offset
   let resolver ← readU16LE? image.programBytes (offset + 2)
   let controller ← readByte? image.programBytes (offset + 4)
-  let leftParticipantMask ← readU16LE? image.programBytes (offset + 5)
-  let rightParticipantMask ← readU16LE? image.programBytes (offset + 7)
+  let participantStart ← readU16LE? image.programBytes (offset + 5)
+  let leftLenMinusOne ← readByte? image.programBytes (offset + 7)
+  let participantEnd ←
+    if row + 1 < image.routeResolverCount then
+      readU16LE? image.programBytes
+        (offset + productionProgramRouteResolverStride + 5)
+    else
+      some image.routeParticipantCount
+  let participantMid := participantStart + leftLenMinusOne + 1
+  if (row = 0 → participantStart = 0) ∧
+      participantMid < participantEnd ∧
+      participantEnd - participantMid ≤ 256 ∧
+      participantEnd ≤ packedU16Absent ∧
+      participantEnd ≤ image.routeParticipantCount then pure () else none
+  let leftParticipants ← readByteRange?
+    image.programBytes image.programRouteParticipantOffset
+    participantStart participantMid
+  let rightParticipants ← readByteRange?
+    image.programBytes image.programRouteParticipantOffset
+    participantMid participantEnd
   if scope < productionMaxEffNodes ∧
       controller < image.roleCount ∧
-      0 < leftParticipantMask ∧ leftParticipantMask < 2 ^ image.roleCount ∧
-      0 < rightParticipantMask ∧ rightParticipantMask < 2 ^ image.roleCount ∧
-      (leftParticipantMask / 2 ^ controller) % 2 = 1 ∧
-      (rightParticipantMask / 2 ^ controller) % 2 = 1 then
+      validRouteParticipants leftParticipants controller image.roleCount ∧
+      validRouteParticipants rightParticipants controller image.roleCount then
     let authority :=
       if resolver = packedU16Absent then RouteAuthority.intrinsic
       else RouteAuthority.dynamic resolver
-    pure { scope, authority, controller, leftParticipantMask, rightParticipantMask }
+    pure {
+      scope
+      authority
+      controller := some controller
+      leftParticipants
+      rightParticipants
+    }
   else
     none
 

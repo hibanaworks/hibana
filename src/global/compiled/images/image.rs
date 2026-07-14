@@ -39,11 +39,6 @@ impl<const ROLE: u8> RoleImageSlice<ROLE> {
     }
 
     #[inline(always)]
-    pub(crate) const fn program(&self) -> &'static CompiledProgramRef {
-        self.descriptor.program()
-    }
-
-    #[inline(always)]
     pub(crate) fn has_active_lane(&self, lane_idx: usize) -> bool {
         self.descriptor.has_active_lane(lane_idx)
     }

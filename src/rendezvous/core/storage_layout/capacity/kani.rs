@@ -1,5 +1,5 @@
 use super::{
-    AssocTable, RouteTable,
+    AssocTable,
     arena::packed_sidecar_range,
     endpoint_lease::{endpoint_lease_storage_bytes, next_endpoint_lease_generation},
     resident_lease::sidecar_ranges_overlap,
@@ -137,30 +137,15 @@ fn endpoint_lease_storage_layout_is_bounded_and_exact() {
 fn association_storage_layout_is_bounded_and_exact() {
     let capacity = usize::from(kani::any::<u16>());
     let storage_bytes = AssocTable::storage_bytes(capacity);
-    let row_bytes = core::mem::size_of::<SessionId>() + 2 * core::mem::size_of::<u8>();
+    let sid_bytes = core::mem::size_of::<SessionId>() * capacity;
+    let lane_end = sid_bytes + core::mem::size_of::<u8>() * capacity;
+    let state_align = core::mem::align_of::<u16>();
+    let state_offset = (lane_end + state_align - 1) & !(state_align - 1);
+    let expected_bytes = state_offset + core::mem::size_of::<u16>() * capacity;
 
     kani::cover!(capacity == 0);
     kani::cover!(capacity == usize::from(u16::MAX));
     assert!(AssocTable::storage_align().is_power_of_two());
-    assert!(row_bytes.checked_mul(capacity) == Some(storage_bytes));
-    assert!(storage_bytes <= u32::MAX as usize);
-}
-
-#[kani::proof]
-fn route_storage_layout_is_bounded_and_exact() {
-    let route_slots = usize::from(kani::any::<u16>());
-    let root_bytes = RouteTable::storage_bytes(0);
-    let frame_stride = RouteTable::storage_bytes(1) - root_bytes;
-    let expected_bytes = frame_stride
-        .checked_mul(route_slots)
-        .and_then(|frames| frames.checked_add(root_bytes))
-        .expect("the full u16 route capacity domain must fit route storage arithmetic");
-    let storage_bytes = RouteTable::storage_bytes(route_slots);
-
-    kani::cover!(route_slots == 0);
-    kani::cover!(route_slots == usize::from(u16::MAX));
-    assert!(RouteTable::storage_align().is_power_of_two());
-    assert!(frame_stride != 0);
     assert!(storage_bytes == expected_bytes);
     assert!(storage_bytes <= u32::MAX as usize);
 }
@@ -222,14 +207,14 @@ fn packed_sidecar_pair_is_aligned_and_disjoint() {
     }
 }
 
-fn pack_four_sidecars(
+fn pack_three_sidecars(
     base: usize,
     mut frontier: usize,
-    bytes: [usize; 4],
-    aligns: [usize; 4],
-    gaps: [usize; 3],
-) -> Option<[(usize, usize); 4]> {
-    let mut ranges = [(0, 0); 4];
+    bytes: [usize; 3],
+    aligns: [usize; 3],
+    gaps: [usize; 2],
+) -> Option<[(usize, usize); 3]> {
+    let mut ranges = [(0, 0); 3];
     let mut index = 0usize;
     while index < ranges.len() {
         let range = packed_sidecar_range(base, frontier, bytes[index], aligns[index])?;
@@ -244,22 +229,21 @@ fn pack_four_sidecars(
 }
 
 #[kani::proof]
-fn four_resident_sidecars_compact_before_all_source_ranges() {
+fn three_resident_sidecars_compact_before_all_source_ranges() {
     let base: usize = kani::any();
     let source_frontier: usize = kani::any();
-    let bytes: [usize; 4] = kani::any();
-    let gaps: [usize; 3] = kani::any();
-    let shifts: [u8; 4] = kani::any();
+    let bytes: [usize; 3] = kani::any();
+    let gaps: [usize; 2] = kani::any();
+    let shifts: [u8; 3] = kani::any();
     let shift_mask = (usize::BITS - 1) as u8;
     let aligns = [
         1usize << usize::from(shifts[0] & shift_mask),
         1usize << usize::from(shifts[1] & shift_mask),
         1usize << usize::from(shifts[2] & shift_mask),
-        1usize << usize::from(shifts[3] & shift_mask),
     ];
 
-    let sources = pack_four_sidecars(base, source_frontier, bytes, aligns, gaps);
-    let destinations = pack_four_sidecars(base, 0, bytes, aligns, [0; 3]);
+    let sources = pack_three_sidecars(base, source_frontier, bytes, aligns, gaps);
+    let destinations = pack_three_sidecars(base, 0, bytes, aligns, [0; 2]);
 
     kani::cover!(sources.is_some() && destinations.is_some());
     kani::cover!(sources.is_none());

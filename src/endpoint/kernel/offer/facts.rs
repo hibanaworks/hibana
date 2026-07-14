@@ -18,8 +18,7 @@ where
         frontier_visited.record(scope_id);
         let entry = selection.entry_position;
         let profile = self.offer_scope_profile(scope_id);
-        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        let evidence = self.offer_ingress_evidence(selection, entry, profile, offer_lanes);
+        let evidence = self.offer_ingress_evidence(selection, entry, profile);
 
         OfferFrontierFacts {
             selection,

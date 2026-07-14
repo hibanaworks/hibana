@@ -7,9 +7,9 @@ GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
-EXPECTED_MARKER="hibana Lean generated proof passed traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
+EXPECTED_MARKER="hibana Lean generated proof passed traces=14 frames=66 projections=21 exact-descriptors=21 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
 EXPECTED_PRODUCTION_MARKER="hibana Lean production evidence passed transitions=7 operations=6 owners=8 codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
-EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=5 poison=1 generation=1 atomic-failures=4"
+EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=4 poison=1 generation=1 atomic-failures=4"
 EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof passed states=9 transitions=81"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
@@ -65,12 +65,12 @@ axiom_both_count="$(awk '
   /depends on axioms: \[propext,$/ { count += 1 }
   END { print count + 0 }
 ' <<<"${axiom_output}")"
-if [[ "${axiom_both_count}" != "258" ]] \
+if [[ "${axiom_both_count}" != "254" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
   || [[ "$(grep -Fc "native_decide.ax" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "189" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "47" ]] \
-  || [[ "$(grep -Ec "^'Hibana\\." <<<"${axiom_output}")" != "494" ]]; then
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "188" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "46" ]] \
+  || [[ "$(grep -Ec "^'Hibana\\." <<<"${axiom_output}")" != "488" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi
@@ -130,4 +130,4 @@ if [[ "${public_operation_lean_output}" != *"${EXPECTED_PUBLIC_OPERATION_MARKER}
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=19 exact-descriptors=19 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=5 atomic-failures=4 public-operation-transitions=81"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=21 exact-descriptors=21 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-transitions=81"

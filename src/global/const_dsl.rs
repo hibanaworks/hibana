@@ -28,7 +28,7 @@ const MAX_ROUTE_RESOLVER_MARKERS: usize = MAX_CAPACITY / 2;
 mod scope;
 
 pub(crate) use self::eff_list::{ScopeRebase, const_send_typed};
-pub(crate) use self::endpoint_controller::{first_visible_controller_mask, unique_controller_role};
+pub(crate) use self::endpoint_controller::first_visible_controller;
 pub(crate) use self::endpoint_selectors::{
     first_visible_endpoint_selector_conflicts_from_markers, local_route_observer_paths_mergeable,
     validate_parallel_endpoint_selectors, validate_roll_reentry_endpoint_selectors,

@@ -5,7 +5,7 @@ use crate::{
 };
 
 fn symbolic_role() -> u8 {
-    kani::any::<u8>() % crate::g::ROLE_DOMAIN_SIZE
+    kani::any()
 }
 
 fn event(from: u8, to: u8, lane: u8) -> EffStruct {

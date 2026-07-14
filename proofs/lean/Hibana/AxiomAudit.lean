@@ -279,14 +279,7 @@ import Hibana.MainTheorems
 #print axioms Hibana.receive_precedes_later_send_has_causal_path
 #print axioms Hibana.causal_handoff_path_orders_receive_before_send
 #print axioms Hibana.roll_reentry_has_fifo_or_causal_order
-#print axioms Hibana.active_route_decision_cannot_be_overwritten
-#print axioms Hibana.selected_local_route_participants_are_exact
 #print axioms Hibana.sealed_local_membership_rejects_late_attach
-#print axioms Hibana.begun_route_decision_tracks_exact_unobserved_participants
-#print axioms Hibana.route_observation_is_affine
-#print axioms Hibana.route_observation_rejects_duplicate
-#print axioms Hibana.route_observation_preserves_selected_arm
-#print axioms Hibana.retired_route_decision_rejects_duplicate_observation
 #print axioms Hibana.transport_admission_is_unique
 #print axioms Hibana.transport_admission_checker_sound
 #print axioms Hibana.transport_admission_depends_only_on_observation
@@ -297,6 +290,7 @@ import Hibana.MainTheorems
 #print axioms Hibana.observer_absence_is_not_branch_evidence
 #print axioms Hibana.observer_outbound_heads_are_not_mergeable
 #print axioms Hibana.accepted_dynamic_route_has_unique_controller
+#print axioms Hibana.accepted_dynamic_route_knowledge_is_controller_or_inbound
 #print axioms Hibana.dynamic_route_competing_first_senders_are_rejected
 #print axioms Hibana.dynamic_route_outbound_observer_without_evidence_is_rejected
 #print axioms Hibana.dynamic_route_inbound_observers_are_projectable

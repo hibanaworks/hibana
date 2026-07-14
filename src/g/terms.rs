@@ -1,5 +1,4 @@
 use super::{Par, ProgramSourceData, ProgramTerm, Resolve, Roll, Route, Send, Seq};
-use crate::global::steps::RoleLaneMask;
 
 impl<const FROM: u8, const TO: u8, M> ProgramTerm for Send<FROM, TO, M>
 where
@@ -9,7 +8,6 @@ where
     const PROGRAM_SOURCE: ProgramSourceData = {
         ProgramSourceData::from_parts(
             crate::global::const_dsl::const_send_typed::<FROM, TO, M, 0>(),
-            RoleLaneMask::empty().with_role(FROM, 0).with_role(TO, 0),
             1,
         )
     };

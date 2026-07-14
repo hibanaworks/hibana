@@ -6,7 +6,7 @@ use super::{
     lane_byte_index,
 };
 use crate::global::const_dsl::EffList;
-use crate::global::frame_labels::FrameLabelAssigner;
+use crate::global::frame_labels::frame_label_at;
 use crate::global::typestate::{
     LocalConflict, LocalDependency, PackedEventConflict, PackedLocalDependency,
 };
@@ -697,14 +697,13 @@ impl RoleLaneScratch {
         };
         let markers = eff_list.scope_markers();
         let has_route = Self::scope_markers_contain_kind(markers, ScopeKind::Route);
-        let mut frame_labels = FrameLabelAssigner::EMPTY;
         let mut step = 0usize;
         let mut idx = 0usize;
         while idx < eff_list.len() {
             let node = eff_list.node_at(idx);
             if matches!(node.kind, crate::eff::EffKind::Atom) {
                 let atom = node.atom_data();
-                let frame_label = frame_labels.assign(atom);
+                let frame_label = frame_label_at(eff_list, idx, atom);
                 if atom.from == role || atom.to == role {
                     let lane = atom.lane as usize;
                     if lane >= logical_lane_count {

@@ -176,7 +176,6 @@ structure LeaseAllocatorSnapshot where
   generation : Nat
   tableBytes : Nat
   assocBytes : Nat
-  routeBytes : Nat
   resolverBytes : Nat
   imageFrontier : Nat
   workspaceBytes : Nat
@@ -213,7 +212,6 @@ def LeaseAllocationAbortCertificate.PreservesAuthorityAndCapacity
   certificate.after.generation = certificate.before.generation /\
   certificate.after.tableBytes = certificate.before.tableBytes /\
   certificate.after.assocBytes = certificate.before.assocBytes /\
-  certificate.after.routeBytes = certificate.before.routeBytes /\
   certificate.after.resolverBytes = certificate.before.resolverBytes /\
   certificate.after.workspaceBytes = certificate.before.workspaceBytes /\
   certificate.after.endpointFloor = certificate.before.endpointFloor /\
@@ -227,17 +225,16 @@ def LeaseAllocationAbortCertificate.check
   certificate.after.generation == certificate.before.generation &&
     (certificate.after.tableBytes == certificate.before.tableBytes &&
       (certificate.after.assocBytes == certificate.before.assocBytes &&
-        (certificate.after.routeBytes == certificate.before.routeBytes &&
-          (certificate.after.resolverBytes == certificate.before.resolverBytes &&
-            (certificate.after.workspaceBytes == certificate.before.workspaceBytes &&
-              (certificate.after.endpointFloor == certificate.before.endpointFloor &&
-                (certificate.after.activeLaneAttachments ==
-                    certificate.before.activeLaneAttachments &&
-                  (certificate.after.associationWitnesses ==
-                      certificate.before.associationWitnesses &&
-                    (certificate.after.slots == certificate.before.slots &&
-                      certificate.after.imageFrontier <=
-                        certificate.before.imageFrontier)))))))))
+        (certificate.after.resolverBytes == certificate.before.resolverBytes &&
+          (certificate.after.workspaceBytes == certificate.before.workspaceBytes &&
+            (certificate.after.endpointFloor == certificate.before.endpointFloor &&
+              (certificate.after.activeLaneAttachments ==
+                  certificate.before.activeLaneAttachments &&
+                (certificate.after.associationWitnesses ==
+                    certificate.before.associationWitnesses &&
+                  (certificate.after.slots == certificate.before.slots &&
+                    certificate.after.imageFrontier <=
+                      certificate.before.imageFrontier))))))))
 
 theorem lease_allocation_abort_certificate_sound
     {certificate : LeaseAllocationAbortCertificate}

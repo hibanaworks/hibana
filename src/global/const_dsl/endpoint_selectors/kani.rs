@@ -3,7 +3,7 @@ use crate::eff::{EffAtom, EventOrigin};
 
 fn symbolic_atom() -> EffAtom {
     EffAtom {
-        from: kani::any::<u8>() % crate::g::ROLE_DOMAIN_SIZE,
+        from: kani::any(),
         to: kani::any(),
         label: kani::any(),
         payload_schema: kani::any(),

@@ -7,7 +7,6 @@ use super::{
 pub(in crate::endpoint::kernel::core) struct SendProgressCommitPlan {
     pub(crate) delta: PreparedCommitDelta,
     pub(crate) route_audit: SendRouteAudit,
-    pub(crate) frame_target: u8,
 }
 
 mod commit;

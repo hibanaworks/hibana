@@ -1,7 +1,6 @@
 use crate::global::const_dsl::{
     EffList, INTRINSIC_ROUTE_RESOLVER_ID, ScopeEvent, ScopeId, ScopeKind, ScopeRebase,
 };
-use crate::global::steps::RoleLaneMask;
 
 use super::ProgramSourceError;
 
@@ -11,20 +10,14 @@ pub(crate) trait ProgramTerm {
 
 pub(crate) struct ProgramSourceData {
     eff: EffList,
-    role_lane_mask: RoleLaneMask,
     lane_span: u16,
     error: Option<ProgramSourceError>,
 }
 
 impl ProgramSourceData {
-    pub(crate) const fn from_parts(
-        eff: EffList,
-        role_lane_mask: RoleLaneMask,
-        lane_span: u16,
-    ) -> Self {
+    pub(crate) const fn from_parts(eff: EffList, lane_span: u16) -> Self {
         Self {
             eff,
-            role_lane_mask,
             lane_span,
             error: None,
         }
@@ -57,7 +50,6 @@ impl ProgramSourceData {
         let lane_span = max_lane_span(left.lane_span, next.lane_span);
         Self {
             eff,
-            role_lane_mask: left.role_lane_mask.union(next.role_lane_mask, lane_span),
             lane_span,
             error,
         }
@@ -92,7 +84,6 @@ impl ProgramSourceData {
         }
         Self {
             eff,
-            role_lane_mask: source.role_lane_mask,
             lane_span: source.lane_span,
             error,
         }
@@ -110,7 +101,6 @@ impl ProgramSourceData {
         eff.push_scope_around(0, len, roll_scope);
         Self {
             eff,
-            role_lane_mask: source.role_lane_mask,
             lane_span: source.lane_span,
             error,
         }
@@ -137,7 +127,6 @@ impl ProgramSourceData {
         let lane_span = max_lane_span(left.lane_span, right.lane_span);
         Self {
             eff,
-            role_lane_mask: left.role_lane_mask.union(right.role_lane_mask, lane_span),
             lane_span,
             error,
         }
@@ -148,16 +137,7 @@ impl ProgramSourceData {
         if left.eff.is_empty() || right.eff.is_empty() {
             error = Self::merge_error(error, Some(ProgramSourceError::ParallelArmAbsent));
         }
-        let right_role_lane_mask = right
-            .role_lane_mask
-            .shift_lanes(left.lane_span, right.lane_span);
         let combined_lane_span = add_lane_span(left.lane_span, right.lane_span);
-        if left
-            .role_lane_mask
-            .intersects(&right_role_lane_mask, combined_lane_span)
-        {
-            error = Self::merge_error(error, Some(ProgramSourceError::ParallelConflict));
-        }
         let parallel_scope = ScopeId::parallel(0);
         let left_budget = left.eff.scope_budget();
         let right_offset = add_scope_budget(1, left_budget);
@@ -173,9 +153,6 @@ impl ProgramSourceData {
         eff.push_parallel_scope_split(parallel_scope, left_len);
         Self {
             eff,
-            role_lane_mask: left
-                .role_lane_mask
-                .union(right_role_lane_mask, combined_lane_span),
             lane_span: combined_lane_span,
             error,
         }

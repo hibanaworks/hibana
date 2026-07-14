@@ -108,25 +108,6 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    fn dynamic_route_scope_count(&self) -> usize {
-        let program = self.program();
-        let mut count = 0usize;
-        let mut row = 0usize;
-        while row < program.route_resolver_row_count() {
-            if program.route_resolver_id_at_row(row).is_some() {
-                count = crate::invariant_some(count.checked_add(1));
-            }
-            row += 1;
-        }
-        count
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_table_frame_slots(&self) -> usize {
-        self.dynamic_route_scope_count()
-    }
-
-    #[inline(always)]
     pub(crate) fn max_route_stack_depth(&self) -> usize {
         self.footprint().max_route_stack_depth
     }

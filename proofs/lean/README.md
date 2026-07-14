@@ -120,7 +120,7 @@ The kernel-checked boundary covers:
   resolver rejection, and roll operation; one exhaustive strong-fairness
   premise ranges over recurrently enabled operations of that type instead of
   imposing an impossible obligation on a losing one-shot route alternative;
-- elastic rolled FIFO and route-publication semantics for legal output
+- elastic rolled FIFO and proof-only route-choice history for legal output
   pipelining before remote
   receive. A proof-only mixed admission history derives each static
   occurrence's generation from its prior descriptor-admitted subsequence,
@@ -147,7 +147,7 @@ The kernel-checked boundary covers:
   canonical frame-label column.
   Per-role state learns intrinsic route selection only from an exact queued
   frame carrying that role's event identity and conflict membership; there is
-  no arbitrary shared route-publication operation. Each operation is checked
+  no arbitrary shared route-choice operation. Each operation is checked
   against its unique role owner, and each role-local queue entry must carry the
   canonical global occurrence lane recovered from the exact descriptor image.
   A wrong-lane frame invalidates the local state rather than being reinterpreted.
@@ -173,13 +173,14 @@ The kernel-checked boundary covers:
   are proved stutters;
 - one `ProtocolExecutionGuarantees` protocol-local proposition. An
   accepted verified protocol artifact simultaneously supplies exact all-role
-  descriptor refinement including route participant masks, reachable-state subject
+  descriptor refinement including route participant lists, reachable-state subject
   reduction and session fidelity, separate global and distributed semantic
   unstuckness certificates, injective transport
   admission, FIFO-or-causal `.roll` reentry, exact intersection of selected and
-  locally attached participants, non-overwritable affine route publication,
-  at-most-once arm-preserving observation, sealed runtime-local membership before
-  dynamic resolution, callback attach exclusion while endpoint storage is
+  locally attached participants, a unique dynamic-route controller, descriptor-
+  admitted inbound choice knowledge for every other branch-sensitive role,
+  sealed runtime-local membership before dynamic resolution, callback attach
+  exclusion while endpoint storage is
   borrowed, and finite asynchronous cancellation retirement from a live fault
   and a covered well-formed transport snapshot. It does not claim that a
   concrete carrier or remote installation
@@ -231,7 +232,7 @@ The kernel-checked boundary covers:
   all event schemas. It does not import algorithm-specific correctness into the
   core;
 - `ElasticErasureRefinement`, proving append, receive, transport send/receive,
-  and route publication commute with erasure of iteration ordinals; and the
+  and proof-only route-choice history commute with erasure of iteration ordinals; and the
   composition theorem
   `assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement`, which
   joins exact translation validation, deployment agreement, verified codecs,
@@ -297,7 +298,7 @@ adds no runtime queues, endpoint types, descriptor rows, or wire fields.
 
 This is not a source-to-source proof of arbitrary downstream Rust. The general
 byte-decoder and transition theorems are quantified over accepted descriptor
-images; the nineteen generated role images are production witnesses used by the
+images; the twenty-one generated role images are production witnesses used by the
 gate and are grouped into eight complete protocol artifacts.
 Every generated exact image also carries rejecting mutations for its first
 global message contract, local action lane, resident metadata and lane bitmap,
@@ -368,22 +369,17 @@ template while keeping persistent state, membership, scheduling, and recovery
 policy outside Hibana's protocol runtime. Session isolation is proved; algorithm-specific
 safety and liveness invariants require their own proofs.
 
-Dynamic resolver publication is scope-global and affine inside one rendezvous
-generation. Its selected-arm participant mask is descriptor-derived, an active
-decision cannot be replaced, and waiter callbacks run only after the complete
-endpoint and nested-route publication. Runtime-local membership is sealed before
-external resolver code, so a late attach cannot obtain a second evaluation of
-the same occurrence. Resolved and intrinsic routes both require one
-first-visible controller; the static checker rejects competing branch
-initiators rather than treating a resolver as a distributed agreement oracle.
-Every non-controller role must receive distinct descriptor-admitted branch
-evidence before its first branch-sensitive operation. A dynamic resolver is
-controller-local authority, not a carrier handshake or cross-runtime oracle;
-rolled routes may choose differently after reentry without adding an iteration
-field to the wire header or resident endpoint. Production shared
-route-table authority is reserved for these explicit resolver scopes;
-all non-controller route commits require endpoint-local frame evidence,
-and intrinsic-only descriptors allocate no shared route table.
+Dynamic route choice is controller-local and affine. Its participant list is
+descriptor-derived, and runtime-local membership is sealed before external
+resolver code, so a late attach cannot obtain a second evaluation of the same
+occurrence. Resolved and intrinsic routes both require one first-visible
+controller; the static checker rejects competing branch initiators rather than
+treating a resolver as a distributed agreement oracle. Every non-controller
+role must receive distinct descriptor-admitted branch evidence before its first
+branch-sensitive operation. Each endpoint records its selected arm locally and
+commits at most once; no shared route-decision sidecar is a second authority.
+Rolled routes may choose differently after reentry without adding an iteration
+field to the wire header, descriptor row, or resident endpoint.
 
 The remaining trust boundaries are explicit. `RuntimeRefinement.lean`
 classifies normalized runtime effects, while `RustKernelRefinement.lean` states

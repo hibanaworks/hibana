@@ -36,7 +36,6 @@ where
         if self.session_fault(sid).is_some() {
             return Err(RendezvousError::SessionPoisoned { sid });
         }
-        let first_session_attach = !self.assoc.has_session(sid);
         let first_attach = if self.assoc.has_entry(lane, sid) {
             if self.assoc.increment(lane, sid).is_none() {
                 return Err(RendezvousError::LaneAttachOverflow { lane });
@@ -49,9 +48,6 @@ where
             true
         };
 
-        if first_session_attach {
-            self.routes.reset_session(sid);
-        }
         if first_attach {
             emit(
                 self.tap(),
@@ -81,7 +77,6 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
-        role_count: u8,
         active_leases: &'a Cell<u32>,
     ) -> Result<(Port<'a, T>, LaneGuard<'a, T>), RendezvousError>
     where
@@ -97,7 +92,6 @@ where
             transport: &self.transport,
             tap: self.tap(),
             tap_counter: &self.tap_counter,
-            routes: &self.routes,
             slab_ptr: self.slab_ptr,
             slab_len: self.slab_len,
             access_state: &self.access_state,
@@ -106,8 +100,6 @@ where
             endpoint_lease_storage: &self.endpoint_lease_storage,
             sid,
             lane,
-            role,
-            role_count,
             rv_id: self.id,
             tx,
             rx,

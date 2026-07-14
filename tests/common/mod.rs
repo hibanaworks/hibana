@@ -9,7 +9,6 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-const TEST_ROLE_CAPACITY: usize = 5;
 const TEST_QUEUE_CAPACITY: usize = 16;
 const TEST_FRAME_PAYLOAD_CAPACITY: usize = 128;
 
@@ -178,29 +177,29 @@ impl RoleState {
     }
 }
 
+struct RoleSlot {
+    role: u8,
+    state: RoleState,
+}
+
 pub(crate) struct TestState {
-    pub(crate) roles: [RoleState; TEST_ROLE_CAPACITY],
+    roles: Vec<RoleSlot>,
 }
 
 impl TestState {
     fn new() -> Self {
-        Self {
-            roles: core::array::from_fn(|_| RoleState::new()),
-        }
+        Self { roles: Vec::new() }
     }
 
     fn role_mut(&mut self, role: u8) -> &mut RoleState {
-        match self.roles.get_mut(role as usize) {
-            Some(role_state) => role_state,
-            None => panic!("test transport role out of range: {role}"),
+        if let Some(index) = self.roles.iter().position(|slot| slot.role == role) {
+            return &mut self.roles[index].state;
         }
-    }
-
-    fn role(&self, role: u8) -> &RoleState {
-        match self.roles.get(role as usize) {
-            Some(role_state) => role_state,
-            None => panic!("test transport role out of range: {role}"),
-        }
+        self.roles.push(RoleSlot {
+            role,
+            state: RoleState::new(),
+        });
+        &mut self.roles.last_mut().expect("inserted role slot").state
     }
 
     fn enqueue(&mut self, role: u8, frame: FrameOwned) -> Option<Waker> {
@@ -224,8 +223,8 @@ impl TestState {
     fn add_waiter(&mut self, role: u8, session_id: SessionId, lane: u8, waker: Waker) {
         self.role_mut(role).add_waiter(session_id, lane, waker);
     }
-    fn ensure_role(&self, role: u8) {
-        let _ = self.role(role);
+    fn ensure_role(&mut self, role: u8) {
+        let _ = self.role_mut(role);
     }
 }
 
@@ -261,7 +260,7 @@ impl TestTransport {
             .borrow()
             .roles
             .iter()
-            .all(|role| role.queue.len == 0)
+            .all(|slot| slot.state.queue.len == 0)
     }
 
     pub(crate) fn truncate_next_payload(&self, role: u8, len: usize) {
@@ -368,7 +367,7 @@ impl TestTransport {
     }
 
     pub(crate) fn open_rx(&self, session_id: SessionId, role: u8, lane: u8) -> TestRx<'_> {
-        self.state.borrow().ensure_role(role);
+        self.state.borrow_mut().ensure_role(role);
         TestRx {
             state: self.state.as_ref(),
             session_id,
@@ -411,7 +410,7 @@ impl Transport for TestTransport {
         let local_role = port.local_role();
         let session_id = port.session_id();
         let lane = port.lane();
-        self.state.borrow().ensure_role(local_role);
+        self.state.borrow_mut().ensure_role(local_role);
         (
             TestTx {
                 session_id,

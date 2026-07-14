@@ -24,12 +24,10 @@ struct PackedProgramAtomFields {
 }
 
 impl ProgramAtomRow {
-    const fn decode(eff_idx: u16, fields: PackedProgramAtomFields, role_count: u8) -> Option<Self> {
+    const fn decode(eff_idx: u16, fields: PackedProgramAtomFields, max_role: u8) -> Option<Self> {
         if eff_idx as usize >= crate::eff::meta::MAX_EFF_NODES
-            || role_count == 0
-            || role_count > crate::g::ROLE_DOMAIN_SIZE
-            || fields.from >= role_count
-            || fields.to >= role_count
+            || fields.from > max_role
+            || fields.to > max_role
         {
             return None;
         }
@@ -152,7 +150,7 @@ impl CompiledProgramRef {
                 origin: self.byte_at(offset + 9),
                 lane: self.byte_at(offset + 10),
             },
-            self.facts.role_count,
+            self.facts.max_role,
         ) {
             Some(row) => Some(row),
             None => crate::invariant(),
@@ -187,8 +185,9 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     pub(crate) const fn role_count(&self) -> usize {
-        self.facts.role_count as usize
+        self.facts.max_role as usize + 1
     }
 
     #[cfg(all(test, hibana_repo_tests))]

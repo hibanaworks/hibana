@@ -8,16 +8,29 @@ use crate::global::typestate::{EnabledEventCommit, StateIndex};
 pub(crate) struct PreparedCommitDelta {
     event: Option<CommitEventRow>,
     selected_routes: PreparedRouteCommitRows,
+    pub(in crate::endpoint::kernel::core) fresh_route_start: u8,
     lane_relocation: Option<RelocatableResidentLaneStep>,
     cursor_after: StateIndex,
 }
 
 impl PreparedCommitDelta {
+    const NO_FRESH_ROUTE: u8 = u8::MAX;
+
     #[inline(always)]
-    fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteCommitRows) -> Self {
+    fn from_preflighted(
+        delta: CommitDelta,
+        selected_routes: PreparedRouteCommitRows,
+        fresh_route_start: Option<usize>,
+    ) -> Self {
+        let fresh_route_start = match fresh_route_start {
+            Some(start) if start < selected_routes.len() && start < u8::MAX as usize => start as u8,
+            Some(_) => crate::invariant(),
+            None => Self::NO_FRESH_ROUTE,
+        };
         Self {
             event: delta.event(),
             selected_routes,
+            fresh_route_start,
             lane_relocation: delta.lane_relocation(),
             cursor_after: delta.cursor_after(),
         }
@@ -59,6 +72,7 @@ impl PreparedCommitDelta {
 pub(crate) struct CommittedCommitDelta {
     event: Option<CommitEventRow>,
     selected_routes: PreparedRouteCommitRows,
+    fresh_route_start: u8,
 }
 
 impl CommittedCommitDelta {
@@ -66,10 +80,12 @@ impl CommittedCommitDelta {
     pub(in crate::endpoint::kernel::core) const fn from_applied(
         event: Option<CommitEventRow>,
         selected_routes: PreparedRouteCommitRows,
+        fresh_route_start: u8,
     ) -> Self {
         Self {
             event,
             selected_routes,
+            fresh_route_start,
         }
     }
 
@@ -86,6 +102,13 @@ impl CommittedCommitDelta {
     #[inline(always)]
     pub(crate) const fn selected_route_lane(&self) -> Option<u8> {
         self.selected_routes.selected_lane()
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_is_fresh(&self, index: usize) -> bool {
+        self.fresh_route_start != PreparedCommitDelta::NO_FRESH_ROUTE
+            && index >= self.fresh_route_start as usize
+            && index < self.selected_routes.len()
     }
 }
 
@@ -230,6 +253,37 @@ where
         Ok(())
     }
 
+    fn fresh_route_suffix_start(
+        &self,
+        delta: &CommitDelta,
+    ) -> Result<Option<usize>, CursorInvariantError> {
+        let routes = delta.selected_routes();
+        let mut start = None;
+        let mut idx = 0usize;
+        while idx < routes.len() {
+            let row = routes
+                .get(&self.cursor, idx)
+                .ok_or(CursorInvariantError::INVARIANT)?;
+            let scope = row.scope();
+            let fresh = match self.selected_arm_for_scope(scope) {
+                None => true,
+                Some(selected) => {
+                    self.cursor.route_scope_reentry(scope)
+                        && self.reentrant_selected_arm_complete(scope, selected)
+                }
+            };
+            if fresh {
+                if start.is_none() {
+                    start = Some(idx);
+                }
+            } else if start.is_some() {
+                return Err(CursorInvariantError::INVARIANT);
+            }
+            idx += 1;
+        }
+        Ok(start)
+    }
+
     #[inline]
     fn preflight_selected_route_row(
         &self,
@@ -307,6 +361,7 @@ where
         delta: CommitDelta,
     ) -> Result<PreparedCommitDelta, CursorInvariantError> {
         self.preflight_commit_delta(&delta)?;
+        let fresh_route_start = self.fresh_route_suffix_start(&delta)?;
         let selected_routes = self
             .route_commit_rows
             .seal(delta.selected_route_rows_ref())
@@ -314,6 +369,7 @@ where
         Ok(PreparedCommitDelta::from_preflighted(
             delta,
             selected_routes,
+            fresh_route_start,
         ))
     }
 
@@ -333,6 +389,7 @@ where
         self.preflight_event_selected_route_chain(idx, &delta)?;
         self.preflight_selected_route_rows(&delta)?;
         self.preflight_lane_relocation(delta.lane_relocation())?;
+        let fresh_route_start = self.fresh_route_suffix_start(&delta)?;
         let selected_routes = self
             .route_commit_rows
             .seal(delta.selected_route_rows_ref())
@@ -340,6 +397,7 @@ where
         Ok(PreparedCommitDelta::from_preflighted(
             delta,
             selected_routes,
+            fresh_route_start,
         ))
     }
 

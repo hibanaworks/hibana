@@ -75,12 +75,12 @@ fn g_project_does_not_enumerate_role_projection_constructors() {
     let g = read("src/g.rs");
     let project = g_project_body(&g);
     assert!(
-        project.contains("if ROLE >= ROLE_DOMAIN_SIZE")
+        project.contains("if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE)")
             && project.contains("role_projection::role_projection_image_for::<ROLE, Steps>()"),
-        "g::project must keep one const role-domain guard followed by direct projection"
+        "g::project must keep one choreography-range guard followed by direct projection"
     );
 
-    for role in 0..16 {
+    for role in 0..=u8::MAX {
         let forbidden = format!("{}{}{}", "role_projection_image_for::<", role, ", Steps>()");
         assert!(
             !project.contains(&forbidden),
@@ -587,7 +587,8 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
     for required in [
         "ROLE_IMAGE_EVENT_STRIDE: usize = 10",
         "ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2",
-        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 9",
+        "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8",
+        "PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE: usize = 1",
     ] {
         assert!(
             descriptor_hot_path.contains(required),

@@ -17,12 +17,6 @@ port_rs="$(
   fi
 )"
 lane_port_rs="$(cat src/endpoint/kernel/lane_port.rs)"
-route_table_rs="$(
-  cat src/rendezvous/tables/route_table.rs
-  if [[ -d src/rendezvous/tables/route_table ]]; then
-    find src/rendezvous/tables/route_table -type f -name '*.rs' -print0 | sort -z | xargs -0 cat
-  fi
-)"
 frontier_state_rs="$(cat src/endpoint/kernel/frontier_state.rs)"
 eff_rs="$(cat src/eff.rs)"
 
@@ -61,8 +55,6 @@ assert_unsafe_limit() {
 }
 
 assert_unsafe_limit "production" 377 src
-assert_unsafe_limit "route table owner" 54 \
-  src/rendezvous/tables/route_table.rs src/rendezvous/tables/route_table/storage.rs
 assert_unsafe_limit "frontier scratch owner" 6 src/endpoint/kernel/frontier/scratch.rs
 assert_unsafe_limit "endpoint lease owner" 4 \
   src/rendezvous/core/endpoint_leases.rs \
@@ -72,7 +64,6 @@ assert_unsafe_limit "resolver erased storage owner" 5 src/session/cluster/core/d
 assert_unsafe_limit "SessionKit init owner" 4 src/runtime/session_kit.rs
 
 for unsafe_owner in \
-  src/rendezvous/tables.rs \
   src/session/cluster/core.rs \
   src/rendezvous/core.rs \
   src/endpoint/carrier.rs \
@@ -216,7 +207,7 @@ if duplicate_failures:
 
 category_terms = {
     "owner": [
-        "owner", "owns", "owned", "rendezvous", "routetable", "route-table",
+        "owner", "owns", "owned", "rendezvous",
         "frontier", "resolver", "sessionkit", "session", "table", "arena",
         "column", "storage", "payload", "free-list", "replacement",
         "destination", "source", "scratch", "callback", "endpoint",
@@ -293,8 +284,6 @@ if category_failures:
     raise SystemExit(1)
 
 focus_paths = [
-    Path("src/rendezvous/tables/route_table.rs"),
-    Path("src/rendezvous/tables/route_table/storage.rs"),
     Path("src/rendezvous/core/endpoint_leases.rs"),
     Path("src/rendezvous/core/storage_layout.rs"),
     Path("src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs"),
@@ -323,7 +312,7 @@ for path in focus_paths:
         lower = window.lower()
         categories = {
             "owner": [
-                "owner", "owns", "owned", "rendezvous", "routetable", "route-table",
+                "owner", "owns", "owned", "rendezvous",
                 "frontier", "resolver", "sessionkit", "table", "arena", "column",
                 "storage", "payload", "free-list", "replacement", "destination",
                 "source", "scratch", "callback",
@@ -511,26 +500,6 @@ do
     exit 1
   fi
 done
-
-for required in \
-  'SAFETY: the caller provides exclusive, writable storage for one' \
-  'SAFETY: `idx` is inside the owner-exclusive unpublished frame' \
-  'SAFETY: both list roots belong to the owner-exclusive unpublished' \
-  'SAFETY: both roots belong to the unpublished replacement bundle.' \
-  'SAFETY: both list roots are inside the smaller layout and every' \
-  'SAFETY: compacted live frames occupy `0..active_count`'
-do
-  if [[ "${route_table_rs}" != *"${required}"* ]]; then
-    echo "RouteTable raw storage operations must carry local SAFETY contracts: ${required}" >&2
-    exit 1
-  fi
-done
-
-if [[ "${route_table_rs}" == *"WaiterSlot"* \
-  || "${route_table_rs}" == *"pending_frame_hint"* ]]; then
-  echo "RouteTable must not regain relocatable waiter or dead frame-hint columns" >&2
-  exit 1
-fi
 
 for required in \
   'SAFETY: `FrontierState` is initialized in one caller-owned endpoint' \

@@ -330,6 +330,7 @@ fn export_production_trace_for_lean() {
     const NESTED_INNER_RESOLVER: u16 = 903;
     const ROLLED_RESOLVER: u16 = 904;
     const REJECTING_RESOLVER: u16 = 905;
+    const FULL_ROLE_DOMAIN_RESOLVER: u16 = 906;
 
     type A = g::Send<0, 1, g::Msg<11, u32>>;
     type B = g::Send<0, 2, g::Msg<12, i32>>;
@@ -368,6 +369,11 @@ fn export_production_trace_for_lean() {
     type RejectLeft = g::Send<0, 1, g::Msg<91, ()>>;
     type RejectRight = g::Send<0, 1, g::Msg<92, ()>>;
     type RejectSteps = g::Resolve<g::Route<RejectLeft, RejectRight>, REJECTING_RESOLVER>;
+    type FullRoleDomainLeft = g::Send<254, 255, g::Msg<101, u32>>;
+    type FullRoleDomainRight = g::Send<254, 255, g::Msg<102, u32>>;
+    type FullRoleDomainSteps = g::Roll<
+        g::Resolve<g::Route<FullRoleDomainLeft, FullRoleDomainRight>, FULL_ROLE_DOMAIN_RESOLVER>,
+    >;
 
     let program = g::seq(
         g::par(
@@ -437,6 +443,12 @@ fn export_production_trace_for_lean() {
         g::send::<0, 1, g::Msg<92, ()>>(),
     )
     .resolve::<REJECTING_RESOLVER>();
+    let full_role_domain = g::route(
+        g::send::<254, 255, g::Msg<101, u32>>(),
+        g::send::<254, 255, g::Msg<102, u32>>(),
+    )
+    .resolve::<FULL_ROLE_DOMAIN_RESOLVER>()
+    .roll();
     let cyclic_roll = cyclic_roll_certificate::program();
     let nested_rolled_role0 = record_trace::<0>(&nested_rolled, &[71, 72, 73, 71, 72, 73]);
     let resolved_left_role0 = record_production_steps::<0>(
@@ -651,6 +663,16 @@ fn export_production_trace_for_lean() {
             "generatedRejectingChoreo",
             "generatedRejectingProjectionRole1",
         ),
+        projection_certificate_source::<254>(
+            &full_role_domain,
+            "generatedFullRoleDomainChoreo",
+            "generatedFullRoleDomainProjectionRole254",
+        ),
+        projection_certificate_source::<255>(
+            &full_role_domain,
+            "generatedFullRoleDomainChoreo",
+            "generatedFullRoleDomainProjectionRole255",
+        ),
     ];
     projection_sources.extend(cyclic_roll_certificate::projection_sources(&cyclic_roll));
     let projection_count = projection_sources.len();
@@ -795,6 +817,7 @@ fn export_production_trace_for_lean() {
          def generatedRolledResolvedChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedRejectingChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedCyclicRollChoreo : Hibana.Choreo :=\n  {}\n\n\
+         def generatedFullRoleDomainChoreo : Hibana.Choreo :=\n  {}\n\n\
          {}\n\
          {}\n\
          {}\n\
@@ -810,6 +833,7 @@ fn export_production_trace_for_lean() {
         RolledResolvedSteps::lean_source(),
         RejectSteps::lean_source(),
         cyclic_roll_certificate::lean_source(),
+        FullRoleDomainSteps::lean_source(),
         traces,
         projections,
         progress,

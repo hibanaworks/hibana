@@ -29,8 +29,7 @@ fn session_errors_do_not_retain_forbidden_variants() {
     let source = read("src/session/cluster/error.rs")
         + &read("src/session/cluster/error/debug.rs")
         + &read("src/session.rs")
-        + &read("src/rendezvous/error.rs")
-        + &read("src/rendezvous/tables.rs");
+        + &read("src/rendezvous/error.rs");
     assert!(
         !repo_file_exists("src/rendezvous/tables/generation.rs"),
         "generation table substrate must stay forbidden"

@@ -112,7 +112,7 @@ where
             return Ok(None);
         }
         Ok(self
-            .preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
+            .peek_live_scope_ack(scope_id)
             .map(|token| token.arm().as_u8())
             .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8)))
     }

@@ -210,7 +210,6 @@ while IFS= read -r hit; do
   [[ -z "${hit}" ]] && continue
   case "${hit}" in
     *"src/session/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
-    *"src/global/steps.rs:"*"macro_rules! impl_role_eq"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! impl_wire_for_int"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! push"*) ;;
     *)

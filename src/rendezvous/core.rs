@@ -8,7 +8,7 @@
 //!
 //! This module owns resident rendezvous images and endpoint lease tables.
 //! Unsafe blocks here may initialize or migrate pinned rendezvous storage, but
-//! must preserve association, route, resolver, and endpoint-lease owner roots
+//! must preserve association, resolver, and endpoint-lease owner roots
 //! before returning safe ports or endpoints.
 
 use core::{
@@ -21,7 +21,6 @@ use super::{
     association::AssocTable,
     error::RendezvousError,
     port::{Port, PortInit},
-    tables::RouteTable,
 };
 use crate::session::types::{Lane, RendezvousId, SessionId};
 use crate::{
@@ -110,13 +109,11 @@ pub(crate) enum LaneRelease {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EndpointResidentBudget {
-    pub(crate) route_frame_slots: u16,
     pub(crate) frontier_workspace_bytes: u16,
 }
 
 impl EndpointResidentBudget {
     pub(crate) const ZERO: Self = Self {
-        route_frame_slots: 0,
         frontier_workspace_bytes: 0,
     };
 
@@ -129,12 +126,8 @@ impl EndpointResidentBudget {
     }
 
     #[inline]
-    pub(crate) const fn with_route_storage(
-        route_frame_slots: usize,
-        frontier_workspace_bytes: usize,
-    ) -> Self {
+    pub(crate) const fn with_frontier_workspace(frontier_workspace_bytes: usize) -> Self {
         Self {
-            route_frame_slots: Self::compact_u16(route_frame_slots),
             frontier_workspace_bytes: Self::compact_u16(frontier_workspace_bytes),
         }
     }
@@ -285,9 +278,7 @@ where
     lane_end: Cell<u32>,
     transport: T,
     assoc_storage: Cell<Sidecar<u8>>,
-    route_storage: Cell<Sidecar<u8>>,
     assoc: AssocTable,
-    routes: RouteTable,
 }
 
 impl<'rv, 'cfg, T: Transport> Rendezvous<'rv, 'cfg, T>
@@ -392,8 +383,6 @@ where
     lane: Lane,
     /// Role for the port.
     role: u8,
-    /// Number of global roles participating in the attached program.
-    role_count: u8,
     /// Active lease counter borrowed from the parent cluster.
     active_leases: Option<&'lease core::cell::Cell<u32>>,
     /// Rendezvous brand for typed owner construction.
@@ -412,7 +401,6 @@ where
         sid: SessionId,
         lane: Lane,
         role: u8,
-        role_count: u8,
         active_leases: &'lease core::cell::Cell<u32>,
         brand: crate::session::brand::Guard<'cfg>,
     ) -> Self {
@@ -421,7 +409,6 @@ where
             sid,
             lane,
             role,
-            role_count,
             active_leases: Some(active_leases),
             brand,
         }
@@ -439,13 +426,7 @@ where
                 entry alive for `'lease`; published rendezvous mutation uses only
                 interior owner cells. */ unsafe { &*rv_ptr };
             let active_leases = *crate::invariant_some(self.active_leases.as_ref());
-            rv.open_port_guard(
-                self.sid,
-                self.lane,
-                self.role,
-                self.role_count,
-                active_leases,
-            )
+            rv.open_port_guard(self.sid, self.lane, self.role, active_leases)
         };
         let (port, guard) = opened?;
         self.lease = None;

@@ -15,23 +15,16 @@ impl EndpointSelector {
     const KIND_SHIFT: u32 = 56;
 
     const fn outbound(atom: eff::EffAtom) -> Option<Self> {
-        if atom.from >= crate::g::ROLE_DOMAIN_SIZE {
-            None
-        } else {
-            Some(Self(
-                (Self::OUTBOUND << Self::KIND_SHIFT)
-                    | ((atom.from as u64) << 48)
-                    | ((atom.label as u64) << 40)
-                    | atom.payload_schema as u64,
-            ))
-        }
+        Some(Self(
+            (Self::OUTBOUND << Self::KIND_SHIFT)
+                | ((atom.from as u64) << 48)
+                | ((atom.label as u64) << 40)
+                | atom.payload_schema as u64,
+        ))
     }
 
-    const fn inbound_evidence(atom_idx: usize, atom: eff::EffAtom) -> Option<Self> {
-        if atom.from >= crate::g::ROLE_DOMAIN_SIZE
-            || atom.to >= crate::g::ROLE_DOMAIN_SIZE
-            || atom_idx > 0x00ff_ffff
-        {
+    const fn inbound_evidence(atom_idx: usize, _atom: eff::EffAtom) -> Option<Self> {
+        if atom_idx > 0x00ff_ffff {
             None
         } else {
             // The runtime demux witness for inbound operations is the frame

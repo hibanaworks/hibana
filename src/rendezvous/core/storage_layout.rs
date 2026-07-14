@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use super::{AssocTable, EndpointLeaseRecord, Rendezvous, RouteTable, Transport};
+use super::{AssocTable, EndpointLeaseRecord, Rendezvous, Transport};
 mod capacity;
 
 // # Unsafe Owner Contract

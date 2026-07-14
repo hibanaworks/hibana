@@ -164,8 +164,8 @@ where
                 self.commit_prepared_delta(delta);
             }
             RecvCommitPlanKind::Branch { branch } => {
-                self.commit_prepared_delta(delta);
-                self.publish_branch_preview_commit_plan(branch);
+                let committed = self.commit_prepared_delta(delta);
+                self.publish_branch_preview_commit_plan(branch, &committed);
                 let endpoint_meta =
                     TapFrameMeta::new(self.sid.raw(), event.lane, ROLE, event.label);
                 self.emit_endpoint_event(event.event_id, endpoint_meta, event.lane);

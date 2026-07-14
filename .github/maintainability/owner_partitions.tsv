@@ -131,8 +131,6 @@ src/global	src/global/program
 src/global	src/global/program.rs
 src/global	src/global/role_program
 src/global	src/global/role_program.rs
-src/global	src/global/steps.rs
-src/global	src/global/types.rs
 src/global	src/global/typestate
 src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
@@ -187,8 +185,6 @@ src/rendezvous	src/rendezvous/port
 src/rendezvous	src/rendezvous/port.rs
 src/rendezvous	src/rendezvous/recv_frame_receipt.rs
 src/rendezvous	src/rendezvous/recv_frame_receipt
-src/rendezvous	src/rendezvous/tables
-src/rendezvous	src/rendezvous/tables.rs
 src/rendezvous/core	src/rendezvous/core/access_port.rs
 src/rendezvous/core	src/rendezvous/core/access_state.rs
 src/rendezvous/core	src/rendezvous/core/endpoint_leases

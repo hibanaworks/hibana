@@ -241,18 +241,8 @@ where
         entry_idx: usize,
     ) -> OfferEntryEvidence {
         let scope_id = self.offer_entry_scope_id(entry_idx);
-        let offer_lanes = if scope_id.is_none() {
-            crate::global::role_program::LaneSetView::EMPTY
-        } else {
-            self.offer_lane_set_for_scope(scope_id)
-        };
         let mut evidence = OfferEntryEvidence::empty();
-        if !scope_id.is_none()
-            && (self.peek_live_scope_ack(scope_id).is_some()
-                || self
-                    .preview_scope_ack_token_non_consuming(scope_id, offer_lanes)
-                    .is_some())
-        {
+        if !scope_id.is_none() && self.peek_live_scope_ack(scope_id).is_some() {
             evidence = evidence.with_ack();
         }
         if !scope_id.is_none() && self.scope_has_ready_arm_evidence(scope_id) {

@@ -50,14 +50,13 @@ fn allocator_snapshot_source(
         .collect::<Vec<_>>();
     format!(
         "def {name} : Hibana.LeaseAllocatorSnapshot := {{\n  generation := {},\n  \
-         tableBytes := {},\n  assocBytes := {},\n  routeBytes := {},\n  \
+         tableBytes := {},\n  assocBytes := {},\n  \
          resolverBytes := {},\n  \
          imageFrontier := {},\n  \
          workspaceBytes := {},\n  endpointFloor := {},\n  activeLaneAttachments := {},\n  associationWitnesses := [\n{}\n  ],\n  slots := [\n{}\n  ]\n}}\n",
         rv.endpoint_lease_generation.get(),
         table.bytes(),
         rv.assoc_storage.get().bytes(),
-        rv.route_storage.get().bytes(),
         rv.resolver_storage_sidecar().bytes(),
         rv.image_frontier.get(),
         rv.frontier_workspace_bytes.get(),
@@ -165,7 +164,6 @@ fn allocation_failure_certificate_source() -> String {
                 64,
                 core::mem::align_of::<usize>(),
                 crate::rendezvous::core::EndpointResidentBudget {
-                    route_frame_slots: 1,
                     frontier_workspace_bytes: 0,
                 },
             )
@@ -337,7 +335,6 @@ fn export_runtime_certificates_for_lean() {
     let mut slab = [0u8; 8192];
     let rv = init_test_rendezvous(&mut slab);
     let resident_budget = crate::rendezvous::core::EndpointResidentBudget {
-        route_frame_slots: 4,
         frontier_workspace_bytes: 32,
     };
     let (_lease, _generation, endpoint_offset, endpoint_bytes) = rv
@@ -356,7 +353,7 @@ fn export_runtime_certificates_for_lean() {
     );
     assert_eq!(endpoint_bytes, 128);
     rv.ensure_endpoint_resident_capacity()
-        .expect("proof route and workspace storage");
+        .expect("proof workspace storage");
     rv.ensure_core_lane_tables_for_assoc_entries(3, 3)
         .expect("proof association storage");
     rv.ensure_dynamic_resolver_capacity(2)

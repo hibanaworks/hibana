@@ -345,9 +345,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "transport-contract-owner \\\n  6 \\\n  6 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport::tests::transport_contract_"
             )
             && miri_gate.contains(
-                "route-authority-storage-owner \\\n  3 \\\n  3 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::tests::route_authority_storage_"
-            )
-            && miri_gate.contains(
                 "rolled-causal-exit-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  rolled_same_label_recv_requires_causal_exit_handoff"
             )
             && miri_gate.contains(
@@ -363,7 +360,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "session-waiter-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  same_lane_session_waiters_are_isolated"
             )
             && miri_gate.contains(
-                "route-branch-send-owner \\\n  5 \\\n  5 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
+                "route-branch-send-owner \\\n  6 \\\n  6 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
             )
             && miri_gate.contains(
                 "resolved-send-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --test send_route_authority"
@@ -381,7 +378,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
             )
             && miri_gate.contains(
-                "resident-sidecar-owner \\\n  23 \\\n  22 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
+                "resident-sidecar-owner \\\n  16 \\\n  15 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate.contains(
                 "resident-descriptor-validation \\\n  40 \\\n  40 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"
@@ -409,7 +406,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_"
             )
             && miri_gate.contains(
-                "compiled-program-atom-validation \\\n  7 \\\n  7 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_rejects_"
+                "compiled-program-atom-validation \\\n  7 \\\n  7 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_"
             )
             && miri_gate.contains(
                 "program-image-storage-validation \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::program_image_"
@@ -419,6 +416,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("rolled_resolved_same_label_reenters_with_selected_schema")
             && miri_gate.contains("rolled-nested-resolver-reentry-owner")
             && miri_gate.contains("rolled_nested_resolved_route_reenters_asymmetric_paths")
+            && miri_gate.contains("intrinsic-route-in-band-owner")
+            && miri_gate.contains(
+                "intrinsic_route_passive_same_label_recv_commits_by_frame_evidence"
+            )
             && miri_gate.contains("miri_ignored_total=$((miri_ignored_total + expected_ignored))")
             && miri_gate.contains(
                 "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"

@@ -56,10 +56,9 @@ for harness in \
   endpoint_gap_placement_is_aligned_and_bounded \
   endpoint_lease_storage_layout_is_bounded_and_exact \
   association_storage_layout_is_bounded_and_exact \
-  route_storage_layout_is_bounded_and_exact \
   packed_sidecar_range_is_aligned_and_monotonic \
   packed_sidecar_pair_is_aligned_and_disjoint \
-  four_resident_sidecars_compact_before_all_source_ranges \
+  three_resident_sidecars_compact_before_all_source_ranges \
   sidecar_overlap_is_symmetric_and_exact \
   resolver_storage_layout_is_bounded_and_exact; do
   if ! grep -Eq "^fn ${harness}\(\)" \
@@ -94,21 +93,6 @@ done
 for harness in public_operation_transition_classifier_is_exact; do
   if ! grep -Eq "^fn ${harness}\\(\\)" \
     "${ROOT_DIR}/src/endpoint/kernel/core/public_types/kani.rs"; then
-    echo "Kani gate missing proof harness: ${harness}" >&2
-    exit 1
-  fi
-done
-
-for harness in \
-  selected_local_participant_mask_is_exact_intersection \
-  active_route_entry_cannot_be_overwritten \
-  empty_route_entry_begin_is_exact \
-  active_route_entry_rejects_conflicting_arm_observation \
-  active_route_entry_observation_is_arm_preserving_and_monotone \
-  route_role_consumption_is_affine_and_arm_preserving \
-  route_entry_initial_mask_is_exact_over_selected_participants; do
-  if ! grep -Eq "^fn ${harness}\(\)" \
-    "${ROOT_DIR}/src/rendezvous/tables/route_table/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
     exit 1
   fi
@@ -167,6 +151,18 @@ for harness in \
 done
 
 for harness in \
+  packed_state_preserves_full_count_and_fault_code \
+  attachment_count_accepts_exact_full_role_domain \
+  attachment_increment_preserves_packed_fault_code \
+  attachment_count_allows_256_and_rejects_257; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/rendezvous/association/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
   packed_event_conflict_decoding_accepts_exact_domain \
   optional_route_arm_decoding_accepts_exact_domain \
   packed_local_dependency_decoding_accepts_exact_domain \
@@ -205,7 +201,7 @@ for harness in scope_id_decoding_accepts_exact_compact_domain; do
   fi
 done
 
-for harness in unique_controller_role_accepts_exact_single_bit_domain; do
+for harness in controller_merge_accepts_exact_single_role_domain; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/const_dsl/endpoint_controller/kani.rs"; then
     echo "Kani gate missing proof harness: ${harness}" >&2
@@ -244,7 +240,8 @@ for harness in \
 done
 
 for harness in \
-  route_resolver_row_decoding_accepts_exact_domain \
+  route_resolver_row_decoding_accepts_exact_range_domain \
+  canonical_route_participant_identity_accepts_full_u8_role_domain \
   dynamic_route_resolver_identity_is_scope_and_id; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/compiled/images/image/route_resolvers/kani.rs"; then
@@ -316,22 +313,14 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness endpoint_gap_placement_is_aligned_and_bounded \
   --harness endpoint_lease_storage_layout_is_bounded_and_exact \
   --harness association_storage_layout_is_bounded_and_exact \
-  --harness route_storage_layout_is_bounded_and_exact \
   --harness packed_sidecar_range_is_aligned_and_monotonic \
   --harness packed_sidecar_pair_is_aligned_and_disjoint \
-  --harness four_resident_sidecars_compact_before_all_source_ranges \
+  --harness three_resident_sidecars_compact_before_all_source_ranges \
   --harness sidecar_overlap_is_symmetric_and_exact \
   --harness resolver_storage_layout_is_bounded_and_exact \
   --harness route_arm_decoding_accepts_exact_binary_domain \
   --harness single_ready_mask_decoding_is_exact \
   --harness public_operation_transition_classifier_is_exact \
-  --harness selected_local_participant_mask_is_exact_intersection \
-  --harness active_route_entry_cannot_be_overwritten \
-  --harness empty_route_entry_begin_is_exact \
-  --harness active_route_entry_rejects_conflicting_arm_observation \
-  --harness active_route_entry_observation_is_arm_preserving_and_monotone \
-  --harness route_role_consumption_is_affine_and_arm_preserving \
-  --harness route_entry_initial_mask_is_exact_over_selected_participants \
   --harness frame_header_roundtrip_preserves_every_field \
   --harness frame_header_identity_is_exact_and_injective \
   --harness builtin_u8_i8_codecs_are_exact \
@@ -352,6 +341,10 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness session_fault_encoding_roundtrip_is_exact \
   --harness session_fault_encoding_is_injective \
   --harness invalid_session_fault_encoding_is_fail_fast \
+  --harness packed_state_preserves_full_count_and_fault_code \
+  --harness attachment_count_accepts_exact_full_role_domain \
+  --harness attachment_increment_preserves_packed_fault_code \
+  --harness attachment_count_allows_256_and_rejects_257 \
   --harness packed_event_conflict_decoding_accepts_exact_domain \
   --harness optional_route_arm_decoding_accepts_exact_domain \
   --harness packed_local_dependency_decoding_accepts_exact_domain \
@@ -368,7 +361,7 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness role_image_fit_probe_rejects_undersized_storage \
   --harness role_image_fit_probe_rejects_plan_mismatch \
   --harness scope_id_decoding_accepts_exact_compact_domain \
-  --harness unique_controller_role_accepts_exact_single_bit_domain \
+  --harness controller_merge_accepts_exact_single_role_domain \
   --harness outbound_selector_identity_is_exact_public_send_contract \
   --harness observer_path_decision_has_exact_merge_domain \
   --harness route_controller_or_in_band_evidence_is_exact_acceptance_domain \
@@ -376,7 +369,8 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness sender_change_without_causal_handoff_is_rejected \
   --harness roll_reentry_causal_closure_rejects_open_cycle \
   --harness roll_reentry_causal_closure_accepts_closed_cycle \
-  --harness route_resolver_row_decoding_accepts_exact_domain \
+  --harness route_resolver_row_decoding_accepts_exact_range_domain \
+  --harness canonical_route_participant_identity_accepts_full_u8_role_domain \
   --harness dynamic_route_resolver_identity_is_scope_and_id \
   --harness resolver_registration_key_is_program_and_id \
   --harness resolver_registration_key_rejects_intrinsic_id \

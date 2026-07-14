@@ -3,8 +3,9 @@ use crate::global::compiled::images::image::blob_storage::{
     ProgramImageBytes, scope_marker_identity_tag,
 };
 use crate::global::compiled::images::image::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
+    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
+    ProgramImageColumns, ProgramImageFacts,
 };
 use crate::global::const_dsl::{EffList, ReentryMark, ScopeEvent};
 use crate::global::role_program::ColumnRange;
@@ -20,15 +21,15 @@ static LAST_BYTE_DIFFERENT: [u8; 27] = [
 ];
 
 fn route_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 3, 0)
+    ProgramImageColumns::new(0, 0, 27, 0)
 }
 
 fn identity_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(1, 0, 1)
+    ProgramImageColumns::new(1, 0, 0, 1)
 }
 
 fn alternate_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(2, 0, 1)
+    ProgramImageColumns::new(2, 0, 5, 0)
 }
 
 fn program<const N: usize>(
@@ -43,13 +44,17 @@ fn program<const N: usize>(
 fn program_image_columns_are_canonical_for_exact_count_domain() {
     let atom_len: u16 = kani::any();
     let route_resolver_len: u16 = kani::any();
+    let route_participant_len: u16 = kani::any();
     let scope_marker_len: u16 = kani::any();
     let atom_bytes = usize::from(atom_len) * PROGRAM_IMAGE_ATOM_STRIDE;
     let route_resolver_bytes =
         usize::from(route_resolver_len) * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE;
+    let route_participant_bytes =
+        usize::from(route_participant_len) * PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE;
     let scope_marker_bytes = usize::from(scope_marker_len) * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
     let route_resolver_offset = atom_bytes;
-    let scope_marker_offset = route_resolver_offset + route_resolver_bytes;
+    let route_participant_offset = route_resolver_offset + route_resolver_bytes;
+    let scope_marker_offset = route_participant_offset + route_participant_bytes;
     let blob_len = scope_marker_offset + scope_marker_bytes;
     let valid = blob_len <= usize::from(u16::MAX);
 
@@ -59,12 +64,15 @@ fn program_image_columns_are_canonical_for_exact_count_domain() {
         let columns = ProgramImageColumns::new(
             usize::from(atom_len),
             usize::from(route_resolver_len),
+            usize::from(route_participant_len),
             usize::from(scope_marker_len),
         );
         assert!(columns.atoms().offset == 0);
         assert!(columns.atoms().len == atom_len);
         assert!(columns.route_resolvers().offset as usize == route_resolver_offset);
         assert!(columns.route_resolvers().len == route_resolver_len);
+        assert!(columns.route_participants().offset as usize == route_participant_offset);
+        assert!(columns.route_participants().len == route_participant_len);
         assert!(columns.scope_markers().offset as usize == scope_marker_offset);
         assert!(columns.scope_markers().len == scope_marker_len);
         assert!(columns.blob_len() == blob_len);
@@ -76,22 +84,30 @@ fn program_image_columns_are_canonical_for_exact_count_domain() {
 fn program_image_columns_reject_total_byte_overflow() {
     let atom_len: u16 = kani::any();
     let route_resolver_len: u16 = kani::any();
+    let route_participant_len: u16 = kani::any();
     let scope_marker_len: u16 = kani::any();
     let blob_len = usize::from(atom_len) * PROGRAM_IMAGE_ATOM_STRIDE
         + usize::from(route_resolver_len) * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE
+        + usize::from(route_participant_len) * PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE
         + usize::from(scope_marker_len) * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
     let overflow = blob_len > usize::from(u16::MAX);
 
     kani::cover!(overflow);
     kani::cover!(!overflow);
-    let (atom_len, route_resolver_len, scope_marker_len) = if overflow {
-        (atom_len, route_resolver_len, scope_marker_len)
+    let (atom_len, route_resolver_len, route_participant_len, scope_marker_len) = if overflow {
+        (
+            atom_len,
+            route_resolver_len,
+            route_participant_len,
+            scope_marker_len,
+        )
     } else {
-        (u16::MAX, u16::MAX, u16::MAX)
+        (u16::MAX, u16::MAX, u16::MAX, u16::MAX)
     };
     let _ = ProgramImageColumns::new(
         usize::from(atom_len),
         usize::from(route_resolver_len),
+        usize::from(route_participant_len),
         usize::from(scope_marker_len),
     );
 }
@@ -99,7 +115,7 @@ fn program_image_columns_reject_total_byte_overflow() {
 #[kani::proof]
 fn program_image_fit_probe_rejects_undersized_storage() {
     let source = EffList::new();
-    let columns = ProgramImageColumns::new(1, 0, 0);
+    let columns = ProgramImageColumns::new(1, 0, 0, 0);
     assert!(ProgramImageBytes::<10>::from_image_if_fits(&source, columns).is_none());
 }
 
@@ -107,7 +123,7 @@ fn program_image_fit_probe_rejects_undersized_storage() {
 #[kani::should_panic]
 fn program_image_constructor_rejects_undersized_storage() {
     let source = EffList::new();
-    let columns = ProgramImageColumns::new(1, 0, 0);
+    let columns = ProgramImageColumns::new(1, 0, 0, 0);
     let _ = ProgramImageBytes::<10>::from_image(&source, columns);
 }
 
@@ -211,7 +227,7 @@ fn compiled_program_blob_comparison_matches_array_equality() {
         compared and neither ref escapes this proof harness. */
         core::mem::transmute(&right_bytes)
     };
-    let facts = ProgramImageFacts { role_count: 2 };
+    let facts = ProgramImageFacts { max_role: 1 };
     let left = program(left_static, facts, identity_columns());
     let right = program(right_static, facts, identity_columns());
     let expected = left_bytes == right_bytes;
@@ -223,12 +239,12 @@ fn compiled_program_blob_comparison_matches_array_equality() {
 
 #[kani::proof]
 fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
-    let facts = ProgramImageFacts { role_count: 2 };
+    let facts = ProgramImageFacts { max_role: 1 };
     let canonical = program(&CANONICAL_IMAGE, facts, route_columns());
     let same_image_at_another_address = program(&SAME_IMAGE, facts, route_columns());
     let different_facts = program(
         &SAME_IMAGE,
-        ProgramImageFacts { role_count: 3 },
+        ProgramImageFacts { max_role: 2 },
         route_columns(),
     );
     let different_columns = program(&SAME_IMAGE, facts, alternate_columns());
@@ -256,13 +272,11 @@ fn program_atom_row_decoding_accepts_exact_domain() {
     let payload_schema: u32 = kani::any();
     let origin: u8 = kani::any();
     let lane: u8 = kani::any();
-    let role_count: u8 = kani::any();
+    let max_role: u8 = kani::any();
 
     let expected = (eff_idx as usize) < crate::eff::meta::MAX_EFF_NODES
-        && role_count != 0
-        && role_count <= crate::g::ROLE_DOMAIN_SIZE
-        && from < role_count
-        && to < role_count
+        && from <= max_role
+        && to <= max_role
         && origin <= 1;
     let decoded = ProgramAtomRow::decode(
         eff_idx,
@@ -274,7 +288,7 @@ fn program_atom_row_decoding_accepts_exact_domain() {
             origin,
             lane,
         },
-        role_count,
+        max_role,
     );
 
     assert!(decoded.is_some() == expected);
@@ -312,8 +326,8 @@ fn compiled_program_atom_blob_decoding_preserves_every_schema_bit() {
     };
     let row = program(
         bytes,
-        ProgramImageFacts { role_count: 2 },
-        ProgramImageColumns::new(1, 0, 0),
+        ProgramImageFacts { max_role: 1 },
+        ProgramImageColumns::new(1, 0, 0, 0),
     )
     .atom_at(0)
     .expect("valid symbolic atom");

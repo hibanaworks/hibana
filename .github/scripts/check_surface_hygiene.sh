@@ -645,7 +645,10 @@ check_absent "\\b(MAX_FIRST_RECV_DISPATCH|FREE_REGION_CAPACITY|FreeRegion|free_r
   src
 check_absent "^type[[:space:]]+[A-Za-z0-9_]*(Step|Steps|Arm|Decision)[A-Za-z0-9_]*[[:space:]]*=" \
   "step/composition alias residue in production source" \
-  src/global/steps.rs
+  src/global \
+  --glob '!**/tests.rs' \
+  --glob '!**/*_tests.rs' \
+  --glob '!**/tests/**'
 check_absent "\\bEndpointBinding\\b" \
   "endpoint binding synonym alias residue in production source" \
   src/endpoint.rs src/endpoint/send.rs src/endpoint/carrier.rs

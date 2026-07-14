@@ -337,11 +337,9 @@ where
         frame_evidence: FrameEvidenceResolution,
     ) -> Poll<RecvResult<PassiveRouteAuthorityOutcome>> {
         let selection = state.selection();
-        let offer_lanes = self.offer_lane_set_for_scope(selection.scope_id);
         match self.poll_passive_route_evidence(
             PassiveRouteEvidenceInput {
                 selection,
-                offer_lanes,
                 frame_evidence,
             },
             PassiveRouteEvidenceContext::new(
@@ -385,10 +383,7 @@ where
         {
             return Poll::Ready(Ok(RouteAuthorityOutcome::RestartFrontier));
         }
-        let offer_lanes = self.offer_lane_set_for_scope(selection.scope_id);
-        if let Some(authority) =
-            self.poll_route_authority_from_offer_lanes(selection.scope_id, offer_lanes)
-        {
+        if let Some(authority) = self.poll_route_authority(selection.scope_id) {
             return Poll::Ready(Ok(RouteAuthorityOutcome::Resolved(authority)));
         }
         match self.defer_missing_route_authority(
@@ -409,17 +404,10 @@ where
         }
     }
 
-    pub(super) fn poll_route_authority_from_offer_lanes(
+    pub(super) fn poll_route_authority(
         &self,
         scope_id: crate::global::const_dsl::ScopeId,
-        offer_lanes: crate::global::role_program::LaneSetView<'_>,
     ) -> Option<RouteAuthorityResolution> {
-        if let Some(arm) = self.try_poll_route_arm_selection_immediate(scope_id, offer_lanes) {
-            return Some(RouteAuthorityResolution {
-                route_token: RouteArmToken::from_ack(arm),
-                commit_evidence: RouteArmCommitEvidence::CachedOrDemux,
-            });
-        }
         let is_dynamic_route_scope = self.cursor.route_scope_resolver(scope_id).is_some();
         if is_dynamic_route_scope {
             return None;

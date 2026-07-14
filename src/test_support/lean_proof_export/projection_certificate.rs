@@ -295,7 +295,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
         let mismatched_controller = if controller == u8::MAX {
             0
         } else {
-            (controller + 1) % program.role_count() as u8
+            controller + 1
         };
         assert_ne!(controller, mismatched_controller);
         format!(
@@ -334,7 +334,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
          roleCount := {}\n    role := {ROLE}\n    logicalLaneCount := {}\n    activeLaneCount := {}\n    \
          endpointLaneSlotCount := {}\n    maxRouteStackDepth := {}\n    firstActiveLane := {}\n    \
          activeLaneStart := {}\n    activeLaneLength := {}\n    atomCount := {}\n    routeResolverCount := {}\n    \
-         scopeMarkerCount := {}\n    eventCount := {}\n    dependencyRowCount := {}\n    \
+         routeParticipantCount := {}\n    scopeMarkerCount := {}\n    eventCount := {}\n    dependencyRowCount := {}\n    \
          conflictRowCount := {}\n    routeScopeCount := {}\n    residentBoundaryCount := {}\n    \
          laneBitCount := {}\n    routeArmLaneStepCount := {}\n    routeCommitRowCount := {}\n    \
          rollScopeCount := {}\n    \
@@ -386,6 +386,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
         resident.active_lane_row.len(),
         program.proof_atom_count(),
         program_columns.route_resolver_count(),
+        program_columns.route_participant_count(),
         program_columns.scope_marker_count(),
         descriptor.local_len(),
         role_columns.dependencies.len,
@@ -415,7 +416,7 @@ pub(super) fn progress_certificate_source(choreo: &str, role: u8, name: &str) ->
 
 pub(super) fn projectability_certificate_source(
     choreo: &str,
-    role_count: u8,
+    role_count: usize,
     name: &str,
 ) -> String {
     format!(
@@ -434,12 +435,12 @@ pub(super) fn projectability_certificate_source(
 
 pub(super) fn verified_protocol_certificate_source(
     choreo: &str,
-    role_count: u8,
+    role_count: usize,
     projectability: &str,
     descriptors: &[&str],
     name: &str,
 ) -> String {
-    assert_eq!(descriptors.len(), usize::from(role_count));
+    assert_eq!(descriptors.len(), role_count);
     let descriptor_list = descriptors
         .iter()
         .map(|descriptor| format!("{descriptor}Exact"))

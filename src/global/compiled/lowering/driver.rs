@@ -6,18 +6,8 @@ use crate::{
 use super::super::images::program::{CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES};
 const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
 const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);
-const MAX_TRACKED_ROLE_FACTS: usize = u16::BITS as usize;
 
 mod impls;
-
-#[inline(always)]
-const fn checked_role_index(role: u8) -> usize {
-    let role = role as usize;
-    if role >= MAX_TRACKED_ROLE_FACTS {
-        panic!("role index exceeds tracked lowering facts");
-    }
-    role
-}
 
 #[inline(always)]
 const fn increment_compact_count(value: u16) -> u16 {
@@ -34,15 +24,9 @@ struct ProgramImageData {
 }
 
 #[derive(Clone)]
-struct ProgramRoleImageData {
-    facts: [RoleCompiledFacts; MAX_TRACKED_ROLE_FACTS],
-    count: u8,
-}
-
-#[derive(Clone)]
 pub(crate) struct CompiledProgramImage {
     program: ProgramImageData,
-    roles: ProgramRoleImageData,
+    max_role: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -63,29 +47,6 @@ impl ProgramLoweringFacts {
         eff_count: 0,
         parallel_enter_count: 0,
         route_scope_count: 0,
-    };
-}
-
-#[derive(Clone, Copy)]
-struct RoleCompiledFacts {
-    local_step_count: u16,
-    resident_row_count: u16,
-    resident_row_lane_entry_count: u16,
-    resident_row_lane_word_count: u16,
-    active_lane_count: u16,
-    endpoint_lane_slot_count: u16,
-    logical_lane_count: u16,
-}
-
-impl RoleCompiledFacts {
-    const EMPTY: Self = Self {
-        local_step_count: 0,
-        resident_row_count: 0,
-        resident_row_lane_entry_count: 0,
-        resident_row_lane_word_count: 0,
-        active_lane_count: 0,
-        endpoint_lane_slot_count: 0,
-        logical_lane_count: 0,
     };
 }
 

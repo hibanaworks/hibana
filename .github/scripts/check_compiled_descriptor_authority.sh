@@ -210,7 +210,7 @@ if project_match is None:
     fail("g project entry is not a recognizable resident projection boundary")
 
 project_body = project_match.group("body")
-role_validation = project_body.find("if ROLE >= ROLE_DOMAIN_SIZE")
+role_validation = project_body.find("if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE)")
 role_projection = project_body.find("role_projection_image_for::<ROLE, Steps>()")
 role_program_publication = project_body.find("role_program_from_image(image)")
 if role_validation < 0 or role_projection < 0 or role_program_publication < 0:
@@ -220,12 +220,12 @@ if not (role_validation < role_projection < role_program_publication):
 for forbidden in [
     "match ROLE {",
     "RoleProjection::<ROLE, Steps>",
-    "role_projection_image_for::<16",
+    "role_projection_image_for::<256",
     "_ => role_projection_image_for::<0, Steps>()",
 ]:
     if forbidden in project_body:
         fail(f"g project entry regressed to generic or out-of-domain projection instantiation: {forbidden}")
-for role in range(16):
+for role in range(256):
     forbidden = f"role_projection_image_for::<{role}, Steps>()"
     if forbidden in project_body:
         fail(f"g project entry must not re-grow hand-written descriptor arm {role}")

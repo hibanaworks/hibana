@@ -1,7 +1,7 @@
 use super::{
     AssocTable, Cell, Lane, LaneRelease, PhantomData, Rendezvous, RendezvousAccessState,
-    RendezvousId, RouteTable, RuntimeResources, SessionId, Sidecar, TapRing, Transport, UnsafeCell,
-    emit, events,
+    RendezvousId, RuntimeResources, SessionId, Sidecar, TapRing, Transport, UnsafeCell, emit,
+    events,
 };
 use crate::{observe::core::TapEvent, runtime_core::consts::TAP_EVENTS};
 
@@ -114,9 +114,7 @@ where
             core::ptr::addr_of_mut!((*dst).lane_end).write(Cell::new(lane_range.end as u32));
             core::ptr::addr_of_mut!((*dst).transport).write(transport);
             core::ptr::addr_of_mut!((*dst).assoc_storage).write(Cell::new(Sidecar::EMPTY));
-            core::ptr::addr_of_mut!((*dst).route_storage).write(Cell::new(Sidecar::EMPTY));
             AssocTable::init_empty(core::ptr::addr_of_mut!((*dst).assoc));
-            RouteTable::init_empty(core::ptr::addr_of_mut!((*dst).routes));
         }
         Some(dst)
     }
@@ -140,11 +138,7 @@ where
         source_role: u8,
         cause: crate::rendezvous::SessionFaultKind,
     ) -> crate::rendezvous::SessionFaultKind {
-        if source_role >= crate::g::ROLE_DOMAIN_SIZE {
-            crate::invariant();
-        }
         let kind = self.assoc.poison_session(sid, cause);
-        self.routes.reset_session(sid);
         self.wake_session_endpoint_waiters(sid, source_role);
         kind
     }
@@ -153,9 +147,6 @@ where
         let remaining = self.assoc.decrement(lane, sid);
         if remaining > 0 {
             return LaneRelease::StillHeld;
-        }
-        if !self.assoc.has_session(sid) {
-            self.routes.reset_session(sid);
         }
         LaneRelease::Released
     }

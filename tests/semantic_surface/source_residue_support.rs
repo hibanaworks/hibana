@@ -75,10 +75,13 @@ fn test_transport_state_has_one_safe_shared_owner() {
     assert!(transport.contains("state: Rc<RefCell<TestState>>"));
     assert!(transport.contains("state: &'a RefCell<TestState>"));
     assert!(transport.contains("state: Rc::new(RefCell::new(TestState::new()))"));
+    assert!(transport.contains("roles: Vec<RoleSlot>"));
     for forbidden in [
         "TransportPool",
         "TransportSlot",
         "TEST_TRANSPORT_POOL_CAPACITY",
+        "TEST_ROLE_CAPACITY",
+        "[RoleState;",
         "UnsafeCell",
         "MaybeUninit",
         "thread_local!",

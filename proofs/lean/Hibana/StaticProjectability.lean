@@ -736,7 +736,7 @@ def Choreo.observerPathsMergeable
     (left.roleEndpointSelectorsFrom role leftBase)
     (right.roleEndpointSelectorsFrom role rightBase)
 
-private def checkRouteSiteProjectability
+def checkRouteSiteProjectability
     (roleCount : Nat)
     (authority : RouteAuthority)
     (leftBase rightBase : Nat)
@@ -766,6 +766,26 @@ theorem accepted_dynamic_route_has_unique_controller
   cases controller : Choreo.routeController? left right with
   | none => simp [controller] at accepted
   | some role => exact ⟨role, rfl⟩
+
+/-- Every non-controller role admitted at a dynamic route learns the selected
+arm from occurrence-identified inbound evidence. No runtime-local publication
+cell is part of the projectability argument. -/
+theorem accepted_dynamic_route_knowledge_is_controller_or_inbound
+    {roleCount resolver leftBase rightBase : Nat}
+    {left right : Choreo}
+    (accepted : checkRouteSiteProjectability roleCount (.dynamic resolver)
+      leftBase rightBase left right = true) :
+    ∃ controller,
+      Choreo.routeController? left right = some controller /\
+      ∀ role, role < roleCount ->
+        role = controller ∨
+          left.observerPathsMergeable role leftBase rightBase right = true := by
+  obtain ⟨controller, controllerEq⟩ :=
+    accepted_dynamic_route_has_unique_controller accepted
+  unfold checkRouteSiteProjectability at accepted
+  rw [controllerEq] at accepted
+  refine ⟨controller, controllerEq, ?_⟩
+  simpa using accepted
 
 def Choreo.checkRouteKnowledgeFrom
     (roleCount base : Nat) : Choreo -> Bool

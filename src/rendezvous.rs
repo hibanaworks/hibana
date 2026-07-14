@@ -9,6 +9,5 @@ pub(crate) mod core;
 pub(crate) mod error;
 pub(crate) mod port;
 mod recv_frame_receipt;
-pub(crate) mod tables;
 
 pub(crate) use association::SessionFaultKind;

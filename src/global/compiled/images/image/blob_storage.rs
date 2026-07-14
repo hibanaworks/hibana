@@ -1,15 +1,15 @@
 use super::columns::{
-    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-    PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
-    ROUTE_ORDINAL_BYTES, insert_route_ordinal,
+    PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
+    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
+    ProgramImageColumns, ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
 };
 use crate::{
     eff::{EffAtom, EffKind},
     global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
         DynamicRouteResolver, EffList, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, ScopeEvent,
-        ScopeId, ScopeKind, ScopeMarker, first_visible_controller_mask,
-        route_arm_ranges_from_first_enter, unique_controller_role,
+        ScopeId, ScopeKind, ScopeMarker, first_visible_controller,
+        route_arm_ranges_from_first_enter,
     },
 };
 
@@ -115,8 +115,13 @@ impl<const N: usize> ProgramImageBytes<N> {
         scope: ScopeId,
         controller_role: u8,
         resolver: Option<DynamicRouteResolver>,
-        arm_participant_masks: [u16; 2],
+        participant_boundaries: [u16; 3],
     ) {
+        let left_len = participant_boundaries[1] - participant_boundaries[0];
+        let right_len = participant_boundaries[2] - participant_boundaries[1];
+        if left_len == 0 || left_len > 256 || right_len == 0 || right_len > 256 {
+            crate::invariant();
+        }
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
         self.write_u16(out, scope.raw());
         let resolver_id = match resolver {
@@ -125,45 +130,69 @@ impl<const N: usize> ProgramImageBytes<N> {
         };
         self.write_u16(out + 2, resolver_id);
         self.write_u8(out + 4, controller_role);
-        self.write_u16(out + 5, arm_participant_masks[0]);
-        self.write_u16(out + 7, arm_participant_masks[1]);
+        self.write_u16(out + 5, participant_boundaries[0]);
+        self.write_u8(out + 7, (left_len - 1) as u8);
     }
 
-    const fn route_arm_participant_mask(eff_list: &EffList, start: usize, end: usize) -> u16 {
-        let mut mask = 0u16;
+    const fn next_route_arm_participant(
+        eff_list: &EffList,
+        start: usize,
+        end: usize,
+        role_floor: u16,
+    ) -> Option<u8> {
+        let mut candidate = None;
         let mut idx = start;
         while idx < end && idx < eff_list.len() {
             if matches!(eff_list.node_at(idx).kind, EffKind::Atom) {
                 let atom = eff_list.node_at(idx).atom_data();
-                if atom.from >= crate::g::ROLE_DOMAIN_SIZE || atom.to >= crate::g::ROLE_DOMAIN_SIZE
+                let from = atom.from as u16;
+                if from >= role_floor
+                    && match candidate {
+                        Some(current) => atom.from < current,
+                        None => true,
+                    }
                 {
-                    crate::invariant();
+                    candidate = Some(atom.from);
                 }
-                mask |= 1u16 << atom.from;
-                mask |= 1u16 << atom.to;
+                let to = atom.to as u16;
+                if to >= role_floor
+                    && match candidate {
+                        Some(current) => atom.to < current,
+                        None => true,
+                    }
+                {
+                    candidate = Some(atom.to);
+                }
             }
             idx += 1;
         }
-        if mask == 0 {
-            crate::invariant();
-        }
-        mask
+        candidate
     }
 
-    const fn route_arm_participant_masks(
+    const fn write_route_arm_participants(
+        &mut self,
+        column: ProgramColumnRange,
+        mut row: usize,
         eff_list: &EffList,
-        route_enter_marker_idx: usize,
-    ) -> [u16; 2] {
-        let markers = eff_list.scope_markers();
-        if route_enter_marker_idx >= markers.len() {
+        start: usize,
+        end: usize,
+    ) -> usize {
+        let first_row = row;
+        let mut role_floor = 0u16;
+        while role_floor <= u8::MAX as u16 {
+            let Some(role) = Self::next_route_arm_participant(eff_list, start, end, role_floor)
+            else {
+                break;
+            };
+            let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE);
+            self.write_u8(out, role);
+            row += 1;
+            role_floor = role as u16 + 1;
+        }
+        if row == first_row {
             crate::invariant();
         }
-        let (_, left_start, left_end, _, right_start, right_end) =
-            route_arm_ranges_from_first_enter(markers, route_enter_marker_idx);
-        [
-            Self::route_arm_participant_mask(eff_list, left_start, left_end),
-            Self::route_arm_participant_mask(eff_list, right_start, right_end),
-        ]
+        row
     }
 
     const fn write_scope_marker(
@@ -189,9 +218,10 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
         let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
             route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
-        let mask = first_visible_controller_mask(eff_list, arm0_start, arm0_end)
-            | first_visible_controller_mask(eff_list, arm1_start, arm1_end);
-        match unique_controller_role(mask) {
+        match first_visible_controller(eff_list, arm0_start, arm0_end)
+            .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
+            .unique()
+        {
             Some(role) => role,
             None => crate::invariant(),
         }
@@ -235,6 +265,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
 
         let mut route_row = 0usize;
+        let mut participant_row = 0usize;
         let mut seen_route_ordinals = [0u8; ROUTE_ORDINAL_BYTES];
         idx = 0;
         while idx < markers.len() {
@@ -249,20 +280,45 @@ impl<const N: usize> ProgramImageBytes<N> {
                 }
                 let controller = Self::route_controller_role(eff_list, idx);
                 let resolver = eff_list.resolver_for_scope(marker.scope_id);
-                let arm_participant_masks = Self::route_arm_participant_masks(eff_list, idx);
+                let (_, left_start, left_end, _, right_start, right_end) =
+                    route_arm_ranges_from_first_enter(markers, idx);
+                let participant_start = participant_row;
+                participant_row = out.write_route_arm_participants(
+                    columns.route_participants(),
+                    participant_row,
+                    eff_list,
+                    left_start,
+                    left_end,
+                );
+                let participant_mid = participant_row;
+                participant_row = out.write_route_arm_participants(
+                    columns.route_participants(),
+                    participant_row,
+                    eff_list,
+                    right_start,
+                    right_end,
+                );
+                if participant_row > u16::MAX as usize {
+                    crate::invariant();
+                }
                 out.write_route_resolver(
                     columns.route_resolvers(),
                     route_row,
                     marker.scope_id,
                     controller,
                     resolver,
-                    arm_participant_masks,
+                    [
+                        participant_start as u16,
+                        participant_mid as u16,
+                        participant_row as u16,
+                    ],
                 );
                 route_row += 1;
             }
             idx += 1;
         }
         if route_row != columns.route_resolver_count()
+            || participant_row != columns.route_participant_count()
             || markers.len() != columns.scope_marker_count()
         {
             crate::invariant();

@@ -130,14 +130,6 @@ where
                 ..EndpointLeaseSlot::EMPTY
             },
         );
-        let required_route_frames = self.resident_route_frame_slots_floor();
-        if self.routes.route_slots() == 0 {
-            if required_route_frames != 0 {
-                crate::invariant();
-            }
-        } else {
-            self.shrink_route_table_capacity(required_route_frames);
-        }
         self.shrink_assoc_table_capacity(self.active_lane_attachment_count());
         self.shrink_lane_range(self.assoc.active_lane_slots());
         self.shrink_endpoint_lease_capacity();

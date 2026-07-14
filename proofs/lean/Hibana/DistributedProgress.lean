@@ -412,7 +412,7 @@ theorem distributed_progress_certificate_covers_reachable
       exact (closed.2.2.2.2.2 _ inductionHypothesis).2.2 _ successor
 
 /-- Distributed asynchronous unstuckness for the independently advancing role
-model, including finite route-publication lag. This remains a model theorem;
+model, including finite choice-evidence delivery lag. This remains a model theorem;
 source-level Rust refinement is a separate deployment obligation. -/
 def DistributedSemanticallyUnstuck
     (session roleCount : Nat)

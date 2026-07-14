@@ -1,18 +1,11 @@
-use super::super::{
-    authority::{Arm, RouteArmToken},
-    decision_state::RouteState,
-    lane_slots::LaneSlotArray,
-};
+use super::super::{authority::Arm, decision_state::RouteState};
 use crate::{
     endpoint::kernel::decision_state::SelectedRouteCommitRows,
     endpoint::{RecvError, RecvResult},
     global::{
         const_dsl::{ReentryMark, ScopeId},
-        role_program::LaneSetView,
         typestate::{EventCursor, PackedEventConflict},
     },
-    rendezvous::port::Port,
-    transport::Transport,
 };
 
 #[inline]
@@ -169,43 +162,7 @@ fn selected_arm_for_scope_from_parts(
     decision_state.selected_arm_for_scope_slot(scope_slot)
 }
 
-fn preview_scope_ack_token_non_consuming_from_parts<'r, const ROLE: u8, T: Transport + 'r>(
-    ports: &LaneSlotArray<Port<'r, T>>,
-    decision_state: &RouteState,
-    cursor: &EventCursor,
-    scope_id: ScopeId,
-    offer_lanes: LaneSetView,
-) -> Option<RouteArmToken> {
-    if let Some(slot) = scope_slot_for_route_from_cursor(cursor, scope_id)
-        && let Some(token) = decision_state.scope_evidence.peek_ack(slot)
-    {
-        return Some(token);
-    }
-    cursor.route_scope_resolver(scope_id)?;
-    let lane_limit = cursor.logical_lane_count();
-    let mut next = offer_lanes.first_set(lane_limit);
-    while let Some(lane_idx) = next {
-        let pending = ports
-            .get(lane_idx)
-            .and_then(|port| port.as_ref())
-            .is_some_and(|port| port.has_pending_route_arm_selection(scope_id, ROLE));
-        if !pending {
-            next = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-            continue;
-        }
-        let port = crate::invariant_some(ports.get(lane_idx).and_then(|port| port.as_ref()));
-        let arm = crate::invariant_some(port.peek_route_arm_selection(scope_id, ROLE));
-        return Some(RouteArmToken::from_ack(Arm::from_raw(arm)));
-    }
-    None
-}
-
-pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_parts<
-    'r,
-    const ROLE: u8,
-    T: Transport + 'r,
->(
-    ports: &LaneSlotArray<Port<'r, T>>,
+pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_parts(
     decision_state: &RouteState,
     cursor: &EventCursor,
     scope_id: ScopeId,
@@ -213,21 +170,12 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     if let Some(arm) = selected_arm_for_scope_from_parts(decision_state, cursor, scope_id) {
         return Some(arm);
     }
-    let offer_lanes = match cursor.route_scope_offer_lane_set(scope_id) {
-        Some(lanes) => lanes,
-        None => LaneSetView::EMPTY,
-    };
-    preview_scope_ack_token_non_consuming_from_parts::<ROLE, T>(
-        ports,
-        decision_state,
-        cursor,
-        scope_id,
-        offer_lanes,
-    )
-    .map(|token| token.arm().as_u8())
-    .or_else(|| {
-        let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
-        let mask = decision_state.scope_evidence.poll_ready_arm_mask(slot);
-        Arm::from_single_ready_mask(mask).map(Arm::as_u8)
-    })
+    scope_slot_for_route_from_cursor(cursor, scope_id)
+        .and_then(|slot| decision_state.scope_evidence.peek_ack(slot))
+        .map(|token| token.arm().as_u8())
+        .or_else(|| {
+            let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
+            let mask = decision_state.scope_evidence.poll_ready_arm_mask(slot);
+            Arm::from_single_ready_mask(mask).map(Arm::as_u8)
+        })
 }

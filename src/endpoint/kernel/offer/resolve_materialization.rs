@@ -157,8 +157,7 @@ where
             return None;
         }
         let scope_id = state.selection().scope_id;
-        let offer_lanes = self.offer_lane_set_for_scope(scope_id);
-        self.poll_route_authority_from_offer_lanes(scope_id, offer_lanes)
+        self.poll_route_authority(scope_id)
     }
 
     #[inline(never)]

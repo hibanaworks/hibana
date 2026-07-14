@@ -70,8 +70,6 @@ fn parse_rustc_minor_version(version: &str) -> Option<u32> {
 }
 
 const RUSTC_1_95_STDERR_CASES: &[&str] = &[
-    "tests/ui/g-project-role-out-of-range.rs",
-    "tests/ui/g-role-out-of-range.rs",
     "tests/ui/g-self-send-non-unit.rs",
     "tests/ui/g-roleprogram-witness-mismatch.rs",
     "tests/ui/g-receive-lane-multiple-senders.rs",
@@ -99,7 +97,7 @@ fn compile_fail(t: &trybuild::TestCases, path: &'static str) {
 }
 
 struct StderrSwap {
-    originals: Vec<(std::path::PathBuf, String)>,
+    originals: Vec<(std::path::PathBuf, std::path::PathBuf, String)>,
 }
 
 impl StderrSwap {
@@ -115,13 +113,15 @@ impl StderrSwap {
                 .and_then(|path| path.strip_suffix(".rs"))
                 .expect("versioned trybuild fixture path must be tests/ui/*.rs");
             let path = std::path::PathBuf::from(format!("tests/ui/{stem}.stderr"));
+            let versioned_path =
+                std::path::PathBuf::from(format!("tests/ui-rustc-1-95/{stem}.stderr"));
             let original =
                 std::fs::read_to_string(&path).expect("failed to read base trybuild stderr");
-            let replacement = std::fs::read_to_string(format!("tests/ui-rustc-1-95/{stem}.stderr"))
+            let replacement = std::fs::read_to_string(&versioned_path)
                 .expect("failed to read rustc 1.95 trybuild stderr");
             let replacement = replacement.replace("tests/ui-rustc-1-95/", "tests/ui/");
             std::fs::write(&path, replacement).expect("failed to install rustc 1.95 stderr");
-            originals.push((path, original));
+            originals.push((path, versioned_path, original));
         }
 
         Some(Self { originals })
@@ -130,7 +130,14 @@ impl StderrSwap {
 
 impl Drop for StderrSwap {
     fn drop(&mut self) {
-        for (path, original) in self.originals.drain(..).rev() {
+        let overwrite = std::env::var_os("TRYBUILD").is_some_and(|value| value == "overwrite");
+        for (path, versioned_path, original) in self.originals.drain(..).rev() {
+            if overwrite {
+                let blessed = std::fs::read_to_string(&path)
+                    .expect("failed to read blessed rustc 1.95 stderr");
+                std::fs::write(versioned_path, blessed)
+                    .expect("failed to persist blessed rustc 1.95 stderr");
+            }
             std::fs::write(path, original).expect("failed to restore base trybuild stderr");
         }
     }
@@ -143,9 +150,7 @@ fn g_compile_fails() {
     let stderr_swap = StderrSwap::for_rustc_1_95(rustc_minor);
     let t = trybuild::TestCases::new();
     compile_fail(&t, "tests/ui/g-efflist-deref.rs");
-    compile_fail(&t, "tests/ui/g-project-role-out-of-range.rs");
     compile_fail(&t, "tests/ui/g-resolver-data-send.rs");
-    compile_fail(&t, "tests/ui/g-role-out-of-range.rs");
     compile_fail(&t, "tests/ui/g-self-send-non-unit.rs");
     compile_fail(&t, "tests/ui/g-roleprogram-witness-mismatch.rs");
     compile_fail(&t, "tests/ui/g-receive-lane-multiple-senders.rs");
@@ -202,6 +207,7 @@ fn g_compile_fails() {
     t.pass("tests/ui-pass/runtime-transport-recv-frame.rs");
     t.pass("tests/ui-pass/endpoint_transport_erased.rs");
     t.pass("tests/ui-pass/g-generic-role-ids.rs");
+    t.pass("tests/ui-pass/g-full-role-domain.rs");
     t.pass("tests/ui-pass/resolver-state-unit.rs");
     t.pass("tests/ui-pass/resolver-wrapper-decide.rs");
 

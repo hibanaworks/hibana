@@ -276,8 +276,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
             && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
             && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
-            && role_program_impl.contains("FrameLabelAssigner::EMPTY")
-            && role_program_impl.contains("frame_labels.assign(atom)")
+            && role_program_impl.contains("use crate::global::frame_labels::frame_label_at;")
+            && role_program_impl.contains("frame_label_at(eff_list, idx, atom)")
             && event_program.contains("self.rows().dependency_for_index(idx)")
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
@@ -790,12 +790,12 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
             && !decision_state.contains(forbidden_from_chain_for_lane)
             && !decision_state.contains("route_commit_chain_row_at")
             && !commit_delta.contains("MAX_ROUTE_COMMIT_ROWS")
-            && commit_delta.contains(
-                "fn from_preflighted(delta: CommitDelta, selected_routes: PreparedRouteCommitRows) -> Self"
-            )
+            && commit_delta.contains("fn from_preflighted(")
+            && commit_delta.contains("fresh_route_start: Option<usize>")
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
+            && prepared_commit_delta_row.contains("fresh_route_start: u8")
             && !prepared_commit_delta_row.contains("roll_row: RollCommitRow")
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
@@ -837,7 +837,7 @@ fn send_recv_branch_recv_publish_paths_are_commit_delta_apply_only() {
         (
             "branch-recv",
             recv_commit_plan.as_str(),
-            "self.commit_prepared_delta(delta);",
+            "let committed = self.commit_prepared_delta(delta);",
         ),
     ] {
         assert!(

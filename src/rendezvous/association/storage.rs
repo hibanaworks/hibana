@@ -11,7 +11,7 @@ use super::AssocTable;
 struct AssocStorageParts {
     entry_sids: *mut SessionId,
     entry_lanes: *mut u8,
-    entry_states: *mut u8,
+    entry_states: *mut u16,
 }
 
 impl AssocTable {
@@ -33,7 +33,9 @@ impl AssocTable {
 
     #[inline]
     pub(in crate::rendezvous) const fn storage_align() -> usize {
-        core::mem::align_of::<SessionId>()
+        let sid = core::mem::align_of::<SessionId>();
+        let state = core::mem::align_of::<u16>();
+        if sid > state { sid } else { state }
     }
 
     #[inline]
@@ -79,9 +81,9 @@ impl AssocTable {
         let lane_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u8>());
         let state_offset = Self::align_up(
             Self::checked_add_usize(lane_offset, lane_bytes),
-            core::mem::align_of::<u8>(),
+            core::mem::align_of::<u16>(),
         );
-        let state_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u8>());
+        let state_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u16>());
         Self::checked_add_usize(state_offset, state_bytes)
     }
 
@@ -103,7 +105,7 @@ impl AssocTable {
                     Self::checked_add_usize(storage as usize, lane_offset),
                     Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u8>()),
                 ),
-                core::mem::align_of::<u8>(),
+                core::mem::align_of::<u16>(),
             ),
             storage as usize,
         );
@@ -111,7 +113,7 @@ impl AssocTable {
             /* SAFETY: all offsets are derived by the assoc arena layout and stay inside `storage_bytes(assoc_slots)`; this only computes disjoint column pointers. */ unsafe {
                 (
                     storage.add(lane_offset).cast::<u8>(),
-                    storage.add(state_offset).cast::<u8>(),
+                    storage.add(state_offset).cast::<u16>(),
                 )
             };
         AssocStorageParts {

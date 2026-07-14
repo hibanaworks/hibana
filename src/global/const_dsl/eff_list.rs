@@ -318,9 +318,6 @@ where
     M: Message,
     M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
-    if let Some(message) = crate::g::role_pair_contract_error::<FROM, TO>() {
-        panic!("{}", message);
-    }
     let atom = eff::EffAtom {
         from: FROM,
         to: TO,

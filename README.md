@@ -22,16 +22,17 @@ Protocol state is kept in compact descriptors instead of a distinct Rust
 continuation type for every state, so protocol growth does not become endpoint
 type growth.
 
-- one choreography for up to 16 roles;
+- one choreography for up to 256 roles using the complete one-byte role domain;
 - asynchronous `send`, `seq`, `par`, binary `route`, and guarded `roll`;
 - affine endpoints that may be dropped but cannot publish progress twice;
 - transport-neutral integration through one `Transport` trait;
 - the same public API on hosted and embedded targets.
 
-The 16-role ceiling is a current implementation limit, not a theoretical limit
-of the protocol model. Splitting a protocol with more than 16 participants into
-several sessions changes the guarantee boundary: Hibana then checks each
-session, not the original choreography as one global protocol.
+Role IDs cover `0..=255`. Projection, route participation, and attachment
+accounting derive storage from actual events and local participants; the runtime
+does not reserve a 256-entry role table. Splitting a protocol across several
+sessions still changes the guarantee boundary: Hibana checks each session, not
+the original choreography as one global protocol.
 
 Hibana does not implement a network stack or a distributed algorithm. It
 enforces the protocol at each attached endpoint and states the carrier,
@@ -522,7 +523,7 @@ Persistent application data, membership policy, scheduling, restart policy,
 and algorithm invariants remain application-owned. Larger systems may compose
 explicit families of finite sessions, but each session keeps its own protocol
 guarantee. This is an application architecture, not an equivalent encoding of
-one choreography with more than 16 roles.
+one global choreography across those sessions.
 
 `RendezvousKit::tap()` returns a read-only iterator over the latest 32 compact
 16-byte evidence records. Events cover endpoint operations, carrier

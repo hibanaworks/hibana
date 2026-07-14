@@ -19,7 +19,7 @@ The pinned gate exhausts the production arithmetic for:
 - exact route-commit decision identity across scope, arm, and reentry metadata;
 - exact local-dependency decoding, including event-image range bounds;
 - exact compiled atom and route-resolver row decoding, including both per-arm
-  participant masks, plus complete dynamic resolver identity over route scope
+  canonical participant lists, plus complete dynamic resolver identity over route scope
   and resolver id;
 - exact structural program-image identity across facts, canonical atom/resolver/
   scope-marker counts, and all blob bytes, including arbitrary scope-marker
@@ -58,20 +58,15 @@ The pinned gate exhausts the production arithmetic for:
   capacity domain;
 - exact association-column sizing and 32-bit bounds across the full `u16`
   capacity domain;
-- exact route-frame and scope-global list-root sizing and 32-bit bounds across
-  the full `u16` capacity domain;
-- exact selected/local participant-mask intersection, non-overwritable active
-  route publication, arm-preserving monotone observation, and exact initial
-  pending-mask complement;
 - aligned, monotonic resident-sidecar packing;
 - aligned, pairwise-disjoint sequential sidecar packing;
-- proof that compacted destinations for all four resident sidecar owners precede
+- proof that compacted destinations for all three resident sidecar owners precede
   their own and every later live source range;
 - exact symmetric sidecar-range collision detection;
 - exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
   capacity domain.
 
-The pinned inventory contains 83 CBMC harnesses. Transport FIFO,
+The pinned inventory contains 81 CBMC harnesses. Transport FIFO,
 exactly-once/no-replay delivery, peer-close observation, and one-shot receive
 receipt resolution are modeled and proved in Lean, mirrored by the Rust
 conformance tests, and checked under Miri.

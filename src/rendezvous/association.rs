@@ -7,7 +7,7 @@
 //!
 //! This module owns the session/lane association storage. Unsafe blocks here may
 //! access backing arrays only through the table's entry capacity and must keep
-//! sid, lane, and packed state columns synchronized.
+//! sid, lane, and packed attachment/fault state columns synchronized.
 
 use core::{
     cell::{Cell, UnsafeCell},
@@ -17,13 +17,27 @@ use core::{
 use crate::session::types::{Lane, SessionId};
 
 mod fault;
+#[cfg(kani)]
+mod kani;
 mod storage;
 pub(crate) use fault::SessionFaultKind;
 
-const ENTRY_COUNT_BITS: u32 = 5;
-const ENTRY_COUNT_MASK: u8 = (1u8 << ENTRY_COUNT_BITS) - 1;
+const ENTRY_COUNT_BITS: u32 = 9;
+const ENTRY_COUNT_MASK: u16 = (1u16 << ENTRY_COUNT_BITS) - 1;
 const ENTRY_FAULT_SHIFT: u32 = ENTRY_COUNT_BITS;
-const ENTRY_COUNT_MAX: u8 = crate::g::ROLE_DOMAIN_SIZE;
+const ENTRY_COUNT_MAX: u16 = u8::MAX as u16 + 1;
+
+#[inline]
+fn next_attachment_count(current: u16) -> Option<u16> {
+    if current == 0 || current > ENTRY_COUNT_MAX {
+        crate::invariant();
+    }
+    if current == ENTRY_COUNT_MAX {
+        None
+    } else {
+        Some(current + 1)
+    }
+}
 
 /// Association table for active `(session, lane)` claims.
 ///
@@ -36,36 +50,36 @@ pub(super) struct AssocTable {
     assoc_slots: Cell<u16>,
     entry_sids: UnsafeCell<*mut SessionId>,
     entry_lanes: UnsafeCell<*mut u8>,
-    entry_states: UnsafeCell<*mut u8>,
+    entry_states: UnsafeCell<*mut u16>,
     _no_send_sync: PhantomData<*mut ()>,
 }
 
 impl AssocTable {
     #[inline]
-    const fn entry_count(raw: u8) -> u8 {
+    const fn entry_count(raw: u16) -> u16 {
         raw & ENTRY_COUNT_MASK
     }
 
     #[inline]
-    const fn entry_fault_code(raw: u8) -> u8 {
-        raw >> ENTRY_FAULT_SHIFT
+    const fn entry_fault_code(raw: u16) -> u8 {
+        (raw >> ENTRY_FAULT_SHIFT) as u8
     }
 
     #[inline]
-    const fn entry_fault(raw: u8) -> Option<SessionFaultKind> {
+    const fn entry_fault(raw: u16) -> Option<SessionFaultKind> {
         SessionFaultKind::decode(Self::entry_fault_code(raw))
     }
 
     #[inline]
-    const fn entry_state(count: u8, fault: u8) -> u8 {
-        if count > ENTRY_COUNT_MAX || fault > (u8::MAX >> ENTRY_FAULT_SHIFT) {
+    const fn entry_state(count: u16, fault: u8) -> u16 {
+        if count > ENTRY_COUNT_MAX || fault as u16 > (u16::MAX >> ENTRY_FAULT_SHIFT) {
             crate::invariant();
         }
-        (fault << ENTRY_FAULT_SHIFT) | count
+        ((fault as u16) << ENTRY_FAULT_SHIFT) | count
     }
 
-    const EMPTY_ENTRY_STATE: u8 = Self::entry_state(0, SessionFaultKind::ABSENT_CODE);
-    const LIVE_ENTRY_STATE: u8 = Self::entry_state(1, SessionFaultKind::ABSENT_CODE);
+    const EMPTY_ENTRY_STATE: u16 = Self::entry_state(0, SessionFaultKind::ABSENT_CODE);
+    const LIVE_ENTRY_STATE: u16 = Self::entry_state(1, SessionFaultKind::ABSENT_CODE);
 
     #[inline]
     fn lane_slots(&self) -> usize {
@@ -92,7 +106,7 @@ impl AssocTable {
     }
 
     #[inline]
-    fn entry_states_ptr(&self) -> *mut u8 {
+    fn entry_states_ptr(&self) -> *mut u16 {
         /* SAFETY: `entry_states` is installed with the assoc entry range and is
         read or written only after a matching entry lookup or bounded entry scan. */
         unsafe { *self.entry_states.get() }
@@ -134,7 +148,7 @@ impl AssocTable {
 
     #[inline]
     pub(super) fn active_entry_count(&self) -> usize {
-        /* SAFETY: the scan is bounded by `assoc_slots` and reads only count bytes. */
+        /* SAFETY: the scan is bounded by `assoc_slots` and reads only packed states. */
         unsafe {
             let states = self.entry_states_ptr();
             let mut idx = 0usize;
@@ -187,24 +201,6 @@ impl AssocTable {
         self.find_entry_by_offset(lane_offset, sid).is_some()
     }
 
-    #[inline]
-    pub(super) fn has_session(&self, sid: SessionId) -> bool {
-        /* SAFETY: the scan is bounded by `assoc_slots` and reads only initialized
-        session/state columns. */
-        unsafe {
-            let sids = self.entry_sids_ptr();
-            let states = self.entry_states_ptr();
-            let mut idx = 0usize;
-            while idx < self.assoc_slots() {
-                if Self::entry_count(*states.add(idx)) != 0 && *sids.add(idx) == sid {
-                    return true;
-                }
-                idx += 1;
-            }
-        }
-        false
-    }
-
     /// Register a session/lane claim in an empty association entry.
     #[inline]
     pub(super) fn register(&self, lane: Lane, sid: SessionId) -> bool {
@@ -238,7 +234,7 @@ impl AssocTable {
     ///
     /// Returns the new attachment count on success.
     #[inline]
-    pub(super) fn increment(&self, lane: Lane, sid: SessionId) -> Option<u8> {
+    pub(super) fn increment(&self, lane: Lane, sid: SessionId) -> Option<u16> {
         let lane_offset = crate::invariant_some(self.lane_offset(lane));
         let idx = crate::invariant_some(self.find_entry_by_offset(lane_offset, sid));
         /* SAFETY: `find_entry_by_offset` bounds `idx` inside the assoc columns.
@@ -247,13 +243,7 @@ impl AssocTable {
             let states = self.entry_states_ptr();
             let raw = *states.add(idx);
             let current = Self::entry_count(raw);
-            if current == 0 {
-                crate::invariant();
-            }
-            if current == ENTRY_COUNT_MAX {
-                return None;
-            }
-            let next = current + 1;
+            let next = next_attachment_count(current)?;
             states
                 .add(idx)
                 .write(Self::entry_state(next, Self::entry_fault_code(raw)));
@@ -265,7 +255,7 @@ impl AssocTable {
     ///
     /// Returns the remaining attachment count after the decrement.
     #[inline]
-    pub(super) fn decrement(&self, lane: Lane, sid: SessionId) -> u8 {
+    pub(super) fn decrement(&self, lane: Lane, sid: SessionId) -> u16 {
         let lane_offset = crate::invariant_some(self.lane_offset(lane));
         let idx = crate::invariant_some(self.find_entry_by_offset(lane_offset, sid));
         /* SAFETY: `find_entry_by_offset` bounds `idx` inside the assoc columns.
@@ -292,8 +282,8 @@ impl AssocTable {
 
     #[inline]
     pub(super) fn session_fault(&self, sid: SessionId) -> Option<SessionFaultKind> {
-        /* SAFETY: the scan is bounded by `assoc_slots` and reads the packed
-        state only from slots whose sid/state pair belongs to the queried session. */
+        /* SAFETY: the scan is bounded by `assoc_slots` and reads packed state
+        only from slots belonging to the queried session. */
         unsafe {
             let sids = self.entry_sids_ptr();
             let states = self.entry_states_ptr();
@@ -322,7 +312,7 @@ impl AssocTable {
             return existing;
         }
         /* SAFETY: the scan is bounded by `assoc_slots` and writes the encoded
-        fault only into slots whose sid/state pair belongs to the poisoned
+        fault only into live slots whose sid belongs to the poisoned
         session. */
         unsafe {
             let sids = self.entry_sids_ptr();

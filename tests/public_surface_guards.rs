@@ -62,8 +62,6 @@ fn sidecar_owner_single_authority() {
 
     for path in [
         "src/rendezvous/association.rs",
-        "src/rendezvous/tables/route_table.rs",
-        "src/rendezvous/tables/route_table/storage.rs",
         "src/session/cluster/core/dynamic_resolvers.rs",
         "src/rendezvous/core.rs",
         "src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs",
@@ -121,7 +119,7 @@ fn resolver_sidecar_replacement_publishes_before_retirement() {
 }
 
 #[test]
-fn assoc_and_route_sidecar_replacement_publish_before_retire() {
+fn assoc_sidecar_replacement_publishes_before_retirement() {
     let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
     let arena = read("src/rendezvous/core/storage_layout/capacity/arena.rs");
     let assoc_stage_pos = capacity
@@ -143,24 +141,6 @@ fn assoc_and_route_sidecar_replacement_publish_before_retire() {
         "assoc replacement must stage and publish before retirement"
     );
 
-    let route_stage_pos = capacity
-        .find(".migrate_from_storage(lease.ptr(), target_frame_slots);")
-        .expect("route replacement must stage entries before release");
-    let route_replacement = &capacity[route_stage_pos..];
-    let route_commit_pos = route_replacement
-        .find(".rebind_from_storage(lease.ptr(), target_frame_slots);")
-        .expect("route replacement must publish staged columns");
-    let route_root_pos = route_replacement
-        .find("self.route_storage.set(lease);")
-        .expect("route replacement must publish the sidecar root");
-    let route_retire_pos = route_replacement
-        .find("self.retire_sidecar(source_route);")
-        .expect("route replacement must retire the source sidecar");
-    assert!(
-        route_commit_pos < route_root_pos && route_root_pos < route_retire_pos,
-        "route replacement must stage and publish before retirement"
-    );
-
     let assoc = read("src/rendezvous/association/storage.rs");
     assert!(
         assoc.contains("pub(in crate::rendezvous) unsafe fn init_replacement_storage")
@@ -172,20 +152,11 @@ fn assoc_and_route_sidecar_replacement_publish_before_retire() {
         "assoc migration must contain only counted session/lane claim columns"
     );
 
-    let route = read("src/rendezvous/tables/route_table/storage.rs");
-    assert!(
-        route.contains("let mut moved =")
-            && route.contains("dst_parts.frames.add(dst_idx).write(moved);")
-            && !route.contains("WaiterSlot")
-            && !route.contains("pending_frame_hint")
-            && !route.contains("waiters"),
-        "route migration must own only session/scope frames and active/free-list roots"
-    );
     assert!(
         arena.contains("fn compact_live_sidecars(&self)")
             && arena.contains("core::ptr::copy(")
             && arena.contains("self.assoc.relocate_storage(compacted.ptr());")
-            && arena.contains("self.routes.relocate_storage(compacted.ptr());"),
+            && arena.contains("relocate_storage(compacted);"),
         "retirement must canonicalize all live sidecars and rebind typed roots"
     );
 }

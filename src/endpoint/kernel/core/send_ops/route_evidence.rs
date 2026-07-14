@@ -5,9 +5,9 @@ use super::super::{
 };
 
 #[derive(Clone, Copy)]
-enum SendRoutePublication {
+enum SendRouteEvidencePhase {
     Begin,
-    Extend,
+    Continue,
 }
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -42,17 +42,16 @@ where
     }
 
     #[inline(never)]
-    fn publish_send_route_row_evidence(
+    fn commit_send_route_row_evidence(
         &mut self,
         route_row: SelectedRouteCommitRow,
         lane_wire: u8,
-        frame_target: u8,
-        publication: SendRoutePublication,
-    ) -> bool {
+        phase: SendRouteEvidencePhase,
+    ) {
         let scope_id = route_row.scope();
         let selected_arm = route_row.selected_arm();
         let route_token = self.peek_live_scope_ack(scope_id);
-        if matches!(publication, SendRoutePublication::Begin) {
+        if matches!(phase, SendRouteEvidencePhase::Begin) {
             let arm = match route_token {
                 Some(RouteArmToken::Resolver(arm)) => arm,
                 None if self.cursor.route_scope_resolver(scope_id).is_some() => {
@@ -60,55 +59,29 @@ where
                 }
                 Some(RouteArmToken::Ack(_) | RouteArmToken::Poll(_)) | None => crate::invariant(),
             };
-            let published = self.begin_route_arm_selection(
-                scope_id,
-                selected_arm,
-                lane_wire,
-                Some(frame_target),
-            );
             self.emit_route_arm_selection(scope_id, RouteArmToken::from_resolver(arm), lane_wire);
             if self.arm_has_recv(scope_id, selected_arm) {
                 self.consume_scope_ready_arm(scope_id, selected_arm);
             }
             self.clear_scope_evidence(scope_id);
-            return published;
+            return;
         }
-        let published = match route_token {
+        match route_token {
             Some(RouteArmToken::Ack(_)) => {
                 let arm = Arm::from_raw(selected_arm);
-                let published = self.observe_active_route_arm_selection(
-                    scope_id,
-                    selected_arm,
-                    lane_wire,
-                    Some(frame_target),
-                );
                 self.emit_route_arm_selection(scope_id, RouteArmToken::from_ack(arm), lane_wire);
-                published
             }
             Some(RouteArmToken::Poll(_)) => {
                 let arm = Arm::from_raw(selected_arm);
-                let published = self.observe_active_route_arm_selection(
-                    scope_id,
-                    selected_arm,
-                    lane_wire,
-                    Some(frame_target),
-                );
                 self.emit_route_arm_selection(
                     scope_id,
                     RouteArmToken::from_poll(arm),
                     self.offer_lane_for_scope(scope_id),
                 );
-                published
             }
             Some(RouteArmToken::Resolver(_)) => crate::invariant(),
             None if self.cursor.route_scope_resolver(scope_id).is_some() => {
                 let arm = Arm::from_raw(selected_arm);
-                let published = self.observe_active_route_arm_selection(
-                    scope_id,
-                    selected_arm,
-                    lane_wire,
-                    Some(frame_target),
-                );
                 self.emit_route_arm_selection(
                     scope_id,
                     RouteArmToken::from_resolver(arm),
@@ -118,73 +91,48 @@ where
                     self.consume_scope_ready_arm(scope_id, selected_arm);
                 }
                 self.clear_scope_evidence(scope_id);
-                return published;
+                return;
             }
             None => {
                 if self.arm_has_recv(scope_id, selected_arm) {
                     self.consume_scope_ready_arm(scope_id, selected_arm);
                 }
                 self.clear_scope_evidence(scope_id);
-                return false;
+                return;
             }
-        };
+        }
 
         if self.arm_has_recv(scope_id, selected_arm) {
             self.consume_scope_ready_arm(scope_id, selected_arm);
         }
         self.clear_scope_evidence(scope_id);
-        published
     }
 
     #[inline(never)]
-    pub(super) fn publish_send_route_evidence_delta(
+    pub(super) fn commit_send_route_evidence_delta(
         &mut self,
         delta: &CommittedCommitDelta,
-        frame_target: u8,
-        fresh_route_start: Option<usize>,
-    ) -> bool {
+        begin_route_start: Option<usize>,
+    ) {
         let routes = delta.selected_routes();
         let Some(route_lane) = delta.selected_route_lane() else {
-            return false;
+            return;
         };
-        let mut published = false;
         let mut idx = 0usize;
         while idx < routes.len() {
             if let Some(route_row) = routes.get(&self.cursor, idx) {
-                let publication = if fresh_route_start.is_some_and(|start| idx >= start) {
-                    SendRoutePublication::Begin
+                let phase = if begin_route_start.is_some_and(|start| idx >= start) {
+                    if !delta.route_is_fresh(idx) {
+                        crate::invariant();
+                    }
+                    SendRouteEvidencePhase::Begin
                 } else {
-                    SendRoutePublication::Extend
+                    SendRouteEvidencePhase::Continue
                 };
-                published |= self.publish_send_route_row_evidence(
-                    route_row,
-                    route_lane,
-                    frame_target,
-                    publication,
-                );
+                self.commit_send_route_row_evidence(route_row, route_lane, phase);
             }
             idx += 1;
         }
-        published
-    }
-
-    pub(super) fn preflight_send_route_publications(
-        &self,
-        rows: SelectedRouteCommitRowsRef,
-        decision_lane: u8,
-        fresh_route_start: Option<usize>,
-    ) -> SendResult<()> {
-        let mut idx = 0usize;
-        while idx < rows.len() {
-            if let Some(row) = rows.get(&self.cursor, idx)
-                && fresh_route_start.is_some_and(|start| idx >= start)
-                && !self.can_begin_route_arm_selection(row.scope(), decision_lane)
-            {
-                return Err(SendError::PhaseInvariant);
-            }
-            idx += 1;
-        }
-        Ok(())
     }
 
     #[inline(never)]

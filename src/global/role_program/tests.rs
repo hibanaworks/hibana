@@ -10,13 +10,13 @@ use crate::global::typestate::{LocalAction, LocalConflict};
 #[macro_use]
 #[path = "tests/final_form_protocol_matrix.rs"]
 mod final_form_protocol_matrix;
+mod full_role_domain;
 mod protocol_matrix;
 
 const LOCAL_STEP_STRESS_ROW_BUDGET: usize = 512;
 const _: () = assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
 const NESTED_PAR_ROUTE_RESOLVER: u16 = 0x91;
 const ROLL_ROUTE_INTERNAL_PARALLEL_RESOLVER: u16 = 0x92;
-const DISJOINT_PAR_ROUTE_RESOLVER: u16 = 0x93;
 
 const fn test_atom(label: u8, lane: u8) -> EffStruct {
     EffStruct::atom(EffAtom {
@@ -72,8 +72,12 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
     );
     assert_eq!(program_ref.route_controller_role(scope), 0);
     assert!(program_ref.route_resolver(scope).is_some());
-    assert_eq!(program_ref.route_participant_mask(scope, 0), 0b111);
-    assert_eq!(program_ref.route_participant_mask(scope, 1), 0b111);
+    assert_eq!(program_ref.route_participant_count(scope, 0), 3);
+    assert_eq!(program_ref.route_participant_count(scope, 1), 3);
+    for role in 0..=2 {
+        assert!(program_ref.route_has_participant(scope, 0, role));
+        assert!(program_ref.route_has_participant(scope, 1, role));
+    }
 
     let events = LocalEventProgram::from_rows(role0.role_image_ref());
     let slot = events.route_scope_slot(scope).expect("route slot");
@@ -92,60 +96,6 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
         "right route arm row must be nonempty"
     );
     assert_ne!(left, right, "route arm rows must stay arm-distinct");
-}
-
-#[test]
-fn route_authority_storage_intrinsic_routes_allocate_no_shared_slots() {
-    let route = g::route(
-        g::send::<0, 1, Msg<40, u8>>(),
-        g::send::<0, 1, Msg<41, u8>>(),
-    );
-    let controller: RoleProgram<0> = project(&route);
-    let receiver: RoleProgram<1> = project(&route);
-
-    for descriptor in [
-        RoleDescriptorRef::from_resident(controller.role_image_ref()),
-        RoleDescriptorRef::from_resident(receiver.role_image_ref()),
-    ] {
-        assert_eq!(descriptor.route_table_frame_slots(), 0);
-    }
-}
-
-#[test]
-fn route_authority_storage_dynamic_routes_derive_slots_from_descriptor() {
-    let route = g::route(
-        g::send::<0, 1, Msg<42, u8>>(),
-        g::send::<0, 1, Msg<43, u8>>(),
-    )
-    .resolve::<NESTED_PAR_ROUTE_RESOLVER>();
-    let controller: RoleProgram<0> = project(&route);
-    let receiver: RoleProgram<1> = project(&route);
-
-    for descriptor in [
-        RoleDescriptorRef::from_resident(controller.role_image_ref()),
-        RoleDescriptorRef::from_resident(receiver.role_image_ref()),
-    ] {
-        assert_eq!(descriptor.route_table_frame_slots(), 1);
-    }
-}
-
-#[test]
-fn route_authority_storage_counts_program_wide_dynamic_scopes() {
-    let left = g::route(
-        g::send::<0, 1, Msg<44, u8>>(),
-        g::send::<0, 1, Msg<45, u8>>(),
-    )
-    .resolve::<NESTED_PAR_ROUTE_RESOLVER>();
-    let right = g::route(
-        g::send::<2, 3, Msg<46, u8>>(),
-        g::send::<2, 3, Msg<47, u8>>(),
-    )
-    .resolve::<DISJOINT_PAR_ROUTE_RESOLVER>();
-    let program: RoleProgram<0> = project(&g::par(left, right));
-    let descriptor = RoleDescriptorRef::from_resident(program.role_image_ref());
-
-    assert_eq!(descriptor.program().route_resolver_row_count(), 2);
-    assert_eq!(descriptor.route_table_frame_slots(), 2);
 }
 
 #[test]
@@ -171,8 +121,12 @@ fn role_projections_share_program_wide_resolver_identity() {
     let scope = program
         .route_resolver_scope_at_row(0)
         .expect("route scope row");
-    assert_eq!(program.route_participant_mask(scope, 0), 0b111);
-    assert_eq!(program.route_participant_mask(scope, 1), 0b111);
+    assert_eq!(program.route_participant_count(scope, 0), 3);
+    assert_eq!(program.route_participant_count(scope, 1), 3);
+    for role in 0..=2 {
+        assert!(program.route_has_participant(scope, 0, role));
+        assert!(program.route_has_participant(scope, 1, role));
+    }
 }
 
 #[test]
@@ -464,7 +418,11 @@ fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
     assert_eq!(columns.route_offer_lane_rows.len, 0);
     assert_eq!(columns.route_arm_lane_step_rows.len, 0);
     assert_eq!(core::mem::size_of::<ColumnRange>(), 4);
-    assert_eq!(core::mem::size_of::<ProgramImageColumns>(), 6);
+    assert_eq!(
+        core::mem::size_of::<ProgramImageColumns>(),
+        4 * core::mem::size_of::<u16>(),
+        "program columns must contain only atom, resolver, participant, and scope counts"
+    );
     assert!(
         core::mem::size_of::<RoleImageColumns>() < 15 * 5,
         "RoleImageColumns must not retain stride or forbidden passive metadata"
@@ -957,35 +915,6 @@ fn parallel_route_projection_keeps_resident_descriptor_without_public_step_surfa
             "route projection should preserve resident route scope facts"
         );
     });
-}
-
-type SparseMultiLaneLeft = g::Seq<
-    g::Send<0, 1, Msg<109, ()>>,
-    g::Par<g::Send<0, 2, Msg<110, ()>>, g::Send<0, 3, Msg<111, ()>>>,
->;
-type SparseMultiLaneRight = g::Seq<
-    g::Send<0, 1, Msg<112, ()>>,
-    g::Par<g::Send<0, 2, Msg<113, ()>>, g::Send<0, 3, Msg<114, ()>>>,
->;
-type SparseMultiLaneRoute = g::Route<SparseMultiLaneLeft, SparseMultiLaneRight>;
-
-fn sparse_multi_lane_route_program() -> Program<SparseMultiLaneRoute> {
-    g::route(
-        g::seq(
-            g::send::<0, 1, Msg<109, ()>>(),
-            g::par(
-                g::send::<0, 2, Msg<110, ()>>(),
-                g::send::<0, 3, Msg<111, ()>>(),
-            ),
-        ),
-        g::seq(
-            g::send::<0, 1, Msg<112, ()>>(),
-            g::par(
-                g::send::<0, 2, Msg<113, ()>>(),
-                g::send::<0, 3, Msg<114, ()>>(),
-            ),
-        ),
-    )
 }
 
 mod route_arm_lane_steps;

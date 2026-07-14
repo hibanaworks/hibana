@@ -1,7 +1,4 @@
-use super::{
-    MAX_COMPILED_IMAGE_NODES, MAX_COMPILED_PROGRAM_SCOPES, ProgramImageData, ProgramLoweringFacts,
-    ProgramRoleImageData, RoleCompiledCounts,
-};
+use super::{MAX_COMPILED_IMAGE_NODES, MAX_COMPILED_PROGRAM_SCOPES, ProgramImageData};
 
 impl ProgramImageData {
     #[inline(always)]
@@ -14,21 +11,6 @@ impl ProgramImageData {
         }
         if self.lowering_facts.scope_count as usize > MAX_COMPILED_PROGRAM_SCOPES {
             panic!("CompiledProgram: MAX_SCOPES exceeded");
-        }
-    }
-}
-
-impl ProgramRoleImageData {
-    #[inline(always)]
-    const fn lowering_counts(&self, program: ProgramLoweringFacts, role: u8) -> RoleCompiledCounts {
-        let role = self.facts[role as usize];
-        RoleCompiledCounts {
-            max_route_stack_depth: program.max_route_stack_depth as usize,
-            local_step_count: role.local_step_count as usize,
-            route_scope_count: program.route_scope_count as usize,
-            active_lane_count: role.active_lane_count as usize,
-            endpoint_lane_slot_count: role.endpoint_lane_slot_count as usize,
-            logical_lane_count: role.logical_lane_count as usize,
         }
     }
 }

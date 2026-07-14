@@ -1,4 +1,4 @@
-use super::{AssocTable, Rendezvous, RouteTable, Sidecar, Transport};
+use super::{AssocTable, Rendezvous, Sidecar, Transport};
 use crate::session::cluster::error::ResourceScope;
 mod arena;
 mod endpoint_lease;
@@ -14,7 +14,7 @@ pub(in crate::rendezvous::core) use resident_lease::PersistentSidecarLease;
 // This file owns rendezvous sidecar capacity growth and resident table rebinding
 // after storage has been allocated by the parent storage layout owner. Raw
 // endpoint-lease and sidecar pointers are range-checked against the pinned
-// rendezvous slab. Allocation derives gaps from the four live owner roots, and
+// rendezvous slab. Allocation derives gaps from the three live owner roots, and
 // retirement packs those roots canonically and recomputes the frontier, so
 // replacement history cannot consume resident storage.
 
@@ -22,7 +22,6 @@ pub(in crate::rendezvous::core) use resident_lease::PersistentSidecarLease;
 enum ResidentSidecarKind {
     EndpointLeases,
     Associations,
-    Routes,
     Resolvers,
 }
 
@@ -38,7 +37,7 @@ where
     'cfg: 'rv,
 {
     #[inline]
-    fn live_sidecars(&self) -> [ResidentSidecar; 4] {
+    fn live_sidecars(&self) -> [ResidentSidecar; 3] {
         [
             ResidentSidecar {
                 kind: ResidentSidecarKind::EndpointLeases,
@@ -49,11 +48,6 @@ where
                 kind: ResidentSidecarKind::Associations,
                 storage: self.assoc_storage.get(),
                 align: AssocTable::storage_align(),
-            },
-            ResidentSidecar {
-                kind: ResidentSidecarKind::Routes,
-                storage: self.route_storage.get(),
-                align: RouteTable::storage_align(),
             },
             ResidentSidecar {
                 kind: ResidentSidecarKind::Resolvers,
@@ -291,86 +285,5 @@ where
                 .checked_add(crate::invariant_ok(u32::try_from(required_lane_slots))),
         );
         self.lane_end.set(lane_end);
-    }
-
-    pub(crate) fn ensure_route_table_capacity(
-        &self,
-        required_frame_slots: usize,
-    ) -> Result<(), ResourceScope> {
-        if required_frame_slots >= RouteTable::FRAME_LIST_END as usize {
-            return Err(ResourceScope::RouteTable);
-        }
-        if required_frame_slots == 0 || self.routes.route_slots() >= required_frame_slots {
-            return Ok(());
-        }
-        let target_frame_slots = required_frame_slots.max(self.routes.route_slots());
-        let lease = self
-            .lease_sidecar::<u8>(
-                RouteTable::storage_bytes(target_frame_slots),
-                RouteTable::storage_align(),
-            )
-            .ok_or(ResourceScope::RouteTable)?;
-        let source_route = self.route_storage.get();
-        if self.routes.route_slots() == 0 {
-            /* SAFETY: route storage is currently unbound. The fresh sidecar
-            lease has route-table size/alignment, and binding initializes the
-            frame and list-head columns before publication. */
-            unsafe {
-                self.routes
-                    .bind_from_storage(lease.ptr(), target_frame_slots);
-            }
-            self.route_storage.set(lease);
-            return Ok(());
-        }
-
-        /* SAFETY: the fresh route-table sidecar is unpublished replacement
-        storage. Migration transfers initialized frame/list state before the
-        new owner root is published and the source sidecar is retired. */
-        unsafe {
-            self.routes
-                .migrate_from_storage(lease.ptr(), target_frame_slots);
-        }
-        /* SAFETY: migration populated the replacement route-table columns before
-        rebinding publishes them for the same rendezvous lane range. */
-        unsafe {
-            self.routes
-                .rebind_from_storage(lease.ptr(), target_frame_slots);
-        }
-        self.route_storage.set(lease);
-        self.retire_sidecar(source_route);
-        Ok(())
-    }
-
-    pub(crate) fn shrink_route_table_capacity(&self, required_frame_slots: usize) {
-        let current_frames = self.routes.route_slots();
-        if required_frame_slots > current_frames {
-            crate::invariant();
-        }
-        if required_frame_slots == 0 {
-            if current_frames == 0 {
-                return;
-            }
-            let route_storage = self.route_storage.get();
-            self.routes.clear_storage();
-            self.route_storage.set(Sidecar::EMPTY);
-            self.retire_persistent_sidecar(route_storage.cast::<u8>());
-            return;
-        }
-        if required_frame_slots == current_frames {
-            return;
-        }
-        let route_storage = self.route_storage.get();
-        /* SAFETY: release/abort only lowers descriptor-derived capacity
-        after dead session frames have been reclaimed. The route owner compacts
-        any remaining live frames before publishing the smaller in-place layout. */
-        unsafe {
-            self.routes
-                .shrink_storage_in_place(route_storage.ptr(), required_frame_slots);
-        }
-        self.route_storage.set(Sidecar::from_raw_parts(
-            route_storage.ptr(),
-            RouteTable::storage_bytes(required_frame_slots),
-        ));
-        self.compact_live_sidecars();
     }
 }

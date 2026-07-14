@@ -9,7 +9,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
     let public_operation_harnesses = read("src/endpoint/kernel/core/public_types/kani.rs");
-    let route_table_harnesses = read("src/rendezvous/tables/route_table/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
@@ -21,6 +20,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let transport_harnesses = read("src/transport/kani.rs");
     let receive_receipt_harnesses = read("src/rendezvous/recv_frame_receipt/kani.rs");
     let fault_harnesses = read("src/rendezvous/association/fault/kani.rs");
+    let association_harnesses = read("src/rendezvous/association/kani.rs");
     let program_blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
     let program_columns = read("src/global/compiled/images/image/columns.rs");
     let role_image_types = read("src/global/role_program/image_types.rs");
@@ -70,15 +70,15 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
             .contains("assert!(overlap == !(left_end <= right_start || right_end <= left_start));")
     );
     let compaction_harness = harnesses
-        .split("fn four_resident_sidecars_compact_before_all_source_ranges()")
+        .split("fn three_resident_sidecars_compact_before_all_source_ranges()")
         .nth(1)
         .expect("sidecar compaction harness")
         .split("#[kani::proof]")
         .next()
         .expect("sidecar compaction harness body");
     assert!(!compaction_harness.contains("kani::assume"));
-    assert!(harnesses.contains("bytes: [usize; 4]"));
-    assert!(harnesses.contains("gaps: [usize; 3]"));
+    assert!(harnesses.contains("bytes: [usize; 3]"));
+    assert!(harnesses.contains("gaps: [usize; 2]"));
     assert!(compaction_harness.contains("destinations[index].1 <= sources[index].1"));
     assert!(compaction_harness.contains("destinations[index].1 <= sources[later].0"));
 
@@ -89,10 +89,9 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "endpoint_gap_placement_is_aligned_and_bounded",
         "endpoint_lease_storage_layout_is_bounded_and_exact",
         "association_storage_layout_is_bounded_and_exact",
-        "route_storage_layout_is_bounded_and_exact",
         "packed_sidecar_range_is_aligned_and_monotonic",
         "packed_sidecar_pair_is_aligned_and_disjoint",
-        "four_resident_sidecars_compact_before_all_source_ranges",
+        "three_resident_sidecars_compact_before_all_source_ranges",
         "sidecar_overlap_is_symmetric_and_exact",
         "resolver_storage_layout_is_bounded_and_exact",
     ] {
@@ -115,24 +114,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!public_operation_harnesses.contains("kani::assume"));
     assert!(script.contains(&format!("--harness {harness}")));
     for harness in [
-        "selected_local_participant_mask_is_exact_intersection",
-        "active_route_entry_cannot_be_overwritten",
-        "empty_route_entry_begin_is_exact",
-        "active_route_entry_rejects_conflicting_arm_observation",
-        "active_route_entry_observation_is_arm_preserving_and_monotone",
-        "route_role_consumption_is_affine_and_arm_preserving",
-        "route_entry_initial_mask_is_exact_over_selected_participants",
-    ] {
-        assert!(route_table_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
-    }
-    assert!(route_table_harnesses.contains(".try_begin(replacement_observed, replacement_arm)"));
-    assert!(route_table_harnesses.contains("local == (selected_participants & attached_roles)"));
-    assert!(route_table_harnesses.contains(".try_observe(additional_observed, arm)"));
-    assert!(route_table_harnesses.contains(".try_observe(additional_observed, arm ^ 1)"));
-    assert!(route_table_harnesses.contains("consumed.try_consume_role(role_bit).is_none()"));
-    assert!(route_table_harnesses.contains("participant_mask & !observed_mask"));
-    for harness in [
         "frame_header_roundtrip_preserves_every_field",
         "frame_header_identity_is_exact_and_injective",
     ] {
@@ -152,6 +133,18 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("--harness session_fault_encoding_is_injective"));
     assert!(script.contains("--harness invalid_session_fault_encoding_is_fail_fast"));
     assert!(!fault_harnesses.contains("kani::assume"));
+    for harness in [
+        "packed_state_preserves_full_count_and_fault_code",
+        "attachment_count_accepts_exact_full_role_domain",
+        "attachment_increment_preserves_packed_fault_code",
+        "attachment_count_allows_256_and_rejects_257",
+    ] {
+        assert!(association_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    assert!(association_harnesses.contains("count_256 == ENTRY_COUNT_MAX"));
+    assert!(association_harnesses.contains("next_attachment_count(count_256).is_none()"));
+    assert!(association_harnesses.contains("AssocTable::entry_fault_code(updated) == fault"));
     for harness in [
         "packed_event_conflict_decoding_accepts_exact_domain",
         "optional_route_arm_decoding_accepts_exact_domain",
@@ -200,9 +193,9 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains(&format!("--harness {harness}")));
 
     let controller_harnesses = read("src/global/const_dsl/endpoint_controller/kani.rs");
-    let harness = "unique_controller_role_accepts_exact_single_bit_domain";
+    let harness = "controller_merge_accepts_exact_single_role_domain";
     assert!(controller_harnesses.contains(&format!("fn {harness}()")));
-    assert!(controller_harnesses.contains("assert_eq!(mask, 1u16 << role)"));
+    assert!(controller_harnesses.contains("merged.unique().is_some(), left == right"));
     assert!(!controller_harnesses.contains("kani::assume"));
     assert!(script.contains(&format!("--harness {harness}")));
 
@@ -238,7 +231,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(receive_lane_harnesses.contains("receive_precedes_after_roll_reentry"));
 
     for harness in [
-        "route_resolver_row_decoding_accepts_exact_domain",
+        "route_resolver_row_decoding_accepts_exact_range_domain",
+        "canonical_route_participant_identity_accepts_full_u8_role_domain",
         "dynamic_route_resolver_identity_is_scope_and_id",
     ] {
         assert!(resolver_row_harnesses.contains(&format!("fn {harness}()")));
@@ -246,10 +240,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(resolver_row_harnesses.contains("assert!(decoded.is_some() == expected)"));
     assert!(resolver_row_harnesses.contains("left_scope == right_scope && left_id == right_id"));
-    assert!(resolver_row_harnesses.contains("row.participant_mask(0) == left_participant_mask"));
-    assert!(resolver_row_harnesses.contains("row.participant_mask(1) == right_participant_mask"));
-    assert!(resolver_row_harnesses.contains("left_participant_mask & (1u16 << controller_role)"));
-    assert!(resolver_row_harnesses.contains("right_participant_mask & (1u16 << controller_role)"));
+    assert!(resolver_row_harnesses.contains("participant_start.checked_add"));
+    assert!(resolver_row_harnesses.contains("participant_mid.is_some_and"));
+    assert!(resolver_row_harnesses.contains("mid < participant_end"));
+    assert!(resolver_row_harnesses.contains("participant_end - mid <= 256"));
+    assert!(resolver_row_harnesses.contains("participant_end <= participant_count"));
+    assert!(resolver_row_harnesses.contains("ProgramImageFacts { max_role: u8::MAX }"));
+    assert!(resolver_row_harnesses.contains("program.role_count() == 256"));
+    assert!(resolver_row_harnesses.contains("route_has_participant(scope, 0, controller)"));
     assert!(!resolver_row_harnesses.contains("kani::assume"));
 
     for harness in [
@@ -293,10 +291,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(program_columns.contains("let byte_len = match len.checked_mul(stride)"));
     assert!(program_columns.contains("scope_marker_len: u16"));
-    assert!(
-        program_columns
-            .contains("ProgramImageColumns::new(atom_len, route_resolver_len, markers.len())")
-    );
+    assert!(program_columns.contains("route_participant_len: u16"));
+    assert!(program_columns.contains("route_participant_len,"));
     assert!(program_blob_storage.contains("fn write_scope_marker("));
     assert!(
         program_blob_storage.contains("scope_marker_identity_tag(marker.event, marker.reentry)")
@@ -334,10 +330,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_ref_harnesses.contains(
         "assert!(canonical.columns.blob_len() == different_columns.columns.blob_len());"
     ));
-    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 3, 0)"));
-    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(2, 0, 1)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 0, 27, 0)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(2, 0, 5, 0)"));
     assert!(program_ref_harnesses.contains("let overflow = blob_len > usize::from(u16::MAX);"));
-    assert!(program_ref_harnesses.contains("(u16::MAX, u16::MAX, u16::MAX)"));
+    assert!(program_ref_harnesses.contains("(u16::MAX, u16::MAX, u16::MAX, u16::MAX)"));
     assert!(program_ref_harnesses.contains("ProgramImageBytes::<10>::from_image_if_fits"));
     assert!(program_ref_harnesses.contains(".is_none()"));
     assert!(!program_ref_harnesses.contains("kani::assume"));

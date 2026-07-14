@@ -4,7 +4,44 @@ use super::{
     route_arm_ranges_from_first_enter,
 };
 
-const ABSENT_WITNESS: u16 = u16::MAX;
+const EVENT_WITNESS_BYTES: usize = crate::eff::meta::MAX_EFF_NODES.div_ceil(8);
+const UNFOLDED_WITNESS_BYTES: usize = (crate::eff::meta::MAX_EFF_NODES * 2).div_ceil(8);
+
+const fn witness_is_set<const N: usize>(witnesses: &[u8; N], idx: usize) -> bool {
+    let byte = idx >> 3;
+    if byte >= N {
+        return false;
+    }
+    (witnesses[byte] & (1u8 << (idx & 7))) != 0
+}
+
+const fn set_witness<const N: usize>(witnesses: &mut [u8; N], idx: usize) {
+    let byte = idx >> 3;
+    if byte >= N {
+        panic!("causality witness index overflow");
+    }
+    witnesses[byte] |= 1u8 << (idx & 7);
+}
+
+const fn first_event_witness_for_role(
+    eff_list: &EffList,
+    witnesses: &[u8; EVENT_WITNESS_BYTES],
+    start: usize,
+    end: usize,
+    role: u8,
+) -> Option<usize> {
+    let mut idx = start;
+    while idx < end {
+        if witness_is_set(witnesses, idx) {
+            let node = eff_list.node_at(idx);
+            if matches!(node.kind, crate::eff::EffKind::Atom) && node.atom_data().to == role {
+                return Some(idx);
+            }
+        }
+        idx += 1;
+    }
+    None
+}
 
 #[derive(Clone, Copy)]
 struct RollBodyRange {
@@ -212,9 +249,8 @@ const fn receive_precedes_later_send(
     later_eff_idx: usize,
 ) -> bool {
     let markers = eff_list.scope_markers();
-    let earlier = eff_list.node_at(earlier_eff_idx).atom_data();
-    let mut witnessed_at = [ABSENT_WITNESS; crate::g::ROLE_DOMAIN_SIZE as usize];
-    witnessed_at[earlier.to as usize] = earlier_eff_idx as u16;
+    let mut witnesses = [0u8; EVENT_WITNESS_BYTES];
+    set_witness(&mut witnesses, earlier_eff_idx);
 
     let mut eff_idx = earlier_eff_idx + 1;
     while eff_idx <= later_eff_idx {
@@ -223,13 +259,27 @@ const fn receive_precedes_later_send(
             && on_endpoint_route_path(markers, eff_idx, earlier_eff_idx, later_eff_idx)
         {
             let atom = node.atom_data();
-            let witness = witnessed_at[atom.from as usize];
-            if witness != ABSENT_WITNESS && local_ordered(markers, witness as usize, eff_idx) {
+            if let Some(witness) = first_event_witness_for_role(
+                eff_list,
+                &witnesses,
+                earlier_eff_idx,
+                eff_idx,
+                atom.from,
+            ) && local_ordered(markers, witness, eff_idx)
+            {
                 if eff_idx == later_eff_idx {
                     return true;
                 }
-                if witnessed_at[atom.to as usize] == ABSENT_WITNESS {
-                    witnessed_at[atom.to as usize] = eff_idx as u16;
+                if first_event_witness_for_role(
+                    eff_list,
+                    &witnesses,
+                    earlier_eff_idx,
+                    eff_idx,
+                    atom.to,
+                )
+                .is_none()
+                {
+                    set_witness(&mut witnesses, eff_idx);
                 }
             }
         }
@@ -325,14 +375,10 @@ const fn receive_precedes_after_roll_reentry(
     let body_len = body.len();
     let earlier_unfolded_idx = earlier_eff_idx - body.start;
     let later_unfolded_idx = body_len + later_eff_idx - body.start;
-    if later_unfolded_idx >= ABSENT_WITNESS as usize {
-        return false;
-    }
 
     let markers = eff_list.scope_markers();
-    let earlier = eff_list.node_at(earlier_eff_idx).atom_data();
-    let mut witnessed_at = [ABSENT_WITNESS; crate::g::ROLE_DOMAIN_SIZE as usize];
-    witnessed_at[earlier.to as usize] = earlier_unfolded_idx as u16;
+    let mut witnesses = [0u8; UNFOLDED_WITNESS_BYTES];
+    set_witness(&mut witnesses, earlier_unfolded_idx);
 
     let mut unfolded_idx = earlier_unfolded_idx + 1;
     while unfolded_idx <= later_unfolded_idx {
@@ -353,15 +399,31 @@ const fn receive_precedes_after_roll_reentry(
                 },
                 body,
             ) {
-                let witness = witnessed_at[candidate.from as usize];
-                if witness != ABSENT_WITNESS
-                    && unfolded_locally_ordered(markers, body, witness as usize, unfolded_idx)
+                let witness = first_unfolded_witness_for_role(
+                    eff_list,
+                    body,
+                    &witnesses,
+                    earlier_unfolded_idx,
+                    unfolded_idx,
+                    candidate.from,
+                );
+                if let Some(witness) = witness
+                    && unfolded_locally_ordered(markers, body, witness, unfolded_idx)
                 {
                     if unfolded_idx == later_unfolded_idx {
                         return true;
                     }
-                    if witnessed_at[candidate.to as usize] == ABSENT_WITNESS {
-                        witnessed_at[candidate.to as usize] = unfolded_idx as u16;
+                    if first_unfolded_witness_for_role(
+                        eff_list,
+                        body,
+                        &witnesses,
+                        earlier_unfolded_idx,
+                        unfolded_idx,
+                        candidate.to,
+                    )
+                    .is_none()
+                    {
+                        set_witness(&mut witnesses, unfolded_idx);
                     }
                 }
             }
@@ -369,6 +431,28 @@ const fn receive_precedes_after_roll_reentry(
         unfolded_idx += 1;
     }
     false
+}
+
+const fn first_unfolded_witness_for_role(
+    eff_list: &EffList,
+    body: RollBodyRange,
+    witnesses: &[u8; UNFOLDED_WITNESS_BYTES],
+    start: usize,
+    end: usize,
+    role: u8,
+) -> Option<usize> {
+    let mut unfolded_idx = start;
+    while unfolded_idx < end {
+        if witness_is_set(witnesses, unfolded_idx) {
+            let occurrence = body.unfolded_occurrence(unfolded_idx);
+            let node = eff_list.node_at(occurrence.eff_idx);
+            if matches!(node.kind, crate::eff::EffKind::Atom) && node.atom_data().to == role {
+                return Some(unfolded_idx);
+            }
+        }
+        unfolded_idx += 1;
+    }
+    None
 }
 
 const fn validate_roll_body_receive_lane_causality(

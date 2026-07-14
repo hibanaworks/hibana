@@ -77,10 +77,6 @@ where
             align,
             resident_budget,
         } = request;
-        if role >= crate::g::ROLE_DOMAIN_SIZE {
-            crate::invariant();
-        }
-
         let mut target = None;
         let mut current = self.head.get();
         while let Some(rendezvous_ptr) = current {

@@ -13,6 +13,7 @@ where
         &mut self,
         mut delta: PreparedCommitDelta,
     ) -> CommittedCommitDelta {
+        let fresh_route_start = delta.fresh_route_start;
         let applies_route_completion =
             delta.event().is_some() || delta.selected_routes().len() != 0;
         let body_reentry_scope = self.prepared_body_reentry_scope(delta.event());
@@ -41,7 +42,11 @@ where
         if applies_route_completion {
             self.apply_prepared_route_completion_cursor(delta.selected_routes());
         }
-        CommittedCommitDelta::from_applied(delta.event(), delta.take_selected_routes())
+        CommittedCommitDelta::from_applied(
+            delta.event(),
+            delta.take_selected_routes(),
+            fresh_route_start,
+        )
     }
 
     #[inline]
