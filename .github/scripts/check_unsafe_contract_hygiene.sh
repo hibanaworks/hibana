@@ -432,7 +432,7 @@ fi
 
 if [[ "${runtime_rs}" != *"pub struct SessionKitStorage"* ]] \
   || [[ "${runtime_rs}" != *"pub fn init(&mut self) -> &SessionKit"* ]]; then
-  echo "SessionKit construction must expose only the safe Pico-class storage owner" >&2
+  echo "SessionKit construction must expose only the safe resource-bounded storage owner" >&2
   exit 1
 fi
 

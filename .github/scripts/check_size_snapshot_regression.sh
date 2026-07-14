@@ -97,9 +97,9 @@ measure_tree() {
       ')"
   printf '%s\n' "${section_output}"
 
-  local pico_example_manifest="${tree}/examples/pico/Cargo.toml"
-  if [[ ! -f "${pico_example_manifest}" ]]; then
-    echo "missing tracked Pico projection example for ${label}: ${pico_example_manifest}" >&2
+  local thumbv6m_example_manifest="${tree}/examples/pico/Cargo.toml"
+  if [[ ! -f "${thumbv6m_example_manifest}" ]]; then
+    echo "missing tracked thumbv6m projection example for ${label}: ${thumbv6m_example_manifest}" >&2
     exit 1
   fi
   CARGO_TERM_COLOR=never \
@@ -108,7 +108,7 @@ measure_tree() {
   PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
   CARGO_TARGET_DIR="${target_dir}" \
     "${TOOLCHAIN_CARGO}" build \
-      --manifest-path "${pico_example_manifest}" \
+      --manifest-path "${thumbv6m_example_manifest}" \
       --no-default-features \
       --target thumbv6m-none-eabi \
       --release \
@@ -208,7 +208,7 @@ for metrics in runtime_shapes.values():
         )
     # resident_prefix_bytes is the full pre-runtime carve:
     # Rendezvous header, transport T field, alignment padding, and tap ring.
-    metrics["pico_total_sram_bytes"] = (
+    metrics["modeled_runtime_sram_bytes"] = (
         data_bss_bytes
         + metrics.get("session_kit_storage_bytes", 0)
         + metrics.get("resident_prefix_bytes", 0)
@@ -265,7 +265,7 @@ runtime_metrics = {
     "peak_live_slab_bytes",
     "localside_peak_stack_bytes",
     "peak_stack_bytes",
-    "pico_total_sram_bytes",
+    "modeled_runtime_sram_bytes",
 }
 
 shapes = current.get("runtime_shapes", {})
@@ -315,8 +315,8 @@ for shape in sorted(expected_shapes):
 
 current_max_stack = current["runtime_max"].get("peak_stack_bytes", 0)
 budget_max_stack = max(metrics["peak_stack_bytes"] for metrics in runtime_budget.values())
-current_sram = current["runtime_max"].get("pico_total_sram_bytes", 0)
-budget_sram = max(metrics["pico_total_sram_bytes"] for metrics in runtime_budget.values())
+current_sram = current["runtime_max"].get("modeled_runtime_sram_bytes", 0)
+budget_sram = max(metrics["modeled_runtime_sram_bytes"] for metrics in runtime_budget.values())
 current_flash = current["sections"].get("flash_total", 0)
 aggregate = [
     ("max_stack", current_max_stack, budget_max_stack),
@@ -338,7 +338,7 @@ if non_growing < 3 or decreased < 1:
         "aggregate snapshot budget gate failed: max_stack/sram/flash must all be <= budget "
         "and at least one must decrease below budget"
     )
-min_sram_headroom = int(os.environ.get("HIBANA_PICO_SRAM_MIN_HEADROOM_BYTES", "64"))
+min_sram_headroom = int(os.environ.get("HIBANA_MODELED_RUNTIME_SRAM_MIN_HEADROOM_BYTES", "64"))
 sram_headroom = budget_sram - current_sram
 print(
     f"worktree-snapshot aggregate sram_headroom current={sram_headroom} "
@@ -346,7 +346,7 @@ print(
 )
 if sram_headroom < min_sram_headroom:
     failures.append(
-        "aggregate Pico-class SRAM headroom is too small: "
+        "aggregate modeled runtime SRAM headroom is too small: "
         f"headroom={sram_headroom} minimum={min_sram_headroom}"
     )
 

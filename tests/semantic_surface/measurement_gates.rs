@@ -27,8 +27,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let final_gate_with_helpers =
         format!("{final_gate}\n{thumb_header_gate}\n{thumb_mask_gate}\n{run_final_gate}");
     let snapshot = read(".github/measurement_snapshots/hibana-size-snapshot.json");
-    let pico_example_manifest = read("examples/pico/Cargo.toml");
-    let pico_example = read("examples/pico/src/lib.rs");
+    let thumbv6m_example_manifest = read("examples/pico/Cargo.toml");
+    let thumbv6m_example = read("examples/pico/src/lib.rs");
     let workflow = read(".github/workflows/quality-gates.yml");
     let endpoint_kernel = read("src/endpoint/kernel/core.rs")
         + &read_production_dir_rs("src/endpoint/kernel")
@@ -55,7 +55,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "Rendezvous header, transport T field, alignment padding, and tap ring",
         "actual_sram =",
         "budget_sram =",
-        "pico_total_sram_bytes",
+        "modeled_runtime_sram_bytes",
+        "HIBANA_MODELED_RUNTIME_SRAM_MIN_HEADROOM_BYTES",
         "actual_max_stack = max(metrics[\"peak_stack_bytes\"] for metrics in seen.values())",
         "bash \"${ROOT_DIR}/.github/scripts/check_size_snapshot_regression.sh\"",
         "bash ./.github/scripts/check_no_split_guard_literals.sh",
@@ -138,7 +139,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && !message_heavy_gate.contains("recursion_limit")
             && !message_heavy_gate.contains("src/main.rs")
             && !message_heavy_gate.contains("std::hint::black_box"),
-        "message-heavy gate must measure distinct wire contracts and type pressure on Pico without recursion-limit escape"
+        "message-heavy gate must measure distinct wire contracts and type pressure on thumbv6m without recursion-limit escape"
     );
 
     for required in [
@@ -195,9 +196,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "CURRENT_REF=\"${HIBANA_SIZE_CURRENT_REF:-HEAD}\"",
         "git worktree add --detach \"${CURRENT_WORKTREE}\" \"${CURRENT_REF}\"",
         "measure_tree \"current-${CURRENT_LABEL}\" \"${CURRENT_TREE}\" \"${CURRENT_JSON}\"",
-        "local pico_example_manifest=\"${tree}/examples/pico/Cargo.toml\"",
-        "missing tracked Pico projection example",
-        "--manifest-path \"${pico_example_manifest}\"",
+        "local thumbv6m_example_manifest=\"${tree}/examples/pico/Cargo.toml\"",
+        "missing tracked thumbv6m projection example",
+        "--manifest-path \"${thumbv6m_example_manifest}\"",
         "libhibana_pico_projection_example.rlib",
         "projected_sections",
         "current runtime snapshot missing shapes",
@@ -206,7 +207,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "\"tap_ring_bytes\"",
         "resident_prefix_bytes must include the internal tap ring carved before the runtime slab",
         "Rendezvous header, transport T field, alignment padding, and tap ring",
-        "\"pico_total_sram_bytes\"",
+        "\"modeled_runtime_sram_bytes\"",
         "SNAPSHOT_FILE=\"${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json\"",
         "budget_snapshot = json.load(f)",
         "worktree-snapshot budget-section {key} actual={actual} budget={maximum}",
@@ -245,6 +246,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "send_signatures",
         "lane_send",
         "projected_crate",
+        "pico_total_sram_bytes",
+        "HIBANA_PICO_SRAM_MIN_HEADROOM_BYTES",
     ] {
         assert!(
             !worktree_gate.contains(forbidden) && !final_gate.contains(forbidden),
@@ -253,14 +256,15 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     }
 
     assert!(
-        pico_example_manifest.contains("name = \"hibana-pico-projection-example\"")
-            && pico_example_manifest
+        thumbv6m_example_manifest.contains("name = \"hibana-pico-projection-example\"")
+            && thumbv6m_example_manifest
                 .contains("hibana = { path = \"../..\", default-features = false }")
-            && pico_example.starts_with("#![no_std]")
-            && pico_example.contains("pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)")
-            && pico_example.contains("g::send::<0, 1, Msg<1, u32>>()")
-            && pico_example.contains("g::send::<1, 0, Msg<2, u32>>()"),
-        "Pico measurement must use one tracked no_std projection example instead of generated compatibility source"
+            && thumbv6m_example.starts_with("#![no_std]")
+            && thumbv6m_example
+                .contains("pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)")
+            && thumbv6m_example.contains("g::send::<0, 1, Msg<1, u32>>()")
+            && thumbv6m_example.contains("g::send::<1, 0, Msg<2, u32>>()"),
+        "thumbv6m measurement must use one tracked no_std projection example instead of generated compatibility source"
     );
 
     assert!(
@@ -290,7 +294,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && final_gate.contains("HIBANA_OMIT_FIXED_SNAPSHOT_CHECK=1")
             && final_gate
                 .contains("if [[ \"${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}\" != \"1\" ]]; then"),
-        "CI must run fixed Pico snapshots and the worktree size snapshot unless an explicit local override is set"
+        "CI must run fixed thumbv6m snapshots and the worktree size snapshot unless an explicit local override is set"
     );
     assert!(
         manifest_test_gate.contains("import tomllib")
@@ -488,11 +492,11 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     }
 
     for required in [
-        "\"description\": \"Measured stack, SRAM, and flash values must satisfy",
+        "\"description\": \"Measured stack, modeled runtime SRAM, and thumbv6m flash values must satisfy",
         "\"localside_peak_stack_bytes\"",
         "\"resident_prefix_bytes\"",
         "\"tap_ring_bytes\"",
-        "\"pico_total_sram_bytes\"",
+        "\"modeled_runtime_sram_bytes\"",
         "\"flash_total_formula\": \".text + .rodata + .data\"",
         "\".text\": 154624",
         "\".rodata\": 15341",
@@ -500,7 +504,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     ] {
         assert!(
             snapshot.contains(required),
-            "measurement snapshot must record the fixed Pico budget and localside stack budget: {required}"
+            "measurement snapshot must record the fixed target budget and localside stack budget: {required}"
         );
     }
 

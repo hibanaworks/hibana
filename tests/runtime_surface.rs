@@ -193,7 +193,7 @@ fn session_kit_construction_is_in_place_only() {
             && !runtime_rs.contains("pub mod resident {")
             && !runtime_rs.contains("pub fn init_resident_in_place")
             && !runtime_rs.contains("pub unsafe fn init_in_place("),
-        "SessionKit construction must expose one safe Pico-class storage owner"
+        "SessionKit construction must expose one safe resource-bounded storage owner"
     );
     assert!(
         !runtime_rs.contains("pub fn new(clock:"),

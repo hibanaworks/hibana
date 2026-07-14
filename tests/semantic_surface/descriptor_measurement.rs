@@ -401,7 +401,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !program.contains("#[cfg(any(feature = \"std\", test))]\nimpl<Steps> Projectable")
             && !program
                 .contains("#[cfg(not(any(feature = \"std\", test)))]\nimpl<Steps> Projectable"),
-        "projection must use one Pico-class Projectable impl, not std/test split metadata"
+        "projection must use one no_std Projectable impl, not std/test split metadata"
     );
     assert!(
         !program.contains("pub const fn embedded") && !projection.contains("pub const fn embedded"),

@@ -12,6 +12,9 @@ use hibana::{
 };
 use in_memory::InMemoryTransport;
 
+// This host example's measured runtime budget; deployments measure their own descriptor set.
+const RUNTIME_SLAB_BYTES: usize = 3 * 1024;
+
 fn main() {
     let choreography = g::seq(
         g::send::<0, 1, Msg<1, u32>>(),
@@ -20,7 +23,7 @@ fn main() {
     let client_program: RoleProgram<0> = project(&choreography);
     let server_program: RoleProgram<1> = project(&choreography);
 
-    let mut slab = [0_u8; 16 * 1024];
+    let mut slab = [0_u8; RUNTIME_SLAB_BYTES];
     let mut storage = SessionKitStorage::<InMemoryTransport>::uninit();
     let kit = storage.init();
     let rendezvous = kit

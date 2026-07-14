@@ -297,7 +297,7 @@ fn tap_event_is_opaque_sixteen_byte_record() {
     assert_eq!(
         core::mem::size_of::<TapEvent>(),
         16,
-        "TapEvent must stay a 16-byte Pico-class diagnostic record"
+        "TapEvent must stay a 16-byte resource-bounded diagnostic record"
     );
     assert!(
         event.contains("#[repr(transparent)]")
@@ -359,7 +359,7 @@ fn tap_ring_bytes_stay_at_half_kib() {
             !consts.contains(forbidden)
                 && !observe.contains(forbidden)
                 && !runtime.contains(forbidden),
-            "tap must stay one fixed Pico-class evidence surface without public capacity/config or host split: {forbidden}"
+            "tap must stay one fixed resource-bounded evidence surface without public capacity/config or host split: {forbidden}"
         );
     }
 }

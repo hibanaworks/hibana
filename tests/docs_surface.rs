@@ -50,6 +50,20 @@ fn assert_absent(readme: &str, forbidden: &str, why: &str) {
     assert!(!readme.contains(forbidden), "{why}: {forbidden}");
 }
 
+fn compact_ws(source: &str) -> String {
+    source.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn marked_rust_block<'a>(markdown: &'a str, name: &str) -> &'a str {
+    let start = format!("<!-- {name}:start -->\n```rust\n");
+    let end = format!("```\n<!-- {name}:end -->");
+    markdown
+        .split_once(&start)
+        .and_then(|(_, tail)| tail.split_once(&end))
+        .map(|(source, _)| source)
+        .unwrap_or_else(|| panic!("missing marked Rust block: {name}"))
+}
+
 fn collect_source_files(root: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(root)
         .unwrap_or_else(|err| panic!("read_dir {} failed: {}", root.display(), err))
@@ -68,158 +82,73 @@ fn collect_source_files(root: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn readme_stays_self_contained_and_hibana_scoped() {
     let readme = read("README.md");
-    let searchable_readme = readme.split_whitespace().collect::<Vec<_>>().join(" ");
+    let searchable_readme = compact_ws(&readme);
 
     for required in [
         "hibana-header.svg",
-        "## What Hibana Is",
-        "## Install",
-        "## Quick Start",
+        "## Install And Run",
+        "## How Hibana Works",
         "## Application Guide",
-        "## Protocol Runtime",
+        "## Protocol Runtime Guide",
+        "## Guarantees And Assumptions",
         "## Build And Test",
-        "### Boundary Contract",
+        "choreography-derived runtime enforcement kernel",
         "cargo add hibana",
-        "runtime code is `no_std` and no-alloc-oriented;",
-        "send() / recv() / offer() / RouteBranch::send() / RouteBranch::recv()",
-        "branch.send::<g::Msg<40, ()>>(&()).await?",
-        "route branch first-step operation succeeds",
+        "cargo run --example ping_pong",
+        "<!-- ping-pong-example:start -->",
+        "<!-- ping-pong-example:end -->",
+        "### Measured `no_std` Resource Envelope",
+        "examples/pico/Cargo.toml",
+        "--target thumbv6m-none-eabi",
+        "| Modeled runtime SRAM envelope | 5,920 B | 8,954 B |",
+        "| Localside runtime stack high-water | 2,831 B | 3,663 B |",
+        "| Largest linked artifact in the tracked protocol matrix | 1,852 B | 16,384 B |",
+        "Component maxima in the table may come from different shapes",
+        "application, concrete transport buffers, executor, interrupt stacks, codec",
+        "bash ./.github/scripts/run_final_form_gates.sh",
         "If you are writing an application, stay on `hibana::g` and `Endpoint`.",
-        "are implementing a protocol crate, use `hibana::runtime`",
-        "install explicit route resolvers when needed",
+        "### Multiparty, Asynchronous, And Affine",
+        "### Choreography Language",
+        "### Affine Progress",
         "Everyday application endpoint code uses these names:",
-        "### Endpoint Surface",
         "### Messages And Payloads",
-        "Choreography authors also use the `Program` value",
-        "plus `.roll()` for repeated regions and `.resolve::<ID>()`",
-        "Use `recv()` when the next local receive can be uniquely committed",
-        "observed transport evidence and the projected descriptor",
-        "### Parallel Composition",
-        "It does not require message labels to be globally unique.",
-        "Keep choreography terms local.",
+        "`WirePayload::SCHEMA_ID`",
+        "### Sending And Receiving",
         "### Routes",
-        "Route choice is a protocol fact, not a transport guess.",
-        "Both forms require one first-visible controller",
-        "it is not a shared oracle that makes competing first senders projectable",
         "Prefer in-band choice",
-        "mark the route with `.resolve::<ID>()`",
-        "### Repeated Regions",
-        "Repeated protocol regions are structural.",
-        "then call `.roll()` on that region.",
-        "`resolve::<ID>()` marks the route node; `.roll()` marks the surrounding",
-        "Resolve first, then roll:",
+        "`RouteBranch::label()` reports the selected arm's first logical message label.",
+        "### Parallel And Repeated Regions",
         ".resolve::<ROUTE_DECISION>()",
-        "g::route(left, right).roll().resolve::<ID>()",
-        "`resolve::<ID>()` is only available on `Program<Route<...>>`",
-        "the resolver belongs to",
-        "let inner = g::route(a, b)",
-        "Resolver state is the external input owner",
-        "A resolved route uses `ResolverRef::decide()` as branch authority",
-        "intrinsic route derives branch authority from projected first visible endpoint",
-        "`RouteBranch::label()` reports the selected arm's first logical message label",
-        "For resolved routes this label is not branch authority",
-        "Do not treat `label()` as an exhaustive discriminator for resolved",
-        "resolved route arms may reuse a logical message label",
-        "rv.set_resolver(&role0, ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision))?;",
-        "External resolver state uses the same explicit registration path.",
-        "decisions come from the typed resolver",
-        "registered for the route site.",
-        "`ResolverRef` for the route decision",
-        "site. When that",
-        "owner has a decision",
-        "returns `DecisionArm`",
-        "otherwise it delegates",
-        "another user-registered `ResolverRef`",
-        "local resolver is still explicit",
-        "transfer authority to external state",
-        "treats external telemetry",
-        "transport readiness",
-        "authority by itself",
-        "local_resolver: ResolverRef::<ROUTE_RESOLVER>::decision_state(",
-        "&LOCAL_ROUTE_STATE,",
-        "### Receive Evidence",
-        "only for direct `recv()` or for `RouteBranch::recv()` after `offer()` has already",
-        "materialized a unique receive descriptor",
-        "`offer()` and unresolved route demux",
-        "require `ReceivedFrame::framed(...)`",
+        "### Failure And Cancellation",
         "Protocol crates use the same `hibana::g` language as applications.",
         "no second composition language.",
-        "let program = g::seq(prefix, app);",
         "let client: RoleProgram<0> = project(&program);",
         "let server: RoleProgram<1> = project(&program);",
+        "let kit = kit_storage.init();",
+        "let rv = kit.rendezvous(runtime_slab, transport)?;",
         "let endpoint = rv.enter(SessionId::new(1), &client)?;",
-        "runtime::SessionKitStorage::uninit().init()",
-        "kit.rendezvous(runtime_slab, transport)",
-        "registered rendezvous.enter(..., ...)",
-        "`runtime::wire::{Payload, WireEncode, WirePayload}`",
-        "Every choreography payload implements both `WireEncode` and `WirePayload`",
-        "`WirePayload::SCHEMA_ID`",
-        "is that canonical wire contract's compact protocol-local identity",
-        "before publishing or consuming protocol",
-        "Incompatible encodings or validators must use distinct ids.",
-        "Rust wrappers may share an id only when they intentionally implement",
-        "Schema `0` is the canonical zero-byte unit schema",
-        "local actions check the zero-byte encoding before committing progress",
-        "one global protocol is an initial deployment agreement",
-        "trait neither receives descriptor bytes nor negotiates program images.",
-        "A deployment may use a versioned application profile",
-        "Replayable early traffic may become Hibana protocol evidence",
-        "resumed application configuration and replay policy",
-        "claim to prove cross-binary Rust type identity",
-        "fn decode_validated_payload(input: Payload<'_>) -> Self::Decoded<'_>",
-        "`runtime::ids::SessionId`",
-        "`runtime::transport::{Transport, TransportError, PortOpen, Outgoing, ReceivedFrame, FrameHeader, FrameLabel}`",
-        "`PortOpen` exposes the descriptor-derived `local_role`, `session_id`, and",
-        "`Outgoing` exposes the projected",
-        "Fresh transport-instance state is a sufficient carrier generation.",
-        "The responsibility boundary is strict:",
+        "Useful runtime owners:",
+        "### Transport",
+        "Ingress demux state belongs inside the transport owner.",
+        "FrameHeader::from_bytes(header_bytes)",
+        "ResolverRef::<ROUTE_RESOLVER>::decision_state(&state, route_decision)",
+        "### Protocol Artifact Guarantee",
+        "`VerifiedProtocolCertificate` accepted by the independent checker",
+        "semantic per-session deadlock freedom",
+        "### Deployed Execution Guarantee",
+        "`GlobalFairnessAssumptions`",
+        "**per-session protocol deadlock freedom under the stated deployment premises**",
         "| Hibana establishes | A deployment supplies |",
-        "External premises are inputs to stronger deployment-indexed theorems, not missing Hibana runtime features.",
-        "must not absorb carrier, cryptography, failure detection, or application algorithms",
-        "address migration and identifier rotation remain inside that generation",
-        "Under the strong affine-delivery profile, peer closure is scoped",
-        "leaving unrelated",
-        "sessions and subchannels intact.",
-        "Global fidelity and progress require the stronger affine-delivery premise",
-        "authentically bound to its mapped peer/direction",
-        "Lean proves exact observation admission and a separate strong affine carrier",
-        "### Session Templates",
-        "the same finite descriptor",
-        "Distinct session transitions commute in the Lean",
-        "A lossy or reordering carrier can expose raw message observations",
-        "A stateful distributed algorithm can instantiate repeated finite interaction",
-        "Algorithm-specific",
-        "safety and liveness invariants require their own proofs.",
-        "One session has at most sixteen declared roles and no channel delegation.",
-        "does not mutate the role",
-        "set of a live descriptor.",
-        "`runtime::tap::{TapEvent, TapPort}`",
-        "`runtime::tap::Evidence`",
-        "### Tap Evidence",
-        "`RendezvousKit::tap()` returns a read-only `TapPort`",
-        "Tap is not a logger and not a user telemetry channel",
-        "Each `TapEvent` is an immutable 16-byte record.",
-        "construct or push tap events",
-        "`Evidence` exposes only `kind()`, `reason()`, and",
-        "Canonical event ids and reasons live in `runtime::tap`",
-        "The ring retains the latest 32 events.",
-        "A new `rv.tap()` created after a failure",
-        "cargo +1.95.0 check --no-default-features --lib -p hibana",
-        "cargo +1.95.0 check --lib -p hibana",
-        "cargo +1.95.0 test -p hibana --test ui",
-        "cargo +1.95.0 test -p hibana --test lane_lifecycle_tap",
-        "cargo +1.95.0 doc -p hibana --no-deps --no-default-features",
-        "The crate package ships self-contained compile/UI/API and runtime behavior tests.",
-        "Repository-only gates that read `.github`, public-surface allowlists,",
-        "measurement snapshots, or maintainability budgets stay outside the production",
+        "Mediated -> Authentic -> Ordered -> Closing -> Fair",
+        "### Elastic Re-entry And Erasure",
+        "### Cross-tool Evidence",
+        "### What Hibana Does Not Claim",
+        "assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement",
         "bash ./.github/scripts/run_final_form_gates.sh",
-        "repo-only unit",
-        "tests are enabled through `hibana_repo_tests`",
-        "`hibana_repo_tests`",
     ] {
         assert!(
             searchable_readme.contains(required),
-            "README must stay self-contained and hibana-scoped: {required}"
+            "README must explain the canonical Hibana surface and boundary: {required}"
         );
     }
 
@@ -229,16 +158,10 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "Phase 0a",
         ".github/scripts/check_",
         "final-form",
-        "quarantine",
         "route frontier",
         "`WireDecode`",
-        "## Guarantees",
-        "## Validation",
-        "Application authors only need these names",
         "g::Msg<L, P, K>",
         "Msg<L, P, K>",
-        "<a href=\"#runtime\">",
-        "<a href=\"#guarantees\">",
         "owned default path",
         "hibana_mgmt",
         "hibana-mgmt",
@@ -247,30 +170,14 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "hibana-cross-repo",
         "`hibana::runtime::mgmt`",
         "`hibana::runtime::resolver::epf`",
-        "`hibana::runtime::mgmt::request_reply::PREFIX`",
-        "`hibana::runtime::mgmt::observe_stream::PREFIX`",
-        "`hibana::runtime::mgmt::ROLE_CONTROLLER`",
-        "`hibana::runtime::mgmt::ROLE_CLUSTER`",
-        "`hibana::runtime::mgmt::Request::Load(LoadRequest)`",
-        "`hibana::runtime::mgmt::Request::LoadAndActivate(LoadRequest)`",
-        "`hibana::runtime::mgmt::Request::Activate(SlotRequest)`",
-        "`hibana::runtime::mgmt::Request::Restore(SlotRequest)`",
-        "`hibana::runtime::mgmt::Request::Stats(SlotRequest)`",
         "`runtime/cross-repo/`",
-        "staging location for cross-repo smoke",
         "App code writes `APP: g::Program<_>`",
         "transport_prefix",
         "appkit",
         "appkits",
-        "appkit_prefix",
-        "build_management_prefix",
-        "drive_management_pair",
-        "duplicate labels",
         "duplicate branch labels",
         "branch labels must be unique",
-        "duplicate branch labels rejected",
         "MyDemux",
-        "EPF",
         "project(&PROGRAM)",
         "const APP: g::Program<_>",
         "static APP: g::Program<_>",
@@ -280,33 +187,22 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "AUTO_MINT_WIRE",
         "enter(None)",
         "Passing `None`",
-        "rv.session(SessionId::new(1))\n    .role(&role0)\n    .set_resolver",
-        "rv.role(&role0)",
-        "`CapDelegate`: `input[0] = (dst_rv << 16) | dst_lane`",
         "runtime::SessionKit::enter(...)",
         "runtime::resolver::replay::ResolverAttrs",
         "runtime::advanced::resolver::replay::ResolverAttrs",
         "kit.enter::<",
         "fn decode_payload(input: Payload<'_>) -> Result<Self::Decoded<'_>, CodecError>",
+        "project::<",
+        "cargo +nightly",
+        "cargo +stable",
+        "workspace_smoke",
+        "Pico-class",
+        "Pico class",
     ] {
         assert_absent(
             &readme,
             forbidden,
-            "README must not leak other-crate or internal-only wording",
-        );
-    }
-
-    assert_absent(
-        &readme,
-        "project::<",
-        "README must not leak other-crate or internal-only wording",
-    );
-
-    for forbidden in ["cargo +nightly", "cargo +stable", "workspace_smoke"] {
-        assert_absent(
-            &readme,
-            forbidden,
-            "README must not pin forbidden toolchain or smoke-helper lanes",
+            "README must not publish removed or internal-only vocabulary",
         );
     }
 }
@@ -315,53 +211,63 @@ fn readme_stays_self_contained_and_hibana_scoped() {
 fn onboarding_starts_with_one_gated_runnable_example() {
     let readme = read("README.md");
     let install = readme
-        .find("## Install")
-        .expect("README must install first");
-    let quick_start = readme
-        .find("## Quick Start")
-        .expect("README must have a quick start");
-    let verification = readme
-        .find("## Verification Boundary")
-        .expect("README must separate the verification boundary");
+        .find("## Install And Run")
+        .expect("README must start with installation and execution");
+    let model = readme
+        .find("## How Hibana Works")
+        .expect("README must explain the model after the runnable example");
+    let application = readme
+        .find("## Application Guide")
+        .expect("README must explain the application surface");
+    let runtime = readme
+        .find("## Protocol Runtime Guide")
+        .expect("README must explain runtime integration");
+    let guarantees = readme
+        .find("## Guarantees And Assumptions")
+        .expect("README must separate guarantees from assumptions");
+    let build = readme
+        .find("## Build And Test")
+        .expect("README must close with verification commands");
 
     assert!(
-        install < quick_start && quick_start < verification,
-        "README onboarding must precede proof details"
-    );
-    assert!(
-        readme[..quick_start].lines().count() < 100,
-        "Quick Start must stay in the first 100 README lines"
-    );
-    assert!(
-        readme.lines().count() < 1_000,
-        "README must not become a proof inventory again"
+        install < model
+            && model < application
+            && application < runtime
+            && runtime < guarantees
+            && guarantees < build,
+        "README must move from execution to model, integration, guarantees, and verification"
     );
 
-    let quick_start = &readme[quick_start..verification];
+    let runnable_section = &readme[install..model];
     for required in [
         "cargo run --example ping_pong",
         "examples/ping_pong.rs",
         "ping=7, pong=8",
-        "host-only and example-local",
-        "### Pico / `no_std`",
+        "The documentation gate requires this block and the executable source to remain",
+        "### Measured `no_std` Resource Envelope",
         "examples/pico/Cargo.toml",
         "examples/pico/src/lib.rs",
         "--target thumbv6m-none-eabi",
         "projected-program input",
+        "Modeled runtime SRAM envelope",
+        "It is a Hibana-owned runtime envelope, not a whole-device memory claim.",
     ] {
         assert!(
-            quick_start.contains(required),
-            "Quick Start must use the runnable canonical example: {required}"
+            runnable_section.contains(required),
+            "install section must use the runnable canonical example: {required}"
         );
     }
-    for forbidden in ["```rust,ignore", "endpoint.send::<"] {
-        assert!(
-            !quick_start.contains(forbidden),
-            "Quick Start must not return to an incomplete ignored fragment: {forbidden}"
-        );
-    }
+    assert!(
+        !runnable_section.contains("```rust,ignore"),
+        "the first example must be complete rather than an ignored fragment"
+    );
 
     let example = read("examples/ping_pong.rs");
+    assert_eq!(
+        marked_rust_block(&readme, "ping-pong-example"),
+        example,
+        "README must embed the exact gated ping_pong source"
+    );
     assert!(
         example.contains("fn main()")
             && example.contains("assert_eq!((ping, pong), (7, 8))")
@@ -369,15 +275,16 @@ fn onboarding_starts_with_one_gated_runnable_example() {
         "ping_pong must remain a self-checking executable"
     );
 
-    let pico_manifest = read("examples/pico/Cargo.toml");
-    let pico_example = read("examples/pico/src/lib.rs");
+    let thumbv6m_manifest = read("examples/pico/Cargo.toml");
+    let thumbv6m_example = read("examples/pico/src/lib.rs");
     assert!(
-        pico_manifest.contains("hibana = { path = \"../..\", default-features = false }")
-            && pico_example.starts_with("#![no_std]")
-            && pico_example.contains("pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)")
-            && pico_example.contains("g::send::<0, 1, Msg<1, u32>>()")
-            && pico_example.contains("g::send::<1, 0, Msg<2, u32>>()"),
-        "the tracked Pico example must compile the canonical public projection surface"
+        thumbv6m_manifest.contains("hibana = { path = \"../..\", default-features = false }")
+            && thumbv6m_example.starts_with("#![no_std]")
+            && thumbv6m_example
+                .contains("pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)")
+            && thumbv6m_example.contains("g::send::<0, 1, Msg<1, u32>>()")
+            && thumbv6m_example.contains("g::send::<1, 0, Msg<2, u32>>()"),
+        "the tracked thumbv6m example must compile the canonical public projection surface"
     );
 
     let crate_docs = read("src/lib.rs");
@@ -391,7 +298,7 @@ fn onboarding_starts_with_one_gated_runnable_example() {
     assert!(
         final_gate.contains("cargo +\"${TOOLCHAIN}\" run --quiet --example ping_pong")
             && final_gate.contains("ping_pong example output mismatch"),
-        "the final gate must execute and validate the onboarding example"
+        "the release gate must execute and validate the onboarding example"
     );
 
     let package_gate = read(".github/scripts/check_package_artifact.sh");
@@ -406,8 +313,8 @@ fn onboarding_starts_with_one_gated_runnable_example() {
     assert!(
         no_std_gate.contains("--manifest-path examples/pico/Cargo.toml")
             && no_std_gate.matches("--target thumbv6m-none-eabi").count() == 2
-            && no_std_gate.contains("pico-example=1"),
-        "the no_std gate must compile both Hibana and its tracked Pico example for thumbv6m"
+            && no_std_gate.contains("projection-example=1"),
+        "the no_std gate must compile both Hibana and its tracked projection example for thumbv6m"
     );
 }
 
@@ -491,6 +398,7 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
     );
 
     let readme = read("README.md");
+    let searchable_readme = compact_ws(&readme);
     let endpoint = endpoint_facade_source();
     let lib = read("src/lib.rs");
 
@@ -523,7 +431,7 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
         "endpoint docs must include branch first-step operations as committed progress"
     );
     assert!(
-        readme.contains("`recv()`, or a route branch first-step operation succeeds")
+        searchable_readme.contains("`recv()`, or a route branch first-step operation succeeds")
             && !readme.contains("Endpoint progress happens when a send or\ndecode succeeds"),
         "README progress contract must include route branch first-step operations"
     );
@@ -605,6 +513,7 @@ fn quality_gates_do_not_directly_execute_non_executable_scripts() {
 #[test]
 fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabulary() {
     let readme = read("README.md");
+    let searchable_readme = compact_ws(&readme);
 
     for required in [
         "Prefer in-band choice",
@@ -622,7 +531,7 @@ fn protocol_docs_keep_route_choice_and_receive_evidence_out_of_control_vocabular
         "For resolved routes this label is not branch authority",
     ] {
         assert!(
-            readme.contains(required),
+            searchable_readme.contains(required),
             "README route/evidence section must document the final-form branch authority: {required}"
         );
     }

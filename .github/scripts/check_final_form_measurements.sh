@@ -749,7 +749,7 @@ for metrics in seen.values():
         sys.exit(1)
     # resident_prefix_bytes is the full pre-runtime carve:
     # Rendezvous header, transport T field, alignment padding, and tap ring.
-    metrics["pico_total_sram_bytes"] = (
+    metrics["modeled_runtime_sram_bytes"] = (
         data_bss_bytes
         + metrics.get("session_kit_storage_bytes", 0)
         + metrics.get("resident_prefix_bytes", 0)
@@ -785,8 +785,8 @@ if actual_max_stack > budget_max_stack:
     sys.exit(1)
 
 section_budget = snapshot["budget"]["thumbv6m_none_eabi_no_std_release_lib"]["sections"]
-actual_sram = max(metrics["pico_total_sram_bytes"] for metrics in seen.values())
-budget_sram = max(metrics["pico_total_sram_bytes"] for metrics in budget.values())
+actual_sram = max(metrics["modeled_runtime_sram_bytes"] for metrics in seen.values())
+budget_sram = max(metrics["modeled_runtime_sram_bytes"] for metrics in budget.values())
 aggregate = [
     ("max_stack", budget_max_stack, actual_max_stack),
     ("sram", budget_sram, actual_sram),
@@ -813,7 +813,7 @@ if non_growing < 3 or decreased < 1:
         file=sys.stderr,
     )
     sys.exit(1)
-min_sram_headroom = int(os.environ.get("HIBANA_PICO_SRAM_MIN_HEADROOM_BYTES", "64"))
+min_sram_headroom = int(os.environ.get("HIBANA_MODELED_RUNTIME_SRAM_MIN_HEADROOM_BYTES", "64"))
 sram_headroom = budget_sram - actual_sram
 print(
     f"snapshot-check aggregate sram_headroom actual={sram_headroom} "
@@ -821,7 +821,7 @@ print(
 )
 if sram_headroom < min_sram_headroom:
     print(
-        "final-form measurement violation: Pico-class SRAM headroom is too small: "
+        "final-form measurement violation: modeled runtime SRAM headroom is too small: "
         f"headroom={sram_headroom} minimum={min_sram_headroom}",
         file=sys.stderr,
     )

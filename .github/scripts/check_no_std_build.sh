@@ -11,7 +11,7 @@ if ! rg -q '^#!\[no_std\]' src/lib.rs; then
   exit 1
 fi
 
-CARGO_TARGET_DIR="${ROOT_DIR}/target/pico-example" cargo +"${TOOLCHAIN}" check \
+CARGO_TARGET_DIR="${ROOT_DIR}/target/thumbv6m-example" cargo +"${TOOLCHAIN}" check \
   --quiet \
   --locked \
   --no-default-features \
@@ -19,11 +19,11 @@ CARGO_TARGET_DIR="${ROOT_DIR}/target/pico-example" cargo +"${TOOLCHAIN}" check \
   -p hibana \
   --target thumbv6m-none-eabi
 
-CARGO_TARGET_DIR="${ROOT_DIR}/target/pico-example" cargo +"${TOOLCHAIN}" check \
+CARGO_TARGET_DIR="${ROOT_DIR}/target/thumbv6m-example" cargo +"${TOOLCHAIN}" check \
   --quiet \
   --manifest-path examples/pico/Cargo.toml \
   --no-default-features \
   --lib \
   --target thumbv6m-none-eabi
 
-echo "no_std build gate passed target=thumbv6m-none-eabi pico-example=1"
+echo "no_std build gate passed target=thumbv6m-none-eabi projection-example=1"

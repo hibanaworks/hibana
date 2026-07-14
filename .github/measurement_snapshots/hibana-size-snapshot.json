@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Measured stack, SRAM, and flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack and resident prefix/tap storage, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and Pico-class aggregate SRAM must keep at least 64 bytes of headroom.",
+  "description": "Measured stack, modeled runtime SRAM, and thumbv6m flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack and resident prefix/tap storage, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and the modeled runtime SRAM envelope must keep at least 64 bytes of headroom.",
   "toolchain": "1.95.0",
   "host": "aarch64-apple-darwin",
   "flash_measurement": {
@@ -36,7 +36,7 @@
         "peak_live_slab_bytes": 4211,
         "localside_peak_stack_bytes": 3663,
         "peak_stack_bytes": 3663,
-        "pico_total_sram_bytes": 8922
+        "modeled_runtime_sram_bytes": 8922
       },
       "linear_heavy": {
         "session_kit_storage_bytes": 32,
@@ -47,7 +47,7 @@
         "peak_live_slab_bytes": 3227,
         "localside_peak_stack_bytes": 2383,
         "peak_stack_bytes": 2383,
-        "pico_total_sram_bytes": 6658
+        "modeled_runtime_sram_bytes": 6658
       },
       "fanout_heavy": {
         "session_kit_storage_bytes": 32,
@@ -58,7 +58,7 @@
         "peak_live_slab_bytes": 4323,
         "localside_peak_stack_bytes": 3583,
         "peak_stack_bytes": 3583,
-        "pico_total_sram_bytes": 8954
+        "modeled_runtime_sram_bytes": 8954
       }
     }
   }

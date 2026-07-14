@@ -483,7 +483,7 @@ distributed finite closures, a strict assumption-indexed carrier hierarchy,
 affine receive receipts, in-band knowledge for both intrinsic and dynamic
 choices, order-independent affine `.roll` materialization, epoch-erased elastic
 roll pipelining, explicit cross-tool prepare/commit refinement, and one
-message-erased `no_std` Pico-class runtime representation. The targeted
+message-erased resource-bounded `no_std` runtime representation. The targeted
 related-work review
 above did not identify that exact combination, but this repository does not
 claim "first" or "world-first". Establishing priority requires a systematic
