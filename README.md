@@ -28,6 +28,11 @@ type growth.
 - transport-neutral integration through one `Transport` trait;
 - the same public API on hosted and embedded targets.
 
+The 16-role ceiling is a current implementation limit, not a theoretical limit
+of the protocol model. Splitting a protocol with more than 16 participants into
+several sessions changes the guarantee boundary: Hibana then checks each
+session, not the original choreography as one global protocol.
+
 Hibana does not implement a network stack or a distributed algorithm. It
 enforces the protocol at each attached endpoint and states the carrier,
 deployment, codec, and scheduling conditions needed to lift that local result
@@ -514,9 +519,10 @@ creates a fresh session; changing the choreography also creates a fresh
 projected artifact.
 
 Persistent application data, membership policy, scheduling, restart policy,
-and algorithm invariants remain application-owned. Larger systems are composed
-from explicit families of finite sessions rather than by making Hibana roles
-or endpoint types unbounded.
+and algorithm invariants remain application-owned. Larger systems may compose
+explicit families of finite sessions, but each session keeps its own protocol
+guarantee. This is an application architecture, not an equivalent encoding of
+one choreography with more than 16 roles.
 
 `RendezvousKit::tap()` returns a read-only iterator over the latest 32 compact
 16-byte evidence records. Events cover endpoint operations, carrier
