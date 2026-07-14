@@ -98,6 +98,7 @@ run_miri_test \
   --lib \
   endpoint::kernel::core::public_types::tests
 
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}" \
 MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
   production-proof-artifact-exporter \
   1 \

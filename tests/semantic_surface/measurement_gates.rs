@@ -268,7 +268,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     );
 
     assert!(
-        workflow.contains("fetch-depth: 0")
+        workflow.matches("uses: actions/checkout@v7").count() == 2
+            && !workflow.contains("actions/checkout@v4")
+            && workflow.contains("fetch-depth: 0")
             && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_manifest_tests.sh")
@@ -385,6 +387,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("receive-frame-receipt-owner")
             && miri_gate.contains("public-operation-kernel")
             && miri_gate.contains("production-proof-artifact-exporter")
+            && miri_gate.contains(
+                "MIRI_TIMEOUT_SECONDS=\"${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}\""
+            )
             && miri_gate.contains(
                 "MIRIFLAGS=\"${MIRIFLAGS} -Zmiri-disable-isolation\" run_miri_test"
             )
