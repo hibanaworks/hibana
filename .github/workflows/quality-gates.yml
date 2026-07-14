@@ -27,6 +27,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep
+          rustup toolchain install 1.95.0 --profile minimal --component clippy
           MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
           rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src
           ELAN_VERSION="4.2.3"

@@ -271,6 +271,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         workflow.matches("uses: actions/checkout@v7").count() == 2
             && !workflow.contains("actions/checkout@v4")
             && workflow.contains("fetch-depth: 0")
+            && workflow
+                .contains("rustup toolchain install 1.95.0 --profile minimal --component clippy")
             && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_manifest_tests.sh")
