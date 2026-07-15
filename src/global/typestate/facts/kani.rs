@@ -4,9 +4,9 @@ use super::{LocalNode, PackedEventConflict, PackedLocalDependency};
 fn packed_event_conflict_decoding_accepts_exact_domain() {
     let raw: u16 = kani::any();
     let decoded = PackedEventConflict::decode_raw(raw);
-    let route_ordinal = (raw >> 1) & 0x0fff;
-    let route = (raw & !0x3fff) == 0 && (route_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES;
-    let valid = route || raw == 0x6000 || raw == 0xffff;
+    let route_ordinal = (raw >> 1) & 0x1fff;
+    let route = (raw & 0x8000) == 0;
+    let valid = route || raw == 0xc000 || raw == 0xffff;
 
     assert!(decoded.is_some() == valid);
     assert!(decoded.is_some_and(|conflict| !conflict.is_none()) == route);
@@ -50,15 +50,16 @@ fn packed_local_dependency_decoding_accepts_exact_domain() {
     let conflict_tag = conflict_route & 0b11;
     let route_ordinal = conflict_route >> 2;
     let present = start < end
-        && end <= 0x0fff
-        && (dep_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES
+        && dep_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
         && (conflict_route & 0x8000) == 0
         && (if conflict_tag >= 2 {
-            (route_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES
+            route_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
         } else {
             route_ordinal == 0
         });
 
+    kani::cover!(present && start <= 4095 && end > 4095);
+    kani::cover!(present && end == u16::MAX);
     assert!(decoded.is_some() == (absent || present));
     assert!(matches!(decoded, Some(None)) == absent);
     if let Some(Some(dependency)) = decoded {
@@ -82,16 +83,16 @@ fn packed_local_dependency_event_bounds_are_exact() {
     let conflict_tag = conflict_route & 0b11;
     let route_ordinal = conflict_route >> 2;
     let present = start < end
-        && end <= 0x0fff
         && end <= event_count
-        && (dep_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES
+        && dep_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
         && (conflict_route & 0x8000) == 0
         && (if conflict_tag >= 2 {
-            (route_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES
+            route_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY
         } else {
             route_ordinal == 0
         });
 
+    kani::cover!(present && start <= 4095 && end > 4095);
     assert!(decoded.is_some() == (absent || present));
     assert!(matches!(decoded, Some(None)) == absent);
     if let Some(Some(dependency)) = decoded {

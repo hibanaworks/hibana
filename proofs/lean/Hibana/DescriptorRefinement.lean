@@ -149,6 +149,20 @@ theorem accepted_descriptor_global_events_bind_canonical_lanes
   unfold ExactDescriptorCertificate.Matches at agreement
   exact agreement.2.2.1.1
 
+/-- Every accepted role image carries exactly the frame-label coloring produced
+by the host-only compiled occurrence source. Sequential reuse and competing
+frontier separation therefore reach the resident descriptor without an
+independent label authority. -/
+theorem accepted_descriptor_frame_labels_bind_compiled_coloring
+    {certificate : ExactDescriptorCertificate}
+    (accepted : certificate.check = true) :
+    certificate.image.decodeEventFrameLabels? =
+      some (certificate.choreo.canonicalRoleFrameLabels certificate.image.role) := by
+  have refines := exact_descriptor_certificate_sound accepted
+  have agreement := refines.2.1
+  unfold ExactDescriptorCertificate.Matches at agreement
+  exact agreement.2.2.2.1.2.1
+
 /-- Every accepted resident image has exactly the action column projected from
 its normalized choreography, for every role and choreography accepted by the
 checker rather than only for the generated witness corpus. -/

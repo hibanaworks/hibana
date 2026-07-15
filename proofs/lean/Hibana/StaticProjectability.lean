@@ -35,7 +35,7 @@ structure StaticInboundEvidence where
   deriving Repr, DecidableEq
 
 private def canonicalInboundEvidenceFrom
-    (all : List DecodedProgramAtom) :
+    (choreo : Choreo) :
     Nat → List DecodedProgramAtom → List StaticInboundEvidence
   | _, [] => []
   | index, atom :: rest =>
@@ -43,17 +43,17 @@ private def canonicalInboundEvidenceFrom
         source := atom.sender
         target := atom.receiver
         lane := atom.lane
-        frameLabel := canonicalFrameLabel all index atom
-      } :: canonicalInboundEvidenceFrom all (index + 1) rest
+        frameLabel := choreo.canonicalFrameLabel index
+      } :: canonicalInboundEvidenceFrom choreo (index + 1) rest
 
 private theorem canonical_inbound_evidence_from_getElem?
-    (all remaining : List DecodedProgramAtom) (base offset : Nat) :
-    (canonicalInboundEvidenceFrom all base remaining)[offset]? =
+    (choreo : Choreo) (remaining : List DecodedProgramAtom) (base offset : Nat) :
+    (canonicalInboundEvidenceFrom choreo base remaining)[offset]? =
       remaining[offset]?.map fun atom => {
         source := atom.sender
         target := atom.receiver
         lane := atom.lane
-        frameLabel := canonicalFrameLabel all (base + offset) atom
+        frameLabel := choreo.canonicalFrameLabel (base + offset)
       } := by
   induction remaining generalizing base offset with
   | nil => simp [canonicalInboundEvidenceFrom]
@@ -66,8 +66,7 @@ private theorem canonical_inbound_evidence_from_getElem?
             tailIH (base + 1) offset
 
 def Choreo.canonicalInboundEvidence (choreo : Choreo) : List StaticInboundEvidence :=
-  canonicalInboundEvidenceFrom choreo.canonicalProgramAtoms 0
-    choreo.canonicalProgramAtoms
+  canonicalInboundEvidenceFrom choreo 0 choreo.canonicalProgramAtoms
 
 private theorem canonical_inbound_evidence_getElem?
     (choreo : Choreo) (index : Nat) :
@@ -76,29 +75,11 @@ private theorem canonical_inbound_evidence_getElem?
         source := atom.sender
         target := atom.receiver
         lane := atom.lane
-        frameLabel := canonicalFrameLabel choreo.canonicalProgramAtoms index atom
+        frameLabel := choreo.canonicalFrameLabel index
       } := by
   simpa [Choreo.canonicalInboundEvidence] using
     canonical_inbound_evidence_from_getElem?
-      choreo.canonicalProgramAtoms choreo.canonicalProgramAtoms 0 index
-
-def Choreo.InboundOccurrenceIdentity (choreo : Choreo) : Prop :=
-  let evidence := choreo.canonicalInboundEvidence
-  evidence.all (fun key => key.frameLabel < 256) = true /\
-    evidence.Nodup
-
-instance (choreo : Choreo) : Decidable choreo.InboundOccurrenceIdentity := by
-  unfold Choreo.InboundOccurrenceIdentity
-  infer_instance
-
-def Choreo.checkInboundOccurrenceIdentity (choreo : Choreo) : Bool :=
-  decide choreo.InboundOccurrenceIdentity
-
-theorem inbound_occurrence_identity_checker_sound
-    {choreo : Choreo}
-    (accepted : choreo.checkInboundOccurrenceIdentity = true) :
-    choreo.InboundOccurrenceIdentity :=
-  of_decide_eq_true accepted
+      choreo choreo.canonicalProgramAtoms 0 index
 
 /-- Two route-membership lists are mutually exclusive when they select
 different arms of the same route conflict. Nested routes need only one shared
@@ -122,6 +103,76 @@ instance (left right : List ParallelArm) :
     Decidable (ParallelListsIndependent left right) := by
   unfold ParallelListsIndependent
   infer_instance
+
+structure StaticInboundColor where
+  evidence : StaticInboundEvidence
+  conflicts : List ConflictArm
+  parallelArms : List ParallelArm
+  rolls : List Nat
+  deriving Repr, DecidableEq
+
+private def enumerateStaticInboundColors :
+    List StaticInboundEvidence -> List (List ConflictArm) ->
+      List (List ParallelArm) -> List (List Nat) -> List StaticInboundColor
+  | evidence :: evidenceRows, conflicts :: conflictRows,
+      parallelArms :: parallelRows, rolls :: rollRows =>
+      { evidence, conflicts, parallelArms, rolls } ::
+        enumerateStaticInboundColors evidenceRows conflictRows parallelRows rollRows
+  | _, _, _, _ => []
+
+def Choreo.staticInboundColors (choreo : Choreo) : List StaticInboundColor :=
+  enumerateStaticInboundColors choreo.canonicalInboundEvidence
+    choreo.globalEventConflicts choreo.globalEventParallelArms
+    choreo.globalEventRollMemberships
+
+def RollPathsCompete (left right : StaticInboundColor) : Prop :=
+  left.conflicts ≠ right.conflicts /\
+    ∃ roll ∈ left.rolls, roll ∈ right.rolls
+
+instance (left right : StaticInboundColor) :
+    Decidable (RollPathsCompete left right) := by
+  unfold RollPathsCompete
+  infer_instance
+
+def InboundColorsSeparate (left right : StaticInboundColor) : Prop :=
+  ConflictListsMutuallyExclusive left.conflicts right.conflicts \/
+      ParallelListsIndependent left.parallelArms right.parallelArms \/
+      RollPathsCompete left right ->
+    left.evidence ≠ right.evidence
+
+instance (left right : StaticInboundColor) :
+    Decidable (InboundColorsSeparate left right) := by
+  unfold InboundColorsSeparate
+  infer_instance
+
+theorem elastic_roll_paths_have_distinct_inbound_evidence
+    {left right : StaticInboundColor}
+    (separate : InboundColorsSeparate left right)
+    (compete : RollPathsCompete left right) :
+    left.evidence ≠ right.evidence :=
+  separate (Or.inr (Or.inr compete))
+
+/-- Frame colors distinguish route alternatives, parallel frontiers, and exact
+route paths sharing an elastic roll. Locally ordered occurrences on one route
+path may reuse the same eight-byte header evidence. -/
+def Choreo.InboundOccurrenceColoring (choreo : Choreo) : Prop :=
+  let colors := choreo.staticInboundColors
+  colors.length = choreo.globalEvents.length /\
+    colors.all (fun color => color.evidence.frameLabel < 256) = true /\
+    colors.Pairwise InboundColorsSeparate
+
+instance (choreo : Choreo) : Decidable choreo.InboundOccurrenceColoring := by
+  unfold Choreo.InboundOccurrenceColoring
+  infer_instance
+
+def Choreo.checkInboundOccurrenceColoring (choreo : Choreo) : Bool :=
+  decide choreo.InboundOccurrenceColoring
+
+theorem inbound_occurrence_coloring_checker_sound
+    {choreo : Choreo}
+    (accepted : choreo.checkInboundOccurrenceColoring = true) :
+    choreo.InboundOccurrenceColoring :=
+  of_decide_eq_true accepted
 
 structure StaticGlobalOccurrence where
   globalId : Nat
@@ -424,71 +475,71 @@ structure TransportAdmission
   evidenceAt : choreo.canonicalInboundEvidence[globalId]? = some frame.inboundEvidence
   eventAt : choreo.globalEvents[globalId]? = some event
 
-theorem transport_admission_is_unique
-    {choreo : Choreo} {frame : TransportFrame}
-    {leftId rightId : Nat} {leftEvent rightEvent : GlobalEvent}
-    (identity : choreo.InboundOccurrenceIdentity)
-    (left : TransportAdmission choreo frame leftId leftEvent)
-    (right : TransportAdmission choreo frame rightId rightEvent) :
-    leftId = rightId /\ leftEvent = rightEvent := by
-  have sameEvidence :
-      choreo.canonicalInboundEvidence[leftId]? =
-        choreo.canonicalInboundEvidence[rightId]? :=
-    left.evidenceAt.trans right.evidenceAt.symm
-  have leftBound := (List.getElem?_eq_some_iff.mp left.evidenceAt).1
-  have idEq :=
-    (List.getElem?_inj leftBound identity.2).mp sameEvidence
-  have rightEventAtLeft :
-      choreo.globalEvents[leftId]? = some rightEvent := by
-    simpa [idEq] using right.eventAt
-  exact ⟨idEq, Option.some.inj (left.eventAt.symm.trans rightEventAtLeft)⟩
-
-private def findTransportAdmission?
+private def transportAdmissionCandidates
     (choreo : Choreo) (frame : TransportFrame) :
-    List Nat → Option (Nat × GlobalEvent)
-  | [] => none
+    List Nat -> List (Nat × GlobalEvent)
+  | [] => []
   | globalId :: rest =>
-      match choreo.canonicalInboundEvidence[globalId]?,
-          choreo.globalEvents[globalId]? with
+      let candidates := transportAdmissionCandidates choreo frame rest
+      match choreo.canonicalInboundEvidence[globalId]?, choreo.globalEvents[globalId]? with
       | some expected, some event =>
-          if expected = frame.inboundEvidence then
-            some (globalId, event)
-          else
-            findTransportAdmission? choreo frame rest
-      | _, _ => findTransportAdmission? choreo frame rest
+          if expected = frame.inboundEvidence then (globalId, event) :: candidates
+          else candidates
+      | _, _ => candidates
 
-private theorem find_transport_admission_sound
+private theorem transport_admission_candidate_sound
     {choreo : Choreo} {frame : TransportFrame}
     {ids : List Nat} {globalId : Nat} {event : GlobalEvent}
-    (found : findTransportAdmission? choreo frame ids = some (globalId, event)) :
-    choreo.canonicalInboundEvidence[globalId]? = some frame.inboundEvidence /\
+    (member : (globalId, event) ∈ transportAdmissionCandidates choreo frame ids) :
+    globalId ∈ ids /\
+      choreo.canonicalInboundEvidence[globalId]? = some frame.inboundEvidence /\
       choreo.globalEvents[globalId]? = some event := by
   induction ids with
-  | nil => simp [findTransportAdmission?] at found
+  | nil => simp [transportAdmissionCandidates] at member
   | cons head tail tailIH =>
-      unfold findTransportAdmission? at found
       cases evidenceCase : choreo.canonicalInboundEvidence[head]? with
       | none =>
-          rw [evidenceCase] at found
-          exact tailIH found
+          simp [transportAdmissionCandidates, evidenceCase] at member
+          obtain ⟨idMember, evidenceAt, eventAt⟩ := tailIH member
+          exact ⟨by simp [idMember], evidenceAt, eventAt⟩
       | some expected =>
-          rw [evidenceCase] at found
           cases eventCase : choreo.globalEvents[head]? with
           | none =>
-              rw [eventCase] at found
-              exact tailIH found
+              simp [transportAdmissionCandidates, evidenceCase, eventCase] at member
+              obtain ⟨idMember, evidenceAt, eventAt⟩ := tailIH member
+              exact ⟨by simp [idMember], evidenceAt, eventAt⟩
           | some candidate =>
-              rw [eventCase] at found
               by_cases matching : expected = frame.inboundEvidence
-              · simp [matching] at found
-                obtain ⟨rfl, rfl⟩ := found
-                exact ⟨by simpa [matching] using evidenceCase, eventCase⟩
-              · simp [matching] at found
-                exact tailIH found
+              · simp [transportAdmissionCandidates, evidenceCase, eventCase, matching] at member
+                rcases member with headMatch | tailMember
+                · obtain ⟨rfl, rfl⟩ := headMatch
+                  exact ⟨by simp, matching ▸ evidenceCase, eventCase⟩
+                · obtain ⟨idMember, evidenceAt, eventAt⟩ := tailIH tailMember
+                  exact ⟨by simp [idMember], evidenceAt, eventAt⟩
+              · simp [transportAdmissionCandidates, evidenceCase, eventCase, matching] at member
+                obtain ⟨idMember, evidenceAt, eventAt⟩ := tailIH member
+                exact ⟨by simp [idMember], evidenceAt, eventAt⟩
+
+def Choreo.transportAdmissionFrom?
+    (choreo : Choreo) (ids : List Nat) (frame : TransportFrame) :
+    Option (Nat × GlobalEvent) :=
+  match transportAdmissionCandidates choreo frame ids with
+  | [candidate] => some candidate
+  | _ => none
+
+theorem transport_admission_is_unique
+    {choreo : Choreo} {ids : List Nat} {frame : TransportFrame}
+    {leftId rightId : Nat} {leftEvent rightEvent : GlobalEvent}
+    (left : choreo.transportAdmissionFrom? ids frame = some (leftId, leftEvent))
+    (right : choreo.transportAdmissionFrom? ids frame = some (rightId, rightEvent)) :
+    leftId = rightId /\ leftEvent = rightEvent := by
+  have same : (leftId, leftEvent) = (rightId, rightEvent) :=
+    Option.some.inj (left.symm.trans right)
+  exact ⟨congrArg Prod.fst same, congrArg Prod.snd same⟩
 
 def Choreo.transportAdmission?
     (choreo : Choreo) (frame : TransportFrame) : Option (Nat × GlobalEvent) :=
-  findTransportAdmission? choreo frame (List.range choreo.globalEvents.length)
+  choreo.transportAdmissionFrom? (List.range choreo.globalEvents.length) frame
 
 /-- Runtime admission depends on the fields observed in the fixed core header,
 not on carrier-private generation, sequence, or arrival history. -/
@@ -497,57 +548,111 @@ def TransportFrame.SameObservation
   left.channel.session = right.channel.session /\
     left.inboundEvidence = right.inboundEvidence
 
-private theorem find_transport_admission_observation_congr
+private theorem transport_admission_candidates_observation_congr
     {choreo : Choreo} {left right : TransportFrame}
     (sameEvidence : left.inboundEvidence = right.inboundEvidence) :
     ∀ ids,
-      findTransportAdmission? choreo left ids =
-        findTransportAdmission? choreo right ids := by
+      transportAdmissionCandidates choreo left ids =
+        transportAdmissionCandidates choreo right ids := by
   intro ids
   induction ids with
   | nil => rfl
   | cons globalId rest restIH =>
-      simp only [findTransportAdmission?]
+      simp only [transportAdmissionCandidates]
       rw [sameEvidence, restIH]
+
+theorem transport_admission_from_depends_only_on_observation
+    {choreo : Choreo} {ids : List Nat} {left right : TransportFrame}
+    (sameEvidence : left.inboundEvidence = right.inboundEvidence) :
+    choreo.transportAdmissionFrom? ids left =
+      choreo.transportAdmissionFrom? ids right := by
+  unfold Choreo.transportAdmissionFrom?
+  rw [transport_admission_candidates_observation_congr sameEvidence]
 
 theorem transport_admission_depends_only_on_observation
     {choreo : Choreo} {left right : TransportFrame}
     (sameEvidence : left.inboundEvidence = right.inboundEvidence) :
     choreo.transportAdmission? left = choreo.transportAdmission? right := by
-  exact find_transport_admission_observation_congr sameEvidence _
+  unfold Choreo.transportAdmission? Choreo.transportAdmissionFrom?
+  rw [transport_admission_candidates_observation_congr sameEvidence]
+
+private theorem transport_admission_from_checker_sound
+    {choreo : Choreo} {ids : List Nat} {frame : TransportFrame}
+    {globalId : Nat} {event : GlobalEvent}
+    (accepted : choreo.transportAdmissionFrom? ids frame = some (globalId, event)) :
+    TransportAdmission choreo frame globalId event /\ globalId ∈ ids := by
+  unfold Choreo.transportAdmissionFrom? at accepted
+  cases candidatesCase : transportAdmissionCandidates choreo frame ids with
+  | nil => simp [candidatesCase] at accepted
+  | cons candidate rest =>
+      cases rest with
+      | nil =>
+          have candidateEq : candidate = (globalId, event) := by
+            simpa [candidatesCase] using accepted
+          subst candidate
+          have sound := transport_admission_candidate_sound
+            (choreo := choreo) (frame := frame) (ids := ids)
+            (globalId := globalId) (event := event) (by simp [candidatesCase])
+          exact ⟨⟨sound.2.1, sound.2.2⟩, sound.1⟩
+      | cons second remaining => simp [candidatesCase] at accepted
 
 theorem transport_admission_checker_sound
     {choreo : Choreo} {frame : TransportFrame}
     {globalId : Nat} {event : GlobalEvent}
     (accepted : choreo.transportAdmission? frame = some (globalId, event)) :
     TransportAdmission choreo frame globalId event := by
-  exact ⟨(find_transport_admission_sound accepted).1,
-    (find_transport_admission_sound accepted).2⟩
+  exact (transport_admission_from_checker_sound accepted).1
+
+def GlobalConfig.inboundCandidateIds (config : GlobalConfig) : List Nat :=
+  (List.range config.choreo.globalEvents.length).filter fun globalId =>
+    match config.status, config.event? globalId, config.phase globalId with
+    | .live, some event, .queued epoch =>
+        epoch == config.epoch && event.sender != event.receiver &&
+          (config.commitLocal? event.receiver globalId
+            (.recv event.sender event.label event.schema)).isSome
+    | _, _, _ => false
 
 def GlobalConfig.admitTransportFrame?
     (config : GlobalConfig) (frame : TransportFrame) : Option (Nat × GlobalEvent) :=
   if frame.channel.session = config.session then
-    config.choreo.transportAdmission? frame
+    config.choreo.transportAdmissionFrom? config.inboundCandidateIds frame
   else
     none
+
+theorem global_transport_admission_is_unique
+    {config : GlobalConfig} {frame : TransportFrame}
+    {leftId rightId : Nat} {leftEvent rightEvent : GlobalEvent}
+    (left : config.admitTransportFrame? frame = some (leftId, leftEvent))
+    (right : config.admitTransportFrame? frame = some (rightId, rightEvent)) :
+    leftId = rightId /\ leftEvent = rightEvent := by
+  have same : (leftId, leftEvent) = (rightId, rightEvent) :=
+    Option.some.inj (left.symm.trans right)
+  exact ⟨congrArg Prod.fst same, congrArg Prod.snd same⟩
 
 theorem observed_transport_admission_ignores_carrier_history
     {config : GlobalConfig} {left right : TransportFrame}
     (same : left.SameObservation right) :
     config.admitTransportFrame? left = config.admitTransportFrame? right := by
   unfold GlobalConfig.admitTransportFrame?
-  rw [same.1, transport_admission_depends_only_on_observation same.2]
+  rw [same.1]
+  by_cases sameSession : right.channel.session = config.session
+  · simp only [sameSession, if_true]
+    exact transport_admission_from_depends_only_on_observation same.2
+  · simp [sameSession]
 
 theorem global_transport_admission_checker_sound
     {config : GlobalConfig} {frame : TransportFrame}
     {globalId : Nat} {event : GlobalEvent}
     (accepted : config.admitTransportFrame? frame = some (globalId, event)) :
     frame.channel.session = config.session /\
-      TransportAdmission config.choreo frame globalId event := by
+      TransportAdmission config.choreo frame globalId event /\
+      globalId ∈ config.inboundCandidateIds := by
   unfold GlobalConfig.admitTransportFrame? at accepted
   by_cases sameSession : frame.channel.session = config.session
-  · exact ⟨sameSession,
-      transport_admission_checker_sound (by simpa [sameSession] using accepted)⟩
+  · have candidateAccepted :
+        config.choreo.transportAdmissionFrom? config.inboundCandidateIds frame =
+          some (globalId, event) := by simpa [sameSession] using accepted
+    exact ⟨sameSession, transport_admission_from_checker_sound candidateAccepted⟩
   · simp [sameSession] at accepted
 
 private def transportAdmissionRegressionChoreo : Choreo :=
@@ -566,18 +671,21 @@ private def transportAdmissionRegressionFrame
   frameLabel := ⟨0, by omega⟩
 }
 
+private def transportAdmissionRegressionConfig : GlobalConfig :=
+  (GlobalConfig.initial 7 2 transportAdmissionRegressionChoreo).withPhase 0 (.queued 0)
+
 example :
-    ((GlobalConfig.initial 7 2 transportAdmissionRegressionChoreo).admitTransportFrame?
+    (transportAdmissionRegressionConfig.admitTransportFrame?
         (transportAdmissionRegressionFrame 7 0)).isSome = true := by
   native_decide
 
 example :
-    ((GlobalConfig.initial 7 2 transportAdmissionRegressionChoreo).admitTransportFrame?
+    (transportAdmissionRegressionConfig.admitTransportFrame?
         (transportAdmissionRegressionFrame 7 1)).isSome = false := by
   native_decide
 
 example :
-    ((GlobalConfig.initial 7 2 transportAdmissionRegressionChoreo).admitTransportFrame?
+    (transportAdmissionRegressionConfig.admitTransportFrame?
         (transportAdmissionRegressionFrame 8 0)).isSome = false := by
   native_decide
 
@@ -591,8 +699,7 @@ theorem transport_admission_binds_exact_descriptor_occurrence
       frame.channel.sender = event.sender /\
       frame.channel.receiver = event.receiver /\
       frame.channel.lane = event.lane /\
-      frame.frameLabel.val =
-        canonicalFrameLabel choreo.canonicalProgramAtoms globalId atom := by
+      frame.frameLabel.val = choreo.canonicalFrameLabel globalId := by
   cases atomCase : choreo.canonicalProgramAtoms[globalId]? with
   | none =>
       have evidenceAt := admission.evidenceAt
@@ -604,8 +711,7 @@ theorem transport_admission_binds_exact_descriptor_occurrence
             source := atom.sender
             target := atom.receiver
             lane := atom.lane
-            frameLabel := canonicalFrameLabel choreo.canonicalProgramAtoms
-              globalId atom
+            frameLabel := choreo.canonicalFrameLabel globalId
           } : StaticInboundEvidence) = frame.inboundEvidence := by
         have evidenceAt := admission.evidenceAt
         rw [canonical_inbound_evidence_getElem?, atomCase] at evidenceAt
@@ -843,7 +949,7 @@ def Choreo.checkRollReentryLinearityFrom
 
 structure Choreo.StaticProjectable
     (roleCount : Nat) (choreo : Choreo) : Prop where
-  inboundOccurrenceIdentity : choreo.InboundOccurrenceIdentity
+  inboundOccurrenceColoring : choreo.InboundOccurrenceColoring
   receiveLaneCausality : choreo.ReceiveLaneCausalSafety roleCount
   rollReceiveLaneCausality : choreo.RollReceiveLaneCausalSafety roleCount
   parallelEndpointLinear : choreo.checkParallelEndpointLinearityFrom 0 = true
@@ -851,7 +957,7 @@ structure Choreo.StaticProjectable
   rollReentryLinear : choreo.checkRollReentryLinearityFrom 0 [] = true
 
 def checkStaticProjectability (roleCount : Nat) (choreo : Choreo) : Bool :=
-    choreo.checkInboundOccurrenceIdentity &&
+    choreo.checkInboundOccurrenceColoring &&
     choreo.checkReceiveLaneCausality roleCount &&
     choreo.checkRollReceiveLaneCausality roleCount &&
     choreo.checkParallelEndpointLinearityFrom 0 &&
@@ -865,7 +971,7 @@ theorem static_projectability_checker_sound
   simp only [checkStaticProjectability, Bool.and_eq_true] at accepted
   rcases accepted with
     ⟨⟨⟨⟨⟨inbound, receiveLane⟩, rollReceiveLane⟩, parallel⟩, route⟩, roll⟩
-  exact ⟨inbound_occurrence_identity_checker_sound inbound,
+  exact ⟨inbound_occurrence_coloring_checker_sound inbound,
     receive_lane_causality_checker_sound receiveLane,
     roll_receive_lane_causality_checker_sound rollReceiveLane,
     parallel, route, roll⟩

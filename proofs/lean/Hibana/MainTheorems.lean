@@ -3,6 +3,7 @@ import Hibana.Authority
 import Hibana.Commit
 import Hibana.Generation
 import Hibana.GlobalSemantics
+import Hibana.GlobalAllocationCorrectness
 import Hibana.GlobalMessageTransitions
 import Hibana.GlobalFidelity
 import Hibana.DescriptorRefinement

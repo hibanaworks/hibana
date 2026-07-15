@@ -266,7 +266,6 @@ where
     registry_next: Cell<Option<NonNull<Rendezvous<'rv, 'cfg, T>>>>,
     resolver_bucket: UnsafeCell<crate::session::cluster::core::ResolverBucket<'cfg>>,
     tap: TapRing<'cfg>,
-    tap_counter: Cell<u32>,
     slab_ptr: *mut u8,
     slab_len: usize,
     slab_marker: PhantomData<&'cfg mut [u8]>,

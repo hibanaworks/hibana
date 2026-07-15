@@ -1,7 +1,7 @@
 //! Immutable typestate facts and metadata.
 
 use crate::{
-    eff::{self, EffIndex, EventOrigin},
+    eff::{EffIndex, EventOrigin},
     global::{
         compiled::images::EventSemanticKind,
         const_dsl::{ReentryMark, ScopeId, ScopeKind},
@@ -13,7 +13,9 @@ pub(crate) use dependency::{LocalDependency, PackedLocalDependency};
 #[cfg(kani)]
 mod kani;
 mod meta;
-pub(crate) use meta::{EventCommitMeta, LocalMeta, RecvMeta, SendMeta, state_index_to_usize};
+pub(crate) use meta::{
+    EventCommitMeta, InboundFrameKey, LocalMeta, RecvMeta, SendMeta, state_index_to_usize,
+};
 mod passive_child;
 pub(crate) use passive_child::PassiveArmChildFact;
 
@@ -27,27 +29,26 @@ pub(crate) const ARM_SHARED: u8 = 0xFF;
 /// nearest enclosing route arm at projection time; parent route membership is
 /// represented by the route scope's own conflict row, so runtime enabled checks
 /// can walk conflict rows without interpreting route-scope structure.
-/// Bits 0, 1..=12, 13, 14, and 15 are respectively arm, route ordinal,
-/// reentry, no-conflict, and reserved.
+/// Bits 0, 1..=13, 14, and 15 are respectively arm, route ordinal,
+/// reentry, and the no-conflict tag. Route rows keep bit 15 clear; `0xc000`
+/// carries reentry without a route conflict and `0xffff` is absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PackedEventConflict(u16);
 
 impl PackedEventConflict {
     const ABSENT_RAW: u16 = u16::MAX;
     const ARM_BITS: u16 = 1;
-    const ROUTE_MASK: u16 = (1 << 12) - 1;
-    const ROUTE_REENTRY_BIT: u16 = 1 << 13;
-    const NO_CONFLICT_BIT: u16 = 1 << 14;
+    const ROUTE_MASK: u16 = (1 << 13) - 1;
+    const ROUTE_REENTRY_BIT: u16 = 1 << 14;
+    const NO_CONFLICT_BIT: u16 = 1 << 15;
     const REENTRY_WITHOUT_CONFLICT_RAW: u16 = Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT;
     const ROUTE_VALUE_MASK: u16 =
         (Self::ROUTE_MASK << Self::ARM_BITS) | 1 | Self::ROUTE_REENTRY_BIT;
     /// Maximum row-chain length for conflict traversal.
     ///
-    /// An event conflict row can only point through route-scope conflict rows
-    /// derived from the same fixed-size local event image. The cursor uses this
-    /// row capacity as its cycle guard instead of consulting runtime route
-    /// structure counts.
-    pub(crate) const MAX_CHAIN_DEPTH: usize = eff::meta::MAX_EFF_NODES + 1;
+    /// Projection rejects route stacks deeper than the compact `u8` depth
+    /// field, so one additional step is a complete cycle guard.
+    pub(crate) const MAX_CHAIN_DEPTH: usize = u8::MAX as usize + 1;
 
     #[inline(always)]
     pub(crate) const fn none() -> Self {
@@ -60,10 +61,6 @@ impl PackedEventConflict {
             return Some(Self(raw));
         }
         if (raw & !Self::ROUTE_VALUE_MASK) != 0 {
-            return None;
-        }
-        let ordinal = (raw >> Self::ARM_BITS) & Self::ROUTE_MASK;
-        if ordinal as usize >= eff::meta::MAX_EFF_NODES {
             return None;
         }
         Some(Self(raw))
@@ -96,9 +93,6 @@ impl PackedEventConflict {
             crate::invariant();
         }
         let ordinal = scope.local_ordinal();
-        if ordinal as usize >= eff::meta::MAX_EFF_NODES {
-            crate::invariant();
-        }
         Self((ordinal << Self::ARM_BITS) | arm as u16)
     }
 
@@ -285,7 +279,7 @@ impl StateIndex {
 
 /// Maximum number of local states tracked per role (one extra slot for the
 /// terminal state).
-pub(crate) const MAX_STATES: usize = eff::meta::MAX_EFF_NODES + 1;
+pub(crate) const MAX_STATES: usize = crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY;
 
 /// Local action associated with a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -629,15 +623,24 @@ impl LocalNode {
 
 #[cfg(test)]
 mod tests {
-    use super::{LocalNode, PackedEventConflict};
+    use super::{InboundFrameKey, LocalNode, PackedEventConflict};
+
+    #[test]
+    fn inbound_frame_key_is_exact_three_byte_identity() {
+        let key = InboundFrameKey::new(253, 254, 255);
+
+        assert_eq!(core::mem::size_of::<InboundFrameKey>(), 3);
+        assert_eq!(key.source_role, 253);
+        assert_eq!(key.lane, 254);
+        assert_eq!(key.frame_label, 255);
+    }
 
     #[test]
     fn packed_conflict_and_optional_arm_decoders_accept_exact_domains() {
         for raw in 0..=u16::MAX {
-            let route_ordinal = (raw >> 1) & 0x0fff;
-            let route =
-                (raw & !0x3fff) == 0 && (route_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES;
-            let expected = route || raw == 0x6000 || raw == 0xffff;
+            let route_ordinal = (raw >> 1) & 0x1fff;
+            let route = raw < 0x8000;
+            let expected = route || raw == 0xc000 || raw == 0xffff;
             let decoded = PackedEventConflict::decode_raw(raw);
             assert_eq!(decoded.is_some(), expected);
             if route {
@@ -664,7 +667,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn packed_conflict_rejects_reserved_high_bit() {
-        let _ = PackedEventConflict::from_raw(1 << 15);
+        let _ = PackedEventConflict::from_raw(0x8001);
     }
 
     #[test]

@@ -46,9 +46,7 @@ impl RouteResolverRow {
             Some(scope) => scope,
             None => return None,
         };
-        if !matches!(scope.kind(), Some(ScopeKind::Route))
-            || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
-        {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             return None;
         }
         let participant_mid = match participant_start.checked_add(left_len_minus_one as u16 + 1) {
@@ -179,9 +177,7 @@ impl CompiledProgramRef {
 
     #[inline]
     fn route_resolver_row(&self, scope_id: ScopeId) -> RouteResolverRow {
-        if !matches!(scope_id.kind(), Some(ScopeKind::Route))
-            || scope_id.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
-        {
+        if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
             crate::invariant();
         }
         let mut row = 0usize;

@@ -1,5 +1,5 @@
 use super::{
-    EffList, ScopeEvent, ScopeKind, ScopeMarker, eff,
+    EffList, ScopeEvent, ScopeKind, ScopeMarkerView, eff,
     scope_ranges::{
         parallel_arm_ranges_from_enter, parallel_enter_at, roll_body_range_from_enter,
         roll_continuation_end, route_arm_ranges_from_first_enter, route_enter_at,
@@ -78,11 +78,13 @@ const fn observer_path_decision(
     }
 }
 
-pub(crate) const fn validate_parallel_endpoint_selectors(eff_list: &EffList) -> bool {
+pub(crate) const fn validate_parallel_endpoint_selectors<const E: usize>(
+    eff_list: &EffList<E>,
+) -> bool {
     let markers = eff_list.scope_markers();
     let mut idx = 0usize;
     while idx < markers.len() {
-        let marker = markers[idx];
+        let marker = markers.at(idx);
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
         {
@@ -106,11 +108,13 @@ pub(crate) const fn validate_parallel_endpoint_selectors(eff_list: &EffList) -> 
     true
 }
 
-pub(crate) const fn validate_roll_reentry_endpoint_selectors(eff_list: &EffList) -> bool {
+pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
+    eff_list: &EffList<E>,
+) -> bool {
     let markers = eff_list.scope_markers();
     let mut idx = 0usize;
     while idx < markers.len() {
-        let marker = markers[idx];
+        let marker = markers.at(idx);
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
         {
@@ -137,8 +141,8 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors(eff_list: &EffList)
     true
 }
 
-const fn parallel_endpoint_selector_conflicts(
-    eff_list: &EffList,
+const fn parallel_endpoint_selector_conflicts<const E: usize>(
+    eff_list: &EffList<E>,
     left_start: usize,
     left_end: usize,
     right_start: usize,
@@ -165,8 +169,8 @@ const fn parallel_endpoint_selector_conflicts(
     false
 }
 
-const fn range_contains_endpoint_selector(
-    eff_list: &EffList,
+const fn range_contains_endpoint_selector<const E: usize>(
+    eff_list: &EffList<E>,
     start: usize,
     end: usize,
     target: EndpointSelector,
@@ -185,8 +189,8 @@ const fn range_contains_endpoint_selector(
     false
 }
 
-pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers(
-    eff_list: &EffList,
+pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers<const E: usize>(
+    eff_list: &EffList<E>,
     left_start: usize,
     left_end: usize,
     right_start: usize,
@@ -261,9 +265,9 @@ pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers(
     false
 }
 
-const fn first_visible_endpoint_matches_atom(
-    markers: &[ScopeMarker],
-    eff_list: &EffList,
+const fn first_visible_endpoint_matches_atom<const E: usize>(
+    markers: ScopeMarkerView<'_>,
+    eff_list: &EffList<E>,
     start: usize,
     end: usize,
     atom_idx: usize,
@@ -293,9 +297,9 @@ const fn first_visible_endpoint_matches_atom(
     }
 }
 
-const fn first_visible_endpoint_matches(
-    markers: &[ScopeMarker],
-    eff_list: &EffList,
+const fn first_visible_endpoint_matches<const E: usize>(
+    markers: ScopeMarkerView<'_>,
+    eff_list: &EffList<E>,
     start: usize,
     end: usize,
     target: EndpointSelector,
@@ -355,8 +359,8 @@ const fn first_visible_endpoint_matches(
     false
 }
 
-pub(crate) const fn local_route_observer_paths_mergeable(
-    eff_list: &EffList,
+pub(crate) const fn local_route_observer_paths_mergeable<const E: usize>(
+    eff_list: &EffList<E>,
     left_start: usize,
     left_end: usize,
     right_start: usize,
@@ -376,8 +380,8 @@ pub(crate) const fn local_route_observer_paths_mergeable(
     }
 }
 
-const fn next_local_endpoint_selector(
-    eff_list: &EffList,
+const fn next_local_endpoint_selector<const E: usize>(
+    eff_list: &EffList<E>,
     idx: &mut usize,
     end: usize,
     role: u8,

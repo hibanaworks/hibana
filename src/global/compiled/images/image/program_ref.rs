@@ -25,7 +25,7 @@ struct PackedProgramAtomFields {
 
 impl ProgramAtomRow {
     const fn decode(eff_idx: u16, fields: PackedProgramAtomFields, max_role: u8) -> Option<Self> {
-        if eff_idx as usize >= crate::eff::meta::MAX_EFF_NODES
+        if eff_idx as usize >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
             || fields.from > max_role
             || fields.to > max_role
         {
@@ -159,7 +159,7 @@ impl CompiledProgramRef {
 
     #[inline]
     pub(crate) const fn atom_at(&self, eff_idx: usize) -> Option<EffAtom> {
-        if eff_idx >= crate::eff::meta::MAX_EFF_NODES {
+        if eff_idx >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             crate::invariant();
         }
         let mut row = 0usize;

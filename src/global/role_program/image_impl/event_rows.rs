@@ -1,10 +1,6 @@
-use super::{
-    super::{PackedLocalEventRow, RoleLaneImage, RoleLaneScratch, ScopeEvent, ScopeId},
-    binary_route_arm_index,
-};
+use super::super::{PackedLocalEventRow, RoleLaneImage, ScopeId};
 use crate::global::{
     compiled::images::{CompiledProgramRef, EventSemanticKind},
-    const_dsl::EffList,
     typestate::{
         LocalAtomFacts, LocalConflict, LocalNode, LocalNodeMeta, PackedEventConflict,
         RouteChoiceMark, StateIndex,
@@ -16,7 +12,7 @@ pub(super) const fn decode_resident_event_header(
     scope_raw: u16,
     flags: u8,
 ) -> Option<ScopeId> {
-    if eff_index as usize >= crate::eff::meta::MAX_EFF_NODES
+    if eff_index as usize >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
         || (flags & !PackedLocalEventRow::FLAG_CHOICE_DETERMINANT) != 0
     {
         return None;
@@ -25,23 +21,11 @@ pub(super) const fn decode_resident_event_header(
         Some(scope) => scope,
         None => return None,
     };
-    if !scope.is_none() && scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES {
-        return None;
-    }
     Some(scope)
 }
 
 impl PackedLocalEventRow {
     const FLAG_CHOICE_DETERMINANT: u8 = 1 << 0;
-
-    pub(crate) const EMPTY: Self = Self {
-        eff_index: u16::MAX,
-        dependency_row: u16::MAX,
-        conflict_row: u16::MAX,
-        scope: ScopeId::none(),
-        frame_label: 0,
-        flags: 0,
-    };
 
     #[inline(always)]
     pub(crate) const fn from_packed_parts(
@@ -78,7 +62,7 @@ impl PackedLocalEventRow {
         frame_label: u8,
         choice: RouteChoiceMark,
     ) -> Self {
-        if eff_idx > u16::MAX as usize {
+        if eff_idx >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             panic!("local event row eff index overflow");
         }
         let mut flags = 0u8;
@@ -195,104 +179,5 @@ impl<'a> RoleLaneImage<'a> {
             ),
             None => None,
         }
-    }
-}
-
-impl RoleLaneScratch {
-    const fn scope_at(eff_list: &EffList, eff_idx: usize) -> ScopeId {
-        let markers = eff_list.scope_markers();
-        let mut best = ScopeId::none();
-        let mut best_start = 0usize;
-        let mut best_span = usize::MAX;
-        let mut idx = 0usize;
-        while idx < markers.len() {
-            let marker = markers[idx];
-            if marker.offset() > eff_idx {
-                break;
-            }
-            if matches!(marker.event, ScopeEvent::Enter) {
-                let start = marker.offset();
-                let end = Self::scope_segment_end(markers, idx, eff_list.len());
-                if eff_idx >= end {
-                    idx += 1;
-                    continue;
-                }
-                if best.is_none() || start > best_start {
-                    best = marker.scope_id;
-                    best_start = start;
-                    best_span = usize::MAX;
-                } else if start == best_start {
-                    let span = end - start;
-                    if span < best_span {
-                        best = marker.scope_id;
-                        best_start = start;
-                        best_span = span;
-                    }
-                }
-            }
-            idx += 1;
-        }
-        best
-    }
-
-    #[inline(always)]
-    const fn route_scope_and_arm_at(eff_list: &EffList, eff_idx: usize) -> Option<(ScopeId, u8)> {
-        match Self::route_conflict_for_eff(eff_list.scope_markers(), eff_idx).to_conflict() {
-            Some(crate::global::typestate::LocalConflict::RouteArm { scope, arm }) => {
-                Some((scope, arm))
-            }
-            Some(
-                crate::global::typestate::LocalConflict::Unconditional
-                | crate::global::typestate::LocalConflict::SharedRoute,
-            )
-            | None => None,
-        }
-    }
-
-    const fn first_recv_eff_for_route_arm(
-        eff_list: &EffList,
-        route: ScopeId,
-        arm: u8,
-        role: u8,
-    ) -> Option<usize> {
-        let arm = binary_route_arm_index(arm);
-        let markers = eff_list.scope_markers();
-        let Some(ranges) = Self::route_arm_ranges(markers, route) else {
-            crate::invariant();
-        };
-        let (start, end) = ranges[arm];
-        let mut idx = start;
-        while idx < end && idx < eff_list.len() {
-            let node = eff_list.node_at(idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) && {
-                let atom = node.atom_data();
-                atom.to == role && atom.from != role
-            } {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline(always)]
-    pub(super) const fn local_event_row_for_eff(
-        eff_list: &EffList,
-        eff_idx: usize,
-        frame_label: u8,
-        role: u8,
-    ) -> PackedLocalEventRow {
-        let scope = Self::scope_at(eff_list, eff_idx);
-        let route_scope_and_arm = Self::route_scope_and_arm_at(eff_list, eff_idx);
-        let choice = match route_scope_and_arm {
-            Some((route_scope, arm)) => {
-                match Self::first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
-                    Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
-                    Some(_) | None => RouteChoiceMark::Ordinary,
-                }
-            }
-            None => RouteChoiceMark::Ordinary,
-        };
-        PackedLocalEventRow::new(eff_idx, scope, frame_label, choice)
     }
 }

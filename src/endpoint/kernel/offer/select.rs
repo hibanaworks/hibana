@@ -3,10 +3,10 @@ use super::{
     Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
     FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, OfferEvidenceOutcome,
     OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    RouteArmToken, ScopeFrameLabelScratch, ScopeFrameLabelView, ScopeId, Transport,
-    frontier_snapshot_from_scratch, lane_port, state_index_to_usize,
+    RouteArmToken, ScopeId, Transport, frontier_snapshot_from_scratch, lane_port,
+    state_index_to_usize,
 };
-use crate::global::typestate::PackedEventConflict;
+use crate::global::typestate::{InboundFrameKey, PackedEventConflict};
 
 pub(super) struct FrontierDeferRequest {
     pub(super) scope_id: ScopeId,
@@ -18,29 +18,6 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(in crate::endpoint::kernel) fn write_offer_entry_frame_label_meta(
-        endpoint: &CursorEndpoint<'r, ROLE, T>,
-        scope_id: ScopeId,
-        entry_idx: usize,
-        out: &mut ScopeFrameLabelScratch,
-    ) -> bool {
-        if !endpoint.offer_entry_has_active_lanes(entry_idx)
-            || endpoint.offer_entry_scope_id(entry_idx) != scope_id
-        {
-            return false;
-        }
-        let reentry_meta =
-            CursorEndpoint::<ROLE, T>::scope_reentry_meta_at(&endpoint.cursor, scope_id, entry_idx);
-        CursorEndpoint::<ROLE, T>::write_scope_frame_label_meta_at(
-            &endpoint.cursor,
-            scope_id,
-            reentry_meta,
-            entry_idx,
-            out,
-        );
-        true
-    }
-
     #[inline]
     pub(super) fn offer_refresh_mask(
         endpoint: &CursorEndpoint<'r, ROLE, T>,
@@ -60,18 +37,14 @@ where
     pub(in crate::endpoint::kernel) fn select_scope(
         &mut self,
         carried_lane: Option<u8>,
-        carried_frame_label: Option<u8>,
+        carried_key: Option<InboundFrameKey>,
         carried_observation: Option<lane_port::FrameObservation>,
     ) -> RecvResult<OfferScopeSelection> {
-        if let Some(selection) = self.select_observed_ingress_route_scope(
-            carried_lane,
-            carried_frame_label,
-            carried_observation,
-        )? {
+        if let Some(selection) = self.select_current_materialized_ingress_scope(carried_key)? {
             return Ok(selection);
         }
         if let Some(selection) =
-            self.select_current_materialized_ingress_scope(carried_lane, carried_frame_label)?
+            self.select_observed_ingress_route_scope(carried_key, carried_observation)?
         {
             return Ok(selection);
         }
@@ -153,25 +126,21 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_frame_label(
+    pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_from_frame_key(
         &mut self,
         scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-        frame_label_meta: &ScopeFrameLabelView<'_>,
-    ) {
-        let exact_passive_arm = self
+        key: InboundFrameKey,
+    ) -> bool {
+        let Some(arm) = self
             .cursor
-            .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
-            .map(Arm::from_raw);
-        let arm = exact_passive_arm
-            .or_else(|| frame_label_meta.evidence_arm_for_frame_label(frame_label));
-        if let Some(arm) = arm {
-            self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
-            if exact_passive_arm.is_some() {
-                self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
-            }
-        }
+            .passive_descendant_dispatch_arm_for_key(scope_id, key)
+            .map(Arm::from_raw)
+        else {
+            return false;
+        };
+        self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
+        self.mark_intrinsic_passive_descendant_path_ready(scope_id, key);
+        true
     }
 
     #[inline]
@@ -191,8 +160,7 @@ where
     pub(super) fn mark_intrinsic_passive_descendant_path_ready(
         &mut self,
         scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
+        key: InboundFrameKey,
     ) {
         let mut current_scope = scope_id;
         let mut depth = 0usize;
@@ -200,11 +168,7 @@ where
         while depth < depth_bound {
             let Some(arm) = self
                 .cursor
-                .passive_descendant_dispatch_arm_from_exact_frame_label(
-                    current_scope,
-                    lane,
-                    frame_label,
-                )
+                .passive_descendant_dispatch_arm_for_key(current_scope, key)
             else {
                 break;
             };

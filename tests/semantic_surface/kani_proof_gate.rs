@@ -12,6 +12,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
+    let allocation_harnesses = read("src/global/const_dsl/allocation/kani.rs");
+    let maximum_matching_harness =
+        read("src/global/const_dsl/allocation/kani/maximum_certificate.rs");
+    let production_coloring_harnesses =
+        read("src/global/const_dsl/allocation/kani/production_coloring.rs");
+    let roll_coloring_harnesses = read("src/global/const_dsl/allocation/kani/roll_coloring.rs");
     let endpoint_selector_harnesses = read("src/global/const_dsl/endpoint_selectors/kani.rs");
     let route_knowledge_harnesses = read("src/global/compiled/lowering/seal/kani.rs");
     let receive_lane_harnesses = read("src/global/const_dsl/receive_lane_causality/kani.rs");
@@ -155,10 +161,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(
-        descriptor_harnesses.contains("(route_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES")
+        descriptor_harnesses
+            .contains("route_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY")
     );
     assert!(
-        descriptor_harnesses.contains("(dep_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES")
+        descriptor_harnesses
+            .contains("dep_ordinal < crate::global::const_dsl::ScopeId::LOCAL_CAPACITY")
     );
     assert!(descriptor_harnesses.contains("matches!(decoded, Some(None)) == absent"));
     for harness in [
@@ -184,13 +192,48 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
             .contains("kani::cover!(valid && left_scope == right_scope && left_arm != right_arm);")
     );
     assert!(image_harnesses.contains("&& left_mark_raw != right_mark_raw"));
-    assert!(image_harnesses.contains("plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }>"));
-    assert!(image_harnesses.contains("plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE>"));
+    assert!(image_harnesses.contains("plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>"));
+    assert!(image_harnesses.contains("plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>"));
 
     let harness = "scope_id_decoding_accepts_exact_compact_domain";
     assert!(scope_harnesses.contains(&format!("fn {harness}()")));
     assert!(scope_harnesses.contains("scope.is_none() == (raw == u16::MAX)"));
     assert!(script.contains(&format!("--harness {harness}")));
+
+    for harness in [
+        "two_by_two_parallel_lane_matching_has_minimum_span",
+        "lane_endpoint_index_aggregates_exact_symbolic_membership",
+        "two_arm_route_frame_coloring_is_exact",
+    ] {
+        assert!(allocation_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    let harness = "nested_roll_frame_coloring_uses_the_complete_inbound_key";
+    assert!(roll_coloring_harnesses.contains(&format!("fn {harness}()")));
+    assert!(script.contains(&format!("--harness {harness}")));
+    for harness in [
+        "parallel_lane_coloring_reuses_disjoint_class",
+        "parallel_lane_coloring_separates_conflicting_class",
+        "lane_reuse_conflict_matches_endpoint_equality",
+    ] {
+        assert!(production_coloring_harnesses.contains(&format!("fn {harness}()")));
+        assert!(script.contains(&format!("--harness {harness}")));
+    }
+    let harness = "three_by_three_parallel_lane_matching_certificate_is_maximum";
+    assert!(maximum_matching_harness.contains(&format!("fn {harness}()")));
+    assert!(maximum_matching_harness.contains("assert!(actual == expected)"));
+    assert!(script.contains(&format!("--harness {harness}")));
+    assert!(
+        production_coloring_harnesses.contains("assert!(source.node_at(1).atom_data().lane == 0)")
+    );
+    assert!(
+        production_coloring_harnesses.contains("assert!(source.node_at(1).atom_data().lane == 1)")
+    );
+    assert!(
+        allocation_harnesses
+            .contains("source.frame_label_at(1) == if same_inbound_key { 1 } else { 0 }")
+    );
+    assert!(!allocation_harnesses.contains("kani::assume"));
 
     let controller_harnesses = read("src/global/const_dsl/endpoint_controller/kani.rs");
     let harness = "controller_merge_accepts_exact_single_role_domain";
@@ -299,7 +342,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     );
     assert!(
         program_blob_storage
-            .contains("out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);")
+            .contains("out.write_scope_marker(columns.scope_markers(), idx, markers.at(idx));")
     );
     assert!(role_image_types.contains("let byte_len = match len.checked_mul(stride)"));
     assert!(program_ref_harnesses.contains("let left_bytes: [u8; 16] = kani::any();"));

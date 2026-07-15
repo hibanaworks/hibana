@@ -132,18 +132,11 @@ where
             return false;
         }
         let selection = state.selection();
-        let Some(lane) = state.ingress.transport_lane_wire() else {
-            return false;
-        };
-        let Some(frame_label) = state.ingress.transport_frame_label_raw() else {
+        let Some(key) = state.ingress.transport_frame_key() else {
             return false;
         };
         self.cursor
-            .passive_descendant_dispatch_arm_from_exact_frame_label(
-                selection.scope_id,
-                lane,
-                frame_label,
-            )
+            .passive_descendant_dispatch_arm_for_key(selection.scope_id, key)
             == Some(selected_arm)
     }
 

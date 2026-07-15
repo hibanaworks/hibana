@@ -121,7 +121,7 @@ fn resolver_id(event: tap::TapEvent) -> u32 {
 }
 
 #[test]
-fn endpoint_events_do_not_emit_resolver_audit_and_retain_latest_thirty_two() {
+fn endpoint_events_do_not_emit_resolver_audit_and_retain_latest_twenty_one() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let events = with_resident_tls_ref(&SESSION_SLOT, |cluster| {
@@ -169,7 +169,7 @@ fn endpoint_events_do_not_emit_resolver_audit_and_retain_latest_thirty_two() {
             rv.tap().collect::<Vec<_>>()
         });
 
-        assert_eq!(events.len(), 32, "tap must retain the latest 32 events");
+        assert_eq!(events.len(), 21, "tap must retain the latest 21 events");
         assert!(
             events.windows(2).all(|pair| pair[0].ts() < pair[1].ts()),
             "retained tap events must be returned oldest-to-newest: {events:?}"
@@ -183,7 +183,7 @@ fn endpoint_events_do_not_emit_resolver_audit_and_retain_latest_thirty_two() {
             })
             .count();
         assert!(
-            endpoint_events >= 20,
+            endpoint_events >= 10,
             "retained window must not be diluted by resolver replay audit: {events:?}"
         );
         assert!(

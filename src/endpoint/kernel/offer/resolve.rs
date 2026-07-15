@@ -154,12 +154,10 @@ where
         state: &mut OfferResolveState<'r>,
         scope_id: crate::global::const_dsl::ScopeId,
     ) -> RecvResult<Option<RouteArmToken>> {
-        let Some(lane) = state.ingress.transport_lane_wire() else {
+        let Some(key) = state.ingress.transport_frame_key() else {
             return Ok(None);
         };
-        let Some(frame_label) = state.ingress.transport_frame_label_raw() else {
-            return Ok(None);
-        };
+        let lane = key.lane;
         let (arm, marks_descendant) = if let Some(target_idx) =
             state.selection().observed_target_index()
         {
@@ -177,11 +175,7 @@ where
         } else {
             let Some(selected) = self
                 .cursor
-                .passive_descendant_dispatch_arm_from_exact_frame_label(
-                    scope_id,
-                    lane,
-                    frame_label,
-                )
+                .passive_descendant_dispatch_arm_for_key(scope_id, key)
             else {
                 return Ok(None);
             };
@@ -203,7 +197,7 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         if marks_descendant {
-            self.mark_intrinsic_passive_descendant_path_ready(scope_id, lane, frame_label);
+            self.mark_intrinsic_passive_descendant_path_ready(scope_id, key);
         }
         self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
         Ok(Some(RouteArmToken::from_poll(arm)))

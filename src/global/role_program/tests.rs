@@ -2,6 +2,7 @@ use super::*;
 use crate::eff::{EffAtom, EffStruct, EventOrigin};
 use crate::g::{self, Msg, Program};
 use crate::global::compiled::images::{CompiledProgramRef, ProgramImageColumns, RoleDescriptorRef};
+use crate::global::compiled::lowering::RoleCompiledCounts;
 use crate::global::const_dsl::{EffList, ScopeKind};
 use crate::global::event_program::LocalEventProgram;
 use crate::global::program::Projectable;
@@ -14,7 +15,6 @@ mod full_role_domain;
 mod protocol_matrix;
 
 const LOCAL_STEP_STRESS_ROW_BUDGET: usize = 512;
-const _: () = assert!(MAX_ROUTE_SCOPE_LANE_ROWS >= crate::eff::meta::MAX_EFF_NODES / 2);
 const NESTED_PAR_ROUTE_RESOLVER: u16 = 0x91;
 const ROLL_ROUTE_INTERNAL_PARALLEL_RESOLVER: u16 = 0x92;
 
@@ -29,8 +29,10 @@ const fn test_atom(label: u8, lane: u8) -> EffStruct {
     })
 }
 
-const fn over_local_step_capacity_atom_program() -> EffList {
-    let mut list = EffList::new();
+type StressEffList = EffList<{ LOCAL_STEP_STRESS_ROW_BUDGET + 1 }>;
+
+const fn over_local_step_capacity_atom_program() -> StressEffList {
+    let mut list = StressEffList::new();
     let mut idx = 0usize;
     while idx <= LOCAL_STEP_STRESS_ROW_BUDGET {
         list = list.push(test_atom(idx as u8, (idx % LANE_DOMAIN_SIZE) as u8));
@@ -39,7 +41,7 @@ const fn over_local_step_capacity_atom_program() -> EffList {
     list
 }
 
-static OVER_LOCAL_STEP_CAPACITY_ATOMS: EffList = over_local_step_capacity_atom_program();
+static OVER_LOCAL_STEP_CAPACITY_ATOMS: StressEffList = over_local_step_capacity_atom_program();
 
 fn with_role_descriptor<const ROLE: u8, R>(
     program: &RoleProgram<ROLE>,
@@ -96,6 +98,31 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
         "right route arm row must be nonempty"
     );
     assert_ne!(left, right, "route arm rows must stay arm-distinct");
+}
+
+#[test]
+fn empty_route_lane_sets_have_one_canonical_byte_encoding() {
+    let program = g::seq(
+        g::send::<0, 2, Msg<39, u8>>(),
+        g::route(
+            g::send::<0, 1, Msg<40, u8>>(),
+            g::send::<0, 1, Msg<41, u8>>(),
+        ),
+    );
+    let role2: RoleProgram<2> = project(&program);
+    let image = role2.role_image_ref();
+
+    assert_eq!(image.columns.route_scopes.len, 1);
+    assert_eq!(image.columns.route_arm_lane_rows.len, 2);
+    for row in 0..2usize {
+        let offset =
+            image.columns.route_arm_lane_rows.offset as usize + row * ROLE_IMAGE_LANE_RANGE_STRIDE;
+        let raw = image.blob.byte_at(offset) as u32
+            | ((image.blob.byte_at(offset + 1) as u32) << 8)
+            | ((image.blob.byte_at(offset + 2) as u32) << 16)
+            | ((image.blob.byte_at(offset + 3) as u32) << 24);
+        assert_eq!(raw, PackedLaneRange::new(0, 0).raw());
+    }
 }
 
 #[test]
@@ -185,7 +212,7 @@ fn resolver_identity_distinguishes_equal_count_scope_topology() {
         wide_program.columns.scope_marker_count(),
         narrow_program.columns.scope_marker_count()
     );
-    for eff_idx in 0..crate::eff::meta::MAX_EFF_NODES {
+    for eff_idx in 0..wide_program.columns.atom_count() {
         assert_eq!(
             wide_program.atom_at(eff_idx),
             narrow_program.atom_at(eff_idx)
@@ -375,7 +402,7 @@ fn lane_set_view_word_compare_can_ignore_one_lane_without_empty_lane_scan() {
 }
 
 #[test]
-fn resident_lane_view_and_route_caps_stay_compact() {
+fn resident_lane_views_stay_compact() {
     assert!(
         core::mem::size_of::<LaneSetView<'static>>() <= 2 * core::mem::size_of::<usize>(),
         "LaneSetView must stay a borrowed word/list descriptor, not a copied lane set"
@@ -388,12 +415,6 @@ fn resident_lane_view_and_route_caps_stay_compact() {
             && core::mem::size_of::<RoleLaneImage<'static>>() <= 2 * word,
         "resident refs must stay thin blob column views without fat-slice lengths"
     );
-    assert_eq!(
-        MAX_LOCAL_STEP_LANES,
-        crate::eff::meta::MAX_EFF_NODES,
-        "max local rows are scratch/projection capacity only"
-    );
-    assert_eq!(MAX_ROUTE_ARM_LANE_ROWS, MAX_ROUTE_SCOPE_LANE_ROWS * 2);
 }
 
 fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
@@ -441,29 +462,6 @@ fn assert_minimal_send_footprint(image: RoleDescriptorRef) {
     );
     assert!(rows.dependency_for_index(0).is_none());
     assert!(rows.event_conflict_for_index(0).to_conflict().is_none());
-
-    let largest_resident_column = columns
-        .events
-        .len
-        .max(columns.lanes.len)
-        .max(columns.dependencies.len)
-        .max(columns.conflicts.len)
-        .max(columns.route_scopes.len)
-        .max(columns.route_scope_conflicts.len)
-        .max(columns.route_arms.len)
-        .max(columns.resident_boundaries.len)
-        .max(columns.lane_bits.len)
-        .max(columns.route_arm_lane_rows.len)
-        .max(columns.route_offer_lane_rows.len)
-        .max(columns.route_arm_lane_step_rows.len) as usize;
-    assert!(
-        largest_resident_column < MAX_LOCAL_STEP_LANES,
-        "small protocol descriptor must not scale to MAX_EFF_NODES"
-    );
-    assert!(
-        rows.columns.blob_len() < MAX_LOCAL_STEP_LANES,
-        "small protocol blob must stay byte-exact, not max-capacity"
-    );
 }
 
 #[test]
@@ -477,64 +475,75 @@ fn minimal_send_descriptor_has_exact_resident_footprint() {
 }
 
 #[test]
-fn resident_local_step_capacity_uses_effect_node_budget() {
+fn streaming_role_image_tracks_actual_event_count() {
     assert!(OVER_LOCAL_STEP_CAPACITY_ATOMS.len() > LOCAL_STEP_STRESS_ROW_BUDGET);
-    let lanes = RoleLaneScratch::from_program(&OVER_LOCAL_STEP_CAPACITY_ATOMS, LANE_DOMAIN_SIZE, 0);
+    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: OVER_LOCAL_STEP_CAPACITY_ATOMS.len(),
+        route_scope_count: 0,
+        active_lane_count: LANE_DOMAIN_SIZE,
+        endpoint_lane_slot_count: LANE_DOMAIN_SIZE,
+        logical_lane_count: LANE_DOMAIN_SIZE,
+    });
+    let plan = RoleImagePlan::from_program(&OVER_LOCAL_STEP_CAPACITY_ATOMS, facts, 0);
+    let build = plan
+        .build_if_fits::<{ u16::MAX as usize }, { LOCAL_STEP_STRESS_ROW_BUDGET + 1 }>(
+            &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+            facts,
+            0,
+        )
+        .expect("streaming role descriptor fits the compact byte domain");
 
-    fn row_range(lanes: &RoleLaneScratch, idx: usize) -> Option<(usize, usize)> {
-        if idx >= lanes.resident_row_len as usize {
-            return None;
-        }
-        let start = lanes.resident_row_boundaries[idx] as usize;
-        let end = lanes.resident_row_boundaries[idx + 1] as usize;
-        Some((start, end))
-    }
+    assert_eq!(
+        build.columns.events.len as usize,
+        OVER_LOCAL_STEP_CAPACITY_ATOMS.len()
+    );
+    assert_eq!(
+        build.columns.lanes.len as usize,
+        OVER_LOCAL_STEP_CAPACITY_ATOMS.len()
+    );
+    assert_eq!(build.columns.resident_boundaries.len, 2);
+    assert_eq!(
+        build.columns.lane_bits.len as usize,
+        LANE_DOMAIN_SIZE / u8::BITS as usize
+    );
+}
 
-    fn lane_steps(lanes: &RoleLaneScratch, row_idx: usize, lane_idx: usize) -> usize {
-        let Some((start, end)) = row_range(lanes, row_idx) else {
-            return 0;
-        };
-        let mut count = 0usize;
-        let mut pos = start;
-        while pos < end {
-            if lanes.local_step_lanes[pos] as usize == lane_idx {
-                count += 1;
-            }
-            pos += 1;
-        }
-        count
+#[test]
+fn streaming_role_image_accepts_more_than_256_resident_rows() {
+    const PHASES: usize = 257;
+    let mut source = EffList::<2048>::new_partitioned(PHASES * 2, PHASES * 3, 0);
+    let mut phase = 0usize;
+    while phase < PHASES {
+        let scope = crate::global::const_dsl::ScopeId::parallel(phase as u16);
+        let start = source.len();
+        source.push_scope_enter_reentry_mut(
+            start,
+            scope,
+            crate::global::const_dsl::ReentryMark::SinglePass,
+        );
+        source.push_event_mut(test_atom(1, 0));
+        source.push_scope_split_mut(source.len(), scope);
+        source.push_event_mut(test_atom(2, 1));
+        let end = source.len();
+        source.close_scope_segment_mut(scope, start, end);
+        source.push_scope_exit_mut(end, scope);
+        phase += 1;
     }
+    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: PHASES * 2,
+        route_scope_count: 0,
+        active_lane_count: 2,
+        endpoint_lane_slot_count: 2,
+        logical_lane_count: 2,
+    });
+    let plan = RoleImagePlan::from_program(&source, facts, 0);
+    let build = plan
+        .build_if_fits::<{ u16::MAX as usize }, 2048>(&source, facts, 0)
+        .expect("257 resident phases fit their exact role image");
 
-    fn lane_step_at(
-        lanes: &RoleLaneScratch,
-        row_idx: usize,
-        lane_idx: usize,
-        ordinal: usize,
-    ) -> Option<u16> {
-        let (start, end) = row_range(lanes, row_idx)?;
-        let mut seen = 0usize;
-        let mut pos = start;
-        while pos < end {
-            if lanes.local_step_lanes[pos] as usize == lane_idx {
-                if seen == ordinal {
-                    return Some(pos as u16);
-                }
-                seen += 1;
-            }
-            pos += 1;
-        }
-        None
-    }
-
-    let mut total_steps = 0usize;
-    let mut lane_idx = 0usize;
-    while lane_idx < LANE_DOMAIN_SIZE {
-        total_steps += lane_steps(&lanes, 0, lane_idx);
-        lane_idx += 1;
-    }
-    assert_eq!(total_steps, OVER_LOCAL_STEP_CAPACITY_ATOMS.len());
-    assert_eq!(lane_step_at(&lanes, 0, 0, 0), Some(0));
-    assert_eq!(lane_step_at(&lanes, 0, 0, 1), Some(LANE_DOMAIN_SIZE as u16));
+    assert_eq!(build.columns.resident_boundaries.len as usize, PHASES + 1);
 }
 
 fn assert_parallel_resident_row_shape(image: RoleDescriptorRef) {
@@ -623,69 +632,69 @@ macro_rules! par_frontier {
 
 fn sparse_route_high_lane_program() -> impl Projectable {
     let non_participant_lanes = par_frontier!(
-        g::send::<2, 3, Msg<108, ()>>(),
-        g::send::<2, 3, Msg<109, ()>>(),
-        g::send::<2, 3, Msg<110, ()>>(),
-        g::send::<2, 3, Msg<111, ()>>(),
-        g::send::<2, 3, Msg<112, ()>>(),
-        g::send::<2, 3, Msg<113, ()>>(),
-        g::send::<2, 3, Msg<114, ()>>(),
-        g::send::<2, 3, Msg<115, ()>>(),
-        g::send::<2, 3, Msg<116, ()>>(),
-        g::send::<2, 3, Msg<117, ()>>(),
-        g::send::<2, 3, Msg<118, ()>>(),
-        g::send::<2, 3, Msg<119, ()>>(),
-        g::send::<2, 3, Msg<120, ()>>(),
-        g::send::<2, 3, Msg<121, ()>>(),
-        g::send::<2, 3, Msg<122, ()>>(),
-        g::send::<2, 3, Msg<123, ()>>(),
-        g::send::<2, 3, Msg<124, ()>>(),
-        g::send::<2, 3, Msg<125, ()>>(),
-        g::send::<2, 3, Msg<126, ()>>(),
-        g::send::<2, 3, Msg<127, ()>>(),
-        g::send::<2, 3, Msg<128, ()>>(),
-        g::send::<2, 3, Msg<129, ()>>(),
-        g::send::<2, 3, Msg<130, ()>>(),
-        g::send::<2, 3, Msg<131, ()>>(),
-        g::send::<2, 3, Msg<132, ()>>(),
-        g::send::<2, 3, Msg<133, ()>>(),
-        g::send::<2, 3, Msg<134, ()>>(),
-        g::send::<2, 3, Msg<135, ()>>(),
-        g::send::<2, 3, Msg<136, ()>>(),
-        g::send::<2, 3, Msg<137, ()>>(),
-        g::send::<2, 3, Msg<138, ()>>(),
-        g::send::<2, 3, Msg<139, ()>>(),
-        g::send::<2, 3, Msg<140, ()>>(),
-        g::send::<2, 3, Msg<141, ()>>(),
-        g::send::<2, 3, Msg<142, ()>>(),
-        g::send::<2, 3, Msg<143, ()>>(),
-        g::send::<2, 3, Msg<144, ()>>(),
-        g::send::<2, 3, Msg<145, ()>>(),
-        g::send::<2, 3, Msg<146, ()>>(),
-        g::send::<2, 3, Msg<147, ()>>(),
-        g::send::<2, 3, Msg<148, ()>>(),
-        g::send::<2, 3, Msg<149, ()>>(),
-        g::send::<2, 3, Msg<150, ()>>(),
-        g::send::<2, 3, Msg<151, ()>>(),
-        g::send::<2, 3, Msg<152, ()>>(),
-        g::send::<2, 3, Msg<153, ()>>(),
-        g::send::<2, 3, Msg<154, ()>>(),
-        g::send::<2, 3, Msg<155, ()>>(),
-        g::send::<2, 3, Msg<156, ()>>(),
-        g::send::<2, 3, Msg<157, ()>>(),
-        g::send::<2, 3, Msg<158, ()>>(),
-        g::send::<2, 3, Msg<159, ()>>(),
-        g::send::<2, 3, Msg<160, ()>>(),
-        g::send::<2, 3, Msg<161, ()>>(),
-        g::send::<2, 3, Msg<162, ()>>(),
-        g::send::<2, 3, Msg<163, ()>>(),
-        g::send::<2, 3, Msg<164, ()>>(),
-        g::send::<2, 3, Msg<165, ()>>(),
-        g::send::<2, 3, Msg<166, ()>>(),
-        g::send::<2, 3, Msg<167, ()>>(),
-        g::send::<2, 3, Msg<168, ()>>(),
-        g::send::<2, 3, Msg<169, ()>>(),
-        g::send::<2, 3, Msg<170, ()>>(),
+        g::send::<1, 2, Msg<108, ()>>(),
+        g::send::<1, 2, Msg<109, ()>>(),
+        g::send::<1, 2, Msg<110, ()>>(),
+        g::send::<1, 2, Msg<111, ()>>(),
+        g::send::<1, 2, Msg<112, ()>>(),
+        g::send::<1, 2, Msg<113, ()>>(),
+        g::send::<1, 2, Msg<114, ()>>(),
+        g::send::<1, 2, Msg<115, ()>>(),
+        g::send::<1, 2, Msg<116, ()>>(),
+        g::send::<1, 2, Msg<117, ()>>(),
+        g::send::<1, 2, Msg<118, ()>>(),
+        g::send::<1, 2, Msg<119, ()>>(),
+        g::send::<1, 2, Msg<120, ()>>(),
+        g::send::<1, 2, Msg<121, ()>>(),
+        g::send::<1, 2, Msg<122, ()>>(),
+        g::send::<1, 2, Msg<123, ()>>(),
+        g::send::<1, 2, Msg<124, ()>>(),
+        g::send::<1, 2, Msg<125, ()>>(),
+        g::send::<1, 2, Msg<126, ()>>(),
+        g::send::<1, 2, Msg<127, ()>>(),
+        g::send::<1, 2, Msg<128, ()>>(),
+        g::send::<1, 2, Msg<129, ()>>(),
+        g::send::<1, 2, Msg<130, ()>>(),
+        g::send::<1, 2, Msg<131, ()>>(),
+        g::send::<1, 2, Msg<132, ()>>(),
+        g::send::<1, 2, Msg<133, ()>>(),
+        g::send::<1, 2, Msg<134, ()>>(),
+        g::send::<1, 2, Msg<135, ()>>(),
+        g::send::<1, 2, Msg<136, ()>>(),
+        g::send::<1, 2, Msg<137, ()>>(),
+        g::send::<1, 2, Msg<138, ()>>(),
+        g::send::<1, 2, Msg<139, ()>>(),
+        g::send::<1, 2, Msg<140, ()>>(),
+        g::send::<1, 2, Msg<141, ()>>(),
+        g::send::<1, 2, Msg<142, ()>>(),
+        g::send::<1, 2, Msg<143, ()>>(),
+        g::send::<1, 2, Msg<144, ()>>(),
+        g::send::<1, 2, Msg<145, ()>>(),
+        g::send::<1, 2, Msg<146, ()>>(),
+        g::send::<1, 2, Msg<147, ()>>(),
+        g::send::<1, 2, Msg<148, ()>>(),
+        g::send::<1, 2, Msg<149, ()>>(),
+        g::send::<1, 2, Msg<150, ()>>(),
+        g::send::<1, 2, Msg<151, ()>>(),
+        g::send::<1, 2, Msg<152, ()>>(),
+        g::send::<1, 2, Msg<153, ()>>(),
+        g::send::<1, 2, Msg<154, ()>>(),
+        g::send::<1, 2, Msg<155, ()>>(),
+        g::send::<1, 2, Msg<156, ()>>(),
+        g::send::<1, 2, Msg<157, ()>>(),
+        g::send::<1, 2, Msg<158, ()>>(),
+        g::send::<1, 2, Msg<159, ()>>(),
+        g::send::<1, 2, Msg<160, ()>>(),
+        g::send::<1, 2, Msg<161, ()>>(),
+        g::send::<1, 2, Msg<162, ()>>(),
+        g::send::<1, 2, Msg<163, ()>>(),
+        g::send::<1, 2, Msg<164, ()>>(),
+        g::send::<1, 2, Msg<165, ()>>(),
+        g::send::<1, 2, Msg<166, ()>>(),
+        g::send::<1, 2, Msg<167, ()>>(),
+        g::send::<1, 2, Msg<168, ()>>(),
+        g::send::<1, 2, Msg<169, ()>>(),
+        g::send::<1, 2, Msg<170, ()>>(),
     );
     g::par(non_participant_lanes, sparse_route_arm_program())
 }

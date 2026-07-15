@@ -361,6 +361,30 @@ fn descriptor_projection_has_no_resource_or_tap_count_axes() {
 }
 
 #[test]
+fn event_identity_and_descriptor_byte_capacities_have_separate_authorities() {
+    let event_identity = read("src/eff.rs");
+    let columns = read("src/global/compiled/images/image/columns.rs");
+    let readme = read("README.md");
+
+    assert!(
+        event_identity.contains(
+            "pub(crate) const COMPACT_EVENT_IDENTITY_CAPACITY: usize = u16::MAX as usize;"
+        )
+    );
+    assert!(
+        columns.contains(
+            "pub(crate) const COMPACT_DESCRIPTOR_BYTE_CAPACITY: usize = u16::MAX as usize;"
+        )
+    );
+    assert!(columns.contains("COMPACT_DESCRIPTOR_BYTE_CAPACITY / PROGRAM_IMAGE_ATOM_STRIDE;"));
+    assert!(readme.contains("| Event identities | 65,535 |"));
+    assert!(readme.contains("| Program image | 65,535 B |"));
+    assert!(readme.contains("| Atom-only program | 5,957 events |"));
+    assert!(readme.contains("| Role image | 65,535 B per role |"));
+    assert!(!readme.contains("| Events | 65,535 |"));
+}
+
+#[test]
 fn projectable_bound_and_lane_domain_stay_embedded_exact() {
     let program = read("src/global/program.rs");
     let projection = read("src/global/program/projection.rs");
@@ -387,8 +411,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
         .and_then(|tail| tail.split("pub const fn seq").next())
         .expect("Projectable sealed impl");
     assert!(
-        projectable.contains("Steps: crate::g::ProgramTerm")
-            && !projectable.contains("ProgramTerm<Source")
+        projectable.contains("Steps: crate::g::ProgramShape")
             && program
                 .contains("#[diagnostic::do_not_recommend]\nimpl<Steps> projection::seal::Sealed")
             && !program.contains("impl<Steps> Projectable for Program<Steps>")
@@ -417,11 +440,6 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
         .nth(1)
         .and_then(|tail| tail.split("pub(crate) mod private").next())
         .expect("RoleLaneImage section must stay present");
-    let role_lane_scratch = role_program
-        .split("pub(crate) struct RoleLaneScratch")
-        .nth(1)
-        .and_then(|tail| tail.split("pub(crate) struct RoleImageRef").next())
-        .expect("RoleLaneScratch section must stay present");
     assert!(
         role_program.contains("pub(crate) struct LaneSetView<'a> {")
             && role_program.contains("_marker: PhantomData<&'a [LaneWord]>")
@@ -430,14 +448,12 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_program.contains("struct LaneSetSnapshot")
             && !role_program.contains("LaneSetSnapshot::from_view")
             && role_program.contains("struct RoleLaneImage")
-            && role_program.contains("struct RoleLaneScratch")
+            && !role_program.contains("struct RoleLaneScratch")
             && role_program.contains("struct PackedLocalEventRow")
             && role_program.contains("scope: crate::global::const_dsl::ScopeId")
             && role_program.contains("ROLE_IMAGE_EVENT_STRIDE: usize = 10")
             && role_program.contains("ROLE_IMAGE_ROUTE_SCOPE_STRIDE: usize = 2")
-            && role_program.contains(
-                "route_scope_rows: [crate::global::const_dsl::ScopeId; MAX_ROUTE_SCOPE_LANE_ROWS]"
-            )
+            && !role_program.contains("route_scope_rows: [")
             && !role_program.contains("scope_slot: u16")
             && !role_image.contains("encode_scope_slot")
             && !role_image.contains("decode_scope_slot")
@@ -454,12 +470,12 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && role_program.contains("route_arm_lane_step_rows: ColumnRange")
             && !role_program.contains("struct PackedColumn")
             && !role_program.contains("pub(crate) stride:")
-            && role_program.contains("lane_step_row(self) -> PackedLaneRange")
-            && role_program.contains("child_slot_delta(self) -> Option<u8>")
+            && role_program.contains("lane_step_len(self) -> usize")
+            && role_program.contains("child_slot(self) -> Option<u16>")
             && role_program.contains("passive_arm_child_ordinal_by_slot")
             && !role_program.contains("passive_children")
             && !role_program.contains("MAX_ROUTE_ARM_LANE_STEP_ROWS")
-            && !role_lane_scratch.contains("route_arm_lane_step_rows: [")
+            && !role_program.contains("route_arm_lane_step_rows: [")
             && !role_program.contains("route_arm_lane_first_steps")
             && !role_program.contains("route_arm_lane_last_steps")
             && !role_program.contains("route_arm_lane_step_len")
@@ -482,31 +498,28 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
             && !role_lane_image.contains("[PackedRouteArmRow; MAX_ROUTE_ARM_LANE_ROWS]")
             && !role_lane_image.contains("[PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS]")
             && !role_lane_image.contains("[PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS]")
-            && role_lane_scratch
-                .contains("local_step_events: [PackedLocalEventRow; MAX_LOCAL_STEP_LANES]")
-            && role_lane_scratch.contains("local_step_lanes: [u8; MAX_LOCAL_STEP_LANES]")
-            && role_lane_scratch
-                .contains("resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS]")
-            && role_lane_scratch.contains("lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES]")
+            && !role_program.contains("local_step_events: [PackedLocalEventRow; CAPACITY]")
+            && !role_program.contains("local_step_lanes: [u8; CAPACITY]")
+            && !role_program.contains("MAX_RESIDENT_ROW_BOUNDARY_ROWS")
+            && !role_program.contains("MAX_RESIDENT_LANE_BIT_BYTES")
             && !role_program.contains("phase_rows: [PackedLaneRange; MAX_RESIDENT_ROW_LANE_ROWS]")
             && !role_program.contains("active_words: [LaneWord; LANE_SET_VIEW_WORDS]")
             && !role_program.contains("phase_words: [LaneWord; LANE_SET_VIEW_WORDS]")
-            && role_lane_scratch
-                .contains("route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS]")
-            && role_lane_scratch
-                .contains("route_offer_lane_rows: [PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS]")
+            && !role_program.contains("route_arm_lane_rows: [PackedLaneRange; CAPACITY]")
+            && !role_program.contains("route_offer_lane_rows: [PackedLaneRange; CAPACITY]")
             && !role_program.contains("from_lanes")
             && !role_program.contains("local_lane_view")
             && !role_program
                 .contains("phase_step_rows: [PackedPhaseLaneStep; MAX_PHASE_LANE_STEP_ROWS]")
-            && role_program
-                .contains("MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES")
-            && role_program
-                .contains("MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NODES / 2")
-            && role_program
-                .contains("MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2")
+            && role_program.contains("pub(crate) const fn emit<const E: usize>(")
+            && role_program.contains("projection::DependencyCursor::new")
+            && role_program.contains("out.write_event(columns.events, local_step, event)")
+            && !role_program.contains("route_arm_rows: [PackedRouteArmRow; CAPACITY]")
+            && !role_program.contains("MAX_LOCAL_STEP_LANES")
+            && !role_program.contains("MAX_ROUTE_SCOPE_LANE_ROWS")
+            && !role_program.contains("MAX_ROUTE_ARM_LANE_ROWS")
             && !role_program.contains("route_arm_lane_entries: [u8; MAX_ROUTE_ARM_LANE_ENTRIES]")
-            && role_program.contains("resident_row_len: u16")
+            && !role_program.contains("resident_row_len: u16")
             && !role_program.contains("phase_steps: [LaneSteps; LANE_DOMAIN_SIZE]")
             && !role_program.contains("PhaseLaneEntry")
             && !lowering_driver_source().contains("fill_role_atom_lanes_in_range")
@@ -600,37 +613,22 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
     let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
     let role_ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let projection = read("src/g/role_projection.rs");
-    let program_from_image = program_blob
-        .split(
-            "pub(crate) const fn from_image(\n        image: &CompiledProgramImage,\n        columns: ProgramImageColumns,\n    ) -> Self {",
-        )
-        .nth(1)
-        .or_else(|| {
-            program_blob
-                .split("pub(crate) const fn from_image(eff_list: &EffList, columns: ProgramImageColumns) -> Self {")
-                .nth(1)
-        })
-        .and_then(|tail| tail.split("let markers = eff_list.scope_markers();").next())
-        .expect("program image fail-closed constructor");
     assert!(
-        program_from_image
-            .contains("if projected_len > N {\n            crate::invariant();\n        }")
-            && !program_from_image.contains("return Self::empty(image);"),
-        "ProgramImageBytes::from_image overflow must fail closed instead of producing an empty or max-capacity image"
+        program_blob.contains("pub(crate) const fn from_image_if_fits")
+            && program_blob.contains("if columns.blob_len() > N {\n            None")
+            && projection.contains("None => panic!(\"program bucket selection\")")
+            && !program_blob.contains("return Self::empty(image);"),
+        "ProgramImageBytes overflow must be rejected by the fit probe and fail at exact bucket selection"
     );
 
-    let role_from_scratch = role_blob
-        .split(
-            "pub(crate) const fn from_scratch(\n        scratch: &RoleLaneScratch,\n        facts: RuntimeRoleFacts,\n        columns: RoleImageColumns,\n    ) -> Self {",
-        )
-        .nth(1)
-        .and_then(|tail| tail.split("let mut out = Self::empty();").next())
-        .expect("role image fail-closed constructor");
     assert!(
-        role_from_scratch
-            .contains("if projected_len > N {\n            panic!(\"role image\");\n        }")
-            && !role_from_scratch.contains("return Self::empty();"),
-        "RoleImageBytes::from_scratch overflow must fail closed instead of producing an empty or max-capacity image"
+        role_blob.contains("pub(crate) const fn build_if_fits<")
+            && role_blob.contains("if self.blob_len() > N {\n            return None;")
+            && role_blob.contains("Some(RoleImageBytes::<N>::emit(")
+            && role_blob.contains("self.columns,")
+            && projection.contains("None => panic!(\"role bucket selection\")")
+            && !role_blob.contains("return Self::empty();"),
+        "RoleImageBytes overflow must be rejected by the plan probe and fail at exact bucket selection"
     );
 
     assert!(
@@ -640,10 +638,9 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             && program_blob.contains(
                 "if columns.blob_len() > N {\n            None\n        } else {\n            Some(Self::from_image(eff_list, columns))"
             )
-            && role_blob.contains("pub(crate) const fn build_if_fits<const N: usize>(")
+            && role_blob.contains("pub(crate) const fn build_if_fits<")
             && role_blob.contains("if self.blob_len() > N {")
-            && role_blob.contains("if columns.blob_len() > N {\n            return None;\n        }")
-            && role_blob.contains("Some(RoleImageBuild {")
+            && role_blob.contains("Some(RoleImageBytes::<N>::emit(")
             && !program_blob.contains("pub(crate) const fn blob(")
             && !role_blob.contains("pub(crate) const fn blob(")
             && !program_blob.contains("BlobPtr::from_array(")
@@ -659,10 +656,11 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             && projection.contains("const BYTES: Option<")
             && projection.contains("ProgramImageBytes::<N>::from_image_if_fits")
             && projection.contains("const BUILD: Option<")
-            && projection.contains("RoleProjection::<ROLE, Steps>::PLAN.build_if_fits::<N>")
+            && projection.contains("RoleProjection::<ROLE, Steps, CAPACITY>::PLAN.build_if_fits(")
             && projection.contains("None => panic!(\"program bucket selection\")")
             && projection.contains("None => panic!(\"role bucket selection\")")
-            && role_blob.contains("RoleImageBytes::<N>::from_scratch(&scratch, facts, columns)")
+            && role_blob.contains("RoleImageBytes::<N>::emit(")
+            && !role_blob.contains("RoleLaneScratch")
             && projection.contains("const PROGRAM_PLAN:")
             && projection.contains("const PROGRAM_COLUMNS:")
             && projection.contains("Self::PROGRAM_PLAN.blob_len()")

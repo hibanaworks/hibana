@@ -35,8 +35,8 @@ impl FirstVisibleController {
     }
 }
 
-pub(crate) const fn first_visible_controller(
-    eff_list: &EffList,
+pub(crate) const fn first_visible_controller<const E: usize>(
+    eff_list: &EffList<E>,
     start: usize,
     end: usize,
 ) -> FirstVisibleController {

@@ -13,7 +13,7 @@ use crate::g::Program;
 #[diagnostic::do_not_recommend]
 impl<Steps> projection::seal::Sealed for Program<Steps>
 where
-    Steps: crate::g::ProgramTerm,
+    Steps: crate::g::ProgramShape,
 {
     #[inline(always)]
     fn project<const ROLE: u8>(&self) -> crate::global::role_program::RoleProgram<ROLE> {

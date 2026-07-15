@@ -351,14 +351,6 @@ impl EventCursor {
         self.machine().route_scope_dense_ordinal(scope_id)
     }
 
-    fn visit_first_recv_dispatch_inner(
-        &self,
-        scope_id: ScopeId,
-        visitor: impl FnMut(u8, StateIndex),
-    ) -> Option<()> {
-        self.machine().visit_first_recv_dispatch(scope_id, visitor)
-    }
-
     fn first_recv_dispatch_arm_mask_inner(&self, scope_id: ScopeId) -> Option<u8> {
         self.machine().first_recv_dispatch_arm_mask(scope_id)
     }
@@ -757,15 +749,6 @@ impl EventCursor {
         }
         let row = self.machine().route_commit_row_at(range.start() + idx);
         row.to_conflict().is_some().then_some(row)
-    }
-
-    #[inline]
-    pub(crate) fn visit_route_scope_first_recv_dispatch(
-        &self,
-        scope_id: ScopeId,
-        visitor: impl FnMut(u8, StateIndex),
-    ) -> Option<()> {
-        self.visit_first_recv_dispatch_inner(scope_id, visitor)
     }
 
     pub(crate) fn route_scope_first_recv_dispatch_arm_mask(&self, scope_id: ScopeId) -> Option<u8> {

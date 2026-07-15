@@ -3,10 +3,9 @@ use super::super::{
     ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE, ROLE_IMAGE_LANE_RANGE_STRIDE,
     ROLE_IMAGE_ROLL_SCOPE_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE, ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
     ROLE_IMAGE_U16_STRIDE, RoleImageBytes, RoleImageColumns, RoleImagePlan, RoleImageRef,
-    RoleLaneImage, RoleLaneScratch, RoleProgram, RuntimeRoleFacts, project,
+    RoleLaneImage, RoleProgram, RuntimeRoleFacts, project,
 };
 use super::decode_binary_route_arm_index;
-use super::plan::RoleImageColumnCounts;
 use crate::{
     g::{self, Msg},
     global::{
@@ -28,10 +27,10 @@ const fn write_u32(bytes: &mut [u8; BLOB_LEN], offset: usize, value: u32) {
     write_u16(bytes, offset + 2, (value >> 16) as u16);
 }
 
-const fn route_arm_bytes(event_and_child: u32, lane_step: u32) -> [u8; BLOB_LEN] {
+const fn route_arm_bytes(event_row: u32, lane_step_len_and_child_slot: u32) -> [u8; BLOB_LEN] {
     let mut bytes = [0; BLOB_LEN];
-    write_u32(&mut bytes, 0, event_and_child);
-    write_u32(&mut bytes, 4, lane_step);
+    write_u32(&mut bytes, 0, event_row);
+    write_u32(&mut bytes, 4, lane_step_len_and_child_slot);
     bytes
 }
 
@@ -88,11 +87,7 @@ const fn event_with_empty_conflict_bytes() -> [u8; BLOB_LEN] {
 
 const fn event_with_out_of_domain_conflict_bytes() -> [u8; BLOB_LEN] {
     let mut bytes = event_bytes(u16::MAX, 0, 0);
-    write_u16(
-        &mut bytes,
-        ROLE_IMAGE_EVENT_STRIDE,
-        (crate::eff::meta::MAX_EFF_NODES as u16) << 1,
-    );
+    write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE, 0x8000);
     bytes
 }
 
@@ -101,11 +96,7 @@ const fn event_with_out_of_domain_dependency_bytes() -> [u8; BLOB_LEN] {
     write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE, 0);
     write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE + 2, 1);
     write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE + 4, 0);
-    write_u16(
-        &mut bytes,
-        ROLE_IMAGE_EVENT_STRIDE + 6,
-        ((crate::eff::meta::MAX_EFF_NODES as u16) << 2) | 2,
-    );
+    write_u16(&mut bytes, ROLE_IMAGE_EVENT_STRIDE + 6, 0x8002);
     bytes
 }
 
@@ -119,7 +110,7 @@ const fn event_with_out_of_bounds_dependency_range_bytes() -> [u8; BLOB_LEN] {
 }
 
 const fn route_arm_with_foreign_lane_step_bytes() -> [u8; BLOB_LEN] {
-    let mut bytes = route_arm_bytes(1, 1);
+    let mut bytes = route_arm_bytes(1, u16::MAX as u32);
     bytes[ROLE_IMAGE_ROUTE_ARM_STRIDE] = 0;
     write_u16(&mut bytes, ROLE_IMAGE_ROUTE_ARM_STRIDE + 1, 1);
     write_u16(&mut bytes, ROLE_IMAGE_ROUTE_ARM_STRIDE + 3, 1);
@@ -164,8 +155,8 @@ const fn route_commit_chain_bytes(len: u16, rows: [u16; 3]) -> [u8; BLOB_LEN] {
 
 const fn passive_child_without_parent_bytes() -> [u8; BLOB_LEN] {
     let mut bytes = [0; BLOB_LEN];
-    write_u32(&mut bytes, 0, (1 << 24) | 1);
-    write_u32(&mut bytes, 4, 0);
+    write_u32(&mut bytes, 0, 1);
+    write_u32(&mut bytes, 4, 1);
     write_u16(&mut bytes, 8, ScopeId::route(0).raw());
     write_u16(&mut bytes, 10, ScopeId::route(1).raw());
     write_u16(&mut bytes, 12, u16::MAX);
@@ -183,23 +174,21 @@ fn route_commit_columns(row_len: usize) -> RoleImageColumns {
 }
 
 static EMPTY_DESCRIPTOR_BYTES: [u8; BLOB_LEN] = [u8::MAX; BLOB_LEN];
-static ROUTE_ARM_WITH_EMPTY_LANE_STEP_BYTES: [u8; BLOB_LEN] = route_arm_bytes(0, u32::MAX);
-static ROUTE_ARM_WITH_OUT_OF_BOUNDS_EVENT_BYTES: [u8; BLOB_LEN] = route_arm_bytes(1, 0);
-static ROUTE_ARM_WITH_OUT_OF_BOUNDS_LANE_STEP_BYTES: [u8; BLOB_LEN] = route_arm_bytes(0, 1);
+static ROUTE_ARM_WITH_NONCANONICAL_EMPTY_LANE_STEP_BYTES: [u8; BLOB_LEN] =
+    route_arm_bytes(0, (1 << 16) | u16::MAX as u32);
+static ROUTE_ARM_WITH_OUT_OF_BOUNDS_EVENT_BYTES: [u8; BLOB_LEN] =
+    route_arm_bytes(1, u16::MAX as u32);
+static ROUTE_ARM_WITH_OUT_OF_BOUNDS_LANE_STEP_BYTES: [u8; BLOB_LEN] =
+    route_arm_bytes(1, (1 << 16) | u16::MAX as u32);
 static ROLL_SCOPE_WITH_EMPTY_EVENT_BYTES: [u8; BLOB_LEN] = roll_scope_bytes(0, u32::MAX);
 static ROLL_SCOPE_WITH_OUT_OF_BOUNDS_EVENT_BYTES: [u8; BLOB_LEN] = roll_scope_bytes(0, 1);
 static NON_ROUTE_SCOPE_BYTES: [u8; BLOB_LEN] = route_scope_bytes(ScopeId::roll_scope(0).raw());
-static ROUTE_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] =
-    route_scope_bytes(crate::eff::meta::MAX_EFF_NODES as u16);
-static ROLL_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] =
-    roll_scope_bytes(crate::eff::meta::MAX_EFF_NODES as u16, 1);
+static ROUTE_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] = route_scope_bytes(0x8000);
+static ROLL_SCOPE_OUT_OF_RANGE_BYTES: [u8; BLOB_LEN] = roll_scope_bytes(ScopeId::LOCAL_CAPACITY, 1);
 static EVENT_WITH_INVALID_FLAGS_BYTES: [u8; BLOB_LEN] = event_bytes(u16::MAX, u16::MAX, 2);
 static EVENT_WITH_OUT_OF_DOMAIN_INDEX_BYTES: [u8; BLOB_LEN] =
-    event_header_bytes(crate::eff::meta::MAX_EFF_NODES as u16, u16::MAX);
-static EVENT_WITH_OUT_OF_DOMAIN_SCOPE_BYTES: [u8; BLOB_LEN] = event_header_bytes(
-    0,
-    ScopeId::route(crate::eff::meta::MAX_EFF_NODES as u16).raw(),
-);
+    event_header_bytes(u16::MAX, u16::MAX);
+static EVENT_WITH_OUT_OF_DOMAIN_SCOPE_BYTES: [u8; BLOB_LEN] = event_header_bytes(0, 0x8000);
 static EVENT_WITH_EMPTY_DEPENDENCY_BYTES: [u8; BLOB_LEN] = event_with_empty_dependency_bytes();
 static EVENT_WITH_EMPTY_CONFLICT_BYTES: [u8; BLOB_LEN] = event_with_empty_conflict_bytes();
 static EVENT_WITH_OUT_OF_DOMAIN_CONFLICT_BYTES: [u8; BLOB_LEN] =
@@ -265,7 +254,7 @@ fn role_image_column_range_rejects_stride_multiplication_overflow() {
 
 #[test]
 fn resident_role_image_fit_probe_rejects_undersized_storage() {
-    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0>();
+    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0, 8>();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
         max_route_stack_depth: 0,
         local_step_count: 1,
@@ -276,26 +265,38 @@ fn resident_role_image_fit_probe_rejects_undersized_storage() {
     });
 
     let plan = RoleImagePlan::from_program(&eff_list, facts, 0);
-    assert!(plan.build_if_fits::<0>(&eff_list, facts, 0).is_none());
+    assert!(plan.build_if_fits::<0, 8>(&eff_list, facts, 0).is_none());
 }
 
 #[test]
 fn resident_parallel_role_image_plan_matches_lane_bit_storage() {
     type Parallel = g::Par<g::Send<0, 1, Msg<90, ()>>, g::Send<0, 1, Msg<91, ()>>>;
 
-    let source = <Parallel as crate::g::ProgramTerm>::PROGRAM_SOURCE;
+    let source = crate::g::ProgramSourceData::<8>::lower::<Parallel>();
     let eff_list = source.eff_list();
-    let scratch = RoleLaneScratch::from_program(eff_list, 2, 0);
-    let planned = RoleImageColumnCounts::from_program(eff_list, 2, 0);
-    let resident = RoleImageColumnCounts::from_scratch(&scratch);
+    let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
+        max_route_stack_depth: 0,
+        local_step_count: 2,
+        route_scope_count: 0,
+        active_lane_count: 2,
+        endpoint_lane_slot_count: 2,
+        logical_lane_count: 2,
+    });
+    let plan = RoleImagePlan::from_program(eff_list, facts, 0);
+    let build = plan
+        .build_if_fits::<64, 8>(eff_list, facts, 0)
+        .expect("planned parallel descriptor fits");
 
-    assert_eq!(planned.resident_boundaries, resident.resident_boundaries);
-    assert_eq!(planned.lane_bits, resident.lane_bits);
+    assert_eq!(
+        plan.columns.resident_boundaries.len,
+        build.columns.resident_boundaries.len
+    );
+    assert_eq!(plan.columns.lane_bits.len, build.columns.lane_bits.len);
 }
 
 #[test]
 fn resident_role_image_fit_probe_rejects_plan_drift() {
-    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0>();
+    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0, 8>();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
         max_route_stack_depth: 0,
         local_step_count: 1,
@@ -308,14 +309,14 @@ fn resident_role_image_fit_probe_rejects_plan_drift() {
     plan.columns.lane_bits.len += 1;
 
     assert_invariant(|| {
-        let _ = plan.build_if_fits::<64>(&eff_list, facts, 0);
+        let _ = plan.build_if_fits::<64, 8>(&eff_list, facts, 0);
     });
 }
 
 #[test]
 #[should_panic(expected = "role image")]
 fn resident_role_image_constructor_rejects_undersized_storage() {
-    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0>();
+    let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0, 8>();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
         max_route_stack_depth: 0,
         local_step_count: 1,
@@ -324,9 +325,8 @@ fn resident_role_image_constructor_rejects_undersized_storage() {
         endpoint_lane_slot_count: 1,
         logical_lane_count: 1,
     });
-    let scratch = RoleLaneScratch::from_program(&eff_list, facts.footprint().logical_lane_count, 0);
-    let columns = RoleImageBytes::<0>::columns(&scratch, facts);
-    let _ = RoleImageBytes::<0>::from_scratch(&scratch, facts, columns);
+    let plan = RoleImagePlan::from_program(&eff_list, facts, 0);
+    let _ = RoleImageBytes::<0>::emit(&eff_list, facts, 0, plan.columns);
 }
 
 fn assert_route_commit_fixture_decodes(image: &RoleLaneImage<'_>, expected_rows: &[(ScopeId, u8)]) {
@@ -418,10 +418,10 @@ fn resident_descriptor_rejects_empty_route_arm_row() {
 }
 
 #[test]
-fn resident_descriptor_rejects_empty_route_arm_lane_step_range() {
+fn resident_descriptor_rejects_noncanonical_empty_route_arm_lane_step_range() {
     let mut columns = empty_columns();
     columns.route_arms = ColumnRange::new(0, 1, ROLE_IMAGE_ROUTE_ARM_STRIDE);
-    let image = image(&columns, &ROUTE_ARM_WITH_EMPTY_LANE_STEP_BYTES);
+    let image = image(&columns, &ROUTE_ARM_WITH_NONCANONICAL_EMPTY_LANE_STEP_BYTES);
 
     assert_invariant(|| {
         let _ = image.route_arm_event_row_by_slot(0, 0);
@@ -687,6 +687,11 @@ fn resident_descriptor_rejects_passive_child_without_parent_authority() {
     columns.route_scopes = ColumnRange::new(8, 2, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
     columns.route_scope_conflicts = ColumnRange::new(12, 2, ROLE_IMAGE_CONFLICT_STRIDE);
     columns.events = ColumnRange::new(16, 1, ROLE_IMAGE_EVENT_STRIDE);
+    columns.route_arm_lane_step_rows = ColumnRange::new(
+        16 + ROLE_IMAGE_EVENT_STRIDE,
+        1,
+        super::super::ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+    );
     let image = image(&columns, &PASSIVE_CHILD_WITHOUT_PARENT_BYTES);
 
     assert_eq!(image.route_scope_by_slot(0), Some(ScopeId::route(0)));

@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: rolled reentry endpoint operations must be un
  --> src/g.rs
   |
   |             panic_choreography_error(error);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Roll<hibana::g::Send<0, 1, hibana::g::Msg<5, ()>>>, hibana::g::Send<0, 2, hibana::g::Msg<5, ()>>>>::VALIDATION` failed inside this call
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Seq<hibana::g::Roll<hibana::g::Send<0, 1, hibana::g::Msg<5, ()>>>, hibana::g::Send<0, 2, hibana::g::Msg<5, ()>>>, 8>::VALIDATION` failed inside this call
   |
 note: inside `g::panic_choreography_error`
  --> $RUST/core/src/panic.rs
@@ -23,22 +23,23 @@ note: erroneous constant encountered
 note: erroneous constant encountered
  --> src/g/role_projection.rs
   |
-  |         build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)
-  |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |             &ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF,
+  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g/role_projection.rs
   |
-  |     &RoleProjection::<ROLE, Steps>::IMAGE_REF
-  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |     &RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 note: erroneous constant encountered
  --> src/g.rs
   |
   |       let image = const {
   |  _________________^
-  | |         if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE) {
-  | |             panic!("projected role is outside the choreography role range");
+  | |         let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;
+  | |         if required_rows <= 8 {
+  | |             role_projection::role_projection_image_for::<ROLE, Steps, 8>()
 ... |
   | |     };
   | |_____^

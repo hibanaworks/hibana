@@ -31,12 +31,9 @@ fn sparse_multi_lane_route_program() -> Program<SparseMultiLaneRoute> {
 
 #[test]
 fn lane_resident_route_rows_do_not_restore_full_domain_copies() {
-    let packed_route_lane_rows = MAX_ROUTE_ARM_LANE_ROWS
-        * core::mem::size_of::<PackedRouteArmRow>()
-        + MAX_ROUTE_SCOPE_LANE_ROWS * core::mem::size_of::<PackedLaneRange>();
-    let full_domain_route_lane_rows = (MAX_ROUTE_ARM_LANE_ROWS + MAX_ROUTE_SCOPE_LANE_ROWS)
-        * LANE_SET_VIEW_WORDS
-        * core::mem::size_of::<LaneWord>();
+    let packed_route_lane_rows =
+        2 * core::mem::size_of::<PackedRouteArmRow>() + core::mem::size_of::<PackedLaneRange>();
+    let full_domain_route_lane_rows = 3 * LANE_SET_VIEW_WORDS * core::mem::size_of::<LaneWord>();
 
     assert!(
         packed_route_lane_rows < full_domain_route_lane_rows,
@@ -61,8 +58,47 @@ fn route_arm_row_keeps_exact_ranges_in_compact_scalar_limbs() {
     );
     assert!(
         ROLE_IMAGE_ROUTE_ARM_STRIDE < separate_exact_range_columns,
-        "route arm row should keep event range, child delta, and lane-step range in one compact scalar row"
+        "route arm row should keep the event range, absolute child slot, and lane-step length in one compact scalar row"
     );
+}
+
+#[test]
+fn route_arm_row_crosses_the_former_twelve_bit_boundary() {
+    for (start, len) in [(4094, 1), (4095, 1), (4096, 1), (u16::MAX as usize - 1, 1)] {
+        let event_row = PackedLaneRange::new(start, len);
+        let lane_step_row = PackedLaneRange::new(7, 1);
+        let packed = PackedRouteArmRow::new(event_row, Some(3), lane_step_row);
+
+        assert_eq!(packed.event_row().start(), start);
+        assert_eq!(packed.event_row().len(), len);
+        assert_eq!(packed.lane_step_len(), 1);
+        assert_eq!(packed.child_slot(), Some(3));
+    }
+}
+
+#[test]
+fn route_arm_row_encodes_the_full_lane_domain_without_growing() {
+    let packed = PackedRouteArmRow::new(
+        PackedLaneRange::new(0, 256),
+        None,
+        PackedLaneRange::new(0, LANE_DOMAIN_SIZE),
+    );
+
+    assert_eq!(packed.lane_step_len(), LANE_DOMAIN_SIZE);
+    assert_eq!(core::mem::size_of_val(&packed), ROLE_IMAGE_ROUTE_ARM_STRIDE);
+}
+
+#[test]
+fn route_arm_child_slot_crosses_the_former_u8_delta_boundary() {
+    for child_slot in [256usize, 4096, u16::MAX as usize - 1] {
+        let packed = PackedRouteArmRow::new(
+            PackedLaneRange::new(0, 1),
+            Some(child_slot),
+            PackedLaneRange::new(0, 1),
+        );
+        assert_eq!(packed.child_slot(), Some(child_slot as u16));
+        assert_eq!(core::mem::size_of_val(&packed), ROLE_IMAGE_ROUTE_ARM_STRIDE);
+    }
 }
 
 #[test]

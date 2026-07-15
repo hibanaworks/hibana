@@ -1,68 +1,34 @@
 pub(crate) mod meta {
-    /// Maximum number of effect rows stored in one lowering segment.
-    pub(crate) const MAX_SEGMENT_EFFS: usize = 96;
-
-    /// Maximum number of fixed lowering segments in one program image.
-    pub(crate) const MAX_SEGMENTS: usize = 32;
-
-    /// Total effect row capacity across all lowering segments.
-    pub(crate) const MAX_EFF_NODES: usize = MAX_SEGMENTS * MAX_SEGMENT_EFFS;
+    /// Number of event ordinals representable without using the reserved
+    /// `u16::MAX` descriptor sentinel.
+    pub(crate) const COMPACT_EVENT_IDENTITY_CAPACITY: usize = u16::MAX as usize;
 }
 
-/// Segmented effect position inside a projected local descriptor image.
-///
-/// The upper 16 bits identify the segment and the lower 16 bits identify the
-/// segment-local effect offset. Application code never constructs this value;
-/// runtime crates may inspect it as a compact stable descriptor id.
+/// Dense event position inside a projected local descriptor image.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct EffIndex(u32);
+pub(crate) struct EffIndex(u16);
 
 impl EffIndex {
     pub(crate) const ZERO: Self = Self(0);
 
     #[inline(always)]
-    pub(crate) const fn from_segment_offset(segment: u16, offset: u16) -> Self {
-        if segment as usize >= meta::MAX_SEGMENTS || offset as usize >= meta::MAX_SEGMENT_EFFS {
-            crate::invariant();
-        }
-        Self(((segment as u32) << 16) | offset as u32)
-    }
-
-    #[inline(always)]
     pub(crate) const fn from_dense_ordinal(idx: usize) -> Self {
-        if idx >= meta::MAX_EFF_NODES {
+        if idx >= meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             crate::invariant();
         }
-        let segment = idx / meta::MAX_SEGMENT_EFFS;
-        let offset = idx % meta::MAX_SEGMENT_EFFS;
-        Self::from_segment_offset(segment as u16, offset as u16)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn segment(self) -> u16 {
-        (self.0 >> 16) as u16
-    }
-
-    #[inline(always)]
-    pub(crate) const fn offset(self) -> u16 {
-        self.0 as u16
+        Self(idx as u16)
     }
 
     #[inline(always)]
     pub(crate) const fn dense_ordinal(self) -> usize {
-        let segment = self.segment() as usize;
-        let offset = self.offset() as usize;
-        if segment >= meta::MAX_SEGMENTS || offset >= meta::MAX_SEGMENT_EFFS {
-            crate::invariant();
-        }
-        segment * meta::MAX_SEGMENT_EFFS + offset
+        self.0 as usize
     }
 }
 
 impl core::fmt::Display for EffIndex {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}:{}", self.segment(), self.offset())
+        write!(f, "{}", self.0)
     }
 }
 
@@ -212,50 +178,27 @@ mod tests {
     use super::{EffIndex, EffStruct};
 
     #[test]
-    fn eff_index_checked_constructor_packs_valid_segment_and_offset() {
-        let idx = EffIndex::from_segment_offset(2, 42);
-
-        assert_eq!(idx.segment(), 2);
-        assert_eq!(idx.offset(), 42);
-        assert_eq!(idx, EffIndex((2u32 << 16) | 42));
-    }
-
-    #[test]
-    #[should_panic]
-    fn invalid_eff_index_constructor_panics_at_construction() {
-        let _ = EffIndex::from_segment_offset(super::meta::MAX_SEGMENTS as u16, 0);
-    }
-
-    #[test]
     #[should_panic]
     fn pure_effect_atom_data_fails_fast() {
         let _ = EffStruct::pure().atom_data();
     }
 
     #[test]
-    fn eff_index_from_dense_ordinal_stays_segment_zero() {
+    fn eff_index_from_dense_ordinal_is_dense() {
         let idx = EffIndex::from_dense_ordinal(42);
 
-        assert_eq!(idx.segment(), 0);
-        assert_eq!(idx.offset(), 42);
         assert_eq!(idx.dense_ordinal(), 42);
     }
 
     #[test]
-    fn eff_index_display_is_always_segmented() {
-        let first = EffIndex::from_dense_ordinal(42);
-        let second = EffIndex::from_dense_ordinal(super::meta::MAX_SEGMENT_EFFS + 7);
-
-        assert_eq!(std::format!("{first}"), "0:42");
-        assert_eq!(std::format!("{second}"), "1:7");
+    fn eff_index_display_is_dense() {
+        let index = EffIndex::from_dense_ordinal(42);
+        assert_eq!(std::format!("{index}"), "42");
     }
 
     #[test]
-    fn eff_index_from_dense_ordinal_crosses_segment_boundary() {
-        let idx = EffIndex::from_dense_ordinal(super::meta::MAX_SEGMENT_EFFS + 7);
-
-        assert_eq!(idx.segment(), 1);
-        assert_eq!(idx.offset(), 7);
-        assert_eq!(idx.dense_ordinal(), super::meta::MAX_SEGMENT_EFFS + 7);
+    #[should_panic]
+    fn eff_index_rejects_reserved_descriptor_sentinel() {
+        let _ = EffIndex::from_dense_ordinal(super::meta::COMPACT_EVENT_IDENTITY_CAPACITY);
     }
 }

@@ -215,7 +215,7 @@ impl EventCursor {
     #[inline(always)]
     fn select_resident_row_for_lane(&mut self, row_idx: usize, lane: u8) -> CursorRefresh {
         if self.resident_row_index_usize() != row_idx {
-            let Ok(row) = u8::try_from(row_idx) else {
+            let Ok(row) = u16::try_from(row_idx) else {
                 crate::invariant();
             };
             self.state_mut().resident_row_index = row;

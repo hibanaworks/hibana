@@ -17,14 +17,6 @@ where
         &self.tap
     }
 
-    pub(crate) fn now32(&self) -> u32 {
-        let current = self.tap_counter.get();
-        if current != u32::MAX {
-            self.tap_counter.set(current + 1);
-        }
-        current
-    }
-
     pub(crate) fn activate_lane_attachment(
         &self,
         sid: SessionId,
@@ -51,12 +43,7 @@ where
         if first_attach {
             emit(
                 self.tap(),
-                events::lane_acquire(
-                    self.now32(),
-                    self.id.raw() as u32,
-                    sid.raw(),
-                    lane.as_wire() as u16,
-                ),
+                events::lane_acquire(self.id.raw() as u32, sid.raw(), lane.as_wire() as u16),
             );
         }
         Ok(())
@@ -91,7 +78,6 @@ where
         let port = Port::new(PortInit {
             transport: &self.transport,
             tap: self.tap(),
-            tap_counter: &self.tap_counter,
             slab_ptr: self.slab_ptr,
             slab_len: self.slab_len,
             access_state: &self.access_state,

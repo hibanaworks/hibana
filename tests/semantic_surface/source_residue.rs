@@ -89,7 +89,11 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let role_lane_image = read("src/global/role_program/image_impl/lane_image.rs");
     let mut role_program_impl = read("src/global/role_program/image_impl.rs");
     role_program_impl.push_str(&read("src/global/role_program/image_impl/event_rows.rs"));
-    role_program_impl.push_str(&read("src/global/role_program/image_impl/scope_rows.rs"));
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/projection.rs"));
+    role_program_impl.push_str(&read(
+        "src/global/role_program/image_impl/projection/dependency.rs",
+    ));
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/blob_image.rs"));
     let reference_tests = {
         let mut tests = read("src/global/event_program_tests.rs");
         tests.push_str(&read("src/global/event_program_cursor_tests.rs"));
@@ -273,11 +277,10 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !role_program_types.contains("route_scope_flags:")
             && !role_program_types.contains("route_scope_conflicts: &'static")
             && role_program_impl.contains("LocalDependency::with_conflict_range")
-            && role_program_impl.contains("PackedLocalDependency::from_dependency(dependency)")
-            && role_program_impl.contains("Self::route_conflict_for_eff(markers, idx)")
-            && role_program_impl.contains("self.route_scope_conflicts[route_slot]")
-            && role_program_impl.contains("use crate::global::frame_labels::frame_label_at;")
-            && role_program_impl.contains("frame_label_at(eff_list, idx, atom)")
+            && role_program_impl.contains("PackedLocalDependency::from_dependency(")
+            && role_program_impl.contains("projection::route_conflict_for_eff(markers, eff_idx)")
+            && role_program_impl.contains("columns.route_scope_conflicts")
+            && role_program_impl.contains("eff_list.frame_label_at(eff_idx)")
             && event_program.contains("self.rows().dependency_for_index(idx)")
             && event_program.contains("self.rows().event_conflict_for_index(idx)")
             && event_program.contains("self.rows().route_scope_conflict_by_slot(slot)")
@@ -292,9 +295,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && role_program_types.contains("PackedRouteArmRow")
             && role_program_types.contains("RouteArmLaneStepRow")
             && !role_program_types.contains("route_arm_rows: &'static")
-            && role_program_impl.contains(
-                "PackedRouteArmRow::new(input.local_row, child_delta, input.lane_step_row)"
-            )
+            && role_program_impl.contains("PackedRouteArmRow::new(")
+            && role_program_impl.contains("child_slot,")
             && event_program.contains("pub(crate) struct LocalEventRowSet")
             && event_program.contains("route_arm_event_row_by_slot")
             && cursor_scope_route.contains("pub(crate) fn event_conflict_row_allows")
@@ -551,7 +553,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
     let cursor_scope_route_navigation =
         read("src/global/typestate/cursor/scope_route/navigation.rs");
     let eff_list = read("src/global/const_dsl/eff_list.rs");
-    let role_scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
+    let role_scope_rows = read("src/global/role_program/image_impl/projection.rs");
     let cursor_send_preview = read("src/global/typestate/cursor/scope_route/send_preview.rs");
     let cursor_send_preview_start =
         read("src/global/typestate/cursor/scope_route/send_preview_start.rs");
@@ -635,8 +637,8 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         "route selection must materialize resident route commit rows and leave route-state application inside prepared commit deltas"
     );
     assert!(
-        eff_list.contains("pub(crate) const fn push_route_resolver")
-            && eff_list.contains("if self.resolver_markers[idx].scope.same(scope)")
+        eff_list.contains("pub(crate) const fn push_route_resolver_mut")
+            && eff_list.contains("if self.resolver_marker_at(idx).scope.same(scope)")
             && !eff_list.contains("pub(crate) const fn resolver_with_scope")
             && !eff_list.contains("pub(crate) const fn resolver_at")
             && !eff_list.contains("scope_id_for_offset"),
@@ -706,7 +708,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         );
     }
     assert!(
-        role_scope_rows.contains("let Some(ranges) = Self::route_arm_ranges(markers, scope_id) else {\n            crate::invariant();\n        };"),
+        role_scope_rows.contains("let Some(ranges) = route_arm_ranges(markers, scope_id) else {\n        crate::invariant();\n    };"),
         "route scope dependency bounds must fail closed when binary arm ranges are missing"
     );
     let send_preview_start = cursor_send_preview_start

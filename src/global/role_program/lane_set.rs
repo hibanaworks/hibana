@@ -24,7 +24,6 @@ pub(crate) const LANE_DOMAIN_SIZE: usize = u8::MAX as usize + 1;
 pub(crate) const DENSE_LANE_ABSENT: DenseLaneOrdinal = DenseLaneOrdinal::ABSENT;
 pub(crate) const MIN_ENDPOINT_LANE_SLOTS: usize = 2;
 pub(crate) const LANE_SET_VIEW_WORDS: usize = lane_word_count(LANE_DOMAIN_SIZE);
-pub(crate) const LANE_DOMAIN_BYTES: usize = lane_byte_count(LANE_DOMAIN_SIZE);
 
 #[inline(always)]
 pub(crate) const fn lane_word_count(lane_count: usize) -> usize {

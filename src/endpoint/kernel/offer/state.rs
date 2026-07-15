@@ -3,6 +3,7 @@
 use super::ingress::OfferFrontierFacts;
 use super::{IngressEvidenceState, OfferProgressState, OfferScopeSelection, ResolvePendingState};
 use crate::endpoint::kernel::lane_port;
+use crate::global::typestate::InboundFrameKey;
 
 pub(super) struct OfferStagedIngress<'a> {
     transport_payload: Option<lane_port::PreambleFrame<'a>>,
@@ -42,10 +43,17 @@ impl<'a> OfferStagedIngress<'a> {
     }
 
     #[inline]
-    pub(super) fn transport_frame_label_raw(&self) -> Option<u8> {
-        self.transport_payload
-            .as_ref()
-            .map(lane_port::PreambleFrame::observed_frame_label_raw)
+    pub(super) fn transport_frame_key(&self) -> Option<InboundFrameKey> {
+        let frame = self.transport_payload.as_ref()?;
+        if frame.is_deterministic() {
+            None
+        } else {
+            Some(InboundFrameKey::new(
+                frame.observed_source_role(),
+                frame.lane_wire(),
+                frame.observed_frame_label_raw(),
+            ))
+        }
     }
 
     #[inline]
@@ -193,8 +201,8 @@ impl<'r> OfferState<'r> {
     }
 
     #[inline]
-    pub(super) fn carried_transport_frame_label_raw(&self) -> Option<u8> {
-        self.carried_ingress.transport_frame_label_raw()
+    pub(super) fn carried_transport_frame_key(&self) -> Option<InboundFrameKey> {
+        self.carried_ingress.transport_frame_key()
     }
 
     #[inline]

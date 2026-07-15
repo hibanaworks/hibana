@@ -135,7 +135,7 @@ migrated_deny_scripts=(
   .github/scripts/check_resolver_surface_hygiene.sh
   .github/scripts/check_route_frontier_owner.sh
   .github/scripts/check_runtime_performance_hygiene.sh
-  .github/scripts/check_segmented_lowering_hygiene.sh
+  .github/scripts/check_source_lowering_hygiene.sh
   .github/scripts/check_summary_authority_hygiene.sh
   .github/scripts/check_surface_hygiene.sh
   .github/scripts/check_surface_test_alias_hygiene.sh

@@ -127,9 +127,7 @@ where
         let port = self.port_for_lane(lane as usize);
         let packed =
             ((ROLE as u32) << 24) | ((meta.lane as u32) << 16) | ((meta.label as u32) << 8);
-        let event = events::raw_event(port.now32(), id)
-            .with_arg0(meta.sid)
-            .with_arg1(packed);
+        let event = events::raw_event(id).with_arg0(meta.sid).with_arg1(packed);
         emit(port.tap(), event);
     }
 }

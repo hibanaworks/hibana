@@ -3,7 +3,7 @@ use super::{
     RendezvousId, RuntimeResources, SessionId, Sidecar, TapRing, Transport, UnsafeCell, emit,
     events,
 };
-use crate::{observe::core::TapEvent, runtime_core::consts::TAP_EVENTS};
+use crate::observe::{core::TAP_EVENTS, event::TapRecord};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ResidentCarveLayout {
@@ -21,8 +21,8 @@ where
         let len = slab.len();
         let header_offset = Self::align_up(base, core::mem::align_of::<Self>());
         let header_end = header_offset.checked_add(core::mem::size_of::<Self>())?;
-        let tap_offset = Self::align_up(header_end, core::mem::align_of::<TapEvent>());
-        let tap_end = tap_offset.checked_add(core::mem::size_of::<[TapEvent; TAP_EVENTS]>())?;
+        let tap_offset = Self::align_up(header_end, core::mem::align_of::<TapRecord>());
+        let tap_end = tap_offset.checked_add(core::mem::size_of::<[TapRecord; TAP_EVENTS]>())?;
         let header_start = header_offset.checked_sub(base)?;
         let tap_start = tap_offset.checked_sub(base)?;
         let runtime_start = tap_end.checked_sub(base)?;
@@ -38,7 +38,7 @@ where
 
     unsafe fn carve_resident_storage(
         slab: &mut [u8],
-    ) -> Option<(*mut Self, &mut [TapEvent; TAP_EVENTS], &mut [u8])> {
+    ) -> Option<(*mut Self, &mut [TapRecord; TAP_EVENTS], &mut [u8])> {
         let layout = Self::resident_carve_layout(slab)?;
         let slab_len = slab.len();
         let slab_ptr = slab.as_mut_ptr();
@@ -47,20 +47,20 @@ where
             slab_ptr.add(layout.header_start).cast::<Self>()
         };
         let tap_ptr = /* SAFETY: `resident_carve_layout` proved `tap_start` is
-        inside `slab` and aligned for `TapEvent`; `TAP_EVENTS` initialized
+        inside `slab` and aligned for `TapRecord`; `TAP_EVENTS` initialized
         cells fit before the runtime slice. */ unsafe {
-            slab_ptr.add(layout.tap_start).cast::<TapEvent>()
+            slab_ptr.add(layout.tap_start).cast::<TapRecord>()
         };
         let mut idx = 0usize;
         while idx < TAP_EVENTS {
-            /* SAFETY: tap storage is carved from the caller slab with TapEvent alignment and initialized exactly once. */
+            /* SAFETY: tap storage is carved from the caller slab with TapRecord alignment and initialized exactly once. */
             unsafe {
-                tap_ptr.add(idx).write(TapEvent::zero());
+                tap_ptr.add(idx).write(TapRecord::zero());
             }
             idx += 1;
         }
-        let tap_storage = /* SAFETY: tap storage was carved at TapEvent alignment and initialized for exactly TAP_EVENTS elements. */ unsafe {
-            &mut *(tap_ptr.cast::<[TapEvent; TAP_EVENTS]>())
+        let tap_storage = /* SAFETY: tap storage was carved at TapRecord alignment and initialized for exactly TAP_EVENTS elements. */ unsafe {
+            &mut *(tap_ptr.cast::<[TapRecord; TAP_EVENTS]>())
         };
         let runtime_ptr = /* SAFETY: `runtime_start <= slab.len()` was checked
         by `resident_carve_layout`, so this points at the runtime suffix. */ unsafe { slab_ptr.add(layout.runtime_start) };
@@ -102,7 +102,6 @@ where
                 crate::session::cluster::core::ResolverBucket::empty(),
             ));
             core::ptr::addr_of_mut!((*dst).tap).write(TapRing::from_storage(tap_storage));
-            core::ptr::addr_of_mut!((*dst).tap_counter).write(Cell::new(0));
             core::ptr::addr_of_mut!((*dst).slab_ptr).write(runtime_slab_ptr);
             core::ptr::addr_of_mut!((*dst).slab_len).write(runtime_slab_len);
             core::ptr::addr_of_mut!((*dst).slab_marker).write(PhantomData);
@@ -155,12 +154,7 @@ where
     pub(crate) fn emit_lane_release(&self, sid: SessionId, lane: Lane) {
         emit(
             self.tap(),
-            events::lane_release(
-                self.now32(),
-                self.id.raw() as u32,
-                sid.raw(),
-                lane.as_wire() as u16,
-            ),
+            events::lane_release(self.id.raw() as u32, sid.raw(), lane.as_wire() as u16),
         );
     }
 }

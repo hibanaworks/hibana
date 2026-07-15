@@ -2,7 +2,7 @@ use super::{
     CursorEndpoint, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest,
     FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
     OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult, ResolvePendingState,
-    ResolveTokenOutcome, RouteArmToken, ScopeFrameLabelScratch, Transport, lane_port,
+    ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput {
     pub(super) selection: OfferScopeSelection,
@@ -68,8 +68,8 @@ impl<'a, 'r> PassiveRouteEvidenceContext<'a, 'r> {
     }
 
     #[inline]
-    fn transport_frame_label_raw(&self) -> Option<u8> {
-        self.ingress.transport_frame_label_raw()
+    fn transport_frame_key(&self) -> Option<super::InboundFrameKey> {
+        self.ingress.transport_frame_key()
     }
 
     #[inline]
@@ -192,23 +192,11 @@ where
         state: &mut PassiveRouteEvidenceContext<'_, 'r>,
     ) -> RecvResult<FrameEvidenceResolution> {
         let scope_id = selection.scope_id;
-        if let Some(frame_lane) = state.transport_lane_wire() {
-            let Some(frame_label) = state.transport_frame_label_raw() else {
+        if state.transport_lane_wire().is_some() {
+            let Some(key) = state.transport_frame_key() else {
                 return Ok(FrameEvidenceResolution::unresolved());
             };
-            let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
-            self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
-            let frame_label_meta = frame_label_scratch.view();
-            if frame_label_meta
-                .evidence_frame_label_mask()
-                .contains_frame_label(frame_label)
-            {
-                self.mark_scope_ready_arm_from_frame_label(
-                    scope_id,
-                    frame_lane,
-                    frame_label,
-                    &frame_label_meta,
-                );
+            if self.mark_scope_ready_arm_from_frame_key(scope_id, key) {
                 return Ok(FrameEvidenceResolution::resolved());
             }
             return Ok(FrameEvidenceResolution::unresolved());
@@ -240,14 +228,16 @@ where
             Poll::Ready(Ok(frame)) => frame,
             Poll::Ready(Err(err)) => return Err(err),
         };
-        let observed_frame_label = frame.observed_frame_label_raw();
+        let key = super::InboundFrameKey::new(
+            frame.observed_source_role(),
+            recv_lane,
+            frame.observed_frame_label_raw(),
+        );
         let observed = frame.observed_transport_frame(self.sid.raw(), recv_lane, ROLE);
-        let mut frame_label_scratch = ScopeFrameLabelScratch::EMPTY;
-        self.write_selection_frame_label_meta(selection, &mut frame_label_scratch);
-        let frame_label_meta = frame_label_scratch.view();
-        if frame_label_meta
-            .evidence_frame_label_mask()
-            .contains_frame_label(observed_frame_label)
+        if self
+            .cursor
+            .passive_descendant_dispatch_arm_for_key(selection.scope_id, key)
+            .is_some()
         {
             state.stage_transport(frame);
             return Ok(FrameEvidenceResolution::resolved());

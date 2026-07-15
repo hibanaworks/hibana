@@ -1,11 +1,44 @@
 use super::{CompiledProgramRef, PackedProgramAtomFields, ProgramAtomRow};
+use crate::eff::{EffAtom, EffStruct, EventOrigin};
 use crate::global::{
     compiled::images::image::{
         blob_storage::ProgramImageBytes,
-        columns::{ProgramColumnRange, ProgramImageColumns, ProgramImageFacts},
+        columns::{
+            PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, PROGRAM_IMAGE_ATOM_STRIDE, ProgramColumnRange,
+            ProgramImageColumns, ProgramImageFacts,
+        },
     },
     const_dsl::EffList,
 };
+
+const ATOM_ONLY_IMAGE_BYTES: usize =
+    PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY * PROGRAM_IMAGE_ATOM_STRIDE;
+
+const fn maximum_atom_only_source() -> EffList<PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY> {
+    let mut source = EffList::new();
+    let atom = EffStruct::atom(EffAtom {
+        from: 0,
+        to: 1,
+        label: 0,
+        payload_schema: 0,
+        origin: EventOrigin::User,
+        lane: 0,
+    });
+    let mut event = 0usize;
+    while event < PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY {
+        source.push_event_mut(atom);
+        event += 1;
+    }
+    source
+}
+
+static MAXIMUM_ATOM_ONLY_SOURCE: EffList<PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY> =
+    maximum_atom_only_source();
+static MAXIMUM_ATOM_ONLY_IMAGE: ProgramImageBytes<ATOM_ONLY_IMAGE_BYTES> =
+    ProgramImageBytes::from_image(
+        &MAXIMUM_ATOM_ONLY_SOURCE,
+        ProgramImageColumns::new(PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, 0, 0, 0),
+    );
 
 const fn encoded_atom(
     eff_idx: u16,
@@ -56,8 +89,18 @@ fn compiled_program_column_range_rejects_stride_multiplication_overflow() {
 }
 
 #[test]
+fn atom_only_source_and_image_reach_the_compact_byte_ceiling() {
+    assert_eq!(MAXIMUM_ATOM_ONLY_SOURCE.len(), 5_957);
+    assert_eq!(ATOM_ONLY_IMAGE_BYTES, 65_527);
+    assert_eq!(
+        core::mem::size_of_val(&MAXIMUM_ATOM_ONLY_IMAGE),
+        ATOM_ONLY_IMAGE_BYTES
+    );
+}
+
+#[test]
 fn program_image_fit_probe_rejects_undersized_storage() {
-    let source = EffList::new();
+    let source = EffList::<1>::new();
     let columns = ProgramImageColumns::new(1, 0, 0, 0);
     assert!(ProgramImageBytes::<10>::from_image_if_fits(&source, columns).is_none());
 }
@@ -65,7 +108,7 @@ fn program_image_fit_probe_rejects_undersized_storage() {
 #[test]
 #[should_panic]
 fn program_image_constructor_rejects_undersized_storage() {
-    let source = EffList::new();
+    let source = EffList::<1>::new();
     let columns = ProgramImageColumns::new(1, 0, 0, 0);
     let _ = ProgramImageBytes::<10>::from_image(&source, columns);
 }
@@ -76,15 +119,7 @@ static VALID_COPY: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, u8::MAX)
 static SCHEMA_DIFFERENT: [u8; 11] = encoded_atom(2, 0, 1, 9, 0x7856_3413, 1, u8::MAX);
 static LAST_BYTE_DIFFERENT: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 1, 0);
 static SAME_COLUMN_BYTES: [u8; 11] = [0; 11];
-static EFF_INDEX_OUT_OF_RANGE: [u8; 11] = encoded_atom(
-    crate::eff::meta::MAX_EFF_NODES as u16,
-    0,
-    1,
-    9,
-    VALID_SCHEMA,
-    1,
-    0,
-);
+static EFF_INDEX_OUT_OF_RANGE: [u8; 11] = encoded_atom(u16::MAX, 0, 1, 9, VALID_SCHEMA, 1, 0);
 static FROM_OUT_OF_RANGE: [u8; 11] = encoded_atom(2, 2, 1, 9, VALID_SCHEMA, 1, 0);
 static TO_OUT_OF_RANGE: [u8; 11] = encoded_atom(2, 0, 2, 9, VALID_SCHEMA, 1, 0);
 static ORIGIN_OUT_OF_RANGE: [u8; 11] = encoded_atom(2, 0, 1, 9, VALID_SCHEMA, 2, 0);
@@ -142,10 +177,7 @@ fn compiled_program_atom_decoder_rejects_exact_invalid_boundaries() {
         lane: 0,
     };
     assert!(ProgramAtomRow::decode(0, fields(0, 0, 0), 0).is_some());
-    assert!(
-        ProgramAtomRow::decode(crate::eff::meta::MAX_EFF_NODES as u16, fields(0, 0, 0), 0,)
-            .is_none()
-    );
+    assert!(ProgramAtomRow::decode(u16::MAX, fields(0, 0, 0), 0,).is_none());
     assert!(ProgramAtomRow::decode(0, fields(0, 0, 2), 0).is_none());
     assert!(ProgramAtomRow::decode(0, fields(1, 0, 0), 0).is_none());
     assert!(ProgramAtomRow::decode(0, fields(0, 1, 0), 0).is_none());
@@ -189,5 +221,6 @@ fn compiled_program_atom_descriptor_rejects_origin_out_of_range() {
 #[test]
 #[should_panic]
 fn compiled_program_atom_descriptor_rejects_effect_index_query_out_of_range() {
-    let _ = forged_program_ref(&VALID, 1).atom_at(crate::eff::meta::MAX_EFF_NODES);
+    let _ =
+        forged_program_ref(&VALID, 1).atom_at(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY);
 }

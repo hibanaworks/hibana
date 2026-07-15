@@ -1,17 +1,7 @@
 use super::LANE_DOMAIN_SIZE;
 use super::lane_set::lane_word_count;
-use crate::global::{
-    compiled::images::CompiledProgramRef,
-    typestate::{PackedEventConflict, PackedLocalDependency},
-};
-pub(crate) const MAX_RESIDENT_ROW_LANE_ROWS: usize = u8::MAX as usize + 1;
-pub(crate) const MAX_RESIDENT_ROW_BOUNDARY_ROWS: usize = MAX_RESIDENT_ROW_LANE_ROWS + 1;
-pub(crate) const MAX_LOCAL_STEP_LANES: usize = crate::eff::meta::MAX_EFF_NODES;
-pub(crate) const MAX_ROUTE_SCOPE_LANE_ROWS: usize = crate::eff::meta::MAX_EFF_NODES / 2;
-pub(crate) const MAX_ROUTE_ARM_LANE_ROWS: usize = MAX_ROUTE_SCOPE_LANE_ROWS * 2;
-pub(crate) const MAX_RESIDENT_LANE_BIT_BYTES: usize = LANE_DOMAIN_SIZE * 4;
+use crate::global::compiled::images::CompiledProgramRef;
 pub(crate) const PACKED_LANE_RANGE_EMPTY: u32 = u32::MAX;
-pub(crate) const PACKED_ROUTE_ARM_ROW_EMPTY: u32 = u32::MAX;
 pub(crate) const ROLE_IMAGE_EVENT_STRIDE: usize = 10;
 pub(crate) const ROLE_IMAGE_LANE_STRIDE: usize = 1;
 pub(crate) const ROLE_IMAGE_DEPENDENCY_STRIDE: usize = 8;
@@ -89,12 +79,6 @@ pub(crate) struct RouteArmLaneStepRow {
 }
 
 impl RouteArmLaneStepRow {
-    pub(crate) const EMPTY: Self = Self {
-        lane: 0,
-        first_step: u16::MAX,
-        last_step: u16::MAX,
-    };
-
     #[inline(always)]
     pub(crate) const fn new(lane: u8, first_step: usize, last_step: usize) -> Self {
         if first_step > u16::MAX as usize || last_step > u16::MAX as usize {
@@ -133,89 +117,83 @@ impl RouteArmLaneStepRow {
     pub(crate) const fn last_step(self) -> u16 {
         self.last_step
     }
-
-    #[inline(always)]
-    pub(crate) const fn with_last_step(self, last_step: usize) -> Self {
-        Self::new(self.lane, self.first_step as usize, last_step)
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedRouteArmRow {
-    event_and_child: u32,
-    lane_step_row: PackedLaneRange,
+    event_row: PackedLaneRange,
+    lane_step_len_and_child_slot: u32,
 }
 
 impl PackedRouteArmRow {
-    pub(crate) const EMPTY: Self = Self {
-        event_and_child: PACKED_ROUTE_ARM_ROW_EMPTY,
-        lane_step_row: PackedLaneRange::EMPTY,
-    };
-    const CHILD_SHIFT: u32 = 24;
-    const START_SHIFT: u32 = 12;
-    const FIELD_MASK: u32 = 0x0fff;
-    const CHILD_ABSENT_DELTA: u32 = 0;
+    const LANE_STEP_LENGTH_SHIFT: u32 = 16;
+    const CHILD_SLOT_MASK: u32 = u16::MAX as u32;
+    const BYTE_MASK: u32 = u8::MAX as u32;
+    const RESERVED_MASK: u32 = (u8::MAX as u32) << 24;
+    const CHILD_ABSENT_SLOT: u32 = u16::MAX as u32;
 
     pub(crate) const fn new(
         event_row: PackedLaneRange,
-        child_slot_delta: Option<usize>,
+        child_slot: Option<usize>,
         lane_step_row: PackedLaneRange,
     ) -> Self {
-        if event_row.is_empty()
-            || event_row.start() > Self::FIELD_MASK as usize
-            || event_row.len() > Self::FIELD_MASK as usize
-        {
+        if event_row.is_empty() {
             panic!("route arm projection row event range overflow");
         }
-        if !lane_step_row.is_empty()
-            && (lane_step_row.start() > u16::MAX as usize
-                || lane_step_row.len() > u16::MAX as usize)
+        if lane_step_row.is_empty()
+            || lane_step_row.len() > LANE_DOMAIN_SIZE
+            || (event_row.is_zero_len() != lane_step_row.is_zero_len())
         {
             panic!("route arm lane step row range overflow");
         }
-        let child = match child_slot_delta {
-            Some(delta) => {
-                if delta == 0 || delta > u8::MAX as usize {
-                    panic!("passive route child slot delta overflow");
+        let child = match child_slot {
+            Some(slot) => {
+                if slot >= u16::MAX as usize {
+                    panic!("passive route child slot overflow");
                 }
-                delta as u32
+                slot as u32
             }
-            None => Self::CHILD_ABSENT_DELTA,
+            None => Self::CHILD_ABSENT_SLOT,
         };
-        let lane_step_row = if lane_step_row.is_empty() {
-            PackedLaneRange::new(0, 0)
+        let encoded_lane_step_len = if lane_step_row.is_zero_len() {
+            0
         } else {
-            lane_step_row
+            (lane_step_row.len() - 1) as u32
         };
         Self {
-            event_and_child: (child << Self::CHILD_SHIFT)
-                | ((event_row.start() as u32) << Self::START_SHIFT)
-                | event_row.len() as u32,
-            lane_step_row,
+            event_row,
+            lane_step_len_and_child_slot: (encoded_lane_step_len << Self::LANE_STEP_LENGTH_SHIFT)
+                | child,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn from_packed_parts(event_and_child: u32, lane_step_raw: u32) -> Self {
+    pub(crate) const fn from_packed_parts(
+        event_row_raw: u32,
+        lane_step_len_and_child_slot: u32,
+    ) -> Self {
+        if (lane_step_len_and_child_slot & Self::RESERVED_MASK) != 0 {
+            crate::invariant();
+        }
         Self {
-            event_and_child,
-            lane_step_row: PackedLaneRange::from_raw(lane_step_raw),
+            event_row: PackedLaneRange::from_raw(event_row_raw),
+            lane_step_len_and_child_slot,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn event_and_child_raw(self) -> u32 {
-        self.event_and_child
+    pub(crate) const fn event_row_raw(self) -> u32 {
+        self.event_row.raw()
     }
 
     #[inline(always)]
-    pub(crate) const fn lane_step_raw(self) -> u32 {
-        self.lane_step_row.raw()
+    pub(crate) const fn lane_step_len_and_child_slot_raw(self) -> u32 {
+        self.lane_step_len_and_child_slot
     }
 
     #[inline(always)]
     pub(crate) const fn is_empty(self) -> bool {
-        self.event_and_child == PACKED_ROUTE_ARM_ROW_EMPTY
+        self.event_row.is_empty()
     }
 
     #[inline(always)]
@@ -223,32 +201,38 @@ impl PackedRouteArmRow {
         if self.is_empty() {
             PackedLaneRange::EMPTY
         } else {
-            PackedLaneRange::new(
-                ((self.event_and_child >> Self::START_SHIFT) & Self::FIELD_MASK) as usize,
-                (self.event_and_child & Self::FIELD_MASK) as usize,
-            )
+            self.event_row
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn lane_step_row(self) -> PackedLaneRange {
+    pub(crate) const fn lane_step_len(self) -> usize {
         if self.is_empty() {
-            PackedLaneRange::EMPTY
+            0
         } else {
-            self.lane_step_row
+            let encoded_len = (self.lane_step_len_and_child_slot >> Self::LANE_STEP_LENGTH_SHIFT)
+                & Self::BYTE_MASK;
+            if self.event_row.is_zero_len() {
+                if encoded_len != 0 {
+                    crate::invariant();
+                }
+                0
+            } else {
+                encoded_len as usize + 1
+            }
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn child_slot_delta(self) -> Option<u8> {
+    pub(crate) const fn child_slot(self) -> Option<u16> {
         if self.is_empty() {
             None
         } else {
-            let delta = (self.event_and_child >> Self::CHILD_SHIFT) as u8;
-            if delta == Self::CHILD_ABSENT_DELTA as u8 {
+            let slot = self.lane_step_len_and_child_slot & Self::CHILD_SLOT_MASK;
+            if slot == Self::CHILD_ABSENT_SLOT {
                 None
             } else {
-                Some(delta)
+                Some(slot as u16)
             }
         }
     }
@@ -261,11 +245,6 @@ pub(crate) struct PackedRollScopeRow {
 }
 
 impl PackedRollScopeRow {
-    pub(crate) const EMPTY: Self = Self {
-        scope: u16::MAX,
-        event_row: PackedLaneRange::EMPTY,
-    };
-
     #[inline(always)]
     pub(crate) const fn new(
         scope: crate::global::const_dsl::ScopeId,
@@ -483,31 +462,6 @@ pub(crate) struct RoleImageBuild<const N: usize> {
     pub(super) columns: RoleImageColumns,
     pub(super) active_lane_row: PackedLaneRange,
     pub(super) first_active_lane: u16,
-}
-
-pub(crate) struct RoleLaneScratch {
-    pub(crate) local_step_events: [PackedLocalEventRow; MAX_LOCAL_STEP_LANES],
-    pub(crate) local_step_lanes: [u8; MAX_LOCAL_STEP_LANES],
-    pub(crate) local_step_dependencies: [PackedLocalDependency; MAX_LOCAL_STEP_LANES],
-    pub(crate) local_step_conflicts: [PackedEventConflict; MAX_LOCAL_STEP_LANES],
-    pub(crate) route_scope_rows: [crate::global::const_dsl::ScopeId; MAX_ROUTE_SCOPE_LANE_ROWS],
-    pub(crate) route_scope_conflicts: [PackedEventConflict; MAX_ROUTE_SCOPE_LANE_ROWS],
-    pub(crate) route_arm_rows: [PackedRouteArmRow; MAX_ROUTE_ARM_LANE_ROWS],
-    pub(crate) resident_row_boundaries: [u16; MAX_RESIDENT_ROW_BOUNDARY_ROWS],
-    pub(crate) lane_bit_rows: [u8; MAX_RESIDENT_LANE_BIT_BYTES],
-    pub(crate) route_arm_lane_rows: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
-    pub(crate) route_offer_lane_rows: [PackedLaneRange; MAX_ROUTE_SCOPE_LANE_ROWS],
-    pub(crate) route_commit_ranges: [PackedLaneRange; MAX_ROUTE_ARM_LANE_ROWS],
-    pub(crate) roll_scope_rows: [PackedRollScopeRow; MAX_LOCAL_STEP_LANES],
-    pub(crate) active_lane_row: PackedLaneRange,
-    pub(crate) resident_row_len: u16,
-    pub(crate) dependency_row_len: u16,
-    pub(crate) conflict_row_len: u16,
-    pub(crate) lane_bit_row_len: u16,
-    pub(crate) route_commit_row_len: u16,
-    pub(crate) route_arm_lane_step_row_len: u16,
-    pub(crate) roll_scope_row_len: u16,
-    pub(crate) first_active_lane: u16,
 }
 
 pub(crate) struct RoleImageRef {

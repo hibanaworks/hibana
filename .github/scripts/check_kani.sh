@@ -184,6 +184,7 @@ for harness in \
   resident_local_step_lane_decoding_accepts_exact_domain \
   resident_route_commit_decision_match_is_exact \
   resident_route_arm_lane_step_decoding_accepts_exact_domain \
+  packed_route_arm_row_round_trips_full_compact_domains \
   role_image_fit_probe_rejects_undersized_storage \
   role_image_fit_probe_rejects_plan_mismatch; do
   if ! grep -Eq "^fn ${harness}\(\)" \
@@ -200,6 +201,40 @@ for harness in scope_id_decoding_accepts_exact_compact_domain; do
     exit 1
   fi
 done
+
+for harness in \
+  two_by_two_parallel_lane_matching_has_minimum_span \
+  lane_endpoint_index_aggregates_exact_symbolic_membership \
+  two_arm_route_frame_coloring_is_exact; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/global/const_dsl/allocation/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Eq '^fn nested_roll_frame_coloring_uses_the_complete_inbound_key\(\)' \
+  "${ROOT_DIR}/src/global/const_dsl/allocation/kani/roll_coloring.rs"; then
+  echo "Kani gate missing proof harness: nested_roll_frame_coloring_uses_the_complete_inbound_key" >&2
+  exit 1
+fi
+
+for harness in \
+  parallel_lane_coloring_reuses_disjoint_class \
+  parallel_lane_coloring_separates_conflicting_class \
+  lane_reuse_conflict_matches_endpoint_equality; do
+  if ! grep -Eq "^fn ${harness}\(\)" \
+    "${ROOT_DIR}/src/global/const_dsl/allocation/kani/production_coloring.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Eq '^fn three_by_three_parallel_lane_matching_certificate_is_maximum\(\)' \
+  "${ROOT_DIR}/src/global/const_dsl/allocation/kani/maximum_certificate.rs"; then
+  echo "Kani gate missing proof harness: three_by_three_parallel_lane_matching_certificate_is_maximum" >&2
+  exit 1
+fi
 
 for harness in controller_merge_accepts_exact_single_role_domain; do
   if ! grep -Eq "^fn ${harness}\(\)" \
@@ -358,9 +393,19 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness resident_local_step_lane_decoding_accepts_exact_domain \
   --harness resident_route_commit_decision_match_is_exact \
   --harness resident_route_arm_lane_step_decoding_accepts_exact_domain \
+  --harness packed_route_arm_row_round_trips_full_compact_domains \
   --harness role_image_fit_probe_rejects_undersized_storage \
   --harness role_image_fit_probe_rejects_plan_mismatch \
   --harness scope_id_decoding_accepts_exact_compact_domain \
+  --harness ring_state_step_preserves_the_exact_slot_domain \
+  --harness parallel_lane_coloring_reuses_disjoint_class \
+  --harness parallel_lane_coloring_separates_conflicting_class \
+  --harness lane_reuse_conflict_matches_endpoint_equality \
+  --harness two_by_two_parallel_lane_matching_has_minimum_span \
+  --harness three_by_three_parallel_lane_matching_certificate_is_maximum \
+  --harness lane_endpoint_index_aggregates_exact_symbolic_membership \
+  --harness two_arm_route_frame_coloring_is_exact \
+  --harness nested_roll_frame_coloring_uses_the_complete_inbound_key \
   --harness controller_merge_accepts_exact_single_role_domain \
   --harness outbound_selector_identity_is_exact_public_send_contract \
   --harness observer_path_decision_has_exact_merge_domain \

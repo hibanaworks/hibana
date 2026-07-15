@@ -7,6 +7,7 @@ use super::super::super::{
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
 use crate::eff::EventOrigin;
+use crate::global::typestate::InboundFrameKey;
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
@@ -329,7 +330,7 @@ where
         &mut self,
         selection: OfferScopeSelection,
         resolved: ResolvedRouteArm,
-        observed_frame: Option<(u8, u8)>,
+        observed_frame: Option<InboundFrameKey>,
     ) -> RecvResult<bool> {
         let scope_id = selection.scope_id;
         let selected_arm = resolved.selected_arm;
@@ -339,17 +340,15 @@ where
         else {
             return Ok(false);
         };
-        if let Some((observed_lane, observed_label)) = observed_frame {
+        if let Some(key) = observed_frame {
             let meta = self.preview_selected_arm_meta(selection, selected_arm)?;
             let exact_target = self
                 .cursor
-                .passive_descendant_target_index_from_exact_frame_label(
-                    scope_id,
-                    observed_lane,
-                    observed_label,
-                );
+                .passive_descendant_target_index_for_key(scope_id, key);
             if !meta.is_empty()
-                && meta.frame_label == observed_label
+                && meta.peer == key.source_role
+                && meta.lane == key.lane
+                && meta.frame_label == key.frame_label
                 && exact_target == Some(state_index_to_usize(meta.cursor_index))
             {
                 return Ok(false);
@@ -422,13 +421,8 @@ where
         let port = self.port_for_lane(lane as usize);
         let causal = TapEvent::make_causal_key(port.lane().as_wire(), token.as_tap_seq());
         let arg0 = self.sid.raw();
-        let event = events::route_arm_selection_with_causal(
-            port.now32(),
-            causal,
-            arg0,
-            scope_id,
-            token.arm().as_u8(),
-        );
+        let event =
+            events::route_arm_selection_with_causal(causal, arg0, scope_id, token.arm().as_u8());
         emit(port.tap(), event);
     }
 

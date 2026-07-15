@@ -82,14 +82,12 @@ pub(crate) struct Port<'r, T: Transport> {
     _no_send_sync: PhantomData<*mut ()>,
     tap: *const TapRing<'static>,
     tap_marker: PhantomData<&'r TapRing<'r>>,
-    tap_counter: &'r Cell<u32>,
     recv_frame_receipt: RecvFrameReceiptState,
 }
 
 pub(crate) struct PortInit<'r, 'tap, T: Transport> {
     pub(crate) transport: &'r T,
     pub(crate) tap: &'tap TapRing<'tap>,
-    pub(crate) tap_counter: &'tap Cell<u32>,
     pub(crate) slab_ptr: *mut u8,
     pub(crate) slab_len: usize,
     pub(crate) access_state: &'tap Cell<RendezvousAccessState>,
@@ -131,7 +129,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
         let PortInit {
             transport,
             tap,
-            tap_counter,
             slab_ptr,
             slab_len,
             access_state,
@@ -161,7 +158,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             _no_send_sync: PhantomData,
             tap: (tap as *const TapRing<'tap>).cast::<TapRing<'static>>(),
             tap_marker: PhantomData,
-            tap_counter,
             recv_frame_receipt: RecvFrameReceiptState::new(),
         }
     }
@@ -308,15 +304,6 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
         // SAFETY: `tap` points to the rendezvous-owned TapRing bound during
         // port construction and outliving every lane port reference.
         unsafe { &*self.tap.cast::<TapRing<'r>>() }
-    }
-
-    #[inline]
-    pub(crate) fn now32(&self) -> u32 {
-        let current = self.tap_counter.get();
-        if current != u32::MAX {
-            self.tap_counter.set(current + 1);
-        }
-        current
     }
 
     #[inline]

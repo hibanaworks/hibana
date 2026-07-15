@@ -282,13 +282,12 @@ fn production_cursor_resolves_deep_left_spine_first_recv_dispatch_from_root() {
                 })
         })
         .expect("root route scope");
-    let lane_h = trace.lane_for_label(215);
-    let frame_h = trace.frame_label_for_label(215);
+    let key_h = trace.frame_key_for_label(215);
 
     assert_eq!(
         trace
             .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(root_scope, lane_h, frame_h),
+            .passive_descendant_dispatch_arm_for_key(root_scope, key_h),
         Some(1)
     );
 }
@@ -533,27 +532,37 @@ fn passive_arm_child_facts_are_strict_projected_descendants() {
     assert_eq!(trace.cursor().passive_child_scope(inner, 1), None);
     assert_ne!(trace.cursor().passive_child_scope(outer, 0), Some(outer));
 
-    let lane_a = trace.lane_for_label(1);
-    let lane_b = trace.lane_for_label(2);
-    let lane_r = trace.lane_for_label(6);
-    let frame_b = trace.frame_label_for_label(2);
-    let frame_r = trace.frame_label_for_label(6);
+    let key_a = trace.frame_key_for_label(1);
+    let key_b = trace.frame_key_for_label(2);
+    let key_r = trace.frame_key_for_label(6);
     assert_eq!(
         trace
             .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_b, frame_b),
+            .passive_descendant_dispatch_arm_for_key(outer, key_b),
         Some(0)
     );
     assert_eq!(
         trace
             .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_r, frame_r),
+            .passive_descendant_dispatch_arm_for_key(outer, key_r),
         Some(1)
     );
     assert_eq!(
-        trace
-            .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_a, 99),
+        trace.cursor().passive_descendant_dispatch_arm_for_key(
+            outer,
+            crate::global::typestate::InboundFrameKey::new(key_a.source_role, key_a.lane, 99,),
+        ),
+        None
+    );
+    assert_eq!(
+        trace.cursor().passive_descendant_dispatch_arm_for_key(
+            outer,
+            crate::global::typestate::InboundFrameKey::new(
+                key_a.source_role.wrapping_add(1),
+                key_a.lane,
+                key_a.frame_label,
+            ),
+        ),
         None
     );
 }
@@ -576,34 +585,31 @@ fn passive_arm_child_facts_cover_right_arm_descendants() {
     assert_eq!(trace.cursor().passive_child_scope(inner, 1), None);
     assert_ne!(trace.cursor().passive_child_scope(outer, 1), Some(outer));
 
-    let lane_a = trace.lane_for_label(1);
-    let lane_b = trace.lane_for_label(2);
-    let lane_l = trace.lane_for_label(6);
-    let frame_a = trace.frame_label_for_label(1);
-    let frame_b = trace.frame_label_for_label(2);
-    let frame_l = trace.frame_label_for_label(6);
+    let key_a = trace.frame_key_for_label(1);
+    let key_b = trace.frame_key_for_label(2);
+    let key_l = trace.frame_key_for_label(6);
     assert_eq!(
         trace
             .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_a, frame_a),
+            .passive_descendant_dispatch_arm_for_key(outer, key_a),
         Some(1)
     );
     assert_eq!(
         trace
             .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_l, frame_l),
+            .passive_descendant_dispatch_arm_for_key(outer, key_l),
         Some(0)
     );
     assert_eq!(
         trace
             .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(outer, lane_b, frame_b),
+            .passive_descendant_dispatch_arm_for_key(outer, key_b),
         Some(1)
     );
     assert_eq!(
         trace
             .cursor()
-            .passive_descendant_dispatch_arm_from_exact_frame_label(inner, lane_b, frame_b),
+            .passive_descendant_dispatch_arm_for_key(inner, key_b),
         Some(1)
     );
 }
@@ -1423,15 +1429,19 @@ impl ProductionCursorTrace {
         panic!("label {target_label} missing from event rows");
     }
 
-    fn frame_label_for_label(&self, target_label: u8) -> u8 {
+    fn frame_key_for_label(&self, target_label: u8) -> crate::global::typestate::InboundFrameKey {
         let mut idx = 0usize;
         while idx < self.descriptor.local_len() {
             if let LocalAction::Recv {
-                label, frame_label, ..
+                peer,
+                label,
+                frame_label,
+                lane,
+                ..
             } = self.event_program.node(idx).action()
                 && label == target_label
             {
-                return frame_label;
+                return crate::global::typestate::InboundFrameKey::new(peer, lane, frame_label);
             }
             idx += 1;
         }

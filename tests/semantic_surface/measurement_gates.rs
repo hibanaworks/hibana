@@ -23,12 +23,12 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let compile_pressure_budget =
         read(".github/measurement_snapshots/hibana-compile-pressure-budget.tsv");
     let thumb_header_gate = read(".github/scripts/check_thumbv6m_frame_header_codegen.sh");
-    let thumb_mask_gate = read(".github/scripts/check_thumbv6m_frame_label_mask_codegen.sh");
-    let final_gate_with_helpers =
-        format!("{final_gate}\n{thumb_header_gate}\n{thumb_mask_gate}\n{run_final_gate}");
+    let final_gate_with_helpers = format!("{final_gate}\n{thumb_header_gate}\n{run_final_gate}");
     let snapshot = read(".github/measurement_snapshots/hibana-size-snapshot.json");
     let thumbv6m_example_manifest = read("examples/pico/Cargo.toml");
     let thumbv6m_example = read("examples/pico/src/lib.rs");
+    let huge_choreography = read("tests/huge_choreography_runtime.rs");
+    let deep_scope = read("tests/deep_scope_runtime.rs");
     let workflow = read(".github/workflows/quality-gates.yml");
     let endpoint_kernel = read("src/endpoint/kernel/core.rs")
         + &read_production_dir_rs("src/endpoint/kernel")
@@ -43,11 +43,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "thumb section name=.rodata bytes=%d target=thumbv6m-none-eabi no_default_features=1",
         "values[\"flash_total\"] =",
         "thumb_values[\"flash_total\"] =",
-        "bash \"${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_label_mask_codegen.sh\"",
         "bash \"${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_header_codegen.sh\"",
         "__aeabi_(lmul|lcmp|ulcmp|ldivmod|uldivmod|llsl|llsr|lasr)\\\\b",
         "thumbv6m FrameHeader codegen has no aeabi u64 helpers",
-        "thumbv6m FrameLabelMask codegen has no aeabi u64 helpers",
         "protocol_artifact_aeabi_metrics",
         "aeabi_u64_helper_count=0",
         "final-form protocol artifact regained aeabi u64 helper calls",
@@ -68,6 +66,10 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "HIBANA_COMPILE_PRESSURE_CRATE_NAME=hibana",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
+        "README_PATH=\"${ROOT_DIR}/README.md\"",
+        "README measurement row stale or missing",
+        "README measurement sync passed",
+        "Complete no-default `libhibana.rlib` sections",
     ] {
         assert!(
             final_gate_with_helpers.contains(required),
@@ -140,6 +142,13 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && !message_heavy_gate.contains("src/main.rs")
             && !message_heavy_gate.contains("std::hint::black_box"),
         "message-heavy gate must measure distinct wire contracts and type pressure on thumbv6m without recursion-limit escape"
+    );
+    assert!(
+        !huge_choreography.contains("recursion_limit")
+            && huge_choreography.contains("ordered_message_block_48")
+            && deep_scope.starts_with("#![recursion_limit = \"512\"]")
+            && deep_scope.contains("active_scope_depth_above_128_enters_public_sessionkit_path"),
+        "flat high-event tests must stay balanced under default rustc limits; only the explicit >128 source-nesting target may raise its crate recursion limit"
     );
 
     for required in [
@@ -385,6 +394,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             )
             && miri_gate.contains("receive-frame-receipt-owner")
             && miri_gate.contains("public-operation-kernel")
+            && miri_gate.contains(
+                "tap-ring-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  observe::core::tests"
+            )
             && miri_gate.contains("production-proof-artifact-exporter")
             && miri_gate.contains(
                 "MIRI_TIMEOUT_SECONDS=\"${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}\""
@@ -416,6 +428,12 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("rolled_resolved_same_label_reenters_with_selected_schema")
             && miri_gate.contains("rolled-nested-resolver-reentry-owner")
             && miri_gate.contains("rolled_nested_resolved_route_reenters_asymmetric_paths")
+            && miri_gate.contains(
+                "rolled-current-frontier-reuse-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths"
+            )
+            && miri_gate.contains(
+                "rolled-elastic-route-path-color-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_deep_right_spine_passive_offer_reenters_across_all_depths"
+            )
             && miri_gate.contains("intrinsic-route-in-band-owner")
             && miri_gate.contains(
                 "intrinsic_route_passive_same_label_recv_commits_by_frame_evidence"

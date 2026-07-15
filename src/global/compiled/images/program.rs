@@ -24,8 +24,6 @@ impl EventSemanticKind {
     }
 }
 
-pub(crate) const MAX_COMPILED_PROGRAM_SCOPES: usize = crate::eff::meta::MAX_EFF_NODES;
-
 #[derive(Clone, Copy)]
 pub(crate) struct CompiledProgramCounts {
     pub(crate) dynamic_resolver_sites: usize,
@@ -42,8 +40,8 @@ mod tests {
     fn compiled_program_counts_remain_plain_derived_counts() {
         assert_eq!(size_of::<CompiledProgramCounts>(), 2 * size_of::<usize>());
         let max = CompiledProgramCounts {
-            dynamic_resolver_sites: crate::eff::meta::MAX_EFF_NODES,
-            route_resolvers: crate::eff::meta::MAX_EFF_NODES,
+            dynamic_resolver_sites: crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY,
+            route_resolvers: crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY,
         };
         assert!(max.dynamic_resolver_sites > 0);
         assert!(max.route_resolvers > 0);

@@ -228,19 +228,14 @@ impl FrameMismatch {
     }
 
     #[inline]
-    pub(crate) fn tap_event(
-        self,
-        now32: u32,
-        expected_session_raw: u32,
-        expected_lane_wire: u8,
-    ) -> TapEvent {
+    pub(crate) fn tap_event(self, expected_session_raw: u32, expected_lane_wire: u8) -> TapEvent {
         let reason = self.kind.tap_reason();
         let observed = if self.kind == FrameMismatchKind::Session {
             self.observation.session_raw()
         } else {
             self.observation.meta()
         };
-        events::raw_event(now32, ids::TRANSPORT_MISMATCH)
+        events::raw_event(ids::TRANSPORT_MISMATCH)
             .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
                 expected_lane_wire,
                 reason,
@@ -251,8 +246,8 @@ impl FrameMismatch {
 }
 
 #[inline]
-pub(crate) fn transport_frame_tap_event(now32: u32, observation: FrameObservation) -> TapEvent {
-    events::raw_event(now32, ids::TRANSPORT_FRAME)
+pub(crate) fn transport_frame_tap_event(observation: FrameObservation) -> TapEvent {
+    events::raw_event(ids::TRANSPORT_FRAME)
         .with_arg0(observation.session_raw())
         .with_arg1(observation.meta())
 }
@@ -531,6 +526,14 @@ impl<'r> PreambleFrame<'r> {
             crate::invariant();
         }
         self.core.observed_frame_label_raw()
+    }
+
+    #[inline]
+    pub(crate) fn observed_source_role(&self) -> u8 {
+        if self.core.observed_source_label.is_deterministic() {
+            crate::invariant();
+        }
+        self.core.observed_source_label.source_role()
     }
 
     #[inline]

@@ -131,7 +131,9 @@ The temporary choreography value carries its structure in Rust while
 `project(&choreography)` builds a compact `RoleProgram<ROLE>`. Endpoint futures
 do not carry the choreography tree or every future payload type. Reusing one
 projected artifact for many isolated sessions therefore does not multiply
-endpoint types.
+endpoint types. Projection lowers the existing public DSL in one internal pass;
+its flat event rows, scope markers, resolver markers, and allocation scratch do
+not enter the endpoint, descriptor header, or Pico runtime state.
 
 ## Protocol Language
 
@@ -154,6 +156,42 @@ Repeated regions add no iteration field to endpoint types, descriptor rows, or
 the eight-byte core frame header. Freshness comes from the projected execution
 rules plus carrier FIFO, replay exclusion, and generation isolation, not from
 growing every frame or endpoint.
+
+The compact descriptor domains impose these explicit limits:
+
+| Domain | Limit | Meaning |
+| --- | ---: | --- |
+| Roles | 256 | The complete `u8` role domain, `0..=255` |
+| Event identities | 65,535 | Dense identity domain; `u16::MAX` remains the absent sentinel |
+| Program image | 65,535 B | Compact `u16` byte-offset domain for one immutable global image |
+| Atom-only program | 5,957 events | `65,535 / 11`; control columns reduce this shape-dependent ceiling |
+| Role image | 65,535 B per role | Compact `u16` byte-offset domain for one projected role image |
+| Structured scopes | 8,192 | Routes, parallel regions, and rolled regions combined |
+| Active route depth | 255 | Maximum nested route stack represented by one projected image |
+| Physical lanes | 256 | Lanes are reused when endpoint-role sets do not conflict |
+| Inbound frame colors | 256 | Maximum simultaneously competing receive candidates for one source/receiver/lane key |
+
+Frame colors are not cumulative message numbers. More than 256 ordered
+messages may reuse a color; distinct sources may also reuse a color because the
+runtime compares source, lane, and frame color together. Inside `.roll`, equal
+route paths reuse one color while distinct paths of the same inbound key receive
+distinct colors for elastic re-entry. Projection rejects only a frontier that
+genuinely requires a 257th color for one complete inbound key. Routes remain
+binary by design.
+The event-identity domain is not a promise that every 65,535-event source fits
+one image. A protocol is accepted only when both its global image and every
+projected role image fit their byte domains; the exact event ceiling therefore
+depends on its messages, scopes, dependencies, route evidence, and role views.
+The temporary source is still a Rust type tree, but lowering stores events,
+scope markers, and resolver markers in one exact-count tagged arena. Its lane
+matching scratch is bounded by the 256-value wire lane domain rather than by
+event count. A const fixture lowers and emits the full 5,957-event atom-only
+image. Public typed fixtures separately track 289 messages and 258 parallel
+events under rustc's default recursion limit. Large generated type trees should
+compose balanced subtrees; genuinely nested source semantics deeper than that
+compiler limit may require a crate-level `recursion_limit`. The dedicated
+`>128` scope test keeps this source constraint separate from runtime,
+descriptor, stack, and SRAM measurements.
 
 ### Messages And Payloads
 
@@ -525,11 +563,13 @@ explicit families of finite sessions, but each session keeps its own protocol
 guarantee. This is an application architecture, not an equivalent encoding of
 one global choreography across those sessions.
 
-`RendezvousKit::tap()` returns a read-only iterator over the latest 32 compact
-16-byte evidence records. Events cover endpoint operations, carrier
-observations, faults, lanes, route selection, and resolver decisions. Public
-code may read records but cannot construct or push them. Tap is diagnostic
-evidence; it cannot select a route or authorize progress.
+`RendezvousKit::tap()` returns a read-only iterator over the latest 21 public
+16-byte evidence values. The ring stores 12-byte records and rebuilds their
+monotonic timestamps while reading, so its 252-byte storage stays within the
+256-byte budget. Events cover endpoint operations, carrier observations,
+faults, lanes, route selection, and resolver decisions. Public code may read
+records but cannot construct or push them. Tap is diagnostic evidence; it
+cannot select a route or authorize progress.
 
 ### Failure Semantics
 
@@ -607,13 +647,13 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | Hibana-owned quantity | Current | Release ceiling |
 | --- | ---: | ---: |
 | `SessionKitStorage` | 24 B | 32 B |
-| Fixed per-rendezvous storage, including the 512 B tap ring | 720 B | 952 B |
-| Peak live runtime slab across tracked heavy shapes | 2,425 B | 4,323 B |
-| Runtime operation stack high-water | 2,831 B | 3,663 B |
-| Modeled runtime SRAM envelope | 5,920 B | 8,954 B |
-| Minimal linked protocol artifact | 356 B | 2,048 B |
-| Largest linked artifact in the tracked protocol matrix | 1,852 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 129,910 B | 169,965 B |
+| Fixed per-rendezvous storage, including the 252 B tap records | 412 B | 952 B |
+| Peak live runtime slab across tracked heavy shapes | 2,349 B | 4,323 B |
+| Runtime operation stack high-water | 2,799 B | 3,663 B |
+| Modeled runtime SRAM envelope | 5,504 B | 8,954 B |
+| Minimal linked protocol artifact | 360 B | 2,048 B |
+| Largest linked artifact in the tracked protocol matrix | 1,856 B | 16,384 B |
+| Complete no-default `libhibana.rlib` sections | 91,286 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release

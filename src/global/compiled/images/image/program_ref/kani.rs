@@ -114,7 +114,7 @@ fn program_image_columns_reject_total_byte_overflow() {
 
 #[kani::proof]
 fn program_image_fit_probe_rejects_undersized_storage() {
-    let source = EffList::new();
+    let source = EffList::<1>::new();
     let columns = ProgramImageColumns::new(1, 0, 0, 0);
     assert!(ProgramImageBytes::<10>::from_image_if_fits(&source, columns).is_none());
 }
@@ -122,7 +122,7 @@ fn program_image_fit_probe_rejects_undersized_storage() {
 #[kani::proof]
 #[kani::should_panic]
 fn program_image_constructor_rejects_undersized_storage() {
-    let source = EffList::new();
+    let source = EffList::<1>::new();
     let columns = ProgramImageColumns::new(1, 0, 0, 0);
     let _ = ProgramImageBytes::<10>::from_image(&source, columns);
 }
@@ -274,7 +274,7 @@ fn program_atom_row_decoding_accepts_exact_domain() {
     let lane: u8 = kani::any();
     let max_role: u8 = kani::any();
 
-    let expected = (eff_idx as usize) < crate::eff::meta::MAX_EFF_NODES
+    let expected = (eff_idx as usize) < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
         && from <= max_role
         && to <= max_role
         && origin <= 1;

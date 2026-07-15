@@ -2,6 +2,7 @@ use super::{
     ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, OfferEntrySummary,
     ReentryScopeLiveness, ScopeId, StateIndex, Transport, state_index_to_usize,
 };
+use crate::global::typestate::InboundFrameKey;
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
@@ -190,10 +191,9 @@ where
 
     pub(in crate::endpoint::kernel) fn active_reentry_scope_for_observed_frame(
         &self,
-        lane: u8,
-        frame_label: u8,
+        key: InboundFrameKey,
     ) -> Option<ScopeId> {
-        let lane_idx = lane as usize;
+        let lane_idx = key.lane as usize;
         if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
@@ -202,11 +202,7 @@ where
                 if !self.is_reentry_route(scope)
                     || self
                         .cursor
-                        .passive_descendant_target_index_from_exact_frame_label(
-                            scope,
-                            lane,
-                            frame_label,
-                        )
+                        .passive_descendant_target_index_for_key(scope, key)
                         .is_none()
                 {
                     return ReentryScopeLiveness::NotReentry;

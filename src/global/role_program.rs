@@ -4,7 +4,7 @@
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
 use super::compiled::lowering::RoleCompiledCounts;
-use crate::global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarker};
+use crate::global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarkerView};
 use core::marker::PhantomData;
 
 mod image_impl;

@@ -429,11 +429,10 @@ fn compact_route_arm_authority_fails_closed_before_commit() {
             && route_commit.contains("Arm::from_single_ready_mask(mask).map(Arm::as_u8)")
             && route_commit.contains("decision_state.scope_evidence.peek_ack(slot)")
             && evidence_store.contains("arm: Arm")
-            && evidence.contains("fn controller_evidence_excluded(self, arm: Arm")
             && first_recv_dispatch.contains("if arm_mask & !0b11 != 0")
             && !first_recv_dispatch.contains("arm_mask & 0b11")
             && !evidence.contains("_ => false"),
-        "decoded route arms must remain typed through ready-mask and frame-label evidence"
+        "decoded route arms must remain typed through ready-mask and first-recv evidence"
     );
     assert!(
         !frontier_types.contains("CachedRouteArm")
@@ -466,10 +465,15 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
     let image_impl = read("src/global/role_program/image_impl.rs");
     let event_rows = read("src/global/role_program/image_impl/event_rows.rs");
     let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
-    let scope_rows = read("src/global/role_program/image_impl/scope_rows.rs");
+    let scope_rows = format!(
+        "{}\n{}",
+        read("src/global/role_program/image_impl/projection.rs"),
+        read("src/global/role_program/image_impl/projection/route.rs")
+    );
+    let blob_image = read("src/global/role_program/image_impl/blob_image.rs");
     let facts = read("src/global/typestate/facts.rs");
     let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
-    let descriptor_arm_paths = format!("{event_rows}\n{lane_image}\n{scope_rows}");
+    let descriptor_arm_paths = format!("{event_rows}\n{lane_image}\n{scope_rows}\n{blob_image}");
     let child_scope_accessor = lane_image
         .split("pub(crate) const fn passive_arm_child_ordinal_by_slot")
         .nth(1)
@@ -502,14 +506,14 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
     }
     assert!(
         lane_image.matches("route_arm_row_index(slot, arm)").count() >= 5
-            && event_rows.contains("let arm = binary_route_arm_index(arm);")
-            && event_rows.contains("let Some(ranges) = Self::route_arm_ranges(markers, route) else {\n            crate::invariant();")
+            && scope_rows.contains("let arm = binary_route_arm_index(arm);")
+            && scope_rows.contains("let Some(ranges) = route_arm_ranges(eff_list.scope_markers(), route) else {\n        crate::invariant();")
             && scope_rows.contains("let arm = binary_route_arm_index(arm) as u8;")
             && scope_rows.contains("Some(binary_route_arm_index(arm) as u8)")
-            && scope_rows.contains("let Some((_, start, _)) = Self::scope_dependency_bounds(markers, view_len, scope)\n                else {\n                    crate::invariant();")
-            && scope_rows.contains("route_arm_row_index(input.route_slot, input.arm)")
-            && child_scope_accessor
-                .contains("let Some(child_slot) = slot.checked_add(delta as usize) else {")
+            && scope_rows.contains("let Some((_, start, _)) = scope_dependency_bounds(markers, view_len, scope) else {")
+            && blob_image.contains("route_arm_row_index(route_slot, arm as u8)")
+            && child_scope_accessor.contains("let child_slot = child_slot as usize;")
+            && child_scope_accessor.contains("if child_slot <= slot {")
             && child_scope_accessor.contains("let Some(scope) = self.route_scope_by_slot(child_slot) else {\n                    invalid_resident_descriptor();")
             && child_scope_accessor
                 .contains("self.route_scope_conflict_by_slot(child_slot).to_conflict()")
@@ -542,6 +546,7 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
 #[test]
 fn resident_descriptor_columns_reject_in_range_sentinels() {
     let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
+    let lane_decode = read("src/global/role_program/image_impl/lane_image/decode.rs");
     let ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let event_rows = read("src/global/role_program/image_impl/event_rows.rs");
     let tests = read("src/global/role_program/image_impl/tests.rs");
@@ -560,7 +565,7 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
         .next()
         .expect("route scope row accessor body");
     let route_arm = lane_image
-        .split("const fn route_arm_row")
+        .split("const fn packed_route_arm_row")
         .nth(1)
         .expect("route arm row accessor")
         .split("const fn packed_dependency_row")
@@ -580,7 +585,7 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
         "route_scope_ordinal_out_of_range",
         "duplicate_route_scope_authority",
         "empty_route_arm_row",
-        "empty_route_arm_lane_step_range",
+        "noncanonical_empty_route_arm_lane_step_range",
         "empty_lane_range_row",
         "empty_roll_scope_row",
         "empty_roll_scope_event_range",
@@ -627,15 +632,13 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
             && !roll_scope.contains("if row.is_empty() { None }")
             && route_scope.contains("decode_resident_route_scope(self.read_u16_at(offset))")
             && route_scope.contains("None => invalid_resident_descriptor(),")
-            && lane_image
-                .contains("scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES")
+            && lane_decode.contains("if raw_ordinal >= ScopeId::LOCAL_CAPACITY")
             && route_arm.contains("if row.is_empty() {")
-            && route_arm.contains("lane_step_row.is_empty()")
             && route_arm.contains("event_row.end() > self.columns.events.len as usize")
-            && route_arm.contains(
-                "lane_step_row.end() > self.columns.route_arm_lane_step_rows.len as usize"
-            )
-            && route_arm.contains("None => invalid_resident_descriptor(),")
+            && route_arm.contains("event_row.is_zero_len() != (row.lane_step_len() == 0)")
+            && route_arm
+                .contains("lane_step_end > self.columns.route_arm_lane_step_rows.len as usize")
+            && route_arm.contains("invalid_resident_descriptor();")
             && lane_range.contains("if row.is_empty() {")
             && lane_range.contains("invalid_resident_descriptor();")
             && event_rows.contains("decode_resident_event_header(eff_index, scope_raw, flags)")
@@ -965,15 +968,21 @@ fn runtime_production_path_has_no_string_panic_alternate_paths() {
 }
 
 #[test]
-fn tap_ring_storage_shape_is_a_single_type_sized_ring() {
-    let observe = read("src/observe/core.rs");
+fn tap_ring_storage_shape_is_a_single_type_sized_wrap_safe_ring() {
+    let core = read("src/observe/core.rs");
+    let ring_state = read("src/observe/core/ring_state.rs");
     assert!(
-        observe.contains("PhantomData<&'a mut [TapEvent; TAP_EVENTS]>")
-            && observe.contains("let idx = head % TAP_EVENTS")
-            && observe.contains("let cursor = head.saturating_sub(TAP_EVENTS)")
-            && observe.contains("RingBuffer::from_ptr(storage.as_mut_ptr())"),
-        "tap ring storage layout must be one fixed 32-event runtime evidence ring"
+        core.contains("TAP_RESIDENT_BYTE_LIMIT: usize = 256")
+            && core.contains("TAP_RESIDENT_BYTES: usize")
+            && core.contains("RingBuffer::from_ptr(storage.as_mut_ptr())")
+            && core.contains("PhantomData<&'a mut [TapRecord; TAP_EVENTS]>")
+            && core.contains("state: Cell<RingState>")
+            && core.contains("let idx = state.write_index() as usize")
+            && core.contains("cursor: head.wrapping_sub(state.resident_len() as usize)")
+            && core.contains("index: state.oldest_index()"),
+        "tap ring storage must derive its record count from one 256-byte upper bound and index independently of the wrapping ordinal"
     );
+    let observe = format!("{core}\n{ring_state}");
     for forbidden in [
         "RingBuffer::new",
         "assert!(storage.len()",
@@ -983,6 +992,8 @@ fn tap_ring_storage_shape_is_a_single_type_sized_ring() {
         "storage.add(RING_BUFFER_SIZE)",
         "storage.add(TAP_EVENTS)",
         "tap_event_precedes",
+        "head % TAP_EVENTS",
+        "head.saturating_sub(TAP_EVENTS)",
     ] {
         assert!(
             !observe.contains(forbidden),

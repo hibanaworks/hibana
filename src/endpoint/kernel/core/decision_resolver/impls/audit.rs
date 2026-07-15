@@ -27,7 +27,6 @@ where
     ) {
         let port = self.port_for_lane(lane as usize);
         let event = events::resolver_audit(
-            port.now32(),
             port.lane().as_wire(),
             self.sid.raw(),
             scope_id,

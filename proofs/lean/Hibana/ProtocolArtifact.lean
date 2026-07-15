@@ -130,7 +130,7 @@ theorem verified_protocol_descriptor_route_participants_match_choreography
   have resolvers := agreement.2.2.1.2.2.1
   simpa [descriptorVerified.2.2.1] using resolvers
 
-theorem verified_protocol_has_injective_inbound_evidence
+theorem verified_protocol_has_competing_inbound_coloring
     {certificate : VerifiedProtocolCertificate}
     {session roleCount : Nat}
     {choreo : Choreo}
@@ -138,32 +138,31 @@ theorem verified_protocol_has_injective_inbound_evidence
     {role : Nat}
     {descriptor : ExactDescriptorCertificate}
     (present : certificate.descriptors[role]? = some descriptor) :
-    choreo.InboundOccurrenceIdentity /\
+    choreo.InboundOccurrenceColoring /\
       descriptor.image.decodeEventFrameLabels? =
         some (choreo.canonicalRoleFrameLabels role) := by
   have verified := verified_protocol_certificate_establishes_all_role_refinement accepted
   have descriptorVerified := verified.2.2 role descriptor present
-  have staticIdentity := verified.1.2.2.2.inboundOccurrenceIdentity
+  have staticColoring := verified.1.2.2.2.inboundOccurrenceColoring
   have roleImage := descriptorVerified.2.1.2.1.2.2.2.1.2.1
   simpa [descriptorVerified.2.2.1, descriptorVerified.2.2.2] using
-    And.intro staticIdentity roleImage
+    And.intro staticColoring roleImage
 
-/-- Every raw header admitted under a verified protocol artifact denotes one
-global occurrence. The theorem composes production descriptor bytes, static
-evidence injectivity, and transport admission without adding wire fields. -/
+/-- Admission under a verified protocol artifact is deterministic over the
+currently enabled local receive frontier. Sequential occurrences may reuse
+header colors; an ambiguous frontier is rejected instead of choosing a row. -/
 theorem verified_protocol_transport_admission_is_unique
     {certificate : VerifiedProtocolCertificate}
     {session roleCount : Nat}
     {choreo : Choreo}
-    (accepted : certificate.check session roleCount choreo = true)
+    (_accepted : certificate.check session roleCount choreo = true)
+    {config : GlobalConfig} (_sameChoreo : config.choreo = choreo)
     {frame : TransportFrame}
     {leftId rightId : Nat} {leftEvent rightEvent : GlobalEvent}
-    (left : TransportAdmission choreo frame leftId leftEvent)
-    (right : TransportAdmission choreo frame rightId rightEvent) :
+    (left : config.admitTransportFrame? frame = some (leftId, leftEvent))
+    (right : config.admitTransportFrame? frame = some (rightId, rightEvent)) :
     leftId = rightId /\ leftEvent = rightEvent := by
-  have verified := verified_protocol_certificate_establishes_all_role_refinement accepted
-  exact transport_admission_is_unique
-    verified.1.2.2.2.inboundOccurrenceIdentity left right
+  exact global_transport_admission_is_unique left right
 
 /-- Any accepted descriptor cursor send can append the next ghost occurrence
 without waiting for a remote receive. This is the general bridge from exact
@@ -360,12 +359,13 @@ structure ProtocolExecutionGuarantees
     ∀ {role : Nat} {descriptor : ExactDescriptorCertificate},
       certificate.descriptors[role]? = some descriptor ->
       ExactDescriptorPipelinedSendRefinement descriptor
-  inboundIdentity : choreo.InboundOccurrenceIdentity
-  transportAdmissionUnique :
-    ∀ {frame : TransportFrame}
+  inboundColoring : choreo.InboundOccurrenceColoring
+  transportAdmissionDeterministic :
+    ∀ {config : GlobalConfig}, config.choreo = choreo ->
+      ∀ {frame : TransportFrame}
       {leftId rightId : Nat} {leftEvent rightEvent : GlobalEvent},
-      TransportAdmission choreo frame leftId leftEvent ->
-      TransportAdmission choreo frame rightId rightEvent ->
+      config.admitTransportFrame? frame = some (leftId, leftEvent) ->
+      config.admitTransportFrame? frame = some (rightId, rightEvent) ->
       leftId = rightId /\ leftEvent = rightEvent
   rollReentryOrder :
     ∀ {body : Choreo}, body ∈ choreo.rollBodies ->
@@ -436,8 +436,8 @@ theorem verified_protocol_establishes_execution_guarantees
     routeKnowledgeIsControllerOrInbound := verified.1.2.2.2.routeKnowledge
     descriptorRouteParticipantsExact := ?_
     descriptorPipelinedSendRefinement := ?_
-    inboundIdentity := verified.1.2.2.2.inboundOccurrenceIdentity
-    transportAdmissionUnique := ?_
+    inboundColoring := verified.1.2.2.2.inboundOccurrenceColoring
+    transportAdmissionDeterministic := ?_
     rollReentryOrder := ?_
     rollPostLinearizationMaterialization := ?_
     elasticPipelining := elastic_pipelined_semantics_holds
@@ -453,9 +453,8 @@ theorem verified_protocol_establishes_execution_guarantees
   · intro role descriptor present
     exact accepted_descriptor_establishes_pipelined_send_refinement
       (verified.2.2 role descriptor present).1
-  · intro frame leftId rightId leftEvent rightEvent left right
-    exact transport_admission_is_unique
-      verified.1.2.2.2.inboundOccurrenceIdentity left right
+  · intro config sameChoreo frame leftId rightId leftEvent rightEvent left right
+    exact verified_protocol_transport_admission_is_unique accepted sameChoreo left right
   · intro body bodyMember left right leftMember rightMember leftNonlocal
       rightNonlocal sameReceiver sameLane rightReceiverBound
     exact verified_protocol_roll_reentry_has_fifo_or_causal_order

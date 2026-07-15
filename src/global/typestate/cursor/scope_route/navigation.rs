@@ -1,6 +1,6 @@
 use super::super::{
-    ARM_SHARED, EventCursor, LocalAction, PackedEventConflict, RouteScopeRows, ScopeId, StateIndex,
-    state_index_to_usize,
+    ARM_SHARED, EventCursor, InboundFrameKey, LocalAction, PackedEventConflict, RouteScopeRows,
+    ScopeId, StateIndex, state_index_to_usize,
 };
 use crate::global::{const_dsl::ScopeKind, typestate::LocalConflict};
 
@@ -144,31 +144,6 @@ impl EventCursor {
     }
 
     #[inline]
-    pub(crate) fn first_recv_target_for_lane_frame_label(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-    ) -> Option<(u8, StateIndex)> {
-        if self.route_scope_resolver(scope_id).is_some() {
-            return None;
-        }
-        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
-    }
-
-    #[inline]
-    pub(crate) fn current_recv_matches_scope_arm(
-        &self,
-        scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
-        arm: u8,
-    ) -> bool {
-        self.first_recv_target_for_lane_frame_label(scope_id, lane, frame_label)
-            .is_some_and(|(target_arm, _)| target_arm == arm)
-    }
-
-    #[inline]
     pub(crate) fn intrinsic_passive_scope_evidence_materializes_poll(
         &self,
         scope_id: ScopeId,
@@ -176,33 +151,30 @@ impl EventCursor {
         !self.is_route_controller(scope_id) && self.route_scope_resolver(scope_id).is_none()
     }
 
-    pub(crate) fn passive_descendant_dispatch_arm_from_exact_frame_label(
+    pub(crate) fn passive_descendant_dispatch_arm_for_key(
         &self,
         scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
+        key: InboundFrameKey,
     ) -> Option<u8> {
-        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
+        self.first_recv_descendant_target_for_key(scope_id, key)
             .and_then(|(dispatch_arm, _)| (dispatch_arm != ARM_SHARED).then_some(dispatch_arm))
     }
 
-    pub(crate) fn passive_descendant_target_index_from_exact_frame_label(
+    pub(crate) fn passive_descendant_target_index_for_key(
         &self,
         scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
+        key: InboundFrameKey,
     ) -> Option<usize> {
-        self.first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
+        self.first_recv_descendant_target_for_key(scope_id, key)
             .and_then(|(dispatch_arm, target)| {
                 (dispatch_arm != ARM_SHARED).then_some(state_index_to_usize(target))
             })
     }
 
-    pub(crate) fn enclosing_passive_route_scope_for_exact_frame_label(
+    pub(crate) fn enclosing_passive_route_scope_for_key(
         &self,
         idx: usize,
-        lane: u8,
-        frame_label: u8,
+        key: InboundFrameKey,
     ) -> Option<ScopeId> {
         let mut selected = None;
         let mut selected_len = usize::MAX;
@@ -211,7 +183,7 @@ impl EventCursor {
             if region.start() <= idx && idx < region.end() {
                 let scope = region.scope();
                 if self
-                    .first_recv_descendant_target_for_lane_frame_label(scope, lane, frame_label)
+                    .first_recv_descendant_target_for_key(scope, key)
                     .is_some_and(|(dispatch_arm, _)| dispatch_arm != ARM_SHARED)
                 {
                     let len = region.end() - region.start();
@@ -226,14 +198,13 @@ impl EventCursor {
         selected
     }
 
-    fn first_recv_descendant_target_for_lane_frame_label(
+    fn first_recv_descendant_target_for_key(
         &self,
         scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
+        key: InboundFrameKey,
     ) -> Option<(u8, StateIndex)> {
         self.machine()
-            .first_recv_descendant_target_for_lane_frame_label(scope_id, lane, frame_label)
+            .first_recv_descendant_target_for_key(scope_id, key)
     }
 
     /// Check if this role is the controller for the given route scope.

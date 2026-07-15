@@ -58,15 +58,15 @@ fn single_slab_carve_layout_accounts_for_alignment_and_tap_ring() {
     let tap_ptr = base + layout.tap_start;
 
     assert_eq!(header_ptr % core::mem::align_of::<TestRv<'_>>(), 0);
-    assert_eq!(tap_ptr % core::mem::align_of::<TapEvent>(), 0);
-    assert_eq!(runtime_ptr % core::mem::align_of::<TapEvent>(), 0);
+    assert_eq!(tap_ptr % core::mem::align_of::<TapRecord>(), 0);
+    assert_eq!(runtime_ptr % core::mem::align_of::<TapRecord>(), 0);
     assert!(
         layout.tap_start > 0,
         "misaligned slab must add prefix padding"
     );
     assert!(
         layout.runtime_start
-            >= core::mem::size_of::<TestRv<'_>>() + core::mem::size_of::<[TapEvent; TAP_EVENTS]>(),
+            >= core::mem::size_of::<TestRv<'_>>() + core::mem::size_of::<[TapRecord; TAP_EVENTS]>(),
         "resident prefix must include header and tap ring bytes"
     );
 }

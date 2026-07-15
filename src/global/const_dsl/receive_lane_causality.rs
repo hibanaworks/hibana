@@ -1,31 +1,21 @@
+use super::event_relations::{events_are_locally_ordered, events_are_route_exclusive};
 use super::scope_ranges::roll_body_range_from_enter;
-use super::{
-    EffList, ScopeEvent, ScopeKind, ScopeMarker, parallel_arm_ranges_from_enter,
-    route_arm_ranges_from_first_enter,
-};
+use super::{EffList, ScopeEvent, ScopeKind, ScopeMarkerView, route_arm_ranges_from_first_enter};
 
-const EVENT_WITNESS_BYTES: usize = crate::eff::meta::MAX_EFF_NODES.div_ceil(8);
-const UNFOLDED_WITNESS_BYTES: usize = (crate::eff::meta::MAX_EFF_NODES * 2).div_ceil(8);
-
-const fn witness_is_set<const N: usize>(witnesses: &[u8; N], idx: usize) -> bool {
-    let byte = idx >> 3;
-    if byte >= N {
-        return false;
-    }
-    (witnesses[byte] & (1u8 << (idx & 7))) != 0
+const fn witness_is_set<const E: usize>(witnesses: &[bool; E], idx: usize) -> bool {
+    idx < E && witnesses[idx]
 }
 
-const fn set_witness<const N: usize>(witnesses: &mut [u8; N], idx: usize) {
-    let byte = idx >> 3;
-    if byte >= N {
+const fn set_witness<const E: usize>(witnesses: &mut [bool; E], idx: usize) {
+    if idx >= E {
         panic!("causality witness index overflow");
     }
-    witnesses[byte] |= 1u8 << (idx & 7);
+    witnesses[idx] = true;
 }
 
-const fn first_event_witness_for_role(
-    eff_list: &EffList,
-    witnesses: &[u8; EVENT_WITNESS_BYTES],
+const fn first_event_witness_for_role<const E: usize>(
+    eff_list: &EffList<E>,
+    witnesses: &[bool; E],
     start: usize,
     end: usize,
     role: u8,
@@ -62,7 +52,7 @@ impl RollBodyRange {
         self.start <= eff_idx && eff_idx < self.end
     }
 
-    const fn is_valid_for(self, eff_list: &EffList) -> bool {
+    const fn is_valid_for<const E: usize>(self, eff_list: &EffList<E>) -> bool {
         self.start < self.end && self.end <= eff_list.len()
     }
 
@@ -100,8 +90,8 @@ struct UnfoldedOccurrence {
     iteration: RollIteration,
 }
 
-const fn is_first_route_enter(markers: &[ScopeMarker], marker_idx: usize) -> bool {
-    let marker = markers[marker_idx];
+const fn is_first_route_enter(markers: ScopeMarkerView<'_>, marker_idx: usize) -> bool {
+    let marker = markers.at(marker_idx);
     if !matches!(marker.event, ScopeEvent::Enter)
         || !matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
     {
@@ -109,7 +99,7 @@ const fn is_first_route_enter(markers: &[ScopeMarker], marker_idx: usize) -> boo
     }
     let mut idx = 0usize;
     while idx < marker_idx {
-        let candidate = markers[idx];
+        let candidate = markers.at(idx);
         if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(marker.scope_id)
         {
             return false;
@@ -120,7 +110,7 @@ const fn is_first_route_enter(markers: &[ScopeMarker], marker_idx: usize) -> boo
 }
 
 const fn route_arm_at(
-    markers: &[ScopeMarker],
+    markers: ScopeMarkerView<'_>,
     route_enter_idx: usize,
     eff_idx: usize,
 ) -> Option<u8> {
@@ -135,74 +125,8 @@ const fn route_arm_at(
     }
 }
 
-const fn parallel_arm_at(
-    markers: &[ScopeMarker],
-    parallel_enter_idx: usize,
-    eff_idx: usize,
-) -> Option<u8> {
-    let Some((left_start, left_end, right_start, right_end)) =
-        parallel_arm_ranges_from_enter(markers, parallel_enter_idx)
-    else {
-        panic!("parallel scope arm range missing");
-    };
-    if left_start <= eff_idx && eff_idx < left_end {
-        Some(0)
-    } else if right_start <= eff_idx && eff_idx < right_end {
-        Some(1)
-    } else {
-        None
-    }
-}
-
-const fn mutually_exclusive_route_arms(
-    markers: &[ScopeMarker],
-    left_eff_idx: usize,
-    right_eff_idx: usize,
-) -> bool {
-    let mut marker_idx = 0usize;
-    while marker_idx < markers.len() {
-        if is_first_route_enter(markers, marker_idx) {
-            let left_arm = route_arm_at(markers, marker_idx, left_eff_idx);
-            let right_arm = route_arm_at(markers, marker_idx, right_eff_idx);
-            if matches!(
-                (left_arm, right_arm),
-                (Some(0), Some(1)) | (Some(1), Some(0))
-            ) {
-                return true;
-            }
-        }
-        marker_idx += 1;
-    }
-    false
-}
-
-const fn different_parallel_arms(
-    markers: &[ScopeMarker],
-    left_eff_idx: usize,
-    right_eff_idx: usize,
-) -> bool {
-    let mut marker_idx = 0usize;
-    while marker_idx < markers.len() {
-        let marker = markers[marker_idx];
-        if matches!(marker.event, ScopeEvent::Enter)
-            && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
-        {
-            let left_arm = parallel_arm_at(markers, marker_idx, left_eff_idx);
-            let right_arm = parallel_arm_at(markers, marker_idx, right_eff_idx);
-            if matches!(
-                (left_arm, right_arm),
-                (Some(0), Some(1)) | (Some(1), Some(0))
-            ) {
-                return true;
-            }
-        }
-        marker_idx += 1;
-    }
-    false
-}
-
 const fn on_endpoint_route_path(
-    markers: &[ScopeMarker],
+    markers: ScopeMarkerView<'_>,
     candidate_eff_idx: usize,
     earlier_eff_idx: usize,
     later_eff_idx: usize,
@@ -230,26 +154,24 @@ const fn on_endpoint_route_path(
 }
 
 const fn local_ordered(
-    markers: &[ScopeMarker],
+    markers: ScopeMarkerView<'_>,
     earlier_eff_idx: usize,
     later_eff_idx: usize,
 ) -> bool {
-    earlier_eff_idx < later_eff_idx
-        && !different_parallel_arms(markers, earlier_eff_idx, later_eff_idx)
-        && !mutually_exclusive_route_arms(markers, earlier_eff_idx, later_eff_idx)
+    events_are_locally_ordered(markers, earlier_eff_idx, later_eff_idx)
 }
 
 /// Proves a causal handoff from the earlier receive to the later sender using
 /// only projected local order and intervening send-to-receive edges. Route-arm
 /// events may participate only when one endpoint fixes that arm; unrelated
 /// branch-local traffic cannot become accidental ordering evidence.
-const fn receive_precedes_later_send(
-    eff_list: &EffList,
+const fn receive_precedes_later_send<const E: usize>(
+    eff_list: &EffList<E>,
     earlier_eff_idx: usize,
     later_eff_idx: usize,
 ) -> bool {
     let markers = eff_list.scope_markers();
-    let mut witnesses = [0u8; EVENT_WITNESS_BYTES];
+    let mut witnesses = [false; E];
     set_witness(&mut witnesses, earlier_eff_idx);
 
     let mut eff_idx = earlier_eff_idx + 1;
@@ -289,7 +211,7 @@ const fn receive_precedes_later_send(
 }
 
 const fn route_reexecutes_in_roll_body(
-    markers: &[ScopeMarker],
+    markers: ScopeMarkerView<'_>,
     route_enter_idx: usize,
     body: RollBodyRange,
 ) -> bool {
@@ -299,7 +221,7 @@ const fn route_reexecutes_in_roll_body(
 }
 
 const fn unfolded_route_path_contains(
-    markers: &[ScopeMarker],
+    markers: ScopeMarkerView<'_>,
     route_enter_idx: usize,
     candidate: UnfoldedOccurrence,
     endpoint: UnfoldedOccurrence,
@@ -320,7 +242,7 @@ const fn unfolded_route_path_contains(
 }
 
 const fn on_unfolded_endpoint_route_path(
-    markers: &[ScopeMarker],
+    markers: ScopeMarkerView<'_>,
     candidate: UnfoldedOccurrence,
     earlier: UnfoldedOccurrence,
     later: UnfoldedOccurrence,
@@ -341,7 +263,7 @@ const fn on_unfolded_endpoint_route_path(
 }
 
 const fn unfolded_locally_ordered(
-    markers: &[ScopeMarker],
+    markers: ScopeMarkerView<'_>,
     body: RollBodyRange,
     earlier_unfolded_idx: usize,
     later_unfolded_idx: usize,
@@ -360,8 +282,8 @@ const fn unfolded_locally_ordered(
 /// Checks a sender-authority transfer across one explicit unfolding of a roll
 /// body without copying its descriptor rows. Route identities inside the body
 /// are iteration-local; enclosing route authority remains stable.
-const fn receive_precedes_after_roll_reentry(
-    eff_list: &EffList,
+const fn receive_precedes_after_roll_reentry<const E: usize>(
+    eff_list: &EffList<E>,
     body: RollBodyRange,
     earlier_eff_idx: usize,
     later_eff_idx: usize,
@@ -377,8 +299,8 @@ const fn receive_precedes_after_roll_reentry(
     let later_unfolded_idx = body_len + later_eff_idx - body.start;
 
     let markers = eff_list.scope_markers();
-    let mut witnesses = [0u8; UNFOLDED_WITNESS_BYTES];
-    set_witness(&mut witnesses, earlier_unfolded_idx);
+    let mut witnesses = [0u8; E];
+    set_unfolded_witness(&mut witnesses, body_len, earlier_unfolded_idx);
 
     let mut unfolded_idx = earlier_unfolded_idx + 1;
     while unfolded_idx <= later_unfolded_idx {
@@ -423,7 +345,7 @@ const fn receive_precedes_after_roll_reentry(
                     )
                     .is_none()
                     {
-                        set_witness(&mut witnesses, unfolded_idx);
+                        set_unfolded_witness(&mut witnesses, body_len, unfolded_idx);
                     }
                 }
             }
@@ -433,17 +355,17 @@ const fn receive_precedes_after_roll_reentry(
     false
 }
 
-const fn first_unfolded_witness_for_role(
-    eff_list: &EffList,
+const fn first_unfolded_witness_for_role<const E: usize>(
+    eff_list: &EffList<E>,
     body: RollBodyRange,
-    witnesses: &[u8; UNFOLDED_WITNESS_BYTES],
+    witnesses: &[u8; E],
     start: usize,
     end: usize,
     role: u8,
 ) -> Option<usize> {
     let mut unfolded_idx = start;
     while unfolded_idx < end {
-        if witness_is_set(witnesses, unfolded_idx) {
+        if unfolded_witness_is_set(witnesses, body.len(), unfolded_idx) {
             let occurrence = body.unfolded_occurrence(unfolded_idx);
             let node = eff_list.node_at(occurrence.eff_idx);
             if matches!(node.kind, crate::eff::EffKind::Atom) && node.atom_data().to == role {
@@ -455,8 +377,40 @@ const fn first_unfolded_witness_for_role(
     None
 }
 
-const fn validate_roll_body_receive_lane_causality(
-    eff_list: &EffList,
+const fn unfolded_witness_parts(body_len: usize, unfolded_idx: usize) -> (usize, u8) {
+    if body_len == 0 {
+        panic!("empty roll body has no unfolded witness");
+    }
+    if unfolded_idx < body_len {
+        (unfolded_idx, 1)
+    } else {
+        (unfolded_idx - body_len, 2)
+    }
+}
+
+const fn unfolded_witness_is_set<const E: usize>(
+    witnesses: &[u8; E],
+    body_len: usize,
+    unfolded_idx: usize,
+) -> bool {
+    let (idx, bit) = unfolded_witness_parts(body_len, unfolded_idx);
+    idx < E && (witnesses[idx] & bit) != 0
+}
+
+const fn set_unfolded_witness<const E: usize>(
+    witnesses: &mut [u8; E],
+    body_len: usize,
+    unfolded_idx: usize,
+) {
+    let (idx, bit) = unfolded_witness_parts(body_len, unfolded_idx);
+    if idx >= E {
+        panic!("unfolded causality witness index overflow");
+    }
+    witnesses[idx] |= bit;
+}
+
+const fn validate_roll_body_receive_lane_causality<const E: usize>(
+    eff_list: &EffList<E>,
     body: RollBodyRange,
 ) -> bool {
     if !body.is_valid_for(eff_list) {
@@ -493,11 +447,11 @@ const fn validate_roll_body_receive_lane_causality(
     true
 }
 
-const fn validate_roll_receive_lane_causality(eff_list: &EffList) -> bool {
+const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let markers = eff_list.scope_markers();
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
-        let marker = markers[marker_idx];
+        let marker = markers.at(marker_idx);
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
         {
@@ -520,7 +474,7 @@ const fn validate_roll_receive_lane_causality(eff_list: &EffList) -> bool {
 /// A physical receive lane may change sender only after a descriptor-derived
 /// causal handoff proves that the earlier frame was consumed, or across
 /// mutually exclusive route arms. Parallel arms already use disjoint lanes.
-pub(crate) const fn validate_receive_lane_causality(eff_list: &EffList) -> bool {
+pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let markers = eff_list.scope_markers();
     let mut left_idx = 0usize;
     while left_idx < eff_list.len() {
@@ -537,7 +491,7 @@ pub(crate) const fn validate_receive_lane_causality(eff_list: &EffList) -> bool 
                             && left.to == right.to
                             && left.lane == right.lane
                             && left.from != right.from
-                            && !mutually_exclusive_route_arms(markers, left_idx, right_idx)
+                            && !events_are_route_exclusive(markers, left_idx, right_idx)
                             && !receive_precedes_later_send(eff_list, left_idx, right_idx)
                         {
                             return false;

@@ -98,6 +98,15 @@ run_miri_test \
   --lib \
   endpoint::kernel::core::public_types::tests
 
+run_miri_test \
+  tap-ring-owner \
+  2 \
+  2 \
+  0 \
+  -p hibana \
+  --lib \
+  observe::core::tests
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}" \
 MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
   production-proof-artifact-exporter \
@@ -246,6 +255,24 @@ run_miri_test \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_nested_resolved_route_reenters_asymmetric_paths
+
+run_miri_test \
+  rolled-current-frontier-reuse-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths
+
+run_miri_test \
+  rolled-elastic-route-path-color-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test rolled_resolver_reentry \
+  rolled_deep_right_spine_passive_offer_reenters_across_all_depths
 
 run_miri_test \
   session-family-isolation \

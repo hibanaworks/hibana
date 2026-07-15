@@ -105,6 +105,10 @@ name = "cursor_send_recv_session_progress"
 path = "tests/cursor_send_recv_session_progress.rs"
 
 [[test]]
+name = "deep_scope_runtime"
+path = "tests/deep_scope_runtime.rs"
+
+[[test]]
 name = "dynamic_route_scope_resolver"
 path = "tests/dynamic_route_scope_resolver.rs"
 

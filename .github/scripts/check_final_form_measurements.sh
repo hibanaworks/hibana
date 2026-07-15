@@ -135,7 +135,6 @@ if [[ ! -f "${THUMB_RLIB}" ]]; then
   exit 1
 fi
 TOOLCHAIN="${TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_header_codegen.sh"
-TOOLCHAIN="${TOOLCHAIN}" bash "${ROOT_DIR}/.github/scripts/check_thumbv6m_frame_label_mask_codegen.sh"
 THUMB_SECTION_OUTPUT="$("${LLVM_SIZE}" --format=sysv "${THUMB_RLIB}" \
   | awk '
       $1 ~ /^\.text/ || $1 == "__text" { text += $2 }
@@ -830,6 +829,85 @@ PY
 else
   echo "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs"
 fi
+
+README_PATH="${ROOT_DIR}/README.md" \
+THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" \
+PROTOCOL_ARTIFACT_OUTPUT="${PROTOCOL_ARTIFACT_OUTPUT}" \
+STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" \
+python3 - <<'PY'
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def metrics_from(line: str) -> dict[str, int]:
+    return {key: int(value) for key, value in re.findall(r"([A-Za-z0-9_]+)=([0-9]+)", line)}
+
+
+thumb = {}
+for line in os.environ["THUMB_SECTION_OUTPUT"].splitlines():
+    match = re.search(r"thumb section name=(\.[A-Za-z0-9_]+) bytes=([0-9]+)", line)
+    if match:
+        thumb[match.group(1)] = int(match.group(2))
+
+artifacts = []
+for line in os.environ["PROTOCOL_ARTIFACT_OUTPUT"].splitlines():
+    if line.startswith("protocol-artifact "):
+        artifacts.append(metrics_from(line))
+
+runtime = []
+for line in os.environ["STACK_HIGH_WATER_OUTPUT"].splitlines():
+    marker = "large-choreography-runtime "
+    if marker in line:
+        runtime.append(metrics_from(line[line.index(marker):]))
+
+if not artifacts or not runtime:
+    print("README measurement sync missing protocol or runtime measurements", file=sys.stderr)
+    sys.exit(1)
+
+data_bss = thumb.get(".data", 0) + thumb.get(".bss", 0)
+for row in runtime:
+    row["modeled_runtime_sram_bytes"] = (
+        data_bss
+        + row["session_kit_storage_bytes"]
+        + row["resident_prefix_bytes"]
+        + row["peak_live_slab_bytes"]
+        + row["localside_peak_stack_bytes"]
+    )
+
+tap_bytes = max(row["tap_ring_bytes"] for row in runtime)
+flash_total = thumb.get(".text", 0) + thumb.get(".rodata", 0) + thumb.get(".data", 0)
+expected = {
+    "`SessionKitStorage`": max(row["session_kit_storage_bytes"] for row in runtime),
+    f"Fixed per-rendezvous storage, including the {tap_bytes:,} B tap records": max(
+        row["resident_prefix_bytes"] for row in runtime
+    ),
+    "Peak live runtime slab across tracked heavy shapes": max(
+        row["peak_live_slab_bytes"] for row in runtime
+    ),
+    "Runtime operation stack high-water": max(row["peak_stack_bytes"] for row in runtime),
+    "Modeled runtime SRAM envelope": max(row["modeled_runtime_sram_bytes"] for row in runtime),
+    "Minimal linked protocol artifact": min(row["flash_total"] for row in artifacts),
+    "Largest linked artifact in the tracked protocol matrix": max(
+        row["flash_total"] for row in artifacts
+    ),
+    "Complete no-default `libhibana.rlib` sections": flash_total,
+    "Library `.data + .bss`": data_bss,
+}
+
+readme = Path(os.environ["README_PATH"]).read_text(encoding="utf-8")
+for label, value in expected.items():
+    row_prefix = f"| {label} | {value:,} B |"
+    if row_prefix not in readme:
+        print(
+            f"README measurement row stale or missing: expected {row_prefix}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+print("README measurement sync passed")
+PY
 
 if [[ "${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}" != "1" ]]; then
   echo "== final-form worktree size snapshot =="

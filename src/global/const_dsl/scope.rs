@@ -96,21 +96,6 @@ impl ScopeId {
         self.0 & Self::LOCAL_MASK
     }
 
-    pub(crate) const fn add_ordinal(self, delta: u16) -> Self {
-        if self.is_none() {
-            crate::invariant();
-        }
-        let ordinal = self.local_ordinal();
-        let sum = ordinal as u32 + delta as u32;
-        if sum > Self::LOCAL_MASK as u32 {
-            panic!("scope ordinal overflow");
-        }
-        match self.kind() {
-            Some(kind) => Self::new(kind, sum as u16),
-            None => crate::invariant(),
-        }
-    }
-
     pub(crate) const fn route(ordinal: u16) -> Self {
         Self::new(ScopeKind::Route, ordinal)
     }
@@ -145,14 +130,13 @@ mod tests {
         assert_eq!(roll.kind(), Some(ScopeKind::Roll));
         assert_eq!(roll.local_ordinal(), 0x1ffe);
 
-        let parallel = ScopeId::parallel(3071);
+        let parallel = ScopeId::parallel(ScopeId::MAX_LOCAL_ORDINAL);
         assert_eq!(parallel.kind(), Some(ScopeKind::Parallel));
-        assert_eq!(parallel.local_ordinal(), 3071);
+        assert_eq!(parallel.local_ordinal(), ScopeId::MAX_LOCAL_ORDINAL);
 
         assert_eq!(ScopeId::decode_raw(route.raw()), Some(route));
         assert_eq!(ScopeId::decode_raw(roll.raw()), Some(roll));
         assert_eq!(ScopeId::decode_raw(parallel.raw()), Some(parallel));
-        assert!(ScopeId::LOCAL_CAPACITY as usize >= crate::eff::meta::MAX_EFF_NODES);
     }
 
     #[test]
@@ -172,11 +156,5 @@ mod tests {
     #[should_panic]
     fn absent_scope_has_no_local_ordinal() {
         let _ = ScopeId::none().local_ordinal();
-    }
-
-    #[test]
-    #[should_panic]
-    fn absent_scope_cannot_be_rebased() {
-        let _ = ScopeId::none().add_ordinal(1);
     }
 }

@@ -10,6 +10,8 @@ mod endpoint_active_leases;
 mod kani_proof_gate;
 #[path = "semantic_surface/lean_ci_gate.rs"]
 mod lean_ci_gate;
+#[path = "semantic_surface/lean_identity_gate.rs"]
+mod lean_identity_gate;
 #[path = "semantic_surface/lean_proof_gate.rs"]
 mod lean_proof_gate;
 #[path = "semantic_surface/lease_owner.rs"]

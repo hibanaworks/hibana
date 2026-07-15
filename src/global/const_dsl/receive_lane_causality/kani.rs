@@ -43,7 +43,7 @@ fn three_event_causal_handoff_accepts_every_valid_role_assignment() {
     kani::assume(later_source != receiver);
     kani::assume(earlier_source != later_source);
 
-    let events = EffList::new()
+    let events = EffList::<4>::new()
         .push(event(earlier_source, receiver, lane))
         .push(event(receiver, later_source, lane))
         .push(event(later_source, receiver, lane));
@@ -61,7 +61,7 @@ fn sender_change_without_causal_handoff_is_rejected() {
     kani::assume(later_source != receiver);
     kani::assume(earlier_source != later_source);
 
-    let events = EffList::new()
+    let events = EffList::<4>::new()
         .push(event(earlier_source, receiver, lane))
         .push(event(later_source, receiver, lane));
 
@@ -72,7 +72,7 @@ fn sender_change_without_causal_handoff_is_rejected() {
 fn roll_reentry_causal_closure_rejects_open_cycle() {
     let (first_source, receiver, last_source) = distinct_role_permutation();
 
-    let events = EffList::new()
+    let events = EffList::<4>::new()
         .push(event(first_source, receiver, 0))
         .push(event(receiver, last_source, 0))
         .push(event(last_source, receiver, 0));
@@ -89,7 +89,7 @@ fn roll_reentry_causal_closure_rejects_open_cycle() {
 fn roll_reentry_causal_closure_accepts_closed_cycle() {
     let (first_source, receiver, last_source) = distinct_role_permutation();
 
-    let events = EffList::new()
+    let events = EffList::<4>::new()
         .push(event(first_source, receiver, 0))
         .push(event(receiver, last_source, 0))
         .push(event(last_source, receiver, 0))

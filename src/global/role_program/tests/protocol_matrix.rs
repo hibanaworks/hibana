@@ -121,12 +121,12 @@ fn report_protocol_matrix(name: &str, measured: ProtocolMatrixMeasurement) {
         measured.largest_section_bytes
     );
     assert!(
-        measured.program_blob_len < crate::eff::meta::MAX_EFF_NODES,
-        "{name} program blob must not scale to MAX_EFF_NODES"
+        measured.program_blob_len <= u16::MAX as usize,
+        "{name} program image must fit its compact offset domain"
     );
     assert!(
-        measured.role_blob_len < crate::eff::meta::MAX_EFF_NODES,
-        "{name} role blob must not scale to MAX_EFF_NODES"
+        measured.role_blob_len <= u16::MAX as usize,
+        "{name} role image must fit its compact offset domain"
     );
 }
 

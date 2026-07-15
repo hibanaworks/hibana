@@ -22,12 +22,12 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && proof_gate.contains("END { print count + 0 }")
             && proof_gate.contains("Classical.choice")
             && proof_gate.contains("native_decide.ax")
-            && proof_gate.contains("!= \"254\"")
-            && proof_gate.contains("!= \"188\"")
-            && proof_gate.contains("!= \"46\"")
-            && proof_gate.contains("!= \"488\"")
+            && proof_gate.contains("!= \"269\"")
+            && proof_gate.contains("!= \"194\"")
+            && proof_gate.contains("!= \"54\"")
+            && proof_gate.contains("!= \"517\"")
             && proof_gate.contains(
-                "traces=14 frames=66 projections=21 exact-descriptors=21 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
+                "traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
             )
             && proof_gate.contains(
                 "production evidence passed transitions=7 operations=6 owners=8 codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"

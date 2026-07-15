@@ -1,5 +1,3 @@
-#![recursion_limit = "512"]
-
 mod common;
 #[path = "support/large_choreography/fanout_program.rs"]
 mod fanout_program;
@@ -23,7 +21,6 @@ use hibana::{
 };
 
 type HugeKitStorage<'a> = SessionKitStorage<'a, TestTransport>;
-type DeepScopeKitStorage<'a> = SessionKitStorage<'a, TestTransport>;
 
 fn drive<F: core::future::Future>(future: F) -> F::Output {
     let mut future = core::pin::pin!(future);
@@ -42,35 +39,87 @@ fn drive_pinned<F: core::future::Future>(mut future: core::pin::Pin<&mut F>) -> 
     }
 }
 
-macro_rules! over_256_ping_pong_program {
-    ($(($controller_label:literal, $worker_label:literal)),+ $(,)?) => {{
-        let program = g::send::<0, 1, Msg<0, u8>>();
+macro_rules! ordered_message_block {
+    (($first_label:literal, $second_label:literal) $(, ($next_first:literal, $next_second:literal))* $(,)?) => {{
+        let program = g::seq(
+            g::send::<0, 1, Msg<$first_label, u8>>(),
+            g::send::<0, 1, Msg<$second_label, u8>>(),
+        );
         $(
-            let program = g::seq(program, g::send::<0, 1, Msg<$controller_label, u8>>());
-            let program = g::seq(program, g::send::<1, 0, Msg<$worker_label, u8>>());
-        )+
+            let program = g::seq(program, g::send::<0, 1, Msg<$next_first, u8>>());
+            let program = g::seq(program, g::send::<0, 1, Msg<$next_second, u8>>());
+        )*
         program
     }};
 }
 
-macro_rules! drive_over_256_ping_pong {
-    ($controller:ident, $worker:ident, $(($controller_label:literal, $worker_label:literal)),+ $(,)?) => {{
+macro_rules! ordered_message_block_48 {
+    () => {
+        ordered_message_block!(
+            (58, 59),
+            (60, 61),
+            (62, 63),
+            (64, 65),
+            (66, 67),
+            (68, 69),
+            (70, 71),
+            (72, 73),
+            (74, 75),
+            (76, 77),
+            (78, 79),
+            (80, 81),
+            (82, 83),
+            (84, 85),
+            (86, 87),
+            (88, 89),
+            (90, 91),
+            (92, 93),
+            (94, 95),
+            (96, 97),
+            (98, 99),
+            (100, 101),
+            (102, 103),
+            (104, 105),
+        )
+    };
+}
+
+macro_rules! over_256_one_way_program {
+    () => {{
+        let block_0 = ordered_message_block_48!();
+        let block_1 = ordered_message_block_48!();
+        let block_2 = ordered_message_block_48!();
+        let block_3 = ordered_message_block_48!();
+        let block_4 = ordered_message_block_48!();
+        let block_5 = ordered_message_block_48!();
+        g::seq(
+            g::send::<0, 1, Msg<0, u8>>(),
+            g::seq(
+                g::seq(block_0, block_1),
+                g::seq(g::seq(block_2, block_3), g::seq(block_4, block_5)),
+            ),
+        )
+    }};
+}
+
+macro_rules! drive_over_256_one_way {
+    ($controller:ident, $worker:ident, $(($first_label:literal, $second_label:literal)),+ $(,)?) => {{
         localside::controller_send_u8::<0>(&mut $controller, 0);
         assert_eq!(localside::worker_recv_u8::<0>(&mut $worker), 0);
         $(
-            localside::controller_send_u8::<$controller_label>(&mut $controller, $controller_label as u8);
+            localside::controller_send_u8::<$first_label>(&mut $controller, $first_label as u8);
             assert_eq!(
-                localside::worker_recv_u8::<$controller_label>(&mut $worker),
-                $controller_label as u8,
-                "linear >256 runtime payload must roundtrip through controller label {}",
-                $controller_label,
+                localside::worker_recv_u8::<$first_label>(&mut $worker),
+                $first_label as u8,
+                "linear >256 runtime payload must roundtrip through first label {}",
+                $first_label,
             );
-            localside::worker_send_u8::<$worker_label>(&mut $worker, $worker_label as u8);
+            localside::controller_send_u8::<$second_label>(&mut $controller, $second_label as u8);
             assert_eq!(
-                localside::controller_recv_u8::<$worker_label>(&mut $controller),
-                $worker_label as u8,
-                "linear >256 runtime payload must roundtrip through worker label {}",
-                $worker_label,
+                localside::worker_recv_u8::<$second_label>(&mut $worker),
+                $second_label as u8,
+                "linear >256 runtime payload must roundtrip through second label {}",
+                $second_label,
             );
         )+
     }};
@@ -108,14 +157,13 @@ macro_rules! over_256_label_pairs {
     };
 }
 
-macro_rules! deep_nested_par_scope_program {
-    () => {
-        g::send::<0, 1, Msg<250, ()>>()
-    };
-    ($lane:literal $($tail:literal)*) => {{
-        let left = g::send::<2, 3, Msg<$lane, ()>>();
-        let right = deep_nested_par_scope_program!($($tail)*);
-        g::par(left, right)
+macro_rules! concurrent_edge_program {
+    ($from:literal, $to:literal; $first:literal $(, $rest:literal)* $(,)?) => {{
+        let program = g::send::<$from, $to, Msg<$first, ()>>();
+        $(
+            let program = g::par(g::send::<$from, $to, Msg<$rest, ()>>(), program);
+        )*
+        program
     }};
 }
 
@@ -160,21 +208,6 @@ fn edge_lane_controller_program() -> RoleProgram<0> {
     let program = g::seq(
         g::send::<0, 1, Msg<{ EDGE_LANE_LABEL }, u8>>(),
         g::send::<1, 0, Msg<{ EDGE_LANE_REPLY_LABEL }, u8>>(),
-    );
-    project(&program)
-}
-
-fn deep_active_scope_controller_program() -> RoleProgram<0> {
-    let program = deep_nested_par_scope_program!(
-        0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
-        16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
-        32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47
-        48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63
-        64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
-        80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95
-        96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111
-        112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
-        128
     );
     project(&program)
 }
@@ -314,8 +347,8 @@ fn huge_choreography_shape_matrix_runs_to_completion_on_actual_localside() {
 }
 
 #[test]
-fn program_over_256_effects_projects_and_runs_through_segment_2() {
-    let program = over_256_label_pairs!(over_256_ping_pong_program);
+fn over_256_ordered_inbound_occurrences_reuse_frame_labels_and_run() {
+    let program = over_256_one_way_program!();
     let controller_program: RoleProgram<0> = project(&program);
     let worker_program: RoleProgram<1> = project(&program);
 
@@ -332,13 +365,57 @@ fn program_over_256_effects_projects_and_runs_through_segment_2() {
             .expect("enter >256 controller");
         let mut worker = rv.enter(sid, &worker_program).expect("enter >256 worker");
 
-        over_256_label_pairs!(drive_over_256_ping_pong, controller, worker);
+        over_256_label_pairs!(drive_over_256_one_way, controller, worker);
 
         assert!(
             transport.queue_is_empty(),
-            ">256 effect runtime proof must drain every transport frame"
+            ">256 ordered inbound occurrences must drain every transport frame"
         );
     });
+}
+
+#[test]
+fn over_256_globally_parallel_events_reuse_lanes_across_disjoint_roles() {
+    let left_low = concurrent_edge_program!(
+        0, 1;
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+        48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+        64,
+    );
+    let left_high = concurrent_edge_program!(
+        0, 1;
+        65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+        80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+        96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+        112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127,
+        128,
+    );
+    let right_low = concurrent_edge_program!(
+        2, 3;
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+        48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+        64,
+    );
+    let right_high = concurrent_edge_program!(
+        2, 3;
+        65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+        80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+        96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+        112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127,
+        128,
+    );
+    let left = g::par(left_low, left_high);
+    let right = g::par(right_low, right_high);
+    let program = g::par(left, right);
+
+    let _: RoleProgram<0> = project(&program);
+    let _: RoleProgram<1> = project(&program);
+    let _: RoleProgram<2> = project(&program);
+    let _: RoleProgram<3> = project(&program);
 }
 
 #[test]
@@ -395,26 +472,6 @@ fn high_lane_route_runs_to_completion_on_actual_localside() {
             transport.queue_is_empty(),
             "high-lane localside route test must drain every transport frame"
         );
-    });
-}
-
-#[test]
-fn active_scope_depth_above_128_enters_public_sessionkit_path() {
-    runtime_support::with_runtime_workspace(|slab| {
-        let transport = TestTransport::new();
-        let mut kit_storage = DeepScopeKitStorage::uninit();
-        let kit = kit_storage.init();
-        let rv = kit
-            .rendezvous(slab, transport.clone())
-            .expect("register deep-scope rendezvous");
-
-        let controller = rv
-            .enter(
-                SessionId::new(0x6210),
-                &deep_active_scope_controller_program(),
-            )
-            .expect("enter role with >128 active nested scopes");
-        core::hint::black_box(&controller);
     });
 }
 

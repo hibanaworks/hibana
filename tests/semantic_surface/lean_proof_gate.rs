@@ -243,6 +243,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && exporter.contains("generatedFullRoleDomainChoreo")
             && exporter.contains("generatedFullRoleDomainProjectionRole254")
             && exporter.contains("generatedFullRoleDomainProjectionRole255")
+            && exporter.contains("generatedLaneMatchingChoreo")
+            && exporter.contains("generatedLaneMatchingProjectionRole3")
             && exporter.contains("generatedNestedResolvedProgressRole0"),
         "Rust-to-Lean refinement must compare canonical program bytes, role bytes, and resident metadata"
     );
@@ -292,11 +294,16 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && global_semantics.contains("structure AdmittedMessage")
             && !lean_sources.contains("WireMessage")
             && global_syntax.contains("lane : Nat")
+            && global_syntax.contains("frameLabel : Nat")
+            && global_syntax.contains("def Choreo.compiledOccurrences")
+            && global_syntax.contains("def mergeParallelOccurrences")
+            && global_syntax.contains("def mergeRouteOccurrences")
             && global_syntax.contains("def Choreo.laneSpan")
             && global_syntax.contains("def Choreo.globalEventsFrom")
-            && global_syntax.contains("right.globalEventsFrom (laneBase + left.laneSpan)")
+            && global_syntax.contains("choreo.compiledOccurrences.occurrences.map")
+            && global_syntax.contains("theorem compiled_occurrences_length")
             && global_syntax.contains("theorem global_events_from_lane_bounds")
-            && global_syntax.contains("theorem parallel_global_event_lanes_are_disjoint")
+            && global_syntax.contains("theorem compiled_occurrences_lane_span_exact")
             && global_syntax.contains("def Choreo.globalEventConflictsFrom")
             && global_syntax.contains("theorem global_event_conflicts_from_length")
             && global_semantics.contains("queue : Nat -> Option AdmittedMessage")
@@ -437,8 +444,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && static_projectability.contains("inductive StaticEndpointSelector")
             && static_projectability.contains("| outbound (role label schema : Nat)")
             && static_projectability.contains("structure StaticInboundEvidence")
-            && static_projectability.contains("checkInboundOccurrenceIdentity")
-            && static_projectability.contains("inbound_occurrence_identity_checker_sound")
+            && static_projectability.contains("checkInboundOccurrenceColoring")
+            && static_projectability.contains("inbound_occurrence_coloring_checker_sound")
             && static_projectability.contains("def Choreo.ReceiveLaneCausalSafety")
             && static_projectability.contains("def Choreo.checkReceiveLaneCausality")
             && static_projectability.contains("receive_lane_causality_checker_sound")
@@ -555,7 +562,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && protocol_artifact.contains("verified_protocol_reachable_preserves_global_invariant")
             && protocol_artifact.contains("verified_protocol_establishes_semantic_unstuckness")
             && !protocol_artifact.contains("affineTransport : AffineTransportProfile")
-            && protocol_artifact.contains("verified_protocol_has_injective_inbound_evidence")
+            && protocol_artifact.contains("verified_protocol_has_competing_inbound_coloring")
             && protocol_artifact.contains("verified_protocol_transport_admission_is_unique")
             && protocol_artifact
                 .contains("verified_protocol_roll_reentry_has_fifo_or_causal_order")
@@ -830,12 +837,20 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem global_events_from_length_eq",
         "theorem global_events_from_projected_actions_eq",
         "theorem global_events_from_lane_bounds",
-        "theorem parallel_global_event_lanes_are_disjoint",
+        "theorem compiled_occurrences_length",
+        "theorem compiled_occurrence_lane_bound",
+        "theorem compiled_occurrences_lane_span_exact",
+        "theorem merge_parallel_occurrence_actions",
+        "theorem merge_route_occurrence_actions",
         "theorem canonical_program_atoms_global_events",
+        "theorem canonical_program_source_frame_labels",
         "theorem accepted_descriptor_global_events_bind_canonical_lanes",
+        "theorem accepted_descriptor_frame_labels_bind_compiled_coloring",
         "theorem transport_admission_is_unique",
+        "theorem transport_admission_from_depends_only_on_observation",
         "theorem transport_admission_checker_sound",
         "theorem transport_admission_depends_only_on_observation",
+        "theorem global_transport_admission_is_unique",
         "theorem global_transport_admission_checker_sound",
         "theorem observed_transport_admission_ignores_carrier_history",
         "theorem transport_admission_binds_exact_descriptor_occurrence",
@@ -939,7 +954,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem ambiguous_receive_fails_closed",
         "theorem verified_protocol_certificate_establishes_all_role_refinement",
         "theorem verified_protocol_descriptor_actions_match_projection",
-        "theorem verified_protocol_has_injective_inbound_evidence",
+        "theorem verified_protocol_has_competing_inbound_coloring",
         "theorem verified_protocol_transport_admission_is_unique",
     ] {
         assert!(
@@ -979,19 +994,6 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || deployment.contains(theorem)
                 || main_theorems.contains(theorem),
             "Lean proof kernel missing {theorem}"
-        );
-    }
-    for identity_field in [
-        "roleCount : Nat",
-        "atomCount : Nat",
-        "routeResolverCount : Nat",
-        "routeParticipantCount : Nat",
-        "scopeMarkerCount : Nat",
-        "blob : List Nat",
-    ] {
-        assert!(
-            authority.contains(identity_field),
-            "Lean program identity must retain exact Rust image field: {identity_field}"
         );
     }
 }

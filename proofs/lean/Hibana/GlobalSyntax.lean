@@ -29,28 +29,460 @@ structure ParallelArm where
 def GlobalEvent.action? (event : GlobalEvent) (role : Nat) : Option LocalAction :=
   Choreo.localAction? role event.sender event.receiver event.label event.schema
 
-def Choreo.laneSpan : Choreo -> Nat
-  | .send _ _ _ _ => 1
-  | .seq left right | .route _ left right => max left.laneSpan right.laneSpan
-  | .par left right => left.laneSpan + right.laneSpan
-  | .roll body => body.laneSpan
+structure CompiledOccurrence where
+  sender : Nat
+  receiver : Nat
+  label : Nat
+  schema : Nat
+  lane : Nat
+  frameLabel : Nat
+  deriving Repr, DecidableEq
 
-/-- Canonical production lane assignment. Sequential and exclusive route arms
-reuse lanes; parallel arms receive disjoint contiguous lane spans. -/
-def Choreo.globalEventsFrom (laneBase : Nat) : Choreo -> List GlobalEvent
-  | .send sender receiver label schema =>
-      [{ sender, receiver, label, schema, lane := laneBase }]
-  | .seq left right | .route _ left right =>
-      left.globalEventsFrom laneBase ++ right.globalEventsFrom laneBase
-  | .par left right =>
-      left.globalEventsFrom laneBase ++
-        right.globalEventsFrom (laneBase + left.laneSpan)
-  | .roll body => body.globalEventsFrom laneBase
+structure CompiledOccurrenceSource where
+  occurrences : List CompiledOccurrence
+  laneSpan : Nat
+  deriving Repr, DecidableEq
+
+def CompiledOccurrence.globalEventFrom
+    (occurrence : CompiledOccurrence) (laneBase : Nat) : GlobalEvent := {
+  sender := occurrence.sender
+  receiver := occurrence.receiver
+  label := occurrence.label
+  schema := occurrence.schema
+  lane := laneBase + occurrence.lane
+}
+
+def CompiledOccurrence.action?
+    (occurrence : CompiledOccurrence) (role : Nat) : Option LocalAction :=
+  Choreo.localAction? role occurrence.sender occurrence.receiver
+    occurrence.label occurrence.schema
+
+def compiledLaneSpan : List CompiledOccurrence -> Nat
+  | [] => 0
+  | occurrence :: rest => max (occurrence.lane + 1) (compiledLaneSpan rest)
+
+def compiledSourceFrom
+    (occurrences : List CompiledOccurrence) : CompiledOccurrenceSource := {
+  occurrences
+  laneSpan := compiledLaneSpan occurrences
+}
+
+def occurrencesShareEndpoint
+    (left right : CompiledOccurrence) : Bool :=
+  left.sender == right.sender || left.sender == right.receiver ||
+    left.receiver == right.sender || left.receiver == right.receiver
+
+def laneClassesShareEndpoint
+    (left right : List CompiledOccurrence)
+    (leftLane rightLane : Nat) : Bool :=
+  left.any fun leftOccurrence =>
+    leftOccurrence.lane == leftLane && right.any fun rightOccurrence =>
+      rightOccurrence.lane == rightLane &&
+        occurrencesShareEndpoint leftOccurrence rightOccurrence
+
+structure LaneRemap where
+  oldLane : Nat
+  newLane : Nat
+  deriving Repr, DecidableEq
+
+def LaneRemap.forRight? (remap : List LaneRemap) (rightLane : Nat) : Option Nat :=
+  (remap.find? fun entry => entry.oldLane == rightLane).map LaneRemap.newLane
+
+def LaneRemap.forLeft? (remap : List LaneRemap) (leftLane : Nat) : Option Nat :=
+  (remap.find? fun entry => entry.newLane == leftLane).map LaneRemap.oldLane
+
+def LaneRemap.replace
+    (remap : List LaneRemap) (rightLane leftLane : Nat) : List LaneRemap :=
+  (remap.filter fun entry =>
+    entry.oldLane != rightLane && entry.newLane != leftLane) ++
+    [{ oldLane := rightLane, newLane := leftLane }]
+
+structure LaneAugmentState where
+  remap? : Option (List LaneRemap)
+  seenLeft : List Nat
+
+/-- Deterministic augmenting-path search used by the production lane allocator.
+`fuel` bounds the alternating path by the finite left-lane domain. Failed
+branches retain their visited set exactly as the fixed Rust scratch bitmap does. -/
+def augmentParallelLane
+    (left right : List CompiledOccurrence) (leftSpan rightLane : Nat)
+    (remap : List LaneRemap) (seenLeft : List Nat) : Nat -> LaneAugmentState
+  | 0 => { remap? := none, seenLeft }
+  | fuel + 1 =>
+      (List.range leftSpan).foldl (fun state leftLane =>
+        match state.remap? with
+        | some _ => state
+        | none =>
+            if state.seenLeft.contains leftLane ||
+                laneClassesShareEndpoint left right leftLane rightLane then
+              state
+            else
+              let nextSeen := leftLane :: state.seenLeft
+              match LaneRemap.forLeft? remap leftLane with
+              | none => {
+                  remap? := some (LaneRemap.replace remap rightLane leftLane)
+                  seenLeft := nextSeen
+                }
+              | some occupant =>
+                  let recursive := augmentParallelLane left right leftSpan occupant remap
+                    nextSeen fuel
+                  match recursive.remap? with
+                  | none => recursive
+                  | some reassigned => {
+                      remap? := some (LaneRemap.replace reassigned rightLane leftLane)
+                      seenLeft := recursive.seenLeft
+                    }) { remap? := none, seenLeft }
+
+def maximumParallelLaneReuse
+    (left right : List CompiledOccurrence)
+    (leftSpan rightSpan : Nat) : List LaneRemap :=
+  (List.range rightSpan).foldl (fun remap rightLane =>
+    (augmentParallelLane left right leftSpan rightLane remap []
+      (leftSpan + 1)).remap?.getD remap) []
+
+def parallelLaneRemap
+    (left right : List CompiledOccurrence)
+    (leftSpan rightSpan : Nat) : List LaneRemap :=
+  let reused := maximumParallelLaneReuse left right leftSpan rightSpan
+  ((List.range rightSpan).foldl (fun state rightLane =>
+    match LaneRemap.forRight? reused rightLane with
+    | some _ => state
+    | none =>
+        (state.1 ++ [({ oldLane := rightLane, newLane := state.2 } : LaneRemap)], state.2 + 1))
+    (reused, leftSpan)).1
+
+private def constrainedLaneLeft : List CompiledOccurrence := [
+  { sender := 0, receiver := 1, label := 0, schema := 0, lane := 0, frameLabel := 0 },
+  { sender := 2, receiver := 3, label := 0, schema := 0, lane := 1, frameLabel := 0 }
+]
+
+private def constrainedLaneRight : List CompiledOccurrence := [
+  { sender := 4, receiver := 5, label := 0, schema := 0, lane := 0, frameLabel := 0 },
+  { sender := 2, receiver := 6, label := 0, schema := 0, lane := 1, frameLabel := 0 }
+]
+
+/-- The augmenting path moves the unconstrained class instead of allocating an
+unnecessary third lane. This is the minimal counterexample to first-fit. -/
+theorem constrained_parallel_lane_matching_uses_minimum_span :
+    parallelLaneRemap constrainedLaneLeft constrainedLaneRight 2 2 =
+      [{ oldLane := 0, newLane := 1 }, { oldLane := 1, newLane := 0 }] := by
+  decide
+
+def remapParallelLane (remap : List LaneRemap) (lane : Nat) : Nat :=
+  match remap.find? fun entry => entry.oldLane == lane with
+  | some entry => entry.newLane
+  | none => 256
+
+def mergeParallelOccurrences
+    (left right : CompiledOccurrenceSource) : CompiledOccurrenceSource :=
+  let remap := parallelLaneRemap
+    left.occurrences right.occurrences left.laneSpan right.laneSpan
+  let recoloredRight := right.occurrences.map fun occurrence =>
+    { occurrence with lane := remapParallelLane remap occurrence.lane }
+  compiledSourceFrom (left.occurrences ++ recoloredRight)
+
+structure FrameLabelRemap where
+  sender : Nat
+  receiver : Nat
+  lane : Nat
+  oldLabel : Nat
+  newLabel : Nat
+  deriving Repr, DecidableEq
+
+def firstAvailableFrameLabel (used : List Nat) : Option Nat :=
+  (List.range 256).find? fun candidate => !used.contains candidate
+
+def FrameLabelRemap.matches
+    (entry : FrameLabelRemap) (occurrence : CompiledOccurrence) : Bool :=
+  entry.sender == occurrence.sender && entry.receiver == occurrence.receiver &&
+    entry.lane == occurrence.lane && entry.oldLabel == occurrence.frameLabel
+
+def routeFrameLabelRemap
+    (left right : List CompiledOccurrence) : List FrameLabelRemap :=
+  right.foldl (fun remap occurrence =>
+    if remap.any (·.matches occurrence) then
+      remap
+    else
+      let usedLeft := (left.filter fun candidate =>
+        candidate.sender == occurrence.sender &&
+          candidate.receiver == occurrence.receiver &&
+          candidate.lane == occurrence.lane).map CompiledOccurrence.frameLabel
+      let usedRight := (remap.filter fun entry =>
+        entry.sender == occurrence.sender &&
+          entry.receiver == occurrence.receiver &&
+          entry.lane == occurrence.lane).map FrameLabelRemap.newLabel
+      let selected := (firstAvailableFrameLabel (usedLeft ++ usedRight)).getD 256
+      remap ++ [{
+        sender := occurrence.sender
+        receiver := occurrence.receiver
+        lane := occurrence.lane
+        oldLabel := occurrence.frameLabel
+        newLabel := selected
+      }]) []
+
+def remapRouteFrameLabel
+    (remap : List FrameLabelRemap) (occurrence : CompiledOccurrence) : Nat :=
+  match remap.find? (·.matches occurrence) with
+  | some entry => entry.newLabel
+  | none => 256
+
+def mergeRouteOccurrences
+    (left right : CompiledOccurrenceSource) : CompiledOccurrenceSource :=
+  let remap := routeFrameLabelRemap left.occurrences right.occurrences
+  let recoloredRight := right.occurrences.map fun occurrence =>
+    { occurrence with frameLabel := remapRouteFrameLabel remap occurrence }
+  compiledSourceFrom (left.occurrences ++ recoloredRight)
+
+structure RollFrameLabelClass where
+  sender : Nat
+  receiver : Nat
+  lane : Nat
+  conflicts : List ConflictArm
+  frameLabel : Nat
+  deriving Repr, DecidableEq
+
+def RollFrameLabelClass.matches
+    (entry : RollFrameLabelClass) (occurrence : CompiledOccurrence)
+    (conflicts : List ConflictArm) : Bool :=
+  entry.sender == occurrence.sender && entry.receiver == occurrence.receiver &&
+    entry.lane == occurrence.lane && entry.conflicts == conflicts
+
+def RollFrameLabelClass.sameInboundKey
+    (entry : RollFrameLabelClass) (occurrence : CompiledOccurrence) : Bool :=
+  entry.sender == occurrence.sender && entry.receiver == occurrence.receiver &&
+    entry.lane == occurrence.lane
+
+/-- Roll compilation retains one frame color for each exact route path of an
+inbound operation key. Equal paths preserve ordered reuse; distinct paths are
+the elastic reentry frontier and therefore receive distinct colors. -/
+def recolorRollOccurrencesFrom
+    (conflictRows : List (List ConflictArm)) :
+    List RollFrameLabelClass -> Nat -> List CompiledOccurrence ->
+      List CompiledOccurrence
+  | _, _, [] => []
+  | classes, index, occurrence :: rest =>
+      let conflicts := (conflictRows[index]?).getD []
+      match classes.find? (fun entry => entry.matches occurrence conflicts) with
+      | some entry =>
+          { occurrence with frameLabel := entry.frameLabel } ::
+            recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+      | none =>
+          let used := (classes.filter fun entry =>
+            entry.sameInboundKey occurrence).map RollFrameLabelClass.frameLabel
+          let selected := (firstAvailableFrameLabel used).getD 256
+          let nextClass : RollFrameLabelClass := {
+            sender := occurrence.sender
+            receiver := occurrence.receiver
+            lane := occurrence.lane
+            conflicts
+            frameLabel := selected
+          }
+          { occurrence with frameLabel := selected } ::
+            recolorRollOccurrencesFrom conflictRows
+              (classes ++ [nextClass]) (index + 1) rest
+
+def recolorRollOccurrences
+    (occurrences : List CompiledOccurrence)
+    (conflictRows : List (List ConflictArm)) : List CompiledOccurrence :=
+  recolorRollOccurrencesFrom conflictRows [] 0 occurrences
+
+def recolorRollSource
+    (source : CompiledOccurrenceSource)
+    (conflictRows : List (List ConflictArm)) : CompiledOccurrenceSource :=
+  compiledSourceFrom (recolorRollOccurrences source.occurrences conflictRows)
+
+theorem filter_map_recolored_lanes
+    (role : Nat) (occurrences : List CompiledOccurrence) (recolor : Nat -> Nat) :
+    (occurrences.map fun occurrence =>
+        { occurrence with lane := recolor occurrence.lane }).filterMap (·.action? role) =
+      occurrences.filterMap (·.action? role) := by
+  induction occurrences with
+  | nil => rfl
+  | cons head tail tailIH =>
+      have headAction :
+          ({ head with lane := recolor head.lane } : CompiledOccurrence).action? role =
+            head.action? role := rfl
+      simp only [List.map_cons, List.filterMap_cons, headAction, tailIH]
+
+theorem filter_map_recolored_frame_labels
+    (role : Nat) (occurrences : List CompiledOccurrence)
+    (recolor : CompiledOccurrence -> Nat) :
+    (occurrences.map fun occurrence =>
+        { occurrence with frameLabel := recolor occurrence }).filterMap (·.action? role) =
+      occurrences.filterMap (·.action? role) := by
+  induction occurrences with
+  | nil => rfl
+  | cons head tail tailIH =>
+      have headAction :
+          ({ head with frameLabel := recolor head } : CompiledOccurrence).action? role =
+            head.action? role := rfl
+      simp only [List.map_cons, List.filterMap_cons, headAction, tailIH]
+
+@[simp]
+theorem merge_parallel_occurrence_actions
+    (role : Nat) (left right : CompiledOccurrenceSource) :
+    (mergeParallelOccurrences left right).occurrences.filterMap (·.action? role) =
+      left.occurrences.filterMap (·.action? role) ++
+        right.occurrences.filterMap (·.action? role) := by
+  simp only [mergeParallelOccurrences, compiledSourceFrom, List.filterMap_append]
+  rw [filter_map_recolored_lanes]
+
+@[simp]
+theorem merge_route_occurrence_actions
+    (role : Nat) (left right : CompiledOccurrenceSource) :
+    (mergeRouteOccurrences left right).occurrences.filterMap (·.action? role) =
+      left.occurrences.filterMap (·.action? role) ++
+        right.occurrences.filterMap (·.action? role) := by
+  simp only [mergeRouteOccurrences, compiledSourceFrom, List.filterMap_append]
+  rw [filter_map_recolored_frame_labels]
+
+@[simp]
+theorem recolor_roll_occurrences_from_length
+    (conflictRows : List (List ConflictArm))
+    (classes : List RollFrameLabelClass) (index : Nat)
+    (occurrences : List CompiledOccurrence) :
+    (recolorRollOccurrencesFrom conflictRows classes index occurrences).length =
+      occurrences.length := by
+  induction occurrences generalizing classes index with
+  | nil => rfl
+  | cons head tail tailIH =>
+      simp only [recolorRollOccurrencesFrom]
+      split <;> simp [tailIH]
+
+@[simp]
+theorem compiled_occurrence_action_update_frame_label
+    (role frameLabel : Nat) (occurrence : CompiledOccurrence) :
+    ({ occurrence with frameLabel } : CompiledOccurrence).action? role =
+      occurrence.action? role := rfl
+
+@[simp]
+theorem recolor_roll_occurrences_from_actions
+    (role : Nat) (conflictRows : List (List ConflictArm))
+    (classes : List RollFrameLabelClass) (index : Nat)
+    (occurrences : List CompiledOccurrence) :
+    (recolorRollOccurrencesFrom conflictRows classes index occurrences).filterMap
+        (·.action? role) = occurrences.filterMap (·.action? role) := by
+  induction occurrences generalizing classes index with
+  | nil => rfl
+  | cons head tail tailIH =>
+      simp only [recolorRollOccurrencesFrom]
+      split <;>
+        simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label] <;>
+        rw [tailIH]
+
+@[simp]
+theorem recolor_roll_source_actions
+    (role : Nat) (source : CompiledOccurrenceSource)
+    (conflictRows : List (List ConflictArm)) :
+    (recolorRollSource source conflictRows).occurrences.filterMap (·.action? role) =
+      source.occurrences.filterMap (·.action? role) := by
+  simp [recolorRollSource, recolorRollOccurrences, compiledSourceFrom]
+
+def Choreo.routeCount : Choreo -> Nat
+  | .send _ _ _ _ => 0
+  | .seq left right | .par left right => left.routeCount + right.routeCount
+  | .route _ left right => 1 + left.routeCount + right.routeCount
+  | .roll body => body.routeCount
+
+/-- Route memberships aligned one-for-one with the canonical event preorder. -/
+def Choreo.globalEventConflictsFrom (conflictBase : Nat) : Choreo -> List (List ConflictArm)
+  | .send _ _ _ _ => [[]]
+  | .seq left right | .par left right =>
+      left.globalEventConflictsFrom conflictBase ++
+        right.globalEventConflictsFrom (conflictBase + left.routeCount)
+  | .route _ left right =>
+      (left.globalEventConflictsFrom (conflictBase + 1)).map
+          ({ conflict := conflictBase, arm := .left } :: ·) ++
+        (right.globalEventConflictsFrom
+          (conflictBase + 1 + left.routeCount)).map
+          ({ conflict := conflictBase, arm := .right } :: ·)
+  | .roll body => body.globalEventConflictsFrom conflictBase
+
+def Choreo.globalEventConflicts (choreo : Choreo) : List (List ConflictArm) :=
+  choreo.globalEventConflictsFrom 0
+
+/-- Host-only production allocation. Event order is the choreography preorder;
+lane and frame-label colors are erased into the compact descriptor rows. -/
+def Choreo.compiledOccurrences : Choreo -> CompiledOccurrenceSource
+  | .send sender receiver label schema => compiledSourceFrom [{
+      sender
+      receiver
+      label
+      schema
+      lane := 0
+      frameLabel := 0
+    }]
+  | .seq left right => compiledSourceFrom
+      (left.compiledOccurrences.occurrences ++ right.compiledOccurrences.occurrences)
+  | .par left right => mergeParallelOccurrences
+      left.compiledOccurrences right.compiledOccurrences
+  | .route _ left right => mergeRouteOccurrences
+      left.compiledOccurrences right.compiledOccurrences
+  | .roll body => recolorRollSource body.compiledOccurrences body.globalEventConflicts
+
+def Choreo.laneSpan (choreo : Choreo) : Nat :=
+  choreo.compiledOccurrences.laneSpan
+
+def Choreo.globalEventsFrom
+    (laneBase : Nat) (choreo : Choreo) : List GlobalEvent :=
+  choreo.compiledOccurrences.occurrences.map (·.globalEventFrom laneBase)
 
 /-- Canonical preorder of global communication occurrences. Route arms and
 parallel branches retain distinct event identities even when contracts match. -/
 def Choreo.globalEvents (choreo : Choreo) : List GlobalEvent :=
   choreo.globalEventsFrom 0
+
+def Choreo.eventCount : Choreo -> Nat
+  | .send _ _ _ _ => 1
+  | .seq left right | .par left right | .route _ left right =>
+      left.eventCount + right.eventCount
+  | .roll body => body.eventCount
+
+@[simp]
+theorem compiled_occurrences_length (choreo : Choreo) :
+    choreo.compiledOccurrences.occurrences.length = choreo.eventCount := by
+  induction choreo with
+  | send => simp [Choreo.compiledOccurrences, compiledSourceFrom, Choreo.eventCount]
+  | seq left right leftIH rightIH =>
+      simp [Choreo.compiledOccurrences, compiledSourceFrom, Choreo.eventCount, leftIH, rightIH]
+  | par left right leftIH rightIH =>
+      simp [Choreo.compiledOccurrences, mergeParallelOccurrences, compiledSourceFrom,
+        Choreo.eventCount, leftIH, rightIH]
+  | route authority left right leftIH rightIH =>
+      simp [Choreo.compiledOccurrences, mergeRouteOccurrences, compiledSourceFrom,
+        Choreo.eventCount, leftIH, rightIH]
+  | roll body bodyIH =>
+      simp [Choreo.compiledOccurrences, recolorRollSource, recolorRollOccurrences,
+        compiledSourceFrom, Choreo.eventCount, bodyIH]
+
+@[simp]
+theorem global_events_length (choreo : Choreo) :
+    choreo.globalEvents.length = choreo.eventCount := by
+  simp [Choreo.globalEvents, Choreo.globalEventsFrom]
+
+theorem compiled_occurrence_lane_bound
+    {occurrence : CompiledOccurrence} {occurrences : List CompiledOccurrence}
+    (member : occurrence ∈ occurrences) :
+    occurrence.lane < compiledLaneSpan occurrences := by
+  induction occurrences with
+  | nil => simp at member
+  | cons head tail tailIH =>
+      rcases List.mem_cons.mp member with rfl | tailMember
+      · simp only [compiledLaneSpan]
+        omega
+      · have bound := tailIH tailMember
+        simp [compiledLaneSpan]
+        omega
+
+theorem compiled_occurrences_lane_span_exact (choreo : Choreo) :
+    choreo.compiledOccurrences.laneSpan =
+      compiledLaneSpan choreo.compiledOccurrences.occurrences := by
+  induction choreo with
+  | send => rfl
+  | seq => rfl
+  | par => rfl
+  | route => rfl
+  | roll => rfl
 
 theorem global_events_from_lane_bounds
     (choreo : Choreo)
@@ -58,102 +490,48 @@ theorem global_events_from_lane_bounds
     {event : GlobalEvent}
     (member : event ∈ choreo.globalEventsFrom laneBase) :
     laneBase ≤ event.lane /\ event.lane < laneBase + choreo.laneSpan := by
-  induction choreo generalizing laneBase with
-  | send sender receiver label schema =>
-      simp only [Choreo.globalEventsFrom, List.mem_singleton] at member
-      subst event
-      simp [Choreo.laneSpan]
-  | seq left right leftIH rightIH =>
-      rcases List.mem_append.mp member with leftMember | rightMember
-      · have bounds := leftIH laneBase leftMember
-        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
-          simp [Choreo.laneSpan]
-          omega)⟩
-      · have bounds := rightIH laneBase rightMember
-        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
-          simp [Choreo.laneSpan]
-          omega)⟩
-  | par left right leftIH rightIH =>
-      rcases List.mem_append.mp member with leftMember | rightMember
-      · have bounds := leftIH laneBase leftMember
-        exact ⟨bounds.1, by
-          simp [Choreo.laneSpan]
-          omega⟩
-      · have bounds := rightIH (laneBase + left.laneSpan) rightMember
-        exact ⟨Nat.le_trans (by omega) bounds.1, by
-          simp [Choreo.laneSpan]
-          omega⟩
-  | route authority left right leftIH rightIH =>
-      rcases List.mem_append.mp member with leftMember | rightMember
-      · have bounds := leftIH laneBase leftMember
-        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
-          simp [Choreo.laneSpan]
-          omega)⟩
-      · have bounds := rightIH laneBase rightMember
-        exact ⟨bounds.1, Nat.lt_of_lt_of_le bounds.2 (by
-          simp [Choreo.laneSpan]
-          omega)⟩
-  | roll body bodyIH =>
-      simpa [Choreo.globalEventsFrom, Choreo.laneSpan] using bodyIH laneBase member
-
-/-- Canonical parallel arms occupy disjoint physical lane intervals. This is the
-lane-level noninterference fact used by the message-erased endpoint runtime. -/
-theorem parallel_global_event_lanes_are_disjoint
-    (left right : Choreo)
-    (laneBase : Nat)
-    {leftEvent rightEvent : GlobalEvent}
-    (leftMember : leftEvent ∈ left.globalEventsFrom laneBase)
-    (rightMember : rightEvent ∈
-      right.globalEventsFrom (laneBase + left.laneSpan)) :
-    leftEvent.lane ≠ rightEvent.lane := by
-  have leftBounds := global_events_from_lane_bounds left laneBase leftMember
-  have rightBounds := global_events_from_lane_bounds right
-    (laneBase + left.laneSpan) rightMember
-  omega
+  have compiledMember : ∃ occurrence,
+      occurrence ∈ choreo.compiledOccurrences.occurrences /\
+        occurrence.globalEventFrom laneBase = event := by
+    simpa [Choreo.globalEventsFrom] using List.mem_map.mp member
+  obtain ⟨occurrence, occurrenceMember, rfl⟩ := compiledMember
+  have occurrenceBound := compiled_occurrence_lane_bound occurrenceMember
+  simp only [CompiledOccurrence.globalEventFrom, Choreo.laneSpan]
+  exact ⟨by omega, by
+    change laneBase + occurrence.lane < laneBase + choreo.compiledOccurrences.laneSpan
+    rw [compiled_occurrences_lane_span_exact]
+    exact Nat.add_lt_add_left occurrenceBound laneBase⟩
 
 @[simp]
 theorem global_events_from_length_eq
     (choreo : Choreo) (leftBase rightBase : Nat) :
     (choreo.globalEventsFrom leftBase).length =
       (choreo.globalEventsFrom rightBase).length := by
-  induction choreo generalizing leftBase rightBase with
-  | send => rfl
-  | seq left right leftIH rightIH =>
-      simp only [Choreo.globalEventsFrom, List.length_append]
-      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
-  | par left right leftIH rightIH =>
-      simp only [Choreo.globalEventsFrom, List.length_append]
-      rw [leftIH leftBase rightBase,
-        rightIH (leftBase + left.laneSpan) (rightBase + left.laneSpan)]
-  | route authority left right leftIH rightIH =>
-      simp only [Choreo.globalEventsFrom, List.length_append]
-      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
-  | roll body bodyIH =>
-      exact bodyIH leftBase rightBase
+  simp [Choreo.globalEventsFrom]
 
 theorem global_events_from_projected_actions_eq
     (role : Nat) (choreo : Choreo) (leftBase rightBase : Nat) :
     (choreo.globalEventsFrom leftBase).filterMap (·.action? role) =
       (choreo.globalEventsFrom rightBase).filterMap (·.action? role) := by
-  induction choreo generalizing leftBase rightBase with
-  | send sender receiver label schema =>
-      cases actionCase : Choreo.localAction? role sender receiver label schema <;>
-        simp [Choreo.globalEventsFrom, GlobalEvent.action?, actionCase]
-  | seq left right leftIH rightIH =>
-      simp only [Choreo.globalEventsFrom, List.filterMap_append]
-      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
-  | par left right leftIH rightIH =>
-      simp only [Choreo.globalEventsFrom, List.filterMap_append]
-      rw [leftIH leftBase rightBase,
-        rightIH (leftBase + left.laneSpan) (rightBase + left.laneSpan)]
-  | route authority left right leftIH rightIH =>
-      simp only [Choreo.globalEventsFrom, List.filterMap_append]
-      rw [leftIH leftBase rightBase, rightIH leftBase rightBase]
-  | roll body bodyIH =>
-      exact bodyIH leftBase rightBase
+  unfold Choreo.globalEventsFrom
+  simp only [List.filterMap_map]
+  change choreo.compiledOccurrences.occurrences.filterMap (fun occurrence =>
+      Choreo.localAction? role occurrence.sender occurrence.receiver
+        occurrence.label occurrence.schema) =
+    choreo.compiledOccurrences.occurrences.filterMap (fun occurrence =>
+      Choreo.localAction? role occurrence.sender occurrence.receiver
+        occurrence.label occurrence.schema)
+  rfl
 
 def Choreo.projectedActions (role : Nat) (choreo : Choreo) : List LocalAction :=
-  choreo.globalEvents.filterMap (·.action? role)
+  choreo.compiledOccurrences.occurrences.filterMap (·.action? role)
+
+@[simp]
+theorem projected_actions_match_global_events (role : Nat) (choreo : Choreo) :
+    choreo.projectedActions role = choreo.globalEvents.filterMap (·.action? role) := by
+  unfold Choreo.projectedActions Choreo.globalEvents Choreo.globalEventsFrom
+  simp only [List.filterMap_map]
+  rfl
 
 /-- The local descriptor event ID of one global occurrence is the number of
 earlier global occurrences visible to that role. -/
@@ -166,12 +544,6 @@ structure GlobalRoll where
   events : List Nat
   conflicts : List Nat
   deriving Repr, DecidableEq
-
-def Choreo.routeCount : Choreo -> Nat
-  | .send _ _ _ _ => 0
-  | .seq left right | .par left right => left.routeCount + right.routeCount
-  | .route _ left right => 1 + left.routeCount + right.routeCount
-  | .roll body => body.routeCount
 
 /-- Roles that can perform the first externally visible send in a branch. A
 dynamic or intrinsic route has one controller exactly when both arms expose
@@ -230,25 +602,6 @@ theorem Choreo.routeAuthorities_length (choreo : Choreo) :
   | roll body bodyIH =>
       simpa [Choreo.routeAuthorities, Choreo.routeCount] using bodyIH
 
-/-- Route memberships aligned one-for-one with `globalEvents`. The conflict
-base follows the same preorder as role projection, so global exclusion never
-depends on choosing one role's local descriptor as a second authority. -/
-def Choreo.globalEventConflictsFrom (conflictBase : Nat) : Choreo -> List (List ConflictArm)
-  | .send _ _ _ _ => [[]]
-  | .seq left right | .par left right =>
-      left.globalEventConflictsFrom conflictBase ++
-        right.globalEventConflictsFrom (conflictBase + left.routeCount)
-  | .route _ left right =>
-      (left.globalEventConflictsFrom (conflictBase + 1)).map
-          ({ conflict := conflictBase, arm := .left } :: ·) ++
-        (right.globalEventConflictsFrom
-          (conflictBase + 1 + left.routeCount)).map
-          ({ conflict := conflictBase, arm := .right } :: ·)
-  | .roll body => body.globalEventConflictsFrom conflictBase
-
-def Choreo.globalEventConflicts (choreo : Choreo) : List (List ConflictArm) :=
-  choreo.globalEventConflictsFrom 0
-
 theorem global_event_conflicts_from_length
     (choreo : Choreo) (conflictBase : Nat) :
     (choreo.globalEventConflictsFrom conflictBase).length =
@@ -257,16 +610,16 @@ theorem global_event_conflicts_from_length
   | send => rfl
   | seq left right leftIH rightIH =>
       simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents,
-        Choreo.globalEventsFrom, leftIH, rightIH]
+        Choreo.globalEventsFrom, Choreo.eventCount, leftIH, rightIH]
   | par left right leftIH rightIH =>
-      simpa [Choreo.globalEventConflictsFrom, Choreo.globalEvents,
-        Choreo.globalEventsFrom, leftIH, rightIH] using
-        global_events_from_length_eq right 0 left.laneSpan
+      simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, Choreo.eventCount, leftIH, rightIH]
   | route authority left right leftIH rightIH =>
       simp [Choreo.globalEventConflictsFrom, Choreo.globalEvents,
-        Choreo.globalEventsFrom, leftIH, rightIH]
+        Choreo.globalEventsFrom, Choreo.eventCount, leftIH, rightIH]
   | roll body bodyIH =>
-      simpa [Choreo.globalEventConflictsFrom, Choreo.globalEvents] using bodyIH conflictBase
+      simpa only [Choreo.globalEventConflictsFrom, global_events_length,
+        Choreo.eventCount] using bodyIH conflictBase
 
 theorem global_event_conflicts_length (choreo : Choreo) :
     choreo.globalEventConflicts.length = choreo.globalEvents.length :=
@@ -307,17 +660,16 @@ theorem global_event_parallel_arms_from_length
   | send => rfl
   | seq left right leftIH rightIH =>
       simp [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents,
-        Choreo.globalEventsFrom, leftIH, rightIH]
+        Choreo.globalEventsFrom, Choreo.eventCount, leftIH, rightIH]
   | par left right leftIH rightIH =>
-      simpa [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents,
-        Choreo.globalEventsFrom, leftIH, rightIH] using
-        global_events_from_length_eq right 0 left.laneSpan
+      simp [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents,
+        Choreo.globalEventsFrom, Choreo.eventCount, leftIH, rightIH]
   | route authority left right leftIH rightIH =>
       simp [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents,
-        Choreo.globalEventsFrom, leftIH, rightIH]
+        Choreo.globalEventsFrom, Choreo.eventCount, leftIH, rightIH]
   | roll body bodyIH =>
-      simpa [Choreo.globalEventParallelArmsFrom, Choreo.globalEvents] using
-        bodyIH parallelBase
+      simpa only [Choreo.globalEventParallelArmsFrom, global_events_length,
+        Choreo.eventCount] using bodyIH parallelBase
 
 theorem global_event_parallel_arms_length (choreo : Choreo) :
     choreo.globalEventParallelArms.length = choreo.globalEvents.length :=
@@ -368,6 +720,39 @@ theorem global_rolls_from_length
 theorem global_rolls_length (choreo : Choreo) :
     choreo.globalRolls.length = choreo.rollCount :=
   global_rolls_from_length choreo 0 0
+
+def Choreo.globalEventRollMembershipsFrom
+    (rollBase : Nat) : Choreo -> List (List Nat)
+  | .send _ _ _ _ => [[]]
+  | .seq left right | .par left right | .route _ left right =>
+      left.globalEventRollMembershipsFrom rollBase ++
+        right.globalEventRollMembershipsFrom (rollBase + left.rollCount)
+  | .roll body =>
+      (body.globalEventRollMembershipsFrom rollBase).map
+        (· ++ [rollBase + body.rollCount])
+
+def Choreo.globalEventRollMemberships (choreo : Choreo) : List (List Nat) :=
+  choreo.globalEventRollMembershipsFrom 0
+
+private theorem global_event_roll_memberships_from_length
+    (choreo : Choreo) (rollBase : Nat) :
+    (choreo.globalEventRollMembershipsFrom rollBase).length = choreo.eventCount := by
+  induction choreo generalizing rollBase with
+  | send => rfl
+  | seq left right leftIH rightIH =>
+      simp [Choreo.globalEventRollMembershipsFrom, Choreo.eventCount, leftIH, rightIH]
+  | par left right leftIH rightIH =>
+      simp [Choreo.globalEventRollMembershipsFrom, Choreo.eventCount, leftIH, rightIH]
+  | route authority left right leftIH rightIH =>
+      simp [Choreo.globalEventRollMembershipsFrom, Choreo.eventCount, leftIH, rightIH]
+  | roll body bodyIH =>
+      simp [Choreo.globalEventRollMembershipsFrom, Choreo.eventCount, bodyIH]
+
+@[simp]
+theorem global_event_roll_memberships_length (choreo : Choreo) :
+    choreo.globalEventRollMemberships.length = choreo.globalEvents.length := by
+  rw [global_events_length]
+  exact global_event_roll_memberships_from_length choreo 0
 
 theorem global_roll_conflicts_ignore_event_base
     (choreo : Choreo) (leftBase rightBase conflictBase : Nat) :
@@ -434,6 +819,7 @@ theorem projected_action_at_local_event_id
     (projected : event.action? role = some action) :
     (choreo.projectedActions role)[choreo.localEventId role globalId]? =
       some action := by
+  rw [projected_actions_match_global_events]
   exact filter_map_get_at_prefix_count (map? := (·.action? role)) eventAt projected
 
 theorem global_event_send_recv_duality

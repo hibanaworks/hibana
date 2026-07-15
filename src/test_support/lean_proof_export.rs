@@ -374,6 +374,14 @@ fn export_production_trace_for_lean() {
     type FullRoleDomainSteps = g::Roll<
         g::Resolve<g::Route<FullRoleDomainLeft, FullRoleDomainRight>, FULL_ROLE_DOMAIN_RESOLVER>,
     >;
+    type MatchingLeftZero = g::Send<0, 1, g::Msg<111, ()>>;
+    type MatchingLeftOne = g::Send<0, 2, g::Msg<112, ()>>;
+    type MatchingRightZero = g::Send<3, 4, g::Msg<113, ()>>;
+    type MatchingRightOne = g::Send<2, 3, g::Msg<114, ()>>;
+    type MatchingSteps = g::Par<
+        g::Par<MatchingLeftZero, MatchingLeftOne>,
+        g::Par<MatchingRightZero, MatchingRightOne>,
+    >;
 
     let program = g::seq(
         g::par(
@@ -450,6 +458,16 @@ fn export_production_trace_for_lean() {
     .resolve::<FULL_ROLE_DOMAIN_RESOLVER>()
     .roll();
     let cyclic_roll = cyclic_roll_certificate::program();
+    let lane_matching = g::par(
+        g::par(
+            g::send::<0, 1, g::Msg<111, ()>>(),
+            g::send::<0, 2, g::Msg<112, ()>>(),
+        ),
+        g::par(
+            g::send::<3, 4, g::Msg<113, ()>>(),
+            g::send::<2, 3, g::Msg<114, ()>>(),
+        ),
+    );
     let nested_rolled_role0 = record_trace::<0>(&nested_rolled, &[71, 72, 73, 71, 72, 73]);
     let resolved_left_role0 = record_production_steps::<0>(
         &resolved,
@@ -673,6 +691,11 @@ fn export_production_trace_for_lean() {
             "generatedFullRoleDomainChoreo",
             "generatedFullRoleDomainProjectionRole255",
         ),
+        projection_certificate_source::<3>(
+            &lane_matching,
+            "generatedLaneMatchingChoreo",
+            "generatedLaneMatchingProjectionRole3",
+        ),
     ];
     projection_sources.extend(cyclic_roll_certificate::projection_sources(&cyclic_roll));
     let projection_count = projection_sources.len();
@@ -818,6 +841,7 @@ fn export_production_trace_for_lean() {
          def generatedRejectingChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedCyclicRollChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedFullRoleDomainChoreo : Hibana.Choreo :=\n  {}\n\n\
+         def generatedLaneMatchingChoreo : Hibana.Choreo :=\n  {}\n\n\
          {}\n\
          {}\n\
          {}\n\
@@ -834,6 +858,7 @@ fn export_production_trace_for_lean() {
         RejectSteps::lean_source(),
         cyclic_roll_certificate::lean_source(),
         FullRoleDomainSteps::lean_source(),
+        MatchingSteps::lean_source(),
         traces,
         projections,
         progress,

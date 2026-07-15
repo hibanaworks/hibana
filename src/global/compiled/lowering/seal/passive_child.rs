@@ -1,15 +1,15 @@
 use crate::{
     g::ProgramSourceError,
-    global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarker},
+    global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarkerView},
 };
 
 pub(super) const fn validate_passive_child_projection_guarantees(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
 ) -> Option<ProgramSourceError> {
     let mut route_slot = 0usize;
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
-        let marker = scope_markers[marker_idx];
+        let marker = scope_markers.at(marker_idx);
         if first_enter_for_scope(scope_markers, marker_idx)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {
@@ -43,7 +43,7 @@ pub(super) const fn validate_passive_child_projection_guarantees(
 }
 
 const fn validate_passive_arm_child_projection(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
     route: ScopeId,
     route_slot: usize,
     arm: u8,
@@ -66,14 +66,14 @@ const fn validate_passive_arm_child_projection(
     let Some(child_slot) = route_scope_slot_for_scope(scope_markers, child) else {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     };
-    if child_slot <= route_slot || child_slot - route_slot > u8::MAX as usize {
+    if child_slot <= route_slot || child_slot >= u16::MAX as usize {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     }
     None
 }
 
 const fn passive_child_route_scope(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
     route: ScopeId,
     arm: u8,
     arm_start: usize,
@@ -83,11 +83,11 @@ const fn passive_child_route_scope(
     else {
         return None;
     };
-    Some(scope_markers[idx].scope_id)
+    Some(scope_markers.at(idx).scope_id)
 }
 
 const fn passive_child_route_enter_index(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
     route: ScopeId,
     arm: u8,
     arm_start: usize,
@@ -100,7 +100,7 @@ const fn passive_child_route_enter_index(
     let mut child_span = 0usize;
     let mut idx = 0usize;
     while idx < scope_markers.len() {
-        let marker = scope_markers[idx];
+        let marker = scope_markers.at(idx);
         if matches!(marker.event, ScopeEvent::Enter)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(route)
@@ -131,7 +131,7 @@ const fn passive_child_route_enter_index(
 }
 
 const fn nearest_route_parent_for_scope(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
     scope: ScopeId,
 ) -> Option<(ScopeId, u8)> {
     let Some(start) = scope_first_enter_offset(scope_markers, scope) else {
@@ -145,7 +145,7 @@ const fn nearest_route_parent_for_scope(
     let mut best_span = usize::MAX;
     let mut idx = 0usize;
     while idx < scope_markers.len() {
-        let marker = scope_markers[idx];
+        let marker = scope_markers.at(idx);
         if first_enter_for_scope(scope_markers, idx)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(scope)
@@ -178,11 +178,11 @@ const fn nearest_route_parent_for_scope(
     }
 }
 
-const fn scope_full_end(scope_markers: &[ScopeMarker], scope: ScopeId) -> Option<usize> {
+const fn scope_full_end(scope_markers: ScopeMarkerView<'_>, scope: ScopeId) -> Option<usize> {
     let Some(enter_idx) = scope_first_enter_index(scope_markers, scope) else {
         return None;
     };
-    let marker = scope_markers[enter_idx];
+    let marker = scope_markers.at(enter_idx);
     if matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
         let (_, _, left_end, _, _, right_end) = route_arm_ranges(scope_markers, scope);
         Some(if left_end > right_end {
@@ -195,17 +195,23 @@ const fn scope_full_end(scope_markers: &[ScopeMarker], scope: ScopeId) -> Option
     }
 }
 
-const fn scope_first_enter_offset(scope_markers: &[ScopeMarker], scope: ScopeId) -> Option<usize> {
+const fn scope_first_enter_offset(
+    scope_markers: ScopeMarkerView<'_>,
+    scope: ScopeId,
+) -> Option<usize> {
     let Some(idx) = scope_first_enter_index(scope_markers, scope) else {
         return None;
     };
-    Some(scope_markers[idx].offset())
+    Some(scope_markers.at(idx).offset())
 }
 
-const fn scope_first_enter_index(scope_markers: &[ScopeMarker], scope: ScopeId) -> Option<usize> {
+const fn scope_first_enter_index(
+    scope_markers: ScopeMarkerView<'_>,
+    scope: ScopeId,
+) -> Option<usize> {
     let mut idx = 0usize;
     while idx < scope_markers.len() {
-        let marker = scope_markers[idx];
+        let marker = scope_markers.at(idx);
         if matches!(marker.event, ScopeEvent::Enter) && marker.scope_id.same(scope) {
             return Some(idx);
         }
@@ -215,30 +221,26 @@ const fn scope_first_enter_index(scope_markers: &[ScopeMarker], scope: ScopeId) 
 }
 
 const fn scope_segment_end(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
     enter_idx: usize,
     segment_limit: usize,
 ) -> usize {
-    let marker = scope_markers[enter_idx];
-    let mut scan = enter_idx + 1;
-    while scan < scope_markers.len() {
-        let candidate = scope_markers[scan];
-        if matches!(candidate.event, ScopeEvent::Exit) && candidate.scope_id.same(marker.scope_id) {
-            return candidate.offset();
-        }
-        scan += 1;
+    let marker = scope_markers.at(enter_idx);
+    let end = marker.segment_end();
+    if end <= marker.offset() || end > segment_limit {
+        crate::invariant();
     }
-    segment_limit
+    end
 }
 
 const fn route_scope_slot_for_scope(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
     route: ScopeId,
 ) -> Option<usize> {
     let mut slot = 0usize;
     let mut idx = 0usize;
     while idx < scope_markers.len() {
-        let marker = scope_markers[idx];
+        let marker = scope_markers.at(idx);
         if first_enter_for_scope(scope_markers, idx)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {
@@ -252,14 +254,14 @@ const fn route_scope_slot_for_scope(
     None
 }
 
-const fn first_enter_for_scope(scope_markers: &[ScopeMarker], marker_idx: usize) -> bool {
-    let marker = scope_markers[marker_idx];
+const fn first_enter_for_scope(scope_markers: ScopeMarkerView<'_>, marker_idx: usize) -> bool {
+    let marker = scope_markers.at(marker_idx);
     if !matches!(marker.event, ScopeEvent::Enter) {
         return false;
     }
     let mut idx = 0usize;
     while idx < marker_idx {
-        let candidate = scope_markers[idx];
+        let candidate = scope_markers.at(idx);
         if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(marker.scope_id)
         {
             return false;
@@ -270,7 +272,7 @@ const fn first_enter_for_scope(scope_markers: &[ScopeMarker], marker_idx: usize)
 }
 
 const fn route_arm_ranges(
-    scope_markers: &[ScopeMarker],
+    scope_markers: ScopeMarkerView<'_>,
     scope_id: ScopeId,
 ) -> (usize, usize, usize, usize, usize, usize) {
     let mut enter_marker_indices = [usize::MAX; 2];
@@ -280,7 +282,7 @@ const fn route_arm_ranges(
     let mut exit_len = 0usize;
     let mut idx = 0usize;
     while idx < scope_markers.len() {
-        let marker = scope_markers[idx];
+        let marker = scope_markers.at(idx);
         if marker.scope_id.same(scope_id)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
         {

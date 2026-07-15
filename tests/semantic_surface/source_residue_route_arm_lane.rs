@@ -47,7 +47,7 @@ fn compact_bucket_backing_stays_byte_only_and_program_ref_shared() {
     let program_blob = read("src/global/compiled/images/image/blob_storage.rs");
     let role_types = read("src/global/role_program/image_types.rs");
     let role_projection = read("src/g/role_projection.rs");
-    let per_role_program_ref = "RoleProjection::<ROLE, Steps>::PROGRAM_REF";
+    let per_role_program_ref = "RoleProjection::<ROLE, Steps, CAPACITY>::PROGRAM_REF";
 
     let program_bytes = program_blob
         .split("pub(crate) struct ProgramImageBytes<const N: usize> {")
@@ -90,9 +90,10 @@ fn compact_bucket_backing_stays_byte_only_and_program_ref_shared() {
     );
 
     assert!(
-        role_projection.contains("impl<Steps> ProgramProjection<Steps>")
+        role_projection
+            .contains("impl<Steps, const CAPACITY: usize> ProgramProjection<Steps, CAPACITY>")
             && role_projection.contains("const PROGRAM_REF:")
-            && role_projection.contains("&ProgramProjection::<Steps>::PROGRAM_REF")
+            && role_projection.contains("&ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF")
             && !role_projection.contains(per_role_program_ref),
         "program-wide compact metadata must be owned once by ProgramProjection<Steps> and referenced by each role projection"
     );

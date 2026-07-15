@@ -135,16 +135,42 @@ example :
       (.route .intrinsic (.send 0 1 1 0) (.send 0 1 2 0)) = true := by
   native_decide
 
+/-- Source is part of inbound identity, so unrelated senders do not consume
+each other's frame-color domain. -/
+private def sourceAwareRouteColoring : Choreo :=
+  .route .intrinsic (.send 0 2 1 0) (.send 1 2 2 0)
+
+example :
+    (sourceAwareRouteColoring.compiledOccurrences.occurrences.map
+      CompiledOccurrence.frameLabel) = [0, 0] := by
+  native_decide
+
+private def nestedRollFrameColoring : Choreo :=
+  .roll (.route .intrinsic
+    (.send 0 1 10 0)
+    (.seq (.send 0 1 11 0)
+      (.route .intrinsic (.send 0 1 12 0) (.send 0 1 13 0))))
+
+/-- Elastic reentry can expose every distinct route path of one inbound key;
+the canonical compiler assigns those paths exact, distinct frame colors. -/
+example :
+    (nestedRollFrameColoring.compiledOccurrences.occurrences.map
+      CompiledOccurrence.frameLabel) = [0, 1, 2, 3] := by
+  native_decide
+
+example : nestedRollFrameColoring.checkInboundOccurrenceColoring = true := by
+  native_decide
+
 private def repeatedInboundEvidence : Nat → Choreo
   | 0 => .send 0 1 1 0
   | count + 1 => .seq (repeatedInboundEvidence count) (.send 0 1 1 0)
 
 example :
-    (repeatedInboundEvidence 255).checkInboundOccurrenceIdentity = true := by
+    (repeatedInboundEvidence 255).checkInboundOccurrenceColoring = true := by
   native_decide
 
 example :
-    (repeatedInboundEvidence 256).checkInboundOccurrenceIdentity = false := by
+    (repeatedInboundEvidence 256).checkInboundOccurrenceColoring = true := by
   native_decide
 
 end Hibana

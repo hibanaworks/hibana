@@ -84,9 +84,12 @@ The kernel-checked boundary covers:
   `(session, generation, lane, sender, receiver)` channel, channel ownership is
   unique, and every queued raw frame carries only that channel, its affine
   sequence, and a byte-bounded frame label. A fail-closed descriptor admission
-  checker maps `(source, target, lane, frame-label)` to one global occurrence;
-  evidence injectivity proves that the same header cannot name two events, and
-  only then reconstructs logical label, schema, epoch, and global event ID;
+  checker filters the current inbound frontier by
+  `(source, target, lane, frame-label)` and accepts exactly one candidate.
+  Ordered occurrences on one route path may reuse a frame label. Distinct paths
+  sharing an elastic roll, route alternatives, and parallel frontiers are proved
+  to have different evidence before admission reconstructs logical label,
+  schema, epoch, and global event ID;
 - history-independent observation admission: carrier-private generation,
   sequence, and arrival history cannot change the descriptor occurrence selected
   by one fixed header observation. This exact local admission theorem has no FIFO
@@ -141,10 +144,12 @@ The kernel-checked boundary covers:
   Empty-versus-visible observer paths are rejected because absence is not
   asynchronous branch evidence, and roll reentry never substitutes for route
   authority.
-  Canonical `(source, target, lane, frame-label)` evidence is complete,
-  byte-bounded, and injective before an inbound global occurrence ID may be
-  used as its abstract name; every verified role descriptor carries the same
-  canonical frame-label column.
+  Canonical `(source, target, lane, frame-label)` evidence is complete and
+  byte-bounded. The compiler colors exact route paths independently for each
+  complete inbound key inside elastic rolls; ordered events on one path retain
+  color reuse. The current-frontier checker rejects zero or multiple matches
+  before an inbound global occurrence ID may be used as its abstract name.
+  Every verified role descriptor carries the same canonical frame-label column.
   Per-role state learns intrinsic route selection only from an exact queued
   frame carrying that role's event identity and conflict membership; there is
   no arbitrary shared route-choice operation. Each operation is checked
@@ -175,7 +180,7 @@ The kernel-checked boundary covers:
   accepted verified protocol artifact simultaneously supplies exact all-role
   descriptor refinement including route participant lists, reachable-state subject
   reduction and session fidelity, separate global and distributed semantic
-  unstuckness certificates, injective transport
+  unstuckness certificates, deterministic current-frontier transport
   admission, FIFO-or-causal `.roll` reentry, exact intersection of selected and
   locally attached participants, a unique dynamic-route controller, descriptor-
   admitted inbound choice knowledge for every other branch-sensitive role,
@@ -268,16 +273,17 @@ cursor-refinement result. The endpoint runtime additionally decides its mediated
 exactly: a request is accepted iff that descriptor operation can commit, and
 every other request is rejected. This is not completeness for arbitrary
 black-box processes. The generated
-corpus contains 14 traces with 66 frames, nineteen exact-byte role projection
+corpus contains 14 traces with 66 frames, twenty-two exact-byte role projection
 certificates, four focused local progress closures, eight all-role
 projectability closures, eight distributed progress closures, and eight
 verified protocol artifacts. It exercises
 all roles of every generated choreography, both
 intrinsic route arms, nonzero `u32`/`i32` schema separation, send/receive
-projections, nested and repeated roll
+projections, an augmenting-path lane reassignment that first-fit rejects,
+nested and repeated roll
 restart, resolved left/right arms, nested resolver sites, alternating resolved
 roll reentry, resolver rejection, and a three-role cyclic sender handoff across
-alternating roll arms. A separate production runtime export checks a five-region
+alternating roll arms. A separate production runtime export checks a four-region
 live slab, poison retirement, lease-generation exhaustion, and four
 allocation-failure atomicity certificates.
 
@@ -285,9 +291,10 @@ The static projectability boundary also matches production's single receive
 FIFO per `(role, lane)`. A sender change is accepted only when the sender is
 unchanged, the occurrences belong to opposite arms of one route, or a finite
 send/receive causal closure proves that the earlier receiver precedes the later
-send. Canonical parallel-arm intervals are proved physically lane-disjoint, and
-their memberships prevent list order across concurrent arms from masquerading
-as local order. Route-local traffic can contribute to a causal closure only when
+send. Parallel-arm lanes are recolored only where endpoint-role sets conflict;
+disjoint endpoint sets may reuse one physical lane. Arm membership prevents list
+order across concurrent arms from masquerading as local order. Route-local
+traffic can contribute to a causal closure only when
 one endpoint fixes that arm, so an unrelated branch cannot silently authorize a
 later sender. The production const checker and the Lean checker use the same
 three cases. Every roll body is additionally checked through one explicit
@@ -298,7 +305,7 @@ adds no runtime queues, endpoint types, descriptor rows, or wire fields.
 
 This is not a source-to-source proof of arbitrary downstream Rust. The general
 byte-decoder and transition theorems are quantified over accepted descriptor
-images; the twenty-one generated role images are production witnesses used by the
+images; the twenty-two generated role images are production witnesses used by the
 gate and are grouped into eight complete protocol artifacts.
 Every generated exact image also carries rejecting mutations for its first
 global message contract, local action lane, resident metadata and lane bitmap,

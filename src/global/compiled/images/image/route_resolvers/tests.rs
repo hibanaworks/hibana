@@ -67,10 +67,8 @@ static NON_ROUTE_SCOPE: [u8; 10] = encoded_descriptor(
     encoded_row(ScopeId::roll_scope(0).raw(), 7, 0, 0, 1),
     [0, 0],
 );
-static ROUTE_ORDINAL_OUT_OF_RANGE: [u8; 10] = encoded_descriptor(
-    encoded_row(crate::eff::meta::MAX_EFF_NODES as u16, 7, 0, 0, 1),
-    [0, 0],
-);
+static ROUTE_ORDINAL_OUT_OF_RANGE: [u8; 10] =
+    encoded_descriptor(encoded_row(ScopeId::LOCAL_CAPACITY, 7, 0, 0, 1), [0, 0]);
 static EMPTY_RIGHT_PARTICIPANTS: [u8; 10] = encoded_descriptor(encoded_row(0, 7, 0, 0, 2), [0, 1]);
 static ORPHAN_PARTICIPANT_PREFIX: [u8; 11] =
     encoded_descriptor(encoded_row(0, 7, 0, 1, 1), [0, 0, 0]);
@@ -113,10 +111,7 @@ fn compiled_program_resolver_decoder_rejects_invalid_ranges_and_scopes() {
     assert!(RouteResolverRow::decode(0, INTRINSIC_ROUTE_RESOLVER_ID, 0, 0, 0, 2, 2).is_some());
     assert!(RouteResolverRow::decode(u16::MAX, 0, 0, 0, 0, 2, 2).is_none());
     assert!(RouteResolverRow::decode(ScopeId::roll_scope(0).raw(), 0, 0, 0, 0, 2, 2).is_none());
-    assert!(
-        RouteResolverRow::decode(crate::eff::meta::MAX_EFF_NODES as u16, 0, 0, 0, 0, 2, 2,)
-            .is_none()
-    );
+    assert!(RouteResolverRow::decode(ScopeId::LOCAL_CAPACITY, 0, 0, 0, 0, 2, 2,).is_none());
     assert!(RouteResolverRow::decode(0, 0, 0, u16::MAX, 0, u16::MAX, u16::MAX as usize).is_none());
     assert!(RouteResolverRow::decode(0, 0, 0, 0, 0, 1, 1).is_none());
     assert!(RouteResolverRow::decode(0, 0, 0, 0, 0, 258, 258).is_none());

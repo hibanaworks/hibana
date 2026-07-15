@@ -9,7 +9,6 @@ pub(crate) mod compiled;
 pub(crate) mod const_dsl;
 /// Descriptor-backed local affine event program rows.
 pub(crate) mod event_program;
-pub(crate) mod frame_labels;
 mod message;
 /// Program combinators and route builders.
 pub(crate) mod program;

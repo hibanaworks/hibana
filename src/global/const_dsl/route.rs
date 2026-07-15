@@ -9,7 +9,6 @@ pub(crate) struct DynamicRouteResolver {
 impl DynamicRouteResolver {
     pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
         if !matches!(scope.kind(), Some(ScopeKind::Route))
-            || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
             || resolver_id == INTRINSIC_ROUTE_RESOLVER_ID
         {
             crate::invariant();
@@ -45,13 +44,6 @@ pub(crate) struct RouteResolverMarker {
 }
 
 impl RouteResolverMarker {
-    pub(crate) const fn empty() -> Self {
-        Self {
-            scope: ScopeId::none(),
-            resolver_id: INTRINSIC_ROUTE_RESOLVER_ID,
-        }
-    }
-
     pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
         let _ = DynamicRouteResolver::new(scope, resolver_id);
         Self { scope, resolver_id }

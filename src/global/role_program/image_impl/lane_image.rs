@@ -9,87 +9,21 @@ use super::{
     },
     route_arm_row_index,
 };
-use crate::global::const_dsl::{ScopeId, ScopeKind};
+use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{
     LocalConflict, LocalDependency, PackedEventConflict, PackedLocalDependency,
+};
+
+mod decode;
+pub(super) use decode::{
+    decode_resident_local_step_lane, decode_resident_roll_scope,
+    decode_resident_route_arm_lane_step, decode_resident_route_scope, route_commit_decisions_match,
 };
 
 #[cold]
 #[inline(never)]
 pub(super) const fn invalid_resident_descriptor() -> ! {
     crate::invariant()
-}
-
-pub(super) const fn decode_resident_route_scope(raw: u16) -> Option<ScopeId> {
-    let scope = match ScopeId::decode_raw(raw) {
-        Some(scope) => scope,
-        None => return None,
-    };
-    if !matches!(scope.kind(), Some(ScopeKind::Route))
-        || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
-    {
-        return None;
-    }
-    Some(scope)
-}
-
-pub(super) const fn decode_resident_roll_scope(raw_ordinal: u16) -> Option<ScopeId> {
-    if raw_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
-        return None;
-    }
-    Some(ScopeId::roll_scope(raw_ordinal))
-}
-
-pub(super) const fn decode_resident_local_step_lane(
-    raw: u8,
-    logical_lane_count: usize,
-) -> Option<u8> {
-    if logical_lane_count == 0
-        || logical_lane_count > super::super::LANE_DOMAIN_SIZE
-        || raw as usize >= logical_lane_count
-    {
-        return None;
-    }
-    Some(raw)
-}
-
-#[inline(always)]
-pub(super) const fn route_commit_decisions_match(
-    left: PackedEventConflict,
-    right: PackedEventConflict,
-) -> bool {
-    match (left.to_conflict(), right.to_conflict()) {
-        (
-            Some(LocalConflict::RouteArm {
-                scope: left_scope,
-                arm: left_arm,
-            }),
-            Some(LocalConflict::RouteArm {
-                scope: right_scope,
-                arm: right_arm,
-            }),
-        ) => left_scope.same(right_scope) && left_arm == right_arm,
-        _ => false,
-    }
-}
-
-pub(super) const fn decode_resident_route_arm_lane_step(
-    row: RouteArmLaneStepRow,
-    logical_lane_count: usize,
-    event_row: PackedLaneRange,
-) -> Option<RouteArmLaneStepRow> {
-    if logical_lane_count == 0
-        || logical_lane_count > super::super::LANE_DOMAIN_SIZE
-        || row.lane() as usize >= logical_lane_count
-        || event_row.is_absent_or_zero_len()
-        || event_row.end() > crate::eff::meta::MAX_EFF_NODES
-        || (row.first_step() as usize) < event_row.start()
-        || row.first_step() > row.last_step()
-        || row.last_step() as usize >= event_row.end()
-    {
-        return None;
-    }
-    Some(row)
 }
 
 impl<'a> RoleLaneImage<'a> {
@@ -420,7 +354,7 @@ impl<'a> RoleLaneImage<'a> {
     }
 
     #[inline]
-    const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
+    const fn packed_route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
         match self.column_offset(
             self.columns.route_arms,
             row_idx,
@@ -434,18 +368,30 @@ impl<'a> RoleLaneImage<'a> {
                 if row.is_empty() {
                     invalid_resident_descriptor();
                 }
-                let event_row = row.event_row();
-                let lane_step_row = row.lane_step_row();
-                if event_row.end() > self.columns.events.len as usize
-                    || lane_step_row.is_empty()
-                    || lane_step_row.end() > self.columns.route_arm_lane_step_rows.len as usize
-                {
-                    invalid_resident_descriptor();
-                }
                 row
             }
             None => invalid_resident_descriptor(),
         }
+    }
+
+    #[inline]
+    const fn route_arm_row(&self, row_idx: usize) -> PackedRouteArmRow {
+        let row = self.packed_route_arm_row(row_idx);
+        let event_row = row.event_row();
+        let mut lane_step_start = 0usize;
+        let mut idx = 0usize;
+        while idx < row_idx {
+            lane_step_start += self.packed_route_arm_row(idx).lane_step_len();
+            idx += 1;
+        }
+        let lane_step_end = lane_step_start + row.lane_step_len();
+        if event_row.end() > self.columns.events.len as usize
+            || (event_row.is_zero_len() != (row.lane_step_len() == 0))
+            || lane_step_end > self.columns.route_arm_lane_step_rows.len as usize
+        {
+            invalid_resident_descriptor();
+        }
+        row
     }
 
     #[inline(always)]
@@ -470,11 +416,12 @@ impl<'a> RoleLaneImage<'a> {
         let Some(parent_scope) = self.route_scope_by_slot(slot) else {
             invalid_resident_descriptor();
         };
-        match self.route_arm_row(row_idx).child_slot_delta() {
-            Some(delta) => {
-                let Some(child_slot) = slot.checked_add(delta as usize) else {
+        match self.route_arm_row(row_idx).child_slot() {
+            Some(child_slot) => {
+                let child_slot = child_slot as usize;
+                if child_slot <= slot {
                     invalid_resident_descriptor();
-                };
+                }
                 let Some(scope) = self.route_scope_by_slot(child_slot) else {
                     invalid_resident_descriptor();
                 };
@@ -600,7 +547,7 @@ impl<'a> RoleLaneImage<'a> {
             return None;
         }
         let arm_row = self.route_arm_row(arm_row_idx);
-        let range = arm_row.lane_step_row();
+        let range = self.route_arm_lane_step_range(arm_row_idx);
         let event_row = arm_row.event_row();
         if range.end() > self.columns.route_arm_lane_step_rows.len as usize {
             invalid_resident_descriptor();
@@ -615,6 +562,21 @@ impl<'a> RoleLaneImage<'a> {
             pos += 1;
         }
         None
+    }
+
+    const fn route_arm_lane_step_range(&self, row_idx: usize) -> PackedLaneRange {
+        let mut start = 0usize;
+        let mut idx = 0usize;
+        while idx < row_idx {
+            start += self.packed_route_arm_row(idx).lane_step_len();
+            idx += 1;
+        }
+        let len = self.packed_route_arm_row(row_idx).lane_step_len();
+        let row = PackedLaneRange::new(start, len);
+        if row.end() > self.columns.route_arm_lane_step_rows.len as usize {
+            invalid_resident_descriptor();
+        }
+        row
     }
 
     #[inline(always)]

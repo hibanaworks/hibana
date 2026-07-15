@@ -6,6 +6,3 @@
 
 /// Exclusive upper bound for the complete wire lane domain.
 pub const LANE_DOMAIN_SIZE: u16 = u8::MAX as u16 + 1;
-
-/// Number of tap events retained in the runtime evidence ring.
-pub const TAP_EVENTS: usize = 32;

@@ -32,13 +32,41 @@ def productionRoleRouteArmLaneStepStride : Nat := 5
 
 def productionRoleRollScopeStride : Nat := 6
 
-def productionMaxEffNodes : Nat := 3072
+def productionEventIdentityCapacity : Nat := 65535
+
+def productionDescriptorByteCapacity : Nat := 65535
+
+def productionAtomOnlyEventCapacity : Nat :=
+  productionDescriptorByteCapacity / productionProgramAtomStride
+
+theorem production_atom_only_event_capacity_exact :
+    productionAtomOnlyEventCapacity = 5957 := by
+  decide
+
+def productionScopeCapacity : Nat := 8192
+
+def productionLocalStepCapacity : Nat := 65536
+
+def productionRoleEventOnlyCapacity : Nat :=
+  productionDescriptorByteCapacity / productionRoleEventStride
+
+theorem production_role_event_only_capacity_exact :
+    productionRoleEventOnlyCapacity = 6553 := by
+  decide
+
+theorem descriptor_bytes_dominate_local_step_field :
+    productionDescriptorByteCapacity < productionLocalStepCapacity := by
+  decide
+
+theorem role_event_bytes_dominate_local_step_field :
+    productionRoleEventOnlyCapacity < productionLocalStepCapacity := by
+  decide
 
 def packedU16Absent : Nat := 65535
 
 def packedU32Absent : Nat := 4294967295
 
-def packedConflictReentryWithoutParent : Nat := 24576
+def packedConflictReentryWithoutParent : Nat := 49152
 
 structure DecodedProgramAtom where
   effIndex : Nat
@@ -63,6 +91,12 @@ structure ProgramAtomBody where
   schema : Nat
   origin : Nat
   lane : Nat
+  frameLabel : Nat
+
+structure CanonicalControlSource where
+  resolvers : List DecodedRouteResolver
+  markers : List DecodedScopeMarker
+  scopeBudget : Nat
 
 structure CanonicalProgramSource where
   atoms : List ProgramAtomBody
@@ -71,9 +105,16 @@ structure CanonicalProgramSource where
   scopeBudget : Nat
   laneSpan : Nat
 
-def ProgramAtomBody.withLaneOffset
-    (atom : ProgramAtomBody) (offset : Nat) : ProgramAtomBody :=
-  { atom with lane := atom.lane + offset }
+def CompiledOccurrence.programAtomBody
+    (occurrence : CompiledOccurrence) : ProgramAtomBody := {
+  sender := occurrence.sender
+  receiver := occurrence.receiver
+  label := occurrence.label
+  schema := occurrence.schema
+  origin := 0
+  lane := occurrence.lane
+  frameLabel := occurrence.frameLabel
+}
 
 def DecodedScopeMarker.rebase
     (marker : DecodedScopeMarker)
@@ -108,86 +149,69 @@ def insertScopeMarkersAfterEquals
     (markers additions : List DecodedScopeMarker) : List DecodedScopeMarker :=
   additions.foldl (fun current marker => insertScopeMarkerAfterEquals marker current) markers
 
-def rebaseProgramSource
-    (source : CanonicalProgramSource)
-    (atomOffset laneOffset scopeOffset : Nat)
-    (markRouteEnters : Bool) : CanonicalProgramSource := {
-  atoms := source.atoms.map (·.withLaneOffset laneOffset)
+def rebaseControlSource
+    (source : CanonicalControlSource)
+    (atomOffset scopeOffset : Nat)
+    (markRouteEnters : Bool) : CanonicalControlSource := {
   resolvers := source.resolvers.map (·.rebase scopeOffset)
   markers := source.markers.map (·.rebase atomOffset scopeOffset markRouteEnters)
   scopeBudget := source.scopeBudget
-  laneSpan := source.laneSpan
 }
 
-@[simp]
-theorem rebase_program_source_lane_span
-    (source : CanonicalProgramSource)
-    (atomOffset laneOffset scopeOffset : Nat)
-    (markRouteEnters : Bool) :
-    (rebaseProgramSource source atomOffset laneOffset scopeOffset markRouteEnters).laneSpan =
-      source.laneSpan := rfl
-
-def canonicalProgramSource : Choreo -> CanonicalProgramSource
-  | .send sender receiver label schema => {
-      atoms := [{ sender, receiver, label, schema, origin := 0, lane := 0 }]
+def canonicalControlSource : Choreo -> CanonicalControlSource
+  | .send _ _ _ _ => {
       resolvers := []
       markers := []
       scopeBudget := 0
-      laneSpan := 1
     }
   | .seq left right =>
-      let leftSource := canonicalProgramSource left
-      let rightSource := rebaseProgramSource
-        (canonicalProgramSource right)
-        leftSource.atoms.length 0 leftSource.scopeBudget false
+      let leftSource := canonicalControlSource left
+      let rightSource := rebaseControlSource
+        (canonicalControlSource right)
+        left.eventCount leftSource.scopeBudget false
       {
-        atoms := leftSource.atoms ++ rightSource.atoms
         resolvers := leftSource.resolvers ++ rightSource.resolvers
         markers := insertScopeMarkersAfterEquals leftSource.markers rightSource.markers
         scopeBudget := leftSource.scopeBudget + rightSource.scopeBudget
-        laneSpan := max leftSource.laneSpan rightSource.laneSpan
       }
   | .par left right =>
-      let leftOriginal := canonicalProgramSource left
-      let rightOriginal := canonicalProgramSource right
-      let leftSource := rebaseProgramSource leftOriginal 0 0 1 false
-      let rightSource := rebaseProgramSource rightOriginal
-        leftSource.atoms.length leftSource.laneSpan (1 + leftOriginal.scopeBudget) false
+      let leftOriginal := canonicalControlSource left
+      let rightOriginal := canonicalControlSource right
+      let leftSource := rebaseControlSource leftOriginal 0 1 false
+      let rightSource := rebaseControlSource rightOriginal
+        left.eventCount (1 + leftOriginal.scopeBudget) false
       let nestedMarkers := insertScopeMarkersAfterEquals leftSource.markers rightSource.markers
       let entered := insertScopeMarkerBeforeEquals
         { offset := 0, scope := 16384, tag := 0 } nestedMarkers
       let split := insertScopeMarkerAfterEquals
-        { offset := leftSource.atoms.length, scope := 16384, tag := 1 } entered
+        { offset := left.eventCount, scope := 16384, tag := 1 } entered
       let exited := insertScopeMarkerAfterEquals
-        { offset := leftSource.atoms.length + rightSource.atoms.length,
+        { offset := left.eventCount + right.eventCount,
           scope := 16384, tag := 2 } split
       {
-        atoms := leftSource.atoms ++ rightSource.atoms
         resolvers := leftSource.resolvers ++ rightSource.resolvers
         markers := exited
         scopeBudget := 1 + leftOriginal.scopeBudget + rightOriginal.scopeBudget
-        laneSpan := leftSource.laneSpan + rightSource.laneSpan
       }
   | .route authority left right =>
-      let leftOriginal := canonicalProgramSource left
-      let rightOriginal := canonicalProgramSource right
-      let leftSource := rebaseProgramSource leftOriginal 0 0 1 false
-      let rightSource := rebaseProgramSource rightOriginal
-        leftSource.atoms.length 0 (1 + leftOriginal.scopeBudget) false
+      let leftOriginal := canonicalControlSource left
+      let rightOriginal := canonicalControlSource right
+      let leftSource := rebaseControlSource leftOriginal 0 1 false
+      let rightSource := rebaseControlSource rightOriginal
+        left.eventCount (1 + leftOriginal.scopeBudget) false
       let enteredLeft := insertScopeMarkerBeforeEquals
         { offset := 0, scope := 0, tag := 0 } leftSource.markers
       let exitedLeft := insertScopeMarkerAfterEquals
-        { offset := leftSource.atoms.length, scope := 0, tag := 2 } enteredLeft
+        { offset := left.eventCount, scope := 0, tag := 2 } enteredLeft
       let enteredRight := insertScopeMarkerAfterEquals
-        { offset := leftSource.atoms.length, scope := 0, tag := 0 } exitedLeft
+        { offset := left.eventCount, scope := 0, tag := 0 } exitedLeft
       let nestedMarkers := insertScopeMarkersAfterEquals enteredRight rightSource.markers
       let exitedRight := insertScopeMarkerAfterEquals
-        { offset := leftSource.atoms.length + rightSource.atoms.length,
+        { offset := left.eventCount + right.eventCount,
           scope := 0, tag := 2 } nestedMarkers
       let controller := uniqueController
         ((left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups)
       {
-        atoms := leftSource.atoms ++ rightSource.atoms
         resolvers := {
           scope := 0
           authority
@@ -198,20 +222,30 @@ def canonicalProgramSource : Choreo -> CanonicalProgramSource
           (leftSource.resolvers ++ rightSource.resolvers)
         markers := exitedRight
         scopeBudget := 1 + leftOriginal.scopeBudget + rightOriginal.scopeBudget
-        laneSpan := max leftSource.laneSpan rightSource.laneSpan
       }
   | .roll body =>
-      let original := canonicalProgramSource body
-      let source := rebaseProgramSource original 0 0 1 true
+      let original := canonicalControlSource body
+      let source := rebaseControlSource original 0 1 true
       let entered := insertScopeMarkerBeforeEquals
         { offset := 0, scope := 8192, tag := 0 } source.markers
       let exited := insertScopeMarkerAfterEquals
-        { offset := source.atoms.length, scope := 8192, tag := 2 } entered
+        { offset := body.eventCount, scope := 8192, tag := 2 } entered
       {
         source with
         markers := exited
         scopeBudget := 1 + original.scopeBudget
       }
+
+def canonicalProgramSource (choreo : Choreo) : CanonicalProgramSource :=
+  let control := canonicalControlSource choreo
+  let compiled := choreo.compiledOccurrences
+  {
+    atoms := compiled.occurrences.map CompiledOccurrence.programAtomBody
+    resolvers := control.resolvers
+    markers := control.markers
+    scopeBudget := control.scopeBudget
+    laneSpan := compiled.laneSpan
+  }
 
 def enumerateProgramAtoms : Nat -> List ProgramAtomBody -> List DecodedProgramAtom
   | _, [] => []
@@ -373,7 +407,7 @@ def RustDescriptorImage.decodeAtomRow?
   let schema ← readU32LE? image.programBytes (offset + 5)
   let origin ← readByte? image.programBytes (offset + 9)
   let lane ← readByte? image.programBytes (offset + 10)
-  if effIndex < productionMaxEffNodes ∧
+  if effIndex < productionEventIdentityCapacity ∧
       0 < image.roleCount ∧
       sender < image.roleCount ∧
       receiver < image.roleCount ∧
@@ -404,51 +438,21 @@ def ProgramAtomBody.globalEventFrom
   lane := atom.lane + laneBase
 }
 
-theorem rebase_program_source_global_events
-    (source : CanonicalProgramSource)
-    (atomOffset laneOffset scopeOffset laneBase : Nat)
-    (markRouteEnters : Bool) :
-    (rebaseProgramSource source atomOffset laneOffset scopeOffset markRouteEnters).atoms.map
-        (·.globalEventFrom laneBase) =
-      source.atoms.map (·.globalEventFrom (laneBase + laneOffset)) := by
-  simp [rebaseProgramSource, ProgramAtomBody.withLaneOffset,
-    ProgramAtomBody.globalEventFrom, List.map_map,
-    Nat.add_comm, Nat.add_left_comm]
-
 theorem canonical_program_source_lane_span (choreo : Choreo) :
-    (canonicalProgramSource choreo).laneSpan = choreo.laneSpan := by
-  induction choreo with
-  | send => rfl
-  | seq left right leftIH rightIH =>
-      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, leftIH, rightIH]
-  | par left right leftIH rightIH =>
-      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, leftIH, rightIH]
-  | route authority left right leftIH rightIH =>
-      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, leftIH, rightIH]
-  | roll body bodyIH =>
-      simp [canonicalProgramSource, rebaseProgramSource, Choreo.laneSpan, bodyIH]
+    (canonicalProgramSource choreo).laneSpan = choreo.laneSpan := rfl
+
+theorem canonical_program_source_frame_labels (choreo : Choreo) :
+    (canonicalProgramSource choreo).atoms.map ProgramAtomBody.frameLabel =
+      choreo.compiledOccurrences.occurrences.map CompiledOccurrence.frameLabel := by
+  simp [canonicalProgramSource, CompiledOccurrence.programAtomBody]
 
 theorem canonical_program_source_global_events_from
     (choreo : Choreo) (laneBase : Nat) :
     (canonicalProgramSource choreo).atoms.map (·.globalEventFrom laneBase) =
       choreo.globalEventsFrom laneBase := by
-  induction choreo generalizing laneBase with
-  | send =>
-      simp [canonicalProgramSource, Choreo.globalEventsFrom,
-        ProgramAtomBody.globalEventFrom]
-  | seq left right leftIH rightIH =>
-      simp [canonicalProgramSource, Choreo.globalEventsFrom,
-        rebase_program_source_global_events, leftIH, rightIH]
-  | par left right leftIH rightIH =>
-      simp [canonicalProgramSource, Choreo.globalEventsFrom,
-        rebase_program_source_global_events, leftIH, rightIH,
-        canonical_program_source_lane_span]
-  | route authority left right leftIH rightIH =>
-      simp [canonicalProgramSource, Choreo.globalEventsFrom,
-        rebase_program_source_global_events, leftIH, rightIH]
-  | roll body bodyIH =>
-      simp [canonicalProgramSource, Choreo.globalEventsFrom,
-        rebase_program_source_global_events, bodyIH]
+  simp [canonicalProgramSource, Choreo.globalEventsFrom,
+    CompiledOccurrence.programAtomBody, ProgramAtomBody.globalEventFrom,
+    CompiledOccurrence.globalEventFrom, List.map_map, Nat.add_comm]
 
 theorem enumerate_program_atoms_global_events
     (index : Nat) (atoms : List ProgramAtomBody) :
@@ -481,19 +485,14 @@ def Choreo.canonicalRoleEffIndices (choreo : Choreo) (role : Nat) : List Nat :=
   choreo.canonicalProgramAtoms.filterMap fun atom =>
     if (atom.localAction? role).isSome then some atom.effIndex else none
 
-def canonicalFrameLabel
-    (atoms : List DecodedProgramAtom) (index : Nat) (atom : DecodedProgramAtom) : Nat :=
-  (atoms.take index).filter (fun prior =>
-    prior.receiver = atom.receiver && prior.lane = atom.lane) |>.length
+def Choreo.canonicalFrameLabel (choreo : Choreo) (index : Nat) : Nat :=
+  ((canonicalProgramSource choreo).atoms[index]?).map ProgramAtomBody.frameLabel |>.getD 256
 
 def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
-  let atoms := choreo.canonicalProgramAtoms
-  (List.range atoms.length).filterMap fun index => do
-    let atom ← atoms[index]?
-    if (atom.localAction? role).isSome then
-      some (canonicalFrameLabel atoms index atom)
-    else
-      none
+  (canonicalProgramSource choreo).atoms.filterMap fun atom =>
+    if (Choreo.localAction? role atom.sender atom.receiver atom.label atom.schema).isSome then
+      some atom.frameLabel
+    else none
 
 structure ScopeSelection where
   scope : Nat
@@ -690,7 +689,7 @@ def canonicalRouteScopeConflict
   | none, false => packedU16Absent
   | none, true => packedConflictReentryWithoutParent
   | some arm, false => arm.scope * 2 + arm.arm
-  | some arm, true => arm.scope * 2 + arm.arm + 8192
+  | some arm, true => arm.scope * 2 + arm.arm + 16384
 
 def Choreo.canonicalRouteScopes (choreo : Choreo) : List Nat :=
   (canonicalProgramSource choreo).resolvers.map DecodedRouteResolver.scope
@@ -836,7 +835,7 @@ def RustDescriptorImage.decodeRouteResolverRow?
   let rightParticipants ← readByteRange?
     image.programBytes image.programRouteParticipantOffset
     participantMid participantEnd
-  if scope < productionMaxEffNodes ∧
+  if scope < productionScopeCapacity ∧
       controller < image.roleCount ∧
       validRouteParticipants leftParticipants controller image.roleCount ∧
       validRouteParticipants rightParticipants controller image.roleCount then
@@ -874,8 +873,8 @@ def RustDescriptorImage.decodeScopeMarkerRow?
   let scope ← readU16LE? image.programBytes (offset + 2)
   let tag ← readByte? image.programBytes (offset + 4)
   if atomOffset ≤ image.atomCount ∧
-      scope < 24576 ∧
-      scope % 8192 < productionMaxEffNodes ∧
+      scope < 3 * productionScopeCapacity ∧
+      scope % productionScopeCapacity < productionScopeCapacity ∧
       validScopeMarkerTag tag then
     pure { offset := atomOffset, scope, tag }
   else
@@ -906,8 +905,9 @@ def decodeRouteConflictReentry? (raw : Nat) : Option ReentryMode :=
     some .singlePass
   else if raw = packedConflictReentryWithoutParent then
     some .rolled
-  else if raw < 16384 ∧ (raw % 8192) / 2 < productionMaxEffNodes then
-    some (if raw / 8192 = 1 then .rolled else .singlePass)
+  else if raw < 32768 ∧
+      (raw % 16384) / 2 < productionScopeCapacity then
+    some (if raw / 16384 = 1 then .rolled else .singlePass)
   else
     none
 
@@ -923,30 +923,83 @@ def decodePackedLaneRange?
 def eventRange (start length : Nat) : List Nat :=
   (List.range length).map (start + ·)
 
+structure DecodedPackedRouteArm where
+  eventStart : Nat
+  eventLength : Nat
+  laneStepLength : Nat
+  childSlot : Nat
+  deriving Repr, DecidableEq
+
+def decodePackedRouteArm?
+    (eventRangeRaw laneStepLenAndChild eventCapacity : Nat) :
+    Option DecodedPackedRouteArm := do
+  let (eventStart, eventLength) ←
+    decodePackedLaneRange? eventRangeRaw eventCapacity
+  let childSlot := laneStepLenAndChild % 65536
+  let encodedLaneStepLength := (laneStepLenAndChild / 65536) % 256
+  let laneStepLength := if eventLength = 0 then 0 else encodedLaneStepLength + 1
+  if laneStepLenAndChild / 16777216 = 0 ∧
+      (eventLength = 0 → encodedLaneStepLength = 0) then
+    pure {
+      eventStart
+      eventLength
+      laneStepLength
+      childSlot
+    }
+  else
+    none
+
+theorem packed_route_arm_crosses_former_twelve_bit_boundary :
+    decodePackedRouteArm?
+      (4096 * 65536 + 1) 3 4097 =
+      some {
+        eventStart := 4096
+        eventLength := 1
+        laneStepLength := 1
+        childSlot := 3
+      } := by
+  decide
+
+theorem packed_route_arm_reaches_last_u16_event :
+    decodePackedRouteArm?
+      (65534 * 65536 + 1) 65535 65535 =
+      some {
+        eventStart := 65534
+        eventLength := 1
+        laneStepLength := 1
+        childSlot := 65535
+      } := by
+  decide
+
+theorem packed_route_arm_encodes_full_lane_domain :
+    decodePackedRouteArm? 256 (255 * 65536 + 65535) 256 =
+      some {
+        eventStart := 0
+        eventLength := 256
+        laneStepLength := 256
+        childSlot := 65535
+      } := by
+  decide
+
 def RustDescriptorImage.decodeRouteArmEvents?
     (image : RustDescriptorImage) (slot arm : Nat) : Option (List Nat) := do
   if slot < image.routeScopeCount ∧ arm < 2 then pure () else none
   let offset := image.roleRouteArmOffset +
     (slot * 2 + arm) * productionRoleRouteArmStride
-  let eventAndChild ← readU32LE? image.roleBytes offset
-  if eventAndChild ≠ packedU32Absent then pure () else none
-  let laneStepRaw ← readU32LE? image.roleBytes (offset + 4)
-  let _ ← decodePackedLaneRange? laneStepRaw image.routeArmLaneStepCount
-  let childDelta := eventAndChild / 16777216
-  if childDelta = 0 ∨ slot + childDelta < image.routeScopeCount then pure () else none
-  let start := (eventAndChild / 4096) % 4096
-  let length := eventAndChild % 4096
-  if start + length ≤ image.eventCount then
-    pure (eventRange start length)
-  else
-    none
+  let eventRangeRaw ← readU32LE? image.roleBytes offset
+  let laneStepLenAndChild ← readU32LE? image.roleBytes (offset + 4)
+  let decoded ← decodePackedRouteArm? eventRangeRaw laneStepLenAndChild image.eventCount
+  let childSlot := decoded.childSlot
+  if childSlot = 65535 ∨
+      (slot < childSlot ∧ childSlot < image.routeScopeCount) then pure () else none
+  pure (eventRange decoded.eventStart decoded.eventLength)
 
 def RustDescriptorImage.decodeRouteScope?
     (image : RustDescriptorImage) (slot : Nat) : Option Nat := do
   if slot < image.routeScopeCount then pure () else none
   let scope ← readU16LE? image.roleBytes
     (image.roleRouteScopeOffset + slot * productionRoleRouteScopeStride)
-  if scope < productionMaxEffNodes then some scope else none
+  if scope < productionScopeCapacity then some scope else none
 
 def RustDescriptorImage.decodeRoute?
     (image : RustDescriptorImage)
@@ -981,7 +1034,7 @@ def RustDescriptorImage.decodeRollRow?
   if slot < image.rollScopeCount then pure () else none
   let offset := image.roleRollScopeOffset + slot * productionRoleRollScopeStride
   let scope ← readU16LE? image.roleBytes offset
-  if scope < productionMaxEffNodes then pure () else none
+  if scope < productionScopeCapacity then pure () else none
   let eventRangeRaw ← readU32LE? image.roleBytes (offset + 2)
   let (start, length) ← decodePackedLaneRange? eventRangeRaw image.eventCount
   if 0 < length then pure { scope, eventStart := start, eventLength := length } else none

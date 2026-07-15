@@ -6,9 +6,7 @@
 use core::{ops::ControlFlow, task::Poll};
 
 use super::authority::{Arm, RouteArmToken, RouteResolveStep};
-use super::evidence::{
-    ScopeEvidence, ScopeFrameLabelMeta, ScopeFrameLabelScratch, ScopeReentryMeta,
-};
+use super::evidence::{ScopeEvidence, ScopeReentryMeta};
 use super::frontier::*;
 use super::frontier_state::FrontierState;
 use super::lane_port;
@@ -38,7 +36,7 @@ use crate::{
         types::{Lane, RendezvousId, SessionId},
     },
     transport::{
-        FrameLabelMask, Transport,
+        Transport,
         trace::TapFrameMeta,
         wire::{CodecError, Payload},
     },

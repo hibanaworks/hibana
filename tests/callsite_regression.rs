@@ -265,12 +265,16 @@ fn attach_and_resolver_errors_keep_debug_boundaries() {
                 .rendezvous(&mut slab[..2048], TestTransport::new())
                 .expect("rv");
             let sid = SessionId::new(441);
+            let endpoint = rv
+                .enter(sid, &origin_program)
+                .expect("first role lease must attach");
             let enter_result = rv.enter(sid, &origin_program);
             let enter_error = match enter_result {
-                Ok(_) => panic!("resource-constrained role enter must fail"),
+                Ok(_) => panic!("duplicate live session-role lease must fail"),
                 Err(error) => error,
             };
             assert_attach_debug_boundary(enter_error, "enter");
+            drop(endpoint);
 
             let resolver =
                 ResolverRef::<77>::decision_state(&UNIT_RESOLVER_STATE, reject_from_unit);

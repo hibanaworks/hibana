@@ -47,14 +47,24 @@ check_required \
   src/g.rs
 
 check_required \
-  "if let Some(error) = Self::SOURCE.error() {" \
-  "ProgramProjection validation must reject invalid choreography terms before role image construction" \
+  "const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();" \
+  "ProgramProjection must lower and validate source shape before role image construction" \
   src/g.rs
 
 check_required \
-  "const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList =" \
+  "pub(super) const SOURCE_EFF_LIST:" \
   "ProgramProjection must remain the only raw EffList owner for resident image generation" \
   src/g.rs
+
+check_required \
+  "Self::SOURCE.eff_list();" \
+  "ProgramProjection must borrow its sole EffList view from the validated source owner" \
+  src/g.rs
+
+check_required \
+  "panic!(\"type tree and lowered source disagree\")" \
+  "source lowering must fail closed when type-tree counts disagree with emitted rows" \
+  src/g/source.rs
 
 check_required \
   "let source = Self::SOURCE_EFF_LIST;" \

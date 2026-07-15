@@ -30,7 +30,6 @@ use core::{
 use super::authority::RouteResolveStep;
 pub(in crate::endpoint::kernel) use super::authority::{Arm, RouteArmToken};
 use super::core::CursorEndpoint;
-use super::evidence::{ScopeFrameLabelScratch, ScopeFrameLabelView};
 use super::frontier::{
     ActiveEntrySet, FrontierDeferOutcome, FrontierVisitSet, LaneOfferState, ObservedEntrySet,
     OfferEvidenceOutcome, OfferProgressState, OfferSelectPriority, frontier_snapshot_from_scratch,
@@ -38,7 +37,7 @@ use super::frontier::{
 use super::lane_port;
 use crate::endpoint::{RecvError, RecvResult};
 use crate::global::const_dsl::{ReentryMark, ScopeId};
-use crate::global::typestate::state_index_to_usize;
+use crate::global::typestate::{InboundFrameKey, state_index_to_usize};
 use crate::transport::Transport;
 
 pub(in crate::endpoint::kernel) use self::commit_types::{
@@ -263,7 +262,7 @@ where
         }
         let selection = match self.select_scope(
             state.carried_transport_lane_wire(),
-            state.carried_transport_frame_label_raw(),
+            state.carried_transport_frame_key(),
             state.carried_transport_observation(self.sid.raw(), ROLE),
         ) {
             Ok(selection) => selection,
@@ -373,10 +372,7 @@ where
                         let descended = match self.descend_selected_passive_route(
                             stage.selection(),
                             resolved,
-                            stage
-                                .ingress
-                                .transport_frame_label_raw()
-                                .map(|label| (stage.selection().offer_lane, label)),
+                            stage.ingress.transport_frame_key(),
                         ) {
                             Ok(descended) => descended,
                             Err(err) => {

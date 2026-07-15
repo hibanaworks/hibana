@@ -32,7 +32,9 @@ mod terms;
 use core::marker::PhantomData;
 
 pub use crate::global::Message;
-pub(crate) use source::{ProgramSourceData, ProgramTerm};
+pub(crate) use source::{
+    ProgramShape, ProgramSourceData, ProgramSourceNode, SourceRouteResolver, checked_source_count,
+};
 
 mod role_projection;
 
@@ -43,29 +45,17 @@ pub struct Msg<const LOGICAL_LABEL: u8, Payload>(PhantomData<Payload>);
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum ProgramSourceError {
-    RouteArmAbsent,
     RouteControllerMismatch,
-    RollBodyAbsent,
-    ParallelArmAbsent,
     ReceiveLaneCausalityConflict,
     ParallelAmbiguousEndpointSelector,
     ReentryAmbiguousEndpointSelector,
-    ResolverIdOutOfDomain,
-    ResolverTargetNotRoute,
     ProjectionRouteUnprojectable,
 }
 
 pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
     match error {
-        ProgramSourceError::RouteArmAbsent => {
-            panic!("g::route arms must begin with a visible action")
-        }
         ProgramSourceError::RouteControllerMismatch => {
             panic!("route arms use different first visible controllers")
-        }
-        ProgramSourceError::RollBodyAbsent => panic!("rolled body requires at least one step"),
-        ProgramSourceError::ParallelArmAbsent => {
-            panic!("g::par(left, right) arms require protocol steps")
         }
         ProgramSourceError::ReceiveLaneCausalityConflict => {
             panic!("receive lane sender change requires a causal handoff or exclusive route arms")
@@ -75,12 +65,6 @@ pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
         }
         ProgramSourceError::ReentryAmbiguousEndpointSelector => {
             panic!("rolled reentry endpoint operations must be unambiguous")
-        }
-        ProgramSourceError::ResolverIdOutOfDomain => {
-            panic!("route resolver id must be < u16::MAX")
-        }
-        ProgramSourceError::ResolverTargetNotRoute => {
-            panic!("route resolver can only be attached to a route")
         }
         ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
             "Route unprojectable for this role: invalid, ambiguous endpoint operation, ",
@@ -192,14 +176,14 @@ impl<LeftSteps, RightSteps> Program<Route<LeftSteps, RightSteps>> {
     }
 }
 
-struct ProgramProjection<Steps>(PhantomData<Steps>);
+struct ProgramProjection<Steps, const CAPACITY: usize>(PhantomData<Steps>);
 
-impl<Steps> ProgramProjection<Steps>
+impl<Steps, const CAPACITY: usize> ProgramProjection<Steps, CAPACITY>
 where
-    Steps: ProgramTerm,
+    Steps: ProgramShape,
 {
-    const SOURCE: ProgramSourceData = <Steps as ProgramTerm>::PROGRAM_SOURCE;
-    pub(super) const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList =
+    const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();
+    pub(super) const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList<CAPACITY> =
         Self::SOURCE.eff_list();
 
     const IMAGE: crate::global::compiled::lowering::CompiledProgramImage = {
@@ -208,9 +192,6 @@ where
     };
 
     const VALIDATION: () = {
-        if let Some(error) = Self::SOURCE.error() {
-            panic_choreography_error(error);
-        }
         let source = Self::SOURCE_EFF_LIST;
         Self::IMAGE.validate_projection_program();
         if let Some(error) =
@@ -243,14 +224,30 @@ pub(crate) fn project<const ROLE: u8, Steps>(
     program: &Program<Steps>,
 ) -> crate::global::role_program::RoleProgram<ROLE>
 where
-    Steps: ProgramTerm,
+    Steps: ProgramShape,
 {
     let _ = program;
     let image = const {
-        if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE) {
-            panic!("projected role is outside the choreography role range");
+        let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;
+        if required_rows <= 8 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 8>()
+        } else if required_rows <= 32 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 32>()
+        } else if required_rows <= 128 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 128>()
+        } else if required_rows <= 512 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 512>()
+        } else if required_rows <= 2048 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 2048>()
+        } else if required_rows <= 8192 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 8192>()
+        } else if required_rows <= 32768 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 32768>()
+        } else if required_rows <= 65535 {
+            role_projection::role_projection_image_for::<ROLE, Steps, 65535>()
+        } else {
+            panic!("choreography source exceeds compact descriptor domain")
         }
-        role_projection::role_projection_image_for::<ROLE, Steps>()
     };
     crate::global::role_program::role_program_from_image(image)
 }

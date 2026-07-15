@@ -19,7 +19,6 @@ mod kani;
 mod passive_child;
 
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
-const SCOPE_ORDINAL_BYTES: usize = eff::meta::MAX_EFF_NODES.div_ceil(8);
 
 #[inline(always)]
 const fn validate_route_stack_depth(summary: &CompiledProgramImage) -> Option<ProgramSourceError> {
@@ -61,22 +60,10 @@ const fn insert_lane(words: &mut [LaneWord; LANE_FACT_WORDS], lane: usize) -> bo
     !seen
 }
 
-#[inline(always)]
-const fn insert_scope_ordinal(words: &mut [u8; SCOPE_ORDINAL_BYTES], ordinal: usize) -> bool {
-    let byte = ordinal >> 3;
-    let bit = ordinal & 7;
-    if byte >= words.len() {
-        panic!("scope ordinal table capacity exceeded");
-    }
-    let mask = 1u8 << bit;
-    let seen = (words[byte] & mask) != 0;
-    if !seen {
-        words[byte] |= mask;
-    }
-    !seen
-}
-
-pub(super) const fn exact_role_facts(eff_list: &EffList, role: u8) -> ExactRoleFacts {
+pub(super) const fn exact_role_facts<const E: usize>(
+    eff_list: &EffList<E>,
+    role: u8,
+) -> ExactRoleFacts {
     let mut active_lanes = [0usize; LANE_FACT_WORDS];
     let mut local_len = 0usize;
     let mut active_lane_count = 0usize;
@@ -116,68 +103,42 @@ pub(super) const fn exact_role_facts(eff_list: &EffList, role: u8) -> ExactRoleF
 }
 
 #[inline(always)]
-const fn validate_compiled_layout(role: u8, eff_list: &EffList) -> Option<ProgramSourceError> {
+const fn validate_compiled_layout<const E: usize>(
+    role: u8,
+    eff_list: &EffList<E>,
+) -> Option<ProgramSourceError> {
     validate_route_projection_guarantees(role, eff_list)
 }
 
-const fn validate_scope_capacity(eff_list: &EffList) {
-    let scope_markers = eff_list.scope_markers();
-    let mut seen_route_like = [0u8; SCOPE_ORDINAL_BYTES];
-    let mut idx = 0usize;
-    while idx < scope_markers.len() {
-        let marker = scope_markers[idx];
-        if matches!(marker.event, ScopeEvent::Enter)
-            && matches!(
-                marker.scope_id.kind(),
-                Some(ScopeKind::Route) | Some(ScopeKind::Roll)
-            )
-        {
-            let ordinal = marker.scope_id.local_ordinal() as usize;
-            if !insert_scope_ordinal(&mut seen_route_like, ordinal) {
-                idx += 1;
-                continue;
-            }
-        }
-        idx += 1;
-    }
-}
-
-const fn validate_route_projection_guarantees(
+const fn validate_route_projection_guarantees<const E: usize>(
     role: u8,
-    eff_list: &EffList,
+    eff_list: &EffList<E>,
 ) -> Option<ProgramSourceError> {
     let scope_markers = eff_list.scope_markers();
-    let mut seen_routes = [0u8; SCOPE_ORDINAL_BYTES];
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
-        let marker = scope_markers[marker_idx];
+        let marker = scope_markers.at(marker_idx);
         if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && matches!(marker.event, ScopeEvent::Enter)
+            && scope_markers.is_first_enter(marker_idx)
+            && let Some(error) = validate_route_scope(role, eff_list, scope_markers, marker_idx)
         {
-            let ordinal = marker.scope_id.local_ordinal() as usize;
-            if ordinal >= eff::meta::MAX_EFF_NODES {
-                return Some(ProgramSourceError::ProjectionRouteUnprojectable);
-            }
-            if insert_scope_ordinal(&mut seen_routes, ordinal)
-                && let Some(error) = validate_route_scope(role, eff_list, scope_markers, marker_idx)
-            {
-                return Some(error);
-            }
+            return Some(error);
         }
         marker_idx += 1;
     }
     None
 }
 
-const fn validate_route_scope(
+const fn validate_route_scope<const E: usize>(
     role: u8,
-    eff_list: &EffList,
-    scope_markers: &[crate::global::const_dsl::ScopeMarker],
+    eff_list: &EffList<E>,
+    scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
     route_enter_marker_idx: usize,
 ) -> Option<ProgramSourceError> {
     let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
-    let route_scope = scope_markers[route_enter_marker_idx].scope_id;
+    let route_scope = scope_markers.at(route_enter_marker_idx).scope_id;
     let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
     let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)
         .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
@@ -218,21 +179,20 @@ const fn route_role_has_branch_knowledge(
 }
 
 #[inline(always)]
-const fn scope_has_dynamic_resolver(
-    eff_list: &EffList,
+const fn scope_has_dynamic_resolver<const E: usize>(
+    eff_list: &EffList<E>,
     route_scope: crate::global::const_dsl::ScopeId,
 ) -> bool {
     eff_list.resolver_for_scope(route_scope).is_some()
 }
 
-pub(crate) const fn projection_error_all_roles(
+pub(crate) const fn projection_error_all_roles<const E: usize>(
     summary: &CompiledProgramImage,
-    eff_list: &EffList,
+    eff_list: &EffList<E>,
 ) -> Option<ProgramSourceError> {
     if let Some(error) = validate_route_stack_depth(summary) {
         return Some(error);
     }
-    validate_scope_capacity(eff_list);
     if !validate_receive_lane_causality(eff_list) {
         return Some(ProgramSourceError::ReceiveLaneCausalityConflict);
     }

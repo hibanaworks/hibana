@@ -7,14 +7,13 @@ use crate::test_support::large_choreography::{
 };
 use crate::{
     Endpoint,
-    observe::core::TapEvent,
+    observe::{core::TAP_EVENTS, event::TapRecord},
     runtime::{
         SessionKitStorage,
         ids::SessionId,
         transport::{FrameHeader, Outgoing, ReceivedFrame, Transport, TransportError},
         wire::Payload,
     },
-    runtime_core::consts::TAP_EVENTS,
 };
 
 type LargeChoreographyKit<'a> = SessionKitStorage<'a, LargeChoreographyTransport>;
@@ -525,7 +524,7 @@ fn run_attached_shape(
                 slab_bytes: TARGET_LARGE_CHOREOGRAPHY_SLAB_BYTES,
                 session_kit_storage_bytes: core::mem::size_of::<LargeChoreographyKit<'static>>(),
                 resident_prefix_bytes,
-                tap_ring_bytes: core::mem::size_of::<[TapEvent; TAP_EVENTS]>(),
+                tap_ring_bytes: core::mem::size_of::<[TapRecord; TAP_EVENTS]>(),
                 sidecar_scratch_high_water_bytes,
                 image_frontier_bytes,
                 frontier_workspace_bytes,

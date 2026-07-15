@@ -455,7 +455,7 @@ fn new_tap_port_reads_all_runtime_events_before_wrap() {
 }
 
 #[test]
-fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
+fn new_tap_port_reads_byte_budgeted_runtime_window_after_wrap() {
     with_runtime_workspace(|slab| {
         let transport = TestTransport::new();
         let slab_ptr = slab as *mut [u8];
@@ -479,12 +479,12 @@ fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
 
         assert_eq!(
             events.len(),
-            32,
-            "new tap port must expose only the retained 32-event window"
+            21,
+            "new tap port must expose the records derived from the resident byte budget"
         );
-        assert_eq!(events.first().map(|event| event.ts), Some(38));
+        assert_eq!(events.first().map(|event| event.ts), Some(49));
         assert_eq!(events.last().map(|event| event.ts), Some(69));
-        assert_eq!(events.first().map(|event| event.sid), Some(0x0001_0213));
+        assert_eq!(events.first().map(|event| event.sid), Some(0x0001_0218));
         assert_eq!(events.last().map(|event| event.sid), Some(0x0001_0222));
         assert!(
             events.iter().all(|event| event.rv == 1 && event.lane == 0),
@@ -495,14 +495,14 @@ fn new_tap_port_reads_latest_thirty_two_runtime_events_after_wrap() {
                 .iter()
                 .filter(|event| event.id == tap::LANE_ACQUIRE)
                 .count(),
-            16
+            10
         );
         assert_eq!(
             events
                 .iter()
                 .filter(|event| event.id == tap::LANE_RELEASE)
                 .count(),
-            16
+            11
         );
     });
 }

@@ -1,4 +1,6 @@
-use super::{EventCursorMachine, LocalAction, ScopeId, StateIndex, state_index_to_usize};
+use super::{
+    EventCursorMachine, InboundFrameKey, LocalAction, ScopeId, StateIndex, state_index_to_usize,
+};
 
 #[derive(Clone, Copy)]
 enum DispatchMatch {
@@ -74,17 +76,17 @@ impl EventCursorMachine {
         Some(mask)
     }
 
-    pub(in crate::global::typestate::cursor) fn first_recv_descendant_target_for_lane_frame_label(
+    pub(in crate::global::typestate::cursor) fn first_recv_descendant_target_for_key(
         &self,
         scope_id: ScopeId,
-        lane: u8,
-        frame_label: u8,
+        key: InboundFrameKey,
     ) -> Option<(u8, StateIndex)> {
         let mut matched = DispatchMatch::None;
         self.visit_first_recv_dispatch(scope_id, |arm, target| {
             let arm = validated_dispatch_arm(arm, target);
             let node = self.node(state_index_to_usize(target));
             let LocalAction::Recv {
+                peer,
                 lane: target_lane,
                 frame_label: target_frame_label,
                 ..
@@ -92,7 +94,10 @@ impl EventCursorMachine {
             else {
                 return;
             };
-            if target_lane == lane && target_frame_label == frame_label {
+            if peer == key.source_role
+                && target_lane == key.lane
+                && target_frame_label == key.frame_label
+            {
                 matched.add(arm, target);
             }
         })?;

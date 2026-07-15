@@ -335,10 +335,7 @@ theorem parallel_global_event_id_ranges_are_disjoint
   have parLength :
       (Choreo.par left right).globalEvents.length =
         left.globalEvents.length + right.globalEvents.length := by
-    unfold Choreo.globalEvents
-    simp only [Choreo.globalEventsFrom, List.length_append]
-    simp only [Nat.zero_add]
-    rw [global_events_from_length_eq right left.laneSpan 0]
+    simp [Choreo.eventCount]
   constructor
   · omega
   · rw [parLength]

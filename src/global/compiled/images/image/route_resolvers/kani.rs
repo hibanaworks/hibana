@@ -16,7 +16,7 @@ fn route_resolver_row_decoding_accepts_exact_range_domain() {
     let participant_count: u16 = kani::any();
 
     let participant_mid = participant_start.checked_add(u16::from(left_len_minus_one) + 1);
-    let expected = (raw_scope as usize) < crate::eff::meta::MAX_EFF_NODES
+    let expected = raw_scope < ScopeId::LOCAL_CAPACITY
         && participant_mid.is_some_and(|mid| {
             mid < participant_end
                 && participant_end - mid <= 256
@@ -98,8 +98,8 @@ fn dynamic_route_resolver_identity_is_scope_and_id() {
     let left_id: u16 = kani::any();
     let right_id: u16 = kani::any();
 
-    if (left_scope as usize) < crate::eff::meta::MAX_EFF_NODES
-        && (right_scope as usize) < crate::eff::meta::MAX_EFF_NODES
+    if left_scope < ScopeId::LOCAL_CAPACITY
+        && right_scope < ScopeId::LOCAL_CAPACITY
         && left_id != INTRINSIC_ROUTE_RESOLVER_ID
         && right_id != INTRINSIC_ROUTE_RESOLVER_ID
     {

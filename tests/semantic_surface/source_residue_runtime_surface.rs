@@ -64,9 +64,7 @@ fn production_large_functions_do_not_force_inline_always() {
 fn route_controller_discovery_has_one_production_authority() {
     let production = read_production_rs_tree("src");
     assert_eq!(
-        production
-            .matches("const fn first_visible_controller(")
-            .count(),
+        production.matches("fn first_visible_controller<").count(),
         1,
         "first-visible route controller discovery must have one production implementation"
     );
@@ -356,8 +354,7 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
             && scope.contains("const LOCAL_MASK: u16 = 0x1fff;")
             && scope.contains("pub(crate) const fn decode_raw(raw: u16) -> Option<Self>")
             && scope.contains("pub(crate) const fn local_ordinal(self) -> u16")
-            && scope.contains("pub(crate) const fn add_ordinal(self, delta: u16) -> Self")
-            && scope.matches("if self.is_none() {").count() >= 3
+            && scope.matches("if self.is_none() {").count() == 2
             && scope
                 .contains("pub(crate) const LOCAL_CAPACITY: u16 = Self::MAX_LOCAL_ORDINAL + 1;"),
         "ScopeId must be a u16 sentinel with reserved/kind/local packed identity"
@@ -398,6 +395,7 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
 
 #[test]
 fn route_resolver_authority_is_complete_identity_keyed() {
+    let scope = read("src/global/const_dsl/scope.rs");
     let const_dsl = read("src/global/const_dsl.rs");
     let route_dsl = read("src/global/const_dsl/route.rs");
     let eff_list = read("src/global/const_dsl/eff_list.rs");
@@ -417,6 +415,7 @@ fn route_resolver_authority_is_complete_identity_keyed() {
     let resolver_regression = read("tests/dynamic_route_scope_resolver.rs");
     let identity_regression = read("src/global/role_program/tests.rs");
     let production_scope = [
+        scope.as_str(),
         const_dsl.as_str(),
         route_dsl.as_str(),
         eff_list.as_str(),
@@ -445,15 +444,15 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "route_participant_len: u16,",
         "pub(crate) const fn scope_markers(self) -> ProgramColumnRange",
         "scope_marker_identity_tag(marker.event, marker.reentry)",
-        "out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);",
+        "out.write_scope_marker(columns.scope_markers(), idx, markers.at(idx));",
         "self.write_u16(out, scope.raw());",
         "self.write_u16(out + 2, resolver_id);",
         "self.write_u8(out + 4,",
         "self.write_u16(out + 5, participant_boundaries[0]);",
         "self.write_u8(out + 7, (left_len - 1) as u8);",
         "right_len == 0 || right_len > 256",
-        "const fn write_route_arm_participants(",
-        "const fn next_route_arm_participant(",
+        "const fn write_route_arm_participants<",
+        "const fn next_route_arm_participant<",
         "struct RouteResolverRow",
         "RouteResolverRow::decode(",
         "pub(crate) fn route_controller_role(&self, scope_id: ScopeId) -> u8",
@@ -483,7 +482,7 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "eff_list.resolver_for_scope(route_scope)",
         "resolver_for_scope(&self, scope: ScopeId)",
         "panic!(\"duplicate route resolver scope\");",
-        "|| scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES",
+        "pub(crate) const LOCAL_CAPACITY: u16 = Self::MAX_LOCAL_ORDINAL + 1;",
     ] {
         assert!(
             production_scope.contains(required),
@@ -587,9 +586,10 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
     let g_core = read("src/g.rs");
     let source = read("src/g/source.rs");
     let const_dsl = read("src/global/const_dsl.rs");
+    let allocation = read("src/global/const_dsl/allocation.rs");
     let endpoint_selectors = read("src/global/const_dsl/endpoint_selectors.rs");
     let receive_lane_causality = read("src/global/const_dsl/receive_lane_causality.rs");
-    let frame_labels = read("src/global/frame_labels.rs");
+    let event_relations = read("src/global/const_dsl/event_relations.rs");
     let scope_ranges = read("src/global/const_dsl/scope_ranges.rs");
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let route = read("src/global/const_dsl/route.rs");
@@ -598,15 +598,16 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
     let lowering_image = read("src/global/compiled/lowering/driver/impls/image.rs");
     let role_image_impl = read("src/global/role_program/image_impl.rs");
     let role_event_rows = read("src/global/role_program/image_impl/event_rows.rs");
-    let role_roll_rows = read("src/global/role_program/image_impl/roll_rows.rs");
+    let role_projection_queries = read("src/global/role_program/image_impl/projection.rs");
     let role_projection = read("src/g/role_projection.rs");
     let combined = [
         g_core.as_str(),
         source.as_str(),
         const_dsl.as_str(),
+        allocation.as_str(),
         endpoint_selectors.as_str(),
         receive_lane_causality.as_str(),
-        frame_labels.as_str(),
+        event_relations.as_str(),
         scope_ranges.as_str(),
         eff_list.as_str(),
         route.as_str(),
@@ -615,37 +616,37 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         lowering_image.as_str(),
         role_image_impl.as_str(),
         role_event_rows.as_str(),
-        role_roll_rows.as_str(),
+        role_projection_queries.as_str(),
         role_projection.as_str(),
     ]
     .join("\n");
 
     for required in [
         "ScopeEvent::Split",
-        "let left_len = eff.len();",
-        "push_parallel_scope_split(parallel_scope, left_len)",
-        "pub(crate) const fn validate_parallel_endpoint_selectors(eff_list: &EffList) -> bool",
-        "pub(crate) const fn validate_roll_reentry_endpoint_selectors(eff_list: &EffList) -> bool",
-        "const fn parallel_endpoint_selector_conflicts(",
+        "let right_start = self.eff.len();",
+        "self.eff.push_scope_split_mut(right_start, scope);",
+        "pub(crate) const fn validate_parallel_endpoint_selectors<",
+        "pub(crate) const fn validate_roll_reentry_endpoint_selectors<",
+        "const fn parallel_endpoint_selector_conflicts<const E: usize>(",
         "struct EndpointSelector(u64);",
         "EndpointSelector::inbound_evidence(",
         "const fn inbound_selector_at(",
         "atom_idx as u64",
         "atom.payload_schema as u64",
-        "pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers(",
-        "pub(crate) const fn local_route_observer_paths_mergeable",
+        "pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers<",
+        "pub(crate) const fn local_route_observer_paths_mergeable<",
         "enum ObserverPathDecision",
         "const fn observer_path_decision(",
         "(Some(_), None) | (None, Some(_)) => ObserverPathDecision::Reject",
         "ProgramSourceError::ParallelAmbiguousEndpointSelector",
         "ProgramSourceError::ReentryAmbiguousEndpointSelector",
         "ProgramSourceError::ReceiveLaneCausalityConflict",
-        "pub(crate) const fn validate_receive_lane_causality(eff_list: &EffList) -> bool",
-        "const fn mutually_exclusive_route_arms(",
-        "const fn receive_precedes_later_send(",
-        "const fn receive_precedes_after_roll_reentry(",
-        "const fn validate_roll_body_receive_lane_causality(",
-        "const fn validate_roll_receive_lane_causality(",
+        "pub(crate) const fn validate_receive_lane_causality<",
+        "events_are_route_exclusive(",
+        "const fn receive_precedes_later_send<",
+        "const fn receive_precedes_after_roll_reentry<",
+        "const fn validate_roll_body_receive_lane_causality<",
+        "const fn validate_roll_receive_lane_causality<",
         "validate_roll_receive_lane_causality(eff_list)",
         "if !validate_receive_lane_causality(eff_list)",
         "if !validate_parallel_endpoint_selectors(eff_list)",
@@ -663,13 +664,9 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "while role < summary.compiled_program_role_count()",
         "validate_compiled_layout(role as u8, eff_list)",
         "pub(crate) const fn parallel_arm_ranges_from_enter(",
-        "const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);",
-        "let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];",
-        "let byte = ordinal >> 3;",
-        "let bit = ordinal & 7;",
-        "let mask = 1u8 << bit;",
-        "const SOURCE: ProgramSourceData = <Steps as ProgramTerm>::PROGRAM_SOURCE;",
-        "const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList =",
+        "scope_markers.is_first_enter(marker_idx)",
+        "const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();",
+        "pub(super) const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList<CAPACITY>",
         "let source = Self::SOURCE_EFF_LIST;",
     ] {
         assert!(
@@ -678,6 +675,8 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         );
     }
     for forbidden in [
+        "EffList<E, S, R>",
+        "EffList<CAPACITY, CAPACITY, CAPACITY>",
         "validate_compiled_layout::<0>",
         "validate_compiled_layout::<1>",
         "validate_compiled_layout::<15>",

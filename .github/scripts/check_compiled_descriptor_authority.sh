@@ -134,16 +134,17 @@ if "ProjectionWitness" in projection_owner:
     fail("RoleProgram must not keep a wrapper around the resident RoleImageRef")
 
 for required in [
-    "struct RoleProjection<const ROLE: u8, Steps>",
-    "impl<const ROLE: u8, Steps> RoleProjection<ROLE, Steps>",
+    "struct RoleProjection<const ROLE: u8, Steps, const CAPACITY: usize>",
+    "impl<const ROLE: u8, Steps, const CAPACITY: usize> RoleProjection<ROLE, Steps, CAPACITY>",
     "const IMAGE_REF: crate::global::role_program::RoleImageRef",
     "ProgramImagePlan::from_program",
     "ProgramImageBytes",
-    "ProgramProjection::<Steps>::PROGRAM_REF",
+    "ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF",
     "RoleImageBuild<N>",
-    "match &RoleProjectionBlob::<ROLE, Steps, N>::BUILD",
+    "match &RoleProjectionBlob::<ROLE, Steps, CAPACITY, N>::BUILD",
     "Self::image_ref::<",
-    "build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)",
+    "build.image_ref(",
+    "&ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF",
 ]:
     if required not in role_projection_surface:
         fail(f"g projection boundary does not own a resident RoleImageRef before attach: {required}")
@@ -202,7 +203,7 @@ if (root / "src/global/compiled/images/image/role_descriptor_ref/tests/route_sco
     fail("RoleDescriptorRef must not keep a test-only lowering route-scope helper module")
 
 project_match = re.search(
-    r"pub\(crate\) fn project<const ROLE: u8, Steps>\([^{}]*\)\s*->\s*crate::global::role_program::RoleProgram<ROLE>\s*where\s*Steps:\s*ProgramTerm,\s*\{(?P<body>.*?)\n\}",
+    r"pub\(crate\) fn project<const ROLE: u8, Steps>\([^{}]*\)\s*->\s*crate::global::role_program::RoleProgram<ROLE>\s*where\s*Steps:\s*ProgramShape,\s*\{(?P<body>.*?)\n\}",
     g_surface,
     re.S,
 )
@@ -210,23 +211,47 @@ if project_match is None:
     fail("g project entry is not a recognizable resident projection boundary")
 
 project_body = project_match.group("body")
-role_validation = project_body.find("if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE)")
-role_projection = project_body.find("role_projection_image_for::<ROLE, Steps>()")
+source_count = project_body.find("let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT")
+role_projection = project_body.find("role_projection_image_for::<ROLE, Steps, 8>()")
 role_program_publication = project_body.find("role_program_from_image(image)")
-if role_validation < 0 or role_projection < 0 or role_program_publication < 0:
-    fail("g project entry must validate, select the resident descriptor for ROLE, and publish from that image")
-if not (role_validation < role_projection < role_program_publication):
-    fail("g project entry must validate the public role before selecting a resident descriptor image")
+if source_count < 0 or role_projection < 0 or role_program_publication < 0:
+    fail("g project entry must derive source rows, select a compact bucket, and publish from that image")
+if not (source_count < role_projection < role_program_publication):
+    fail("g project entry must derive source rows before selecting and publishing a compact image")
+
+for capacity in [8, 32, 128, 512, 2048, 8192, 32768, 65535]:
+    required = f"role_projection_image_for::<ROLE, Steps, {capacity}>()"
+    if required not in project_body:
+        fail(f"g project entry is missing compact source bucket: {capacity}")
+if 'panic!("choreography source exceeds compact descriptor domain")' not in project_body:
+    fail("g project entry must reject source rows outside the compact descriptor domain")
+
+projection_match = re.search(
+    r"pub\(super\) const fn role_projection_image_for<const ROLE: u8, Steps, const CAPACITY: usize>\(\)\s*->[^{}]*\s*where\s*Steps:\s*ProgramShape,\s*\{(?P<body>.*?)\n\}",
+    role_projection_surface,
+    re.S,
+)
+if projection_match is None:
+    fail("role projection helper is not a recognizable capacity-erased boundary")
+projection_body = projection_match.group("body")
+role_validation = projection_body.find(
+    "if !ProgramProjection::<Steps, CAPACITY>::IMAGE.contains_role(ROLE)"
+)
+image_publication = projection_body.find(
+    "&RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF"
+)
+if role_validation < 0 or image_publication < 0 or role_validation >= image_publication:
+    fail("role projection helper must validate ROLE before publishing the selected compact image")
 for forbidden in [
     "match ROLE {",
-    "RoleProjection::<ROLE, Steps>",
+    "RoleProjection::<ROLE, Steps,",
     "role_projection_image_for::<256",
-    "_ => role_projection_image_for::<0, Steps>()",
+    "_ => role_projection_image_for::<0, Steps,",
 ]:
     if forbidden in project_body:
         fail(f"g project entry regressed to generic or out-of-domain projection instantiation: {forbidden}")
 for role in range(256):
-    forbidden = f"role_projection_image_for::<{role}, Steps>()"
+    forbidden = f"role_projection_image_for::<{role}, Steps,"
     if forbidden in project_body:
         fail(f"g project entry must not re-grow hand-written descriptor arm {role}")
 

@@ -1,11 +1,13 @@
 use super::super::*;
 
 impl CompiledProgramImage {
-    const fn scan_into(summary: &mut Self, eff_list: &EffList) {
+    const fn scan_into<const E: usize>(summary: &mut Self, eff_list: &EffList<E>) {
         let mut scope_count = 0u16;
         let mut max_role = 0u8;
         let mut has_atom = false;
-        let mut route_scope_ordinals = [0u8; ROUTE_SCOPE_ORDINAL_BYTES];
+        if eff_list.len() > u16::MAX as usize {
+            panic!("choreography exceeds compact event domain");
+        }
         summary.program.lowering_facts.eff_count = eff_list.len() as u16;
         let mut idx = 0usize;
         while idx < eff_list.len() {
@@ -30,7 +32,7 @@ impl CompiledProgramImage {
         let mut active_route_depth = 0u16;
         let mut max_route_depth = 0u16;
         while scope_idx < src_scope_markers.len() {
-            let marker = src_scope_markers[scope_idx];
+            let marker = src_scope_markers.at(scope_idx);
             match marker.event {
                 ScopeEvent::Enter => {
                     scope_count = increment_compact_count(scope_count);
@@ -54,15 +56,7 @@ impl CompiledProgramImage {
                         if active_route_depth > max_route_depth {
                             max_route_depth = active_route_depth;
                         }
-                        let ordinal = marker.scope_id.local_ordinal() as usize;
-                        let byte = ordinal >> 3;
-                        let bit = ordinal & 7;
-                        if byte >= route_scope_ordinals.len() {
-                            panic!("route scope ordinal overflow");
-                        }
-                        let mask = 1u8 << bit;
-                        if (route_scope_ordinals[byte] & mask) == 0 {
-                            route_scope_ordinals[byte] |= mask;
+                        if src_scope_markers.is_first_enter(scope_idx) {
                             summary.program.lowering_facts.route_scope_count =
                                 increment_compact_count(
                                     summary.program.lowering_facts.route_scope_count,
@@ -112,7 +106,7 @@ impl CompiledProgramImage {
         summary.max_role = max_role;
     }
 
-    const fn scan_impl(eff_list: &EffList) -> Self {
+    const fn scan_impl<const E: usize>(eff_list: &EffList<E>) -> Self {
         let mut summary = Self {
             program: ProgramImageData {
                 compiled_program_counts: CompiledProgramCounts {
@@ -128,7 +122,7 @@ impl CompiledProgramImage {
     }
 
     #[inline(always)]
-    pub(crate) const fn scan_const(eff_list: &EffList) -> Self {
+    pub(crate) const fn scan_const<const E: usize>(eff_list: &EffList<E>) -> Self {
         Self::scan_impl(eff_list)
     }
 
@@ -155,9 +149,9 @@ impl CompiledProgramImage {
     }
 
     #[inline(always)]
-    pub(crate) const fn role_lowering_counts(
+    pub(crate) const fn role_lowering_counts<const E: usize>(
         &self,
-        eff_list: &EffList,
+        eff_list: &EffList<E>,
         role: u8,
     ) -> RoleCompiledCounts {
         if !self.contains_role(role) {

@@ -17,6 +17,56 @@ pub struct TapEvent {
     bytes: [u8; 16],
 }
 
+/// Resident tap representation. The timestamp is the ring ordinal and is
+/// reconstructed when a reader materializes the public event.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub(crate) struct TapRecord {
+    bytes: [u8; Self::BYTE_LEN],
+}
+
+impl TapRecord {
+    pub(crate) const BYTE_LEN: usize = 12;
+
+    #[inline(always)]
+    pub(crate) const fn from_event(event: TapEvent) -> Self {
+        Self {
+            bytes: [
+                (event.id() >> 8) as u8,
+                event.id() as u8,
+                (event.causal_key() >> 8) as u8,
+                event.causal_key() as u8,
+                (event.arg0() >> 24) as u8,
+                (event.arg0() >> 16) as u8,
+                (event.arg0() >> 8) as u8,
+                event.arg0() as u8,
+                (event.arg1() >> 24) as u8,
+                (event.arg1() >> 16) as u8,
+                (event.arg1() >> 8) as u8,
+                event.arg1() as u8,
+            ],
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn to_event(self, timestamp: u32) -> TapEvent {
+        TapEvent::new(
+            timestamp,
+            u16::from_be_bytes([self.bytes[0], self.bytes[1]]),
+            u16::from_be_bytes([self.bytes[2], self.bytes[3]]),
+            u32::from_be_bytes([self.bytes[4], self.bytes[5], self.bytes[6], self.bytes[7]]),
+            u32::from_be_bytes([self.bytes[8], self.bytes[9], self.bytes[10], self.bytes[11]]),
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn zero() -> Self {
+        Self {
+            bytes: [0; Self::BYTE_LEN],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Evidence {
     kind: u16,
@@ -151,12 +201,6 @@ impl TapEvent {
         ((role as u16) << 8) | (seq as u16)
     }
 
-    /// Create a zeroed event (for array initialization).
-    #[inline]
-    pub(crate) const fn zero() -> Self {
-        Self { bytes: [0; 16] }
-    }
-
     #[inline]
     pub const fn evidence(self) -> Evidence {
         let id = self.id();
@@ -197,23 +241,19 @@ impl TapEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::TapEvent;
+    use super::{TapEvent, TapRecord};
     use crate::observe::ids;
     use std::format;
 
     #[test]
     fn transport_mismatch_evidence_carries_expected_lane_and_reason() {
-        let event = TapEvent::zero()
+        let event = super::super::events::raw_event(ids::TRANSPORT_MISMATCH)
             .with_causal_key(TapEvent::make_causal_key(
                 1,
                 ids::TRANSPORT_MISMATCH_SESSION,
             ))
             .with_arg0(0x1111_2222)
             .with_arg1(0x3333_4444);
-        let event = super::super::events::raw_event(0, ids::TRANSPORT_MISMATCH)
-            .with_causal_key(event.causal_key())
-            .with_arg0(event.arg0())
-            .with_arg1(event.arg1());
         let evidence = event.evidence();
         assert_eq!(evidence.kind(), ids::TRANSPORT_MISMATCH);
         assert_eq!(evidence.reason(), ids::TRANSPORT_MISMATCH_SESSION);
@@ -232,12 +272,9 @@ mod tests {
 
     #[test]
     fn transport_fault_evidence_carries_lane_and_reason() {
-        let event = TapEvent::zero()
+        let event = super::super::events::raw_event(ids::TRANSPORT_FAULT)
             .with_causal_key(TapEvent::make_causal_key(2, ids::TRANSPORT_FAULT_DEADLINE))
             .with_arg0(0xaaaa_bbbb);
-        let event = super::super::events::raw_event(0, ids::TRANSPORT_FAULT)
-            .with_causal_key(event.causal_key())
-            .with_arg0(event.arg0());
         let evidence = event.evidence();
         assert_eq!(evidence.kind(), ids::TRANSPORT_FAULT);
         assert_eq!(evidence.reason(), ids::TRANSPORT_FAULT_DEADLINE);
@@ -261,8 +298,24 @@ mod tests {
     }
 
     #[test]
+    fn resident_tap_record_erases_and_reconstructs_timestamp() {
+        let event = TapEvent::new(99, ids::TRANSPORT_FRAME, 0, 0, 0)
+            .with_causal_key(0x0506)
+            .with_arg0(0x0708_090a)
+            .with_arg1(0x0b0c_0d0e);
+        let reconstructed = TapRecord::from_event(event).to_event(17);
+
+        assert_eq!(core::mem::size_of::<TapRecord>(), 12);
+        assert_eq!(reconstructed.ts(), 17);
+        assert_eq!(reconstructed.id(), event.id());
+        assert_eq!(reconstructed.causal_key(), event.causal_key());
+        assert_eq!(reconstructed.arg0(), event.arg0());
+        assert_eq!(reconstructed.arg1(), event.arg1());
+    }
+
+    #[test]
     fn tap_event_record_bytes_are_exactly_sixteen_bytes() {
-        let event = super::super::events::raw_event(0x0102_0304, ids::TRANSPORT_FRAME)
+        let event = TapEvent::new(0x0102_0304, ids::TRANSPORT_FRAME, 0, 0, 0)
             .with_causal_key(0x0506)
             .with_arg0(0x0708_090a)
             .with_arg1(0x0b0c_0d0e);
@@ -277,7 +330,7 @@ mod tests {
 
     #[test]
     fn tap_event_debug_uses_semantic_fields_only() {
-        let event = super::super::events::raw_event(0x0102_0304, ids::TRANSPORT_FRAME)
+        let event = TapEvent::new(0x0102_0304, ids::TRANSPORT_FRAME, 0, 0, 0)
             .with_causal_key(0x0506)
             .with_arg0(0x0708_090a)
             .with_arg1(0x0b0c_0d0e);

@@ -21,7 +21,7 @@ use crate::{eff::EffIndex, session::types::SessionId, transport::wire::Payload};
 mod labels;
 
 pub use labels::FrameLabel;
-pub(crate) use labels::{FrameLabelMask, LogicalLabel};
+pub(crate) use labels::LogicalLabel;
 
 /// Transport-owned metadata for an outgoing payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

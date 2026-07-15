@@ -330,31 +330,70 @@ impl EventCursor {
     }
 
     #[inline(never)]
-    pub(crate) fn roll_reentry_recv_index_for_frame(
+    fn roll_reentry_recv_index_for_frame_phase(
         &self,
-        lane: u8,
-        frame_label: u8,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        key: super::super::InboundFrameKey,
+        phase: RollLaneAdmission,
+        live_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
-        if !self.has_reentry_scopes() {
-            return None;
-        }
         let mut idx = 0usize;
         while self.contains_node_index(idx) {
             let Some(meta) = self.try_recv_meta_at(idx) else {
                 idx += 1;
                 continue;
             };
-            if meta.lane != lane || meta.frame_label != frame_label {
+            if !key.matches_recv(meta) {
                 idx += 1;
                 continue;
             }
-            if self.roll_reentry_event_allows_index(idx, lane, &mut *selected_arm_for_scope) {
+            let before_cursor = self.event_is_before_lane_cursor(idx, key.lane);
+            let phase_matches = match phase {
+                RollLaneAdmission::Head => before_cursor,
+                RollLaneAdmission::Progress { .. } => !before_cursor,
+            };
+            let mut arm_for_candidate = |scope| {
+                let live = live_arm_for_scope(scope);
+                let membership = self.route_arm_for_index(scope, idx);
+                let committed = membership.and_then(|_| committed_arm_for_scope(scope));
+                live.or(committed)
+            };
+            let allows = phase_matches
+                && self.roll_reentry_event_allows_index(idx, key.lane, &mut arm_for_candidate);
+            if allows {
                 return Some(idx);
             }
             idx += 1;
         }
         None
+    }
+
+    #[inline(never)]
+    pub(crate) fn roll_reentry_recv_index_for_frame(
+        &self,
+        key: super::super::InboundFrameKey,
+        live_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+    ) -> Option<usize> {
+        if !self.has_reentry_scopes() {
+            return None;
+        }
+        if let Some(current) = self.roll_reentry_recv_index_for_frame_phase(
+            key,
+            RollLaneAdmission::Progress {
+                current_step: self.step_index_at_lane(key.lane as usize),
+            },
+            live_arm_for_scope,
+            committed_arm_for_scope,
+        ) {
+            return Some(current);
+        }
+        self.roll_reentry_recv_index_for_frame_phase(
+            key,
+            RollLaneAdmission::Head,
+            live_arm_for_scope,
+            committed_arm_for_scope,
+        )
     }
 
     #[inline(never)]

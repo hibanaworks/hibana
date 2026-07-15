@@ -301,7 +301,7 @@ fn emit_transport_mismatch_observation<'r, T>(
 ) where
     T: Transport + 'r,
 {
-    let event = mismatch.tap_event(port.now32(), expected_session_raw, expected_lane_wire);
+    let event = mismatch.tap_event(expected_session_raw, expected_lane_wire);
     crate::observe::core::emit(port.tap(), event);
 }
 
@@ -311,7 +311,7 @@ fn emit_transport_frame_observation<'r, T>(port: &Port<'r, T>, observation: Fram
 where
     T: Transport + 'r,
 {
-    let event = crate::rendezvous::port::transport_frame_tap_event(port.now32(), observation);
+    let event = crate::rendezvous::port::transport_frame_tap_event(observation);
     crate::observe::core::emit(port.tap(), event);
 }
 

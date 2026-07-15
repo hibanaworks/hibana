@@ -124,9 +124,9 @@ mod tests {
     use super::CachedRecvMeta;
 
     #[test]
-    fn cached_recv_meta_is_exactly_twelve_bytes() {
-        assert_eq!(core::mem::size_of::<CachedRecvMeta>(), 12);
-        assert_eq!(core::mem::align_of::<CachedRecvMeta>(), 4);
+    fn cached_recv_meta_is_exactly_ten_bytes() {
+        assert_eq!(core::mem::size_of::<CachedRecvMeta>(), 10);
+        assert_eq!(core::mem::align_of::<CachedRecvMeta>(), 2);
     }
 }
 

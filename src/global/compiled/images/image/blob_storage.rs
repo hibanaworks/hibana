@@ -1,7 +1,7 @@
 use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
     PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
-    ProgramImageColumns, ProgramImageFacts, ROUTE_ORDINAL_BYTES, insert_route_ordinal,
+    ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
     eff::{EffAtom, EffKind},
@@ -38,8 +38,8 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    pub(crate) const fn from_image_if_fits(
-        eff_list: &EffList,
+    pub(crate) const fn from_image_if_fits<const E: usize>(
+        eff_list: &EffList<E>,
         columns: ProgramImageColumns,
     ) -> Option<Self> {
         if columns.blob_len() > N {
@@ -134,8 +134,8 @@ impl<const N: usize> ProgramImageBytes<N> {
         self.write_u8(out + 7, (left_len - 1) as u8);
     }
 
-    const fn next_route_arm_participant(
-        eff_list: &EffList,
+    const fn next_route_arm_participant<const E: usize>(
+        eff_list: &EffList<E>,
         start: usize,
         end: usize,
         role_floor: u16,
@@ -169,11 +169,11 @@ impl<const N: usize> ProgramImageBytes<N> {
         candidate
     }
 
-    const fn write_route_arm_participants(
+    const fn write_route_arm_participants<const E: usize>(
         &mut self,
         column: ProgramColumnRange,
         mut row: usize,
-        eff_list: &EffList,
+        eff_list: &EffList<E>,
         start: usize,
         end: usize,
     ) -> usize {
@@ -211,7 +211,10 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn route_controller_role(eff_list: &EffList, route_enter_marker_idx: usize) -> u8 {
+    const fn route_controller_role<const E: usize>(
+        eff_list: &EffList<E>,
+        route_enter_marker_idx: usize,
+    ) -> u8 {
         let scope_markers = eff_list.scope_markers();
         if route_enter_marker_idx >= scope_markers.len() {
             crate::invariant();
@@ -228,7 +231,7 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn atom_at(eff_list: &EffList, idx: usize) -> Option<EffAtom> {
+    const fn atom_at<const E: usize>(eff_list: &EffList<E>, idx: usize) -> Option<EffAtom> {
         if idx >= eff_list.len() {
             return None;
         }
@@ -240,7 +243,10 @@ impl<const N: usize> ProgramImageBytes<N> {
         }
     }
 
-    pub(crate) const fn from_image(eff_list: &EffList, columns: ProgramImageColumns) -> Self {
+    pub(crate) const fn from_image<const E: usize>(
+        eff_list: &EffList<E>,
+        columns: ProgramImageColumns,
+    ) -> Self {
         let projected_len = columns.blob_len();
         if projected_len > N {
             crate::invariant();
@@ -266,15 +272,13 @@ impl<const N: usize> ProgramImageBytes<N> {
 
         let mut route_row = 0usize;
         let mut participant_row = 0usize;
-        let mut seen_route_ordinals = [0u8; ROUTE_ORDINAL_BYTES];
         idx = 0;
         while idx < markers.len() {
-            let marker = markers[idx];
+            let marker = markers.at(idx);
             if matches!(marker.event, ScopeEvent::Enter)
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
-                let ordinal = marker.scope_id.local_ordinal() as usize;
-                if !insert_route_ordinal(&mut seen_route_ordinals, ordinal) {
+                if !markers.is_first_enter(idx) {
                     idx += 1;
                     continue;
                 }
@@ -326,7 +330,7 @@ impl<const N: usize> ProgramImageBytes<N> {
 
         idx = 0;
         while idx < markers.len() {
-            out.write_scope_marker(columns.scope_markers(), idx, markers[idx]);
+            out.write_scope_marker(columns.scope_markers(), idx, markers.at(idx));
             idx += 1;
         }
         out

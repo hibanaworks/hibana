@@ -1,6 +1,9 @@
 use super::role_program::RoleProgram;
 use crate::g::Program;
-use crate::global::compiled::images::PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE;
+use crate::global::compiled::images::{
+    PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, PROGRAM_IMAGE_ATOM_STRIDE,
+    PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+};
 use crate::global::const_dsl::{EffList, ScopeId};
 use core::mem::size_of;
 
@@ -20,8 +23,15 @@ fn descriptor_first_size_gates_hold() {
 }
 
 #[test]
+fn compact_event_identity_and_descriptor_byte_domains_are_not_conflated() {
+    assert_eq!(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY, 65_535);
+    assert_eq!(PROGRAM_IMAGE_ATOM_STRIDE, 11);
+    assert_eq!(PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, 5_957);
+}
+
+#[test]
 fn dynamic_route_resolver_lookup_is_exactly_route_scoped() {
-    let mut effects = EffList::new();
+    let mut effects = EffList::<1>::new_partitioned(0, 0, 1);
     effects.push_route_resolver_mut(ScopeId::route(3), 7);
     let resolver = effects
         .resolver_for_scope(ScopeId::route(3))
@@ -34,26 +44,28 @@ fn dynamic_route_resolver_lookup_is_exactly_route_scoped() {
 #[test]
 #[should_panic]
 fn absent_scope_cannot_query_dynamic_route_resolver() {
-    let _ = EffList::new().resolver_for_scope(ScopeId::none());
+    let _ = EffList::<0>::new().resolver_for_scope(ScopeId::none());
 }
 
 #[test]
 #[should_panic]
 fn non_route_scope_cannot_query_dynamic_route_resolver() {
-    let _ = EffList::new().resolver_for_scope(ScopeId::parallel(0));
+    let _ = EffList::<0>::new().resolver_for_scope(ScopeId::parallel(0));
 }
 
 #[test]
-#[should_panic]
-fn out_of_domain_scope_cannot_query_dynamic_route_resolver() {
-    let _ =
-        EffList::new().resolver_for_scope(ScopeId::route(crate::eff::meta::MAX_EFF_NODES as u16));
+fn highest_scope_ordinal_can_query_dynamic_route_resolver() {
+    assert!(
+        EffList::<0>::new()
+            .resolver_for_scope(ScopeId::route(ScopeId::MAX_LOCAL_ORDINAL))
+            .is_none()
+    );
 }
 
 #[test]
 #[should_panic(expected = "duplicate route resolver scope")]
 fn route_scope_cannot_acquire_two_compile_time_resolver_authorities() {
-    let mut effects = EffList::new();
+    let mut effects = EffList::<2>::new_partitioned(0, 0, 2);
     effects.push_route_resolver_mut(ScopeId::route(3), 7);
     effects.push_route_resolver_mut(ScopeId::route(3), 8);
 }

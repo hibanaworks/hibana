@@ -185,9 +185,9 @@ for required in \
   'src/global/role_program/image_types.rs:pub(crate) struct RoleImageRef' \
   'src/global/role_program/image_types.rs:pub(crate) struct RuntimeRoleFacts' \
   'src/g/role_projection.rs:const IMAGE_REF: crate::global::role_program::RoleImageRef' \
-  'src/g/role_projection.rs:&RoleProjection::<ROLE, Steps>::IMAGE_REF' \
+  'src/g/role_projection.rs:&RoleProjection::<ROLE, Steps, CAPACITY>::IMAGE_REF' \
   'src/g/role_projection.rs:ProgramImageBytes' \
-  'src/g/role_projection.rs:ProgramProjection::<Steps>::PROGRAM_REF' \
+  'src/g/role_projection.rs:ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF' \
   "src/global/role_program/program.rs:image: &'static crate::global::role_program::RoleImageRef" \
   'src/global/compiled/images/image/role_descriptor_ref.rs:resident: image' \
   'src/session/cluster/core/session_cluster_ops.rs:RoleImageSlice::from_resident(compiled)' \

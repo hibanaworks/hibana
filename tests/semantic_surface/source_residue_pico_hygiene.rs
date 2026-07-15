@@ -75,13 +75,24 @@ fn g_project_does_not_enumerate_role_projection_constructors() {
     let g = read("src/g.rs");
     let project = g_project_body(&g);
     assert!(
-        project.contains("if !ProgramProjection::<Steps>::IMAGE.contains_role(ROLE)")
-            && project.contains("role_projection::role_projection_image_for::<ROLE, Steps>()"),
-        "g::project must keep one choreography-range guard followed by direct projection"
+        project.contains("let required_rows = <Steps as ProgramShape>::SOURCE_ROW_COUNT;")
+            && project.contains("role_projection::role_projection_image_for::<ROLE, Steps, 8>()")
+            && project
+                .contains("role_projection::role_projection_image_for::<ROLE, Steps, 65535>()")
+            && project
+                .contains("panic!(\"choreography source exceeds compact descriptor domain\")"),
+        "g::project must select one source-derived bucket over the compact descriptor domain"
+    );
+    assert_eq!(
+        project
+            .matches("role_projection_image_for::<ROLE, Steps,")
+            .count(),
+        8,
+        "source projection must keep the finite bucket ladder without role enumeration"
     );
 
     for role in 0..=u8::MAX {
-        let forbidden = format!("{}{}{}", "role_projection_image_for::<", role, ", Steps>()");
+        let forbidden = format!("{}{}{}", "role_projection_image_for::<", role, ", Steps");
         assert!(
             !project.contains(&forbidden),
             "g::project must not re-grow hand-written role dispatch: {forbidden}"
@@ -330,17 +341,22 @@ fn tap_event_is_opaque_sixteen_byte_record() {
 }
 
 #[test]
-fn tap_ring_bytes_stay_at_half_kib() {
+fn tap_ring_bytes_stay_at_quarter_kib() {
     let consts = read("src/runtime_core/consts.rs");
     let observe = read("src/observe/core.rs");
+    let event = read("src/observe/event.rs");
     let runtime = read("src/runtime.rs");
     assert!(
-        consts.contains("pub const TAP_EVENTS: usize = 32;"),
-        "mandatory tap ring capacity must stay at 32 events"
-    );
-    assert!(
-        core::mem::size_of::<[TapEvent; 32]>() == 512,
-        "mandatory tap ring must stay exactly 512 bytes"
+        observe.contains("TAP_RESIDENT_BYTE_LIMIT: usize = 256")
+            && observe
+                .contains("TAP_EVENTS: usize = TAP_RESIDENT_BYTE_LIMIT / TapRecord::BYTE_LEN")
+            && observe.contains("TAP_RESIDENT_BYTES: usize")
+            && observe
+                .contains("TAP_RESIDENT_BYTE_LIMIT - TAP_RESIDENT_BYTES < TapRecord::BYTE_LEN",)
+            && event.contains("pub(crate) struct TapRecord {")
+            && event.contains("bytes: [u8; Self::BYTE_LEN],")
+            && event.contains("pub(crate) const BYTE_LEN: usize = 12;"),
+        "tap retention must derive from one 256-byte bound and the compact resident record"
     );
     for forbidden in [
         "RING_BUFFER_SIZE",
@@ -358,6 +374,7 @@ fn tap_ring_bytes_stay_at_half_kib() {
         assert!(
             !consts.contains(forbidden)
                 && !observe.contains(forbidden)
+                && !event.contains(forbidden)
                 && !runtime.contains(forbidden),
             "tap must stay one fixed resource-bounded evidence surface without public capacity/config or host split: {forbidden}"
         );
@@ -504,48 +521,23 @@ fn transport_docs_do_not_teach_u64_header() {
     );
 }
 
-fn assert_frame_label_mask_byte_limb_storage(labels: &str) {
-    let body = named_struct_body(labels, "FrameLabelMask");
-    assert!(
-        labels.contains("#[repr(transparent)]"),
-        "FrameLabelMask must stay a transparent byte-limb wrapper"
-    );
-    assert_eq!(
-        body.trim(),
-        "limbs: [u8; 32],",
-        "FrameLabelMask must stay a fixed [u8; 32] mask"
-    );
-    assert!(
-        labels.contains("limbs[(frame_label >> 3) as usize]"),
-        "FrameLabelMask indexing must stay byte-limb based"
-    );
-    assert!(
-        labels.contains("1u8 << (frame_label & 7)"),
-        "FrameLabelMask bit construction must stay u8 based"
-    );
-}
+#[test]
+fn inbound_frame_identity_is_scalar_and_label_masks_are_absent() {
+    let labels = read("src/transport/labels.rs");
+    let meta = read("src/global/typestate/facts/meta.rs");
+    let key = named_struct_body(&meta, "InboundFrameKey");
 
-fn assert_frame_label_mask_ops_use_no_u64(labels: &str) {
-    for forbidden in [
-        "u64", "1u64", "[u64;", "word0", "word1", "word2", "word3", ">> 6", "<< 6", "* 64", "/ 64",
-    ] {
+    assert_eq!(
+        key.trim(),
+        "pub(crate) source_role: u8,\n    pub(crate) lane: u8,\n    pub(crate) frame_label: u8,",
+        "the endpoint-fixed inbound identity must stay three scalar wire fields"
+    );
+    for forbidden in ["FrameLabelMask", "ScopeFrameLabelMasks", "[u8; 32]"] {
         assert!(
-            !labels.contains(forbidden),
-            "FrameLabelMask must not re-grow wide integer storage or helpers: {forbidden}"
+            !labels.contains(forbidden) && !meta.contains(forbidden),
+            "label-only masks must not return to the receive authority path: {forbidden}"
         );
     }
-}
-
-#[test]
-fn frame_label_mask_has_no_u64_storage() {
-    let labels = read("src/transport/labels.rs");
-    assert_frame_label_mask_byte_limb_storage(&labels);
-}
-
-#[test]
-fn frame_label_mask_ops_do_not_use_u64() {
-    let labels = read("src/transport/labels.rs");
-    assert_frame_label_mask_ops_use_no_u64(&labels);
 }
 
 #[test]
@@ -570,7 +562,10 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
             "dependency descriptor row must stay u16-limb based: {required}"
         );
     }
-    for required in ["event_and_child: u32", "lane_step_row: PackedLaneRange"] {
+    for required in [
+        "event_row: PackedLaneRange",
+        "lane_step_len_and_child_slot: u32",
+    ] {
         assert!(
             route_arm.contains(required),
             "route-arm descriptor row must stay u32/range based: {required}"
@@ -628,141 +623,33 @@ fn role_descriptor_rows_do_not_use_u64_hot_path_storage_or_helpers() {
 }
 
 #[test]
-fn scope_frame_label_meta_does_not_own_frame_label_masks() {
-    let evidence = read("src/endpoint/kernel/evidence.rs");
-    let meta = named_struct_body(&evidence, "ScopeFrameLabelMeta");
-    let masks = named_struct_body(&evidence, "ScopeFrameLabelMasks");
-    let scratch = named_struct_body(&evidence, "ScopeFrameLabelScratch");
-    let view = named_struct_body(&evidence, "ScopeFrameLabelView<'a>");
-
-    for required in [
-        "recv_frame_label: u8",
-        "recv_arm: u8",
-        "controller_frame_labels: [u8; 2]",
-        "flags: u8",
-    ] {
-        assert!(
-            meta.contains(required),
-            "ScopeFrameLabelMeta must keep only scalar route facts: {required}"
-        );
-    }
-    for forbidden in [
-        "FrameLabelMask",
-        "ScopeFrameLabelMasks",
-        "limbs",
-        "[u8; 32]",
-    ] {
-        assert!(
-            !meta.contains(forbidden),
-            "ScopeFrameLabelMeta must not own frame-label masks: {forbidden}"
-        );
-    }
-    assert!(
-        scratch.contains("masks: ScopeFrameLabelMasks")
-            && view.contains("masks: &'a ScopeFrameLabelMasks"),
-        "mask ownership must stay confined to scratch and borrowed through ScopeFrameLabelView"
-    );
-    assert_eq!(
-        masks.trim(),
-        "pub(super) arm_frame_label_masks: [FrameLabelMask; 2],",
-        "ScopeFrameLabelMasks must not re-grow duplicate per-arm mask sets"
-    );
-}
-
-#[test]
-fn scope_frame_label_scratch_is_not_copy() {
-    let evidence = read("src/endpoint/kernel/evidence.rs");
-    let scratch_prefix = evidence
-        .split("pub(super) struct ScopeFrameLabelScratch")
-        .next()
-        .expect("evidence source");
-    let scratch_attrs = scratch_prefix
-        .rsplit("\n\n")
-        .next()
-        .expect("ScopeFrameLabelScratch attrs");
-    assert!(
-        !scratch_attrs.contains("Copy") && !scratch_attrs.contains("Clone"),
-        "ScopeFrameLabelScratch must not be Clone/Copy"
-    );
-}
-
-#[test]
-fn scope_frame_label_masks_is_not_copy() {
-    let evidence = read("src/endpoint/kernel/evidence.rs");
-    let masks_prefix = evidence
-        .split("pub(super) struct ScopeFrameLabelMasks")
-        .next()
-        .expect("evidence source");
-    let masks_attrs = masks_prefix
-        .rsplit("\n\n")
-        .next()
-        .expect("ScopeFrameLabelMasks attrs");
-    assert!(
-        !masks_attrs.contains("Copy") && !masks_attrs.contains("Clone"),
-        "ScopeFrameLabelMasks must not be Clone/Copy"
-    );
-}
-
-#[test]
-fn no_by_value_scope_frame_label_meta_in_hot_paths() {
+fn receive_hot_path_uses_descriptor_queries_and_complete_keys_without_mask_scratch() {
     let hot_path = [
         read("src/endpoint/kernel/core/frontier_helpers.rs"),
-        read("src/endpoint/kernel/core/scope_evidence_logic.rs"),
         read("src/endpoint/kernel/offer.rs"),
-        read("src/endpoint/kernel/offer/facts.rs"),
         read("src/endpoint/kernel/offer/passive.rs"),
         read("src/endpoint/kernel/offer/select.rs"),
+        read("src/endpoint/kernel/offer/select_observed.rs"),
+        read("src/global/typestate/cursor/first_recv_dispatch.rs"),
     ]
     .join("\n");
     for forbidden in [
+        "ScopeFrameLabelMeta",
+        "ScopeFrameLabelScratch",
         "ScopeFrameLabelMasks::EMPTY",
         "frame_label_masks",
-        "frame_label_meta: &ScopeFrameLabelMeta",
-        ") -> ScopeFrameLabelMeta",
-        ".frame_hint_mask(&",
-        "fn selection_frame_label_meta(",
-        "fn offer_scope_frame_label_meta(",
-        "fn scope_frame_label_meta(",
-        "fn scope_frame_label_meta_at(",
+        "FrameLabelMask",
     ] {
         assert!(
             !hot_path.contains(forbidden),
-            "scope frame-label hot path must use ScopeFrameLabelScratch/View, not by-value mask plumbing: {forbidden}"
+            "receive dispatch must not rebuild label-only mask authority: {forbidden}"
         );
     }
     assert!(
-        hot_path.contains("ScopeFrameLabelScratch::EMPTY")
-            && hot_path.contains("ScopeFrameLabelView<'_>"),
-        "offer hot paths must build scratch locally and pass ScopeFrameLabelView"
-    );
-}
-
-#[test]
-fn no_by_value_scope_frame_label_scratch_in_hot_paths() {
-    let hot_path = [
-        read("src/endpoint/kernel/core/frontier_helpers.rs"),
-        read("src/endpoint/kernel/core/scope_evidence_logic.rs"),
-        read("src/endpoint/kernel/offer.rs"),
-        read("src/endpoint/kernel/offer/facts.rs"),
-        read("src/endpoint/kernel/offer/passive.rs"),
-        read("src/endpoint/kernel/offer/select.rs"),
-    ]
-    .join("\n");
-    for forbidden in [
-        ") -> ScopeFrameLabelScratch",
-        "frame_label_scratch: ScopeFrameLabelScratch",
-        "scratch: ScopeFrameLabelScratch",
-        "ScopeFrameLabelMasks,",
-    ] {
-        assert!(
-            !hot_path.contains(forbidden),
-            "scope frame-label scratch must not move by value through hot path signatures: {forbidden}"
-        );
-    }
-    assert!(
-        hot_path.contains("&mut ScopeFrameLabelScratch")
-            && hot_path.contains("ScopeFrameLabelView<'_>"),
-        "hot paths must use mutable scratch and borrowed frame-label views"
+        hot_path.contains("InboundFrameKey")
+            && hot_path.contains("first_recv_descendant_target_for_key")
+            && hot_path.contains("matches_recv"),
+        "receive dispatch must compare source, lane, and frame label through one key"
     );
 }
 

@@ -22,25 +22,17 @@ impl LocalDependency {
         start: usize,
         end: usize,
     ) -> Self {
-        if scope.is_none()
-            || !matches!(scope.kind(), Some(ScopeKind::Parallel))
-            || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
-        {
+        if scope.is_none() || !matches!(scope.kind(), Some(ScopeKind::Parallel)) {
             crate::invariant();
         }
-        if start > PackedLocalDependency::STEP_MASK as usize
-            || end > PackedLocalDependency::STEP_MASK as usize
-        {
+        if start > u16::MAX as usize || end > u16::MAX as usize {
             crate::invariant();
         }
         if start >= end {
             crate::invariant();
         }
         if let LocalConflict::RouteArm { scope, arm } = conflict
-            && (scope.is_none()
-                || !matches!(scope.kind(), Some(ScopeKind::Route))
-                || scope.local_ordinal() as usize >= crate::eff::meta::MAX_EFF_NODES
-                || arm > 1)
+            && (scope.is_none() || !matches!(scope.kind(), Some(ScopeKind::Route)) || arm > 1)
         {
             crate::invariant();
         }
@@ -89,7 +81,6 @@ pub(crate) struct PackedLocalDependency {
 
 impl PackedLocalDependency {
     const ABSENT_FIELD: u16 = u16::MAX;
-    pub(crate) const STEP_MASK: u16 = (1 << 12) - 1;
     const ROUTE_ORDINAL_MASK: u16 = (1 << 13) - 1;
     const CONFLICT_MASK: u16 = 0b11;
     const ROUTE_SHIFT: u16 = 2;
@@ -198,10 +189,10 @@ impl PackedLocalDependency {
                 None
             };
         }
-        if self.start >= self.end || self.end > Self::STEP_MASK {
+        if self.start >= self.end {
             return None;
         }
-        if self.dep_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
+        if self.dep_ordinal >= ScopeId::LOCAL_CAPACITY {
             return None;
         }
         if (self.conflict_route & !Self::CONFLICT_ROUTE_MASK) != 0 {
@@ -221,7 +212,7 @@ impl PackedLocalDependency {
             }
             LocalConflict::SharedRoute
         } else if conflict_tag == Self::CONFLICT_ROUTE_ARM_0 {
-            if route_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
+            if route_ordinal >= ScopeId::LOCAL_CAPACITY {
                 return None;
             }
             LocalConflict::RouteArm {
@@ -229,7 +220,7 @@ impl PackedLocalDependency {
                 arm: 0,
             }
         } else {
-            if route_ordinal as usize >= crate::eff::meta::MAX_EFF_NODES {
+            if route_ordinal >= ScopeId::LOCAL_CAPACITY {
                 return None;
             }
             LocalConflict::RouteArm {
@@ -303,6 +294,20 @@ mod tests {
     }
 
     #[test]
+    fn packed_dependency_crosses_the_former_twelve_bit_boundary() {
+        for (start, end) in [(4094, 4095), (4095, 4096), (u16::MAX - 1, u16::MAX)] {
+            let dependency = LocalDependency::with_conflict_range(
+                ScopeId::parallel(0),
+                LocalConflict::Unconditional,
+                start as usize,
+                end as usize,
+            );
+            let packed = PackedLocalDependency::from_dependency(dependency);
+            assert_eq!(packed.decode(), Some(Some(dependency)));
+        }
+    }
+
+    #[test]
     #[should_panic]
     fn local_dependency_rejects_absent_scope() {
         let _ = LocalDependency::with_conflict_range(
@@ -317,7 +322,7 @@ mod tests {
     #[should_panic]
     fn local_dependency_rejects_out_of_domain_parallel_scope() {
         let _ = LocalDependency::with_conflict_range(
-            ScopeId::parallel(crate::eff::meta::MAX_EFF_NODES as u16),
+            ScopeId::parallel(ScopeId::LOCAL_CAPACITY),
             LocalConflict::Unconditional,
             0,
             1,
@@ -330,7 +335,7 @@ mod tests {
         let _ = LocalDependency::with_conflict_range(
             ScopeId::parallel(0),
             LocalConflict::RouteArm {
-                scope: ScopeId::route(crate::eff::meta::MAX_EFF_NODES as u16),
+                scope: ScopeId::route(ScopeId::LOCAL_CAPACITY),
                 arm: 0,
             },
             0,

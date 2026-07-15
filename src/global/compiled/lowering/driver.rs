@@ -3,9 +3,7 @@ use crate::{
     global::const_dsl::{EffList, ScopeEvent},
 };
 
-use super::super::images::program::{CompiledProgramCounts, MAX_COMPILED_PROGRAM_SCOPES};
-const MAX_COMPILED_IMAGE_NODES: usize = crate::eff::meta::MAX_EFF_NODES;
-const ROUTE_SCOPE_ORDINAL_BYTES: usize = MAX_COMPILED_IMAGE_NODES.div_ceil(8);
+use super::super::images::program::CompiledProgramCounts;
 
 mod impls;
 

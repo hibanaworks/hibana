@@ -1,161 +1,180 @@
-use crate::global::const_dsl::{
-    EffList, INTRINSIC_ROUTE_RESOLVER_ID, ScopeEvent, ScopeId, ScopeKind, ScopeRebase,
+use crate::{
+    eff::{EffAtom, EffStruct},
+    global::const_dsl::{
+        EffList, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, ScopeId, ScopeKind,
+        color_roll_frame_labels, merge_parallel_lanes, merge_route_frame_labels,
+    },
 };
 
-use super::ProgramSourceError;
-
-pub(crate) trait ProgramTerm {
-    const PROGRAM_SOURCE: ProgramSourceData;
+#[derive(Clone, Copy)]
+pub(crate) enum SourceRouteResolver {
+    Intrinsic,
+    Dynamic(u16),
 }
 
-pub(crate) struct ProgramSourceData {
-    eff: EffList,
-    lane_span: u16,
-    error: Option<ProgramSourceError>,
+#[derive(Clone, Copy)]
+pub(crate) enum ProgramSourceNode {
+    Send(EffAtom),
+    Seq {
+        left: &'static Self,
+        right: &'static Self,
+    },
+    Route {
+        left: &'static Self,
+        right: &'static Self,
+        resolver: SourceRouteResolver,
+    },
+    Parallel {
+        left: &'static Self,
+        right: &'static Self,
+    },
+    Roll(&'static Self),
 }
 
-impl ProgramSourceData {
-    pub(crate) const fn from_parts(eff: EffList, lane_span: u16) -> Self {
+pub(crate) trait ProgramShape {
+    const SOURCE_NODE: ProgramSourceNode;
+    const EVENT_COUNT: usize;
+    const SCOPE_MARKER_COUNT: usize;
+    const RESOLVER_MARKER_COUNT: usize;
+
+    const SOURCE_ROW_COUNT: usize = checked_source_count(
+        Self::EVENT_COUNT,
+        Self::SCOPE_MARKER_COUNT,
+        Self::RESOLVER_MARKER_COUNT,
+    );
+}
+
+pub(crate) struct ProgramSourceData<const CAPACITY: usize> {
+    eff: EffList<CAPACITY>,
+}
+
+struct SourceLowering<const CAPACITY: usize> {
+    eff: EffList<CAPACITY>,
+    next_scope_ordinal: u16,
+}
+
+impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
+    const fn new(event_count: usize, scope_count: usize, resolver_count: usize) -> Self {
         Self {
-            eff,
-            lane_span,
-            error: None,
+            eff: EffList::new_partitioned(event_count, scope_count, resolver_count),
+            next_scope_ordinal: 0,
         }
     }
 
-    pub(crate) const fn merge_error(
-        left: Option<ProgramSourceError>,
-        right: Option<ProgramSourceError>,
-    ) -> Option<ProgramSourceError> {
-        if left.is_some() { left } else { right }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn eff_list(&self) -> &EffList {
-        &self.eff
-    }
-
-    #[inline(always)]
-    pub(crate) const fn error(&self) -> Option<ProgramSourceError> {
-        self.error
-    }
-
-    pub(crate) const fn seq(left: Self, next: Self) -> Self {
-        let error = Self::merge_error(left.error, next.error);
-        let left_budget = left.eff.scope_budget();
-        let right_budget = next.eff.scope_budget();
-        let mut eff = left.eff;
-        eff.append_rebased_from(&next.eff, 0, left_budget, ScopeRebase::Preserve);
-        add_scope_budget(left_budget, right_budget);
-        let lane_span = max_lane_span(left.lane_span, next.lane_span);
-        Self {
-            eff,
-            lane_span,
-            error,
+    const fn allocate_scope(&mut self, kind: ScopeKind) -> ScopeId {
+        if self.next_scope_ordinal >= ScopeId::LOCAL_CAPACITY {
+            panic!("structured scope domain exceeded");
         }
+        let ordinal = self.next_scope_ordinal;
+        self.next_scope_ordinal += 1;
+        ScopeId::new(kind, ordinal)
     }
 
-    pub(crate) const fn resolve_route(source: Self, resolver_id: u16) -> Self {
-        let mut eff = source.eff;
-        let mut error = source.error;
-        if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
-            error = Self::merge_error(error, Some(ProgramSourceError::ResolverIdOutOfDomain));
-        } else if eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
-        } else {
-            let scope = ScopeId::route(0);
-            let mut found = false;
-            let mut marker_idx = 0usize;
-            while marker_idx < eff.scope_marker_count() {
-                let marker = eff.scope_marker_at(marker_idx);
-                if matches!(marker.event, ScopeEvent::Enter)
-                    && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-                    && marker.scope_id.same(scope)
-                    && !found
-                {
-                    eff.push_route_resolver_mut(scope, resolver_id);
-                    found = true;
+    const fn emit(&mut self, node: &ProgramSourceNode, route_reentry: ReentryMark) -> u16 {
+        match node {
+            ProgramSourceNode::Send(atom) => {
+                self.eff.push_event_mut(EffStruct::atom(*atom));
+                1
+            }
+            ProgramSourceNode::Seq { left, right } => {
+                let left_span = self.emit(left, route_reentry);
+                let right_span = self.emit(right, route_reentry);
+                max_lane_span(left_span, right_span)
+            }
+            ProgramSourceNode::Route {
+                left,
+                right,
+                resolver,
+            } => {
+                let scope = self.allocate_scope(ScopeKind::Route);
+                let left_start = self.eff.len();
+                self.eff
+                    .push_scope_enter_reentry_mut(left_start, scope, route_reentry);
+                let left_span = self.emit(left, route_reentry);
+                let right_start = self.eff.len();
+                self.eff
+                    .close_scope_segment_mut(scope, left_start, right_start);
+                self.eff.push_scope_exit_mut(right_start, scope);
+                self.eff
+                    .push_scope_enter_reentry_mut(right_start, scope, route_reentry);
+                let right_span = self.emit(right, route_reentry);
+                let right_end = self.eff.len();
+                self.eff
+                    .close_scope_segment_mut(scope, right_start, right_end);
+                self.eff.push_scope_exit_mut(right_end, scope);
+                merge_route_frame_labels(&mut self.eff, left_start, right_start, right_end);
+                if let SourceRouteResolver::Dynamic(resolver_id) = *resolver {
+                    if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
+                        panic!("route resolver id must be < u16::MAX");
+                    }
+                    self.eff.push_route_resolver_mut(scope, resolver_id);
                 }
-                marker_idx += 1;
+                max_lane_span(left_span, right_span)
             }
-            if !found {
-                error = Self::merge_error(error, Some(ProgramSourceError::ResolverTargetNotRoute));
+            ProgramSourceNode::Parallel { left, right } => {
+                let scope = self.allocate_scope(ScopeKind::Parallel);
+                let left_start = self.eff.len();
+                self.eff
+                    .push_scope_enter_reentry_mut(left_start, scope, ReentryMark::SinglePass);
+                let left_span = self.emit(left, route_reentry);
+                let right_start = self.eff.len();
+                self.eff.push_scope_split_mut(right_start, scope);
+                let right_span = self.emit(right, route_reentry);
+                let right_end = self.eff.len();
+                self.eff
+                    .close_scope_segment_mut(scope, left_start, right_end);
+                self.eff.push_scope_exit_mut(right_end, scope);
+                merge_parallel_lanes(
+                    &mut self.eff,
+                    left_start,
+                    right_start,
+                    right_end,
+                    left_span,
+                    right_span,
+                )
+            }
+            ProgramSourceNode::Roll(inner) => {
+                let scope = self.allocate_scope(ScopeKind::Roll);
+                let start = self.eff.len();
+                self.eff
+                    .push_scope_enter_reentry_mut(start, scope, ReentryMark::SinglePass);
+                let lane_span = self.emit(inner, ReentryMark::Reentrant);
+                let end = self.eff.len();
+                self.eff.close_scope_segment_mut(scope, start, end);
+                self.eff.push_scope_exit_mut(end, scope);
+                color_roll_frame_labels(&mut self.eff, start, end);
+                lane_span
             }
         }
-        Self {
-            eff,
-            lane_span: source.lane_span,
-            error,
-        }
     }
+}
 
-    pub(crate) const fn roll(source: Self) -> Self {
-        let mut error = source.error;
-        if source.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::RollBodyAbsent));
+impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
+    pub(crate) const fn lower<Steps>() -> Self
+    where
+        Steps: ProgramShape,
+    {
+        if Steps::SOURCE_ROW_COUNT == 0 || Steps::SOURCE_ROW_COUNT > CAPACITY {
+            panic!("source bucket selection");
         }
-        let roll_scope = ScopeId::roll_scope(0);
-        let mut eff = source.eff;
-        eff.rebase_scopes_mut(1, ScopeRebase::MarkRouteEnters);
-        let len = eff.len();
-        eff.push_scope_around(0, len, roll_scope);
-        Self {
-            eff,
-            lane_span: source.lane_span,
-            error,
-        }
-    }
-
-    pub(crate) const fn route(left: Self, right: Self) -> Self {
-        let mut error = Self::merge_error(left.error, right.error);
-        if left.eff.is_empty() || right.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::RouteArmAbsent));
-        }
-        let scope = ScopeId::route(0);
-        let left_budget = left.eff.scope_budget();
-        let right_offset = add_scope_budget(1, left_budget);
-        let mut eff = left.eff;
-        eff.rebase_scopes_mut(1, ScopeRebase::Preserve);
-        let left_start = 0usize;
-        let left_end = eff.len();
-        eff.push_scope_around(left_start, left_end, scope);
-        let right_start = eff.len();
-        eff.push_scope_enter_at_boundary(right_start, scope);
-        eff.append_rebased_from(&right.eff, 0, right_offset, ScopeRebase::Preserve);
-        let right_end = eff.len();
-        eff.push_scope_exit_at_boundary(right_end, scope);
-        let lane_span = max_lane_span(left.lane_span, right.lane_span);
-        Self {
-            eff,
-            lane_span,
-            error,
-        }
-    }
-
-    pub(crate) const fn par(left: Self, right: Self) -> Self {
-        let mut error = Self::merge_error(left.error, right.error);
-        if left.eff.is_empty() || right.eff.is_empty() {
-            error = Self::merge_error(error, Some(ProgramSourceError::ParallelArmAbsent));
-        }
-        let combined_lane_span = add_lane_span(left.lane_span, right.lane_span);
-        let parallel_scope = ScopeId::parallel(0);
-        let left_budget = left.eff.scope_budget();
-        let right_offset = add_scope_budget(1, left_budget);
-        let mut eff = left.eff;
-        eff.rebase_scopes_mut(1, ScopeRebase::Preserve);
-        let left_len = eff.len();
-        eff.append_rebased_from(
-            &right.eff,
-            left.lane_span,
-            right_offset,
-            ScopeRebase::Preserve,
+        let mut lowering = SourceLowering::new(
+            Steps::EVENT_COUNT,
+            Steps::SCOPE_MARKER_COUNT,
+            Steps::RESOLVER_MARKER_COUNT,
         );
-        eff.push_parallel_scope_split(parallel_scope, left_len);
-        Self {
-            eff,
-            lane_span: combined_lane_span,
-            error,
+        let _ = lowering.emit(&Steps::SOURCE_NODE, ReentryMark::SinglePass);
+        if lowering.eff.len() != Steps::EVENT_COUNT
+            || lowering.eff.scope_marker_count() != Steps::SCOPE_MARKER_COUNT
+            || lowering.eff.resolver_marker_count() != Steps::RESOLVER_MARKER_COUNT
+        {
+            panic!("type tree and lowered source disagree");
         }
+        Self { eff: lowering.eff }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn eff_list(&self) -> &EffList<CAPACITY> {
+        &self.eff
     }
 }
 
@@ -163,18 +182,12 @@ const fn max_lane_span(lhs: u16, rhs: u16) -> u16 {
     if lhs >= rhs { lhs } else { rhs }
 }
 
-const fn add_lane_span(lhs: u16, rhs: u16) -> u16 {
-    let sum = lhs as u32 + rhs as u32;
-    if sum > (u8::MAX as u32 + 1) {
-        panic!("projection internal lane overflow");
-    }
-    sum as u16
-}
-
-const fn add_scope_budget(lhs: u16, rhs: u16) -> u16 {
-    let sum = lhs as u32 + rhs as u32;
-    if sum > ScopeId::LOCAL_CAPACITY as u32 {
-        panic!("structured scope budget exceeded");
-    }
-    sum as u16
+pub(crate) const fn checked_source_count(lhs: usize, rhs: usize, added: usize) -> usize {
+    let Some(partial) = lhs.checked_add(rhs) else {
+        panic!("choreography source count overflow");
+    };
+    let Some(sum) = partial.checked_add(added) else {
+        panic!("choreography source count overflow");
+    };
+    sum
 }

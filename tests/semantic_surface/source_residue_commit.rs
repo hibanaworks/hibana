@@ -553,7 +553,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
     let cursor_lane_progress = read("src/global/typestate/cursor/lane_progress.rs");
     let role_program_types = read("src/global/role_program/image_types.rs");
     let mut role_program_impl = read("src/global/role_program/image_impl.rs");
-    role_program_impl.push_str(&read("src/global/role_program/image_impl/scope_rows.rs"));
+    role_program_impl.push_str(&read("src/global/role_program/image_impl/blob_image.rs"));
     role_program_impl.push_str(&read("src/global/role_program/image_impl/lane_image.rs"));
     role_program_impl.push_str(&read("src/global/role_program/image_impl/ref_access.rs"));
     let endpoint_kernel = endpoint_kernel_source();
@@ -568,7 +568,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
         .and_then(|tail| tail.split("    #[inline(always)]").next())
         .expect("passive child scope authority must stay factored");
     let passive_dispatch = cursor_route_navigation
-        .split("pub(crate) fn passive_descendant_dispatch_arm_from_exact_frame_label")
+        .split("pub(crate) fn passive_descendant_dispatch_arm_for_key")
         .nth(1)
         .and_then(|tail| {
             tail.split("    /// Check if this role is the controller for the given route scope.")
@@ -598,13 +598,12 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && cursor_route_navigation.contains("PackedEventConflict::MAX_CHAIN_DEPTH")
             && role_program_types.contains("PackedRouteArmRow")
             && role_program_types.contains("RouteArmLaneStepRow")
-            && role_program_types.contains("child_slot_delta(self) -> Option<u8>")
+            && role_program_types.contains("child_slot(self) -> Option<u16>")
             && role_program_impl.contains("passive_arm_child_ordinal_by_slot")
             && !role_program_types.contains("passive_children")
             && !role_program_types.contains("route_arm_rows: &'static")
-            && role_program_impl.contains(
-                "PackedRouteArmRow::new(input.local_row, child_delta, input.lane_step_row)"
-            )
+            && role_program_impl.contains("PackedRouteArmRow::new(")
+            && role_program_impl.contains("child_slot,")
             && !role_program_types.contains("passive_arm_child_rows")
             && !role_program_types.contains("PassiveArmChildRow")
             && !cursor_scope_route.contains("PassiveArmChildRow")
@@ -643,7 +642,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
         );
     }
     assert!(
-        passive_dispatch.contains(".first_recv_descendant_target_for_lane_frame_label(")
+        passive_dispatch.contains(".first_recv_descendant_target_for_key(")
             && first_recv_dispatch.contains("visit_first_recv_dispatch(")
             && first_recv_dispatch.contains("first_recv_dispatch_root_arm")
             && first_recv_dispatch.contains("passive_arm_child_fact_by_slot")
@@ -665,7 +664,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
         );
     }
     assert!(
-        !passive_dispatch.contains(".passive_descendant_dispatch_arm_from_exact_frame_label("),
+        !passive_dispatch.contains(".passive_descendant_dispatch_arm_for_key("),
         "passive descendant dispatch must stay non-recursive"
     );
     assert!(

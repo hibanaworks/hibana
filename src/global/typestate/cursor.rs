@@ -3,8 +3,9 @@
 use core::slice;
 
 use super::facts::{
-    ARM_SHARED, LocalAction, LocalDependency, LocalMeta, LocalNode, PackedEventConflict,
-    PassiveArmChildFact, RecvMeta, RouteScopeRows, SendMeta, StateIndex, state_index_to_usize,
+    ARM_SHARED, InboundFrameKey, LocalAction, LocalDependency, LocalMeta, LocalNode,
+    PackedEventConflict, PassiveArmChildFact, RecvMeta, RouteScopeRows, SendMeta, StateIndex,
+    state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
 use crate::{
@@ -398,7 +399,7 @@ pub(crate) struct EventCursorState {
     /// Primary typestate index used for scope queries.
     idx: u16,
     /// Cached resident-row locator for compact lane rows.
-    resident_row_index: u8,
+    resident_row_index: u16,
     /// Per-lane cursor within the cached resident row.
     /// Completion is tracked by `completed_event_words`, not by this locator.
     lane_cursors: *mut u16,

@@ -78,9 +78,9 @@ theorem roll_step_with_admitted_transport_frame_is_fresh_occurrence
   cases sameDelivery
   have admissionSound := global_transport_admission_checker_sound admitted
   obtain ⟨_, _, _, sender, receiver, lane, _⟩ :=
-    transport_admission_binds_exact_descriptor_occurrence admissionSound.2
+    transport_admission_binds_exact_descriptor_occurrence admissionSound.2.1
   exact ⟨ready, empty, channel, sequence, label,
-    admissionSound.1, admissionSound.2, sender, receiver, lane⟩
+    admissionSound.1, admissionSound.2.1, sender, receiver, lane⟩
 
 /-- Session-number reuse is safe only when the transport allocates a distinct
 carrier-instance generation. Retired-generation frames cannot be the new iteration's

@@ -5,6 +5,36 @@ use crate::{
 
 use super::{RouteChoiceMark, StateIndex};
 
+/// Complete descriptor-visible identity of an inbound transport operation.
+///
+/// Session and target role are fixed by the attached endpoint. These three
+/// fields are the remaining wire facts needed to select exactly one receive
+/// occurrence without conflating messages from different peers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InboundFrameKey {
+    pub(crate) source_role: u8,
+    pub(crate) lane: u8,
+    pub(crate) frame_label: u8,
+}
+
+impl InboundFrameKey {
+    #[inline(always)]
+    pub(crate) const fn new(source_role: u8, lane: u8, frame_label: u8) -> Self {
+        Self {
+            source_role,
+            lane,
+            frame_label,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn matches_recv(self, meta: RecvMeta) -> bool {
+        self.source_role == meta.peer
+            && self.lane == meta.lane
+            && self.frame_label == meta.frame_label
+    }
+}
+
 /// Metadata for a send transition derived from typestate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SendMeta {

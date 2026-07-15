@@ -99,3 +99,44 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
         );
     }
 }
+
+#[test]
+fn offer_admission_prioritizes_the_unconsumed_current_frontier() {
+    let select = read("src/endpoint/kernel/offer/select.rs");
+    let observed = read("src/endpoint/kernel/offer/select_observed.rs");
+    let roll = read("src/global/typestate/cursor/scope_route/roll.rs");
+
+    let current = select
+        .find("self.select_current_materialized_ingress_scope")
+        .expect("offer selection must inspect the current materialized frontier");
+    let reentry = select
+        .find("self.select_observed_ingress_route_scope")
+        .expect("offer selection must retain elastic reentry admission");
+    assert!(
+        current < reentry,
+        "the exact unconsumed current occurrence must precede next-iteration reentry admission"
+    );
+    assert!(
+        observed.contains("self.cursor.node_event_done_for_lane(current_idx, key.lane)"),
+        "a consumed current occurrence must not shadow a legal rolled reentry frame"
+    );
+
+    let roll_admission = roll
+        .split("pub(crate) fn roll_reentry_recv_index_for_frame")
+        .nth(1)
+        .and_then(|body| {
+            body.split("pub(crate) fn roll_reentry_event_allows_index")
+                .next()
+        })
+        .expect("roll frame admission function must remain inspectable");
+    let current_progress = roll_admission
+        .find("RollLaneAdmission::Progress")
+        .expect("roll frame admission must name current progress");
+    let next_head = roll_admission
+        .find("RollLaneAdmission::Head")
+        .expect("roll frame admission must name the next iteration head");
+    assert!(
+        current_progress < next_head,
+        "same-color roll admission must exhaust current progress before considering a next-iteration head"
+    );
+}

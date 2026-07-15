@@ -324,10 +324,12 @@ fn eff_index_stays_internal_descriptor_id() {
     let eff_rs = read("src/eff.rs");
     assert!(
         !runtime_rs.contains("EffIndex")
-            && eff_rs.contains("pub(crate) struct EffIndex")
-            && eff_rs.contains("pub(crate) const fn segment(self) -> u16")
-            && eff_rs.contains("pub(crate) const fn offset(self) -> u16"),
-        "EffIndex must remain an internal segmented descriptor id, not public runtime authority"
+            && eff_rs.contains("pub(crate) struct EffIndex(u16)")
+            && eff_rs.contains("pub(crate) const fn from_dense_ordinal(idx: usize) -> Self")
+            && eff_rs.contains("pub(crate) const fn dense_ordinal(self) -> usize")
+            && !eff_rs.contains("fn segment(")
+            && !eff_rs.contains("fn offset("),
+        "EffIndex must remain an internal dense descriptor id, not public runtime authority"
     );
     assert!(
         !eff_rs.contains("pub const fn as_usize")
@@ -335,12 +337,12 @@ fn eff_index_stays_internal_descriptor_id() {
             && !eff_rs.contains("pub const ZERO")
             && !eff_rs.contains("pub const MAX")
             && eff_rs.contains("pub(crate) const fn dense_ordinal(self) -> usize"),
-        "EffIndex must not expose public constructors, absence codes, flat ordinal, or raw conversion"
+        "EffIndex must not expose public constructors, absence codes, or raw conversion"
     );
 }
 
 #[test]
-fn role_program_handle_is_resident_compiled_image_backed() {
+fn role_program_handle_is_compact_image_backed() {
     let role_program = {
         let mut source = read("src/global/role_program.rs");
         source.push_str(&read_dir_rs("src/global/role_program"));
@@ -355,7 +357,7 @@ fn role_program_handle_is_resident_compiled_image_backed() {
         .and_then(|tail| tail.split("}").next())
         .expect("RoleProgram definition must stay present");
     let role_projection = role_projection_source
-        .split("struct RoleProjection<const ROLE: u8, Steps>")
+        .split("struct RoleProjection<const ROLE: u8, Steps, const CAPACITY: usize>")
         .nth(1)
         .expect("role projection boundary must stay on the public g vocabulary side");
 
@@ -374,15 +376,14 @@ fn role_program_handle_is_resident_compiled_image_backed() {
             && role_projection
                 .contains("const IMAGE_REF: crate::global::role_program::RoleImageRef")
             && role_projection.contains("ProgramImageBytes")
-            && role_projection.contains("ProgramProjection::<Steps>::PROGRAM_REF")
+            && role_projection.contains("ProgramProjection::<Steps, CAPACITY>::PROGRAM_REF")
             && role_projection.contains("RoleImageBuild<N>")
-            && role_projection.contains("match &RoleProjectionBlob::<ROLE, Steps, N>::BUILD")
+            && role_projection
+                .contains("match &RoleProjectionBlob::<ROLE, Steps, CAPACITY, N>::BUILD")
             && role_projection.contains("Self::image_ref::<")
-            && role_projection.contains(
-                "build.image_ref(&ProgramProjection::<Steps>::PROGRAM_REF, ROLE, Self::FACTS)"
-            )
+            && role_projection.contains("build.image_ref(")
             && role_blob.contains("self.bytes.image_ref("),
-        "RoleProgram must stay a direct compact resident RoleImageRef handle"
+        "RoleProgram must stay a direct compact RoleImageRef handle"
     );
 }
 

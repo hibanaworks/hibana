@@ -23,7 +23,7 @@ where
         mismatch: FrameMismatch,
     ) {
         let port = self.port_for_lane(lane_idx);
-        let event = mismatch.tap_event(port.now32(), self.sid.raw(), lane_wire);
+        let event = mismatch.tap_event(self.sid.raw(), lane_wire);
         crate::observe::core::emit(port.tap(), event);
     }
 
@@ -35,7 +35,7 @@ where
         observation: lane_port::FrameObservation,
     ) {
         let port = self.port_for_lane(lane_idx);
-        let event = crate::rendezvous::port::transport_frame_tap_event(port.now32(), observation);
+        let event = crate::rendezvous::port::transport_frame_tap_event(observation);
         crate::observe::core::emit(port.tap(), event);
     }
 
@@ -165,7 +165,7 @@ where
     ) {
         let port = self.port_for_lane(lane_idx);
         let reason = transport_fault_reason(error);
-        let event = events::raw_event(port.now32(), ids::TRANSPORT_FAULT)
+        let event = events::raw_event(ids::TRANSPORT_FAULT)
             .with_causal_key(crate::observe::core::TapEvent::make_causal_key(
                 lane_wire, reason,
             ))

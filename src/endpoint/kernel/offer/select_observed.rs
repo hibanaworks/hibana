@@ -2,6 +2,7 @@ use super::{
     CursorEndpoint, OfferScopeSelection, RecvError, RecvResult, Transport, state_index_to_usize,
 };
 use crate::endpoint::kernel::frontier::checked_state_index;
+use crate::global::typestate::InboundFrameKey;
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -9,17 +10,19 @@ where
 {
     pub(in crate::endpoint::kernel::offer) fn select_current_materialized_ingress_scope(
         &self,
-        carried_lane: Option<u8>,
-        carried_frame_label: Option<u8>,
+        carried_key: Option<InboundFrameKey>,
     ) -> RecvResult<Option<OfferScopeSelection>> {
-        let (Some(lane), Some(frame_label)) = (carried_lane, carried_frame_label) else {
+        let Some(key) = carried_key else {
             return Ok(None);
         };
         let current_idx = self.cursor.index();
         let Some(meta) = self.cursor.try_recv_meta_at(current_idx) else {
             return Ok(None);
         };
-        if meta.lane != lane || meta.frame_label != frame_label {
+        if !key.matches_recv(meta) {
+            return Ok(None);
+        }
+        if self.cursor.node_event_done_for_lane(current_idx, key.lane) {
             return Ok(None);
         }
         let node_scope = self.cursor.node_scope_id_at(current_idx);
@@ -29,63 +32,60 @@ where
         else {
             return Ok(None);
         };
-        self.offer_scope_selection_for_scope_lane(scope_id, current_idx, lane)
+        self.offer_scope_selection_for_scope_lane(scope_id, current_idx, key.lane)
             .map(Some)
     }
 
     pub(in crate::endpoint::kernel::offer) fn select_observed_ingress_route_scope(
         &mut self,
-        carried_lane: Option<u8>,
-        carried_frame_label: Option<u8>,
+        carried_key: Option<InboundFrameKey>,
         carried_observation: Option<super::lane_port::FrameObservation>,
     ) -> RecvResult<Option<OfferScopeSelection>> {
-        let (Some(lane), Some(frame_label)) = (carried_lane, carried_frame_label) else {
+        let Some(key) = carried_key else {
             return Ok(None);
         };
         let current_idx = self.cursor.index();
         let reentry_target = {
             let endpoint = &*self;
-            let mut selected_arm_for_scope =
+            let mut live_arm_for_scope =
                 |scope| endpoint.preview_live_selected_arm_for_scope(scope);
+            // A completed arm still owns the enclosing iteration whose
+            // completion admits reentry; unrelated inner scopes must not leak.
+            let mut committed_arm_for_scope = |scope| endpoint.selected_arm_for_scope(scope);
             endpoint.cursor.roll_reentry_recv_index_for_frame(
-                lane,
-                frame_label,
-                &mut selected_arm_for_scope,
+                key,
+                &mut live_arm_for_scope,
+                &mut committed_arm_for_scope,
             )
         };
-        let (scope_id, target_idx, reentry_observed_target) = if let Some(target_idx) =
-            reentry_target
-        {
-            let node_scope = self.cursor.node_scope_id_at(target_idx);
-            let scope_id = self
-                .cursor
-                .route_scope_for_offer_node(node_scope, target_idx)
-                .ok_or(RecvError::PhaseInvariant)?;
-            (scope_id, target_idx, true)
-        } else if let Some(scope_id) = self
-            .active_reentry_scope_for_observed_frame(lane, frame_label)
-            .or_else(|| {
-                self.cursor
-                    .enclosing_passive_route_scope_for_exact_frame_label(
-                        current_idx,
-                        lane,
-                        frame_label,
-                    )
-            })
-        {
-            let target_idx = self
-                .cursor
-                .passive_descendant_target_index_from_exact_frame_label(scope_id, lane, frame_label)
-                .ok_or(RecvError::PhaseInvariant)?;
-            (scope_id, target_idx, false)
-        } else {
-            return Ok(None);
-        };
+        let (scope_id, target_idx, reentry_observed_target) =
+            if let Some(target_idx) = reentry_target {
+                let node_scope = self.cursor.node_scope_id_at(target_idx);
+                let scope_id = self
+                    .cursor
+                    .route_scope_for_offer_node(node_scope, target_idx)
+                    .ok_or(RecvError::PhaseInvariant)?;
+                (scope_id, target_idx, true)
+            } else if let Some(scope_id) = self
+                .active_reentry_scope_for_observed_frame(key)
+                .or_else(|| {
+                    self.cursor
+                        .enclosing_passive_route_scope_for_key(current_idx, key)
+                })
+            {
+                let target_idx = self
+                    .cursor
+                    .passive_descendant_target_index_for_key(scope_id, key)
+                    .ok_or(RecvError::PhaseInvariant)?;
+                (scope_id, target_idx, false)
+            } else {
+                return Ok(None);
+            };
         let observed_arm = if reentry_observed_target {
             self.cursor.route_arm_for_index(scope_id, target_idx)
         } else {
             self.cursor
-                .passive_descendant_dispatch_arm_from_exact_frame_label(scope_id, lane, frame_label)
+                .passive_descendant_dispatch_arm_for_key(scope_id, key)
         };
         let selected_arm_for_observed = {
             let preview_conflict = self.cursor.event_conflict_for_index(target_idx);
@@ -103,8 +103,8 @@ where
         {
             let observation = carried_observation.ok_or(RecvError::PhaseInvariant)?;
             self.emit_materialization_mismatch_observation(
-                usize::from(lane),
-                lane,
+                usize::from(key.lane),
+                key.lane,
                 super::lane_port::FrameMismatch::label_mismatch(observation),
             );
             return Err(RecvError::PhaseInvariant);
@@ -117,7 +117,7 @@ where
         let mut selection = self.offer_scope_selection_for_scope_lane_with_selected_arm(
             scope_id,
             target_idx,
-            lane,
+            key.lane,
             selected_arm_for_observed.or(observed_arm),
         )?;
         selection.observed_target =

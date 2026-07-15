@@ -1,7 +1,7 @@
 use super::{
     super::{
-        ColumnRange, PackedLaneRange, ROLE_IMAGE_EVENT_STRIDE, RoleImageColumns, RoleImagePlan,
-        RouteArmLaneStepRow, RuntimeRoleFacts,
+        ColumnRange, PackedLaneRange, PackedRouteArmRow, ROLE_IMAGE_EVENT_STRIDE, RoleImageColumns,
+        RoleImagePlan, RouteArmLaneStepRow, RuntimeRoleFacts,
     },
     decode_binary_route_arm_index,
     event_rows::decode_resident_event_header,
@@ -53,12 +53,12 @@ fn one_event_role_image_plan() -> RoleImagePlan {
 
 #[kani::proof]
 fn role_image_fit_probe_rejects_undersized_storage() {
-    let source = crate::global::const_dsl::EffList::new();
+    let source = crate::global::const_dsl::EffList::<1>::new();
     let facts = empty_role_facts();
     let plan = one_event_role_image_plan();
     assert!(plan.blob_len() == ROLE_IMAGE_EVENT_STRIDE);
     assert!(
-        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }>(&source, facts, 0)
+        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>(&source, facts, 0)
             .is_none()
     );
 }
@@ -66,7 +66,7 @@ fn role_image_fit_probe_rejects_undersized_storage() {
 #[kani::proof]
 #[kani::should_panic]
 fn role_image_fit_probe_rejects_plan_mismatch() {
-    let source = crate::global::const_dsl::EffList::new();
+    let source = crate::global::const_dsl::EffList::<1>::new();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
         max_route_stack_depth: 0,
         local_step_count: 0,
@@ -76,7 +76,7 @@ fn role_image_fit_probe_rejects_plan_mismatch() {
         logical_lane_count: 1,
     });
     let plan = one_event_role_image_plan();
-    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE>(&source, facts, 0);
+    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>(&source, facts, 0);
 }
 
 #[kani::proof]
@@ -117,7 +117,7 @@ fn resident_route_arm_index_decoding_accepts_exact_binary_domain() {
 fn resident_route_scope_decoding_accepts_exact_domain() {
     let raw: u16 = kani::any();
     let decoded = decode_resident_route_scope(raw);
-    let expected = (raw as usize) < crate::eff::meta::MAX_EFF_NODES;
+    let expected = raw < ScopeId::LOCAL_CAPACITY;
 
     assert!(decoded.is_some() == expected);
     if let Some(scope) = decoded {
@@ -130,7 +130,7 @@ fn resident_route_scope_decoding_accepts_exact_domain() {
 fn resident_roll_scope_decoding_accepts_exact_domain() {
     let raw_ordinal: u16 = kani::any();
     let decoded = decode_resident_roll_scope(raw_ordinal);
-    let expected = (raw_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES;
+    let expected = raw_ordinal < ScopeId::LOCAL_CAPACITY;
 
     assert!(decoded.is_some() == expected);
     if let Some(scope) = decoded {
@@ -143,14 +143,11 @@ fn resident_event_header_decoding_accepts_exact_domain() {
     let eff_index: u16 = kani::any();
     let scope_raw: u16 = kani::any();
     let flags: u8 = kani::any();
-    let scope_ordinal = scope_raw & 0x1fff;
     let scope_kind = (scope_raw >> 13) & 0b11;
-    let scope_valid = scope_raw == u16::MAX
-        || ((scope_raw & 0x8000) == 0
-            && scope_kind <= 2
-            && (scope_ordinal as usize) < crate::eff::meta::MAX_EFF_NODES);
-    let expected =
-        (eff_index as usize) < crate::eff::meta::MAX_EFF_NODES && flags <= 1 && scope_valid;
+    let scope_valid = scope_raw == u16::MAX || ((scope_raw & 0x8000) == 0 && scope_kind <= 2);
+    let expected = (eff_index as usize) < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
+        && flags <= 1
+        && scope_valid;
     let decoded = decode_resident_event_header(eff_index, scope_raw, flags);
 
     assert!(decoded.is_some() == expected);
@@ -183,8 +180,8 @@ fn resident_route_commit_decision_match_is_exact() {
     let left_mark_raw: u8 = kani::any();
     let right_mark_raw: u8 = kani::any();
 
-    let valid = (left_scope as usize) < crate::eff::meta::MAX_EFF_NODES
-        && (right_scope as usize) < crate::eff::meta::MAX_EFF_NODES
+    let valid = left_scope < ScopeId::LOCAL_CAPACITY
+        && right_scope < ScopeId::LOCAL_CAPACITY
         && left_arm <= 1
         && right_arm <= 1
         && left_mark_raw <= 1
@@ -236,7 +233,6 @@ fn resident_route_arm_lane_step_decoding_accepts_exact_domain() {
         && (lane as u16) < logical_lane_count
         && event_raw != u32::MAX
         && event_len != 0
-        && event_end <= crate::eff::meta::MAX_EFF_NODES
         && event_start <= first_step
         && first_step <= last_step
         && (last_step as usize) < event_end;
@@ -251,5 +247,45 @@ fn resident_route_arm_lane_step_decoding_accepts_exact_domain() {
         assert!(row.lane() == lane);
         assert!(row.first_step() == first_step);
         assert!(row.last_step() == last_step);
+    }
+}
+
+#[kani::proof]
+fn packed_route_arm_row_round_trips_full_compact_domains() {
+    let event_start: u16 = kani::any();
+    let event_len: u16 = kani::any();
+    let lane_step_start: u16 = kani::any();
+    let lane_step_len: u16 = kani::any();
+    let child_slot: u16 = kani::any();
+    let event_raw = ((event_start as u32) << 16) | event_len as u32;
+
+    let representable = event_raw != u32::MAX
+        && lane_step_len as usize <= super::super::LANE_DOMAIN_SIZE
+        && (event_len == 0) == (lane_step_len == 0);
+    kani::cover!(representable);
+    kani::cover!(!representable);
+    if representable {
+        let event_row = PackedLaneRange::new(event_start as usize, event_len as usize);
+        let lane_step_row = PackedLaneRange::new(lane_step_start as usize, lane_step_len as usize);
+        let child = if child_slot == u16::MAX {
+            None
+        } else {
+            Some(child_slot as usize)
+        };
+        let packed = PackedRouteArmRow::new(event_row, child, lane_step_row);
+
+        assert!(packed.event_row_raw() == event_raw);
+        assert!(packed.event_row().start() == event_start as usize);
+        assert!(packed.event_row().len() == event_len as usize);
+        assert!(packed.lane_step_len() == lane_step_len as usize);
+        let expected_child = if child_slot == u16::MAX {
+            None
+        } else {
+            Some(child_slot)
+        };
+        assert!(packed.child_slot() == expected_child);
+        kani::cover!(event_start == 4095 && event_len == 1);
+        kani::cover!(event_start == 4096 && event_len == 1);
+        kani::cover!(lane_step_len as usize == super::super::LANE_DOMAIN_SIZE);
     }
 }

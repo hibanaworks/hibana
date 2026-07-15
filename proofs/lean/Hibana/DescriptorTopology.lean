@@ -164,7 +164,7 @@ def Choreo.canonicalRoleDependencies
 private structure DecodedRouteArmRow where
   eventStart : Nat
   eventLength : Nat
-  childDelta : Nat
+  childSlot : Nat
   laneStepStart : Nat
   laneStepLength : Nat
   deriving Repr, DecidableEq
@@ -211,7 +211,7 @@ private def canonicalPassiveChildScope?
 private structure CanonicalRouteArmSpec where
   eventStart : Nat
   eventLength : Nat
-  childDelta : Nat
+  childSlot : Nat
 
 private def canonicalRouteArmSpecsFrom
     (source : CanonicalProgramSource)
@@ -224,17 +224,17 @@ private def canonicalRouteArmSpecsFrom
       | some (left, right) =>
           let makeSpec (arm : Nat) (bounds : Nat × Nat) :=
             let localRange := canonicalLocalEventRange atoms bounds.1 bounds.2
-            let childDelta := match canonicalPassiveChildScope?
+            let childSlot := match canonicalPassiveChildScope?
                 source resolver.scope arm bounds.1 bounds.2 with
-              | none => 0
+              | none => 65535
               | some childScope =>
                   match canonicalRouteSlot? childScope source.resolvers 0 with
-                  | some childSlot => childSlot - slot
-                  | none => 0
+                  | some childSlot => childSlot
+                  | none => 65535
             {
               eventStart := localRange.1
               eventLength := localRange.2
-              childDelta
+              childSlot
             }
           makeSpec 0 left :: makeSpec 1 right ::
             canonicalRouteArmSpecsFrom source atoms rest (slot + 1)
@@ -272,7 +272,7 @@ private def compileCanonicalRouteArmColumns
         rows := {
           eventStart := spec.eventStart
           eventLength := spec.eventLength
-          childDelta := spec.childDelta
+          childSlot := spec.childSlot
           laneStepStart
           laneStepLength := laneSteps.length
         } :: tail.rows
@@ -591,12 +591,13 @@ def Choreo.canonicalRoleRollRows
 
 private def validPackedScope (raw : Nat) : Bool :=
   raw = packedU16Absent ||
-    (raw < 24576 && raw % 8192 < productionMaxEffNodes)
+    (raw < 3 * productionScopeCapacity &&
+      raw % productionScopeCapacity < productionScopeCapacity)
 
 private def validPackedConflict (raw : Nat) : Bool :=
   raw = packedU16Absent ||
     raw = packedConflictReentryWithoutParent ||
-    (raw < 16384 && (raw % 8192) / 2 < productionMaxEffNodes)
+    (raw < 32768 && (raw % 16384) / 2 < productionScopeCapacity)
 
 private def validRouteArmConflict (raw : Nat) : Bool :=
   raw ≠ packedU16Absent &&
@@ -607,7 +608,7 @@ private def validPackedDependencyConflict (raw : Nat) : Bool :=
   let tag := raw % 4
   let route := raw / 4
   raw < 32768 &&
-    if tag < 2 then route = 0 else route < productionMaxEffNodes
+    if tag < 2 then route = 0 else route < productionScopeCapacity
 
 private def RustDescriptorImage.decodeRoleEventRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedRoleEventRow := do
@@ -619,7 +620,7 @@ private def RustDescriptorImage.decodeRoleEventRow?
   let scope ← readU16LE? image.roleBytes (offset + 6)
   let frameLabel ← readByte? image.roleBytes (offset + 8)
   let flags ← readByte? image.roleBytes (offset + 9)
-  if effIndex < productionMaxEffNodes ∧
+  if effIndex < productionEventIdentityCapacity ∧
       (dependencyRow = packedU16Absent ∨ dependencyRow < image.dependencyRowCount) ∧
       (conflictRow = packedU16Absent ∨ conflictRow < image.conflictRowCount) ∧
       validPackedScope scope = true ∧
@@ -646,9 +647,9 @@ private def RustDescriptorImage.decodeDependencyRow?
   let parallelScope ← readU16LE? image.roleBytes (offset + 4)
   let conflict ← readU16LE? image.roleBytes (offset + 6)
   if start < stop ∧
-      stop ≤ 4095 ∧
+      stop < productionLocalStepCapacity ∧
       stop ≤ image.eventCount ∧
-      parallelScope < productionMaxEffNodes ∧
+      parallelScope < productionScopeCapacity ∧
       validPackedDependencyConflict conflict = true then
     pure { start, stop, parallelScope, conflict }
   else
@@ -684,26 +685,39 @@ def RustDescriptorImage.decodeRouteCommitRows?
   (List.range image.routeCommitRowCount).mapM image.routeCommitRow?
 
 private def RustDescriptorImage.decodeRouteArmRow?
-    (image : RustDescriptorImage) (row : Nat) : Option DecodedRouteArmRow := do
+    (image : RustDescriptorImage) (row laneStepStart : Nat) :
+    Option DecodedRouteArmRow := do
   if row < image.routeScopeCount * 2 then pure () else none
   let offset := image.roleRouteArmOffset + row * productionRoleRouteArmStride
-  let eventAndChild ← readU32LE? image.roleBytes offset
-  if eventAndChild ≠ packedU32Absent then pure () else none
-  let laneSteps ← readU32LE? image.roleBytes (offset + 4)
-  let (laneStepStart, laneStepLength) ←
-    decodePackedLaneRange? laneSteps image.routeArmLaneStepCount
-  let childDelta := eventAndChild / 16777216
-  let eventStart := (eventAndChild / 4096) % 4096
-  let eventLength := eventAndChild % 4096
-  if eventStart + eventLength ≤ image.eventCount ∧
-      (childDelta = 0 ∨ row / 2 + childDelta < image.routeScopeCount) then
-    pure { eventStart, eventLength, childDelta, laneStepStart, laneStepLength }
+  let eventRangeRaw ← readU32LE? image.roleBytes offset
+  let laneStepLenAndChild ← readU32LE? image.roleBytes (offset + 4)
+  let decoded ← decodePackedRouteArm?
+    eventRangeRaw laneStepLenAndChild image.eventCount
+  if laneStepStart + decoded.laneStepLength ≤ image.routeArmLaneStepCount ∧
+      (decoded.childSlot = 65535 ∨
+        (row / 2 < decoded.childSlot ∧ decoded.childSlot < image.routeScopeCount)) then
+    pure {
+      eventStart := decoded.eventStart
+      eventLength := decoded.eventLength
+      childSlot := decoded.childSlot
+      laneStepStart
+      laneStepLength := decoded.laneStepLength
+    }
   else
     none
 
+private def RustDescriptorImage.decodeRouteArmRowsFrom?
+    (image : RustDescriptorImage) : Nat → Nat → Nat → Option (List DecodedRouteArmRow)
+  | 0, _, _ => some []
+  | remaining + 1, row, laneStepStart => do
+      let decoded ← image.decodeRouteArmRow? row laneStepStart
+      let rest ← image.decodeRouteArmRowsFrom?
+        remaining (row + 1) (laneStepStart + decoded.laneStepLength)
+      pure (decoded :: rest)
+
 def RustDescriptorImage.decodeRouteArmRows?
     (image : RustDescriptorImage) : Option (List DecodedRouteArmRow) :=
-  (List.range (image.routeScopeCount * 2)).mapM image.decodeRouteArmRow?
+  image.decodeRouteArmRowsFrom? (image.routeScopeCount * 2) 0 0
 
 def RustDescriptorImage.decodeResidentBoundaries?
     (image : RustDescriptorImage) : Option (List Nat) :=
