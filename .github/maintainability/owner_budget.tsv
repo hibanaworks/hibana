@@ -88,7 +88,7 @@ src/global/const_dsl/allocation/lane_matching/index.rs	200	1	recursive
 src/global/const_dsl/eff_list.rs	380	1	recursive
 src/global/const_dsl/endpoint_selectors.rs	560	1	recursive
 src/global/const_dsl/event_relations.rs	180	1	recursive
-src/global/const_dsl/receive_lane_causality.rs	640	1	recursive
+src/global/const_dsl/receive_lane_causality.rs	560	1	recursive
 src/global/const_dsl/scope_ranges.rs	300	1	recursive
 src/global/const_dsl/route.rs	160	1	recursive
 src/global/program.rs	120	1	recursive

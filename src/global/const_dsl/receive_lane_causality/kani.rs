@@ -1,4 +1,8 @@
-use super::{RollBodyRange, receive_precedes_after_roll_reentry, validate_receive_lane_causality};
+use super::{
+    FirstCausalWitnesses, RollBodyRange, receive_precedes_after_roll_reentry,
+    validate_linear_receive_lane_causality, validate_receive_lane_causality,
+    validate_structured_receive_lane_causality,
+};
 use crate::{
     eff::{EffAtom, EffStruct, EventOrigin},
     global::const_dsl::EffList,
@@ -31,6 +35,43 @@ fn distinct_role_permutation() -> (u8, u8, u8) {
         5 => (2, 1, 0),
         _ => unreachable!(),
     }
+}
+
+#[kani::proof]
+fn causal_witness_table_is_first_write_wins_and_role_exact() {
+    let first_role = kani::any::<u8>();
+    let second_role = kani::any::<u8>();
+    let query_role = kani::any::<u8>();
+    let first_idx = kani::any::<u32>();
+    let second_idx = kani::any::<u32>();
+    kani::assume(first_idx != u32::MAX);
+    kani::assume(second_idx != u32::MAX);
+
+    let mut witnesses = FirstCausalWitnesses::new(first_role, first_idx as usize);
+    witnesses.record_first(first_role, second_idx as usize);
+    witnesses.record_first(second_role, second_idx as usize);
+
+    let expected = if query_role == first_role {
+        Some(first_idx as usize)
+    } else if query_role == second_role {
+        Some(second_idx as usize)
+    } else {
+        None
+    };
+    assert_eq!(witnesses.first(query_role), expected);
+}
+
+#[kani::proof]
+fn three_event_linear_scan_matches_pairwise_checker() {
+    let events = EffList::<4>::new()
+        .push(event(kani::any(), kani::any(), kani::any()))
+        .push(event(kani::any(), kani::any(), kani::any()))
+        .push(event(kani::any(), kani::any(), kani::any()));
+
+    assert_eq!(
+        validate_linear_receive_lane_causality(&events),
+        validate_structured_receive_lane_causality(&events)
+    );
 }
 
 #[kani::proof]

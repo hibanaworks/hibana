@@ -2,35 +2,49 @@ use super::event_relations::{events_are_locally_ordered, events_are_route_exclus
 use super::scope_ranges::roll_body_range_from_enter;
 use super::{EffList, ScopeEvent, ScopeKind, ScopeMarkerView, route_arm_ranges_from_first_enter};
 
-const fn witness_is_set<const E: usize>(witnesses: &[bool; E], idx: usize) -> bool {
-    idx < E && witnesses[idx]
+const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
+const NO_CAUSAL_WITNESS: u32 = u32::MAX;
+const _: () =
+    assert!(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY * 2 < NO_CAUSAL_WITNESS as usize);
+
+/// The causal closure retains only the first occurrence that transfers
+/// authority to each role. Its storage follows the exact wire role domain and
+/// is independent of choreography size.
+struct FirstCausalWitnesses {
+    by_role: [u32; CAUSAL_ROLE_COUNT],
 }
 
-const fn set_witness<const E: usize>(witnesses: &mut [bool; E], idx: usize) {
-    if idx >= E {
-        panic!("causality witness index overflow");
+impl FirstCausalWitnesses {
+    #[inline(always)]
+    const fn new(role: u8, occurrence_idx: usize) -> Self {
+        let mut witnesses = Self {
+            by_role: [NO_CAUSAL_WITNESS; CAUSAL_ROLE_COUNT],
+        };
+        witnesses.record_first(role, occurrence_idx);
+        witnesses
     }
-    witnesses[idx] = true;
-}
 
-const fn first_event_witness_for_role<const E: usize>(
-    eff_list: &EffList<E>,
-    witnesses: &[bool; E],
-    start: usize,
-    end: usize,
-    role: u8,
-) -> Option<usize> {
-    let mut idx = start;
-    while idx < end {
-        if witness_is_set(witnesses, idx) {
-            let node = eff_list.node_at(idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) && node.atom_data().to == role {
-                return Some(idx);
-            }
+    #[inline(always)]
+    const fn first(&self, role: u8) -> Option<usize> {
+        let occurrence_idx = self.by_role[role as usize];
+        if occurrence_idx == NO_CAUSAL_WITNESS {
+            None
+        } else {
+            Some(occurrence_idx as usize)
         }
-        idx += 1;
     }
-    None
+
+    #[inline(always)]
+    const fn record_first(&mut self, role: u8, occurrence_idx: usize) {
+        let slot = &mut self.by_role[role as usize];
+        if *slot != NO_CAUSAL_WITNESS {
+            return;
+        }
+        if occurrence_idx >= NO_CAUSAL_WITNESS as usize {
+            panic!("causality occurrence index exceeds the compact witness domain");
+        }
+        *slot = occurrence_idx as u32;
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -161,6 +175,23 @@ const fn local_ordered(
     events_are_locally_ordered(markers, earlier_eff_idx, later_eff_idx)
 }
 
+#[inline(always)]
+const fn propagate_causal_witness(
+    markers: ScopeMarkerView<'_>,
+    witnesses: &mut FirstCausalWitnesses,
+    eff_idx: usize,
+    atom: crate::eff::EffAtom,
+) -> bool {
+    let Some(witness) = witnesses.first(atom.from) else {
+        return false;
+    };
+    if !local_ordered(markers, witness, eff_idx) {
+        return false;
+    }
+    witnesses.record_first(atom.to, eff_idx);
+    true
+}
+
 /// Proves a causal handoff from the earlier receive to the later sender using
 /// only projected local order and intervening send-to-receive edges. Route-arm
 /// events may participate only when one endpoint fixes that arm; unrelated
@@ -171,8 +202,11 @@ const fn receive_precedes_later_send<const E: usize>(
     later_eff_idx: usize,
 ) -> bool {
     let markers = eff_list.scope_markers();
-    let mut witnesses = [false; E];
-    set_witness(&mut witnesses, earlier_eff_idx);
+    let earlier_node = eff_list.node_at(earlier_eff_idx);
+    if !matches!(earlier_node.kind, crate::eff::EffKind::Atom) {
+        return false;
+    }
+    let mut witnesses = FirstCausalWitnesses::new(earlier_node.atom_data().to, earlier_eff_idx);
 
     let mut eff_idx = earlier_eff_idx + 1;
     while eff_idx <= later_eff_idx {
@@ -181,33 +215,71 @@ const fn receive_precedes_later_send<const E: usize>(
             && on_endpoint_route_path(markers, eff_idx, earlier_eff_idx, later_eff_idx)
         {
             let atom = node.atom_data();
-            if let Some(witness) = first_event_witness_for_role(
-                eff_list,
-                &witnesses,
-                earlier_eff_idx,
-                eff_idx,
-                atom.from,
-            ) && local_ordered(markers, witness, eff_idx)
+            if propagate_causal_witness(markers, &mut witnesses, eff_idx, atom)
+                && eff_idx == later_eff_idx
             {
-                if eff_idx == later_eff_idx {
-                    return true;
-                }
-                if first_event_witness_for_role(
-                    eff_list,
-                    &witnesses,
-                    earlier_eff_idx,
-                    eff_idx,
-                    atom.to,
-                )
-                .is_none()
-                {
-                    set_witness(&mut witnesses, eff_idx);
-                }
+                return true;
             }
         }
         eff_idx += 1;
     }
     false
+}
+
+/// In a scope-free sequence the route-path predicate is constant for every
+/// later endpoint. One forward closure per earlier receive therefore checks the
+/// same pairs as repeated endpoint-specific closures without recomputing each
+/// prefix.
+const fn validate_linear_later_senders<const E: usize>(
+    eff_list: &EffList<E>,
+    earlier_eff_idx: usize,
+) -> bool {
+    let earlier_node = eff_list.node_at(earlier_eff_idx);
+    if !matches!(earlier_node.kind, crate::eff::EffKind::Atom) {
+        return false;
+    }
+    let earlier = earlier_node.atom_data();
+    let markers = eff_list.scope_markers();
+    if markers.len() != 0 {
+        return false;
+    }
+    let mut witnesses = FirstCausalWitnesses::new(earlier.to, earlier_eff_idx);
+    let mut eff_idx = earlier_eff_idx + 1;
+    while eff_idx < eff_list.len() {
+        let node = eff_list.node_at(eff_idx);
+        if matches!(node.kind, crate::eff::EffKind::Atom) {
+            let candidate = node.atom_data();
+            let causally_preceded =
+                propagate_causal_witness(markers, &mut witnesses, eff_idx, candidate);
+            if candidate.from != candidate.to
+                && earlier.to == candidate.to
+                && earlier.lane == candidate.lane
+                && earlier.from != candidate.from
+                && !causally_preceded
+            {
+                return false;
+            }
+        }
+        eff_idx += 1;
+    }
+    true
+}
+
+const fn validate_linear_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
+    let mut earlier_eff_idx = 0usize;
+    while earlier_eff_idx < eff_list.len() {
+        let node = eff_list.node_at(earlier_eff_idx);
+        if matches!(node.kind, crate::eff::EffKind::Atom) {
+            let earlier = node.atom_data();
+            if earlier.from != earlier.to
+                && !validate_linear_later_senders(eff_list, earlier_eff_idx)
+            {
+                return false;
+            }
+        }
+        earlier_eff_idx += 1;
+    }
+    true
 }
 
 const fn route_reexecutes_in_roll_body(
@@ -299,8 +371,12 @@ const fn receive_precedes_after_roll_reentry<const E: usize>(
     let later_unfolded_idx = body_len + later_eff_idx - body.start;
 
     let markers = eff_list.scope_markers();
-    let mut witnesses = [0u8; E];
-    set_unfolded_witness(&mut witnesses, body_len, earlier_unfolded_idx);
+    let earlier_node = eff_list.node_at(earlier_eff_idx);
+    if !matches!(earlier_node.kind, crate::eff::EffKind::Atom) {
+        return false;
+    }
+    let mut witnesses =
+        FirstCausalWitnesses::new(earlier_node.atom_data().to, earlier_unfolded_idx);
 
     let mut unfolded_idx = earlier_unfolded_idx + 1;
     while unfolded_idx <= later_unfolded_idx {
@@ -320,93 +396,18 @@ const fn receive_precedes_after_roll_reentry<const E: usize>(
                     iteration: RollIteration::Next,
                 },
                 body,
-            ) {
-                let witness = first_unfolded_witness_for_role(
-                    eff_list,
-                    body,
-                    &witnesses,
-                    earlier_unfolded_idx,
-                    unfolded_idx,
-                    candidate.from,
-                );
-                if let Some(witness) = witness
-                    && unfolded_locally_ordered(markers, body, witness, unfolded_idx)
-                {
-                    if unfolded_idx == later_unfolded_idx {
-                        return true;
-                    }
-                    if first_unfolded_witness_for_role(
-                        eff_list,
-                        body,
-                        &witnesses,
-                        earlier_unfolded_idx,
-                        unfolded_idx,
-                        candidate.to,
-                    )
-                    .is_none()
-                    {
-                        set_unfolded_witness(&mut witnesses, body_len, unfolded_idx);
-                    }
+            ) && let Some(witness) = witnesses.first(candidate.from)
+                && unfolded_locally_ordered(markers, body, witness, unfolded_idx)
+            {
+                if unfolded_idx == later_unfolded_idx {
+                    return true;
                 }
+                witnesses.record_first(candidate.to, unfolded_idx);
             }
         }
         unfolded_idx += 1;
     }
     false
-}
-
-const fn first_unfolded_witness_for_role<const E: usize>(
-    eff_list: &EffList<E>,
-    body: RollBodyRange,
-    witnesses: &[u8; E],
-    start: usize,
-    end: usize,
-    role: u8,
-) -> Option<usize> {
-    let mut unfolded_idx = start;
-    while unfolded_idx < end {
-        if unfolded_witness_is_set(witnesses, body.len(), unfolded_idx) {
-            let occurrence = body.unfolded_occurrence(unfolded_idx);
-            let node = eff_list.node_at(occurrence.eff_idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) && node.atom_data().to == role {
-                return Some(unfolded_idx);
-            }
-        }
-        unfolded_idx += 1;
-    }
-    None
-}
-
-const fn unfolded_witness_parts(body_len: usize, unfolded_idx: usize) -> (usize, u8) {
-    if body_len == 0 {
-        panic!("empty roll body has no unfolded witness");
-    }
-    if unfolded_idx < body_len {
-        (unfolded_idx, 1)
-    } else {
-        (unfolded_idx - body_len, 2)
-    }
-}
-
-const fn unfolded_witness_is_set<const E: usize>(
-    witnesses: &[u8; E],
-    body_len: usize,
-    unfolded_idx: usize,
-) -> bool {
-    let (idx, bit) = unfolded_witness_parts(body_len, unfolded_idx);
-    idx < E && (witnesses[idx] & bit) != 0
-}
-
-const fn set_unfolded_witness<const E: usize>(
-    witnesses: &mut [u8; E],
-    body_len: usize,
-    unfolded_idx: usize,
-) {
-    let (idx, bit) = unfolded_witness_parts(body_len, unfolded_idx);
-    if idx >= E {
-        panic!("unfolded causality witness index overflow");
-    }
-    witnesses[idx] |= bit;
 }
 
 const fn validate_roll_body_receive_lane_causality<const E: usize>(
@@ -471,10 +472,7 @@ const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList
     true
 }
 
-/// A physical receive lane may change sender only after a descriptor-derived
-/// causal handoff proves that the earlier frame was consumed, or across
-/// mutually exclusive route arms. Parallel arms already use disjoint lanes.
-pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
+const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let markers = eff_list.scope_markers();
     let mut left_idx = 0usize;
     while left_idx < eff_list.len() {
@@ -503,7 +501,20 @@ pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &E
         }
         left_idx += 1;
     }
-    validate_roll_receive_lane_causality(eff_list)
+    true
+}
+
+/// A physical receive lane may change sender only after a descriptor-derived
+/// causal handoff proves that the earlier frame was consumed, or across
+/// mutually exclusive route arms. Parallel arms already use disjoint lanes.
+pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
+    let markers = eff_list.scope_markers();
+    let receive_lanes_are_safe = if markers.len() == 0 {
+        validate_linear_receive_lane_causality(eff_list)
+    } else {
+        validate_structured_receive_lane_causality(eff_list)
+    };
+    receive_lanes_are_safe && validate_roll_receive_lane_causality(eff_list)
 }
 
 #[cfg(kani)]

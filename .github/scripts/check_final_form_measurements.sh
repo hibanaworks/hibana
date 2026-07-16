@@ -921,4 +921,7 @@ bash "${ROOT_DIR}/.github/scripts/check_message_heavy_matrix.sh"
 echo "== final-form route-arm projection pressure =="
 bash "${ROOT_DIR}/.github/scripts/check_route_arm_projection_pressure.sh"
 
+echo "== final-form causal-handoff pressure =="
+bash "${ROOT_DIR}/.github/scripts/check_causal_handoff_pressure.sh"
+
 echo "final-form measurement check passed"

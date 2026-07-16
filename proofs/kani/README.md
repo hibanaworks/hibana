@@ -18,6 +18,10 @@ The pinned gate exhausts the production arithmetic for:
   logical-lane rows, route-arm lane-step rows, and binary route-arm indexing;
 - exact full-domain route-arm lane accumulation: duplicate events preserve one
   relation, lane bits remain exact, and the final local step is retained;
+- exact receive-causality witness indexing across the complete `u8` role
+  domain: the first authority transfer is never overwritten and distinct roles
+  cannot alias, and every symbolic three-event scope-free program gives the
+  same result under the single-scan and pairwise checkers;
 - exact route-commit decision identity across scope, arm, and reentry metadata;
 - exact local-dependency decoding, including event-image range bounds;
 - exact compiled atom and route-resolver row decoding, including both per-arm

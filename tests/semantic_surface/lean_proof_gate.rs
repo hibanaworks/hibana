@@ -470,6 +470,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && static_projectability.contains("roll_receive_lane_causality_checker_sound")
             && static_projectability.contains("roll_body_occurrences_cross_iteration_safe")
             && static_projectability.contains("roll_reentry_sender_change_requires_causal_handoff")
+            && static_projectability.contains("add_causal_witness_first_write_wins")
+            && static_projectability.contains("add_causal_witness_preserves_other_role")
+            && static_projectability.contains(
+                "propagate_causal_witness_without_route_conflicts_is_endpoint_independent"
+            )
+            && static_projectability.contains("causal_witness_fold_reuses_prefix_exactly")
             && static_projectability.contains("ConflictListsMutuallyExclusive")
             && static_projectability.contains("ParallelListsIndependent")
             && static_projectability.contains("receivePrecedesLaterSend")
@@ -872,6 +878,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem roll_receive_lane_causality_checker_sound",
         "theorem roll_body_occurrences_cross_iteration_safe",
         "theorem roll_reentry_sender_change_requires_causal_handoff",
+        "theorem add_causal_witness_first_write_wins",
+        "theorem add_causal_witness_preserves_other_role",
+        "theorem propagate_causal_witness_without_route_conflicts_is_endpoint_independent",
+        "theorem causal_witness_fold_reuses_prefix_exactly",
         "theorem local_queued_frame_has_canonical_lane",
         "theorem initial_route_selection_fidelity",
         "theorem global_step_preserves_route_selection_fidelity",

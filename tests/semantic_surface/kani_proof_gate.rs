@@ -261,6 +261,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!route_knowledge_harnesses.contains("kani::assume"));
 
     for harness in [
+        "causal_witness_table_is_first_write_wins_and_role_exact",
+        "three_event_linear_scan_matches_pairwise_checker",
         "three_event_causal_handoff_accepts_every_valid_role_assignment",
         "sender_change_without_causal_handoff_is_rejected",
         "roll_reentry_causal_closure_rejects_open_cycle",
@@ -269,6 +271,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         assert!(receive_lane_harnesses.contains(&format!("fn {harness}()")));
     }
     assert!(receive_lane_harnesses.contains("earlier_source != later_source"));
+    assert!(receive_lane_harnesses.contains("query_role == first_role"));
+    assert!(receive_lane_harnesses.contains("query_role == second_role"));
     assert!(receive_lane_harnesses.contains("event(receiver, later_source, lane)"));
     assert!(receive_lane_harnesses.contains("assert!(!validate_receive_lane_causality(&events))"));
     assert!(receive_lane_harnesses.contains("receive_precedes_after_roll_reentry"));

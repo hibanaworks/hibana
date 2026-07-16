@@ -325,6 +325,10 @@ import Hibana.MainTheorems
 #print axioms Hibana.roll_receive_lane_causality_checker_sound
 #print axioms Hibana.roll_body_occurrences_cross_iteration_safe
 #print axioms Hibana.roll_reentry_sender_change_requires_causal_handoff
+#print axioms Hibana.add_causal_witness_first_write_wins
+#print axioms Hibana.add_causal_witness_preserves_other_role
+#print axioms Hibana.propagate_causal_witness_without_route_conflicts_is_endpoint_independent
+#print axioms Hibana.causal_witness_fold_reuses_prefix_exactly
 #print axioms Hibana.initial_causal_witnesses_sound
 #print axioms Hibana.add_causal_witness_preserves_soundness
 #print axioms Hibana.propagate_causal_witness_preserves_soundness

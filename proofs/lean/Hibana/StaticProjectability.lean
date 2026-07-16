@@ -218,6 +218,22 @@ def addCausalWitness
     else
       witnesses candidate
 
+theorem add_causal_witness_first_write_wins
+    {witnesses : CausalWitnesses} {role : Nat}
+    {witness : StaticGlobalOccurrence} :
+    addCausalWitness witnesses role witness role =
+      match witnesses role with
+      | none => some witness
+      | present => present := by
+  simp [addCausalWitness]
+
+theorem add_causal_witness_preserves_other_role
+    {witnesses : CausalWitnesses} {role query : Nat}
+    {witness : StaticGlobalOccurrence}
+    (different : query ≠ role) :
+    addCausalWitness witnesses role witness query = witnesses query := by
+  simp [addCausalWitness, different]
+
 def propagateCausalWitness
     (earlier later : StaticGlobalOccurrence)
     (roleCount : Nat)
@@ -235,6 +251,25 @@ def propagateCausalWitness
           witnesses
   else
     witnesses
+
+theorem propagate_causal_witness_without_route_conflicts_is_endpoint_independent
+    {earlier left right candidate : StaticGlobalOccurrence}
+    {roleCount : Nat} {witnesses : CausalWitnesses}
+    (noConflicts : candidate.conflicts = []) :
+    propagateCausalWitness earlier left roleCount witnesses candidate =
+      propagateCausalWitness earlier right roleCount witnesses candidate := by
+  simp [propagateCausalWitness, occurrenceOnEndpointRoutePath, noConflicts]
+
+theorem causal_witness_fold_reuses_prefix_exactly
+    {earlier later : StaticGlobalOccurrence} {roleCount : Nat}
+    (witnesses : CausalWitnesses)
+    (before after : List StaticGlobalOccurrence) :
+    (before ++ after).foldl
+        (propagateCausalWitness earlier later roleCount) witnesses =
+      after.foldl (propagateCausalWitness earlier later roleCount)
+        (before.foldl
+          (propagateCausalWitness earlier later roleCount) witnesses) := by
+  simp
 
 /-- Executable causal closure from the earlier receive to the later send. It
 uses only local projected order and send-to-receive edges, excludes direct

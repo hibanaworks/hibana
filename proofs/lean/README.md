@@ -300,7 +300,13 @@ order across concurrent arms from masquerading as local order. Route-local
 traffic can contribute to a causal closure only when
 one endpoint fixes that arm, so an unrelated branch cannot silently authorize a
 later sender. The production const checker and the Lean checker use the same
-three cases. Every roll body is additionally checked through one explicit
+three cases and the same role-indexed, first-write-wins causal witness map.
+Production scratch is fixed by the exact 256-role wire domain rather than by
+source event capacity, and is erased after descriptor construction. For a
+scope-free sequence, endpoint-independent propagation and exact fold-prefix
+reuse justify one forward closure per earlier receive instead of recomputing
+every prefix. Every roll
+body is additionally checked through one explicit
 unfolding with fresh per-iteration route and parallel identities. A sender
 change from the body tail to the next head therefore requires a causal handoff;
 route exclusion from the previous iteration cannot be reused as evidence. This

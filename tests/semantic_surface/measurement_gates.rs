@@ -5,6 +5,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let final_gate = read(".github/scripts/check_final_form_measurements.sh");
     let message_heavy_gate = read(".github/scripts/check_message_heavy_matrix.sh");
     let route_arm_pressure_gate = read(".github/scripts/check_route_arm_projection_pressure.sh");
+    let causal_handoff_pressure_gate = read(".github/scripts/check_causal_handoff_pressure.sh");
     let worktree_gate = read(".github/scripts/check_size_snapshot_regression.sh");
     let performance_gate = read(".github/scripts/check_runtime_performance_hygiene.sh");
     let kernel_monomorphization_gate =
@@ -158,6 +159,22 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 .contains("route-arm projection pressure passed target=${TARGET} arm-events=256")
             && compile_pressure_budget.contains("route_arm_heavy_256\t"),
         "route-arm projection must retain a Pico-target compile-pressure regression gate"
+    );
+    assert!(
+        final_gate
+            .contains("bash \"${ROOT_DIR}/.github/scripts/check_causal_handoff_pressure.sh\"")
+            && causal_handoff_pressure_gate.contains("TARGET=\"thumbv6m-none-eabi\"")
+            && causal_handoff_pressure_gate.contains("((0, 2), (2, 1), (1, 2), (2, 0))[idx % 4]")
+            && causal_handoff_pressure_gate.contains("for count in 4 64 256")
+            && causal_handoff_pressure_gate
+                .contains("HIBANA_COMPILE_PRESSURE_LABEL=\"causal_handoff_${count}\"")
+            && causal_handoff_pressure_gate
+                .contains("causal-handoff compile time became superlinear")
+            && causal_handoff_pressure_gate
+                .contains("causal-handoff pressure passed target=${TARGET} events=256")
+            && !causal_handoff_pressure_gate.contains("recursion_limit")
+            && compile_pressure_budget.contains("causal_handoff_256\t"),
+        "causal handoff must retain a Pico-target compile-pressure regression gate"
     );
     assert!(
         !huge_choreography.contains("recursion_limit")

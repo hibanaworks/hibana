@@ -695,6 +695,37 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
             "projection validation must not reintroduce const-generic all-role expansion: {forbidden}"
         );
     }
+    for required in [
+        "const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;",
+        "struct FirstCausalWitnesses",
+        "by_role: [u32; CAUSAL_ROLE_COUNT]",
+        "const fn propagate_causal_witness(",
+        "const fn validate_linear_later_senders<",
+        "const fn validate_linear_receive_lane_causality<",
+        "const fn validate_structured_receive_lane_causality<",
+        "validate_linear_receive_lane_causality(eff_list)",
+        "validate_structured_receive_lane_causality(eff_list)",
+        "witnesses.record_first(candidate.to, unfolded_idx);",
+    ] {
+        assert!(
+            receive_lane_causality.contains(required),
+            "causal closure scratch must stay indexed by the exact role domain: {required}"
+        );
+    }
+    for forbidden in [
+        "first_event_witness_for_role",
+        "first_unfolded_witness_for_role",
+        "unfolded_witness_parts",
+        "unfolded_witness_is_set",
+        "set_unfolded_witness",
+        "[false; E]",
+        "[0u8; E]",
+    ] {
+        assert!(
+            !receive_lane_causality.contains(forbidden),
+            "causal closure must not restore event-capacity scratch or repeated witness scans: {forbidden}"
+        );
+    }
     assert!(
         !seal.contains("reentry: ReentryMark") && !seal.contains("if reentry.is_reentrant()"),
         "roll reentry must not bypass intrinsic-route observer knowledge"
