@@ -9,6 +9,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let workflow = read(".github/workflows/quality-gates.yml");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
+    let decision_state_harnesses = read("src/endpoint/kernel/decision_state/kani.rs");
     let public_operation_harnesses = read("src/endpoint/kernel/core/public_types/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
@@ -78,6 +79,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!script.contains("hibana-kani-proofs.XXXXXX"));
     assert!(!script.contains("kani_harness_args"));
     assert!(script.contains("Kani should-panic harness may panic before its production call"));
+    assert!(
+        decision_state_harnesses
+            .contains("fn selected_route_commit_rows_finish_is_lane_exact_and_fail_closed()")
+    );
+    assert!(decision_state_harnesses.contains("routes: SelectedRouteCommitRowsRef::EMPTY"));
+    assert!(decision_state_harnesses.contains("assert!(empty.is_empty())"));
+    assert!(decision_state_harnesses.contains("finish_for_lane(mismatched_lane)"));
+    assert!(decision_state_harnesses.contains("assert!(rejected.is_err())"));
     assert!(harnesses.contains("kani::assume(left_start < left_end)"));
     assert!(
         harnesses

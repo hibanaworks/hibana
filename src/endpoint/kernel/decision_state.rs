@@ -299,20 +299,20 @@ impl SelectedRouteCommitRows {
     }
 
     #[inline]
-    pub(super) fn as_commit_rows(&self, route_lane: u8) -> SelectedRouteCommitRowsRef {
-        if self.routes.is_empty() {
-            return SelectedRouteCommitRowsRef::EMPTY;
+    pub(super) fn finish_for_lane(self, route_lane: u8) -> RecvResult<SelectedRouteCommitRowsRef> {
+        if !self.routes.is_empty() && self.routes.selected_lane() != Some(route_lane) {
+            return Err(RecvError::PhaseInvariant);
         }
-        if self.routes.selected_lane() != Some(route_lane) {
-            return SelectedRouteCommitRowsRef::EMPTY;
-        }
-        self.routes
+        Ok(self.routes)
     }
 
-    pub(super) fn as_route_only_commit_rows(&self, route_lane: u8) -> RouteOnlyCommitRowsRef {
-        RouteOnlyCommitRowsRef {
-            selected_routes: self.as_commit_rows(route_lane),
-        }
+    pub(super) fn finish_route_only_for_lane(
+        self,
+        route_lane: u8,
+    ) -> RecvResult<RouteOnlyCommitRowsRef> {
+        Ok(RouteOnlyCommitRowsRef {
+            selected_routes: self.finish_for_lane(route_lane)?,
+        })
     }
 
     pub(super) fn merge_chain(
@@ -452,9 +452,6 @@ impl LaneOfferStateView {
         let Some(dense) = self.lane_dense_ordinal(lane_idx) else {
             return LaneOfferState::EMPTY;
         };
-        if dense >= self.len {
-            return LaneOfferState::EMPTY;
-        }
         /* SAFETY: `dense < len` bounds the initialized lane-offer column; shared access copies the resident offer state. */
         unsafe { *self.ptr.add(dense) }
     }
@@ -462,9 +459,6 @@ impl LaneOfferStateView {
     #[inline]
     fn get_mut(&mut self, lane_idx: usize) -> Option<&mut LaneOfferState> {
         let dense = self.lane_dense_ordinal(lane_idx)?;
-        if dense >= self.len {
-            return None;
-        }
         Some(
             /* SAFETY: `dense < len` bounds the initialized lane-offer column, and `&mut self` owns this lane mutation. */
             unsafe { &mut *self.ptr.add(dense) },

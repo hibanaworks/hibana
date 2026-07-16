@@ -88,6 +88,31 @@ fn prepared_route_commit_rows_cross_the_former_256_boundary() {
 }
 
 #[test]
+fn selected_route_commit_rows_reject_lane_mismatch_without_erasing_rows() {
+    let empty = SelectedRouteCommitRows {
+        routes: SelectedRouteCommitRowsRef::EMPTY,
+        max_len: 0,
+    }
+    .finish_for_lane(4)
+    .expect("canonical empty route rows");
+    assert!(empty.is_empty());
+
+    let rows =
+        SelectedRouteCommitRowsRef::from_resident_range_for_lane(PackedLaneRange::new(7, 9), 3);
+    let exact = SelectedRouteCommitRows::from_seed(rows)
+        .expect("nonempty route rows")
+        .finish_for_lane(3)
+        .expect("matching route lane");
+    assert_eq!(exact.len(), 9);
+    assert_eq!(exact.selected_lane(), Some(3));
+
+    let rejected = SelectedRouteCommitRows::from_seed(rows)
+        .expect("nonempty route rows")
+        .finish_for_lane(4);
+    assert!(rejected.is_err());
+}
+
+#[test]
 fn route_arm_history_crosses_the_former_256_boundary() {
     const CAPACITY: usize = 257;
     let mut states = std::vec![RouteArmState::EMPTY; CAPACITY];

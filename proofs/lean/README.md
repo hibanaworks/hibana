@@ -225,7 +225,9 @@ The kernel-checked boundary covers:
 - `PreparedKernelSemantics` and `RustKernelRefinement`, which state the pure
   prepare/commit, zero-or-one-transition production obligation explicitly.
   Kani and Miri discharge concrete Rust-side obligations; Lean does not recast
-  their result as a source-level Lean proof;
+  their result as a source-level Lean proof. The same layer models route commit
+  rows as either canonical empty or a nonempty lane-bound chain: matching lanes
+  preserve the exact rows and a mismatched lane is rejected rather than erased;
 - one checked `ProductionKernelArtifact` covering the seven normalized effect
   classes, all six protocol operation constructors, and the eight production
   ownership boundaries exactly once. The generated artifact constructs the

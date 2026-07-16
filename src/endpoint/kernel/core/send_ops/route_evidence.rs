@@ -38,7 +38,8 @@ where
             &mut rows,
         )
         .map_err(|_| SendError::PhaseInvariant)?;
-        Ok(rows.as_commit_rows(meta.lane))
+        rows.finish_for_lane(meta.lane)
+            .map_err(|_| SendError::PhaseInvariant)
     }
 
     #[inline(never)]

@@ -50,6 +50,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let session_composition = read("proofs/lean/Hibana/SessionComposition.lean");
     let session_lifecycle = read("proofs/lean/Hibana/SessionLifecycle.lean");
     let runtime_refinement = read("proofs/lean/Hibana/RuntimeRefinement.lean");
+    let rust_kernel_refinement = read("proofs/lean/Hibana/RustKernelRefinement.lean");
     let protocol_artifact = read("proofs/lean/Hibana/ProtocolArtifact.lean");
     let carrier_refinement = read("proofs/lean/Hibana/CarrierRefinement.lean");
     let mediated_carrier = read("proofs/lean/Hibana/MediatedCarrier.lean");
@@ -110,6 +111,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         session_composition.as_str(),
         session_lifecycle.as_str(),
         runtime_refinement.as_str(),
+        rust_kernel_refinement.as_str(),
         protocol_artifact.as_str(),
         carrier_refinement.as_str(),
         mediated_carrier.as_str(),
@@ -957,6 +959,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem runtime_ambiguous_receive_transition_preserves_global_invariant",
         "theorem runtime_cancellation_observation_preserves_global_invariant",
         "theorem runtime_stutter_effect_is_zero_transition",
+        "theorem empty_route_rows_finish_exactly",
+        "theorem lane_bound_route_rows_finish_exactly",
+        "theorem lane_bound_route_rows_mismatch_is_rejected",
         "theorem session_pool_step_preserves_other_session_state",
         "theorem session_pool_step_preserves_well_formed",
         "theorem attach_initial_exact",
@@ -1011,6 +1016,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || session_composition.contains(theorem)
                 || session_lifecycle.contains(theorem)
                 || runtime_refinement.contains(theorem)
+                || rust_kernel_refinement.contains(theorem)
                 || protocol_artifact.contains(theorem)
                 || carrier_refinement.contains(theorem)
                 || deployment.contains(theorem)

@@ -393,7 +393,7 @@ where
             route_row_result?;
             (
                 target_index,
-                route_rows.as_route_only_commit_rows(selection.offer_lane),
+                route_rows.finish_route_only_for_lane(selection.offer_lane)?,
             )
         };
         let emit_poll_selection = resolved.route_token.is_poll();

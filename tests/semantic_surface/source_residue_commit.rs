@@ -250,7 +250,11 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && runtime_types.contains("fn route_rows(rows: RouteOnlyCommitRowsRef")
             && !runtime_types.contains("fn route_rows(rows: SelectedRouteCommitRowsRef")
             && !commit_delta_row.contains("route_lane")
-            && decision_state.contains("fn as_route_only_commit_rows(")
+            && decision_state.contains("fn finish_route_only_for_lane(")
+            && decision_state.contains("fn finish_for_lane(")
+            && decision_state.contains("return Err(RecvError::PhaseInvariant);")
+            && !decision_state.contains("fn as_commit_rows(")
+            && !decision_state.contains("fn as_route_only_commit_rows(")
             && commit_delta.contains(".route_commit_rows")
             && commit_delta.contains(".seal(delta.selected_route_rows_ref())")
             && commit_delta.contains("pub(in crate::endpoint::kernel) fn prepare_commit_delta")
@@ -333,7 +337,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
     );
     assert!(
         branch_recv_builder.contains("CommitDelta::from_recv_meta(")
-            && branch_recv_builder.contains("route_rows.as_commit_rows(")
+            && branch_recv_builder.contains("route_rows.finish_for_lane(")
             && !branch_recv_builder.contains("with_selected_route_rows")
             && !branch_recv_builder.contains("apply_selected_route_commit_row")
             && !branch_recv_builder.contains("record_prepared_route_selection"),
@@ -341,7 +345,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
     );
     assert!(
         select.contains("CommitDelta::route_rows(")
-            && select.contains("as_route_only_commit_rows(")
+            && select.contains("finish_route_only_for_lane(")
             && select.contains("self.commit_prepared_delta(delta);")
             && !select.contains("apply_selected_route_commit_row")
             && !select.contains("record_prepared_route_selection"),

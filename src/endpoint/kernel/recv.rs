@@ -278,7 +278,7 @@ where
                     cursor_index,
                     &mut rows,
                 )?;
-                rows.as_commit_rows(meta.lane)
+                rows.finish_for_lane(meta.lane)?
             };
             if route_rows.is_empty() {
                 return Err(RecvError::PhaseInvariant);

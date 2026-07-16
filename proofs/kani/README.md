@@ -23,6 +23,9 @@ The pinned gate exhausts the production arithmetic for:
   cannot alias, and every symbolic three-event scope-free program gives the
   same result under the single-scan and pairwise checkers;
 - exact route-commit decision identity across scope, arm, and reentry metadata;
+- lane-exact route-commit finalization: canonical empty remains empty, a
+  matching lane preserves all prepared rows, and a mismatched lane is rejected
+  instead of becoming an empty commit;
 - exact local-dependency decoding, including event-image range bounds;
 - exact compiled atom and route-resolver row decoding, including both per-arm
   canonical participant lists, plus complete dynamic resolver identity over route scope

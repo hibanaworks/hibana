@@ -40,6 +40,37 @@ structure RustKernelRefinement
           (kernel.abstractState state) (kernel.effect prepared) =
         some (kernel.abstractState (kernel.commit state prepared))
 
+/-- Nonempty route rows carry the only lane authority accepted by the commit
+boundary. Empty rows are represented by `none`; a second lane cannot silently
+reinterpret or erase a prepared nonempty chain. -/
+structure LaneBoundRouteRows (Row : Type) where
+  lane : Nat
+  rows : List Row
+  nonempty : rows ≠ []
+
+def finishRouteRowsForLane?
+    (prepared : Option (LaneBoundRouteRows Row))
+    (expectedLane : Nat) : Option (List Row) :=
+  match prepared with
+  | none => some []
+  | some bound =>
+      if bound.lane = expectedLane then some bound.rows else none
+
+theorem empty_route_rows_finish_exactly :
+    finishRouteRowsForLane? (Row := Row) none expectedLane = some [] := by
+  rfl
+
+theorem lane_bound_route_rows_finish_exactly
+    (bound : LaneBoundRouteRows Row) :
+    finishRouteRowsForLane? (some bound) bound.lane = some bound.rows := by
+  simp [finishRouteRowsForLane?]
+
+theorem lane_bound_route_rows_mismatch_is_rejected
+    (bound : LaneBoundRouteRows Row)
+    (different : bound.lane ≠ expectedLane) :
+    finishRouteRowsForLane? (some bound) expectedLane = none := by
+  simp [finishRouteRowsForLane?, different]
+
 theorem rejected_kernel_preparation_is_zero_transition
     {kernel : PreparedKernelSemantics}
     {state : kernel.State}

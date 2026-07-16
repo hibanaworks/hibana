@@ -235,9 +235,10 @@ where
                 meta,
                 enabled.cursor_after(),
             );
+            let route_rows = route_rows.finish_for_lane(branch_meta.lane)?;
             let delta = CommitDelta::from_recv_meta(
                 branch_meta,
-                route_rows.as_commit_rows(branch_meta.lane),
+                route_rows,
                 enabled.cursor_after(),
                 enabled.progress_step(),
             )
@@ -302,7 +303,7 @@ where
                     event_commit.label,
                     event_commit.origin,
                     CommitRow::new(branch_scope, event_commit.route_arm, lane_wire),
-                    route_rows.as_commit_rows(lane_wire),
+                    route_rows.finish_for_lane(lane_wire)?,
                     enabled.cursor_after(),
                     enabled.progress_step(),
                 );
@@ -312,7 +313,7 @@ where
             BranchKind::TerminalArm => {
                 let next_index = StateIndex::from_usize(self.cursor.index());
                 let delta = CommitDelta::route_rows(
-                    route_rows.as_route_only_commit_rows(lane_wire),
+                    route_rows.finish_route_only_for_lane(lane_wire)?,
                     next_index,
                 );
                 self.prepare_commit_delta(delta)

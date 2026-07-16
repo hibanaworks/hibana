@@ -66,9 +66,9 @@ axiom_both_count="$(awk '
   END { print count + 0 }
 ' <<<"${axiom_output}")"
 readonly EXPECTED_AXIOM_BOTH_COUNT=281
-readonly EXPECTED_AXIOM_PROPEXT_COUNT=198
-readonly EXPECTED_AXIOM_FREE_COUNT=68
-readonly EXPECTED_EXPORTED_THEOREM_COUNT=547
+readonly EXPECTED_AXIOM_PROPEXT_COUNT=200
+readonly EXPECTED_AXIOM_FREE_COUNT=69
+readonly EXPECTED_EXPORTED_THEOREM_COUNT=550
 if [[ "${axiom_both_count}" != "${EXPECTED_AXIOM_BOTH_COUNT}" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
   || [[ "$(grep -Fc "native_decide.ax" <<<"${axiom_output}")" != "0" ]] \

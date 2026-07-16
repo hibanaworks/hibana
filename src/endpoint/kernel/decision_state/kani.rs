@@ -1,4 +1,7 @@
-use super::{RouteArmHistoryView, RouteScopeSelectedArmSlot, SelectedRouteCommitRowsRef};
+use super::{
+    RouteArmHistoryView, RouteScopeSelectedArmSlot, SelectedRouteCommitRows,
+    SelectedRouteCommitRowsRef,
+};
 use crate::endpoint::kernel::evidence::RouteArmState;
 use crate::global::const_dsl::ScopeId;
 use crate::global::role_program::{DenseLaneOrdinal, PackedLaneRange};
@@ -70,6 +73,37 @@ fn selected_route_commit_rows_accept_257_entries() {
 
     assert_eq!(rows.len(), 257);
     assert_eq!(rows.selected_lane(), Some(lane));
+}
+
+#[kani::proof]
+fn selected_route_commit_rows_finish_is_lane_exact_and_fail_closed() {
+    let lane = kani::any::<u8>();
+    let mismatched_lane = lane.wrapping_add(1);
+
+    let empty = SelectedRouteCommitRows {
+        routes: SelectedRouteCommitRowsRef::EMPTY,
+        max_len: 0,
+    }
+    .finish_for_lane(lane)
+    .expect("canonical empty route rows");
+    assert!(empty.is_empty());
+
+    let rows = SelectedRouteCommitRowsRef::from_resident_range_for_lane(
+        PackedLaneRange::new(7, 257),
+        lane,
+    );
+
+    let exact = SelectedRouteCommitRows::from_seed(rows)
+        .expect("nonempty route rows")
+        .finish_for_lane(lane)
+        .expect("matching route lane");
+    assert_eq!(exact.len(), 257);
+    assert_eq!(exact.selected_lane(), Some(lane));
+
+    let rejected = SelectedRouteCommitRows::from_seed(rows)
+        .expect("nonempty route rows")
+        .finish_for_lane(mismatched_lane);
+    assert!(rejected.is_err());
 }
 
 #[kani::proof]

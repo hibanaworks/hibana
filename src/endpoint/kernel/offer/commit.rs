@@ -40,7 +40,7 @@ where
                 event_idx,
                 &mut rows,
             )?;
-            rows.as_commit_rows(lane_wire)
+            rows.finish_for_lane(lane_wire)?
         };
         if route_seed_rows.is_empty() {
             return Err(RecvError::PhaseInvariant);

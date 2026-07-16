@@ -506,6 +506,9 @@ import Hibana.MainTheorems
 #print axioms Hibana.elastic_transport_erasure_preserved_by_receive
 #print axioms Hibana.elastic_route_publish_commutes_with_trace_erasure
 #print axioms Hibana.elastic_erasure_refinement_holds
+#print axioms Hibana.empty_route_rows_finish_exactly
+#print axioms Hibana.lane_bound_route_rows_finish_exactly
+#print axioms Hibana.lane_bound_route_rows_mismatch_is_rejected
 #print axioms Hibana.rejected_kernel_preparation_is_zero_transition
 #print axioms Hibana.prepared_kernel_commit_has_accepted_transition_certificate
 #print axioms Hibana.prepared_kernel_commit_refines_exact_lean_effect
