@@ -1,4 +1,4 @@
-use super::{CommitDeltaApplyPermit, RouteArmState, RouteScopeSelectedArmSlot, RouteState};
+use super::{CommitDeltaApplyPermit, RouteScopeSelectedArmSlot, RouteState};
 use crate::global::const_dsl::ScopeId;
 
 pub(in crate::endpoint::kernel) enum ReentryScopeLiveness {
@@ -19,15 +19,11 @@ impl RouteState {
         let mut idx = 0usize;
         while idx < len {
             let current = self.lane_route_arms.get(lane_idx, idx);
-            if current.scope == scope && current.arm == old_arm {
-                self.lane_route_arms.set(
-                    lane_idx,
-                    idx,
-                    RouteArmState {
-                        scope,
-                        arm: new_arm,
-                    },
-                );
+            if current.scope == scope
+                && current.arm == old_arm
+                && !self.lane_route_arms.set(lane_idx, idx, scope, new_arm)
+            {
+                crate::invariant();
             }
             idx += 1;
         }
@@ -91,12 +87,14 @@ impl RouteState {
         G: FnMut(ScopeId) -> Option<usize>,
         H: FnMut(ScopeId) -> bool,
     {
-        let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
+        if self
+            .lane_offer_states
+            .lane_dense_ordinal(lane_idx)
+            .is_none()
+        {
             crate::invariant();
-        };
-        let mut len = /* SAFETY: `dense` is produced by this route state's lane-offer view; it indexes an initialized lane route-arm length cell and this read only copies the current length. */ unsafe {
-            *self.lane_route_arm_lens.add(dense) as usize
-        };
+        }
+        let mut len = self.lane_route_arms.lane_len(lane_idx);
         let mut idx = 0usize;
         while idx < len {
             let current = self.lane_route_arms.get(lane_idx, idx);
@@ -104,59 +102,52 @@ impl RouteState {
                 idx += 1;
                 continue;
             }
-            self.release_selected_arm_ref(crate::invariant_some(route_scope_slot(current.scope)));
+            let scope_slot = crate::invariant_some(route_scope_slot(current.scope));
+            let next_slot = self.prepare_selected_arm_ref_release(scope_slot);
             len -= 1;
-            self.remove_lane_route_arm(lane_idx, idx, len);
-            /* SAFETY: `dense` still names the same initialized lane length cell; `remove_lane_route_arm` compacted this owned lane stack and `&mut self` writes the new bounded `len` without aliasing. */
-            unsafe {
-                self.lane_route_arm_lens.add(dense).write(len as u8);
+            if !self.lane_route_arms.remove(lane_idx, idx) {
+                crate::invariant();
             }
-            if route_scope_reentry(current.scope) {
-                self.decrement_lane_reentry_count(dense, lane_idx);
+            self.publish_selected_arm_slot(scope_slot, next_slot);
+        }
+        let mut has_reentry = false;
+        let mut remaining = 0usize;
+        while remaining < len {
+            let scope = self.lane_route_arms.get(lane_idx, remaining).scope;
+            if !scope.is_none() && route_scope_reentry(scope) {
+                has_reentry = true;
+                break;
             }
+            remaining += 1;
+        }
+        if has_reentry {
+            self.lane_reentry_lanes.insert(lane_idx);
+        } else {
+            self.lane_reentry_lanes.remove(lane_idx);
         }
     }
 
-    fn release_selected_arm_ref(&mut self, scope_slot: usize) {
+    fn prepare_selected_arm_ref_release(&self, scope_slot: usize) -> RouteScopeSelectedArmSlot {
         if scope_slot >= self.scope_selected_arm_count {
             crate::invariant();
         }
-        let selected_slot = /* SAFETY: `scope_slot < scope_selected_arm_count` selects an initialized selected-arm slot owned by `RouteState`; this release path holds `&mut self` and mutates the refcount exactly once. */ unsafe {
-            &mut *self.scope_selected_arms.add(scope_slot)
+        let selected_slot = /* SAFETY: `scope_slot < scope_selected_arm_count`
+        selects one initialized selected-arm slot. This copy remains unpublished
+        until the matching sparse history row has been removed. */ unsafe {
+            *self.scope_selected_arms.add(scope_slot)
         };
-        if selected_slot.refs == 0 {
-            crate::invariant();
-        }
-        selected_slot.refs -= 1;
-        if selected_slot.refs == 0 {
-            *selected_slot = RouteScopeSelectedArmSlot::EMPTY;
-        }
+        selected_slot.prepared_release()
     }
 
-    fn remove_lane_route_arm(&mut self, lane_idx: usize, idx: usize, len: usize) {
-        let mut shift = idx + 1;
-        while shift <= len {
-            self.lane_route_arms.set(
-                lane_idx,
-                shift - 1,
-                self.lane_route_arms.get(lane_idx, shift),
-            );
-            shift += 1;
-        }
-        self.lane_route_arms
-            .set(lane_idx, len, RouteArmState::EMPTY);
-    }
-
-    fn decrement_lane_reentry_count(&mut self, dense: usize, lane_idx: usize) {
-        let count = /* SAFETY: `dense` comes from the route state's initialized lane-offer map; the matching reentry-count cell belongs to this lane commit and `&mut self` owns the decrement mutation. */ unsafe {
-            &mut *self.lane_reentry_counts.add(dense)
-        };
-        if *count == 0 {
-            crate::invariant();
-        }
-        *count -= 1;
-        if *count == 0 {
-            self.lane_reentry_lanes.remove(lane_idx);
+    fn publish_selected_arm_slot(
+        &mut self,
+        scope_slot: usize,
+        next_slot: RouteScopeSelectedArmSlot,
+    ) {
+        /* SAFETY: preparation bounded `scope_slot`; the sparse history removal
+        has completed, so this write publishes its matching refcount exactly once. */
+        unsafe {
+            self.scope_selected_arms.add(scope_slot).write(next_slot);
         }
     }
 }

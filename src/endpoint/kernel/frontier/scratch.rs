@@ -1,6 +1,6 @@
 use super::{
-    ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierCandidate, FrontierObservationSlot,
-    ObservedEntrySet, align_up, max_usize, mem, slice,
+    ActiveEntrySetBuilder, ActiveEntrySlot, FrontierCandidate, FrontierObservationSlot,
+    ObservedEntrySetBuilder, align_up, max_usize, mem, slice,
 };
 // # Unsafe Owner Contract
 //
@@ -40,7 +40,7 @@ pub(crate) struct FrontierScratchLayout {
 }
 
 impl FrontierScratchLayout {
-    pub(crate) const fn new(max_frontier_entries: usize, _lane_word_count: usize) -> Self {
+    pub(crate) const fn new(max_frontier_entries: usize) -> Self {
         let mut offset = 0usize;
         let mut total_align = 1usize;
 
@@ -113,14 +113,19 @@ const fn checked_usize_mul(lhs: usize, rhs: usize) -> usize {
     lhs * rhs
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct FrontierScratchView {
     candidates: *mut FrontierCandidate,
-    frontier_entry_capacity: u8,
+    frontier_entry_capacity: u16,
 }
 
 #[inline]
-fn frontier_scratch_storage_ptr(scratch_ptr: *mut [u8], layout: FrontierScratchLayout) -> *mut u8 {
+unsafe fn frontier_scratch_storage_ptr(
+    scratch_ptr: *mut [u8],
+    layout: FrontierScratchLayout,
+) -> *mut u8 {
+    if scratch_ptr.is_null() {
+        crate::invariant();
+    }
     let scratch = /* SAFETY: endpoint frontier owns `scratch_ptr` for the
     current affine operation. The backing slice remains resident for this poll,
     and this helper only derives the arena base after checking the layout byte
@@ -148,31 +153,39 @@ fn frontier_section_ptr<T>(storage: *mut u8, section: FrontierScratchSection) ->
 }
 
 #[inline]
-pub(crate) fn frontier_global_active_entries_view_from_storage(
+pub(crate) unsafe fn frontier_global_active_entries_view_from_storage(
     scratch_ptr: *mut [u8],
     layout: FrontierScratchLayout,
     frontier_entry_capacity: usize,
-) -> ActiveEntrySet {
-    let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
-    ActiveEntrySet {
-        slots: EntryBuffer::from_parts(
+) -> ActiveEntrySetBuilder {
+    /* SAFETY: active-entry composition owns the complete frontier scratch
+    lease. The storage helper checks its byte extent; this section is disjoint and
+    remains exclusively owned until the returned builder is sealed. */
+    unsafe {
+        let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
+        ActiveEntrySetBuilder::from_parts(
             frontier_section_ptr(storage, layout.global_active_entry_slots()),
             frontier_entry_capacity,
-        ),
+        )
     }
 }
 
 #[inline]
-pub(crate) fn frontier_observed_entries_view_from_storage(
+pub(crate) unsafe fn frontier_observed_entries_view_from_storage(
     scratch_ptr: *mut [u8],
     layout: FrontierScratchLayout,
     frontier_entry_capacity: usize,
-) -> ObservedEntrySet {
-    let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
-    ObservedEntrySet::from_parts(
-        frontier_section_ptr(storage, layout.observed_entry_slots()),
-        frontier_entry_capacity,
-    )
+) -> ObservedEntrySetBuilder {
+    /* SAFETY: frontier observation owns the complete frontier scratch lease.
+    The storage helper checks its byte extent; this section is disjoint and
+    remains exclusively owned until the returned builder is sealed. */
+    unsafe {
+        let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
+        ObservedEntrySetBuilder::from_parts(
+            frontier_section_ptr(storage, layout.observed_entry_slots()),
+            frontier_entry_capacity,
+        )
+    }
 }
 
 impl FrontierScratchView {
@@ -182,9 +195,16 @@ impl FrontierScratchView {
         layout: FrontierScratchLayout,
         frontier_entry_capacity: usize,
     ) -> Self {
+        if frontier_entry_capacity > u16::MAX as usize {
+            crate::invariant();
+        }
+        let candidates: *mut FrontierCandidate = frontier_section_ptr(storage, layout.candidates());
+        if frontier_entry_capacity != 0 && candidates.is_null() {
+            crate::invariant();
+        }
         Self {
-            candidates: frontier_section_ptr(storage, layout.candidates()),
-            frontier_entry_capacity: frontier_entry_capacity as u8,
+            candidates,
+            frontier_entry_capacity: frontier_entry_capacity as u16,
         }
     }
 
@@ -198,14 +218,18 @@ impl FrontierScratchView {
 }
 
 #[inline]
-pub(crate) fn frontier_scratch_view_from_storage(
+pub(crate) unsafe fn frontier_scratch_view_from_storage(
     scratch_ptr: *mut [u8],
     layout: FrontierScratchLayout,
     frontier_entry_capacity: usize,
 ) -> FrontierScratchView {
-    let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
-    /* SAFETY: endpoint kernel owns the resident endpoint storage and holds the affine operation borrow for this raw access. */
-    unsafe { FrontierScratchView::from_parts(storage, layout, frontier_entry_capacity) }
+    /* SAFETY: candidate selection owns the complete frontier scratch lease.
+    The storage helper checks its byte extent; this section is disjoint from the
+    builder sections and remains owned by this non-Copy view. */
+    unsafe {
+        let storage = frontier_scratch_storage_ptr(scratch_ptr, layout);
+        FrontierScratchView::from_parts(storage, layout, frontier_entry_capacity)
+    }
 }
 
 #[cfg(test)]
@@ -214,7 +238,7 @@ mod tests {
 
     #[test]
     fn global_frontier_scratch_sections_track_max_frontier_entries() {
-        let layout = FrontierScratchLayout::new(5, 2);
+        let layout = FrontierScratchLayout::new(5);
         assert_eq!(layout.global_active_entry_slots().count(), 5);
         assert_eq!(layout.observed_entry_slots().count(), 5);
     }

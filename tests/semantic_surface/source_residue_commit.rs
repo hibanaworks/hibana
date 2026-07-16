@@ -211,7 +211,7 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && !commit_delta.contains("pub(in crate::endpoint::kernel) const fn from_preflighted")
             && prepared_commit_delta_row.contains("event: Option<CommitEventRow>")
             && prepared_commit_delta_row.contains("selected_routes: PreparedRouteCommitRows")
-            && prepared_commit_delta_row.contains("fresh_route_start: u8")
+            && prepared_commit_delta_row.contains("fresh_route_start: u16")
             && !prepared_commit_delta_row.contains("roll_row: RollCommitRow")
             && !prepared_commit_delta_row.contains("delta: CommitDelta")
             && !commit_delta.contains("pub(crate) const fn delta(")
@@ -225,7 +225,8 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && !decision_state.contains("ptr: *const SelectedRouteCommitRow")
             && !endpoint_layout.contains("route_state_commit_rows")
             && decision_state.contains("conflict: PackedEventConflict")
-            && decision_state.contains("range_lane_len: u32")
+            && decision_state.contains("range: PackedLaneRange")
+            && decision_state.contains("lane: u8")
             && decision_state.contains("from_resident_range_for_lane")
             && !decision_state.contains(forbidden_from_chain_for_lane)
             && !decision_state.contains("route_commit_chain_row_at")
@@ -241,9 +242,10 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && runtime_types.contains("fn from_recv_meta(")
             && runtime_types.contains("selected_routes: SelectedRouteCommitRowsRef,")
             && !runtime_types.contains("fn with_selected_route_rows(")
-            && decision_state.contains("range_lane_len: u32")
+            && decision_state.contains("range: PackedLaneRange")
             && !decision_state.contains("fn from_slice_for_lane(")
-            && endpoint_init.contains("role_descriptor.max_route_stack_depth().max(1)")
+            && endpoint_init.contains("role_descriptor.max_route_commit_count(),")
+            && !endpoint_init.contains("max_route_commit_count().max(1)")
             && !endpoint_init.contains("route_scope_count().saturating_add(1)",)
             && runtime_types.contains("fn route_rows(rows: RouteOnlyCommitRowsRef")
             && !runtime_types.contains("fn route_rows(rows: SelectedRouteCommitRowsRef")
@@ -429,32 +431,33 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
 }
 
 #[test]
-fn route_stack_depth_cap_is_projection_sealed() {
+fn route_history_and_traversal_are_descriptor_derived() {
     let lowering_driver = lowering_driver_source();
     let lowering_seal = read("src/global/compiled/lowering/seal.rs");
     let passive_child_seal = read("src/global/compiled/lowering/seal/passive_child.rs");
     let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
-    let projection_error = lowering_seal
-        .split("pub(crate) const fn projection_error_all_roles")
-        .nth(1)
-        .expect("projection error gate must stay visible");
-
+    let route_history = read("src/endpoint/kernel/decision_state/route_arm_history.rs");
+    let endpoint_layout = read("src/endpoint/kernel/layout.rs");
+    let cursor = read("src/global/typestate/cursor.rs");
+    let conflict = read("src/global/typestate/facts.rs");
     assert!(
-        lowering_driver.contains(
-            "pub(in crate::global::compiled::lowering) const fn max_route_stack_depth_for_projection"
-        )
-            && lowering_seal.contains("const fn validate_route_stack_depth(")
-            && lowering_seal.contains(
-                "summary.max_route_stack_depth_for_projection() > u8::MAX as usize"
-            )
-            && lowering_seal.contains("ProgramSourceError::ProjectionRouteUnprojectable")
-            && projection_error.contains("validate_route_stack_depth(summary)")
-            && decision_state.contains("depth: u8")
-            && decision_state.contains("range_lane_len: u32")
-            && decision_state.contains("range.len() > u8::MAX as usize")
-            && decision_state.contains("crate::invariant();"),
-        "route stack depth must be rejected by projection seal before endpoint runtime init; runtime u8 guards are defensive only"
+        !lowering_driver.contains("max_route_commit_count_for_projection")
+            && !lowering_seal.contains("validate_route_stack_depth")
+            && route_history.contains("struct RouteArmHistoryView")
+            && route_history.contains("lane_lengths: *mut u16")
+            && route_history.contains("capacity: u16")
+            && route_history.contains("len: u16")
+            && decision_state.contains("range: PackedLaneRange")
+            && !route_history.contains("lane_reentry_counts")
+            && !route_history.contains("range.len() > u8::MAX as usize")
+            && endpoint_layout.contains("footprint.route_arm_state_capacity")
+            && !endpoint_layout
+                .contains("footprint.active_lane_count, footprint.max_route_commit_count")
+            && cursor.contains("fn route_chain_bound(&self) -> usize")
+            && cursor.contains(".route_scope_count")
+            && !conflict.contains("MAX_CHAIN_DEPTH"),
+        "route history must be sparse over emitted descriptor relations and traversal bounds must come from the route-scope count"
     );
     assert!(
         !lowering_seal.contains("validate_first_recv_dispatch_capacity")
@@ -466,6 +469,212 @@ fn route_stack_depth_cap_is_projection_sealed() {
             && first_recv_dispatch.contains("passive_arm_child_fact_by_slot")
             && passive_child_seal.contains("passive_child_route_scope("),
         "passive first-recv dispatch must stream from descriptor route-scope child-slot authority without an arbitrary fixed table"
+    );
+}
+
+#[test]
+fn route_history_publishes_shared_refs_after_sparse_commit() {
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
+    let reentry_clear = read("src/endpoint/kernel/decision_state/reentry_clear.rs");
+    let apply = decision_state
+        .split("pub(super) fn apply_prepared_route_selection")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(super) fn selected_arm_for_scope_slot")
+                .next()
+        })
+        .expect("prepared route selection commit must stay factored");
+    let history_set = apply
+        .find("self.lane_route_arms.set(")
+        .expect("existing route history must commit through the sparse owner");
+    let history_push = apply
+        .find("self.lane_route_arms.push(")
+        .expect("new route history must commit through the sparse owner");
+    let publications: Vec<_> = apply.match_indices(".write(next_slot);").collect();
+    let direct_slot_mutation = apply
+        .lines()
+        .any(|line| line.trim_start().starts_with("slot."));
+
+    assert!(
+        apply.contains("let mut next_slot =")
+            && publications.len() == 2
+            && history_set < publications[0].0
+            && history_push < publications[1].0
+            && !apply.contains("let slot =")
+            && !direct_slot_mutation,
+        "route selection must prepare shared ref state locally and publish it only after sparse history commits"
+    );
+
+    let clear = reentry_clear
+        .split("pub(in crate::endpoint::kernel) fn clear_lane_route_selections_in_scope")
+        .nth(1)
+        .and_then(|tail| tail.split("fn prepare_selected_arm_ref_release").next())
+        .expect("route history clear must stay factored");
+    let prepare_release = clear
+        .find("prepare_selected_arm_ref_release(scope_slot)")
+        .expect("shared ref release must be prepared before mutation");
+    let remove = clear
+        .find("lane_route_arms.remove(lane_idx, idx)")
+        .expect("route history row must be removed through the sparse owner");
+    let publish = clear
+        .find("publish_selected_arm_slot(scope_slot, next_slot)")
+        .expect("prepared shared ref state must be published");
+    assert!(
+        prepare_release < remove
+            && remove < publish
+            && !reentry_clear.contains("release_selected_arm_ref"),
+        "route history removal must validate shared refs first and publish them only after sparse compaction"
+    );
+}
+
+#[test]
+fn offer_frontier_capacity_is_derived_from_active_lanes() {
+    let role_image = read("src/global/role_program/image_types.rs");
+    let lane_set = read("src/global/role_program/lane_set.rs");
+    let entry_sets = read("src/endpoint/kernel/frontier/entry_sets.rs");
+    let entry_buffer = read("src/endpoint/kernel/frontier/entry_sets/buffer.rs");
+    let snapshot = read("src/endpoint/kernel/frontier/snapshot.rs");
+    let layout = read("src/endpoint/kernel/layout.rs");
+    let cache_refresh = read("src/endpoint/kernel/offer/cache_refresh.rs");
+    let selection_pool = read("src/endpoint/kernel/offer/select_alignment/model/pool.rs");
+    let observation = read("src/endpoint/kernel/frontier/observation.rs");
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
+    let route_arm_history = read("src/endpoint/kernel/decision_state/route_arm_history.rs");
+    let evidence_store = read("src/endpoint/kernel/evidence_store.rs");
+    let assoc_storage = read("src/rendezvous/association/storage.rs");
+
+    assert!(
+        role_image.contains("pub(crate) const fn frontier_entry_count(self) -> usize")
+            && role_image.contains("self.active_lane_count")
+            && !role_image.contains("if self.active_lane_count == 0")
+            && lane_set.contains("endpoint_lane_slot_count")
+            && lane_set.contains("active_lane_count > endpoint_lane_slot_count")
+            && !lane_set.contains("MIN_ENDPOINT_LANE_SLOTS")
+            && !lane_set.contains("RESERVED_BINDING_LANES")
+            && !role_image.contains("frontier_entry_count_for_route_depth")
+            && !entry_sets.contains("FRONTIER_SLOT_MASK_BITS")
+            && !entry_sets.contains("occupancy_mask")
+            && !entry_sets.contains("controller_mask")
+            && !entry_sets.contains("progress_mask")
+            && !entry_sets.contains("ready_arm_mask")
+            && entry_sets.contains("struct ActiveEntrySetBuilder")
+            && entry_sets.contains("struct ObservedEntrySetBuilder")
+            && entry_sets.contains("const fn seal(self) -> ActiveEntrySet")
+            && entry_sets.contains("const fn seal(self) -> ObservedEntrySet")
+            && entry_buffer.contains("const unsafe fn from_parts")
+            && !entry_buffer.contains("#[derive(Clone, Copy)]\npub(super) struct EntryBuffer")
+            && entry_buffer.contains("const fn into_view(self) -> EntryView<T>")
+            && !entry_buffer.contains("const fn view(&self) -> EntryView<T>")
+            && snapshot.contains("slots: *mut StateIndex")
+            && snapshot.contains("visited.contains(candidate.entry.as_usize())")
+            && snapshot.contains("if self.len >= self.capacity")
+            && snapshot.contains("crate::invariant();")
+            && !snapshot.contains(
+                "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct FrontierVisitSet"
+            )
+            && !lane_set.contains("#[derive(Clone, Copy, Debug)]\npub(crate) struct LaneSet {")
+            && !decision_state.contains("#[derive(Clone, Copy)]\nstruct LaneOfferStateView")
+            && !route_arm_history
+                .contains("#[derive(Clone, Copy)]\npub(super) struct RouteArmHistoryView")
+            && !evidence_store
+                .contains("#[derive(Clone, Copy)]\npub(super) struct ScopeEvidenceTable")
+            && !assoc_storage.contains("#[derive(Clone, Copy)]\nstruct AssocStorageParts")
+            && !snapshot.contains("visited.contains(candidate.scope_id)")
+            && layout.contains("frontier_visited_entries: EndpointArenaSection")
+            && !repo_file_exists("src/endpoint/kernel/offer/select_alignment/model/set.rs")
+            && selection_pool.contains("while slot_idx < self.observed_entries.len()")
+            && observation.contains("frontier_mask & !FrontierKind::ALL_BITS")
+            && observation.contains("self.frontier_mask = frontier_mask;")
+            && !observation.contains("frontier_mask & 0x0f")
+            && cache_refresh.contains("crate::invariant_some(composed.insert_entry(entry_idx))")
+            && cache_refresh.contains("composed.seal()"),
+        "offer arbitration and exact entry-identity visits must stream the active-lane-derived frontier without a fixed mask or silent truncation"
+    );
+}
+
+#[test]
+fn descriptor_counts_are_not_reexpanded_by_runtime_fallbacks() {
+    let role_descriptor = read("src/global/compiled/images/image/role_descriptor_ref.rs");
+    let cursor = read("src/global/typestate/cursor.rs");
+    let attach = read("src/session/cluster/core/endpoint_attach.rs");
+    let endpoint_init = read("src/endpoint/kernel/endpoint_init.rs");
+    let capacity = read("src/rendezvous/core/storage_layout/capacity.rs");
+
+    assert!(
+        !role_descriptor.contains("endpoint_lane_slot_count.max(1)")
+            && !role_descriptor.contains("max(self.endpoint_lane_slot_count())")
+            && !cursor.contains("endpoint_lane_slot_count.max(1)")
+            && !attach.contains("logical_lane_count().max(1)")
+            && !endpoint_init.contains("max_route_commit_count().max(1)")
+            && capacity.contains("required_lane_slots == 0")
+            && capacity.contains("required_assoc_slots == 0")
+            && !capacity.contains("required_lane_slots.max(1)")
+            && !capacity.contains("required_assoc_slots.max(1)"),
+        "accepted descriptor counts must flow unchanged into runtime storage; zero is either exact or rejected, never silently expanded"
+    );
+}
+
+#[test]
+fn inbound_projection_identity_uses_the_compact_event_domain() {
+    let selectors = read("src/global/const_dsl/endpoint_selectors.rs");
+
+    assert!(
+        selectors.contains("crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY")
+            && selectors.contains("frame-label reuse remains independent")
+            && !selectors.contains("0x00ff_ffff")
+            && !selectors.contains("issued monotonically"),
+        "projection evidence identity must share the descriptor event domain and must not retain obsolete monotonic-frame-label assumptions"
+    );
+}
+
+#[test]
+fn compact_state_and_route_reference_identities_fail_closed() {
+    let facts = read("src/global/typestate/facts.rs");
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
+    let reselection = decision_state
+        .split("fn commit_existing_lane_reselection")
+        .nth(1)
+        .expect("route reselection transition")
+        .split("impl LaneOfferStateView")
+        .next()
+        .expect("route reselection owner body");
+
+    assert!(
+        facts.contains("if raw == u16::MAX")
+            && facts.contains("if idx >= MAX_STATES")
+            && reselection.contains("if self.refs != 1")
+            && reselection.contains("self.arm = selected_arm")
+            && !reselection.contains("self.refs = 1")
+            && decision_state.contains("slot.commit_existing_lane_reselection(current.arm, arm)"),
+        "present state identities must exclude the absent sentinel and route reselection must preserve the exact shared reference count"
+    );
+}
+
+#[test]
+fn lean_role_metadata_matches_production_capacity_semantics() {
+    let topology = read("proofs/lean/Hibana/DescriptorTopology.lean");
+    let descriptor = read("proofs/lean/Hibana/DescriptorImage.lean");
+    let refinement = read("proofs/lean/Hibana/DescriptorRefinement.lean");
+    let exporter = read("src/test_support/lean_proof_export/projection_certificate.rs");
+    let complete_surface = [
+        topology.as_str(),
+        descriptor.as_str(),
+        refinement.as_str(),
+        exporter.as_str(),
+    ]
+    .join("\n");
+
+    assert!(
+        topology.contains("let logicalLaneCount := endpointLaneSlotCount")
+            && topology.contains("canonical_logical_lane_count_is_exact_endpoint_span")
+            && descriptor.contains("maxRouteCommitCount : Nat")
+            && descriptor.contains("production_frontier_capacity_is_exact_active_lane_count")
+            && !descriptor.contains("if activeLaneCount = 0 then 1")
+            && refinement.contains("certificate.image.maxRouteCommitCount")
+            && exporter.contains("maxRouteCommitCount := {}")
+            && !complete_surface.contains("maxRouteStackDepth")
+            && !complete_surface.contains("activeLaneCount + 2"),
+        "Lean canonical metadata and the Rust proof exporter must use the exact descriptor lane span and route-commit capacity semantics"
     );
 }
 
@@ -595,7 +804,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && passive_child_scope.contains("child_scope != route_scope")
             && !passive_child_scope.contains("scope_id.kind()")
             && !passive_child_scope.contains("ScopeKind::Route")
-            && cursor_route_navigation.contains("PackedEventConflict::MAX_CHAIN_DEPTH")
+            && cursor_route_navigation.contains("self.route_chain_bound()")
             && role_program_types.contains("PackedRouteArmRow")
             && role_program_types.contains("RouteArmLaneStepRow")
             && role_program_types.contains("child_slot(self) -> Option<u16>")

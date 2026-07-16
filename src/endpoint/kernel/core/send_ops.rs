@@ -31,7 +31,7 @@ where
                 audit_start: _,
             } => {
                 let selected_routes = self.build_send_selected_route_rows(preview_idx, meta)?;
-                if lane != meta.lane || selected_routes.packed_selected_lane() != Some(lane) {
+                if lane != meta.lane || selected_routes.selected_lane() != Some(lane) {
                     return Err(SendError::PhaseInvariant);
                 }
                 selected_routes

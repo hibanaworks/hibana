@@ -181,8 +181,9 @@ fn rendezvous_scratch_borrows_are_scoped_and_offer_progress_is_endpoint_resident
         "pending sends must retain the source payload, never a shared-scratch borrow"
     );
     assert!(
-        layout.contains("frontier_visited_scopes: EndpointArenaSection")
-            && frontier_state.contains("visited_scopes: *mut ScopeId")
+        layout.contains("frontier_visited_entries: EndpointArenaSection")
+            && frontier_state.contains("visited_entries: *mut StateIndex")
+            && !frontier_state.contains("visited_scopes")
             && !production.contains("OfferEntryTable")
             && !production.contains("global_frontier_scratch_state"),
         "poll-spanning offer state must be endpoint resident and derived from active lanes"

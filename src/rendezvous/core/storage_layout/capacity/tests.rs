@@ -101,6 +101,26 @@ fn nonempty_sidecar_before_slab_fails_closed() {
 }
 
 #[test]
+fn association_storage_rejects_zero_requirements_without_allocating_reserves() {
+    let mut slab = [0u8; 4096];
+    let rv = init_test_rendezvous(&mut slab);
+    let frontier_before = rv.image_frontier.get();
+
+    assert_eq!(
+        rv.ensure_core_lane_tables_for_assoc_entries(0, 1),
+        Err(ResourceScope::LaneStorage)
+    );
+    assert_eq!(
+        rv.ensure_core_lane_tables_for_assoc_entries(1, 0),
+        Err(ResourceScope::LaneStorage)
+    );
+    assert_eq!(rv.lane_slot_count(), 0);
+    assert_eq!(rv.assoc.assoc_slots(), 0);
+    assert!(rv.assoc_storage.get().is_empty());
+    assert_eq!(rv.image_frontier.get(), frontier_before);
+}
+
+#[test]
 fn assoc_replacement_retires_old_root_without_history_growth() {
     let mut slab = [0u8; 4096];
     let rv = init_test_rendezvous(&mut slab);

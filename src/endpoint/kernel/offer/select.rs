@@ -6,7 +6,7 @@ use super::{
     RouteArmToken, ScopeId, Transport, frontier_snapshot_from_scratch, lane_port,
     state_index_to_usize,
 };
-use crate::global::typestate::{InboundFrameKey, PackedEventConflict};
+use crate::global::typestate::InboundFrameKey;
 
 pub(super) struct FrontierDeferRequest {
     pub(super) scope_id: ScopeId,
@@ -164,7 +164,7 @@ where
     ) {
         let mut current_scope = scope_id;
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.cursor.route_chain_bound();
         while depth < depth_bound {
             let Some(arm) = self
                 .cursor
@@ -197,8 +197,8 @@ where
         let fingerprint = self.evidence_fingerprint(scope_id, ingress);
         let evidence = progress.on_defer(fingerprint);
         let is_pending = matches!(evidence, OfferEvidenceOutcome::Pending);
-        visited.record(scope_id);
         let current_entry_idx = self.cursor.index();
+        visited.record(current_entry_idx);
         let current_is_controller = self.cursor.is_route_controller(scope_id);
         let mut scratch = self.frontier_scratch_view();
         let mut snapshot = frontier_snapshot_from_scratch(
@@ -222,27 +222,25 @@ where
             ControlFlow::<()>::Continue(())
         });
         if is_pending {
-            let Some(candidate) = snapshot.select_yield_candidate(*visited) else {
+            let Some(candidate) = snapshot.select_yield_candidate(visited) else {
                 return FrontierDeferOutcome::Pending;
             };
-            visited.record(candidate.scope_id);
-            if candidate.entry_idx as usize != self.cursor.index()
-                && self
-                    .commit_cursor_realign_index(candidate.entry_idx as usize)
-                    .is_err()
+            let candidate_entry = candidate.entry.as_usize();
+            visited.record(candidate_entry);
+            if candidate_entry != self.cursor.index()
+                && self.commit_cursor_realign_index(candidate_entry).is_err()
             {
                 return FrontierDeferOutcome::Pending;
             }
             return FrontierDeferOutcome::Yielded;
         }
-        let Some(candidate) = snapshot.select_yield_candidate(*visited) else {
+        let Some(candidate) = snapshot.select_yield_candidate(visited) else {
             return FrontierDeferOutcome::Continue;
         };
-        visited.record(candidate.scope_id);
-        if candidate.entry_idx as usize != self.cursor.index()
-            && self
-                .commit_cursor_realign_index(candidate.entry_idx as usize)
-                .is_err()
+        let candidate_entry = candidate.entry.as_usize();
+        visited.record(candidate_entry);
+        if candidate_entry != self.cursor.index()
+            && self.commit_cursor_realign_index(candidate_entry).is_err()
         {
             return FrontierDeferOutcome::Continue;
         }
@@ -299,12 +297,13 @@ where
             let summary = self.compute_offer_entry_summary(current_idx);
             let entry_parallel = self.offer_entry_parallel_root(current_idx);
             let parallel_root = info.parallel_root;
-            let current_parallel =
-                if !parallel_root.is_none() && self.root_frontier_active_mask(parallel_root) != 0 {
-                    Some(parallel_root)
-                } else {
-                    entry_parallel
-                };
+            let current_parallel = if !parallel_root.is_none()
+                && self.root_frontier_has_active_entries(parallel_root)
+            {
+                Some(parallel_root)
+            } else {
+                entry_parallel
+            };
             let mut flags = 0u8;
             if summary.is_controller() {
                 flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
@@ -337,7 +336,7 @@ where
         let cursor_parallel =
             CursorEndpoint::<ROLE, T>::parallel_scope_root(&self.cursor, scope_id);
         let cursor_parallel_has_offer =
-            cursor_parallel.is_some_and(|root| self.root_frontier_active_mask(root) != 0);
+            cursor_parallel.is_some_and(|root| self.root_frontier_has_active_entries(root));
         let current_entry_has_offer = self.offer_entry_has_active_lanes(current_idx);
         let current_entry_parallel = if cursor_parallel_has_offer || !current_entry_has_offer {
             None

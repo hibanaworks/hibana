@@ -200,7 +200,9 @@ def FrameLabelRemap.matches
 def routeFrameLabelRemap
     (left right : List CompiledOccurrence) : List FrameLabelRemap :=
   right.foldl (fun remap occurrence =>
-    if remap.any (·.matches occurrence) then
+    if occurrence.sender == occurrence.receiver then
+      remap
+    else if remap.any (·.matches occurrence) then
       remap
     else
       let usedLeft := (left.filter fun candidate =>
@@ -222,9 +224,23 @@ def routeFrameLabelRemap
 
 def remapRouteFrameLabel
     (remap : List FrameLabelRemap) (occurrence : CompiledOccurrence) : Nat :=
-  match remap.find? (·.matches occurrence) with
-  | some entry => entry.newLabel
-  | none => 256
+  if occurrence.sender == occurrence.receiver then
+    occurrence.frameLabel
+  else
+    match remap.find? (·.matches occurrence) with
+    | some entry => entry.newLabel
+    | none => 256
+
+@[simp]
+theorem remap_route_frame_label_preserves_local_effect
+    (remap : List FrameLabelRemap) (occurrence : CompiledOccurrence)
+    (localEffect : occurrence.sender = occurrence.receiver) :
+    remapRouteFrameLabel remap occurrence = occurrence.frameLabel := by
+  have sameRole : (occurrence.sender == occurrence.receiver) = true :=
+    beq_iff_eq.mpr localEffect
+  unfold remapRouteFrameLabel
+  rw [sameRole]
+  rfl
 
 def mergeRouteOccurrences
     (left right : CompiledOccurrenceSource) : CompiledOccurrenceSource :=
@@ -262,29 +278,44 @@ def recolorRollOccurrencesFrom
   | _, _, [] => []
   | classes, index, occurrence :: rest =>
       let conflicts := (conflictRows[index]?).getD []
-      match classes.find? (fun entry => entry.matches occurrence conflicts) with
-      | some entry =>
-          { occurrence with frameLabel := entry.frameLabel } ::
-            recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
-      | none =>
-          let used := (classes.filter fun entry =>
-            entry.sameInboundKey occurrence).map RollFrameLabelClass.frameLabel
-          let selected := (firstAvailableFrameLabel used).getD 256
-          let nextClass : RollFrameLabelClass := {
-            sender := occurrence.sender
-            receiver := occurrence.receiver
-            lane := occurrence.lane
-            conflicts
-            frameLabel := selected
-          }
-          { occurrence with frameLabel := selected } ::
-            recolorRollOccurrencesFrom conflictRows
-              (classes ++ [nextClass]) (index + 1) rest
+      if occurrence.sender == occurrence.receiver then
+        occurrence :: recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+      else
+        match classes.find? (fun entry => entry.matches occurrence conflicts) with
+        | some entry =>
+            { occurrence with frameLabel := entry.frameLabel } ::
+              recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+        | none =>
+            let used := (classes.filter fun entry =>
+              entry.sameInboundKey occurrence).map RollFrameLabelClass.frameLabel
+            let selected := (firstAvailableFrameLabel used).getD 256
+            let nextClass : RollFrameLabelClass := {
+              sender := occurrence.sender
+              receiver := occurrence.receiver
+              lane := occurrence.lane
+              conflicts
+              frameLabel := selected
+            }
+            { occurrence with frameLabel := selected } ::
+              recolorRollOccurrencesFrom conflictRows
+                (classes ++ [nextClass]) (index + 1) rest
 
 def recolorRollOccurrences
     (occurrences : List CompiledOccurrence)
     (conflictRows : List (List ConflictArm)) : List CompiledOccurrence :=
   recolorRollOccurrencesFrom conflictRows [] 0 occurrences
+
+@[simp]
+theorem recolor_roll_local_effect_head_is_unchanged
+    (conflictRows : List (List ConflictArm))
+    (classes : List RollFrameLabelClass) (index : Nat)
+    (occurrence : CompiledOccurrence) (rest : List CompiledOccurrence)
+    (localEffect : occurrence.sender = occurrence.receiver) :
+    recolorRollOccurrencesFrom conflictRows classes index (occurrence :: rest) =
+      occurrence :: recolorRollOccurrencesFrom conflictRows classes (index + 1) rest := by
+  have sameRole : (occurrence.sender == occurrence.receiver) = true :=
+    beq_iff_eq.mpr localEffect
+  cases rest <;> simp only [recolorRollOccurrencesFrom, sameRole, if_true]
 
 def recolorRollSource
     (source : CompiledOccurrenceSource)
@@ -347,7 +378,9 @@ theorem recolor_roll_occurrences_from_length
   | nil => rfl
   | cons head tail tailIH =>
       simp only [recolorRollOccurrencesFrom]
-      split <;> simp [tailIH]
+      split
+      · simp [tailIH]
+      · split <;> simp [tailIH]
 
 @[simp]
 theorem compiled_occurrence_action_update_frame_label
@@ -366,9 +399,12 @@ theorem recolor_roll_occurrences_from_actions
   | nil => rfl
   | cons head tail tailIH =>
       simp only [recolorRollOccurrencesFrom]
-      split <;>
-        simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label] <;>
+      split
+      · simp only [List.filterMap_cons]
         rw [tailIH]
+      · split <;>
+          simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label] <;>
+          rw [tailIH]
 
 @[simp]
 theorem recolor_roll_source_actions

@@ -107,6 +107,42 @@ run_miri_test \
   --lib \
   observe::core::tests
 
+run_miri_test \
+  descriptor-derived-route-history-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  endpoint::kernel::decision_state::tests::route_arm_history_crosses_the_former_256_boundary
+
+run_miri_test \
+  descriptor-domain-offer-frontier-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_beyond_the_former_eight_slot_mask
+
+run_miri_test \
+  exact-frontier-visit-identity-owner \
+  3 \
+  3 \
+  0 \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier::snapshot::tests
+
+run_miri_test \
+  root-frontier-packed-pool-owner \
+  7 \
+  7 \
+  0 \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier_state::tests
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}" \
 MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
   production-proof-artifact-exporter \
@@ -345,8 +381,8 @@ run_miri_test \
 
 run_miri_test \
   resident-sidecar-owner \
+  17 \
   16 \
-  15 \
   1 \
   -p hibana \
   --lib \
@@ -378,6 +414,24 @@ run_miri_test \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_
+
+run_miri_test \
+  compiled-program-atom-lookup \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows
+
+run_miri_test \
+  compiled-program-atom-order-rejection \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_descriptor_rejects_noncanonical_atom_order
 
 run_miri_test \
   program-image-storage-validation \

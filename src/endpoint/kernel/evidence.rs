@@ -14,6 +14,11 @@ impl RouteArmState {
         scope: ScopeId::none(),
         arm: 0,
     };
+
+    #[inline]
+    pub(super) const fn new(scope: ScopeId, arm: u8) -> Self {
+        Self { scope, arm }
+    }
 }
 
 #[derive(Clone, Copy)]

@@ -17,16 +17,10 @@ use crate::{
 #[cfg(kani)]
 mod kani;
 mod passive_child;
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
-
-#[inline(always)]
-const fn validate_route_stack_depth(summary: &CompiledProgramImage) -> Option<ProgramSourceError> {
-    if summary.max_route_stack_depth_for_projection() > u8::MAX as usize {
-        return Some(ProgramSourceError::ProjectionRouteUnprojectable);
-    }
-    None
-}
 
 #[derive(Clone, Copy)]
 pub(super) struct ExactRoleFacts {
@@ -190,9 +184,6 @@ pub(crate) const fn projection_error_all_roles<const E: usize>(
     summary: &CompiledProgramImage,
     eff_list: &EffList<E>,
 ) -> Option<ProgramSourceError> {
-    if let Some(error) = validate_route_stack_depth(summary) {
-        return Some(error);
-    }
     if !validate_receive_lane_causality(eff_list) {
         return Some(ProgramSourceError::ReceiveLaneCausalityConflict);
     }

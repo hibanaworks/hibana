@@ -68,7 +68,7 @@ impl EventCursor {
         let mut scope = scope_id;
         let mut selected_arm = arm;
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             if let Some(entry) = self.route_scope_arm_recv_index(scope, selected_arm) {
                 return Some(entry);
@@ -252,7 +252,7 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
                 return true;
@@ -284,7 +284,7 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
                 return true;
@@ -317,7 +317,7 @@ impl EventCursor {
             return None;
         }
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             let LocalConflict::RouteArm { scope, arm } = conflict.to_conflict()? else {
                 return None;
@@ -356,7 +356,7 @@ impl EventCursor {
         let mut conflict = self.machine().event_conflict_for_index(self.idx_usize());
         let mut first_unresolved = ScopeId::none();
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             let Some(row) = conflict.to_conflict() else {
                 break;
@@ -403,7 +403,7 @@ impl EventCursor {
         if selected_scope == initial_scope {
             return initial_scope;
         }
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         let mut depth = 0usize;
         while depth < depth_bound {
             let Some(arm) = selected_or_preview_arm_for_scope(selected_scope) else {

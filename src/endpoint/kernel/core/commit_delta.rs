@@ -8,13 +8,13 @@ use crate::global::typestate::{EnabledEventCommit, StateIndex};
 pub(crate) struct PreparedCommitDelta {
     event: Option<CommitEventRow>,
     selected_routes: PreparedRouteCommitRows,
-    pub(in crate::endpoint::kernel::core) fresh_route_start: u8,
+    pub(in crate::endpoint::kernel::core) fresh_route_start: u16,
     lane_relocation: Option<RelocatableResidentLaneStep>,
     cursor_after: StateIndex,
 }
 
 impl PreparedCommitDelta {
-    const NO_FRESH_ROUTE: u8 = u8::MAX;
+    const NO_FRESH_ROUTE: u16 = u16::MAX;
 
     #[inline(always)]
     fn from_preflighted(
@@ -23,7 +23,9 @@ impl PreparedCommitDelta {
         fresh_route_start: Option<usize>,
     ) -> Self {
         let fresh_route_start = match fresh_route_start {
-            Some(start) if start < selected_routes.len() && start < u8::MAX as usize => start as u8,
+            Some(start) if start < selected_routes.len() && start < u16::MAX as usize => {
+                start as u16
+            }
             Some(_) => crate::invariant(),
             None => Self::NO_FRESH_ROUTE,
         };
@@ -72,7 +74,7 @@ impl PreparedCommitDelta {
 pub(crate) struct CommittedCommitDelta {
     event: Option<CommitEventRow>,
     selected_routes: PreparedRouteCommitRows,
-    fresh_route_start: u8,
+    fresh_route_start: u16,
 }
 
 impl CommittedCommitDelta {
@@ -80,7 +82,7 @@ impl CommittedCommitDelta {
     pub(in crate::endpoint::kernel::core) const fn from_applied(
         event: Option<CommitEventRow>,
         selected_routes: PreparedRouteCommitRows,
-        fresh_route_start: u8,
+        fresh_route_start: u16,
     ) -> Self {
         Self {
             event,

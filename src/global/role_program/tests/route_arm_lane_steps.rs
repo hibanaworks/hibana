@@ -144,25 +144,28 @@ fn route_arm_lane_steps_are_sparse_over_actual_lanes_not_logical_lanes() {
 }
 
 #[test]
-fn route_arm_lane_steps_keep_multi_lane_arms_sparse() {
+fn route_arm_lane_steps_store_one_row_per_actual_arm_lane_relation() {
     let program: RoleProgram<0> = project(&sparse_multi_lane_route_program());
     with_role_descriptor(&program, |descriptor| {
         let rows = descriptor.local_event_rows();
         let columns = rows.lanes().columns;
         assert_eq!(columns.route_arms.len, 2);
-        assert!(
-            columns.route_arm_lane_step_rows.len > columns.route_arms.len,
-            "route arms with multiple actual lanes must keep more than one sparse row per arm"
-        );
-        assert!(
-            (columns.route_arm_lane_step_rows.len as usize)
-                < columns.route_arms.len as usize * descriptor.logical_lane_count()
-        );
+        assert_eq!(descriptor.logical_lane_count(), 2);
+        assert_eq!(columns.route_arm_lane_step_rows.len, 4);
+        for arm in 0..=1 {
+            for lane in 0..=1 {
+                assert!(
+                    rows.route_arm_lane_first_step_by_slot(0, arm, lane)
+                        .is_some(),
+                    "each actually used arm/lane pair must own exactly one relation row"
+                );
+            }
+        }
     });
 }
 
 #[test]
-fn nested_route_lane_steps_are_not_capped_by_local_step_count() {
+fn nested_route_lane_steps_are_relation_counted_not_event_counted() {
     let program: RoleProgram<0> = project(&final_form_protocol!(triple_nested_route));
     with_role_descriptor(&program, |descriptor| {
         let rows = descriptor.local_event_rows();
@@ -172,10 +175,7 @@ fn nested_route_lane_steps_are_not_capped_by_local_step_count() {
             columns.route_arm_lane_step_rows.len as usize > columns.events.len as usize,
             "nested route arms can duplicate lane-step summaries across ancestor arms"
         );
-        assert!(
-            (columns.route_arm_lane_step_rows.len as usize)
-                < columns.route_arms.len as usize * descriptor.logical_lane_count(),
-            "nested route sparse rows must still avoid route_arm * logical_lane_count scaling"
-        );
+        assert_eq!(descriptor.logical_lane_count(), 1);
+        assert_eq!(columns.route_arm_lane_step_rows.len, columns.route_arms.len);
     });
 }

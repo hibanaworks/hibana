@@ -41,7 +41,7 @@ check_absent_multiline \
   src/endpoint/kernel/core.rs
 
 check_absent_multiline \
-  "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_reentry_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
+  "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
   "core.rs detected direct route-state table mutation" \
   src/endpoint/kernel/core.rs
 

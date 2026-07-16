@@ -1,5 +1,6 @@
 use super::*;
 use core::mem::MaybeUninit;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::global::const_dsl::ScopeId;
 
@@ -27,6 +28,12 @@ fn init_table<'a>(
         );
         table.assume_init()
     }
+}
+
+fn active_slot(table: &RootFrontierTable, idx: usize) -> ActiveEntrySlot {
+    assert!(idx < table.pool_capacity());
+    /* SAFETY: `idx` was bounded by this table's initialized active-entry pool. */
+    unsafe { *table.active_entries.add(idx) }
 }
 
 #[test]
@@ -94,4 +101,89 @@ fn root_frontier_active_pool_stays_ordered_after_insert_and_remove() {
     assert_eq!(entries.entry_at(0), Some(10));
     assert_eq!(entries.entry_at(1), Some(30));
     assert_eq!(table.active_pool_used(), 2);
+}
+
+#[test]
+fn root_frontier_insert_validates_all_offsets_before_pool_mutation() {
+    let mut rows = [RootFrontierState::EMPTY; 3];
+    let mut active = [ActiveEntrySlot::EMPTY; 2];
+    let mut table = init_table(&mut rows, &mut active, 3);
+    for idx in 0..3 {
+        table.prepare_row(idx, test_scope(idx as u16 + 1));
+    }
+    table[1].active_start = u16::MAX;
+    table[2].active_start = 0;
+    let active_before = active_slot(&table, 0);
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = table.insert_root_active_entry(0, 10, 0);
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(table[0].active_len, 0);
+    assert_eq!(table[1].active_start, u16::MAX);
+    assert!(active_slot(&table, 0) == active_before);
+}
+
+#[test]
+fn root_frontier_remove_validates_all_offsets_before_pool_mutation() {
+    let mut rows = [RootFrontierState::EMPTY; 3];
+    let mut active = [ActiveEntrySlot::EMPTY; 2];
+    let mut table = init_table(&mut rows, &mut active, 3);
+    for idx in 0..3 {
+        table.prepare_row(idx, test_scope(idx as u16 + 1));
+    }
+    assert!(table.insert_root_active_entry(0, 10, 0));
+    table[1].active_start = 0;
+    table[2].active_start = 1;
+    let active_before = active_slot(&table, 0);
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = table.remove_root_active_entry(0, 10);
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(table[0].active_len, 1);
+    assert_eq!(table[1].active_start, 0);
+    assert!(active_slot(&table, 0) == active_before);
+}
+
+#[test]
+fn root_frontier_row_remove_validates_offsets_before_compaction() {
+    let mut rows = [RootFrontierState::EMPTY; 2];
+    let mut active = [ActiveEntrySlot::EMPTY; 3];
+    let mut table = init_table(&mut rows, &mut active, 2);
+    table.prepare_row(0, test_scope(1));
+    table.prepare_row(1, test_scope(2));
+    assert!(table.insert_root_active_entry(0, 10, 0));
+    assert!(table.insert_root_active_entry(0, 20, 1));
+    table[1].active_start = 1;
+    let first_before = active_slot(&table, 0);
+    let second_before = active_slot(&table, 1);
+
+    let result = catch_unwind(AssertUnwindSafe(|| table.remove_root_row(0)));
+
+    assert!(result.is_err());
+    assert_eq!(table[0].root, test_scope(1));
+    assert_eq!(table[0].active_len, 2);
+    assert_eq!(table[1].root, test_scope(2));
+    assert_eq!(table[1].active_start, 1);
+    assert!(active_slot(&table, 0) == first_before);
+    assert!(active_slot(&table, 1) == second_before);
+}
+
+#[test]
+#[should_panic]
+fn missing_root_frontier_cannot_silently_detach_a_lane() {
+    let mut rows = [RootFrontierState::EMPTY; 1];
+    let mut active = [ActiveEntrySlot::EMPTY; 1];
+    let table = init_table(&mut rows, &mut active, 1);
+    let mut state = FrontierState {
+        root_frontier_state: table,
+        visited_entries: core::ptr::null_mut(),
+    };
+    let mut info = LaneOfferState::EMPTY;
+    info.parallel_root = test_scope(1);
+
+    state.detach_lane_from_root_frontier(info);
 }

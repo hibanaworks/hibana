@@ -28,7 +28,6 @@ impl ScopeEvidenceSlot {
     };
 }
 
-#[derive(Clone, Copy)]
 pub(super) struct ScopeEvidenceTable {
     slots: *mut ScopeEvidenceSlot,
     len: u16,

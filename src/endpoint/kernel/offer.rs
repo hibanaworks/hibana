@@ -276,7 +276,7 @@ where
                 crate::invariant();
             };
             let facts = self.prepare_frontier_facts(selection, frontier_visited);
-            (*frontier_visited, facts)
+            (frontier_visited.take(), facts)
         };
         state.execution = OfferExecution::Collecting {
             frontier_visited,
@@ -317,7 +317,7 @@ where
                     let ingress =
                         core::mem::replace(&mut stage.ingress, OfferStagedIngress::empty());
                     (
-                        *frontier_visited,
+                        frontier_visited.take(),
                         OfferResolveState {
                             facts: stage.facts,
                             ingress,
@@ -363,7 +363,7 @@ where
             match resolved {
                 ResolveTokenOutcome::RestartFrontier => {
                     restart = Some((
-                        *frontier_visited,
+                        frontier_visited.take(),
                         core::mem::replace(&mut stage.ingress, OfferStagedIngress::empty()),
                     ));
                 }
@@ -382,7 +382,7 @@ where
                         };
                         if descended {
                             restart = Some((
-                                *frontier_visited,
+                                frontier_visited.take(),
                                 core::mem::replace(&mut stage.ingress, OfferStagedIngress::empty()),
                             ));
                         }

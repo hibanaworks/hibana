@@ -360,7 +360,7 @@ private structure RouteDepthState where
   current : Nat
   maximum : Nat
 
-private def canonicalMaxRouteStackDepth (source : CanonicalProgramSource) : Nat :=
+private def canonicalMaxRouteCommitCount (source : CanonicalProgramSource) : Nat :=
   let depth := source.markers.foldl (fun depth marker =>
     if marker.scope / 8192 = 0 then
       if marker.tag % 4 = 0 then
@@ -380,7 +380,7 @@ private structure CanonicalRoleMetadata where
   activeLaneCount : Nat
   endpointLaneSlotCount : Nat
   logicalLaneCount : Nat
-  maxRouteStackDepth : Nat
+  maxRouteCommitCount : Nat
   firstActiveLane : Nat
   activeLaneStart : Nat
   activeLaneLength : Nat
@@ -395,7 +395,7 @@ private def Choreo.canonicalRoleMetadata
   let activeLaneCount := activeLanes.length
   let endpointLaneSlotCount := activeLanes.foldl
     (fun count lane => max count (lane + 1)) 1
-  let logicalLaneCount := min 256 (max (activeLaneCount + 2) endpointLaneSlotCount)
+  let logicalLaneCount := endpointLaneSlotCount
   let firstActiveLane := match activeLanes with
     | [] => packedU16Absent
     | first :: rest => rest.foldl min first
@@ -404,7 +404,7 @@ private def Choreo.canonicalRoleMetadata
     activeLaneCount
     endpointLaneSlotCount
     logicalLaneCount
-    maxRouteStackDepth := canonicalMaxRouteStackDepth source
+    maxRouteCommitCount := canonicalMaxRouteCommitCount source
     firstActiveLane
     activeLaneStart := 0
     activeLaneLength := (laneBytesForLanes activeLanes).length
@@ -422,8 +422,14 @@ def Choreo.canonicalEndpointLaneSlotCount (choreo : Choreo) (role : Nat) : Nat :
 def Choreo.canonicalLogicalLaneCount (choreo : Choreo) (role : Nat) : Nat :=
   (choreo.canonicalRoleMetadata role).logicalLaneCount
 
-def Choreo.canonicalRoleMaxRouteStackDepth (choreo : Choreo) (role : Nat) : Nat :=
-  (choreo.canonicalRoleMetadata role).maxRouteStackDepth
+theorem Choreo.canonical_logical_lane_count_is_exact_endpoint_span
+    (choreo : Choreo) (role : Nat) :
+    choreo.canonicalLogicalLaneCount role =
+      choreo.canonicalEndpointLaneSlotCount role := by
+  rfl
+
+def Choreo.canonicalRoleMaxRouteCommitCount (choreo : Choreo) (role : Nat) : Nat :=
+  (choreo.canonicalRoleMetadata role).maxRouteCommitCount
 
 def Choreo.canonicalFirstActiveLane (choreo : Choreo) (role : Nat) : Nat :=
   (choreo.canonicalRoleMetadata role).firstActiveLane

@@ -1,7 +1,7 @@
 use super::CompiledProgramRef;
 use crate::{
     endpoint::kernel::EndpointArenaLayout,
-    global::role_program::{DENSE_LANE_ABSENT, DenseLaneOrdinal, RoleImageRef, lane_word_count},
+    global::role_program::{DENSE_LANE_ABSENT, DenseLaneOrdinal, RoleImageRef},
 };
 
 #[derive(Clone, Copy)]
@@ -84,22 +84,17 @@ impl RoleDescriptorRef {
 
     #[inline(always)]
     pub(crate) fn endpoint_lane_slot_count(&self) -> usize {
-        self.footprint().endpoint_lane_slot_count.max(1)
+        self.footprint().endpoint_lane_slot_count
     }
 
     #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
-        self.footprint()
-            .logical_lane_count
-            .max(self.endpoint_lane_slot_count())
+        self.footprint().logical_lane_count
     }
 
     #[inline(always)]
     pub(crate) fn frontier_scratch_layout(&self) -> crate::endpoint::kernel::FrontierScratchLayout {
-        crate::endpoint::kernel::FrontierScratchLayout::new(
-            self.max_frontier_entries(),
-            lane_word_count(self.logical_lane_count()),
-        )
+        crate::endpoint::kernel::FrontierScratchLayout::new(self.max_frontier_entries())
     }
 
     #[inline(always)]
@@ -108,8 +103,8 @@ impl RoleDescriptorRef {
     }
 
     #[inline(always)]
-    pub(crate) fn max_route_stack_depth(&self) -> usize {
-        self.footprint().max_route_stack_depth
+    pub(crate) fn max_route_commit_count(&self) -> usize {
+        self.footprint().max_route_commit_count
     }
 
     #[cfg(all(test, hibana_repo_tests))]

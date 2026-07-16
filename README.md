@@ -166,9 +166,10 @@ The compact descriptor domains impose these explicit limits:
 | Program image | 65,535 B | Compact `u16` byte-offset domain for one immutable global image |
 | Atom-only program | 5,957 events | `65,535 / 11`; control columns reduce this shape-dependent ceiling |
 | Role image | 65,535 B per role | Compact `u16` byte-offset domain for one projected role image |
-| Structured scopes | 8,192 | Routes, parallel regions, and rolled regions combined |
-| Active route depth | 255 | Maximum nested route stack represented by one projected image |
-| Physical lanes | 256 | Lanes are reused when endpoint-role sets do not conflict |
+| Structured scopes | Image-derived | Every scope contributes at least two five-byte markers, so the byte ceiling binds before the compact scope-id domain |
+| Route commit chain | Image-derived | A `u16` descriptor range; no separate `u8` chain ceiling |
+| Physical lanes | 256 | Storage follows the exact projected lane span; lanes are reused when endpoint-role sets do not conflict and no hidden binding lanes are reserved |
+| Offer frontier | Active-lane-derived | At most one active entry per active lane; streamed candidates and exact visited-entry identities have no fixed eight-entry mask |
 | Inbound frame colors | 256 | Maximum simultaneously competing receive candidates for one source/receiver/lane key |
 
 Frame colors are not cumulative message numbers. More than 256 ordered
@@ -182,6 +183,13 @@ The event-identity domain is not a promise that every 65,535-event source fits
 one image. A protocol is accepted only when both its global image and every
 projected role image fit their byte domains; the exact event ceiling therefore
 depends on its messages, scopes, dependencies, route evidence, and role views.
+The internal scope-id domain contains 8,192 identities, but this is not an
+additional acceptance limit: even the smallest structured scope consumes ten
+program-image bytes, so a fitting image contains at most 6,553 scopes. Route
+commit-chain lengths use the same compact `u16` count domain and are therefore
+bounded by descriptor structure rather than by an unrelated 255-entry runtime
+field. Runtime route history is a packed sparse table sized by emitted
+`(lane, route)` relations, not by `active lanes × maximum route depth`.
 The temporary source is still a Rust type tree, but lowering stores events,
 scope markers, and resolver markers in one exact-count tagged arena. Its lane
 matching scratch is bounded by the 256-value wire lane domain rather than by
@@ -649,11 +657,11 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | `SessionKitStorage` | 24 B | 32 B |
 | Fixed per-rendezvous storage, including the 252 B tap records | 412 B | 952 B |
 | Peak live runtime slab across tracked heavy shapes | 2,349 B | 4,323 B |
-| Runtime operation stack high-water | 2,799 B | 3,663 B |
-| Modeled runtime SRAM envelope | 5,504 B | 8,954 B |
+| Runtime operation stack high-water | 2,879 B | 3,663 B |
+| Modeled runtime SRAM envelope | 5,584 B | 8,954 B |
 | Minimal linked protocol artifact | 360 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,856 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 91,286 B | 169,965 B |
+| Complete no-default `libhibana.rlib` sections | 97,779 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release

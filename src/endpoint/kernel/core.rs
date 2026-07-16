@@ -388,7 +388,15 @@ where
         let port = self.port_for_lane(self.primary_lane);
         let scratch_ptr = lane_port::frontier_scratch_ptr(port);
         let layout = self.cursor.frontier_scratch_layout();
-        frontier_scratch_view_from_storage(scratch_ptr, layout, self.cursor.max_frontier_entries())
+        /* SAFETY: this endpoint operation owns the port scratch lease; the
+        returned non-Copy view is consumed before the operation can yield. */
+        unsafe {
+            frontier_scratch_view_from_storage(
+                scratch_ptr,
+                layout,
+                self.cursor.max_frontier_entries(),
+            )
+        }
     }
 
     #[inline]

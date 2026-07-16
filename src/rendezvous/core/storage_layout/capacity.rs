@@ -103,18 +103,20 @@ where
 
     #[inline]
     fn target_lane_slots(required_lane_slots: usize) -> Option<usize> {
-        if required_lane_slots > usize::from(crate::runtime_core::consts::LANE_DOMAIN_SIZE) {
+        if required_lane_slots == 0
+            || required_lane_slots > usize::from(crate::runtime_core::consts::LANE_DOMAIN_SIZE)
+        {
             return None;
         }
-        Some(required_lane_slots.max(1))
+        Some(required_lane_slots)
     }
 
     #[inline]
     fn target_assoc_slots(required_assoc_slots: usize) -> Option<usize> {
-        if required_assoc_slots > usize::from(u16::MAX) {
+        if required_assoc_slots == 0 || required_assoc_slots > usize::from(u16::MAX) {
             return None;
         }
-        Some(required_assoc_slots.max(1))
+        Some(required_assoc_slots)
     }
 
     #[inline]

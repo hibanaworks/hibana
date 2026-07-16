@@ -1,107 +1,10 @@
 use super::{
-    Deref, DerefMut, FRONTIER_SLOT_MASK_BITS, FrontierKind, FrontierObservationSlot, Index,
-    IndexMut, MAX_STATES, OfferEntryObservedState, StateIndex,
-    cached_frontier_observation_slots_len, checked_state_index, slice, state_index_to_usize,
+    FrontierObservationSlot, MAX_STATES, OfferEntryAdmission, OfferEntryObservedState, StateIndex,
+    cached_frontier_observation_slots_len, checked_state_index, state_index_to_usize,
 };
-#[derive(Clone, Copy)]
-pub(crate) struct EntryBuffer<T> {
-    pub(crate) ptr: *mut T,
-    capacity: u8,
-}
 
-impl<T> EntryBuffer<T> {
-    pub(crate) const EMPTY: Self = Self {
-        ptr: core::ptr::null_mut(),
-        capacity: 0,
-    };
-
-    #[inline]
-    pub(crate) const fn capacity(&self) -> usize {
-        self.capacity as usize
-    }
-
-    #[inline]
-    pub(crate) const fn from_parts(ptr: *mut T, capacity: usize) -> Self {
-        if capacity > u8::MAX as usize {
-            crate::invariant();
-        }
-        Self {
-            ptr,
-            capacity: capacity as u8,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn as_slice(&self) -> &[T] {
-        if self.ptr.is_null() {
-            &[]
-        } else {
-            /* SAFETY: `EntryBuffer` stores a pointer and u8 capacity created by
-            the frontier owner for one initialized entry slice; shared slicing
-            is tied to `&self`. */
-            unsafe { slice::from_raw_parts(self.ptr, self.capacity()) }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn as_mut_slice(&mut self) -> &mut [T] {
-        if self.ptr.is_null() {
-            &mut []
-        } else {
-            /* SAFETY: `&mut self` is the entry-buffer mutation token, and the
-            stored pointer/capacity describe one initialized frontier entry
-            slice owned by this buffer. */
-            unsafe { slice::from_raw_parts_mut(self.ptr, self.capacity()) }
-        }
-    }
-}
-
-impl<T> Deref for EntryBuffer<T> {
-    type Target = [T];
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
-    }
-}
-
-impl<T> DerefMut for EntryBuffer<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.as_mut_slice()
-    }
-}
-
-impl<T: PartialEq> PartialEq for EntryBuffer<T> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.as_slice() == other.as_slice()
-    }
-}
-
-impl<T: Eq> Eq for EntryBuffer<T> {}
-
-impl<T, I> Index<I> for EntryBuffer<T>
-where
-    [T]: Index<I>,
-{
-    type Output = <[T] as Index<I>>::Output;
-
-    #[inline]
-    fn index(&self, index: I) -> &Self::Output {
-        &self.as_slice()[index]
-    }
-}
-
-impl<T, I> IndexMut<I> for EntryBuffer<T>
-where
-    [T]: IndexMut<I>,
-{
-    #[inline]
-    fn index_mut(&mut self, index: I) -> &mut Self::Output {
-        &mut self.as_mut_slice()[index]
-    }
-}
+mod buffer;
+use buffer::{EntryBuffer, EntryView};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ActiveEntrySlot {
@@ -118,21 +21,20 @@ impl ActiveEntrySlot {
 
 #[derive(Clone, Copy)]
 pub(crate) struct ActiveEntrySet {
-    pub(crate) slots: EntryBuffer<ActiveEntrySlot>,
+    slots: EntryView<ActiveEntrySlot>,
 }
 
 impl ActiveEntrySet {
     pub(crate) const EMPTY: Self = Self {
-        slots: EntryBuffer::EMPTY,
+        slots: EntryView::EMPTY,
     };
 
     #[inline]
-    pub(crate) fn clear(&mut self) {
-        let capacity = self.slots.capacity();
-        let mut idx = 0usize;
-        while idx < capacity {
-            self.slots[idx] = ActiveEntrySlot::EMPTY;
-            idx += 1;
+    pub(crate) const unsafe fn from_parts(slots: *const ActiveEntrySlot, capacity: usize) -> Self {
+        Self {
+            /* SAFETY: caller owns the active-entry resident span and keeps it
+            initialized and immutable while this read-only view is used. */
+            slots: unsafe { EntryView::from_parts(slots, capacity) },
         }
     }
 
@@ -149,17 +51,7 @@ impl ActiveEntrySet {
     }
 
     #[inline]
-    pub(crate) fn occupancy_mask(self) -> u8 {
-        let len = self.len();
-        if len >= FRONTIER_SLOT_MASK_BITS {
-            u8::MAX
-        } else {
-            (1u8 << len) - 1
-        }
-    }
-
-    #[inline]
-    pub(crate) fn entry_at(self, slot_idx: usize) -> Option<usize> {
+    pub(crate) fn entry_at(&self, slot_idx: usize) -> Option<usize> {
         if slot_idx >= self.len() {
             return None;
         }
@@ -167,12 +59,55 @@ impl ActiveEntrySet {
     }
 
     #[inline]
-    pub(crate) fn contains_only(self, entry_idx: usize) -> bool {
+    pub(crate) fn contains_only(&self, entry_idx: usize) -> bool {
         self.len() == 1 && self.entry_at(0) == Some(entry_idx)
+    }
+}
+
+pub(crate) struct ActiveEntrySetBuilder {
+    slots: EntryBuffer<ActiveEntrySlot>,
+}
+
+impl ActiveEntrySetBuilder {
+    #[inline]
+    pub(crate) const unsafe fn from_parts(slots: *mut ActiveEntrySlot, capacity: usize) -> Self {
+        Self {
+            /* SAFETY: caller grants this builder exclusive access to the
+            active-entry span until `seal` consumes the mutation capability. */
+            slots: unsafe { EntryBuffer::from_parts(slots, capacity) },
+        }
     }
 
     #[inline]
-    pub(crate) fn slot_for_entry(self, entry_idx: usize) -> Option<usize> {
+    pub(crate) fn clear(&mut self) {
+        let capacity = self.slots.capacity();
+        let mut idx = 0usize;
+        while idx < capacity {
+            self.slots[idx] = ActiveEntrySlot::EMPTY;
+            idx += 1;
+        }
+    }
+
+    #[cfg(kani)]
+    #[inline]
+    pub(crate) const fn capacity(&self) -> usize {
+        self.slots.capacity()
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        let mut len = 0usize;
+        while len < self.slots.capacity() {
+            if self.slots[len].entry.is_absent() {
+                break;
+            }
+            len += 1;
+        }
+        len
+    }
+
+    #[inline]
+    pub(crate) fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
         let entry = checked_state_index(entry_idx)?;
         let len = self.len();
         let mut slot_idx = 0usize;
@@ -203,7 +138,7 @@ impl ActiveEntrySet {
             }
             insert_idx += 1;
         }
-        if len >= self.slots.capacity() || len >= FRONTIER_SLOT_MASK_BITS {
+        if len >= self.slots.capacity() {
             return false;
         }
         let mut shift_idx = len;
@@ -214,76 +149,28 @@ impl ActiveEntrySet {
         self.slots[insert_idx] = ActiveEntrySlot { entry, lane_idx };
         true
     }
+
+    #[inline]
+    pub(crate) const fn seal(self) -> ActiveEntrySet {
+        ActiveEntrySet {
+            slots: self.slots.into_view(),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct ObservedEntrySet {
-    pub(crate) slots: EntryBuffer<FrontierObservationSlot>,
-    pub(crate) controller_mask: u8,
-    pub(crate) dynamic_controller_mask: u8,
-    pub(crate) progress_mask: u8,
-    pub(crate) ready_arm_mask: u8,
-    pub(crate) ready_mask: u8,
+    slots: EntryView<FrontierObservationSlot>,
 }
 
 impl ObservedEntrySet {
     #[inline]
-    pub(crate) const fn from_parts(slots: *mut FrontierObservationSlot, capacity: usize) -> Self {
-        Self {
-            slots: EntryBuffer::from_parts(slots, capacity),
-            controller_mask: 0,
-            dynamic_controller_mask: 0,
-            progress_mask: 0,
-            ready_arm_mask: 0,
-            ready_mask: 0,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn clear(&mut self) {
-        let mut idx = 0usize;
-        while idx < self.slots.capacity() {
-            self.slots[idx] = FrontierObservationSlot::EMPTY;
-            idx += 1;
-        }
-        self.controller_mask = 0;
-        self.dynamic_controller_mask = 0;
-        self.progress_mask = 0;
-        self.ready_arm_mask = 0;
-        self.ready_mask = 0;
-    }
-
-    #[inline]
     pub(crate) fn len(&self) -> usize {
-        cached_frontier_observation_slots_len(self.slots)
+        cached_frontier_observation_slots_len(self.slots.as_slice())
     }
 
     #[inline]
-    pub(crate) fn occupancy_mask(self) -> u8 {
-        let len = self.len();
-        if len >= FRONTIER_SLOT_MASK_BITS {
-            u8::MAX
-        } else {
-            (1u8 << len) - 1
-        }
-    }
-
-    #[inline]
-    pub(crate) fn frontier_mask(self, frontier: FrontierKind) -> u8 {
-        let mut mask = 0u8;
-        let mut slot_idx = 0usize;
-        let len = self.len();
-        while slot_idx < len {
-            if (self.slots[slot_idx].frontier_mask & frontier.bit()) != 0 {
-                mask |= 1u8 << slot_idx;
-            }
-            slot_idx += 1;
-        }
-        mask
-    }
-
-    #[inline]
-    pub(crate) fn slot_for_entry(self, entry_idx: usize) -> Option<usize> {
+    pub(crate) fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
         let entry = checked_state_index(entry_idx)?;
         let len = self.len();
         let mut slot_idx = 0usize;
@@ -296,81 +183,111 @@ impl ObservedEntrySet {
         None
     }
 
-    pub(crate) fn insert_entry(&mut self, entry_idx: usize) -> Option<(u8, bool)> {
+    #[inline]
+    pub(crate) fn entry_idx(&self, slot_idx: usize) -> Option<usize> {
+        let slot = *self.slots.as_slice().get(slot_idx)?;
+        if slot.entry.is_absent() {
+            return None;
+        }
+        let entry_idx = state_index_to_usize(slot.entry);
+        (entry_idx < MAX_STATES).then_some(entry_idx)
+    }
+
+    #[inline]
+    pub(crate) fn slot(&self, slot_idx: usize) -> Option<FrontierObservationSlot> {
+        if slot_idx >= self.len() {
+            None
+        } else {
+            Some(self.slots[slot_idx])
+        }
+    }
+}
+
+pub(crate) struct ObservedEntrySetBuilder {
+    slots: EntryBuffer<FrontierObservationSlot>,
+}
+
+impl ObservedEntrySetBuilder {
+    #[inline]
+    pub(crate) const unsafe fn from_parts(
+        slots: *mut FrontierObservationSlot,
+        capacity: usize,
+    ) -> Self {
+        Self {
+            /* SAFETY: caller grants this builder exclusive access to the
+            observation span until `seal` consumes the mutation capability. */
+            slots: unsafe { EntryBuffer::from_parts(slots, capacity) },
+        }
+    }
+
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        let mut idx = 0usize;
+        while idx < self.slots.capacity() {
+            self.slots[idx] = FrontierObservationSlot::EMPTY;
+            idx += 1;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        cached_frontier_observation_slots_len(self.slots.as_slice())
+    }
+
+    #[inline]
+    pub(crate) fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
+        let entry = checked_state_index(entry_idx)?;
+        let len = self.len();
+        let mut slot_idx = 0usize;
+        while slot_idx < len {
+            if self.slots[slot_idx].entry == entry {
+                return Some(slot_idx);
+            }
+            slot_idx += 1;
+        }
+        None
+    }
+
+    pub(crate) fn insert_entry(&mut self, entry_idx: usize) -> Option<(usize, bool)> {
         if entry_idx >= MAX_STATES {
             return None;
         }
         let entry = checked_state_index(entry_idx)?;
         if let Some(observed_idx) = self.slot_for_entry(entry_idx) {
-            return Some((1u8 << observed_idx, false));
+            return Some((observed_idx, false));
         }
         let observed_idx = self.len();
-        if observed_idx >= self.slots.capacity() || observed_idx >= FRONTIER_SLOT_MASK_BITS {
+        if observed_idx >= self.slots.capacity() {
             return None;
         }
-        self.slots[observed_idx] = FrontierObservationSlot {
-            entry,
-            frontier_mask: 0,
-        };
-        Some((1u8 << observed_idx, true))
+        self.slots[observed_idx] = FrontierObservationSlot::new(entry);
+        Some((observed_idx, true))
     }
 
     #[inline]
-    pub(crate) fn entry_bit(self, entry_idx: usize) -> u8 {
-        match self.slot_for_entry(entry_idx) {
-            Some(slot) => 1u8 << slot,
-            None => 0,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn first_entry_idx(self, mask: u8) -> Option<usize> {
-        if mask == 0 {
-            return None;
-        }
-        let observed_idx = mask.trailing_zeros() as usize;
-        if observed_idx >= self.len() {
-            return None;
-        }
-        let entry = self.slots[observed_idx].entry;
-        if entry.is_absent() {
-            return None;
-        }
-        let entry_idx = state_index_to_usize(entry);
-        if entry_idx >= MAX_STATES {
-            return None;
-        }
-        Some(entry_idx)
-    }
-
-    #[inline]
-    pub(crate) fn observe_with_frontier_mask(
+    pub(crate) fn record_observation(
         &mut self,
-        observed_bit: u8,
+        slot_idx: usize,
         observed: OfferEntryObservedState,
         frontier_mask: u8,
+        admission: OfferEntryAdmission,
     ) {
-        if observed.is_controller() {
-            self.controller_mask |= observed_bit;
+        if slot_idx >= self.len() {
+            crate::invariant();
         }
-        if observed.is_dynamic() {
-            self.dynamic_controller_mask |= observed_bit;
-        }
-        if observed.has_progress_evidence() {
-            self.progress_mask |= observed_bit;
-        }
-        if observed.has_ready_arm_evidence() {
-            self.ready_arm_mask |= observed_bit;
-        }
-        if (observed.flags & OfferEntryObservedState::FLAG_READY) != 0 {
-            self.ready_mask |= observed_bit;
-        }
-        if observed_bit != 0 {
-            let slot_idx = observed_bit.trailing_zeros() as usize;
-            if slot_idx < self.len() {
-                let summary_bits = &mut self.slots[slot_idx].frontier_mask;
-                *summary_bits = (*summary_bits & !0x0f) | (frontier_mask & 0x0f);
-            }
+        self.slots[slot_idx].record(observed, frontier_mask, admission);
+    }
+
+    #[inline]
+    pub(crate) const fn seal(self) -> ObservedEntrySet {
+        ObservedEntrySet {
+            slots: self.slots.into_view(),
         }
     }
 }
+
+#[cfg(kani)]
+mod kani;
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;

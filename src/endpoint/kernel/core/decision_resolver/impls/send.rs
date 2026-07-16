@@ -48,9 +48,7 @@ where
                 lane,
                 audit_start: _,
             } => {
-                if lane != meta.lane
-                    || current.is_empty()
-                    || current.packed_selected_lane() != Some(lane)
+                if lane != meta.lane || current.is_empty() || current.selected_lane() != Some(lane)
                 {
                     return Err(SendError::PhaseInvariant);
                 }

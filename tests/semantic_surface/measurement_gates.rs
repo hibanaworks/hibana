@@ -387,7 +387,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
             )
             && miri_gate.contains(
-                "resident-sidecar-owner \\\n  16 \\\n  15 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
+                "resident-sidecar-owner \\\n  17 \\\n  16 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
             )
             && miri_gate.contains(
                 "resident-descriptor-validation \\\n  40 \\\n  40 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"
@@ -408,6 +408,17 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean"
             )
             && miri_gate.contains("endpoint::kernel::core::public_types::tests")
+            && miri_gate.contains("descriptor-derived-route-history-owner")
+            && miri_gate.contains("exact-frontier-visit-identity-owner")
+            && miri_gate.contains("root-frontier-packed-pool-owner")
+            && miri_gate.contains("endpoint::kernel::frontier_state::tests")
+            && miri_gate.contains(
+                "endpoint::kernel::decision_state::tests::route_arm_history_crosses_the_former_256_boundary"
+            )
+            && miri_gate.contains("descriptor-domain-offer-frontier-owner")
+            && miri_gate.contains(
+                "endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_beyond_the_former_eight_slot_mask"
+            )
             && miri_gate.contains("rolled-output-pipeline-owner")
             && miri_gate.contains(
                 "global::event_program_cursor_tests::production_cursor_pipelines_rolled_send_before_remote_receive"
@@ -419,6 +430,14 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             )
             && miri_gate.contains(
                 "compiled-program-atom-validation \\\n  7 \\\n  7 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_"
+            )
+            && miri_gate.contains("compiled-program-atom-lookup")
+            && miri_gate.contains(
+                "compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows"
+            )
+            && miri_gate.contains("compiled-program-atom-order-rejection")
+            && miri_gate.contains(
+                "compiled_program_descriptor_rejects_noncanonical_atom_order"
             )
             && miri_gate.contains(
                 "program-image-storage-validation \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::program_image_"
@@ -559,7 +578,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "--test parallel_route_nesting",
         "--test parallel_route_alternating",
         "--test huge_choreography_runtime",
-        "lane_set_view_iterates_set_bits_without_empty_lane_scan",
     ] {
         assert!(
             performance_gate.contains(required),
@@ -617,7 +635,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "offer_branch_recv_evidence",
         "parallel_route_nesting",
         "parallel_route_alternating",
-        "lane_set_view_iterates_set_bits_without_empty_lane_scan",
         "huge_choreography_runtime",
         "message_heavy_1",
         "message_heavy_64",

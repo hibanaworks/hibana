@@ -8,8 +8,11 @@ where
     T: Transport + 'r,
 {
     #[inline]
-    pub(in crate::endpoint::kernel) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {
-        self.frontier_state.root_frontier_active_mask(root)
+    pub(in crate::endpoint::kernel) fn root_frontier_has_active_entries(
+        &self,
+        root: ScopeId,
+    ) -> bool {
+        self.frontier_state.root_frontier_has_active_entries(root)
     }
 
     #[inline]

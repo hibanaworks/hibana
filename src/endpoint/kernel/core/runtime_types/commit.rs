@@ -184,7 +184,7 @@ impl CommitDelta {
 
     #[inline(always)]
     pub(crate) const fn selected_route_lane(&self) -> Option<u8> {
-        self.selected_routes.packed_selected_lane()
+        self.selected_routes.selected_lane()
     }
 
     #[inline(always)]

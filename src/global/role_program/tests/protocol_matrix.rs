@@ -40,12 +40,12 @@ impl ProtocolMatrixMeasurement {
 fn endpoint_largest_section(layout: crate::endpoint::kernel::EndpointArenaLayout) -> usize {
     let mut largest = layout.event_cursor_state().bytes();
     largest = largest.max(layout.decision_state().bytes());
-    largest = largest.max(layout.route_arm_stack().bytes());
+    largest = largest.max(layout.route_arm_history().bytes());
     largest = largest.max(layout.lane_offer_state_slots().bytes());
     largest = largest.max(layout.frontier_state().bytes());
     largest = largest.max(layout.frontier_root_rows().bytes());
     largest = largest.max(layout.frontier_root_active_slots().bytes());
-    largest = largest.max(layout.frontier_visited_scopes().bytes());
+    largest = largest.max(layout.frontier_visited_entries().bytes());
     largest = largest.max(layout.scope_evidence_slots().bytes());
     largest
 }

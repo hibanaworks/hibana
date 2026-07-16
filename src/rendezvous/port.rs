@@ -119,7 +119,7 @@ impl Drop for ScratchLease<'_> {
 impl<'r, T: Transport + 'r> Port<'r, T> {
     #[inline(always)]
     const fn frontier_scratch_align() -> usize {
-        FrontierScratchLayout::new(0, 0).total_align()
+        FrontierScratchLayout::new(0).total_align()
     }
 
     pub(crate) fn new<'tap>(init: PortInit<'r, 'tap, T>) -> Self

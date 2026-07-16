@@ -122,7 +122,7 @@ check_absent "payload_view\\(" \
   "received transport frame payload view detected instead of intent-specific frame operations" \
   src/endpoint src/rendezvous/port.rs
 
-check_absent "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_reentry_counts\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
+check_absent "lane_route_arms\\[[^]]+\\][[:space:]]*=|lane_offer_state\\[[^]]+\\][[:space:]]*=" \
   "core.rs detected direct route-state table mutation" \
   src/endpoint/kernel/core.rs
 

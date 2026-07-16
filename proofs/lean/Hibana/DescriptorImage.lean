@@ -43,9 +43,191 @@ theorem production_atom_only_event_capacity_exact :
     productionAtomOnlyEventCapacity = 5957 := by
   decide
 
+theorem descriptor_byte_ceiling_dominates_event_identity_domain :
+    productionAtomOnlyEventCapacity < productionEventIdentityCapacity := by
+  decide
+
 def productionScopeCapacity : Nat := 8192
 
 def productionLocalStepCapacity : Nat := 65536
+
+/-- Capacity facts emitted by a well-formed program image. Every structured
+scope owns at least an enter/exit marker pair, and a route commit chain has at
+most one row beyond the number of active structured scopes. -/
+structure ProgramCapacityWitness where
+  scopeCount : Nat
+  scopeMarkerCount : Nat
+  routeCommitCount : Nat
+  programByteLength : Nat
+  scopeMarkersCoverScopes : scopeCount * 2 ≤ scopeMarkerCount
+  routeCommitsCoveredByScopes : routeCommitCount ≤ scopeCount + 1
+  scopeMarkerBytesFit : scopeMarkerCount * productionProgramScopeMarkerStride ≤ programByteLength
+  descriptorFits : programByteLength ≤ productionDescriptorByteCapacity
+
+/-- The 64 KiB descriptor ceiling is stricter than both the packed scope-id
+domain and the resident `u16` route-commit count. No additional `u8` chain
+limit is needed by an accepted image. -/
+theorem descriptor_byte_ceiling_dominates_scope_and_route_commit_counts
+    (witness : ProgramCapacityWitness) :
+    witness.scopeCount < productionScopeCapacity ∧
+      witness.routeCommitCount < productionLocalStepCapacity := by
+  have markerBytes : witness.scopeMarkerCount * 5 ≤ witness.programByteLength :=
+    witness.scopeMarkerBytesFit
+  have descriptorFits : witness.programByteLength ≤ 65535 :=
+    witness.descriptorFits
+  have scopesCovered : witness.scopeCount * 2 ≤ witness.scopeMarkerCount :=
+    witness.scopeMarkersCoverScopes
+  have routeCovered : witness.routeCommitCount ≤ witness.scopeCount + 1 :=
+    witness.routeCommitsCoveredByScopes
+  constructor
+  · dsimp [productionScopeCapacity]
+    omega
+  · dsimp [productionLocalStepCapacity]
+    omega
+
+def routeCommit257CapacityWitness : ProgramCapacityWitness := {
+  scopeCount := 256
+  scopeMarkerCount := 1024
+  routeCommitCount := 257
+  programByteLength := 5120
+  scopeMarkersCoverScopes := by decide
+  routeCommitsCoveredByScopes := by decide
+  scopeMarkerBytesFit := by decide
+  descriptorFits := by decide
+}
+
+theorem route_commit_count_257_fits_the_descriptor_derived_domain :
+    routeCommit257CapacityWitness.routeCommitCount = 257 ∧
+      routeCommit257CapacityWitness.programByteLength < productionDescriptorByteCapacity := by
+  decide
+
+def productionRouteTraversalBound (routeScopeCount : Nat) : Nat :=
+  routeScopeCount + 1
+
+theorem production_route_traversal_bound_covers_every_acyclic_parent_chain
+    (routeScopeCount chainLength : Nat)
+    (chainCoveredByScopes : chainLength ≤ routeScopeCount) :
+    chainLength < productionRouteTraversalBound routeScopeCount := by
+  simp only [productionRouteTraversalBound]
+  omega
+
+theorem production_route_traversal_has_no_former_256_step_limit :
+    productionRouteTraversalBound 257 = 258 := by
+  decide
+
+/-- One emitted route-arm lane relation is a compact witness that a lane can
+own a selected arm for that route. Every live runtime `(lane, route)` state must
+map to one of those descriptor rows. -/
+structure RouteHistoryCapacityWitness where
+  activeLaneCount : Nat
+  routeCommitCount : Nat
+  emittedLaneRelationCount : Nat
+  liveRouteStateCount : Nat
+  liveStatesCoveredByRelations : liveRouteStateCount ≤ emittedLaneRelationCount
+  relationColumnFits : emittedLaneRelationCount ≤ productionDescriptorByteCapacity
+
+def productionRouteHistoryCapacity (witness : RouteHistoryCapacityWitness) : Nat :=
+  witness.emittedLaneRelationCount
+
+theorem production_route_history_capacity_covers_every_live_state
+    (witness : RouteHistoryCapacityWitness) :
+    witness.liveRouteStateCount ≤ productionRouteHistoryCapacity witness := by
+  exact witness.liveStatesCoveredByRelations
+
+theorem production_route_history_capacity_fits_the_compact_descriptor_domain
+    (witness : RouteHistoryCapacityWitness) :
+    productionRouteHistoryCapacity witness ≤ productionDescriptorByteCapacity := by
+  exact witness.relationColumnFits
+
+def sparseRouteHistoryExample : RouteHistoryCapacityWitness := {
+  activeLaneCount := 200
+  routeCommitCount := 300
+  emittedLaneRelationCount := 17
+  liveRouteStateCount := 17
+  liveStatesCoveredByRelations := by decide
+  relationColumnFits := by decide
+}
+
+theorem sparse_route_history_avoids_the_lane_depth_product :
+    productionRouteHistoryCapacity sparseRouteHistoryExample = 17 ∧
+      productionRouteHistoryCapacity sparseRouteHistoryExample <
+        sparseRouteHistoryExample.activeLaneCount * sparseRouteHistoryExample.routeCommitCount := by
+  decide
+
+def productionLaneCapacity : Nat := 256
+
+/-- Runtime lane-indexed storage is sized by the exact projected lane span. No
+extra binding lanes are reserved because production never creates a lane that
+is absent from the accepted descriptor. -/
+structure RoleLaneSpanWitness where
+  activeLaneCount : Nat
+  endpointLaneSlotCount : Nat
+  nonemptySpan : 0 < endpointLaneSlotCount
+  activeLanesCovered : activeLaneCount ≤ endpointLaneSlotCount
+  spanFitsWireDomain : endpointLaneSlotCount ≤ productionLaneCapacity
+
+def productionLogicalLaneCount (witness : RoleLaneSpanWitness) : Nat :=
+  witness.endpointLaneSlotCount
+
+theorem production_logical_lane_count_is_exact_descriptor_span
+    (witness : RoleLaneSpanWitness) :
+    productionLogicalLaneCount witness = witness.endpointLaneSlotCount := rfl
+
+theorem production_logical_lane_count_covers_active_lanes
+    (witness : RoleLaneSpanWitness) :
+    witness.activeLaneCount ≤ productionLogicalLaneCount witness := by
+  exact witness.activeLanesCovered
+
+theorem production_logical_lane_count_has_no_reserved_lane_overhead
+    (witness : RoleLaneSpanWitness) :
+    productionLogicalLaneCount witness ≤ productionLaneCapacity := by
+  exact witness.spanFitsWireDomain
+
+/-- Runtime offer entries are keyed by the active lane that owns them. The
+production kernel may merge several lanes into one entry, but it cannot create
+an entry without an owning active lane. -/
+structure FrontierCapacityWitness where
+  activeLaneCount : Nat
+  activeEntryCount : Nat
+  visitedEntryCount : Nat
+  entriesOwnedByActiveLanes : activeEntryCount ≤ activeLaneCount
+  visitedEntriesOwnedByActiveEntries : visitedEntryCount ≤ activeEntryCount
+  activeLanesFitWireDomain : activeLaneCount ≤ productionLaneCapacity
+
+/-- Frontier storage is exactly the number of active lanes. Empty projections
+need no frontier cell; their session lane remains represented independently. -/
+def productionFrontierCapacity (activeLaneCount : Nat) : Nat :=
+  activeLaneCount
+
+theorem production_frontier_capacity_is_exact_active_lane_count
+    (activeLaneCount : Nat) :
+    productionFrontierCapacity activeLaneCount = activeLaneCount := by
+  rfl
+
+theorem production_frontier_capacity_covers_all_active_entries
+    (witness : FrontierCapacityWitness) :
+    witness.activeEntryCount ≤ productionFrontierCapacity witness.activeLaneCount := by
+  exact witness.entriesOwnedByActiveLanes
+
+/-- Visit tracking uses exact local-entry identity, not route scope identity.
+Every visited entry therefore belongs to the same active-entry domain and the
+active-lane-derived allocation never needs truncation. -/
+theorem production_frontier_capacity_covers_all_visited_entries
+    (witness : FrontierCapacityWitness) :
+    witness.visitedEntryCount ≤ productionFrontierCapacity witness.activeLaneCount := by
+  exact Nat.le_trans witness.visitedEntriesOwnedByActiveEntries
+    (production_frontier_capacity_covers_all_active_entries witness)
+
+theorem production_frontier_capacity_is_bounded_by_the_lane_domain
+    (activeLaneCount : Nat)
+    (laneBound : activeLaneCount ≤ productionLaneCapacity) :
+    productionFrontierCapacity activeLaneCount ≤ productionLaneCapacity := by
+  exact laneBound
+
+theorem production_frontier_capacity_has_no_former_eight_entry_limit :
+    productionFrontierCapacity 9 = 9 ∧
+      productionFrontierCapacity 256 = productionLaneCapacity := by
+  decide
 
 def productionRoleEventOnlyCapacity : Nat :=
   productionDescriptorByteCapacity / productionRoleEventStride
@@ -263,6 +445,46 @@ def enumerateProgramAtoms : Nat -> List ProgramAtomBody -> List DecodedProgramAt
 def Choreo.canonicalProgramAtoms (choreo : Choreo) : List DecodedProgramAtom :=
   enumerateProgramAtoms 0 (canonicalProgramSource choreo).atoms
 
+private theorem enumerate_program_atoms_eff_index_lower_bound
+    (index : Nat) (atoms : List ProgramAtomBody) (atom : DecodedProgramAtom)
+    (member : atom ∈ enumerateProgramAtoms index atoms) :
+    index ≤ atom.effIndex := by
+  induction atoms generalizing index with
+  | nil => simp [enumerateProgramAtoms] at member
+  | cons head tail tailIH =>
+      simp only [enumerateProgramAtoms, List.mem_cons] at member
+      rcases member with rfl | member
+      · simp
+      · have lower := tailIH (index := index + 1) member
+        omega
+
+private theorem enumerate_program_atoms_eff_indices_pairwise
+    (index : Nat) (atoms : List ProgramAtomBody) :
+    (enumerateProgramAtoms index atoms).Pairwise
+      (fun left right => left.effIndex < right.effIndex) := by
+  induction atoms generalizing index with
+  | nil => simp [enumerateProgramAtoms]
+  | cons head tail tailIH =>
+      rw [enumerateProgramAtoms]
+      apply List.pairwise_cons.mpr
+      constructor
+      · intro atom member
+        have lower := enumerate_program_atoms_eff_index_lower_bound
+          (index + 1) tail atom member
+        change index < atom.effIndex
+        omega
+      · exact tailIH (index + 1)
+
+/-- Canonical atom rows are strictly ordered by compact event identity, which
+justifies the erased runtime's logarithmic descriptor lookup without an index
+column. -/
+theorem canonical_program_atom_eff_indices_strict (choreo : Choreo) :
+    choreo.canonicalProgramAtoms.Pairwise
+      (fun left right => left.effIndex < right.effIndex) := by
+  simpa [Choreo.canonicalProgramAtoms] using
+    enumerate_program_atoms_eff_indices_pairwise 0
+      (canonicalProgramSource choreo).atoms
+
 def Choreo.canonicalRouteResolvers (choreo : Choreo) : List DecodedRouteResolver :=
   (canonicalProgramSource choreo).resolvers
 
@@ -277,7 +499,7 @@ structure RustDescriptorImage where
   logicalLaneCount : Nat
   activeLaneCount : Nat
   endpointLaneSlotCount : Nat
-  maxRouteStackDepth : Nat
+  maxRouteCommitCount : Nat
   firstActiveLane : Nat
   activeLaneStart : Nat
   activeLaneLength : Nat

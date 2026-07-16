@@ -1,113 +1,127 @@
 use super::super::super::ObservedEntrySet;
-use super::entry::{CurrentOfferEntry, OfferAlignmentCandidateInput};
-use super::selection::{
-    ClassifiedOfferCandidateSets, CurrentOfferObservation, OfferAlignmentSelection,
-};
-use super::set::OfferEntrySet;
+use super::entry::OfferAlignmentCandidateInput;
+use super::selection::{CurrentOfferObservation, OfferAlignmentOutcome, OfferAlignmentSelection};
+use crate::endpoint::kernel::frontier::FrontierObservationSlot;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(in crate::endpoint::kernel::offer::select_alignment) enum CurrentControllerFrontier {
+enum CurrentControllerFrontier {
     IncludeCurrent,
     ExcludeCurrent,
 }
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer::select_alignment) struct OfferAlignmentCandidatePool {
-    observed_entries: OfferEntrySet,
-    ready_entries: OfferEntrySet,
-    ready_arm_entries: OfferEntrySet,
-    controller_entries: OfferEntrySet,
-    dynamic_controller_entries: OfferEntrySet,
-    progress_entries: OfferEntrySet,
-    current_entry_slot: OfferEntrySet,
+    observed_entries: ObservedEntrySet,
+    input: OfferAlignmentCandidateInput,
+}
+
+#[derive(Clone, Copy)]
+struct ClassifiedCandidates {
+    candidate_count: usize,
+    first_candidate: Option<usize>,
+    controller_count: usize,
+    first_controller: Option<usize>,
+    dynamic_controller_count: usize,
+    first_dynamic_controller: Option<usize>,
+}
+
+impl ClassifiedCandidates {
+    const EMPTY: Self = Self {
+        candidate_count: 0,
+        first_candidate: None,
+        controller_count: 0,
+        first_controller: None,
+        dynamic_controller_count: 0,
+        first_dynamic_controller: None,
+    };
+
+    fn record(&mut self, entry_idx: usize, slot: FrontierObservationSlot) {
+        if self.first_candidate.is_none() {
+            self.first_candidate = Some(entry_idx);
+        }
+        self.candidate_count += 1;
+        if slot.is_controller() {
+            if self.first_controller.is_none() {
+                self.first_controller = Some(entry_idx);
+            }
+            self.controller_count += 1;
+            if slot.is_dynamic() {
+                if self.first_dynamic_controller.is_none() {
+                    self.first_dynamic_controller = Some(entry_idx);
+                }
+                self.dynamic_controller_count += 1;
+            }
+        }
+    }
+
+    fn outcome(self) -> OfferAlignmentOutcome {
+        if self.dynamic_controller_count == 1 {
+            return OfferAlignmentOutcome::UniqueDynamicController(crate::invariant_some(
+                self.first_dynamic_controller,
+            ));
+        }
+        if self.controller_count == 1 {
+            return OfferAlignmentOutcome::UniqueController(crate::invariant_some(
+                self.first_controller,
+            ));
+        }
+        match self.candidate_count {
+            0 => OfferAlignmentOutcome::CandidateAbsent,
+            1 => {
+                OfferAlignmentOutcome::UniqueCandidate(crate::invariant_some(self.first_candidate))
+            }
+            _ => OfferAlignmentOutcome::CandidateSetAmbiguous,
+        }
+    }
 }
 
 impl OfferAlignmentCandidatePool {
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) fn from_observed(
+    pub(in crate::endpoint::kernel::offer::select_alignment) const fn from_observed(
         observed_entries: ObservedEntrySet,
-        selectable: OfferEntrySet,
         input: OfferAlignmentCandidateInput,
     ) -> Self {
-        let observed =
-            OfferEntrySet::from_bits(observed_entries.occupancy_mask()).intersect(selectable);
-        let current_entry_slot =
-            OfferEntrySet::from_bits(observed_entries.entry_bit(input.current_idx));
-        let raw_progress = OfferEntrySet::from_bits(observed_entries.progress_mask);
-        let progress_entries = if input.current_entry.is_route_entry() {
-            raw_progress.intersect(observed)
-        } else {
-            raw_progress.intersect(observed).without(current_entry_slot)
-        };
         Self {
-            observed_entries: observed,
-            ready_entries: OfferEntrySet::from_bits(observed_entries.ready_mask)
-                .intersect(observed),
-            ready_arm_entries: OfferEntrySet::from_bits(observed_entries.ready_arm_mask)
-                .intersect(observed),
-            controller_entries: OfferEntrySet::from_bits(observed_entries.controller_mask)
-                .intersect(observed),
-            dynamic_controller_entries: OfferEntrySet::from_bits(
-                observed_entries.dynamic_controller_mask,
-            )
-            .intersect(observed),
-            progress_entries,
-            current_entry_slot,
+            observed_entries,
+            input,
         }
     }
 
     #[inline]
-    const fn current_matches_route(self, entry: CurrentOfferEntry) -> bool {
-        !self.current_entry_slot.is_empty() && entry.is_route_entry()
+    fn is_current_slot(self, slot_idx: usize) -> bool {
+        self.observed_entries.entry_idx(slot_idx) == Some(self.input.current_idx)
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn current_observation(
-        self,
-        observed_entries: ObservedEntrySet,
-    ) -> CurrentOfferObservation {
-        let raw_progress_entries = OfferEntrySet::from_bits(observed_entries.progress_mask);
-        let mut observation = CurrentOfferObservation::empty();
-        if !self.current_entry_slot.is_empty() {
-            observation = observation.with_present();
-        }
-        if self.current_entry_slot.intersects(self.ready_entries) {
-            observation = observation.with_ready();
-        }
-        if self.current_entry_slot.intersects(self.progress_entries) {
-            observation = observation.with_progress_evidence();
-        }
-        if self.current_entry_slot.intersects(raw_progress_entries) {
-            observation = observation.with_observed_progress_evidence();
-        }
-        if !self
-            .progress_entries
-            .intersect(self.controller_entries)
-            .without(self.current_entry_slot)
-            .is_empty()
-        {
-            observation = observation.with_controller_progress_sibling();
-        }
-        observation
+    fn current_slot(self) -> Option<usize> {
+        self.observed_entries.slot_for_entry(self.input.current_idx)
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn current_controller_frontier(
-        self,
-        observed_entries: ObservedEntrySet,
-        input: OfferAlignmentCandidateInput,
-    ) -> CurrentControllerFrontier {
-        if input.current_authority.is_controller()
-            && self.current_matches_route(input.current_entry)
-            && self
-                .current_entry_slot
-                .intersect(OfferEntrySet::from_bits(observed_entries.ready_arm_mask))
-                .is_empty()
-            && self
-                .current_entry_slot
-                .intersect(OfferEntrySet::from_bits(observed_entries.progress_mask))
-                .is_empty()
-            && input.progress_sibling_presence.exists()
+    fn current_matches_route(self) -> bool {
+        self.current_slot().is_some() && self.input.current_entry.is_route_entry()
+    }
+
+    #[inline]
+    fn slot_has_progress(self, slot_idx: usize) -> bool {
+        let Some(slot) = self.observed_entries.slot(slot_idx) else {
+            return false;
+        };
+        slot.is_selectable()
+            && slot.has_progress()
+            && (self.input.current_entry.is_route_entry() || !self.is_current_slot(slot_idx))
+    }
+
+    fn current_controller_frontier(self) -> CurrentControllerFrontier {
+        let current_has_no_authority_evidence = self.current_slot().is_some_and(|slot_idx| {
+            self.observed_entries
+                .slot(slot_idx)
+                .is_some_and(|slot| !slot.has_ready_arm() && !slot.has_progress())
+        });
+        if self.input.current_authority.is_controller()
+            && self.current_matches_route()
+            && current_has_no_authority_evidence
+            && self.input.progress_sibling_presence.exists()
         {
             CurrentControllerFrontier::ExcludeCurrent
         } else {
@@ -116,67 +130,113 @@ impl OfferAlignmentCandidatePool {
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn intrinsic_controller_frontier(
+    fn in_intrinsic_controller_frontier(
         self,
+        slot_idx: usize,
         current_controller: CurrentControllerFrontier,
-    ) -> OfferEntrySet {
-        let mut ready = self.observed_entries.without(self.controller_entries);
-        ready = ready.union(self.current_entry_slot.intersect(self.controller_entries));
-        ready = ready.union(self.progress_entries.intersect(self.controller_entries));
-        match current_controller {
-            CurrentControllerFrontier::IncludeCurrent => ready,
-            CurrentControllerFrontier::ExcludeCurrent => {
-                ready = ready.without(self.current_entry_slot);
-                ready
+    ) -> bool {
+        let Some(slot) = self.observed_entries.slot(slot_idx) else {
+            return false;
+        };
+        if !slot.is_selectable()
+            || (current_controller == CurrentControllerFrontier::ExcludeCurrent
+                && self.is_current_slot(slot_idx))
+        {
+            return false;
+        }
+        !slot.is_controller() || self.is_current_slot(slot_idx) || self.slot_has_progress(slot_idx)
+    }
+
+    #[inline]
+    fn is_candidate(self, slot_idx: usize, current_controller: CurrentControllerFrontier) -> bool {
+        if !self.in_intrinsic_controller_frontier(slot_idx, current_controller) {
+            return false;
+        }
+        self.slot_has_progress(slot_idx)
+            || (self.current_matches_route() && self.is_current_slot(slot_idx))
+            || (self.input.current_entry.is_unrunnable_route() && !self.is_current_slot(slot_idx))
+    }
+
+    pub(in crate::endpoint::kernel::offer::select_alignment) fn current_observation(
+        self,
+    ) -> CurrentOfferObservation {
+        let Some(current_slot) = self.current_slot() else {
+            return CurrentOfferObservation::empty();
+        };
+        let Some(slot) = self.observed_entries.slot(current_slot) else {
+            crate::invariant();
+        };
+        let mut observation = CurrentOfferObservation::empty().with_present();
+        if slot.is_selectable() && slot.is_ready() {
+            observation = observation.with_ready();
+        }
+        if self.slot_has_progress(current_slot) {
+            observation = observation.with_progress_evidence();
+        }
+        if slot.has_progress() {
+            observation = observation.with_observed_progress_evidence();
+        }
+
+        let mut slot_idx = 0usize;
+        while slot_idx < self.observed_entries.len() {
+            let Some(sibling) = self.observed_entries.slot(slot_idx) else {
+                crate::invariant();
+            };
+            if !self.is_current_slot(slot_idx)
+                && sibling.is_controller()
+                && self.slot_has_progress(slot_idx)
+            {
+                return observation.with_controller_progress_sibling();
             }
+            slot_idx += 1;
         }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn arbitration_frontier(
-        self,
-        input: OfferAlignmentCandidateInput,
-        intrinsic_controller_frontier: OfferEntrySet,
-    ) -> OfferEntrySet {
-        let mut candidates = self.progress_entries;
-        if self.current_matches_route(input.current_entry) {
-            candidates = candidates.union(self.current_entry_slot);
-        }
-        if input.current_entry.is_unrunnable_route() {
-            candidates = candidates.union(self.observed_entries.without(self.current_entry_slot));
-        }
-        candidates.intersect(intrinsic_controller_frontier)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn ready_frontier(
-        self,
-        candidates: OfferEntrySet,
-    ) -> OfferEntrySet {
-        candidates
-            .intersect(self.ready_arm_entries)
-            .retain_singleton()
+        observation
     }
 
     pub(in crate::endpoint::kernel::offer::select_alignment) fn selection(
         self,
-        observed_entries: ObservedEntrySet,
-        input: OfferAlignmentCandidateInput,
-        intrinsic_controller_frontier: OfferEntrySet,
     ) -> OfferAlignmentSelection {
-        let candidates = self.arbitration_frontier(input, intrinsic_controller_frontier);
-        let ready = self.ready_frontier(candidates);
-        let ready_entry_filter = ready.first_entry_idx(observed_entries);
-        let candidates = if !ready.is_empty() { ready } else { candidates };
-        let controllers = candidates.intersect(self.controller_entries);
-        let dynamic_controllers = controllers.intersect(self.dynamic_controller_entries);
-        let outcome =
-            ClassifiedOfferCandidateSets::new(candidates, controllers, dynamic_controllers)
-                .outcome(observed_entries);
+        let current_controller = self.current_controller_frontier();
+        let mut ready_count = 0usize;
+        let mut ready_slot = None;
+        let mut slot_idx = 0usize;
+        while slot_idx < self.observed_entries.len() {
+            let Some(slot) = self.observed_entries.slot(slot_idx) else {
+                crate::invariant();
+            };
+            if self.is_candidate(slot_idx, current_controller) && slot.has_ready_arm() {
+                ready_count += 1;
+                if ready_slot.is_none() {
+                    ready_slot = Some(slot_idx);
+                }
+            }
+            slot_idx += 1;
+        }
+
+        let ready_slot = if ready_count == 1 { ready_slot } else { None };
+        let ready_entry_filter = ready_slot.and_then(|slot| self.observed_entries.entry_idx(slot));
+        let mut classified = ClassifiedCandidates::EMPTY;
+        slot_idx = 0;
+        while slot_idx < self.observed_entries.len() {
+            let selected = match ready_slot {
+                Some(ready) => slot_idx == ready,
+                None => self.is_candidate(slot_idx, current_controller),
+            };
+            if selected {
+                let Some(slot) = self.observed_entries.slot(slot_idx) else {
+                    crate::invariant();
+                };
+                let Some(entry_idx) = self.observed_entries.entry_idx(slot_idx) else {
+                    crate::invariant();
+                };
+                classified.record(entry_idx, slot);
+            }
+            slot_idx += 1;
+        }
 
         OfferAlignmentSelection {
             ready_entry_filter,
-            outcome,
+            outcome: classified.outcome(),
         }
     }
 }

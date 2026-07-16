@@ -256,7 +256,7 @@ fn role_image_column_range_rejects_stride_multiplication_overflow() {
 fn resident_role_image_fit_probe_rejects_undersized_storage() {
     let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0, 8>();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: 1,
         route_scope_count: 0,
         active_lane_count: 1,
@@ -275,7 +275,7 @@ fn resident_parallel_role_image_plan_matches_lane_bit_storage() {
     let source = crate::g::ProgramSourceData::<8>::lower::<Parallel>();
     let eff_list = source.eff_list();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: 2,
         route_scope_count: 0,
         active_lane_count: 2,
@@ -298,7 +298,7 @@ fn resident_parallel_role_image_plan_matches_lane_bit_storage() {
 fn resident_role_image_fit_probe_rejects_plan_drift() {
     let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0, 8>();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: 1,
         route_scope_count: 0,
         active_lane_count: 1,
@@ -318,7 +318,7 @@ fn resident_role_image_fit_probe_rejects_plan_drift() {
 fn resident_role_image_constructor_rejects_undersized_storage() {
     let eff_list = crate::global::const_dsl::const_send_typed::<0, 1, crate::g::Msg<1, ()>, 0, 8>();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: 1,
         route_scope_count: 0,
         active_lane_count: 1,
@@ -545,7 +545,7 @@ fn resident_descriptor_rejects_program_lane_mismatch() {
         program: compiled,
         role: 0,
         facts: RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-            max_route_stack_depth: 0,
+            max_route_commit_count: 0,
             local_step_count: 1,
             route_scope_count: 0,
             active_lane_count: 1,

@@ -15,7 +15,7 @@ const fn compact_count(value: usize) -> u16 {
 }
 
 impl RuntimeRoleFacts {
-    const MAX_ROUTE_STACK_DEPTH: usize = 0;
+    const MAX_ROUTE_COMMIT_COUNT: usize = 0;
     const LOCAL_STEP_COUNT: usize = 1;
     const ROUTE_SCOPE_COUNT: usize = 2;
     const ACTIVE_LANE_COUNT: usize = 3;
@@ -26,7 +26,7 @@ impl RuntimeRoleFacts {
     pub(crate) const fn from_counts(counts: RoleCompiledCounts) -> Self {
         Self {
             words: [
-                compact_count(counts.max_route_stack_depth),
+                compact_count(counts.max_route_commit_count),
                 compact_count(counts.local_step_count),
                 compact_count(counts.route_scope_count),
                 compact_count(counts.active_lane_count),
@@ -39,7 +39,8 @@ impl RuntimeRoleFacts {
     #[inline(always)]
     pub(crate) const fn footprint(self) -> RuntimeRoleFootprint {
         RuntimeRoleFootprint {
-            max_route_stack_depth: self.words[Self::MAX_ROUTE_STACK_DEPTH] as usize,
+            max_route_commit_count: self.words[Self::MAX_ROUTE_COMMIT_COUNT] as usize,
+            route_arm_state_capacity: 0,
             local_step_count: self.words[Self::LOCAL_STEP_COUNT] as usize,
             route_scope_count: self.words[Self::ROUTE_SCOPE_COUNT] as usize,
             active_lane_count: self.words[Self::ACTIVE_LANE_COUNT] as usize,
@@ -79,7 +80,9 @@ impl RoleImageRef {
 
     #[inline(always)]
     pub(crate) const fn footprint(&self) -> RuntimeRoleFootprint {
-        self.facts.footprint()
+        let mut footprint = self.facts.footprint();
+        footprint.route_arm_state_capacity = self.columns.route_arm_lane_step_rows.len as usize;
+        footprint
     }
 
     #[inline(always)]

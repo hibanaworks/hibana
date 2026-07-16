@@ -495,7 +495,8 @@ pub(crate) trait RoleProgramView<const ROLE: u8>: private::RoleProgramViewSeal {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RuntimeRoleFootprint {
-    pub(crate) max_route_stack_depth: usize,
+    pub(crate) max_route_commit_count: usize,
+    pub(crate) route_arm_state_capacity: usize,
     pub(crate) local_step_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) active_lane_count: usize,
@@ -504,19 +505,6 @@ pub(crate) struct RuntimeRoleFootprint {
 }
 
 impl RuntimeRoleFootprint {
-    #[inline(always)]
-    pub(crate) const fn frontier_entry_count_for_route_depth(route_depth: usize) -> usize {
-        if route_depth == 0 {
-            1
-        } else {
-            if route_depth > (u8::BITS as usize / 2) {
-                u8::BITS as usize
-            } else {
-                route_depth * 2
-            }
-        }
-    }
-
     #[inline(always)]
     pub(crate) const fn lane_word_count(self) -> usize {
         lane_word_count(self.logical_lane_count)
@@ -529,6 +517,6 @@ impl RuntimeRoleFootprint {
 
     #[inline(always)]
     pub(crate) const fn frontier_entry_count(self) -> usize {
-        Self::frontier_entry_count_for_route_depth(self.max_route_stack_depth)
+        self.active_lane_count
     }
 }

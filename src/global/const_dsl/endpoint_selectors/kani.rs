@@ -37,6 +37,24 @@ fn outbound_selector_identity_is_exact_public_send_contract() {
 }
 
 #[kani::proof]
+fn inbound_selector_identity_is_exact_compact_event_identity() {
+    let left: u16 = kani::any();
+    let right: u16 = kani::any();
+    let left_selector = EndpointSelector::inbound_evidence(left as usize);
+    let right_selector = EndpointSelector::inbound_evidence(right as usize);
+
+    assert!(left_selector.is_some() == (left != u16::MAX));
+    assert!(right_selector.is_some() == (right != u16::MAX));
+    if let (Some(left_selector), Some(right_selector)) = (left_selector, right_selector) {
+        assert!(left_selector.same(right_selector) == (left == right));
+    }
+    assert!(
+        EndpointSelector::inbound_evidence(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY)
+            .is_none()
+    );
+}
+
+#[kani::proof]
 fn observer_path_decision_has_exact_merge_domain() {
     let left = kani::any::<bool>().then_some(EndpointSelector(kani::any()));
     let right = kani::any::<bool>().then_some(EndpointSelector(kani::any()));

@@ -64,6 +64,21 @@ const fn encoded_atom(
     ]
 }
 
+const fn encoded_atom_rows(eff_indices: [u16; 3]) -> [u8; 33] {
+    let mut bytes = [0u8; 33];
+    let mut row = 0usize;
+    while row < eff_indices.len() {
+        let encoded = encoded_atom(eff_indices[row], 0, 0, row as u8, 0, 0, 0);
+        let mut offset = 0usize;
+        while offset < encoded.len() {
+            bytes[row * PROGRAM_IMAGE_ATOM_STRIDE + offset] = encoded[offset];
+            offset += 1;
+        }
+        row += 1;
+    }
+    bytes
+}
+
 fn forged_program_ref(bytes: &'static [u8; 11], max_role: u8) -> CompiledProgramRef {
     CompiledProgramRef::compact(ProgramImageFacts { max_role }, atom_columns(), bytes)
 }
@@ -133,6 +148,35 @@ fn compiled_program_atom_descriptor_decodes_canonical_row() {
     assert_eq!(atom.payload_schema, VALID_SCHEMA);
     assert_eq!(atom.origin.packed_bits(), 1);
     assert_eq!(atom.lane, u8::MAX);
+}
+
+#[test]
+fn compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows() {
+    static SORTED: [u8; 33] = encoded_atom_rows([1, 257, 4096]);
+    let image = CompiledProgramRef::compact(
+        ProgramImageFacts { max_role: 0 },
+        ProgramImageColumns::new(3, 0, 0, 0),
+        &SORTED,
+    );
+
+    assert_eq!(image.atom_at(0), None);
+    assert_eq!(image.atom_at(1).map(|atom| atom.label), Some(0));
+    assert_eq!(image.atom_at(256), None);
+    assert_eq!(image.atom_at(257).map(|atom| atom.label), Some(1));
+    assert_eq!(image.atom_at(4095), None);
+    assert_eq!(image.atom_at(4096).map(|atom| atom.label), Some(2));
+    assert_eq!(image.atom_at(4097), None);
+}
+
+#[test]
+#[should_panic]
+fn compiled_program_descriptor_rejects_noncanonical_atom_order() {
+    static UNSORTED: [u8; 33] = encoded_atom_rows([1, 4096, 257]);
+    let _ = CompiledProgramRef::compact(
+        ProgramImageFacts { max_role: 0 },
+        ProgramImageColumns::new(3, 0, 0, 0),
+        &UNSORTED,
+    );
 }
 
 #[test]

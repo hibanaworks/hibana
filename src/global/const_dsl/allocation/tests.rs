@@ -96,6 +96,23 @@ fn route_rejects_an_unavoidable_two_hundred_fifty_seventh_color() {
     merge_route_frame_labels(&mut source, 0, 256, 257);
 }
 
+#[test]
+fn local_effects_do_not_consume_wire_frame_colors() {
+    let mut source = EffList::<257>::new();
+    for label in 0..=u8::MAX {
+        source.push_event_mut(atom(0, 0, 0));
+        source.set_frame_label(label as usize, label);
+    }
+    source.push_event_mut(atom(0, 0, 0));
+
+    merge_route_frame_labels(&mut source, 0, 256, 257);
+    color_roll_frame_labels(&mut source, 0, 257);
+
+    for idx in 0..source.len() {
+        assert_eq!(source.frame_label_at(idx), (idx as u8));
+    }
+}
+
 fn nested_roll_source(prefix_from: u8, nested_from: u8) -> EffList<14> {
     let mut source = EffList::<14>::new_partitioned(4, 10, 0);
     let roll = ScopeId::new(ScopeKind::Roll, 0);

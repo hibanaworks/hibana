@@ -32,8 +32,16 @@ where
         observed_entries: ObservedEntrySet,
         current_idx: usize,
     ) -> Option<usize> {
-        let mask = observed_entries.ready_mask & !observed_entries.entry_bit(current_idx);
-        observed_entries.first_entry_idx(mask)
+        let mut slot_idx = 0usize;
+        while slot_idx < observed_entries.len() {
+            let slot = observed_entries.slot(slot_idx)?;
+            let entry_idx = observed_entries.entry_idx(slot_idx)?;
+            if entry_idx != current_idx && slot.is_ready() {
+                return Some(entry_idx);
+            }
+            slot_idx += 1;
+        }
+        None
     }
 
     #[inline]
@@ -202,11 +210,11 @@ where
     pub(in crate::endpoint::kernel) fn next_active_frontier_entry(
         &self,
         active_entries: ActiveEntrySet,
-        remaining_mask: &mut u8,
+        next_slot: &mut usize,
     ) -> Option<usize> {
-        while *remaining_mask != 0 {
-            let slot_idx = remaining_mask.trailing_zeros() as usize;
-            *remaining_mask &= !(1u8 << slot_idx);
+        while *next_slot < active_entries.len() {
+            let slot_idx = *next_slot;
+            *next_slot += 1;
             let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
                 continue;
             };
@@ -292,9 +300,8 @@ where
         mut visitor: impl FnMut(FrontierCandidate) -> ControlFlow<R>,
     ) -> Option<R> {
         let active_entries = self.active_frontier_entries(current_parallel);
-        let mut remaining_entries = active_entries.occupancy_mask();
-        while let Some(entry_idx) =
-            self.next_active_frontier_entry(active_entries, &mut remaining_entries)
+        let mut next_slot = 0usize;
+        while let Some(entry_idx) = self.next_active_frontier_entry(active_entries, &mut next_slot)
         {
             let Some(candidate) = self.scan_offer_entry_candidate_non_consuming(entry_idx) else {
                 continue;

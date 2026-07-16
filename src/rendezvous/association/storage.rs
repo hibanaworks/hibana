@@ -7,7 +7,6 @@ use crate::session::types::SessionId;
 
 use super::AssocTable;
 
-#[derive(Clone, Copy)]
 struct AssocStorageParts {
     entry_sids: *mut SessionId,
     entry_lanes: *mut u8,

@@ -19,6 +19,10 @@ pub(crate) const fn merge_route_frame_labels<const E: usize>(
         let key_node = eff_list.node_at(key_idx);
         if matches!(key_node.kind, EffKind::Atom) {
             let key = key_node.atom_data();
+            if key.from == key.to {
+                key_idx += 1;
+                continue;
+            }
             let mut earlier_same_key = false;
             let mut prior_right = right_start;
             while prior_right < key_idx {

@@ -3,8 +3,8 @@ use super::super::frontier::{
     frontier_observed_entries_view_from_storage,
 };
 use super::{
-    ActiveEntrySet, CursorEndpoint, FrontierScratchLayout, ObservedEntrySet, Transport, lane_port,
-    state_index_to_usize,
+    ActiveEntrySet, CursorEndpoint, FrontierScratchLayout, ObservedEntrySet,
+    ObservedEntrySetBuilder, Transport, lane_port, state_index_to_usize,
 };
 use crate::endpoint::kernel::offer::CurrentReentryControllerEvidence;
 
@@ -27,11 +27,15 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn global_active_entries(&mut self) -> ActiveEntrySet {
         let (scratch_ptr, layout, frontier_entry_capacity) = self.global_frontier_scratch_parts();
-        let mut active_entries = frontier_global_active_entries_view_from_storage(
-            scratch_ptr,
-            layout,
-            frontier_entry_capacity,
-        );
+        /* SAFETY: the current public endpoint operation owns the port's
+        frontier scratch lease until the returned builder is sealed below. */
+        let mut active_entries = unsafe {
+            frontier_global_active_entries_view_from_storage(
+                scratch_ptr,
+                layout,
+                frontier_entry_capacity,
+            )
+        };
         active_entries.clear();
         let active_offer_lanes = self.decision_state.active_offer_lanes();
         let lane_limit = self.cursor.logical_lane_count();
@@ -49,21 +53,25 @@ where
             }
             next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
-        active_entries
+        active_entries.seal()
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn empty_observed_entries_scratch(
         &mut self,
-    ) -> ObservedEntrySet {
+    ) -> ObservedEntrySetBuilder {
         let port = self.port_for_lane(self.primary_lane);
         let scratch_ptr = lane_port::frontier_scratch_ptr(port);
         let layout = self.cursor.frontier_scratch_layout();
-        let mut observed = frontier_observed_entries_view_from_storage(
-            scratch_ptr,
-            layout,
-            self.cursor.max_frontier_entries(),
-        );
+        /* SAFETY: the current public endpoint operation owns the port's
+        observation scratch section until the builder is sealed. */
+        let mut observed = unsafe {
+            frontier_observed_entries_view_from_storage(
+                scratch_ptr,
+                layout,
+                self.cursor.max_frontier_entries(),
+            )
+        };
         observed.clear();
         observed
     }
@@ -89,11 +97,20 @@ where
         current_frontier: FrontierKind,
         reentry_controller_evidence: CurrentReentryControllerEvidence,
     ) -> bool {
-        let mut sibling_mask = observed_entries.progress_mask;
-        sibling_mask &= !observed_entries.entry_bit(current_entry_idx);
-        if !reentry_controller_evidence.allows_cross_frontier_progress_sibling() {
-            sibling_mask &= observed_entries.frontier_mask(current_frontier);
+        let mut slot_idx = 0usize;
+        while slot_idx < observed_entries.len() {
+            let Some(slot) = observed_entries.slot(slot_idx) else {
+                crate::invariant();
+            };
+            let sibling = observed_entries.entry_idx(slot_idx) != Some(current_entry_idx);
+            let frontier_matches = reentry_controller_evidence
+                .allows_cross_frontier_progress_sibling()
+                || slot.is_in_frontier(current_frontier);
+            if sibling && slot.has_progress() && frontier_matches {
+                return true;
+            }
+            slot_idx += 1;
         }
-        sibling_mask != 0
+        false
     }
 }

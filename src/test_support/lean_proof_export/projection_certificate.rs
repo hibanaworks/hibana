@@ -332,7 +332,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
          example : {name}.RefinesTopology :=\n  Hibana.projection_certificate_sound (by decide)\n\n\
          def {exact_name} : Hibana.ExactDescriptorCertificate := {{\n  image := {{\n    \
          roleCount := {}\n    role := {ROLE}\n    logicalLaneCount := {}\n    activeLaneCount := {}\n    \
-         endpointLaneSlotCount := {}\n    maxRouteStackDepth := {}\n    firstActiveLane := {}\n    \
+         endpointLaneSlotCount := {}\n    maxRouteCommitCount := {}\n    firstActiveLane := {}\n    \
          activeLaneStart := {}\n    activeLaneLength := {}\n    atomCount := {}\n    routeResolverCount := {}\n    \
          routeParticipantCount := {}\n    scopeMarkerCount := {}\n    eventCount := {}\n    dependencyRowCount := {}\n    \
          conflictRowCount := {}\n    routeScopeCount := {}\n    residentBoundaryCount := {}\n    \
@@ -380,7 +380,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
         descriptor.logical_lane_count(),
         footprint.active_lane_count,
         descriptor.endpoint_lane_slot_count(),
-        descriptor.max_route_stack_depth(),
+        descriptor.max_route_commit_count(),
         first_active_lane,
         resident.active_lane_row.start(),
         resident.active_lane_row.len(),

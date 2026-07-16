@@ -168,7 +168,8 @@ PY
 check_absent_multiline \
   "route_scope_lane_words" \
   "endpoint arena must not contain route-scope lane-word caches" \
-  "src/endpoint/kernel/decision_state.rs"
+  "src/endpoint/kernel/decision_state.rs" \
+  "src/endpoint/kernel/decision_state/route_arm_history.rs"
 
 if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
@@ -191,12 +192,6 @@ run_runtime_test \
   "parallel_route_alternating" \
   -p hibana \
   --test parallel_route_alternating
-
-run_runtime_test \
-  "lane_set_view_iterates_set_bits_without_empty_lane_scan" \
-  -p hibana \
-  global::role_program::tests::lane_set_view_iterates_set_bits_without_empty_lane_scan \
-  --lib
 
 run_runtime_test \
   "huge_choreography_runtime" \

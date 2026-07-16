@@ -19,8 +19,8 @@ private def ExactDescriptorCertificate.ResidentMetadataMatches
       certificate.choreo.canonicalEndpointLaneSlotCount certificate.image.role ∧
     certificate.image.logicalLaneCount =
       certificate.choreo.canonicalLogicalLaneCount certificate.image.role ∧
-    certificate.image.maxRouteStackDepth =
-      certificate.choreo.canonicalRoleMaxRouteStackDepth certificate.image.role ∧
+    certificate.image.maxRouteCommitCount =
+      certificate.choreo.canonicalRoleMaxRouteCommitCount certificate.image.role ∧
     certificate.image.firstActiveLane =
       certificate.choreo.canonicalFirstActiveLane certificate.image.role ∧
     (certificate.image.activeLaneStart, certificate.image.activeLaneLength) =

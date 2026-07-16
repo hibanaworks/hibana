@@ -119,7 +119,6 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/entry.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/pool.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/selection.rs
-src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/set.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/state.rs
 src/global	src/global/compiled
 src/global	src/global/const_dsl
@@ -153,6 +152,7 @@ src/global/const_dsl	src/global/const_dsl/source_arena.rs
 src/global/role_program	src/global/role_program/image_impl
 src/global/role_program	src/global/role_program/image_impl.rs
 src/global/role_program	src/global/role_program/image_types.rs
+src/global/role_program	src/global/role_program/lane_set
 src/global/role_program	src/global/role_program/lane_set.rs
 src/global/role_program	src/global/role_program/program.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/blob_image.rs

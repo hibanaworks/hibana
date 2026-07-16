@@ -116,14 +116,16 @@ impl<'a> RoleLaneImage<'a> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) const fn lane_bit_view(
         &self,
         range: PackedLaneRange,
         word_len: usize,
     ) -> LaneSetView<'static> {
         if range.is_absent_or_zero_len() {
-            LaneSetView::from_bytes(core::ptr::null(), 0, word_len)
+            /* SAFETY: an empty descriptor lane set has no backing bytes; the
+            word span is metadata used only to synthesize zero words. */
+            unsafe { LaneSetView::from_bytes(core::ptr::null(), 0, word_len) }
         } else {
             if range.end() > self.columns.lane_bits.len as usize {
                 invalid_resident_descriptor();
@@ -132,12 +134,11 @@ impl<'a> RoleLaneImage<'a> {
             if offset + range.len() > self.columns.blob_len() {
                 invalid_resident_descriptor();
             }
-            LaneSetView::from_bytes(
-                /* SAFETY: the column directory bounds above cover the backing allocation. */
-                unsafe { self.blob.as_ptr().add(offset) },
-                range.len(),
-                word_len,
-            )
+            /* SAFETY: the column directory bounds above cover the immutable
+            static descriptor allocation for the complete returned view. */
+            unsafe {
+                LaneSetView::from_bytes(self.blob.as_ptr().add(offset), range.len(), word_len)
+            }
         }
     }
 

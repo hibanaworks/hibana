@@ -504,6 +504,32 @@ boundary. The axiom audit permits only the `propext` and `Quot.sound`
 dependencies introduced by the checked Core/Std proofs, and the gate requires
 every exported theorem in the package to appear in that audit.
 
+Frontier scratch capacity is derived from the projected active-lane count. Lean
+proves that every active offer entry has an owning active lane and that the
+complete 256-lane wire domain bounds the resulting allocation; the production
+selection kernel streams those entries instead of representing them in a fixed
+candidate bit mask. Visit tracking uses exact local-entry identity rather than
+route-scope identity, and Lean proves that the same allocation covers every
+visited entry. Capacity exhaustion is an invariant failure, never silent
+truncation.
+
+All other lane-indexed endpoint storage follows the exact projected lane span.
+Lean and Kani prove that this span covers every active lane and remains inside
+the 256-lane wire domain; the removed two-lane binding reserve had no descriptor
+or runtime authority.
+
+Selected route history uses the same descriptor-first rule. One sparse runtime
+row is admitted only for an emitted `(lane, route)` relation, and Lean proves
+that the emitted relation count covers every live row. The endpoint therefore
+does not allocate the Cartesian product of active lanes and maximum route
+depth.
+
+Canonical program atom rows are strictly ordered by compact event identity.
+Lean proves this for every normalized choreography, the compact Rust image
+rejects a noncanonical order at construction, and Kani checks every order class
+used by the production binary search. Runtime event lookup is therefore
+logarithmic without adding an event-index column to the descriptor or endpoint.
+
 Run the same fail-closed gate used by CI:
 
 ```sh

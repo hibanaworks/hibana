@@ -283,7 +283,7 @@ fn resident_descriptor_attach_has_no_lowering_materialization_path() {
             && role_descriptor_ref.contains("self.resident.program")
             && role_descriptor_ref.contains("self.resident.footprint()")
             && !role_descriptor_ref.contains(".active_lane_count")
-            && !role_descriptor_ref.contains("checked_mul(self.max_route_stack_depth")
+            && !role_descriptor_ref.contains("checked_mul(self.max_route_commit_count")
             && role_image
                 .contains("pub(crate) const fn from_resident(image: &'static RoleImageRef)")
             && !role_image.contains("RoleDescriptorSource"),
@@ -444,7 +444,7 @@ fn projectable_bound_and_lane_domain_stay_embedded_exact() {
         role_program.contains("pub(crate) struct LaneSetView<'a> {")
             && role_program.contains("_marker: PhantomData<&'a [LaneWord]>")
             && role_program.contains("byte_len: u16")
-            && role_program.contains("pub(crate) const fn from_bytes")
+            && role_program.contains("pub(crate) const unsafe fn from_bytes")
             && !role_program.contains("struct LaneSetSnapshot")
             && !role_program.contains("LaneSetSnapshot::from_view")
             && role_program.contains("struct RoleLaneImage")
@@ -740,5 +740,24 @@ fn compiled_image_sources_stay_split_below_one_thousand_lines() {
         oversized.is_empty(),
         "production source files must stay below 1000 lines after image split: {}",
         oversized.join(", ")
+    );
+}
+
+#[test]
+fn program_atom_lookup_stays_logarithmic_and_proof_connected() {
+    let program_ref = read("src/global/compiled/images/image/program_ref.rs");
+    let descriptor_proof = read("proofs/lean/Hibana/DescriptorImage.lean");
+    let kani_gate = read(".github/scripts/check_kani.sh");
+
+    assert!(
+        program_ref.contains("image.validate_atom_order();")
+            && program_ref.contains("while start < end")
+            && program_ref.contains("let row = start + (end - start) / 2;")
+            && !program_ref
+                .contains("let mut row = 0usize;\n        while row < self.columns.atom_count()")
+            && descriptor_proof.contains("theorem canonical_program_atom_eff_indices_strict")
+            && kani_gate.contains("compiled_program_atom_binary_search_is_exact_for_sorted_rows")
+            && kani_gate.contains("compiled_program_atom_order_rejects_noncanonical_rows"),
+        "canonical atom order must be sealed once and searched logarithmically without adding a resident index column"
     );
 }

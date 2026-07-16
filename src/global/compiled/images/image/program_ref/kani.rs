@@ -19,6 +19,8 @@ static LAST_BYTE_DIFFERENT: [u8; 27] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     27,
 ];
+static SORTED_ATOM_ROWS: [u8; 33] = atom_rows([1, 3, 5]);
+static NONCANONICAL_ATOM_ROWS: [u8; 33] = atom_rows([1, 5, 3]);
 
 fn route_columns() -> ProgramImageColumns {
     ProgramImageColumns::new(0, 0, 27, 0)
@@ -38,6 +40,19 @@ fn program<const N: usize>(
     columns: ProgramImageColumns,
 ) -> CompiledProgramRef {
     CompiledProgramRef::compact(facts, columns, bytes)
+}
+
+const fn atom_rows(eff_indices: [u16; 3]) -> [u8; 33] {
+    let mut bytes = [0u8; 33];
+    let mut row = 0usize;
+    while row < eff_indices.len() {
+        let offset = row * PROGRAM_IMAGE_ATOM_STRIDE;
+        bytes[offset] = eff_indices[row] as u8;
+        bytes[offset + 1] = (eff_indices[row] >> 8) as u8;
+        bytes[offset + 4] = row as u8;
+        row += 1;
+    }
+    bytes
 }
 
 #[kani::proof]
@@ -301,6 +316,35 @@ fn program_atom_row_decoding_accepts_exact_domain() {
         assert!(row.atom.origin.packed_bits() == origin);
         assert!(row.atom.lane == lane);
     }
+}
+
+#[kani::proof]
+fn compiled_program_atom_binary_search_is_exact_for_sorted_rows() {
+    // The search is comparison-only. These calls cover all seven
+    // before/equal/between/after order classes; Lean proves arbitrary
+    // canonical descriptor keys are strictly ordered.
+    let image = program(
+        &SORTED_ATOM_ROWS,
+        ProgramImageFacts { max_role: 0 },
+        ProgramImageColumns::new(3, 0, 0, 0),
+    );
+    assert!(image.atom_at(0).is_none());
+    assert!(image.atom_at(1).map(|atom| atom.label) == Some(0));
+    assert!(image.atom_at(2).is_none());
+    assert!(image.atom_at(3).map(|atom| atom.label) == Some(1));
+    assert!(image.atom_at(4).is_none());
+    assert!(image.atom_at(5).map(|atom| atom.label) == Some(2));
+    assert!(image.atom_at(6).is_none());
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn compiled_program_atom_order_rejects_noncanonical_rows() {
+    let _ = program(
+        &NONCANONICAL_ATOM_ROWS,
+        ProgramImageFacts { max_role: 0 },
+        ProgramImageColumns::new(3, 0, 0, 0),
+    );
 }
 
 #[kani::proof]

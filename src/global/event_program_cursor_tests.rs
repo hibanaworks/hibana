@@ -1658,7 +1658,8 @@ impl ProductionCursorTrace {
     fn record_event_conflict_selection(&mut self, idx: usize) {
         let mut conflict = self.event_program.event_conflict_for_index(idx);
         let mut depth = 0usize;
-        while depth < PackedEventConflict::MAX_CHAIN_DEPTH {
+        let depth_bound = self.event_program.footprint().route_scope_count + 1;
+        while depth < depth_bound {
             let Some(LocalConflict::RouteArm { scope, arm }) = conflict.to_conflict() else {
                 return;
             };

@@ -101,6 +101,54 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
 }
 
 #[test]
+fn route_history_capacity_tracks_emitted_lane_relations() {
+    let routed = g::route(
+        g::send::<0, 1, Msg<21, u8>>(),
+        g::send::<0, 1, Msg<22, u8>>(),
+    );
+    let unrelated = g::par(
+        g::send::<0, 2, Msg<23, u8>>(),
+        g::send::<0, 3, Msg<24, u8>>(),
+    );
+    let program = g::par(routed, unrelated);
+    let role0: RoleProgram<0> = project(&program);
+    let image = role0.role_image_ref();
+    let descriptor = RoleDescriptorRef::from_resident(image);
+    let footprint = image.footprint();
+    let layout = descriptor.endpoint_arena_layout();
+
+    assert_eq!(
+        footprint.route_arm_state_capacity,
+        image.columns.route_arm_lane_step_rows.len as usize
+    );
+    assert_eq!(
+        layout.route_arm_history().count(),
+        footprint.route_arm_state_capacity
+    );
+    assert!(
+        footprint.route_arm_state_capacity
+            < footprint.active_lane_count * footprint.max_route_commit_count,
+        "sparse route history must not regress to active-lane by route-depth storage"
+    );
+}
+
+#[test]
+fn inactive_role_keeps_only_its_session_lane_and_no_frontier_reserve() {
+    let program = g::send::<0, 2, Msg<20, u8>>();
+    let role1: RoleProgram<1> = project(&program);
+    let image = role1.role_image_ref();
+    let footprint = image.footprint();
+    let layout = RoleDescriptorRef::from_resident(image).endpoint_arena_layout();
+
+    assert_eq!(footprint.active_lane_count, 0);
+    assert_eq!(footprint.endpoint_lane_slot_count, 1);
+    assert_eq!(footprint.logical_lane_count, 1);
+    assert_eq!(footprint.frontier_entry_count(), 0);
+    assert_eq!(layout.frontier_root_active_slots().count(), 0);
+    assert_eq!(layout.frontier_visited_entries().count(), 0);
+}
+
+#[test]
 fn empty_route_lane_sets_have_one_canonical_byte_encoding() {
     let program = g::seq(
         g::send::<0, 2, Msg<39, u8>>(),
@@ -316,10 +364,23 @@ fn resident_route_arm_access_rejects_nonbinary_index() {
 
 #[test]
 fn logical_lane_count_stays_inside_wire_lane_domain() {
-    assert_eq!(logical_lane_count_for_role(0, 1), MIN_ENDPOINT_LANE_SLOTS);
-    assert_eq!(logical_lane_count_for_role(254, 255), LANE_DOMAIN_SIZE);
+    assert_eq!(logical_lane_count_for_role(0, 1), 1);
+    assert_eq!(logical_lane_count_for_role(1, 1), 1);
+    assert_eq!(logical_lane_count_for_role(254, 255), 255);
     assert_eq!(logical_lane_count_for_role(255, 256), LANE_DOMAIN_SIZE);
     assert_eq!(logical_lane_count_for_role(256, 256), LANE_DOMAIN_SIZE);
+}
+
+#[test]
+#[should_panic]
+fn lane_set_mutation_rejects_a_lane_outside_its_exact_span() {
+    let mut words = [0usize; 1];
+    let mut set = core::mem::MaybeUninit::<LaneSet>::uninit();
+    unsafe {
+        LaneSet::init_from_parts(set.as_mut_ptr(), words.as_mut_ptr(), words.len());
+    }
+    let mut set = unsafe { set.assume_init() };
+    set.insert(usize::BITS as usize);
 }
 
 #[test]
@@ -331,7 +392,8 @@ fn lane_set_view_iterates_set_bits_without_empty_lane_scan() {
     words[word] |= bit;
     let (word, bit) = lane_word_index(usize::BITS as usize * 2 + 1);
     words[word] |= bit;
-    let view = LaneSetView::from_parts(words.as_ptr(), words.len());
+    /* SAFETY: `words` remains live and immutable for the complete view use. */
+    let view = unsafe { LaneSetView::from_parts(words.as_ptr(), words.len()) };
 
     assert_eq!(view.first_set(256), Some(3));
     assert_eq!(view.next_set_from(4, 256), Some(usize::BITS as usize + 5));
@@ -385,8 +447,11 @@ fn lane_set_view_word_compare_can_ignore_one_lane_without_empty_lane_scan() {
     let (word, bit) = lane_word_index(usize::BITS as usize * 3 + 7);
     rhs[word] |= bit;
 
-    let lhs = LaneSetView::from_parts(lhs.as_ptr(), lhs.len());
-    let rhs = LaneSetView::from_parts(rhs.as_ptr(), rhs.len());
+    /* SAFETY: both word arrays remain live and immutable for the complete
+    comparison. */
+    let lhs = unsafe { LaneSetView::from_parts(lhs.as_ptr(), lhs.len()) };
+    /* SAFETY: see the shared comparison owner contract above. */
+    let rhs = unsafe { LaneSetView::from_parts(rhs.as_ptr(), rhs.len()) };
 
     assert!(!equals_until(lhs, rhs, usize::BITS as usize * 2));
     assert!(equals_until_except_lane(
@@ -478,7 +543,7 @@ fn minimal_send_descriptor_has_exact_resident_footprint() {
 fn streaming_role_image_tracks_actual_event_count() {
     assert!(OVER_LOCAL_STEP_CAPACITY_ATOMS.len() > LOCAL_STEP_STRESS_ROW_BUDGET);
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: OVER_LOCAL_STEP_CAPACITY_ATOMS.len(),
         route_scope_count: 0,
         active_lane_count: LANE_DOMAIN_SIZE,
@@ -531,7 +596,7 @@ fn streaming_role_image_accepts_more_than_256_resident_rows() {
         phase += 1;
     }
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: PHASES * 2,
         route_scope_count: 0,
         active_lane_count: 2,

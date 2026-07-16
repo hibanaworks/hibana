@@ -39,3 +39,22 @@ fn nested_roll_frame_coloring_uses_the_complete_inbound_key() {
     assert!(source.frame_label_at(1) == 0);
     assert!(source.frame_label_at(2) == if same_source { 1 } else { 0 });
 }
+
+#[kani::proof]
+#[kani::unwind(24)]
+fn local_effect_frame_labels_are_erased_from_the_wire_coloring_domain() {
+    let role: u8 = kani::any();
+    let left_label: u8 = kani::any();
+    let right_label: u8 = kani::any();
+    let mut source = EffList::<2>::new()
+        .push(atom(role, role, 0))
+        .push(atom(role, role, 0));
+    source.set_frame_label(0, left_label);
+    source.set_frame_label(1, right_label);
+
+    merge_route_frame_labels(&mut source, 0, 1, 2);
+    color_roll_frame_labels(&mut source, 0, 2);
+
+    assert!(source.frame_label_at(0) == left_label);
+    assert!(source.frame_label_at(1) == right_label);
+}

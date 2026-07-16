@@ -1,4 +1,21 @@
-use super::{LocalNode, PackedEventConflict, PackedLocalDependency};
+use super::{LocalNode, PackedEventConflict, PackedLocalDependency, StateIndex};
+
+#[kani::proof]
+fn state_index_preserves_the_exact_present_identity_domain() {
+    let raw: u16 = kani::any();
+    kani::assume(raw != u16::MAX);
+
+    let state = StateIndex::new(raw);
+
+    assert_eq!(state.raw(), raw);
+    assert!(!state.is_absent());
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn state_index_rejects_the_reserved_absent_identity() {
+    let _ = StateIndex::from_usize(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY);
+}
 
 #[kani::proof]
 fn packed_event_conflict_decoding_accepts_exact_domain() {

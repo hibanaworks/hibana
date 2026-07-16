@@ -116,8 +116,10 @@ fn two_arm_route_frame_coloring_is_exact() {
         .push(atom(right_from, right_to, right_lane));
 
     merge_route_frame_labels(&mut source, 0, 1, 2);
-    let same_inbound_key =
-        left_from == right_from && left_to == right_to && left_lane == right_lane;
+    let same_inbound_key = right_from != right_to
+        && left_from == right_from
+        && left_to == right_to
+        && left_lane == right_lane;
 
     assert!(source.frame_label_at(0) == 0);
     assert!(source.frame_label_at(1) == if same_inbound_key { 1 } else { 0 });

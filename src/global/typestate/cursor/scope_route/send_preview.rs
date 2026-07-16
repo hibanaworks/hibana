@@ -674,7 +674,7 @@ impl EventCursor {
         }
 
         let mut iter = 0usize;
-        let bound = self.local_steps_len() + PackedEventConflict::MAX_CHAIN_DEPTH;
+        let bound = self.local_steps_len() + self.route_chain_bound();
         loop {
             iter += 1;
             if iter > bound {

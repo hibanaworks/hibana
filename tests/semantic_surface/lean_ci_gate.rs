@@ -22,10 +22,14 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && proof_gate.contains("END { print count + 0 }")
             && proof_gate.contains("Classical.choice")
             && proof_gate.contains("native_decide.ax")
-            && proof_gate.contains("!= \"269\"")
-            && proof_gate.contains("!= \"194\"")
-            && proof_gate.contains("!= \"54\"")
-            && proof_gate.contains("!= \"517\"")
+            && proof_gate.contains("readonly EXPECTED_AXIOM_BOTH_COUNT=")
+            && proof_gate.contains("readonly EXPECTED_AXIOM_PROPEXT_COUNT=")
+            && proof_gate.contains("readonly EXPECTED_AXIOM_FREE_COUNT=")
+            && proof_gate.contains("readonly EXPECTED_EXPORTED_THEOREM_COUNT=")
+            && proof_gate.contains("!= \"${EXPECTED_AXIOM_BOTH_COUNT}\"")
+            && proof_gate.contains("!= \"${EXPECTED_AXIOM_PROPEXT_COUNT}\"")
+            && proof_gate.contains("!= \"${EXPECTED_AXIOM_FREE_COUNT}\"")
+            && proof_gate.contains("!= \"${EXPECTED_EXPORTED_THEOREM_COUNT}\"")
             && proof_gate.contains(
                 "traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
             )

@@ -1,5 +1,6 @@
 use super::{
-    FrontierCandidate, FrontierKind, OfferEntryObservedState, OfferEntrySummary, ScopeId, TryFrom,
+    FrontierCandidate, FrontierKind, OfferEntryObservedState, OfferEntrySummary, ScopeId,
+    checked_state_index,
 };
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OfferSelectPriority {
@@ -108,12 +109,10 @@ pub(crate) fn offer_entry_frontier_candidate(
     frontier: FrontierKind,
     observed: OfferEntryObservedState,
 ) -> FrontierCandidate {
-    if u16::try_from(entry_idx).is_err() {
-        crate::invariant();
-    }
+    let entry = crate::invariant_some(checked_state_index(entry_idx));
     FrontierCandidate {
         scope_id,
-        entry_idx: entry_idx as u16,
+        entry,
         parallel_root,
         frontier,
         flags: FrontierCandidate::flags_from_observed(observed),

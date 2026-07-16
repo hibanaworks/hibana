@@ -14,7 +14,7 @@ use crate::{
         compiled::images::RoleDescriptorRef,
         const_dsl::{DynamicRouteResolver, ScopeId, ScopeKind},
         event_program::{LocalEventProgram, LocalEventRowSet},
-        role_program::{LaneSetView, LaneSteps, PackedLaneRange, lane_word_count},
+        role_program::{LaneSetView, LaneSteps, PackedLaneRange},
     },
 };
 
@@ -193,6 +193,16 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
+    fn route_chain_bound(&self) -> usize {
+        crate::invariant_some(
+            self.event_program()
+                .footprint()
+                .route_scope_count
+                .checked_add(1),
+        )
+    }
+
+    #[inline(always)]
     fn node_len(&self) -> usize {
         self.event_program().node_len()
     }
@@ -265,10 +275,7 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn frontier_scratch_layout(&self) -> FrontierScratchLayout {
-        FrontierScratchLayout::new(
-            self.max_frontier_entries(),
-            lane_word_count(self.logical_lane_count()),
-        )
+        FrontierScratchLayout::new(self.max_frontier_entries())
     }
 
     #[inline(always)]
@@ -278,10 +285,7 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn logical_lane_count(&self) -> usize {
-        let footprint = self.event_program().footprint();
-        footprint
-            .logical_lane_count
-            .max(footprint.endpoint_lane_slot_count.max(1))
+        self.event_program().footprint().logical_lane_count
     }
 
     #[inline(always)]
@@ -656,6 +660,11 @@ impl EventCursor {
     #[inline(always)]
     pub(crate) fn local_steps_len(&self) -> usize {
         self.machine().local_steps_len()
+    }
+
+    #[inline(always)]
+    pub(crate) fn route_chain_bound(&self) -> usize {
+        self.machine().route_chain_bound()
     }
 
     // =========================================================================

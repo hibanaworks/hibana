@@ -2,7 +2,7 @@ use super::super::{CurrentFrontierSelectionState, ObservedEntrySet, OfferSelectP
 use super::model::{
     CurrentOfferAuthority, CurrentOfferCandidateStatus, CurrentOfferEntry, CurrentOfferObservation,
     OfferAlignmentCandidateInput, OfferAlignmentCandidatePool, OfferAlignmentSelection,
-    OfferEntrySet, ProgressEvidence, ProgressSiblingPresence,
+    ProgressEvidence, ProgressSiblingPresence,
 };
 use super::{CursorEndpoint, Transport};
 use crate::endpoint::kernel::frontier::FrontierKind;
@@ -173,44 +173,16 @@ where
         observed_entries: ObservedEntrySet,
         input: OfferAlignmentCandidateInput,
     ) -> OfferAlignmentCandidates {
-        let candidates = OfferAlignmentCandidatePool::from_observed(
-            observed_entries,
-            self.selectable_observed_offer_entries(observed_entries),
-            input,
-        );
-        let current_controller_frontier =
-            candidates.current_controller_frontier(observed_entries, input);
-        let intrinsic_controller_frontier =
-            candidates.intrinsic_controller_frontier(current_controller_frontier);
-        let selection =
-            candidates.selection(observed_entries, input, intrinsic_controller_frontier);
+        let candidates = OfferAlignmentCandidatePool::from_observed(observed_entries, input);
+        let selection = candidates.selection();
         let current = OfferAlignmentCurrent::new(
             input.current_idx,
             input.current_entry,
             input.current_authority,
             input.progress_sibling_presence,
-            candidates.current_observation(observed_entries),
+            candidates.current_observation(),
         );
 
         OfferAlignmentCandidates { current, selection }
-    }
-
-    fn selectable_observed_offer_entries(
-        &self,
-        observed_entries: ObservedEntrySet,
-    ) -> OfferEntrySet {
-        let mut selectable = OfferEntrySet::empty();
-        let mut slot_idx = 0usize;
-        let observed_len = observed_entries.len();
-        while slot_idx < observed_len {
-            let slot = OfferEntrySet::slot(slot_idx);
-            if let Some(entry_idx) = slot.first_entry_idx(observed_entries)
-                && self.entry_has_route_scope(entry_idx)
-            {
-                selectable = selectable.union(slot);
-            }
-            slot_idx += 1;
-        }
-        selectable
     }
 }

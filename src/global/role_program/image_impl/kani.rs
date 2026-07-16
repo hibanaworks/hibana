@@ -19,7 +19,7 @@ use crate::global::{
 
 fn empty_role_facts() -> RuntimeRoleFacts {
     RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: 0,
         route_scope_count: 0,
         active_lane_count: 0,
@@ -68,7 +68,7 @@ fn role_image_fit_probe_rejects_undersized_storage() {
 fn role_image_fit_probe_rejects_plan_mismatch() {
     let source = crate::global::const_dsl::EffList::<1>::new();
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         local_step_count: 0,
         route_scope_count: 0,
         active_lane_count: 0,

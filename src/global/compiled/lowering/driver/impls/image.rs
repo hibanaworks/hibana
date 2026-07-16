@@ -98,7 +98,7 @@ impl CompiledProgramImage {
 
         summary.program.lowering_facts.scope_count = scope_count;
         summary.program.lowering_facts.max_active_scope_depth = max_active_scope_depth;
-        summary.program.lowering_facts.max_route_stack_depth = if max_route_depth == 0 {
+        summary.program.lowering_facts.max_route_commit_count = if max_route_depth == 0 {
             0
         } else {
             increment_compact_count(max_route_depth)
@@ -127,13 +127,6 @@ impl CompiledProgramImage {
     }
 
     #[inline(always)]
-    pub(in crate::global::compiled::lowering) const fn max_route_stack_depth_for_projection(
-        &self,
-    ) -> usize {
-        self.program.lowering_facts.max_route_stack_depth as usize
-    }
-
-    #[inline(always)]
     pub(crate) const fn compiled_program_role_count(&self) -> usize {
         self.max_role as usize + 1
     }
@@ -159,7 +152,7 @@ impl CompiledProgramImage {
         }
         let role = crate::global::compiled::lowering::seal::exact_role_facts(eff_list, role);
         RoleCompiledCounts {
-            max_route_stack_depth: self.program.lowering_facts.max_route_stack_depth as usize,
+            max_route_commit_count: self.program.lowering_facts.max_route_commit_count as usize,
             local_step_count: role.local_step_count as usize,
             route_scope_count: self.program.lowering_facts.route_scope_count as usize,
             active_lane_count: role.active_lane_count as usize,

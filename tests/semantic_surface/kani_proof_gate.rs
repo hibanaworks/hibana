@@ -244,12 +244,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
 
     for harness in [
         "outbound_selector_identity_is_exact_public_send_contract",
+        "inbound_selector_identity_is_exact_compact_event_identity",
         "observer_path_decision_has_exact_merge_domain",
     ] {
         assert!(endpoint_selector_harnesses.contains(&format!("fn {harness}()")));
         assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(endpoint_selector_harnesses.contains("left.payload_schema == right.payload_schema"));
+    assert!(endpoint_selector_harnesses.contains("left != u16::MAX"));
     assert!(endpoint_selector_harnesses.contains("(Some(_), None) | (None, Some(_)) =>"));
     assert!(!endpoint_selector_harnesses.contains("kani::assume"));
     let harness = "route_controller_or_in_band_evidence_is_exact_acceptance_domain";

@@ -99,6 +99,42 @@ for harness in public_operation_transition_classifier_is_exact; do
 done
 
 for harness in \
+  existing_route_reselection_preserves_exact_reference_count \
+  selected_arm_release_is_exact_and_never_underflows \
+  selected_route_commit_rows_preserve_full_descriptor_range \
+  selected_route_commit_rows_accept_257_entries \
+  sparse_route_history_preserves_lane_partition \
+  sparse_route_history_accepts_257_descriptor_relations; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/endpoint/kernel/decision_state/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
+  frontier_entry_capacity_preserves_the_full_lane_domain \
+  nonempty_frontier_entry_buffer_rejects_null_storage \
+  frontier_observation_packing_is_exact \
+  frontier_observation_rejects_bits_outside_the_exact_kind_domain; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/endpoint/kernel/frontier/entry_sets/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
+  visited_entry_identity_is_exact_and_never_silent \
+  absent_state_identity_is_rejected; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/endpoint/kernel/frontier/snapshot/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
   frame_header_roundtrip_preserves_every_field \
   frame_header_identity_is_exact_and_injective; do
   if ! grep -Eq "^fn ${harness}\\(\\)" \
@@ -163,6 +199,8 @@ for harness in \
 done
 
 for harness in \
+  state_index_preserves_the_exact_present_identity_domain \
+  state_index_rejects_the_reserved_absent_identity \
   packed_event_conflict_decoding_accepts_exact_domain \
   optional_route_arm_decoding_accepts_exact_domain \
   packed_local_dependency_decoding_accepts_exact_domain \
@@ -203,6 +241,19 @@ for harness in scope_id_decoding_accepts_exact_compact_domain; do
 done
 
 for harness in \
+  logical_lane_capacity_is_the_exact_descriptor_lane_span \
+  lane_set_mutation_is_exact_over_the_complete_lane_domain \
+  lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain \
+  nonempty_lane_set_view_rejects_null_storage \
+  nonempty_lane_set_owner_rejects_null_storage; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/global/role_program/lane_set/kani.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
+
+for harness in \
   two_by_two_parallel_lane_matching_has_minimum_span \
   lane_endpoint_index_aggregates_exact_symbolic_membership \
   two_arm_route_frame_coloring_is_exact; do
@@ -213,11 +264,15 @@ for harness in \
   fi
 done
 
-if ! grep -Eq '^fn nested_roll_frame_coloring_uses_the_complete_inbound_key\(\)' \
-  "${ROOT_DIR}/src/global/const_dsl/allocation/kani/roll_coloring.rs"; then
-  echo "Kani gate missing proof harness: nested_roll_frame_coloring_uses_the_complete_inbound_key" >&2
-  exit 1
-fi
+for harness in \
+  nested_roll_frame_coloring_uses_the_complete_inbound_key \
+  local_effect_frame_labels_are_erased_from_the_wire_coloring_domain; do
+  if ! grep -Eq "^fn ${harness}\\(\\)" \
+    "${ROOT_DIR}/src/global/const_dsl/allocation/kani/roll_coloring.rs"; then
+    echo "Kani gate missing proof harness: ${harness}" >&2
+    exit 1
+  fi
+done
 
 for harness in \
   parallel_lane_coloring_reuses_disjoint_class \
@@ -246,6 +301,7 @@ done
 
 for harness in \
   outbound_selector_identity_is_exact_public_send_contract \
+  inbound_selector_identity_is_exact_compact_event_identity \
   observer_path_decision_has_exact_merge_domain; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/const_dsl/endpoint_selectors/kani.rs"; then
@@ -297,6 +353,8 @@ for harness in \
   compiled_program_blob_comparison_matches_array_equality \
   compiled_program_image_identity_is_exact_over_facts_columns_and_blob \
   program_atom_row_decoding_accepts_exact_domain \
+  compiled_program_atom_binary_search_is_exact_for_sorted_rows \
+  compiled_program_atom_order_rejects_noncanonical_rows \
   compiled_program_atom_blob_decoding_preserves_every_schema_bit; do
   if ! grep -Eq "^fn ${harness}\(\)" \
     "${ROOT_DIR}/src/global/compiled/images/image/program_ref/kani.rs"; then
@@ -356,6 +414,18 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness route_arm_decoding_accepts_exact_binary_domain \
   --harness single_ready_mask_decoding_is_exact \
   --harness public_operation_transition_classifier_is_exact \
+  --harness existing_route_reselection_preserves_exact_reference_count \
+  --harness selected_arm_release_is_exact_and_never_underflows \
+  --harness selected_route_commit_rows_preserve_full_descriptor_range \
+  --harness selected_route_commit_rows_accept_257_entries \
+  --harness sparse_route_history_preserves_lane_partition \
+  --harness sparse_route_history_accepts_257_descriptor_relations \
+  --harness frontier_entry_capacity_preserves_the_full_lane_domain \
+  --harness nonempty_frontier_entry_buffer_rejects_null_storage \
+  --harness frontier_observation_packing_is_exact \
+  --harness frontier_observation_rejects_bits_outside_the_exact_kind_domain \
+  --harness visited_entry_identity_is_exact_and_never_silent \
+  --harness absent_state_identity_is_rejected \
   --harness frame_header_roundtrip_preserves_every_field \
   --harness frame_header_identity_is_exact_and_injective \
   --harness builtin_u8_i8_codecs_are_exact \
@@ -380,6 +450,8 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness attachment_count_accepts_exact_full_role_domain \
   --harness attachment_increment_preserves_packed_fault_code \
   --harness attachment_count_allows_256_and_rejects_257 \
+  --harness state_index_preserves_the_exact_present_identity_domain \
+  --harness state_index_rejects_the_reserved_absent_identity \
   --harness packed_event_conflict_decoding_accepts_exact_domain \
   --harness optional_route_arm_decoding_accepts_exact_domain \
   --harness packed_local_dependency_decoding_accepts_exact_domain \
@@ -406,8 +478,15 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness lane_endpoint_index_aggregates_exact_symbolic_membership \
   --harness two_arm_route_frame_coloring_is_exact \
   --harness nested_roll_frame_coloring_uses_the_complete_inbound_key \
+  --harness local_effect_frame_labels_are_erased_from_the_wire_coloring_domain \
+  --harness logical_lane_capacity_is_the_exact_descriptor_lane_span \
+  --harness lane_set_mutation_is_exact_over_the_complete_lane_domain \
+  --harness lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain \
+  --harness nonempty_lane_set_view_rejects_null_storage \
+  --harness nonempty_lane_set_owner_rejects_null_storage \
   --harness controller_merge_accepts_exact_single_role_domain \
   --harness outbound_selector_identity_is_exact_public_send_contract \
+  --harness inbound_selector_identity_is_exact_compact_event_identity \
   --harness observer_path_decision_has_exact_merge_domain \
   --harness route_controller_or_in_band_evidence_is_exact_acceptance_domain \
   --harness three_event_causal_handoff_accepts_every_valid_role_assignment \
@@ -432,6 +511,8 @@ RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --harness compiled_program_blob_comparison_matches_array_equality \
   --harness compiled_program_image_identity_is_exact_over_facts_columns_and_blob \
   --harness program_atom_row_decoding_accepts_exact_domain \
+  --harness compiled_program_atom_binary_search_is_exact_for_sorted_rows \
+  --harness compiled_program_atom_order_rejects_noncanonical_rows \
   --harness compiled_program_atom_blob_decoding_preserves_every_schema_bit
 
 echo "Kani gate passed version=${EXPECTED_VERSION} harnesses=${kani_harness_total} backend=CBMC"

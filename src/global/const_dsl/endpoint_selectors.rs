@@ -23,14 +23,12 @@ impl EndpointSelector {
         ))
     }
 
-    const fn inbound_evidence(atom_idx: usize, _atom: eff::EffAtom) -> Option<Self> {
-        if atom_idx > 0x00ff_ffff {
+    const fn inbound_evidence(atom_idx: usize) -> Option<Self> {
+        if atom_idx >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             None
         } else {
-            // The runtime demux witness for inbound operations is the frame
-            // label, issued monotonically per descriptor target/lane. Within
-            // projection validation the atom index is the same descriptor
-            // identity without re-counting prior atoms for every comparison.
+            // Projection validation uses the same compact event identity later
+            // carried by the descriptor; frame-label reuse remains independent.
             Some(Self(
                 (Self::INBOUND_EVIDENCE << Self::KIND_SHIFT) | atom_idx as u64,
             ))
@@ -158,7 +156,7 @@ const fn parallel_endpoint_selector_conflicts<const E: usize>(
             {
                 return true;
             }
-            if let Some(selector) = inbound_selector_at(idx, atom)
+            if let Some(selector) = inbound_selector_at(idx)
                 && range_contains_endpoint_selector(eff_list, right_start, right_end, selector)
             {
                 return true;
@@ -289,7 +287,7 @@ const fn first_visible_endpoint_matches_atom<const E: usize>(
         }
         _ => {}
     }
-    match inbound_selector_at(atom_idx, atom) {
+    match inbound_selector_at(atom_idx) {
         Some(selector) => {
             first_visible_endpoint_matches(markers, eff_list, start, end, selector, marker_floor)
         }
@@ -393,7 +391,7 @@ const fn next_local_endpoint_selector<const E: usize>(
             let selector = if atom.from == role {
                 EndpointSelector::outbound(atom)
             } else if atom.to == role {
-                inbound_selector_at(*idx, atom)
+                inbound_selector_at(*idx)
             } else {
                 None
             };
@@ -407,8 +405,8 @@ const fn next_local_endpoint_selector<const E: usize>(
     None
 }
 
-const fn inbound_selector_at(atom_idx: usize, atom: eff::EffAtom) -> Option<EndpointSelector> {
-    EndpointSelector::inbound_evidence(atom_idx, atom)
+const fn inbound_selector_at(atom_idx: usize) -> Option<EndpointSelector> {
+    EndpointSelector::inbound_evidence(atom_idx)
 }
 
 const fn atom_matches_selector(
@@ -419,7 +417,7 @@ const fn atom_matches_selector(
     if target.is_outbound() {
         return matches!(EndpointSelector::outbound(atom), Some(selector) if selector.same(target));
     }
-    matches!(inbound_selector_at(atom_idx, atom), Some(selector) if selector.same(target))
+    matches!(inbound_selector_at(atom_idx), Some(selector) if selector.same(target))
 }
 
 #[cfg(kani)]

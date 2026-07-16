@@ -22,8 +22,10 @@ impl DenseLaneOrdinal {
 
 pub(crate) const LANE_DOMAIN_SIZE: usize = u8::MAX as usize + 1;
 pub(crate) const DENSE_LANE_ABSENT: DenseLaneOrdinal = DenseLaneOrdinal::ABSENT;
-pub(crate) const MIN_ENDPOINT_LANE_SLOTS: usize = 2;
 pub(crate) const LANE_SET_VIEW_WORDS: usize = lane_word_count(LANE_DOMAIN_SIZE);
+
+#[cfg(kani)]
+mod kani;
 
 #[inline(always)]
 pub(crate) const fn lane_word_count(lane_count: usize) -> usize {
@@ -73,8 +75,8 @@ impl<'a> LaneSetView<'a> {
     };
 
     #[inline]
-    pub(crate) const fn from_parts(ptr: *const LaneWord, word_len: usize) -> Self {
-        if word_len > u16::MAX as usize {
+    pub(crate) const unsafe fn from_parts(ptr: *const LaneWord, word_len: usize) -> Self {
+        if word_len > u16::MAX as usize || (word_len != 0 && ptr.is_null()) {
             crate::invariant();
         }
         if word_len > LANE_SET_VIEW_WORDS {
@@ -89,8 +91,15 @@ impl<'a> LaneSetView<'a> {
     }
 
     #[inline]
-    pub(crate) const fn from_bytes(ptr: *const u8, byte_len: usize, word_len: usize) -> Self {
+    pub(crate) const unsafe fn from_bytes(
+        ptr: *const u8,
+        byte_len: usize,
+        word_len: usize,
+    ) -> Self {
         if byte_len > u16::MAX as usize || word_len > u16::MAX as usize {
+            crate::invariant();
+        }
+        if byte_len != 0 && ptr.is_null() {
             crate::invariant();
         }
         if word_len > LANE_SET_VIEW_WORDS {
@@ -268,7 +277,7 @@ impl<'a, 'b> PartialEq<LaneSetView<'b>> for LaneSetView<'a> {
 
 impl Eq for LaneSetView<'_> {}
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub(crate) struct LaneSet {
     pub(crate) ptr: *mut LaneWord,
     word_len: u16,
@@ -277,7 +286,7 @@ pub(crate) struct LaneSet {
 impl LaneSet {
     #[inline(always)]
     pub(crate) unsafe fn init_from_parts(dst: *mut Self, ptr: *mut LaneWord, word_len: usize) {
-        if word_len > u16::MAX as usize {
+        if word_len > LANE_SET_VIEW_WORDS || (word_len != 0 && ptr.is_null()) {
             crate::invariant();
         }
         /* SAFETY: route/frontier initialization passes an unpublished
@@ -300,20 +309,22 @@ impl LaneSet {
     }
 
     #[inline(always)]
-    pub(crate) const fn word_len(self) -> usize {
+    pub(crate) const fn word_len(&self) -> usize {
         self.word_len as usize
     }
 
     #[inline(always)]
     pub(crate) fn view(&self) -> LaneSetView<'_> {
-        LaneSetView::from_parts(self.ptr.cast_const(), self.word_len())
+        /* SAFETY: `LaneSet::init_from_parts` established the initialized word
+        span and `&self` keeps that resident owner alive for the view. */
+        unsafe { LaneSetView::from_parts(self.ptr.cast_const(), self.word_len()) }
     }
 
     #[inline(always)]
     pub(crate) fn insert(&mut self, lane: usize) {
         let (word_idx, bit) = lane_word_index(lane);
         if word_idx >= self.word_len() {
-            return;
+            crate::invariant();
         }
         /* SAFETY: `word_idx < word_len` bounds the lane-set word containing
         `lane`, and `&mut self` owns the read-modify-write for that word. */
@@ -327,7 +338,7 @@ impl LaneSet {
     pub(crate) fn remove(&mut self, lane: usize) {
         let (word_idx, bit) = lane_word_index(lane);
         if word_idx >= self.word_len() {
-            return;
+            crate::invariant();
         }
         /* SAFETY: `word_idx < word_len` bounds the lane-set word containing
         `lane`, and `&mut self` owns the removal read-modify-write. */
@@ -343,20 +354,13 @@ pub(crate) const fn logical_lane_count_for_role(
     active_lane_count: usize,
     endpoint_lane_slot_count: usize,
 ) -> usize {
-    if active_lane_count > usize::MAX - MIN_ENDPOINT_LANE_SLOTS {
+    if endpoint_lane_slot_count == 0
+        || endpoint_lane_slot_count > LANE_DOMAIN_SIZE
+        || active_lane_count > endpoint_lane_slot_count
+    {
         crate::invariant();
     }
-    let required = active_lane_count + MIN_ENDPOINT_LANE_SLOTS;
-    let requested = if required > endpoint_lane_slot_count {
-        required
-    } else {
-        endpoint_lane_slot_count
-    };
-    if requested > LANE_DOMAIN_SIZE {
-        LANE_DOMAIN_SIZE
-    } else {
-        requested
-    }
+    endpoint_lane_slot_count
 }
 
 /// Steps for a single lane within the resident role descriptor.

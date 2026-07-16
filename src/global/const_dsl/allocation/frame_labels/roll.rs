@@ -23,6 +23,10 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
             crate::invariant();
         }
         let class = class_node.atom_data();
+        if class.from == class.to {
+            class_idx += 1;
+            continue;
+        }
 
         let mut already_colored = false;
         let mut prior_idx = start;

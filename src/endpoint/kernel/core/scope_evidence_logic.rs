@@ -274,16 +274,6 @@ where
         self.peek_live_scope_ack(scope_id).map(RouteArmToken::arm)
     }
 
-    #[inline]
-    pub(in crate::endpoint::kernel) fn next_slot_in_mask(slot_mask: &mut u8) -> Option<usize> {
-        if *slot_mask == 0 {
-            return None;
-        }
-        let slot_idx = slot_mask.trailing_zeros() as usize;
-        *slot_mask &= !(1u8 << slot_idx);
-        Some(slot_idx)
-    }
-
     pub(in crate::endpoint::kernel) fn arm_has_recv(&self, scope_id: ScopeId, arm: u8) -> bool {
         let materialization_meta = self.compute_scope_arm_materialization_meta(scope_id);
         self.arm_has_recv_with_materialization(scope_id, arm, materialization_meta)

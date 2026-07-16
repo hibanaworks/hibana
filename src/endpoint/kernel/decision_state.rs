@@ -16,6 +16,10 @@ use crate::global::typestate::{EventCursor, LocalConflict, PackedEventConflict};
 
 mod reentry_clear;
 pub(super) use reentry_clear::ReentryScopeLiveness;
+mod route_arm_history;
+use route_arm_history::RouteArmHistoryView;
+#[cfg(kani)]
+mod kani;
 
 const SELECTED_ARM_NONE: u8 = u8::MAX;
 
@@ -66,11 +70,15 @@ impl SelectedRouteCommitRow {
 
 #[derive(Clone, Copy)]
 pub(crate) struct SelectedRouteCommitRowsRef {
-    range_lane_len: u32,
+    range: PackedLaneRange,
+    lane: u8,
 }
 
 impl SelectedRouteCommitRowsRef {
-    pub(in crate::endpoint::kernel) const EMPTY: Self = Self { range_lane_len: 0 };
+    pub(in crate::endpoint::kernel) const EMPTY: Self = Self {
+        range: PackedLaneRange::EMPTY,
+        lane: 0,
+    };
 
     #[inline(always)]
     pub(in crate::endpoint::kernel) const fn from_resident_range_for_lane(
@@ -80,33 +88,29 @@ impl SelectedRouteCommitRowsRef {
         if range.is_absent_or_zero_len() {
             Self::EMPTY
         } else {
-            if range.start() > u16::MAX as usize || range.len() > u8::MAX as usize {
-                crate::invariant();
-            }
             Self {
-                range_lane_len: ((range.start() as u32) << 16)
-                    | ((route_lane as u32) << 8)
-                    | range.len() as u32,
+                range,
+                lane: route_lane,
             }
         }
     }
 
     #[inline(always)]
     pub(in crate::endpoint::kernel) const fn is_empty(self) -> bool {
-        (self.range_lane_len & 0xff) == 0
+        self.range.is_absent_or_zero_len()
     }
 
     #[inline(always)]
     pub(in crate::endpoint::kernel) const fn len(self) -> usize {
-        (self.range_lane_len & 0xff) as usize
+        if self.is_empty() { 0 } else { self.range.len() }
     }
 
     #[inline(always)]
-    pub(in crate::endpoint::kernel) const fn packed_selected_lane(self) -> Option<u8> {
+    pub(in crate::endpoint::kernel) const fn selected_lane(self) -> Option<u8> {
         if self.is_empty() {
             None
         } else {
-            Some(((self.range_lane_len >> 8) & 0xff) as u8)
+            Some(self.lane)
         }
     }
 
@@ -115,7 +119,7 @@ impl SelectedRouteCommitRowsRef {
         if self.is_empty() {
             PackedLaneRange::EMPTY
         } else {
-            PackedLaneRange::new((self.range_lane_len >> 16) as usize, self.len())
+            self.range
         }
     }
 
@@ -208,7 +212,7 @@ impl PreparedRouteCommitRows {
         if self.len() == 0 {
             None
         } else {
-            self.selected_routes.packed_selected_lane()
+            self.selected_routes.selected_lane()
         }
     }
 
@@ -250,12 +254,10 @@ impl RouteCommitRowSetBuilder {
         if len == 0 {
             return Ok(PreparedRouteCommitRows::empty());
         }
-        if len > self.max_len as usize || len > u8::MAX as usize {
+        if len > self.max_len as usize {
             return Err(RecvError::PhaseInvariant);
         }
-        routes
-            .packed_selected_lane()
-            .ok_or(RecvError::PhaseInvariant)?;
+        routes.selected_lane().ok_or(RecvError::PhaseInvariant)?;
         Ok(PreparedRouteCommitRows::from_routes(routes))
     }
 }
@@ -275,7 +277,7 @@ impl SelectedRouteCommitRows {
         }
         Ok(Self {
             routes,
-            max_len: u8::MAX as u16,
+            max_len: u16::MAX,
         })
     }
 
@@ -301,7 +303,7 @@ impl SelectedRouteCommitRows {
         if self.routes.is_empty() {
             return SelectedRouteCommitRowsRef::EMPTY;
         }
-        if self.routes.packed_selected_lane() != Some(route_lane) {
+        if self.routes.selected_lane() != Some(route_lane) {
             return SelectedRouteCommitRowsRef::EMPTY;
         }
         self.routes
@@ -330,7 +332,7 @@ impl SelectedRouteCommitRows {
             self.routes = incoming;
             return Ok(());
         }
-        if self.routes.packed_selected_lane() != Some(lane) {
+        if self.routes.selected_lane() != Some(lane) {
             return Err(RecvError::PhaseInvariant);
         }
         if self.routes.contains_all(cursor, incoming) {
@@ -368,97 +370,35 @@ impl RouteScopeSelectedArmSlot {
         arm: SELECTED_ARM_NONE,
         refs: 0,
     };
-}
 
-#[derive(Clone, Copy)]
-struct RouteArmStackView {
-    ptr: *mut RouteArmState,
-    lane_dense_by_lane: *mut DenseLaneOrdinal,
-    lane_slot_count: usize,
-    active_lane_count: usize,
-    depth: u8,
-}
-
-impl RouteArmStackView {
-    unsafe fn init(
-        dst: *mut Self,
-        ptr: *mut RouteArmState,
-        lane_dense_by_lane: *mut DenseLaneOrdinal,
-        lane_slot_count: usize,
-        active_lane_count: usize,
-        depth: usize,
-    ) {
-        if depth > u8::MAX as usize {
+    #[inline]
+    fn commit_existing_lane_reselection(&mut self, current_arm: u8, selected_arm: u8) {
+        if current_arm == selected_arm {
+            return;
+        }
+        if self.refs == 0 {
             crate::invariant();
         }
-        /* SAFETY: `RouteState::init_empty` passes an unpublished `RouteArmStackView`; route-arm column, dense map, lane counts, and depth are installed before exposure. */
-        unsafe {
-            core::ptr::addr_of_mut!((*dst).ptr).write(ptr);
-            core::ptr::addr_of_mut!((*dst).lane_dense_by_lane).write(lane_dense_by_lane);
-            core::ptr::addr_of_mut!((*dst).lane_slot_count).write(lane_slot_count);
-            core::ptr::addr_of_mut!((*dst).active_lane_count).write(active_lane_count);
-            core::ptr::addr_of_mut!((*dst).depth).write(depth as u8);
-        }
-        let total = crate::invariant_some(active_lane_count.checked_mul(depth));
-        let mut idx = 0usize;
-        while idx < total {
-            /* SAFETY: `idx < active_lane_count * depth` selects one unpublished route-arm stack cell; every cell is initialized to EMPTY before publication. */
-            unsafe {
-                ptr.add(idx).write(RouteArmState::EMPTY);
+        if self.arm == current_arm {
+            if self.refs != 1 {
+                crate::invariant();
             }
-            idx += 1;
+            self.arm = selected_arm;
+        } else if self.arm != selected_arm {
+            crate::invariant();
         }
     }
 
     #[inline]
-    fn lane_dense_ordinal(&self, lane_idx: usize) -> Option<usize> {
-        if lane_idx >= self.lane_slot_count {
-            return None;
+    fn prepared_release(mut self) -> Self {
+        if self.refs == 0 {
+            crate::invariant();
         }
-        let dense = /* SAFETY: `lane_idx < lane_slot_count` bounds this view's dense-lane map; this read only observes the compiled lane-to-dense projection. */ unsafe { *self.lane_dense_by_lane.add(lane_idx) };
-        if dense == DENSE_LANE_ABSENT || dense.get() >= self.active_lane_count {
-            None
-        } else {
-            Some(dense.get())
-        }
-    }
-
-    #[inline]
-    fn depth(&self) -> usize {
-        self.depth as usize
-    }
-
-    #[inline]
-    fn get(&self, lane_idx: usize, arm_idx: usize) -> RouteArmState {
-        let Some(dense) = self.lane_dense_ordinal(lane_idx) else {
-            return RouteArmState::EMPTY;
-        };
-        let depth = self.depth();
-        if arm_idx >= depth {
-            return RouteArmState::EMPTY;
-        }
-        /* SAFETY: `dense < active_lane_count` and `arm_idx < depth` bound an initialized route-arm cell; shared access copies resident state. */
-        unsafe { *self.ptr.add(dense * depth + arm_idx) }
-    }
-
-    #[inline]
-    fn set(&mut self, lane_idx: usize, arm_idx: usize, state: RouteArmState) -> bool {
-        let Some(dense) = self.lane_dense_ordinal(lane_idx) else {
-            return false;
-        };
-        let depth = self.depth();
-        if arm_idx >= depth {
-            return false;
-        }
-        /* SAFETY: `dense < active_lane_count` and `arm_idx < depth` bound a route-arm stack cell; `&mut self` owns this mutation. */
-        unsafe {
-            self.ptr.add(dense * depth + arm_idx).write(state);
-        }
-        true
+        self.refs -= 1;
+        if self.refs == 0 { Self::EMPTY } else { self }
     }
 }
 
-#[derive(Clone, Copy)]
 struct LaneOfferStateView {
     ptr: *mut LaneOfferState,
     lane_dense_by_lane: *mut DenseLaneOrdinal,
@@ -533,13 +473,11 @@ impl LaneOfferStateView {
 }
 
 pub(super) struct RouteState {
-    lane_route_arms: RouteArmStackView,
+    lane_route_arms: RouteArmHistoryView,
     lane_offer_states: LaneOfferStateView,
     pub(super) scope_evidence: ScopeEvidenceTable,
     scope_selected_arms: *mut RouteScopeSelectedArmSlot,
     scope_selected_arm_count: usize,
-    lane_route_arm_lens: *mut u8,
-    lane_reentry_counts: *mut u8,
     lane_reentry_lanes: LaneSet,
     lane_offer_reentry_lanes: LaneSet,
     active_offer_lanes: LaneSet,
@@ -547,12 +485,11 @@ pub(super) struct RouteState {
 
 pub(super) struct RouteStateStorage {
     pub(super) route_arm_storage: *mut RouteArmState,
+    pub(super) lane_route_arm_lengths: *mut u16,
     pub(super) lane_offer_state_storage: *mut LaneOfferState,
     pub(super) scope_evidence_slots: *mut ScopeEvidenceSlot,
     pub(super) scope_selected_arms: *mut RouteScopeSelectedArmSlot,
     pub(super) lane_dense_by_lane: *mut DenseLaneOrdinal,
-    pub(super) lane_route_arm_lens: *mut u8,
-    pub(super) lane_reentry_counts: *mut u8,
     pub(super) lane_reentry_words: *mut LaneWord,
     pub(super) lane_offer_reentry_words: *mut LaneWord,
     pub(super) active_offer_lane_words: *mut LaneWord,
@@ -560,10 +497,9 @@ pub(super) struct RouteStateStorage {
 
 pub(super) struct RouteStateCapacity {
     pub(super) lane_slot_count: usize,
-    pub(super) active_lane_count: usize,
     pub(super) lane_word_count: usize,
     pub(super) lane_offer_state_count: usize,
-    pub(super) route_frame_depth: usize,
+    pub(super) route_arm_state_capacity: usize,
     pub(super) scope_evidence_count: usize,
     pub(super) scope_selected_arm_count: usize,
 }
@@ -586,13 +522,14 @@ impl RouteState {
     ) {
         /* SAFETY: endpoint route initialization passes an unpublished `RouteState`; sub-owners receive disjoint arena columns before exposure. */
         unsafe {
-            RouteArmStackView::init(
+            RouteArmHistoryView::init(
                 core::ptr::addr_of_mut!((*dst).lane_route_arms),
                 storage.route_arm_storage,
+                storage.lane_route_arm_lengths,
                 storage.lane_dense_by_lane,
                 capacity.lane_slot_count,
-                capacity.active_lane_count,
-                capacity.route_frame_depth,
+                capacity.lane_offer_state_count,
+                capacity.route_arm_state_capacity,
             );
             LaneOfferStateView::init(
                 core::ptr::addr_of_mut!((*dst).lane_offer_states),
@@ -609,8 +546,6 @@ impl RouteState {
             core::ptr::addr_of_mut!((*dst).scope_selected_arms).write(storage.scope_selected_arms);
             core::ptr::addr_of_mut!((*dst).scope_selected_arm_count)
                 .write(capacity.scope_selected_arm_count);
-            core::ptr::addr_of_mut!((*dst).lane_route_arm_lens).write(storage.lane_route_arm_lens);
-            core::ptr::addr_of_mut!((*dst).lane_reentry_counts).write(storage.lane_reentry_counts);
             LaneSet::init_from_parts(
                 core::ptr::addr_of_mut!((*dst).lane_reentry_lanes),
                 storage.lane_reentry_words,
@@ -626,12 +561,6 @@ impl RouteState {
                 storage.active_offer_lane_words,
                 capacity.lane_word_count,
             );
-            let mut lane_idx = 0usize;
-            while lane_idx < capacity.active_lane_count {
-                storage.lane_route_arm_lens.add(lane_idx).write(0);
-                storage.lane_reentry_counts.add(lane_idx).write(0);
-                lane_idx += 1;
-            }
             let mut scope_idx = 0usize;
             while scope_idx < capacity.scope_selected_arm_count {
                 storage
@@ -645,24 +574,18 @@ impl RouteState {
 
     #[inline]
     pub(super) fn lane_route_arm_len(&self, lane_idx: usize) -> usize {
-        match self.lane_offer_states.lane_dense_ordinal(lane_idx) {
-            Some(dense) => {
-                /* SAFETY: dense lane comes from this route state's lane-offer view and indexes initialized `lane_route_arm_lens`. */
-                unsafe { *self.lane_route_arm_lens.add(dense) as usize }
-            }
-            None => 0,
-        }
+        self.lane_route_arms.lane_len(lane_idx)
     }
 
     fn preflight_selected_route_with_effective_slot(
         &self,
         input: SelectedRoutePreflight,
     ) -> Option<SelectedRouteCommitRow> {
-        let dense = self.lane_offer_states.lane_dense_ordinal(input.lane_idx)?;
+        self.lane_offer_states.lane_dense_ordinal(input.lane_idx)?;
         if input.scope_slot > u16::MAX as usize {
             return None;
         }
-        let len = /* SAFETY: `dense` was resolved by this route state's lane-offer view and indexes initialized route-arm lengths. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
+        let len = self.lane_route_arms.lane_len(input.lane_idx);
         let mut idx = 0usize;
         while idx < len {
             let current = self.lane_route_arms.get(input.lane_idx, idx);
@@ -678,7 +601,7 @@ impl RouteState {
             idx += 1;
         }
 
-        if len >= self.lane_route_arms.depth() && input.reentry.is_reentrant() {
+        if !self.lane_route_arms.has_capacity() {
             return None;
         }
         if input.effective_refs == 0
@@ -725,56 +648,63 @@ impl RouteState {
             crate::invariant();
         }
         let scope = row.scope();
-        let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
+        if self
+            .lane_offer_states
+            .lane_dense_ordinal(lane_idx)
+            .is_none()
+        {
             crate::invariant();
-        };
+        }
         if scope_slot >= self.scope_selected_arm_count {
             crate::invariant();
         }
         let arm = row.selected_arm();
-        let slot = /* SAFETY: prepared route selection bounds `scope_slot` inside selected-arm column, and `&mut self` owns this commit mutation. */ unsafe { &mut *self.scope_selected_arms.add(scope_slot) };
-        let len = /* SAFETY: `dense` came from the lane-offer view and indexes initialized route-arm length for this commit. */ unsafe { *self.lane_route_arm_lens.add(dense) as usize };
+        let mut next_slot = /* SAFETY: prepared route selection bounds
+        `scope_slot` inside the initialized selected-arm column. The copied next
+        state remains unpublished until the sparse lane history commits. */ unsafe {
+            *self.scope_selected_arms.add(scope_slot)
+        };
+        let len = self.lane_route_arms.lane_len(lane_idx);
         let mut pos = 0usize;
         while pos < len {
             let current = self.lane_route_arms.get(lane_idx, pos);
             if current.scope == scope {
-                if current.arm != arm {
-                    slot.arm = arm;
-                    slot.refs = 1;
+                next_slot.commit_existing_lane_reselection(current.arm, arm);
+                if !self.lane_route_arms.set(lane_idx, pos, scope, arm) {
+                    crate::invariant();
                 }
-                self.lane_route_arms
-                    .set(lane_idx, pos, RouteArmState { scope, arm });
+                /* SAFETY: `scope_slot` was bounded above. The history mutation
+                completed, so this single write publishes the matching ref state. */
+                unsafe {
+                    self.scope_selected_arms.add(scope_slot).write(next_slot);
+                }
                 return;
             }
             pos += 1;
         }
 
-        if slot.refs == 0 {
-            slot.arm = arm;
-            slot.refs = 1;
+        if next_slot.refs == 0 {
+            next_slot.arm = arm;
+            next_slot.refs = 1;
         } else {
-            if slot.refs == u16::MAX {
+            if next_slot.refs == u16::MAX {
                 crate::invariant();
             }
-            slot.refs += 1;
+            next_slot.refs += 1;
         }
-        if len >= self.lane_route_arms.depth() {
-            if reentry.is_reentrant() {
-                crate::invariant();
-            }
-            return;
-        }
-        self.lane_route_arms
-            .set(lane_idx, len, RouteArmState { scope, arm });
-        if len >= u8::MAX as usize {
+        if !self.lane_route_arms.has_capacity() {
             crate::invariant();
         }
-        /* SAFETY: `dense` indexes this lane's route-arm length column, and `len + 1` is bounded by route depth and `u8::MAX`. */
+        if !self.lane_route_arms.push(lane_idx, scope, arm) {
+            crate::invariant();
+        }
+        /* SAFETY: `scope_slot` was bounded above. Every fallible history check
+        and mutation completed before this single selected-arm publication. */
         unsafe {
-            self.lane_route_arm_lens.add(dense).write((len as u8) + 1);
+            self.scope_selected_arms.add(scope_slot).write(next_slot);
         }
         if reentry.is_reentrant() {
-            self.increment_reentry_count(lane_idx);
+            self.lane_reentry_lanes.insert(lane_idx);
         }
     }
 
@@ -788,24 +718,6 @@ impl RouteState {
             None
         } else {
             Some(slot.arm)
-        }
-    }
-
-    #[inline]
-    pub(super) fn increment_reentry_count(&mut self, lane_idx: usize) {
-        let Some(dense) = self.lane_offer_states.lane_dense_ordinal(lane_idx) else {
-            crate::invariant();
-        };
-        /* SAFETY: `dense` came from the lane-offer view and indexes initialized reentry-count column; `&mut self` owns the mutation. */
-        unsafe {
-            let count = &mut *self.lane_reentry_counts.add(dense);
-            if *count == u8::MAX {
-                crate::invariant();
-            }
-            *count += 1;
-            if *count == 1 {
-                self.lane_reentry_lanes.insert(lane_idx);
-            }
         }
     }
 

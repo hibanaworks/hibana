@@ -9,16 +9,15 @@
 use core::ops::{Index, IndexMut};
 
 use super::frontier::{
-    ActiveEntrySet, ActiveEntrySlot, EntryBuffer, FrontierVisitSet, LaneOfferState,
-    RootFrontierState,
+    ActiveEntrySet, ActiveEntrySlot, FrontierVisitSet, LaneOfferState, RootFrontierState,
 };
-use crate::global::const_dsl::ScopeId;
+use crate::global::{const_dsl::ScopeId, typestate::StateIndex};
 
 pub(super) struct RootFrontierTable {
     ptr: *mut RootFrontierState,
     active_entries: *mut ActiveEntrySlot,
     capacity: u16,
-    pool_capacity: u8,
+    pool_capacity: u16,
 }
 
 pub(super) struct RootFrontierStorage {
@@ -33,7 +32,7 @@ pub(super) struct RootFrontierCapacity {
 
 pub(super) struct FrontierStateStorage {
     pub(super) root: RootFrontierStorage,
-    pub(super) visited_scopes: *mut ScopeId,
+    pub(super) visited_entries: *mut StateIndex,
 }
 
 pub(super) struct FrontierStateCapacity {
@@ -49,7 +48,12 @@ impl RootFrontierTable {
         if capacity.row_count > u16::MAX as usize {
             crate::invariant();
         }
-        if capacity.pool_capacity > u8::MAX as usize {
+        if capacity.pool_capacity > u16::MAX as usize {
+            crate::invariant();
+        }
+        if (capacity.row_count != 0 && storage.rows.is_null())
+            || (capacity.pool_capacity != 0 && storage.active_entries.is_null())
+        {
             crate::invariant();
         }
         /* SAFETY: `FrontierState::init_empty` passes an unpublished root table; row and active-entry columns are installed before borrow. */
@@ -57,7 +61,7 @@ impl RootFrontierTable {
             core::ptr::addr_of_mut!((*dst).ptr).write(storage.rows);
             core::ptr::addr_of_mut!((*dst).active_entries).write(storage.active_entries);
             core::ptr::addr_of_mut!((*dst).capacity).write(capacity.row_count as u16);
-            core::ptr::addr_of_mut!((*dst).pool_capacity).write(capacity.pool_capacity as u8);
+            core::ptr::addr_of_mut!((*dst).pool_capacity).write(capacity.pool_capacity as u16);
         }
         let mut slot_idx = 0usize;
         while slot_idx < capacity.row_count {
@@ -113,18 +117,31 @@ impl RootFrontierTable {
     }
 
     #[inline]
-    fn active_entry_set(&self, slot_idx: usize) -> ActiveEntrySet {
+    fn checked_active_span(&self, slot_idx: usize) -> (usize, usize, usize) {
         let row = self[slot_idx];
-        if row.active_len == 0 {
+        let start = row.active_start as usize;
+        let len = row.active_len as usize;
+        let end = match start.checked_add(len) {
+            Some(end) => end,
+            None => crate::invariant(),
+        };
+        let used = self.active_pool_used();
+        if end > used || used > self.pool_capacity() {
+            crate::invariant();
+        }
+        (start, len, used)
+    }
+
+    #[inline]
+    fn active_entry_set(&self, slot_idx: usize) -> ActiveEntrySet {
+        let (start, len, _) = self.checked_active_span(slot_idx);
+        if len == 0 {
             return ActiveEntrySet::EMPTY;
         }
-        ActiveEntrySet {
-            slots: EntryBuffer::from_parts(
-                /* SAFETY: row active span is allocated from this table's active-entry pool and stays below `active_pool_used()`. */
-                unsafe { self.active_entries.add(row.active_start as usize) },
-                row.active_len as usize,
-            ),
-        }
+        /* SAFETY: row active span is allocated from this table's initialized
+        active-entry pool and stays immutable while this read-only view is
+        consumed by the current endpoint operation. */
+        unsafe { ActiveEntrySet::from_parts(self.active_entries.add(start), len) }
     }
 
     #[inline]
@@ -134,10 +151,16 @@ impl RootFrontierTable {
 
     #[inline]
     fn prepare_row(&mut self, slot_idx: usize, root: ScopeId) {
+        if slot_idx != self.len() || slot_idx >= self.capacity() {
+            crate::invariant();
+        }
         let active_start = self.active_pool_used();
+        if active_start > self.pool_capacity() || active_start > u16::MAX as usize {
+            crate::invariant();
+        }
         let row = &mut self[slot_idx];
         row.root = root;
-        row.active_start = active_start as u8;
+        row.active_start = active_start as u16;
         row.active_len = 0;
     }
 
@@ -153,9 +176,7 @@ impl RootFrontierTable {
         let Some(entry) = super::frontier::checked_state_index(entry_idx) else {
             return false;
         };
-        let row = self[slot_idx];
-        let start = row.active_start as usize;
-        let len = row.active_len as usize;
+        let (start, len, used) = self.checked_active_span(slot_idx);
         let mut insert_rel = 0usize;
         while insert_rel < len {
             let existing = /* SAFETY: `insert_rel < row.active_len` bounds a shared read inside the root row active-entry span. */ unsafe { *self.active_entries.add(start + insert_rel) };
@@ -169,9 +190,19 @@ impl RootFrontierTable {
             }
             insert_rel += 1;
         }
-        let used = self.active_pool_used();
         if used >= self.pool_capacity() {
             return false;
+        }
+        let row_len = self.len();
+        if self[slot_idx].active_len == u16::MAX {
+            crate::invariant();
+        }
+        let mut shifted_row = slot_idx + 1;
+        while shifted_row < row_len {
+            if self[shifted_row].active_start == u16::MAX {
+                crate::invariant();
+            }
+            shifted_row += 1;
         }
         let insert_idx = start + insert_rel;
         let mut idx = used;
@@ -190,16 +221,9 @@ impl RootFrontierTable {
                 .add(insert_idx)
                 .write(ActiveEntrySlot { entry, lane_idx });
         }
-        if self[slot_idx].active_len == u8::MAX {
-            crate::invariant();
-        }
         self[slot_idx].active_len += 1;
-        let row_len = self.len();
         let mut idx = slot_idx + 1;
         while idx < row_len {
-            if self[idx].active_start == u8::MAX {
-                crate::invariant();
-            }
             self[idx].active_start += 1;
             idx += 1;
         }
@@ -210,9 +234,7 @@ impl RootFrontierTable {
         if slot_idx >= self.len() {
             crate::invariant();
         }
-        let row = self[slot_idx];
-        let start = row.active_start as usize;
-        let len = row.active_len as usize;
+        let (start, len, used) = self.checked_active_span(slot_idx);
         let mut remove_rel = 0usize;
         let entry = crate::invariant_some(super::frontier::checked_state_index(entry_idx));
         while remove_rel < len {
@@ -226,7 +248,17 @@ impl RootFrontierTable {
         if remove_rel >= len {
             return false;
         }
-        let used = self.active_pool_used();
+        if self[slot_idx].active_len == 0 {
+            crate::invariant();
+        }
+        let row_len = self.len();
+        let mut shifted_row = slot_idx + 1;
+        while shifted_row < row_len {
+            if self[shifted_row].active_start == 0 {
+                crate::invariant();
+            }
+            shifted_row += 1;
+        }
         let remove_idx = start + remove_rel;
         let mut idx = remove_idx;
         while idx + 1 < used {
@@ -246,16 +278,9 @@ impl RootFrontierTable {
                     .write(ActiveEntrySlot::EMPTY);
             }
         }
-        if self[slot_idx].active_len == 0 {
-            crate::invariant();
-        }
         self[slot_idx].active_len -= 1;
-        let row_len = self.len();
         let mut idx = slot_idx + 1;
         while idx < row_len {
-            if self[idx].active_start == 0 {
-                crate::invariant();
-            }
             self[idx].active_start -= 1;
             idx += 1;
         }
@@ -268,13 +293,18 @@ impl RootFrontierTable {
             crate::invariant();
         }
 
-        let active_span = self[slot_idx].active_len as usize;
+        let (start, active_span, used) = self.checked_active_span(slot_idx);
+        let mut shifted_row = slot_idx + 1;
+        while shifted_row < len {
+            if active_span > self[shifted_row].active_start as usize {
+                crate::invariant();
+            }
+            shifted_row += 1;
+        }
         if active_span != 0 {
-            let start = self[slot_idx].active_start as usize;
-            let used = self.active_pool_used();
             let mut idx = start;
             while idx + active_span < used {
-                /* SAFETY: `idx` and `idx + active_span` are inside used active-entry pool; `&mut self` owns the root-row removal shift. */
+                /* SAFETY: `idx` and `idx + active_span` are inside the initialized used active-entry pool; `&mut self` owns the root-row removal shift. */
                 unsafe {
                     self.active_entries
                         .add(idx)
@@ -298,10 +328,7 @@ impl RootFrontierTable {
         while idx < len {
             let mut shifted = self[idx];
             if active_span != 0 {
-                if active_span > shifted.active_start as usize {
-                    crate::invariant();
-                }
-                shifted.active_start -= active_span as u8;
+                shifted.active_start -= active_span as u16;
             }
             self[idx - 1] = shifted;
             idx += 1;
@@ -336,7 +363,7 @@ impl IndexMut<usize> for RootFrontierTable {
 
 pub(super) struct FrontierState {
     pub(super) root_frontier_state: RootFrontierTable,
-    visited_scopes: *mut ScopeId,
+    visited_entries: *mut StateIndex,
 }
 
 impl FrontierState {
@@ -345,6 +372,9 @@ impl FrontierState {
         storage: FrontierStateStorage,
         capacity: FrontierStateCapacity,
     ) {
+        if capacity.root.pool_capacity != 0 && storage.visited_entries.is_null() {
+            crate::invariant();
+        }
         unsafe {
             // SAFETY: `FrontierState` is initialized in one caller-owned endpoint
             // arena. The root and offer-entry sub-tables receive disjoint backing
@@ -355,18 +385,18 @@ impl FrontierState {
                 storage.root,
                 capacity.root,
             );
-            core::ptr::addr_of_mut!((*dst).visited_scopes).write(storage.visited_scopes);
+            core::ptr::addr_of_mut!((*dst).visited_entries).write(storage.visited_entries);
         }
     }
 
     #[inline]
     pub(super) fn empty_frontier_visit_set(&mut self) -> FrontierVisitSet {
-        /* SAFETY: `visited_scopes` is the endpoint-owned arena section paired
-        with the offer-entry capacity. One public offer operation owns the
+        /* SAFETY: `visited_entries` is the endpoint-owned arena section paired
+        with the active-entry capacity. One public offer operation owns the
         returned initialized prefix until it completes or is dropped. */
         unsafe {
             FrontierVisitSet::from_parts(
-                self.visited_scopes,
+                self.visited_entries,
                 self.root_frontier_state.pool_capacity(),
             )
         }
@@ -392,13 +422,10 @@ impl FrontierState {
     }
 
     #[inline]
-    pub(super) fn root_frontier_active_mask(&self, root: ScopeId) -> u8 {
+    pub(super) fn root_frontier_has_active_entries(&self, root: ScopeId) -> bool {
         match self.root_frontier_slot(root) {
-            Some(slot) => self
-                .root_frontier_state
-                .active_entry_set(slot)
-                .occupancy_mask(),
-            None => 0,
+            Some(slot) => self.root_frontier_state.active_entry_set(slot).len() != 0,
+            None => false,
         }
     }
 
@@ -461,7 +488,7 @@ impl FrontierState {
             return;
         }
         let Some(slot_idx) = self.root_frontier_slot(root) else {
-            return;
+            crate::invariant();
         };
         if self.root_frontier_state.active_entry_set(slot_idx).len() == 0 {
             self.remove_root_frontier_slot(slot_idx);

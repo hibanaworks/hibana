@@ -73,11 +73,13 @@ impl CompiledProgramRef {
         bytes: &'static [u8; N],
     ) -> Self {
         let blob = BlobPtr::from_array(bytes, columns.blob_len());
-        Self {
+        let image = Self {
             facts,
             columns,
             blob,
-        }
+        };
+        image.validate_atom_order();
+        image
     }
 
     pub(crate) fn same_image(&self, other: &Self) -> bool {
@@ -157,23 +159,60 @@ impl CompiledProgramRef {
         }
     }
 
+    const fn validate_atom_order(&self) {
+        let mut row = 1usize;
+        while row < self.columns.atom_count() {
+            let previous_offset = match self.column_offset(
+                self.columns.atoms(),
+                row - 1,
+                PROGRAM_IMAGE_ATOM_STRIDE,
+            ) {
+                Some(offset) => offset,
+                None => crate::invariant(),
+            };
+            let offset =
+                match self.column_offset(self.columns.atoms(), row, PROGRAM_IMAGE_ATOM_STRIDE) {
+                    Some(offset) => offset,
+                    None => crate::invariant(),
+                };
+            if self.read_u16_at(previous_offset) >= self.read_u16_at(offset) {
+                crate::invariant();
+            }
+            row += 1;
+        }
+    }
+
     #[inline]
     pub(crate) const fn atom_at(&self, eff_idx: usize) -> Option<EffAtom> {
         if eff_idx >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             crate::invariant();
         }
-        let mut row = 0usize;
-        while row < self.columns.atom_count() {
+        let mut start = 0usize;
+        let mut end = self.columns.atom_count();
+        while start < end {
+            let row = start + (end - start) / 2;
             let decoded = match self.atom_row_at(row) {
                 Some(decoded) => decoded,
                 None => crate::invariant(),
             };
-            if decoded.eff_idx as usize == eff_idx {
-                return Some(decoded.atom);
+            if (decoded.eff_idx as usize) < eff_idx {
+                start = row + 1;
+            } else {
+                end = row;
             }
-            row += 1;
         }
-        None
+        if start >= self.columns.atom_count() {
+            return None;
+        }
+        let decoded = match self.atom_row_at(start) {
+            Some(decoded) => decoded,
+            None => crate::invariant(),
+        };
+        if decoded.eff_idx as usize == eff_idx {
+            Some(decoded.atom)
+        } else {
+            None
+        }
     }
 
     #[inline(always)]

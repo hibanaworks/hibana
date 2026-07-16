@@ -1,5 +1,4 @@
-use super::super::super::{CurrentFrontierSelectionState, ObservedEntrySet, OfferSelectPriority};
-use super::set::OfferEntrySet;
+use super::super::super::{CurrentFrontierSelectionState, OfferSelectPriority};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(u8)]
@@ -178,54 +177,5 @@ impl OfferAlignmentSelection {
             OfferAlignmentOutcome::CandidateAbsent
             | OfferAlignmentOutcome::CandidateSetAmbiguous => None,
         }
-    }
-}
-
-pub(in crate::endpoint::kernel::offer::select_alignment) struct ClassifiedOfferCandidateSets {
-    candidates: OfferEntrySet,
-    controllers: OfferEntrySet,
-    dynamic_controllers: OfferEntrySet,
-}
-
-impl ClassifiedOfferCandidateSets {
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn new(
-        candidates: OfferEntrySet,
-        controllers: OfferEntrySet,
-        dynamic_controllers: OfferEntrySet,
-    ) -> Self {
-        Self {
-            candidates,
-            controllers,
-            dynamic_controllers,
-        }
-    }
-
-    pub(in crate::endpoint::kernel::offer::select_alignment) fn outcome(
-        self,
-        observed_entries: ObservedEntrySet,
-    ) -> OfferAlignmentOutcome {
-        if self.dynamic_controllers.has_one() {
-            let Some(entry_idx) = self.dynamic_controllers.first_entry_idx(observed_entries) else {
-                crate::invariant();
-            };
-            return OfferAlignmentOutcome::UniqueDynamicController(entry_idx);
-        }
-        if self.controllers.has_one() {
-            let Some(entry_idx) = self.controllers.first_entry_idx(observed_entries) else {
-                crate::invariant();
-            };
-            return OfferAlignmentOutcome::UniqueController(entry_idx);
-        }
-        if self.candidates.is_empty() {
-            return OfferAlignmentOutcome::CandidateAbsent;
-        }
-        if self.candidates.has_one() {
-            let Some(entry_idx) = self.candidates.first_entry_idx(observed_entries) else {
-                crate::invariant();
-            };
-            return OfferAlignmentOutcome::UniqueCandidate(entry_idx);
-        }
-        OfferAlignmentOutcome::CandidateSetAmbiguous
     }
 }

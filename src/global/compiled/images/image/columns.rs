@@ -2,7 +2,7 @@ use crate::{
     eff::EffKind,
     global::{
         compiled::lowering::CompiledProgramImage,
-        const_dsl::{EffList, ScopeEvent, ScopeKind, route_arm_ranges_from_first_enter},
+        const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, route_arm_ranges_from_first_enter},
     },
 };
 
@@ -11,11 +11,16 @@ pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8;
 pub(crate) const PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE: usize = 1;
 pub(crate) const PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5;
 pub(crate) const COMPACT_DESCRIPTOR_BYTE_CAPACITY: usize = u16::MAX as usize;
+pub(crate) const PROGRAM_IMAGE_MIN_SCOPE_BYTES: usize = 2 * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+const PROGRAM_IMAGE_SCOPE_CAPACITY: usize =
+    COMPACT_DESCRIPTOR_BYTE_CAPACITY / PROGRAM_IMAGE_MIN_SCOPE_BYTES;
 pub(crate) const PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY: usize =
     COMPACT_DESCRIPTOR_BYTE_CAPACITY / PROGRAM_IMAGE_ATOM_STRIDE;
 const _: () = assert!(
     PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
 );
+const _: () = assert!(PROGRAM_IMAGE_SCOPE_CAPACITY < ScopeId::LOCAL_CAPACITY as usize);
+const _: () = assert!(PROGRAM_IMAGE_SCOPE_CAPACITY < u16::MAX as usize);
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProgramColumnRange {

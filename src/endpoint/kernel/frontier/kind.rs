@@ -1,4 +1,4 @@
-use super::{ScopeId, StateIndex, TryFrom};
+use super::{MAX_STATES, ScopeId, StateIndex};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrontierKind {
     Route,
@@ -8,6 +8,8 @@ pub(crate) enum FrontierKind {
 }
 
 impl FrontierKind {
+    pub(crate) const ALL_BITS: u8 = (1 << 4) - 1;
+
     #[inline]
     pub(crate) const fn bit(self) -> u8 {
         match self {
@@ -21,7 +23,11 @@ impl FrontierKind {
 
 #[inline]
 pub(crate) fn checked_state_index(idx: usize) -> Option<StateIndex> {
-    u16::try_from(idx).ok().map(StateIndex::new)
+    if idx < MAX_STATES {
+        Some(StateIndex::new(idx as u16))
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy)]

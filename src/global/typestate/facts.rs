@@ -44,12 +44,6 @@ impl PackedEventConflict {
     const REENTRY_WITHOUT_CONFLICT_RAW: u16 = Self::NO_CONFLICT_BIT | Self::ROUTE_REENTRY_BIT;
     const ROUTE_VALUE_MASK: u16 =
         (Self::ROUTE_MASK << Self::ARM_BITS) | 1 | Self::ROUTE_REENTRY_BIT;
-    /// Maximum row-chain length for conflict traversal.
-    ///
-    /// Projection rejects route stacks deeper than the compact `u8` depth
-    /// field, so one additional step is a complete cycle guard.
-    pub(crate) const MAX_CHAIN_DEPTH: usize = u8::MAX as usize + 1;
-
     #[inline(always)]
     pub(crate) const fn none() -> Self {
         Self(Self::ABSENT_RAW)
@@ -250,12 +244,15 @@ impl StateIndex {
 
     #[inline(always)]
     pub(crate) const fn new(raw: u16) -> Self {
+        if raw == u16::MAX {
+            crate::invariant();
+        }
         Self(raw)
     }
 
     #[inline(always)]
     pub(crate) const fn from_usize(idx: usize) -> Self {
-        if idx > (u16::MAX as usize) {
+        if idx >= MAX_STATES {
             crate::invariant();
         }
         Self(idx as u16)
@@ -623,7 +620,22 @@ impl LocalNode {
 
 #[cfg(test)]
 mod tests {
-    use super::{InboundFrameKey, LocalNode, PackedEventConflict};
+    use super::{InboundFrameKey, LocalNode, MAX_STATES, PackedEventConflict, StateIndex};
+
+    #[test]
+    fn state_index_uses_the_exact_present_identity_domain() {
+        assert_eq!(
+            StateIndex::from_usize(MAX_STATES - 1).as_usize(),
+            MAX_STATES - 1
+        );
+        assert!(!StateIndex::from_usize(MAX_STATES - 1).is_absent());
+    }
+
+    #[test]
+    #[should_panic]
+    fn state_index_rejects_the_reserved_absent_identity() {
+        let _ = StateIndex::from_usize(MAX_STATES);
+    }
 
     #[test]
     fn inbound_frame_key_is_exact_three_byte_identity() {

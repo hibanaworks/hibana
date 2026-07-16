@@ -124,7 +124,7 @@ impl EventCursor {
     ) -> bool {
         let mut reentry_scope = meta_scope;
         let mut depth = 0usize;
-        let depth_bound = self.local_steps_len() + PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.local_steps_len() + self.route_chain_bound();
         while depth < depth_bound {
             if reentry_scope == branch_scope {
                 return true;
@@ -164,7 +164,7 @@ impl EventCursor {
         }
         let mut target_scope = initial_scope;
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             if let Some(arm) = preview_arm_for_scope(target_scope) {
                 if !visit(target_scope, arm) {
@@ -419,7 +419,7 @@ impl EventCursor {
             return None;
         }
         let mut depth = 0usize;
-        let depth_bound = PackedEventConflict::MAX_CHAIN_DEPTH;
+        let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
             let (scope, arm) = self.route_conflict_parent_arm(child_scope)?;
             if scope == target_scope {

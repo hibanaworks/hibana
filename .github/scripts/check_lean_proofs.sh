@@ -65,12 +65,16 @@ axiom_both_count="$(awk '
   /depends on axioms: \[propext,$/ { count += 1 }
   END { print count + 0 }
 ' <<<"${axiom_output}")"
-if [[ "${axiom_both_count}" != "269" ]] \
+readonly EXPECTED_AXIOM_BOTH_COUNT=274
+readonly EXPECTED_AXIOM_PROPEXT_COUNT=195
+readonly EXPECTED_AXIOM_FREE_COUNT=68
+readonly EXPECTED_EXPORTED_THEOREM_COUNT=537
+if [[ "${axiom_both_count}" != "${EXPECTED_AXIOM_BOTH_COUNT}" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
   || [[ "$(grep -Fc "native_decide.ax" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "194" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "54" ]] \
-  || [[ "$(grep -Ec "^'Hibana\\." <<<"${axiom_output}")" != "517" ]]; then
+  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "${EXPECTED_AXIOM_PROPEXT_COUNT}" ]] \
+  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "${EXPECTED_AXIOM_FREE_COUNT}" ]] \
+  || [[ "$(grep -Ec "^'Hibana\\." <<<"${axiom_output}")" != "${EXPECTED_EXPORTED_THEOREM_COUNT}" ]]; then
   echo "Lean proof gate axiom set changed" >&2
   exit 1
 fi

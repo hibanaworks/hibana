@@ -213,6 +213,9 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T>(
                 active_lane_dense_by_lane,
                 arena_layout.route_state_lane_dense_by_lane().count(),
             ));
+        if active_lane_count != arena_layout.lane_offer_state_slots().count() {
+            crate::invariant();
+        }
         let decision_state =
             section_ptr::<RouteState>(arena_storage, arena_layout.decision_state());
         LeasedState::init_from_ptr(
@@ -229,14 +232,18 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T>(
         );
         RouteCommitRowSetBuilder::init(
             route_commit_row_set_builder,
-            role_descriptor.max_route_stack_depth().max(1),
+            role_descriptor.max_route_commit_count(),
         );
         RouteState::init_empty(
             decision_state,
             RouteStateStorage {
                 route_arm_storage: section_ptr::<crate::endpoint::kernel::evidence::RouteArmState>(
                     arena_storage,
-                    arena_layout.route_arm_stack(),
+                    arena_layout.route_arm_history(),
+                ),
+                lane_route_arm_lengths: section_ptr::<u16>(
+                    arena_storage,
+                    arena_layout.route_state_lane_route_arm_lengths(),
                 ),
                 lane_offer_state_storage: section_ptr::<
                     crate::endpoint::kernel::frontier::LaneOfferState,
@@ -254,14 +261,6 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T>(
                     arena_layout.route_state_scope_selected_arms(),
                 ),
                 lane_dense_by_lane: active_lane_dense_by_lane,
-                lane_route_arm_lens: section_ptr::<u8>(
-                    arena_storage,
-                    arena_layout.route_state_lane_route_arm_lens(),
-                ),
-                lane_reentry_counts: section_ptr::<u8>(
-                    arena_storage,
-                    arena_layout.route_state_lane_reentry_counts(),
-                ),
                 lane_reentry_words: section_ptr::<crate::global::role_program::LaneWord>(
                     arena_storage,
                     arena_layout.route_state_lane_reentry_lanes(),
@@ -277,10 +276,9 @@ unsafe fn init_endpoint_route<'r, const ROLE: u8, T>(
             },
             RouteStateCapacity {
                 lane_slot_count: arena_layout.route_state_lane_dense_by_lane().count(),
-                active_lane_count,
                 lane_word_count: arena_layout.route_state_lane_reentry_lanes().count(),
                 lane_offer_state_count: arena_layout.lane_offer_state_slots().count(),
-                route_frame_depth: role_descriptor.max_route_stack_depth(),
+                route_arm_state_capacity: arena_layout.route_arm_history().count(),
                 scope_evidence_count: arena_layout.scope_evidence_slots().count(),
                 scope_selected_arm_count: arena_layout.route_state_scope_selected_arms().count(),
             },
@@ -319,9 +317,9 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
                         arena_layout.frontier_root_active_slots(),
                     ),
                 },
-                visited_scopes: section_ptr::<crate::global::const_dsl::ScopeId>(
+                visited_entries: section_ptr::<crate::global::typestate::StateIndex>(
                     arena_storage,
-                    arena_layout.frontier_visited_scopes(),
+                    arena_layout.frontier_visited_entries(),
                 ),
             },
             FrontierStateCapacity {

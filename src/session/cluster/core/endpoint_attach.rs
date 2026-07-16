@@ -86,7 +86,7 @@ where
             public_ops,
             public_slot_ownership,
         } = args;
-        let logical_lane_count = role_image.logical_lane_count().max(1);
+        let logical_lane_count = role_image.logical_lane_count();
         let primary_lane_index = Self::primary_endpoint_lane_index(role_image, logical_lane_count);
         let session_lane_index = 0usize;
         let session_wire_lane = Lane::new(session_lane_index as u32);
@@ -245,7 +245,7 @@ where
             session storage only long enough to compute endpoint storage
             requirements and reserve a live endpoint slot. */
             unsafe {
-                let logical_lane_count = role_image.logical_lane_count().max(1);
+                let logical_lane_count = role_image.logical_lane_count();
                 let rv = self
                     .locals()
                     .get_checked(&rv_id)

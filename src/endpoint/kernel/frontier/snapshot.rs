@@ -1,4 +1,9 @@
-use super::{FrontierCandidate, FrontierKind, FrontierScratchView, OfferEntryEvidence, ScopeId};
+#[cfg(all(test, hibana_repo_tests))]
+use super::MAX_STATES;
+use super::{
+    FrontierCandidate, FrontierKind, FrontierScratchView, OfferEntryEvidence, ScopeId, StateIndex,
+    checked_state_index,
+};
 pub(crate) fn frontier_snapshot_from_scratch(
     scratch: &mut FrontierScratchView,
     current_scope: ScopeId,
@@ -6,6 +11,7 @@ pub(crate) fn frontier_snapshot_from_scratch(
     current_parallel_root: ScopeId,
     current_frontier: FrontierKind,
 ) -> FrontierSnapshot {
+    let current_entry = crate::invariant_some(checked_state_index(current_entry_idx));
     let candidate_capacity = scratch.candidates_mut().len();
     /* SAFETY: `scratch` is the endpoint frontier scratch borrow for the active
     operation. Its candidate slice remains live for the returned snapshot, and
@@ -13,7 +19,7 @@ pub(crate) fn frontier_snapshot_from_scratch(
     unsafe {
         FrontierSnapshot::from_parts(
             current_scope,
-            current_entry_idx,
+            current_entry,
             current_parallel_root,
             current_frontier,
             scratch.candidates_mut().as_mut_ptr(),
@@ -22,10 +28,10 @@ pub(crate) fn frontier_snapshot_from_scratch(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct FrontierSnapshot {
     pub(crate) current_scope: ScopeId,
-    pub(crate) current_entry_idx: usize,
+    pub(crate) current_entry: StateIndex,
     pub(crate) current_parallel_root: ScopeId,
     pub(crate) current_frontier: FrontierKind,
     candidates: *mut FrontierCandidate,
@@ -37,12 +43,17 @@ impl FrontierSnapshot {
     #[inline]
     pub(crate) unsafe fn from_parts(
         current_scope: ScopeId,
-        current_entry_idx: usize,
+        current_entry: StateIndex,
         current_parallel_root: ScopeId,
         current_frontier: FrontierKind,
         candidates: *mut FrontierCandidate,
         candidate_capacity: usize,
     ) -> Self {
+        if candidate_capacity > u16::MAX as usize
+            || (candidate_capacity != 0 && candidates.is_null())
+        {
+            crate::invariant();
+        }
         let mut idx = 0usize;
         while idx < candidate_capacity {
             /* SAFETY: `idx < candidate_capacity` bounds the scratch candidate
@@ -55,7 +66,7 @@ impl FrontierSnapshot {
         }
         Self {
             current_scope,
-            current_entry_idx,
+            current_entry,
             current_parallel_root,
             current_frontier,
             candidates,
@@ -79,7 +90,7 @@ impl FrontierSnapshot {
     }
 
     #[inline]
-    fn candidate_at(self, idx: usize) -> FrontierCandidate {
+    fn candidate_at(&self, idx: usize) -> FrontierCandidate {
         if idx >= self.candidate_len {
             crate::invariant();
         }
@@ -90,25 +101,24 @@ impl FrontierSnapshot {
     }
 
     #[inline]
-    pub(crate) fn matches_parallel_root(self, candidate: FrontierCandidate) -> bool {
+    pub(crate) fn matches_parallel_root(&self, candidate: FrontierCandidate) -> bool {
         self.current_parallel_root.is_none()
             || candidate.parallel_root == self.current_parallel_root
     }
 
     pub(crate) fn select_yield_candidate(
-        self,
-        visited: FrontierVisitSet,
+        &self,
+        visited: &FrontierVisitSet,
     ) -> Option<FrontierCandidate> {
         let mut idx = 0usize;
         while idx < self.candidate_len {
             let candidate = self.candidate_at(idx);
-            if (candidate.scope_id != self.current_scope
-                || candidate.entry_idx as usize != self.current_entry_idx)
+            if (candidate.scope_id != self.current_scope || candidate.entry != self.current_entry)
                 && self.matches_parallel_root(candidate)
                 && candidate.frontier == self.current_frontier
                 && candidate.ready()
                 && candidate.has_evidence()
-                && !visited.contains(candidate.scope_id)
+                && !visited.contains(candidate.entry.as_usize())
             {
                 return Some(candidate);
             }
@@ -117,12 +127,11 @@ impl FrontierSnapshot {
         idx = 0;
         while idx < self.candidate_len {
             let candidate = self.candidate_at(idx);
-            if (candidate.scope_id != self.current_scope
-                || candidate.entry_idx as usize != self.current_entry_idx)
+            if (candidate.scope_id != self.current_scope || candidate.entry != self.current_entry)
                 && self.matches_parallel_root(candidate)
                 && candidate.ready()
                 && candidate.has_evidence()
-                && !visited.contains(candidate.scope_id)
+                && !visited.contains(candidate.entry.as_usize())
             {
                 return Some(candidate);
             }
@@ -132,41 +141,53 @@ impl FrontierSnapshot {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct FrontierVisitSet {
-    slots: *mut ScopeId,
-    capacity: usize,
-    pub(crate) len: usize,
+    slots: *mut StateIndex,
+    capacity: u16,
+    len: u16,
 }
 
 impl FrontierVisitSet {
+    const EMPTY: Self = Self {
+        slots: core::ptr::null_mut(),
+        capacity: 0,
+        len: 0,
+    };
+
     #[inline]
-    pub(crate) unsafe fn from_parts(slots: *mut ScopeId, capacity: usize) -> Self {
+    pub(crate) unsafe fn from_parts(slots: *mut StateIndex, capacity: usize) -> Self {
+        if capacity > u16::MAX as usize || (capacity != 0 && slots.is_null()) {
+            crate::invariant();
+        }
         let mut idx = 0usize;
         while idx < capacity {
-            /* SAFETY: `idx < capacity` bounds the scratch visited-scope
+            /* SAFETY: `idx < capacity` bounds the resident visited-entry
             buffer. All cells are reset before `len` exposes the initialized
             prefix. */
             unsafe {
-                slots.add(idx).write(ScopeId::none());
+                slots.add(idx).write(StateIndex::ABSENT);
             }
             idx += 1;
         }
         Self {
             slots,
-            capacity,
+            capacity: capacity as u16,
             len: 0,
         }
     }
 
     #[inline]
-    pub(crate) fn contains(self, scope: ScopeId) -> bool {
+    pub(crate) fn contains(&self, entry_idx: usize) -> bool {
+        let Some(entry) = checked_state_index(entry_idx) else {
+            crate::invariant();
+        };
         let mut idx = 0usize;
-        while idx < self.len {
+        while idx < self.len as usize {
             if
             /* SAFETY: `idx < len` bounds the initialized prefix of the
-            visited-scope scratch buffer; this shared read copies one scope id. */
-            unsafe { *self.slots.add(idx) } == scope {
+            visited-entry buffer; this shared read copies one state identity. */
+            unsafe { *self.slots.add(idx) } == entry {
                 return true;
             }
             idx += 1;
@@ -175,18 +196,101 @@ impl FrontierVisitSet {
     }
 
     #[inline]
-    pub(crate) fn record(&mut self, scope: ScopeId) {
-        if scope.is_none() || self.contains(scope) || self.len >= self.capacity {
+    pub(crate) fn record(&mut self, entry_idx: usize) {
+        if self.contains(entry_idx) {
             return;
         }
-        /* SAFETY: `len < capacity` bounds the next visited-scope slot; the
+        if self.len >= self.capacity {
+            crate::invariant();
+        }
+        let entry = crate::invariant_some(checked_state_index(entry_idx));
+        /* SAFETY: `len < capacity` bounds the next visited-entry slot; the
         initialized prefix grows only after this write. */
         unsafe {
-            self.slots.add(self.len).write(scope);
+            self.slots.add(self.len as usize).write(entry);
         }
         self.len += 1;
     }
+
+    #[inline]
+    pub(crate) fn take(&mut self) -> Self {
+        core::mem::replace(self, Self::EMPTY)
+    }
+
+    #[cfg(kani)]
+    #[inline]
+    pub(crate) const fn len(&self) -> usize {
+        self.len as usize
+    }
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visit_set_distinguishes_entries_that_share_a_scope() {
+        let scope = ScopeId::route(1);
+        let mut candidates = [FrontierCandidate::EMPTY; 2];
+        /* SAFETY: `candidates` is a live, exclusive two-cell allocation and
+        remains in scope for the complete snapshot use. */
+        let mut snapshot = unsafe {
+            FrontierSnapshot::from_parts(
+                ScopeId::none(),
+                StateIndex::new(0),
+                ScopeId::none(),
+                FrontierKind::Route,
+                candidates.as_mut_ptr(),
+                candidates.len(),
+            )
+        };
+        for entry_idx in [1u16, 2u16] {
+            assert!(snapshot.push_candidate(FrontierCandidate {
+                scope_id: scope,
+                entry: StateIndex::new(entry_idx),
+                parallel_root: ScopeId::none(),
+                frontier: FrontierKind::Route,
+                flags: FrontierCandidate::FLAG_HAS_EVIDENCE | FrontierCandidate::FLAG_READY,
+            }));
+        }
+        let mut visited_storage = [StateIndex::ABSENT; 2];
+        /* SAFETY: `visited_storage` is initialized, live, and exclusively
+        borrowed for the complete visit-set use. */
+        let mut visited = unsafe {
+            FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), visited_storage.len())
+        };
+        visited.record(1);
+
+        assert_eq!(
+            snapshot
+                .select_yield_candidate(&visited)
+                .map(|candidate| candidate.entry.raw()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn visit_set_fails_closed_instead_of_truncating() {
+        let mut storage = [StateIndex::ABSENT; 1];
+        /* SAFETY: `storage` is one initialized, live, exclusively borrowed
+        visit cell whose exact length is passed to the view. */
+        let mut visited =
+            unsafe { FrontierVisitSet::from_parts(storage.as_mut_ptr(), storage.len()) };
+        visited.record(1);
+        visited.record(2);
+    }
+
+    #[test]
+    fn absent_state_identity_is_not_admissible() {
+        assert!(checked_state_index(MAX_STATES - 1).is_some());
+        assert!(checked_state_index(MAX_STATES).is_none());
+        assert!(checked_state_index(usize::MAX).is_none());
+    }
+}
+
+#[cfg(kani)]
+mod kani;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrontierDeferOutcome {

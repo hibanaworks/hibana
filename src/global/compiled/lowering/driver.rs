@@ -31,7 +31,7 @@ pub(crate) struct CompiledProgramImage {
 struct ProgramLoweringFacts {
     scope_count: u16,
     max_active_scope_depth: u16,
-    max_route_stack_depth: u16,
+    max_route_commit_count: u16,
     eff_count: u16,
     parallel_enter_count: u16,
     route_scope_count: u16,
@@ -41,7 +41,7 @@ impl ProgramLoweringFacts {
     const EMPTY: Self = Self {
         scope_count: 0,
         max_active_scope_depth: 0,
-        max_route_stack_depth: 0,
+        max_route_commit_count: 0,
         eff_count: 0,
         parallel_enter_count: 0,
         route_scope_count: 0,
@@ -50,7 +50,7 @@ impl ProgramLoweringFacts {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RoleCompiledCounts {
-    pub(crate) max_route_stack_depth: usize,
+    pub(crate) max_route_commit_count: usize,
     pub(crate) local_step_count: usize,
     pub(crate) route_scope_count: usize,
     pub(crate) active_lane_count: usize,
