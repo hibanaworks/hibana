@@ -282,6 +282,27 @@ mod tests {
     }
 
     #[test]
+    fn visit_set_holds_the_current_entry_and_the_full_active_frontier() {
+        const ACTIVE_LANE_COUNT: usize = u8::MAX as usize + 1;
+        let mut storage = [StateIndex::ABSENT; ACTIVE_LANE_COUNT + 1];
+        /* SAFETY: `storage` is initialized, live, and exclusively borrowed for
+        the complete visit-set use. Its extra cell is the current cursor entry. */
+        let mut visited =
+            unsafe { FrontierVisitSet::from_parts(storage.as_mut_ptr(), storage.len()) };
+        let current = MAX_STATES - 1;
+        visited.record(current);
+        let mut entry = 0usize;
+        while entry < ACTIVE_LANE_COUNT {
+            visited.record(entry);
+            entry += 1;
+        }
+
+        assert_eq!(visited.len as usize, ACTIVE_LANE_COUNT + 1);
+        assert!(visited.contains(current));
+        assert!(visited.contains(ACTIVE_LANE_COUNT - 1));
+    }
+
+    #[test]
     fn absent_state_identity_is_not_admissible() {
         assert!(checked_state_index(MAX_STATES - 1).is_some());
         assert!(checked_state_index(MAX_STATES).is_none());

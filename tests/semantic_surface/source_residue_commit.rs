@@ -546,6 +546,10 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
     assert!(
         role_image.contains("pub(crate) const fn frontier_entry_count(self) -> usize")
             && role_image.contains("self.active_lane_count")
+            && role_image.contains("pub(crate) const fn frontier_visit_count(self) -> usize")
+            && role_image.contains("pub(crate) const fn frontier_visit_capacity(")
+            && role_image.contains("count.checked_add(1)")
+            && role_image.contains("frontier_visit_capacity(self.frontier_entry_count())")
             && !role_image.contains("if self.active_lane_count == 0")
             && lane_set.contains("endpoint_lane_slot_count")
             && lane_set.contains("active_lane_count > endpoint_lane_slot_count")
@@ -581,6 +585,7 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
             && !assoc_storage.contains("#[derive(Clone, Copy)]\nstruct AssocStorageParts")
             && !snapshot.contains("visited.contains(candidate.scope_id)")
             && layout.contains("frontier_visited_entries: EndpointArenaSection")
+            && layout.contains("footprint.frontier_visit_count()")
             && !repo_file_exists("src/endpoint/kernel/offer/select_alignment/model/set.rs")
             && selection_pool.contains("while slot_idx < self.observed_entries.len()")
             && observation.contains("frontier_mask & !FrontierKind::ALL_BITS")

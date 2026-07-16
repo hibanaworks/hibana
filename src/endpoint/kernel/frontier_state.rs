@@ -11,7 +11,9 @@ use core::ops::{Index, IndexMut};
 use super::frontier::{
     ActiveEntrySet, ActiveEntrySlot, FrontierVisitSet, LaneOfferState, RootFrontierState,
 };
-use crate::global::{const_dsl::ScopeId, typestate::StateIndex};
+use crate::global::{
+    const_dsl::ScopeId, role_program::frontier_visit_capacity, typestate::StateIndex,
+};
 
 pub(super) struct RootFrontierTable {
     ptr: *mut RootFrontierState,
@@ -92,6 +94,11 @@ impl RootFrontierTable {
     #[inline]
     fn pool_capacity(&self) -> usize {
         self.pool_capacity as usize
+    }
+
+    #[inline]
+    fn visit_capacity(&self) -> usize {
+        frontier_visit_capacity(self.pool_capacity())
     }
 
     #[inline]
@@ -391,13 +398,13 @@ impl FrontierState {
 
     #[inline]
     pub(super) fn empty_frontier_visit_set(&mut self) -> FrontierVisitSet {
-        /* SAFETY: `visited_entries` is the endpoint-owned arena section paired
-        with the active-entry capacity. One public offer operation owns the
-        returned initialized prefix until it completes or is dropped. */
+        /* SAFETY: `visited_entries` is the endpoint-owned arena section sized
+        for the current entry plus every active-frontier candidate. One public
+        offer operation owns the returned initialized prefix until completion. */
         unsafe {
             FrontierVisitSet::from_parts(
                 self.visited_entries,
-                self.root_frontier_state.pool_capacity(),
+                self.root_frontier_state.visit_capacity(),
             )
         }
     }

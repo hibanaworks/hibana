@@ -504,6 +504,17 @@ pub(crate) struct RuntimeRoleFootprint {
     pub(crate) logical_lane_count: usize,
 }
 
+#[inline(always)]
+pub(crate) const fn frontier_visit_capacity(frontier_entry_count: usize) -> usize {
+    match frontier_entry_count {
+        0 => 0,
+        count => match count.checked_add(1) {
+            Some(count) => count,
+            None => crate::invariant(),
+        },
+    }
+}
+
 impl RuntimeRoleFootprint {
     #[inline(always)]
     pub(crate) const fn lane_word_count(self) -> usize {
@@ -518,5 +529,10 @@ impl RuntimeRoleFootprint {
     #[inline(always)]
     pub(crate) const fn frontier_entry_count(self) -> usize {
         self.active_lane_count
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_visit_count(self) -> usize {
+        frontier_visit_capacity(self.frontier_entry_count())
     }
 }

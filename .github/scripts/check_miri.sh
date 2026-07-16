@@ -127,8 +127,8 @@ run_miri_test \
 
 run_miri_test \
   exact-frontier-visit-identity-owner \
-  3 \
-  3 \
+  4 \
+  4 \
   0 \
   -p hibana \
   --lib \

@@ -199,7 +199,7 @@ impl EndpointArenaLayout {
 
         let frontier_visited_entries = Self::section_array::<crate::global::typestate::StateIndex>(
             offset,
-            footprint.frontier_entry_count(),
+            footprint.frontier_visit_count(),
         );
         offset = frontier_visited_entries.end_offset();
         total_align = max_usize(total_align, frontier_visited_entries.align());
@@ -474,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn root_frontier_shared_pools_track_max_frontier_entries() {
+    fn frontier_storage_distinguishes_candidates_from_the_current_visit() {
         let footprint = test_footprint(3, 65, 65, 3, 4);
         let layout = EndpointArenaLayout::from_footprint(footprint);
         assert_eq!(layout.frontier_root_rows().count(), 3);
@@ -484,8 +484,9 @@ mod tests {
         );
         assert_eq!(
             layout.frontier_visited_entries().count(),
-            footprint.frontier_entry_count()
+            footprint.frontier_visit_count()
         );
+        assert_eq!(layout.frontier_visited_entries().count(), 4);
     }
 
     #[test]

@@ -34,6 +34,15 @@ fn frontier_entry_capacity_preserves_the_full_lane_domain() {
     let entries = entries.seal();
     assert_eq!(entries.len(), 0);
     assert_eq!(capacity, active_lane_count as usize);
+    if active_lane_count == 0 {
+        assert_eq!(footprint.frontier_visit_count(), 0);
+    } else {
+        assert_eq!(
+            footprint.frontier_visit_count(),
+            active_lane_count as usize + 1
+        );
+        assert!(footprint.frontier_visit_count() > capacity);
+    }
 }
 
 #[kani::proof]
