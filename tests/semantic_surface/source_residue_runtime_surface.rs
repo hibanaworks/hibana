@@ -1,21 +1,5 @@
 use super::common::*;
 
-fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
-    let marker = format!("struct {name}");
-    let visible_marker = format!("pub(crate) struct {name}");
-    let tail = source
-        .split(&marker)
-        .nth(1)
-        .or_else(|| source.split(&visible_marker).nth(1))
-        .unwrap_or_else(|| panic!("{name} struct must stay visible"));
-    tail.split_once('{')
-        .unwrap_or_else(|| panic!("{name} struct body must start with an opening brace"))
-        .1
-        .split("\n}")
-        .next()
-        .unwrap_or_else(|| panic!("{name} struct body must stay visible"))
-}
-
 fn inline_always_function_span(source: &str, attr_start: usize) -> Option<usize> {
     let tail = &source[attr_start..];
     let brace_rel = tail.find('{')?;
@@ -349,7 +333,7 @@ fn scope_id_is_single_u16_identity_without_compact_shadow() {
     assert!(
         scope.contains("pub(crate) struct ScopeId(u16);")
             && scope.contains("const ABSENT_RAW: u16 = u16::MAX;")
-            && scope.contains("const RESERVED_BIT: u16 = 0x8000;")
+            && scope.contains("pub(in crate::global) const RESERVED_BIT: u16 = 0x8000;")
             && scope.contains("const KIND_SHIFT: u16 = 13;")
             && scope.contains("const LOCAL_MASK: u16 = 0x1fff;")
             && scope.contains("pub(crate) const fn decode_raw(raw: u16) -> Option<Self>")
@@ -445,8 +429,13 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "pub(crate) const fn scope_markers(self) -> ProgramColumnRange",
         "scope_marker_identity_tag(marker.event, marker.reentry)",
         "out.write_scope_marker(columns.scope_markers(), idx, markers.at(idx));",
-        "self.write_u16(out, scope.raw());",
-        "self.write_u16(out + 2, resolver_id);",
+        "scope.raw() | ScopeId::RESERVED_BIT",
+        "packed_scope & !ScopeId::RESERVED_BIT",
+        "let authority = PackedRouteAuthority::encode(scope, resolver);",
+        "self.write_u16(out, authority.packed_scope());",
+        "self.write_u16(out + 2, authority.resolver_id());",
+        "PackedRouteAuthority::decode(packed_scope, resolver_id)",
+        "} else if resolver_id == 0 {",
         "self.write_u8(out + 4,",
         "self.write_u16(out + 5, participant_boundaries[0]);",
         "self.write_u8(out + 7, (left_len - 1) as u8);",
@@ -500,6 +489,7 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "pub(crate) const fn resolver_with_scope(",
         "PROGRAM_IMAGE_RESOLVER_STRIDE",
         "ProgramResolverRow",
+        "INTRINSIC_ROUTE_RESOLVER_ID",
         "resident_resolver_at",
         "first_visible_frontier",
         "collect_first_visible_frontier",

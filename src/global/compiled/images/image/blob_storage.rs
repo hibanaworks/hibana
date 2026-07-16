@@ -3,13 +3,13 @@ use super::columns::{
     PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
     ProgramImageColumns, ProgramImageFacts,
 };
+use super::route_resolvers::PackedRouteAuthority;
 use crate::{
     eff::{EffAtom, EffKind},
     global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
-        DynamicRouteResolver, EffList, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, ScopeEvent,
-        ScopeId, ScopeKind, ScopeMarker, first_visible_controller,
-        route_arm_ranges_from_first_enter,
+        DynamicRouteResolver, EffList, ReentryMark, ScopeEvent, ScopeId, ScopeKind, ScopeMarker,
+        first_visible_controller, route_arm_ranges_from_first_enter,
     },
 };
 
@@ -123,12 +123,9 @@ impl<const N: usize> ProgramImageBytes<N> {
             crate::invariant();
         }
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE);
-        self.write_u16(out, scope.raw());
-        let resolver_id = match resolver {
-            Some(resolver) => resolver.resolver_id(),
-            None => INTRINSIC_ROUTE_RESOLVER_ID,
-        };
-        self.write_u16(out + 2, resolver_id);
+        let authority = PackedRouteAuthority::encode(scope, resolver);
+        self.write_u16(out, authority.packed_scope());
+        self.write_u16(out + 2, authority.resolver_id());
         self.write_u8(out + 4, controller_role);
         self.write_u16(out + 5, participant_boundaries[0]);
         self.write_u8(out + 7, (left_len - 1) as u8);

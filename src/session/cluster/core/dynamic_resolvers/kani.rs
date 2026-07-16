@@ -32,30 +32,24 @@ fn program<const LOGICAL_LABEL: u8>() -> &'static CompiledProgramRef {
 fn resolver_registration_key_is_program_and_id() {
     let left_id: u16 = kani::any();
     let right_id: u16 = kani::any();
-    let intrinsic = crate::global::const_dsl::INTRINSIC_ROUTE_RESOLVER_ID;
-    let valid = left_id != intrinsic && right_id != intrinsic;
 
-    kani::cover!(valid && left_id == right_id);
-    kani::cover!(valid && left_id != right_id);
-    if valid {
-        let first_program = program::<1>();
-        let second_program = program::<2>();
-        let left = ResolverRegistrationKey::new(first_program, left_id);
-        let same_program = ResolverRegistrationKey::new(first_program, right_id);
-        let other_program = ResolverRegistrationKey::new(second_program, left_id);
+    kani::cover!(left_id == right_id);
+    kani::cover!(left_id != right_id);
+    kani::cover!(left_id == u16::MAX);
+    let first_program = program::<1>();
+    let second_program = program::<2>();
+    let left = ResolverRegistrationKey::new(first_program, left_id);
+    let same_program = ResolverRegistrationKey::new(first_program, right_id);
+    let other_program = ResolverRegistrationKey::new(second_program, left_id);
 
-        assert!((left == same_program) == (left_id == right_id));
-        assert!(left != other_program);
-    }
+    assert!((left == same_program) == (left_id == right_id));
+    assert!(left != other_program);
 }
 
 #[kani::proof]
-#[kani::should_panic]
-fn resolver_registration_key_rejects_intrinsic_id() {
-    let _ = ResolverRegistrationKey::new(
-        program::<1>(),
-        crate::global::const_dsl::INTRINSIC_ROUTE_RESOLVER_ID,
-    );
+fn resolver_registration_key_accepts_full_u16_id_domain() {
+    let key = ResolverRegistrationKey::new(program::<1>(), u16::MAX);
+    assert!(key.resolver_id() == u16::MAX);
 }
 
 #[kani::proof]

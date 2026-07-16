@@ -168,6 +168,7 @@ The compact descriptor domains impose these explicit limits:
 | Role image | 65,535 B per role | Compact `u16` byte-offset domain for one projected role image |
 | Structured scopes | Image-derived | Every scope contributes at least two five-byte markers, so the byte ceiling binds before the compact scope-id domain |
 | Route commit chain | Image-derived | A `u16` descriptor range; no separate `u8` chain ceiling |
+| Resolver identities | 65,536 | The complete `u16` domain; intrinsic/dynamic authority is tagged separately in the route row |
 | Physical lanes | 256 | Storage follows the exact projected lane span; lanes are reused when endpoint-role sets do not conflict and no hidden binding lanes are reserved |
 | Offer frontier | Active-lane-derived | At most one active entry per active lane; streamed candidates and exact visited-entry identities have no fixed eight-entry mask |
 | Inbound frame colors | 256 | Maximum simultaneously competing receive candidates for one source/receiver/lane key |
@@ -661,7 +662,7 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | Modeled runtime SRAM envelope | 5,584 B | 8,954 B |
 | Minimal linked protocol artifact | 360 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,856 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 97,779 B | 169,965 B |
+| Complete no-default `libhibana.rlib` sections | 98,400 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release

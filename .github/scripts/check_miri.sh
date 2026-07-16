@@ -354,6 +354,15 @@ run_miri_test \
   same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority
 
 run_miri_test \
+  resolver-full-id-domain-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --test dynamic_route_scope_resolver \
+  maximum_resolver_id_runs_end_to_end
+
+run_miri_test \
   resolver-reject-cancellation-owner \
   1 \
   1 \

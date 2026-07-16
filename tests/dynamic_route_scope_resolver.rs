@@ -52,7 +52,7 @@ fn narrow_roll_topology_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     ))
 }
 
-fn assert_same_label_route_send_uses_selected_arm(
+fn assert_same_label_route_send_uses_selected_arm<const RESOLVER: u16>(
     resolver_arm: &'static DecisionArm,
     expected_arm: u32,
     value: u32,
@@ -64,11 +64,11 @@ fn assert_same_label_route_send_uses_selected_arm(
             let rv = cluster
                 .rendezvous(slab, transport)
                 .expect("register rendezvous");
-            let role0 = same_label_outbound_program::<0>();
-            let role1 = same_label_outbound_program::<1>();
+            let role0 = same_label_outbound_program_for::<0, RESOLVER>();
+            let role1 = same_label_outbound_program_for::<1, RESOLVER>();
             rv.set_resolver(
                 &role0,
-                ResolverRef::<SAME_LABEL_ROUTE_RESOLVER>::decision_state(resolver_arm, choose_arm),
+                ResolverRef::<RESOLVER>::decision_state(resolver_arm, choose_arm),
             )
             .expect("install sender resolver");
             let mut origin = rv.enter(sid, &role0).expect("attach origin");
@@ -110,7 +110,7 @@ fn assert_same_label_route_send_uses_selected_arm(
             1,
             "same-label send must audit one resolver decision: {events:?}"
         );
-        assert_eq!(resolver_id(audits[0]), SAME_LABEL_ROUTE_RESOLVER as u32);
+        assert_eq!(resolver_id(audits[0]), RESOLVER as u32);
 
         let selections = route_arm_selections(&events);
         assert!(
@@ -188,12 +188,19 @@ fn left_decision_materializes_nested_parallel_arm_once() {
 
 #[test]
 fn same_label_resolved_outbound_left_uses_left_schema() {
-    assert_same_label_route_send_uses_selected_arm(&LEFT_ARM, 0, 5501);
+    assert_same_label_route_send_uses_selected_arm::<SAME_LABEL_ROUTE_RESOLVER>(&LEFT_ARM, 0, 5501);
 }
 
 #[test]
 fn same_label_resolved_outbound_right_uses_right_schema() {
-    assert_same_label_route_send_uses_selected_arm(&RIGHT_ARM, 1, 5502);
+    assert_same_label_route_send_uses_selected_arm::<SAME_LABEL_ROUTE_RESOLVER>(
+        &RIGHT_ARM, 1, 5502,
+    );
+}
+
+#[test]
+fn maximum_resolver_id_runs_end_to_end() {
+    assert_same_label_route_send_uses_selected_arm::<{ u16::MAX }>(&LEFT_ARM, 0, 5503);
 }
 
 #[test]

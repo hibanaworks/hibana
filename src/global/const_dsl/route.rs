@@ -1,4 +1,4 @@
-use super::{INTRINSIC_ROUTE_RESOLVER_ID, ScopeId, ScopeKind};
+use super::{ScopeId, ScopeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicRouteResolver {
@@ -8,9 +8,7 @@ pub(crate) struct DynamicRouteResolver {
 
 impl DynamicRouteResolver {
     pub(crate) const fn new(scope: ScopeId, resolver_id: u16) -> Self {
-        if !matches!(scope.kind(), Some(ScopeKind::Route))
-            || resolver_id == INTRINSIC_ROUTE_RESOLVER_ID
-        {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
             crate::invariant();
         }
         Self { resolver_id, scope }

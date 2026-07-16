@@ -330,7 +330,7 @@ fn export_production_trace_for_lean() {
     const NESTED_INNER_RESOLVER: u16 = 903;
     const ROLLED_RESOLVER: u16 = 904;
     const REJECTING_RESOLVER: u16 = 905;
-    const FULL_ROLE_DOMAIN_RESOLVER: u16 = 906;
+    const FULL_ROLE_DOMAIN_RESOLVER: u16 = u16::MAX;
 
     type A = g::Send<0, 1, g::Msg<11, u32>>;
     type B = g::Send<0, 2, g::Msg<12, i32>>;

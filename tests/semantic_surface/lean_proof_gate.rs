@@ -243,6 +243,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && exporter.contains("generatedFullRoleDomainChoreo")
             && exporter.contains("generatedFullRoleDomainProjectionRole254")
             && exporter.contains("generatedFullRoleDomainProjectionRole255")
+            && exporter.contains("const FULL_ROLE_DOMAIN_RESOLVER: u16 = u16::MAX;")
             && exporter.contains("generatedLaneMatchingChoreo")
             && exporter.contains("generatedLaneMatchingProjectionRole3")
             && exporter.contains("generatedNestedResolvedProgressRole0"),
@@ -252,6 +253,17 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         descriptor_refinement.contains("structure RustDescriptorImage")
             && descriptor_refinement.contains("productionProgramAtomStride : Nat := 11")
             && descriptor_refinement.contains("productionProgramRouteResolverStride : Nat := 8")
+            && descriptor_refinement
+                .contains("productionRouteResolverDynamicScopeBit : Nat := 32768")
+            && descriptor_refinement.contains("productionPackedU16Capacity : Nat := 65536")
+            && descriptor_refinement
+                .contains("productionResolverCapacity : Nat := productionPackedU16Capacity")
+            && descriptor_refinement.contains("def decodePackedRouteAuthority?")
+            && descriptor_refinement.contains("theorem packed_route_authority_dynamic_roundtrip")
+            && descriptor_refinement
+                .contains("theorem packed_route_authority_intrinsic_is_canonical")
+            && !descriptor_refinement
+                .contains("if resolver = packedU16Absent then RouteAuthority.intrinsic")
             && descriptor_refinement.contains("productionProgramRouteParticipantStride : Nat := 1")
             && descriptor_refinement.contains("routeParticipantCount : Nat")
             && descriptor_refinement.contains("leftParticipants : List Nat")

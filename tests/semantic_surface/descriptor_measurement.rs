@@ -746,6 +746,7 @@ fn compiled_image_sources_stay_split_below_one_thousand_lines() {
 #[test]
 fn program_atom_lookup_stays_logarithmic_and_proof_connected() {
     let program_ref = read("src/global/compiled/images/image/program_ref.rs");
+    let program_ref_kani = read("src/global/compiled/images/image/program_ref/kani.rs");
     let descriptor_proof = read("proofs/lean/Hibana/DescriptorImage.lean");
     let kani_gate = read(".github/scripts/check_kani.sh");
 
@@ -756,8 +757,13 @@ fn program_atom_lookup_stays_logarithmic_and_proof_connected() {
             && !program_ref
                 .contains("let mut row = 0usize;\n        while row < self.columns.atom_count()")
             && descriptor_proof.contains("theorem canonical_program_atom_eff_indices_strict")
-            && kani_gate.contains("compiled_program_atom_binary_search_is_exact_for_sorted_rows")
-            && kani_gate.contains("compiled_program_atom_order_rejects_noncanonical_rows"),
+            && program_ref_kani
+                .contains("fn compiled_program_atom_binary_search_is_exact_for_sorted_rows()")
+            && program_ref_kani
+                .contains("fn compiled_program_atom_order_rejects_noncanonical_rows()")
+            && kani_gate.contains("cargo kani \\")
+            && !kani_gate.contains("--harness")
+            && kani_gate.contains("successfully verified harnesses, 0 failures"),
         "canonical atom order must be sealed once and searched logarithmically without adding a resident index column"
     );
 }

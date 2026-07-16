@@ -43,7 +43,7 @@ The pinned gate exhausts the production arithmetic for:
   disagreement after exact construction;
 - exact callback-registration identity over resident program image and resolver
   id, including separation of distinct program images at the same route site
-  and rejection of the intrinsic resolver sentinel;
+  and the complete `u16` resolver-id domain;
 - resolver bucket first allocation from uninitialized storage, proving complete
   slot initialization before insertion and typed callback dispatch;
 - resolver bucket replacement compaction over a real hole-bearing entry array,
@@ -66,9 +66,11 @@ The pinned gate exhausts the production arithmetic for:
 - exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
   capacity domain.
 
-The pinned inventory contains 81 CBMC harnesses. Transport FIFO,
-exactly-once/no-replay delivery, peer-close observation, and one-shot receive
-receipt resolution are modeled and proved in Lean, mirrored by the Rust
+Kani itself discovers and verifies every production `#[kani::proof]`; the gate
+does not pass a harness filter or maintain a second execution inventory. It
+rejects a missing, partial, failed, or empty complete-harness summary. Transport
+FIFO, exactly-once/no-replay delivery, peer-close observation, and one-shot
+receive receipt resolution are modeled and proved in Lean, mirrored by the Rust
 conformance tests, and checked under Miri.
 
 The harnesses cover both successful and rejected symbolic inputs. They use no

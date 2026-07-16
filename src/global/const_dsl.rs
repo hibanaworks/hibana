@@ -40,5 +40,3 @@ pub(crate) use self::scope_ranges::{
 };
 use self::source_arena::SourceRow;
 pub(crate) use self::source_arena::{EffList, ScopeMarker, ScopeMarkerView};
-
-pub(crate) const INTRINSIC_ROUTE_RESOLVER_ID: u16 = u16::MAX;

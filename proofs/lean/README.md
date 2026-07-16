@@ -64,6 +64,9 @@ The kernel-checked boundary covers:
 - exact optional descriptor-arm decoding with byte `255` as the sole absence
   representation and every other non-binary value rejected;
 - exact commit and resolver successor deltas from one prepared base state;
+- exact route-authority packing: the spare route-scope bit distinguishes
+  intrinsic from dynamic authority, intrinsic rows require a canonical zero
+  resolver field, and dynamic rows retain the complete `u16` resolver domain;
 - atomic roll and route-arm reentry resets, including inside-clear and
   outside-preservation properties.
 - production descriptor topology refinement for every sealed choreography

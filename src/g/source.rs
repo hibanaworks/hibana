@@ -1,8 +1,8 @@
 use crate::{
     eff::{EffAtom, EffStruct},
     global::const_dsl::{
-        EffList, INTRINSIC_ROUTE_RESOLVER_ID, ReentryMark, ScopeId, ScopeKind,
-        color_roll_frame_labels, merge_parallel_lanes, merge_route_frame_labels,
+        EffList, ReentryMark, ScopeId, ScopeKind, color_roll_frame_labels, merge_parallel_lanes,
+        merge_route_frame_labels,
     },
 };
 
@@ -104,9 +104,6 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
                 self.eff.push_scope_exit_mut(right_end, scope);
                 merge_route_frame_labels(&mut self.eff, left_start, right_start, right_end);
                 if let SourceRouteResolver::Dynamic(resolver_id) = *resolver {
-                    if resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
-                        panic!("route resolver id must be < u16::MAX");
-                    }
                     self.eff.push_route_resolver_mut(scope, resolver_id);
                 }
                 max_lane_span(left_span, right_span)

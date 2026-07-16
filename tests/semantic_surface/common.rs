@@ -9,6 +9,20 @@ pub(crate) fn read(path: &str) -> String {
     read_plain(&full)
 }
 
+pub(crate) fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
+    let marker = format!("struct {name}");
+    let tail = source
+        .split_once(&marker)
+        .unwrap_or_else(|| panic!("{name} struct must stay visible"))
+        .1;
+    tail.split_once('{')
+        .unwrap_or_else(|| panic!("{name} struct body must start with an opening brace"))
+        .1
+        .split("\n}")
+        .next()
+        .unwrap_or_else(|| panic!("{name} struct body must stay visible"))
+}
+
 pub(crate) fn repo_file_exists(path: &str) -> bool {
     PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")))
         .join(path)

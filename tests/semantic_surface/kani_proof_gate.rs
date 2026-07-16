@@ -4,6 +4,7 @@ use super::common::read;
 fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let root_manifest = read("Cargo.toml");
     let verification_manifest = read("proofs/kani/Cargo.toml");
+    let verification_readme = read("proofs/kani/README.md");
     let script = read(".github/scripts/check_kani.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
@@ -38,12 +39,22 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(verification_manifest.contains("path = \"../../src/lib.rs\""));
     assert!(!verification_manifest.contains("[dependencies]"));
     assert!(!verification_manifest.contains("rust-version"));
+    assert!(verification_readme.contains("complete `u16` resolver-id domain"));
+    assert!(verification_readme.contains("Kani itself discovers and verifies every production"));
+    assert!(verification_readme.contains("does not pass a harness filter"));
+    assert!(!verification_readme.contains("intrinsic resolver sentinel"));
+    assert!(!verification_readme.contains("inventory contains 81"));
     assert!(root_manifest.contains("'cfg(kani)'"));
     assert!(root_manifest.contains("\"!/src/**/kani.rs\""));
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
-    assert!(script.contains("kani_harness_total=\"$(wc -l < \"${gate_inventory}\" | tr -d ' ')\""));
+    assert!(!script.contains("--harness"));
+    assert!(script.contains("hibana-kani-verification.XXXXXX"));
+    assert!(script.contains("exactly one successful complete-harness summary"));
+    assert!(script.contains("successfully verified harnesses, 0 failures"));
+    assert!(script.contains("reported_harness_total="));
+    assert!(script.contains("requires a nonempty complete-harness total"));
     assert!(script.contains(
         "Kani gate passed version=${EXPECTED_VERSION} harnesses=${kani_harness_total} backend=CBMC"
     ));
@@ -60,16 +71,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "receive_frame_receipt_rejects_foreign_state",
     ] {
         assert!(receive_receipt_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(!script.contains("rg -q"));
-    assert!(script.contains("hibana-kani-proofs.XXXXXX"));
-    assert!(script.contains("hibana-kani-gate.XXXXXX"));
-    assert!(script.contains("Kani proof and gate harness names must each be unique"));
+    assert!(!script.contains("hibana-kani-proofs.XXXXXX"));
+    assert!(!script.contains("kani_harness_args"));
     assert!(script.contains("Kani should-panic harness may panic before its production call"));
-    assert!(
-        script.contains("Kani gate harness inventory does not match production proof inventory")
-    );
     assert!(harnesses.contains("kani::assume(left_start < left_end)"));
     assert!(
         harnesses
@@ -102,14 +108,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "resolver_storage_layout_is_bounded_and_exact",
     ] {
         assert!(harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     for harness in [
         "route_arm_decoding_accepts_exact_binary_domain",
         "single_ready_mask_decoding_is_exact",
     ] {
         assert!(authority_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(authority_harnesses.contains("Arm::decode_single_ready_mask(mask) == expected"));
     assert!(!authority_harnesses.contains("kani::assume"));
@@ -118,13 +122,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(public_operation_harnesses.contains("current == PublicActiveOp::Poisoned"));
     assert!(public_operation_harnesses.contains("current == expected"));
     assert!(!public_operation_harnesses.contains("kani::assume"));
-    assert!(script.contains(&format!("--harness {harness}")));
     for harness in [
         "frame_header_roundtrip_preserves_every_field",
         "frame_header_identity_is_exact_and_injective",
     ] {
         assert!(transport_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(transport_harnesses.contains("left_header == right_header"));
     assert!(!transport_harnesses.contains("kani::assume"));
@@ -135,9 +137,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(fault_harnesses.contains("fn invalid_session_fault_encoding_is_fail_fast()"));
     assert!(fault_harnesses.contains("#[kani::should_panic]"));
     assert!(fault_harnesses.contains("left.encode() == right.encode()"));
-    assert!(script.contains("--harness session_fault_encoding_roundtrip_is_exact"));
-    assert!(script.contains("--harness session_fault_encoding_is_injective"));
-    assert!(script.contains("--harness invalid_session_fault_encoding_is_fail_fast"));
     assert!(!fault_harnesses.contains("kani::assume"));
     for harness in [
         "packed_state_preserves_full_count_and_fault_code",
@@ -146,7 +145,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "attachment_count_allows_256_and_rejects_257",
     ] {
         assert!(association_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(association_harnesses.contains("count_256 == ENTRY_COUNT_MAX"));
     assert!(association_harnesses.contains("next_attachment_count(count_256).is_none()"));
@@ -158,7 +156,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "packed_local_dependency_event_bounds_are_exact",
     ] {
         assert!(descriptor_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(
         descriptor_harnesses
@@ -183,7 +180,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "role_image_fit_probe_rejects_plan_mismatch",
     ] {
         assert!(image_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(!image_harnesses.contains("kani::assume"));
     assert!(image_harnesses.contains("#[kani::should_panic]"));
@@ -198,7 +194,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let harness = "scope_id_decoding_accepts_exact_compact_domain";
     assert!(scope_harnesses.contains(&format!("fn {harness}()")));
     assert!(scope_harnesses.contains("scope.is_none() == (raw == u16::MAX)"));
-    assert!(script.contains(&format!("--harness {harness}")));
 
     for harness in [
         "two_by_two_parallel_lane_matching_has_minimum_span",
@@ -206,23 +201,19 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "two_arm_route_frame_coloring_is_exact",
     ] {
         assert!(allocation_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     let harness = "nested_roll_frame_coloring_uses_the_complete_inbound_key";
     assert!(roll_coloring_harnesses.contains(&format!("fn {harness}()")));
-    assert!(script.contains(&format!("--harness {harness}")));
     for harness in [
         "parallel_lane_coloring_reuses_disjoint_class",
         "parallel_lane_coloring_separates_conflicting_class",
         "lane_reuse_conflict_matches_endpoint_equality",
     ] {
         assert!(production_coloring_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     let harness = "three_by_three_parallel_lane_matching_certificate_is_maximum";
     assert!(maximum_matching_harness.contains(&format!("fn {harness}()")));
     assert!(maximum_matching_harness.contains("assert!(actual == expected)"));
-    assert!(script.contains(&format!("--harness {harness}")));
     assert!(
         production_coloring_harnesses.contains("assert!(source.node_at(1).atom_data().lane == 0)")
     );
@@ -240,7 +231,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(controller_harnesses.contains(&format!("fn {harness}()")));
     assert!(controller_harnesses.contains("merged.unique().is_some(), left == right"));
     assert!(!controller_harnesses.contains("kani::assume"));
-    assert!(script.contains(&format!("--harness {harness}")));
 
     for harness in [
         "outbound_selector_identity_is_exact_public_send_contract",
@@ -248,7 +238,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "observer_path_decision_has_exact_merge_domain",
     ] {
         assert!(endpoint_selector_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(endpoint_selector_harnesses.contains("left.payload_schema == right.payload_schema"));
     assert!(endpoint_selector_harnesses.contains("left != u16::MAX"));
@@ -258,7 +247,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(route_knowledge_harnesses.contains(&format!("fn {harness}()")));
     assert!(route_knowledge_harnesses.contains("role == controller || observer_paths_mergeable"));
     assert!(route_knowledge_harnesses.contains("role != controller && !observer_paths_mergeable"));
-    assert!(script.contains(&format!("--harness {harness}")));
     assert!(!route_knowledge_harnesses.contains("kani::assume"));
 
     for harness in [
@@ -268,7 +256,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "roll_reentry_causal_closure_accepts_closed_cycle",
     ] {
         assert!(receive_lane_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(receive_lane_harnesses.contains("earlier_source != later_source"));
     assert!(receive_lane_harnesses.contains("event(receiver, later_source, lane)"));
@@ -277,13 +264,15 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
 
     for harness in [
         "route_resolver_row_decoding_accepts_exact_range_domain",
+        "packed_route_authority_roundtrip_is_exact",
         "canonical_route_participant_identity_accepts_full_u8_role_domain",
         "dynamic_route_resolver_identity_is_scope_and_id",
     ] {
         assert!(resolver_row_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(resolver_row_harnesses.contains("assert!(decoded.is_some() == expected)"));
+    assert!(resolver_row_harnesses.contains("PackedRouteAuthority::encode(scope, resolver)"));
+    assert!(resolver_row_harnesses.contains("Some((scope, resolver))"));
     assert!(resolver_row_harnesses.contains("left_scope == right_scope && left_id == right_id"));
     assert!(resolver_row_harnesses.contains("participant_start.checked_add"));
     assert!(resolver_row_harnesses.contains("participant_mid.is_some_and"));
@@ -310,7 +299,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "compiled_program_atom_blob_decoding_preserves_every_schema_bit",
     ] {
         assert!(program_ref_harnesses.contains(&format!("fn {harness}()")));
-        assert!(script.contains(&format!("--harness {harness}")));
     }
     assert!(program_ref_harnesses.contains("assert!(decoded.is_some() == expected)"));
     assert!(program_ref_harnesses.contains("row.atom.payload_schema == payload_schema"));
@@ -391,13 +379,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     );
     assert!(resolver_registration_harnesses.contains("assert!(left != other_program);"));
     assert!(!resolver_registration_harnesses.contains("kani::assume"));
-    assert!(script.contains(&format!("--harness {harness}")));
 
-    let harness = "resolver_registration_key_rejects_intrinsic_id";
+    let harness = "resolver_registration_key_accepts_full_u16_id_domain";
     assert!(resolver_registration_harnesses.contains(&format!("fn {harness}()")));
-    assert!(resolver_registration_harnesses.contains("#[kani::should_panic]"));
-    assert!(resolver_registration_harnesses.contains("INTRINSIC_ROUTE_RESOLVER_ID"));
-    assert!(script.contains(&format!("--harness {harness}")));
+    assert!(resolver_registration_harnesses.contains("program::<1>(), u16::MAX"));
+    assert!(resolver_registration_harnesses.contains("key.resolver_id() == u16::MAX"));
 
     let harness = "resolver_initial_storage_is_initialized_and_dispatchable";
     assert!(resolver_registration_harnesses.contains(&format!("fn {harness}()")));
@@ -405,7 +391,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(resolver_registration_harnesses.contains("bucket.entry_count() == 0"));
     assert!(resolver_registration_harnesses.contains("bucket.get(key).is_none()"));
     assert!(resolver_registration_harnesses.contains("resolver.resolve_decision()"));
-    assert!(script.contains(&format!("--harness {harness}")));
     assert_eq!(
         resolver_registration_harnesses
             .matches("bucket.replace_storage(")
@@ -431,5 +416,4 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(resolver_registration_harnesses.contains("bucket.entry_count() == 2"));
     assert!(resolver_registration_harnesses.contains("Ok(DecisionArm::Left)"));
     assert!(resolver_registration_harnesses.contains("Ok(DecisionArm::Right)"));
-    assert!(script.contains(&format!("--harness {harness}")));
 }

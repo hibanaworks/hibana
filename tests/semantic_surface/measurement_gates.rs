@@ -378,6 +378,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 "resolver-identity-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority"
             )
             && miri_gate.contains(
+                "resolver-full-id-domain-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  maximum_resolver_id_runs_end_to_end"
+            )
+            && miri_gate.contains(
                 "resolver-reject-cancellation-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  resolver_reject_does_not_encode_or_stage_send_payload"
             )
             && miri_gate.contains(

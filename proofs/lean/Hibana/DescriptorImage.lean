@@ -49,7 +49,13 @@ theorem descriptor_byte_ceiling_dominates_event_identity_domain :
 
 def productionScopeCapacity : Nat := 8192
 
-def productionLocalStepCapacity : Nat := 65536
+def productionPackedU16Capacity : Nat := 65536
+
+def productionLocalStepCapacity : Nat := productionPackedU16Capacity
+
+def productionResolverCapacity : Nat := productionPackedU16Capacity
+
+def productionRouteResolverDynamicScopeBit : Nat := 32768
 
 /-- Capacity facts emitted by a well-formed program image. Every structured
 scope owns at least an enter/exit marker pair, and a route commit chain has at
@@ -82,7 +88,7 @@ theorem descriptor_byte_ceiling_dominates_scope_and_route_commit_counts
   constructor
   · dsimp [productionScopeCapacity]
     omega
-  · dsimp [productionLocalStepCapacity]
+  · dsimp [productionLocalStepCapacity, productionPackedU16Capacity]
     omega
 
 def routeCommit257CapacityWitness : ProgramCapacityWitness := {
@@ -249,6 +255,49 @@ def packedU16Absent : Nat := 65535
 def packedU32Absent : Nat := 4294967295
 
 def packedConflictReentryWithoutParent : Nat := 49152
+
+def decodePackedRouteAuthority?
+    (packedScope resolver : Nat) : Option (Nat × RouteAuthority) :=
+  if packedScope < productionRouteResolverDynamicScopeBit then
+    if resolver = 0 then some (packedScope, .intrinsic) else none
+  else if packedScope < productionPackedU16Capacity ∧
+      resolver < productionResolverCapacity then
+    some (packedScope - productionRouteResolverDynamicScopeBit, .dynamic resolver)
+  else
+    none
+
+theorem packed_route_authority_dynamic_roundtrip
+    (scope resolver : Nat)
+    (scopeBound : scope < productionScopeCapacity)
+    (resolverBound : resolver < productionResolverCapacity) :
+    decodePackedRouteAuthority?
+      (productionRouteResolverDynamicScopeBit + scope) resolver =
+        some (scope, .dynamic resolver) := by
+  dsimp [productionScopeCapacity] at scopeBound
+  dsimp [productionResolverCapacity, productionPackedU16Capacity] at resolverBound
+  unfold decodePackedRouteAuthority?
+  dsimp [productionRouteResolverDynamicScopeBit, productionPackedU16Capacity,
+    productionResolverCapacity]
+  have dynamicTag : ¬32768 + scope < 32768 := by omega
+  rw [if_neg dynamicTag]
+  have bounds : 32768 + scope < 65536 ∧ resolver < 65536 := by
+    constructor
+    · omega
+    · exact resolverBound
+  rw [if_pos bounds]
+  rw [Nat.add_sub_cancel_left]
+
+theorem packed_route_authority_intrinsic_is_canonical
+    (scope resolver : Nat)
+    (scopeBound : scope < productionScopeCapacity) :
+    decodePackedRouteAuthority? scope resolver = some (scope, .intrinsic) ↔
+      resolver = 0 := by
+  have scopeSmall : scope < 32768 := by
+    dsimp [productionScopeCapacity] at scopeBound
+    omega
+  by_cases resolverZero : resolver = 0 <;>
+    simp [decodePackedRouteAuthority?, productionRouteResolverDynamicScopeBit,
+      scopeSmall, resolverZero]
 
 structure DecodedProgramAtom where
   effIndex : Nat
@@ -1034,8 +1083,9 @@ def RustDescriptorImage.decodeRouteResolverRow?
   if row < image.routeResolverCount then pure () else none
   let offset := image.programRouteResolverOffset +
     row * productionProgramRouteResolverStride
-  let scope ← readU16LE? image.programBytes offset
+  let packedScope ← readU16LE? image.programBytes offset
   let resolver ← readU16LE? image.programBytes (offset + 2)
+  let (scope, authority) ← decodePackedRouteAuthority? packedScope resolver
   let controller ← readByte? image.programBytes (offset + 4)
   let participantStart ← readU16LE? image.programBytes (offset + 5)
   let leftLenMinusOne ← readByte? image.programBytes (offset + 7)
@@ -1061,9 +1111,6 @@ def RustDescriptorImage.decodeRouteResolverRow?
       controller < image.roleCount ∧
       validRouteParticipants leftParticipants controller image.roleCount ∧
       validRouteParticipants rightParticipants controller image.roleCount then
-    let authority :=
-      if resolver = packedU16Absent then RouteAuthority.intrinsic
-      else RouteAuthority.dynamic resolver
     pure {
       scope
       authority

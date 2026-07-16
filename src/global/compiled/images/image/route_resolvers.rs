@@ -1,8 +1,65 @@
 use super::CompiledProgramRef;
 use super::columns::{PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE, PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE};
-use crate::global::const_dsl::{
-    DynamicRouteResolver, INTRINSIC_ROUTE_RESOLVER_ID, ScopeId, ScopeKind,
-};
+use crate::global::const_dsl::{DynamicRouteResolver, ScopeId, ScopeKind};
+
+#[derive(Clone, Copy)]
+pub(super) struct PackedRouteAuthority {
+    packed_scope: u16,
+    resolver_id: u16,
+}
+
+impl PackedRouteAuthority {
+    pub(super) const fn encode(scope: ScopeId, resolver: Option<DynamicRouteResolver>) -> Self {
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
+            crate::invariant();
+        }
+        match resolver {
+            Some(resolver) => {
+                if !resolver.scope().same(scope) {
+                    crate::invariant();
+                }
+                Self {
+                    packed_scope: scope.raw() | ScopeId::RESERVED_BIT,
+                    resolver_id: resolver.resolver_id(),
+                }
+            }
+            None => Self {
+                packed_scope: scope.raw(),
+                resolver_id: 0,
+            },
+        }
+    }
+
+    const fn decode(
+        packed_scope: u16,
+        resolver_id: u16,
+    ) -> Option<(ScopeId, Option<DynamicRouteResolver>)> {
+        let dynamic = (packed_scope & ScopeId::RESERVED_BIT) != 0;
+        let scope = match ScopeId::decode_raw(packed_scope & !ScopeId::RESERVED_BIT) {
+            Some(scope) => scope,
+            None => return None,
+        };
+        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
+            return None;
+        }
+        let resolver = if dynamic {
+            Some(DynamicRouteResolver::new(scope, resolver_id))
+        } else if resolver_id == 0 {
+            None
+        } else {
+            return None;
+        };
+        Some((scope, resolver))
+    }
+
+    pub(super) const fn packed_scope(self) -> u16 {
+        self.packed_scope
+    }
+
+    pub(super) const fn resolver_id(self) -> u16 {
+        self.resolver_id
+    }
+}
 
 #[derive(Clone, Copy)]
 struct RouteParticipantRange {
@@ -27,14 +84,14 @@ impl RouteParticipantRange {
 #[derive(Clone, Copy)]
 struct RouteResolverRow {
     scope: ScopeId,
-    resolver_id: u16,
+    resolver: Option<DynamicRouteResolver>,
     controller_role: u8,
     participants: [RouteParticipantRange; 2],
 }
 
 impl RouteResolverRow {
     const fn decode(
-        raw_scope: u16,
+        packed_scope: u16,
         resolver_id: u16,
         controller_role: u8,
         participant_start: u16,
@@ -42,13 +99,10 @@ impl RouteResolverRow {
         participant_end: u16,
         participant_count: usize,
     ) -> Option<Self> {
-        let scope = match ScopeId::decode_raw(raw_scope) {
-            Some(scope) => scope,
+        let (scope, resolver) = match PackedRouteAuthority::decode(packed_scope, resolver_id) {
+            Some(authority) => authority,
             None => return None,
         };
-        if !matches!(scope.kind(), Some(ScopeKind::Route)) {
-            return None;
-        }
         let participant_mid = match participant_start.checked_add(left_len_minus_one as u16 + 1) {
             Some(mid) => mid,
             None => return None,
@@ -69,18 +123,14 @@ impl RouteResolverRow {
         };
         Some(Self {
             scope,
-            resolver_id,
+            resolver,
             controller_role,
             participants: [left, right],
         })
     }
 
     const fn resolver(self) -> Option<DynamicRouteResolver> {
-        if self.resolver_id == INTRINSIC_ROUTE_RESOLVER_ID {
-            None
-        } else {
-            Some(DynamicRouteResolver::new(self.scope, self.resolver_id))
-        }
+        self.resolver
     }
 
     const fn participant_range(self, arm: u8) -> RouteParticipantRange {

@@ -362,7 +362,7 @@ private def Event.hasConflictArm
 
 private def RouteAuthority.check : RouteAuthority -> Bool
   | .intrinsic => true
-  | .dynamic resolver => resolver < 65535
+  | .dynamic resolver => resolver < 65536
 
 private def RouteInfo.check (graph : EventGraph) (route : RouteInfo) : Bool :=
   route.conflict < graph.conflictCount &&

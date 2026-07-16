@@ -21,15 +21,17 @@ pub(crate) enum ScopeEvent {
 /// Encoded scope identifier carried by lowering, descriptor rows, resolver
 /// sites, and endpoint evidence.
 ///
-/// `u16::MAX` is the absent sentinel. Present scopes use the packed layout
-/// `reserved:1 | kind:2 | local:13`; the reserved bit is always zero.
+/// `u16::MAX` is the absent sentinel. Present `ScopeId` values use the packed
+/// layout `reserved:1 | kind:2 | local:13` with the reserved bit clear. A
+/// descriptor wrapper may use that bit as an out-of-band tag, but must clear
+/// and validate it before constructing a `ScopeId`.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScopeId(u16);
 
 impl ScopeId {
     const ABSENT_RAW: u16 = u16::MAX;
-    const RESERVED_BIT: u16 = 0x8000;
+    pub(in crate::global) const RESERVED_BIT: u16 = 0x8000;
     const KIND_SHIFT: u16 = 13;
     const KIND_MASK: u16 = 0b11;
     const LOCAL_MASK: u16 = 0x1fff;

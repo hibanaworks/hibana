@@ -1,8 +1,18 @@
 use super::{CompiledProgramRef, RouteResolverRow};
-use crate::global::{
-    compiled::images::image::columns::{ProgramImageColumns, ProgramImageFacts},
-    const_dsl::{INTRINSIC_ROUTE_RESOLVER_ID, ScopeId},
+use crate::{
+    g::{self, Msg},
+    global::{
+        compiled::images::image::columns::{ProgramImageColumns, ProgramImageFacts},
+        const_dsl::ScopeId,
+        role_program::{RoleProgram, project},
+    },
 };
+
+const MAX_ROUTE_RESOLVER: u16 = u16::MAX;
+
+const fn dynamic_scope(scope: u16) -> u16 {
+    scope | ScopeId::RESERVED_BIT
+}
 
 const fn encoded_row(
     scope: u16,
@@ -53,35 +63,33 @@ fn forged_program_ref<const N: usize>(
     CompiledProgramRef::compact(ProgramImageFacts { max_role }, columns, bytes)
 }
 
-static INTRINSIC: [u8; 12] = encoded_descriptor(
-    encoded_row(0, INTRINSIC_ROUTE_RESOLVER_ID, 0, 0, 2),
-    [0, 1, 0, 1],
-);
-static DYNAMIC: [u8; 11] = encoded_descriptor(encoded_row(1, 7, 0, 0, 1), [0, 0, 1]);
-static ROLE_255: [u8; 10] = encoded_descriptor(
-    encoded_row(0, INTRINSIC_ROUTE_RESOLVER_ID, u8::MAX, 0, 1),
-    [u8::MAX, u8::MAX],
-);
-static ABSENT_SCOPE: [u8; 10] = encoded_descriptor(encoded_row(u16::MAX, 7, 0, 0, 1), [0, 0]);
+static INTRINSIC: [u8; 12] = encoded_descriptor(encoded_row(0, 0, 0, 0, 2), [0, 1, 0, 1]);
+static DYNAMIC: [u8; 11] = encoded_descriptor(encoded_row(dynamic_scope(1), 7, 0, 0, 1), [0, 0, 1]);
+static DYNAMIC_MAX: [u8; 10] =
+    encoded_descriptor(encoded_row(dynamic_scope(0), u16::MAX, 0, 0, 1), [0, 0]);
+static NONCANONICAL_INTRINSIC: [u8; 10] = encoded_descriptor(encoded_row(0, 1, 0, 0, 1), [0, 0]);
+static ROLE_255: [u8; 10] =
+    encoded_descriptor(encoded_row(0, 0, u8::MAX, 0, 1), [u8::MAX, u8::MAX]);
+static INVALID_PACKED_SCOPE: [u8; 10] =
+    encoded_descriptor(encoded_row(u16::MAX, 7, 0, 0, 1), [0, 0]);
 static NON_ROUTE_SCOPE: [u8; 10] = encoded_descriptor(
-    encoded_row(ScopeId::roll_scope(0).raw(), 7, 0, 0, 1),
+    encoded_row(dynamic_scope(ScopeId::roll_scope(0).raw()), 7, 0, 0, 1),
     [0, 0],
 );
-static ROUTE_ORDINAL_OUT_OF_RANGE: [u8; 10] =
-    encoded_descriptor(encoded_row(ScopeId::LOCAL_CAPACITY, 7, 0, 0, 1), [0, 0]);
-static EMPTY_RIGHT_PARTICIPANTS: [u8; 10] = encoded_descriptor(encoded_row(0, 7, 0, 0, 2), [0, 1]);
+static EMPTY_RIGHT_PARTICIPANTS: [u8; 10] =
+    encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [0, 1]);
 static ORPHAN_PARTICIPANT_PREFIX: [u8; 11] =
-    encoded_descriptor(encoded_row(0, 7, 0, 1, 1), [0, 0, 0]);
+    encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 1, 1), [0, 0, 0]);
 static CONTROLLER_OUT_OF_RANGE: [u8; 12] =
-    encoded_descriptor(encoded_row(0, 7, 2, 0, 2), [0, 1, 0, 1]);
+    encoded_descriptor(encoded_row(dynamic_scope(0), 7, 2, 0, 2), [0, 1, 0, 1]);
 static CONTROLLER_MISSING_FROM_ARM: [u8; 10] =
-    encoded_descriptor(encoded_row(0, 7, 1, 0, 1), [0, 1]);
+    encoded_descriptor(encoded_row(dynamic_scope(0), 7, 1, 0, 1), [0, 1]);
 static UNSORTED_PARTICIPANTS: [u8; 12] =
-    encoded_descriptor(encoded_row(0, 7, 0, 0, 2), [1, 0, 0, 1]);
+    encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [1, 0, 0, 1]);
 static DUPLICATE_PARTICIPANTS: [u8; 12] =
-    encoded_descriptor(encoded_row(0, 7, 0, 0, 2), [0, 0, 0, 1]);
+    encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [0, 0, 0, 1]);
 static PARTICIPANT_OUT_OF_RANGE: [u8; 12] =
-    encoded_descriptor(encoded_row(0, 7, 0, 0, 2), [0, 2, 0, 1]);
+    encoded_descriptor(encoded_row(dynamic_scope(0), 7, 0, 0, 2), [0, 2, 0, 1]);
 
 #[test]
 fn compiled_program_descriptor_decodes_canonical_resolver_rows() {
@@ -104,21 +112,76 @@ fn compiled_program_descriptor_decodes_canonical_resolver_rows() {
     let resolver = dynamic.route_resolver(scope).expect("dynamic resolver");
     assert_eq!(resolver.scope(), scope);
     assert_eq!(resolver.resolver_id(), 7);
+
+    let dynamic_max = forged_program_ref(&DYNAMIC_MAX, 0, 2);
+    let resolver = dynamic_max
+        .route_resolver(ScopeId::route(0))
+        .expect("maximum dynamic resolver id");
+    assert_eq!(resolver.resolver_id(), u16::MAX);
+}
+
+#[test]
+fn public_projection_preserves_the_full_u16_resolver_id_domain() {
+    let route = g::route(
+        g::send::<0, 1, Msg<35, u8>>(),
+        g::send::<0, 1, Msg<36, u8>>(),
+    )
+    .resolve::<MAX_ROUTE_RESOLVER>();
+    let role0: RoleProgram<0> = project(&route);
+    let program = role0.role_image_ref().program;
+
+    assert_eq!(program.route_resolver_row_count(), 1);
+    assert_eq!(
+        program.route_resolver_id_at_row(0),
+        Some(MAX_ROUTE_RESOLVER)
+    );
 }
 
 #[test]
 fn compiled_program_resolver_decoder_rejects_invalid_ranges_and_scopes() {
-    assert!(RouteResolverRow::decode(0, INTRINSIC_ROUTE_RESOLVER_ID, 0, 0, 0, 2, 2).is_some());
+    assert!(RouteResolverRow::decode(0, 0, 0, 0, 0, 2, 2).is_some());
+    assert!(RouteResolverRow::decode(0, 1, 0, 0, 0, 2, 2).is_none());
+    assert!(RouteResolverRow::decode(dynamic_scope(0), u16::MAX, 0, 0, 0, 2, 2).is_some());
     assert!(RouteResolverRow::decode(u16::MAX, 0, 0, 0, 0, 2, 2).is_none());
-    assert!(RouteResolverRow::decode(ScopeId::roll_scope(0).raw(), 0, 0, 0, 0, 2, 2).is_none());
-    assert!(RouteResolverRow::decode(ScopeId::LOCAL_CAPACITY, 0, 0, 0, 0, 2, 2,).is_none());
-    assert!(RouteResolverRow::decode(0, 0, 0, u16::MAX, 0, u16::MAX, u16::MAX as usize).is_none());
-    assert!(RouteResolverRow::decode(0, 0, 0, 0, 0, 1, 1).is_none());
-    assert!(RouteResolverRow::decode(0, 0, 0, 0, 0, 258, 258).is_none());
     assert!(
-        RouteResolverRow::decode(0, 0, 0, u16::MAX - 2, 0, u16::MAX, u16::MAX as usize,).is_some()
+        RouteResolverRow::decode(
+            dynamic_scope(ScopeId::roll_scope(0).raw()),
+            0,
+            0,
+            0,
+            0,
+            2,
+            2,
+        )
+        .is_none()
     );
-    let full_arm = RouteResolverRow::decode(0, 0, 0, 0, u8::MAX, 257, 257)
+    assert!(
+        RouteResolverRow::decode(
+            dynamic_scope(0),
+            0,
+            0,
+            u16::MAX,
+            0,
+            u16::MAX,
+            u16::MAX as usize,
+        )
+        .is_none()
+    );
+    assert!(RouteResolverRow::decode(dynamic_scope(0), 0, 0, 0, 0, 1, 1).is_none());
+    assert!(RouteResolverRow::decode(dynamic_scope(0), 0, 0, 0, 0, 258, 258).is_none());
+    assert!(
+        RouteResolverRow::decode(
+            dynamic_scope(0),
+            0,
+            0,
+            u16::MAX - 2,
+            0,
+            u16::MAX,
+            u16::MAX as usize,
+        )
+        .is_some()
+    );
+    let full_arm = RouteResolverRow::decode(dynamic_scope(0), 0, 0, 0, u8::MAX, 257, 257)
         .expect("encoded length 255 denotes 256 participants");
     assert_eq!(full_arm.participant_range(0).len(), 256);
     assert_eq!(full_arm.participant_range(1).len(), 1);
@@ -135,8 +198,15 @@ fn compiled_program_descriptor_accepts_role_255_participant() {
 
 #[test]
 #[should_panic]
-fn compiled_program_descriptor_rejects_absent_route_scope() {
-    let descriptor = forged_program_ref(&ABSENT_SCOPE, 0, 2);
+fn compiled_program_descriptor_rejects_invalid_packed_scope() {
+    let descriptor = forged_program_ref(&INVALID_PACKED_SCOPE, 0, 2);
+    let _ = descriptor.route_resolver_scope_at_row(0);
+}
+
+#[test]
+#[should_panic]
+fn compiled_program_descriptor_rejects_noncanonical_intrinsic_authority() {
+    let descriptor = forged_program_ref(&NONCANONICAL_INTRINSIC, 0, 2);
     let _ = descriptor.route_resolver_scope_at_row(0);
 }
 
@@ -144,13 +214,6 @@ fn compiled_program_descriptor_rejects_absent_route_scope() {
 #[should_panic]
 fn compiled_program_descriptor_rejects_non_route_scope() {
     let descriptor = forged_program_ref(&NON_ROUTE_SCOPE, 0, 2);
-    let _ = descriptor.route_resolver_scope_at_row(0);
-}
-
-#[test]
-#[should_panic]
-fn compiled_program_descriptor_rejects_route_ordinal_out_of_range() {
-    let descriptor = forged_program_ref(&ROUTE_ORDINAL_OUT_OF_RANGE, 0, 2);
     let _ = descriptor.route_resolver_scope_at_row(0);
 }
 

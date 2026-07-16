@@ -168,9 +168,6 @@ impl<LeftSteps, RightSteps> Program<Route<LeftSteps, RightSteps>> {
     pub const fn resolve<const RESOLVER_ID: u16>(
         self,
     ) -> Program<Resolve<Route<LeftSteps, RightSteps>, RESOLVER_ID>> {
-        if RESOLVER_ID == u16::MAX {
-            panic!("route resolver id must be < u16::MAX");
-        }
         let _ = self;
         Program::new()
     }

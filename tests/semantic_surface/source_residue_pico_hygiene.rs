@@ -2,17 +2,6 @@ use super::common::*;
 use hibana::runtime::tap::TapEvent;
 use std::{fs, path::PathBuf, process::Command};
 
-fn named_struct_body<'a>(source: &'a str, name: &str) -> &'a str {
-    let marker = format!("struct {name} {{");
-    let tail = source
-        .split(&marker)
-        .nth(1)
-        .unwrap_or_else(|| panic!("{name} struct must stay visible"));
-    tail.split("\n}")
-        .next()
-        .unwrap_or_else(|| panic!("{name} struct body must stay visible"))
-}
-
 fn frame_header_impl(source: &str) -> &str {
     let impl_start = source
         .find("impl FrameHeader {")

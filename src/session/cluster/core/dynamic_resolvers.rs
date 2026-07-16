@@ -243,9 +243,6 @@ impl ResolverRegistrationKey {
         program: &'static crate::global::compiled::images::CompiledProgramRef,
         resolver_id: u16,
     ) -> Self {
-        if resolver_id == crate::global::const_dsl::INTRINSIC_ROUTE_RESOLVER_ID {
-            crate::invariant();
-        }
         Self {
             program,
             resolver_id,

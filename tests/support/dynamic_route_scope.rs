@@ -117,10 +117,6 @@ pub(crate) fn nested_resolver_program<const ROLE: u8>() -> RoleProgram<ROLE> {
     )
 }
 
-pub(crate) fn same_label_outbound_program<const ROLE: u8>() -> RoleProgram<ROLE> {
-    same_label_outbound_program_for::<ROLE, SAME_LABEL_ROUTE_RESOLVER>()
-}
-
 pub(crate) fn same_label_outbound_program_for<const ROLE: u8, const RESOLVER: u16>()
 -> RoleProgram<ROLE> {
     let left = g::send::<0, 1, Msg<SAME_LABEL, u32>>();
