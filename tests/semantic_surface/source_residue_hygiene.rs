@@ -52,6 +52,49 @@ fn role_projection_does_not_hide_exact_count_dispatch() {
 }
 
 #[test]
+fn route_arm_lane_projection_has_one_linear_fact_authority() {
+    let plan = read("src/global/role_program/image_impl/plan.rs");
+    let emitter = read("src/global/role_program/image_impl/blob_image/lanes.rs");
+    let facts = read("src/global/role_program/image_impl/projection/lanes.rs");
+    let combined = format!("{plan}\n{emitter}");
+
+    for removed in [
+        "lane_byte_len_for_eff_range",
+        "route_arm_lane_step_count",
+        "eff_lane_bit_byte",
+        "eff_lane_bit_len",
+        "while scan < eff_idx",
+        "while scan_eff < eff_idx",
+    ] {
+        assert!(
+            !combined.contains(removed),
+            "route-arm lane projection must not restore repeated event scans: {removed}"
+        );
+    }
+    assert!(
+        plan.contains("projection::LocalLaneFacts::for_eff_range")
+            && emitter.contains("facts.last_step(atom.lane)")
+            && emitter.contains("let (start_eff, end_eff) = facts.eff_range()")
+            && !emitter.contains("eff_range: (usize, usize)")
+            && emitter.contains("let mut emitted = [0u8; LANE_BITMAP_BYTES]")
+            && emitter.contains("if source_row >= column.len as usize")
+            && emitter.contains("self.zero_extended_lane_bit_from_row(column, left, idx)")
+            && emitter.contains("self.zero_extended_lane_bit_from_row(column, right, idx)")
+            && emitter.contains("if row_start < left.end() || row_start < right.end()")
+            && facts.contains("struct LocalLaneAccumulator")
+            && facts.contains("last_steps: [u16; LANE_DOMAIN_SIZE]")
+            && facts.contains("eff_range: (usize, usize)")
+            && facts.contains("lanes.record(atom.lane, local_step)")
+            && facts.contains("if start_eff > end_eff || end_eff > eff_list.len()")
+            && !facts.contains("let limit = if end_eff < eff_list.len()")
+            && facts.contains("if byte_idx >= self.lanes.lane_bit_len")
+            && facts.contains("if self.lanes.lane_bits[byte_idx] & bit == 0")
+            && facts.contains("relation_count: usize"),
+        "planner and emitter must share one lane-domain-derived linear fact projection"
+    );
+}
+
+#[test]
 fn production_sources_do_not_retain_test_only_effect_or_offer_helpers() {
     let production = read_production_rs_tree("src");
     for forbidden in [

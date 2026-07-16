@@ -4,6 +4,7 @@ use super::common::*;
 fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let final_gate = read(".github/scripts/check_final_form_measurements.sh");
     let message_heavy_gate = read(".github/scripts/check_message_heavy_matrix.sh");
+    let route_arm_pressure_gate = read(".github/scripts/check_route_arm_projection_pressure.sh");
     let worktree_gate = read(".github/scripts/check_size_snapshot_regression.sh");
     let performance_gate = read(".github/scripts/check_runtime_performance_hygiene.sh");
     let kernel_monomorphization_gate =
@@ -142,6 +143,21 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && !message_heavy_gate.contains("src/main.rs")
             && !message_heavy_gate.contains("std::hint::black_box"),
         "message-heavy gate must measure distinct wire contracts and type pressure on thumbv6m without recursion-limit escape"
+    );
+    assert!(
+        final_gate.contains(
+            "bash \"${ROOT_DIR}/.github/scripts/check_route_arm_projection_pressure.sh\""
+        ) && route_arm_pressure_gate.contains("TARGET=\"thumbv6m-none-eabi\"")
+            && route_arm_pressure_gate.contains("program = f\"g::route(")
+            && route_arm_pressure_gate.contains("for count in 1 64 256")
+            && route_arm_pressure_gate
+                .contains("HIBANA_COMPILE_PRESSURE_LABEL=\"route_arm_heavy_${count}\"")
+            && route_arm_pressure_gate
+                .contains("route-arm projection compile time became superlinear")
+            && route_arm_pressure_gate
+                .contains("route-arm projection pressure passed target=${TARGET} arm-events=256")
+            && compile_pressure_budget.contains("route_arm_heavy_256\t"),
+        "route-arm projection must retain a Pico-target compile-pressure regression gate"
     );
     assert!(
         !huge_choreography.contains("recursion_limit")

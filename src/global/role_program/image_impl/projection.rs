@@ -10,9 +10,11 @@ use crate::global::{
 };
 
 mod dependency;
+mod lanes;
 mod resident;
 mod route;
 pub(super) use dependency::DependencyCursor;
+pub(super) use lanes::{LANE_BITMAP_BYTES, LocalLaneFacts};
 pub(super) use resident::ResidentRowCursor;
 pub(super) use route::{
     passive_arm_child_scope, route_commit_conflict_at, route_commit_row_count,

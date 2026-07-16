@@ -523,9 +523,12 @@ or runtime authority.
 
 Selected route history uses the same descriptor-first rule. One sparse runtime
 row is admitted only for an emitted `(lane, route)` relation, and Lean proves
-that the emitted relation count covers every live row. The endpoint therefore
-does not allocate the Cartesian product of active lanes and maximum route
-depth.
+that relation membership is exactly the set of lanes used by the arm, duplicate
+events do not allocate another relation, the 256-lane domain bounds the relation
+count, and the emitted relation count covers every live row. Production lowering
+computes the bitmap, local row, and last step in one event pass; Kani verifies
+the full-domain accumulator transition. The endpoint therefore does not
+allocate the Cartesian product of active lanes and maximum route depth.
 
 Canonical program atom rows are strictly ordered by compact event identity.
 Lean proves this for every normalized choreography, the compact Rust image

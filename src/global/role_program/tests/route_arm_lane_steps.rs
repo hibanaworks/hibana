@@ -10,6 +10,16 @@ type SparseMultiLaneRight = g::Seq<
 >;
 type SparseMultiLaneRoute = g::Route<SparseMultiLaneLeft, SparseMultiLaneRight>;
 
+type RepeatedLaneLeft = g::Seq<
+    g::Send<0, 1, Msg<115, ()>>,
+    g::Seq<g::Send<0, 1, Msg<116, ()>>, g::Send<0, 1, Msg<117, ()>>>,
+>;
+type RepeatedLaneRight = g::Seq<
+    g::Send<0, 1, Msg<118, ()>>,
+    g::Seq<g::Send<0, 1, Msg<119, ()>>, g::Send<0, 1, Msg<120, ()>>>,
+>;
+type RepeatedLaneRoute = g::Route<RepeatedLaneLeft, RepeatedLaneRight>;
+
 fn sparse_multi_lane_route_program() -> Program<SparseMultiLaneRoute> {
     g::route(
         g::seq(
@@ -24,6 +34,25 @@ fn sparse_multi_lane_route_program() -> Program<SparseMultiLaneRoute> {
             g::par(
                 g::send::<0, 2, Msg<113, ()>>(),
                 g::send::<0, 3, Msg<114, ()>>(),
+            ),
+        ),
+    )
+}
+
+fn repeated_lane_route_program() -> Program<RepeatedLaneRoute> {
+    g::route(
+        g::seq(
+            g::send::<0, 1, Msg<115, ()>>(),
+            g::seq(
+                g::send::<0, 1, Msg<116, ()>>(),
+                g::send::<0, 1, Msg<117, ()>>(),
+            ),
+        ),
+        g::seq(
+            g::send::<0, 1, Msg<118, ()>>(),
+            g::seq(
+                g::send::<0, 1, Msg<119, ()>>(),
+                g::send::<0, 1, Msg<120, ()>>(),
             ),
         ),
     )
@@ -152,6 +181,7 @@ fn route_arm_lane_steps_store_one_row_per_actual_arm_lane_relation() {
         assert_eq!(columns.route_arms.len, 2);
         assert_eq!(descriptor.logical_lane_count(), 2);
         assert_eq!(columns.route_arm_lane_step_rows.len, 4);
+        let offer = rows.route_scope_offer_lane_set_by_slot(0);
         for arm in 0..=1 {
             for lane in 0..=1 {
                 assert!(
@@ -159,8 +189,26 @@ fn route_arm_lane_steps_store_one_row_per_actual_arm_lane_relation() {
                         .is_some(),
                     "each actually used arm/lane pair must own exactly one relation row"
                 );
+                assert!(
+                    offer.contains(lane as usize),
+                    "offer lane row must contain the union of both emitted arm rows"
+                );
             }
         }
+    });
+}
+
+#[test]
+fn route_arm_lane_steps_preserve_first_and_last_repeated_lane_occurrences() {
+    let program: RoleProgram<0> = project(&repeated_lane_route_program());
+    with_role_descriptor(&program, |descriptor| {
+        let rows = descriptor.local_event_rows();
+        let columns = rows.lanes().columns;
+        assert_eq!(columns.route_arm_lane_step_rows.len, 2);
+        assert_eq!(rows.route_arm_lane_first_step_by_slot(0, 0, 0), Some(0));
+        assert_eq!(rows.route_arm_lane_last_step_by_slot(0, 0, 0), Some(2));
+        assert_eq!(rows.route_arm_lane_first_step_by_slot(0, 1, 0), Some(3));
+        assert_eq!(rows.route_arm_lane_last_step_by_slot(0, 1, 0), Some(5));
     });
 }
 

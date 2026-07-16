@@ -918,4 +918,7 @@ fi
 echo "== final-form message-heavy matrix =="
 bash "${ROOT_DIR}/.github/scripts/check_message_heavy_matrix.sh"
 
+echo "== final-form route-arm projection pressure =="
+bash "${ROOT_DIR}/.github/scripts/check_route_arm_projection_pressure.sh"
+
 echo "final-form measurement check passed"

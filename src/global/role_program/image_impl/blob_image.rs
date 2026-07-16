@@ -259,8 +259,9 @@ impl<const N: usize> RoleImageBytes<N> {
             panic!("role image plan mismatch");
         }
 
-        let active_lane_row =
-            out.write_lane_bit_row(columns.lane_bits, 0, eff_list, role, 0, eff_list.len());
+        let active_lane_facts =
+            projection::LocalLaneFacts::for_eff_range(eff_list, role, 0, eff_list.len());
+        let active_lane_row = out.write_lane_bit_row(columns.lane_bits, 0, &active_lane_facts);
         let mut lane_bit_row = active_lane_row.end();
 
         let resident_row_count = if columns.resident_boundaries.len == 0 {
@@ -330,22 +331,19 @@ impl<const N: usize> RoleImageBytes<N> {
                     panic!("route scope missing binary arm ranges");
                 };
                 let mut local_rows = [PackedLaneRange::EMPTY; 2];
+                let mut arm_lane_rows = [PackedLaneRange::EMPTY; 2];
                 let mut arm = 0usize;
                 while arm < 2 {
                     let (start_eff, end_eff) = ranges[arm];
-                    let local_row = projection::local_step_range_for_eff_range(
-                        eff_list, start_eff, end_eff, role,
+                    let lane_facts = projection::LocalLaneFacts::for_eff_range(
+                        eff_list, role, start_eff, end_eff,
                     );
+                    let local_row = lane_facts.local_row();
                     local_rows[arm] = local_row;
                     let arm_row_index = route_arm_row_index(route_slot, arm as u8);
-                    let lane_row = out.write_lane_bit_row(
-                        columns.lane_bits,
-                        lane_bit_row,
-                        eff_list,
-                        role,
-                        start_eff,
-                        end_eff,
-                    );
+                    let lane_row =
+                        out.write_lane_bit_row(columns.lane_bits, lane_bit_row, &lane_facts);
+                    arm_lane_rows[arm] = lane_row;
                     lane_bit_row += lane_row.len();
                     out.w32(
                         columns.route_arm_lane_rows,
@@ -358,8 +356,7 @@ impl<const N: usize> RoleImageBytes<N> {
                         route_arm_lane_step_row,
                         eff_list,
                         role,
-                        (start_eff, end_eff),
-                        local_row,
+                        &lane_facts,
                     );
                     let lane_step_row =
                         PackedLaneRange::new(route_arm_lane_step_row, written_steps);
@@ -427,10 +424,8 @@ impl<const N: usize> RoleImageBytes<N> {
                 let offer_row = out.write_lane_bit_union_row(
                     columns.lane_bits,
                     lane_bit_row,
-                    eff_list,
-                    role,
-                    ranges[0],
-                    ranges[1],
+                    arm_lane_rows[0],
+                    arm_lane_rows[1],
                 );
                 lane_bit_row += offer_row.len();
                 out.w32(

@@ -72,7 +72,8 @@ check_absent \
   "event-capacity array in role descriptor plan/emitter detected" \
   src/global/role_program/image_impl/plan.rs \
   src/global/role_program/image_impl/blob_image.rs \
-  src/global/role_program/image_impl/projection.rs
+  src/global/role_program/image_impl/projection.rs \
+  src/global/role_program/image_impl/projection/lanes.rs
 if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: role descriptor planning memory must not scale with source event capacity" >&2
   exit 1
@@ -85,7 +86,8 @@ for required in \
   'src/global/role_program/image_impl/blob_image.rs:pub(crate) const fn emit<const E: usize>' \
   'src/global/role_program/image_impl/blob_image.rs:projection::DependencyCursor::new(eff_list, role)' \
   'src/global/role_program/image_impl/blob_image.rs:projection::ResidentRowCursor::new(eff_list, role)' \
-  'src/global/role_program/image_impl/blob_image.rs:out.write_event(columns.events, local_step, event)'
+  'src/global/role_program/image_impl/blob_image.rs:out.write_event(columns.events, local_step, event)' \
+  'src/global/role_program/image_impl/projection/lanes.rs:lanes.record(atom.lane, local_step)'
 do
   path="${required%%:*}"
   pattern="${required#*:}"

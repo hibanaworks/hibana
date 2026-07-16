@@ -16,6 +16,8 @@ The pinned gate exhausts the production arithmetic for:
   sentinel;
 - exact resident decoding for route/roll scope rows, local event headers,
   logical-lane rows, route-arm lane-step rows, and binary route-arm indexing;
+- exact full-domain route-arm lane accumulation: duplicate events preserve one
+  relation, lane bits remain exact, and the final local step is retained;
 - exact route-commit decision identity across scope, arm, and reentry metadata;
 - exact local-dependency decoding, including event-image range bounds;
 - exact compiled atom and route-resolver row decoding, including both per-arm

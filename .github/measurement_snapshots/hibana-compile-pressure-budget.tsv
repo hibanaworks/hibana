@@ -10,3 +10,6 @@ huge_choreography_runtime	2	228	30	256
 message_heavy_1	1	87	15	128
 message_heavy_64	1	98	15	128
 message_heavy_256	5	144	20	256
+route_arm_heavy_1	1	4	15	128
+route_arm_heavy_64	1	99	15	128
+route_arm_heavy_256	3	153	20	256

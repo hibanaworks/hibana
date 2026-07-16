@@ -174,68 +174,6 @@ impl RoleImageColumnCounts {
         }
     }
 
-    const fn lane_byte_len_for_eff_range<const E: usize>(
-        eff_list: &EffList<E>,
-        role: u8,
-        start_eff: usize,
-        end_eff: usize,
-    ) -> usize {
-        let mut max_lane_plus_one = 0usize;
-        let mut eff_idx = start_eff;
-        while eff_idx < end_eff {
-            let node = eff_list.node_at(eff_idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    let lane_plus_one = atom.lane as usize + 1;
-                    if lane_plus_one > max_lane_plus_one {
-                        max_lane_plus_one = lane_plus_one;
-                    }
-                }
-            }
-            eff_idx += 1;
-        }
-        lane_byte_count(max_lane_plus_one)
-    }
-
-    const fn route_arm_lane_step_count<const E: usize>(
-        eff_list: &EffList<E>,
-        role: u8,
-        start_eff: usize,
-        end_eff: usize,
-    ) -> usize {
-        let mut count = 0usize;
-        let mut eff_idx = start_eff;
-        while eff_idx < end_eff {
-            let node = eff_list.node_at(eff_idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    let mut seen = false;
-                    let mut scan = start_eff;
-                    while scan < eff_idx {
-                        let candidate = eff_list.node_at(scan);
-                        if matches!(candidate.kind, crate::eff::EffKind::Atom) {
-                            let candidate = candidate.atom_data();
-                            if (candidate.from == role || candidate.to == role)
-                                && candidate.lane == atom.lane
-                            {
-                                seen = true;
-                                break;
-                            }
-                        }
-                        scan += 1;
-                    }
-                    if !seen {
-                        count += 1;
-                    }
-                }
-            }
-            eff_idx += 1;
-        }
-        count
-    }
-
     const fn resident_row_count<const E: usize>(eff_list: &EffList<E>, role: u8) -> usize {
         let mut rows = projection::ResidentRowCursor::new(eff_list, role);
         let mut row_count = 0usize;
@@ -276,11 +214,11 @@ impl RoleImageColumnCounts {
                 let mut arm_lane_bits = [0usize; 2];
                 while arm < 2 {
                     let (start, end) = ranges[arm];
-                    let lane_bits = Self::lane_byte_len_for_eff_range(eff_list, role, start, end);
-                    arm_lane_bits[arm] = lane_bits;
-                    facts.lane_bits += lane_bits;
-                    facts.route_arm_lane_steps +=
-                        Self::route_arm_lane_step_count(eff_list, role, start, end);
+                    let lanes =
+                        projection::LocalLaneFacts::for_eff_range(eff_list, role, start, end);
+                    arm_lane_bits[arm] = lanes.lane_bit_len();
+                    facts.lane_bits += lanes.lane_bit_len();
+                    facts.route_arm_lane_steps += lanes.relation_count();
                     facts.route_commit_rows += projection::route_commit_row_count(
                         markers,
                         eff_list.len(),

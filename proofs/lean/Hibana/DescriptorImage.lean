@@ -162,6 +162,38 @@ theorem sparse_route_history_avoids_the_lane_depth_product :
 
 def productionLaneCapacity : Nat := 256
 
+/-- Semantic route-arm lane relations. The production emitter preserves
+first-occurrence row order separately; relation membership is the bounded lane
+set below. -/
+def projectedRouteArmLanes (lanes : List Nat) : List Nat :=
+  (List.range productionLaneCapacity).filter fun lane => lane ∈ lanes
+
+theorem projected_route_arm_lanes_are_exact
+    (lanes : List Nat) (lane : Nat)
+    (inDomain : lane < productionLaneCapacity) :
+    lane ∈ projectedRouteArmLanes lanes ↔ lane ∈ lanes := by
+  simp [projectedRouteArmLanes, inDomain]
+
+theorem projected_route_arm_lanes_exclude_out_of_domain
+    (lanes : List Nat) (lane : Nat)
+    (outOfDomain : productionLaneCapacity ≤ lane) :
+    lane ∉ projectedRouteArmLanes lanes := by
+  simp [projectedRouteArmLanes, Nat.not_lt.mpr outOfDomain]
+
+theorem projected_route_arm_lane_relation_count_is_domain_bounded
+    (lanes : List Nat) :
+    (projectedRouteArmLanes lanes).length ≤ productionLaneCapacity := by
+  unfold projectedRouteArmLanes
+  calc
+    _ ≤ (List.range productionLaneCapacity).length := List.length_filter_le _ _
+    _ = productionLaneCapacity := List.length_range
+
+theorem projected_route_arm_lane_duplicates_do_not_allocate_relations
+    (lanes : List Nat) (lane : Nat) :
+    projectedRouteArmLanes (lanes ++ [lane, lane]) =
+      projectedRouteArmLanes (lanes ++ [lane]) := by
+  simp [projectedRouteArmLanes]
+
 /-- Runtime lane-indexed storage is sized by the exact projected lane span. No
 extra binding lanes are reserved because production never creates a lane that
 is absent from the accepted descriptor. -/

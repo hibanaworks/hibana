@@ -12,6 +12,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let public_operation_harnesses = read("src/endpoint/kernel/core/public_types/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
+    let lane_projection_harnesses =
+        read("src/global/role_program/image_impl/projection/lanes/kani.rs");
     let scope_harnesses = read("src/global/const_dsl/scope/kani.rs");
     let allocation_harnesses = read("src/global/const_dsl/allocation/kani.rs");
     let maximum_matching_harness =
@@ -93,6 +95,15 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(harnesses.contains("gaps: [usize; 2]"));
     assert!(compaction_harness.contains("destinations[index].1 <= sources[index].1"));
     assert!(compaction_harness.contains("destinations[index].1 <= sources[later].0"));
+    assert!(
+        lane_projection_harnesses
+            .contains("fn local_lane_accumulator_preserves_exact_lane_relations_and_last_steps()")
+    );
+    assert!(lane_projection_harnesses.contains("assert_eq!(facts.relation_count, 1)"));
+    assert!(
+        lane_projection_harnesses
+            .contains("assert_eq!(facts.last_steps[lane as usize], last_step)")
+    );
 
     for harness in [
         "endpoint_generation_advances_or_exhausts",
