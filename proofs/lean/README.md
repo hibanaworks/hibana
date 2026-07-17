@@ -519,10 +519,12 @@ Frontier scratch capacity is derived from the projected active-lane count. Lean
 proves that every active offer entry has an owning active lane and that the
 complete 256-lane wire domain bounds the resulting allocation; the production
 selection kernel streams those entries instead of representing them in a fixed
-candidate bit mask. Visit tracking uses exact local-entry identity rather than
-route-scope identity, and Lean proves that the same allocation covers every
-visited entry. Capacity exhaustion is an invariant failure, never silent
-truncation.
+candidate bit mask. The representative lookup is proved total exactly when an
+owning lane exists, and every returned representative is an exact owner; no
+frontier kind is fabricated for a missing representative. Visit tracking uses
+exact local-entry identity rather than route-scope identity, and Lean proves
+that the same allocation covers every visited entry. Capacity exhaustion is an
+invariant failure, never silent truncation.
 
 All other lane-indexed endpoint storage follows the exact projected lane span.
 Lean and Kani prove that this span covers every active lane and remains inside

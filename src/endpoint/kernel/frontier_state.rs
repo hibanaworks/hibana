@@ -520,3 +520,7 @@ impl FrontierState {
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "frontier_state/tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "frontier_state/kani.rs"]
+mod kani;

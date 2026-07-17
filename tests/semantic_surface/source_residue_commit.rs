@@ -762,6 +762,7 @@ fn branch_recv_progress_plan_no_longer_carries_route_cleanup_inputs() {
 fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
     let offer_refresh = read("src/endpoint/kernel/core/offer_refresh.rs");
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
+    let offer_cache_refresh = read("src/endpoint/kernel/offer/cache_refresh.rs");
     let frontier_select = read("src/endpoint/kernel/core/frontier_select.rs");
     let frontier_helpers = read("src/endpoint/kernel/core/frontier_helpers.rs");
     let cursor = read("src/global/typestate/cursor.rs");
@@ -803,7 +804,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
         offer_refresh.contains(".selected_arm_for_scope(")
             && offer_select.contains(".route_scope_for_offer_node(")
             && offer_select.contains(".route_offer_entry_allows_current(")
-            && offer_select.contains(".route_scope_present_for_entry(")
+            && offer_cache_refresh.contains(".route_scope_present_for_entry(")
             && current_offer_scope_id.contains(".route_scope_slot_inner(node_scope).is_some()")
             && !current_offer_scope_id.contains("node_scope.kind()")
             && !current_offer_scope_id.contains("ScopeKind::Route")
@@ -945,5 +946,46 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && !token_lookup.contains("resident_lane_step_locator(")
             && cursor_lane_progress.contains("self.local_event_done(target.step_idx as usize)"),
         "resident lane progress tokens must carry event/lane identity, not cached phase/ordinal correctness"
+    );
+}
+
+#[test]
+fn active_offer_entries_are_owner_derived_without_frontier_fallback() {
+    let frontier_select = read("src/endpoint/kernel/core/frontier_select.rs");
+    let active_offer_entry = read("src/endpoint/kernel/frontier/active_offer_entry.rs");
+    let entry_sets = read("src/endpoint/kernel/frontier/entry_sets.rs");
+
+    assert!(
+        entry_sets.contains("pub(crate) fn slot_at(")
+            && !entry_sets.contains("pub(crate) fn entry_at(")
+            && frontier_select.contains("active_offer_entry_from_slot")
+            && frontier_select.contains("slot.lane_idx as usize")
+            && frontier_select.contains("owner.entry != entry")
+            && frontier_select
+                .matches("active_offer_entry_from_owner_lane(")
+                .count()
+                == 2
+            && active_offer_entry.contains("pub(crate) struct ActiveOfferEntry")
+            && active_offer_entry.contains("info.entry != self.representative.entry")
+            && !active_offer_entry.contains("info.scope != self.representative.scope")
+            && !active_offer_entry
+                .contains("info.parallel_root != self.representative.parallel_root"),
+        "active frontier selection must retain and validate its concrete owning lane"
+    );
+    for removed in [
+        "offer_entry_has_active_lanes",
+        "offer_entry_scope_id",
+        "offer_entry_frontier(",
+        "compute_offer_entry_summary",
+        "offer_entry_representative_lane_from_route_state",
+    ] {
+        assert!(
+            !frontier_select.contains(removed),
+            "active offer entries must not regrow split scans or fallback helpers: {removed}"
+        );
+    }
+    assert!(
+        !frontier_select.contains("FrontierKind::Route"),
+        "a missing active-entry representative must never become a Route frontier"
     );
 }

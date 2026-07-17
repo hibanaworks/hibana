@@ -19,8 +19,14 @@ fn active_entry_set_accepts_the_complete_lane_domain() {
     assert_eq!(entries.len(), 256);
     assert!(!entries.insert_entry(256, u8::MAX));
     let entries = entries.seal();
-    assert_eq!(entries.entry_at(8), Some(8));
-    assert_eq!(entries.entry_at(255), Some(255));
+    assert_eq!(
+        entries.slot_at(8).map(|slot| slot.entry.as_usize()),
+        Some(8)
+    );
+    assert_eq!(
+        entries.slot_at(255).map(|slot| slot.entry.as_usize()),
+        Some(255)
+    );
 }
 
 #[test]

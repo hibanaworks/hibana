@@ -64,6 +64,7 @@ src/endpoint/kernel	src/endpoint/kernel/evidence.rs
 src/endpoint/kernel	src/endpoint/kernel/evidence_store.rs
 src/endpoint/kernel	src/endpoint/kernel/frontier
 src/endpoint/kernel	src/endpoint/kernel/frontier.rs
+src/endpoint/kernel	src/endpoint/kernel/frontier_state
 src/endpoint/kernel	src/endpoint/kernel/frontier_state.rs
 src/endpoint/kernel	src/endpoint/kernel/lane_port.rs
 src/endpoint/kernel	src/endpoint/kernel/layout.rs

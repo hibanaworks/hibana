@@ -140,6 +140,8 @@ import Hibana.MainTheorems
 #print axioms Hibana.production_frontier_capacity_covers_all_visited_entries
 #print axioms Hibana.production_frontier_capacity_is_bounded_by_the_lane_domain
 #print axioms Hibana.production_frontier_capacity_has_no_former_eight_entry_limit
+#print axioms Hibana.first_owning_lane_is_exact_owner
+#print axioms Hibana.active_offer_entry_has_representative_iff_owned
 #print axioms Hibana.role_event_bytes_dominate_local_step_field
 #print axioms Hibana.projected_actions_match_global_events
 #print axioms Hibana.global_events_from_length_eq

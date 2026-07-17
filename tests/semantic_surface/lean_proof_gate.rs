@@ -128,6 +128,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && descriptor_refinement_leaf.contains("import Hibana.DescriptorTopology"),
         "descriptor refinement must remain split into byte-image, topology, and certificate layers"
     );
+    for theorem in [
+        "first_owning_lane_is_exact_owner",
+        "active_offer_entry_has_representative_iff_owned",
+    ] {
+        assert!(descriptor_image.contains(&format!("theorem {theorem}")));
+    }
     assert!(
         !lean_sources.lines().any(|line| {
             let trimmed = line.trim_start();

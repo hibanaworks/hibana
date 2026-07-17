@@ -1,29 +1,105 @@
 use super::{
-    ActiveEntrySet, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint, FrontierCandidate,
-    FrontierKind, LaneOfferState, ObservedEntrySet, OfferEntryEvidence, OfferEntryObservedState,
-    ScopeArmMaterializationMeta, ScopeId, Transport, offer_entry_frontier_candidate,
-    offer_entry_observed_state, state_index_to_usize,
+    ActiveEntrySlot, ActiveOfferEntry, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint,
+    FrontierCandidate, LaneOfferState, ObservedEntrySet, OfferEntryEvidence,
+    OfferEntryObservedState, ScopeArmMaterializationMeta, ScopeId, StateIndex, Transport,
+    checked_state_index, offer_entry_frontier_candidate, offer_entry_observed_state,
+    state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_has_active_lanes(
+    fn active_offer_entry_from_owner_lane(
         &self,
-        entry_idx: usize,
-    ) -> bool {
+        entry: StateIndex,
+        owner_lane_idx: usize,
+        excluded_lane_idx: Option<usize>,
+    ) -> ActiveOfferEntry {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.decision_state.active_offer_lanes();
+        if owner_lane_idx >= lane_limit
+            || excluded_lane_idx == Some(owner_lane_idx)
+            || !active_offer_lanes.contains(owner_lane_idx)
+        {
+            crate::invariant();
+        }
+        let owner = self.decision_state.lane_offer_state(owner_lane_idx);
+        if owner.entry != entry {
+            crate::invariant();
+        }
+        let owner_lane = match u8::try_from(owner_lane_idx) {
+            Ok(lane) => lane,
+            Err(_) => crate::invariant(),
+        };
+        let mut active = crate::invariant_some(ActiveOfferEntry::new(owner_lane, owner));
         let mut next = active_offer_lanes.first_set(lane_limit);
         while let Some(lane_idx) = next {
             let info = self.decision_state.lane_offer_state(lane_idx);
-            if !info.entry.is_absent() && state_index_to_usize(info.entry) == entry_idx {
-                return true;
+            if info.entry.is_absent() || info.scope.is_none() {
+                crate::invariant();
+            }
+            if lane_idx != owner_lane_idx
+                && excluded_lane_idx != Some(lane_idx)
+                && info.entry == entry
+                && !active.observe_lane(info)
+            {
+                crate::invariant();
             }
             next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
-        false
+        active
+    }
+
+    pub(in crate::endpoint::kernel) fn active_offer_entry_excluding(
+        &self,
+        entry_idx: usize,
+        excluded_lane_idx: Option<usize>,
+    ) -> Option<ActiveOfferEntry> {
+        let entry = checked_state_index(entry_idx)?;
+        let lane_limit = self.cursor.logical_lane_count();
+        let active_offer_lanes = self.decision_state.active_offer_lanes();
+        let mut active: Option<ActiveOfferEntry> = None;
+        let mut next = active_offer_lanes.first_set(lane_limit);
+        while let Some(lane_idx) = next {
+            let info = self.decision_state.lane_offer_state(lane_idx);
+            if info.entry.is_absent() || info.scope.is_none() {
+                crate::invariant();
+            }
+            if excluded_lane_idx != Some(lane_idx) && info.entry == entry {
+                if let Some(active) = active.as_mut() {
+                    if !active.observe_lane(info) {
+                        crate::invariant();
+                    }
+                } else {
+                    let lane = match u8::try_from(lane_idx) {
+                        Ok(lane) => lane,
+                        Err(_) => crate::invariant(),
+                    };
+                    active = Some(crate::invariant_some(ActiveOfferEntry::new(lane, info)));
+                }
+            }
+            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
+        }
+        active
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn active_offer_entry(
+        &self,
+        entry_idx: usize,
+    ) -> Option<ActiveOfferEntry> {
+        self.active_offer_entry_excluding(entry_idx, None)
+    }
+
+    #[inline]
+    pub(in crate::endpoint::kernel) fn active_offer_entry_from_slot(
+        &self,
+        slot: ActiveEntrySlot,
+    ) -> ActiveOfferEntry {
+        if slot.entry.is_absent() {
+            crate::invariant();
+        }
+        self.active_offer_entry_from_owner_lane(slot.entry, slot.lane_idx as usize, None)
     }
 
     #[inline]
@@ -50,13 +126,13 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<CurrentScopeSelectionMeta> {
-        let (_, info) = self.offer_entry_representative_lane_from_route_state(entry_idx)?;
-        if info.scope != scope_id {
+        let active = self.active_offer_entry(entry_idx)?;
+        if active.scope() != scope_id {
             return None;
         }
         Some(self.compute_offer_entry_selection_meta(
             scope_id,
-            info,
+            active.representative(),
             !self.offer_lane_set_for_scope(scope_id).is_empty(),
         ))
     }
@@ -67,94 +143,11 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<ScopeArmMaterializationMeta> {
-        if !self.offer_entry_has_active_lanes(entry_idx)
-            || self.offer_entry_scope_id(entry_idx) != scope_id
-        {
+        let active = self.active_offer_entry(entry_idx)?;
+        if active.scope() != scope_id {
             return None;
         }
         Some(self.compute_scope_arm_materialization_meta(scope_id))
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_lane_state(
-        &self,
-        scope_id: ScopeId,
-        entry_idx: usize,
-    ) -> Option<LaneOfferState> {
-        if !self.offer_entry_has_active_lanes(entry_idx)
-            || self.offer_entry_scope_id(entry_idx) != scope_id
-        {
-            return None;
-        }
-        self.offer_entry_representative_lane_state(entry_idx)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_representative_lane_from_route_state(
-        &self,
-        entry_idx: usize,
-    ) -> Option<(usize, LaneOfferState)> {
-        let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
-        let mut next = active_offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            let info = self.decision_state.lane_offer_state(lane_idx);
-            if state_index_to_usize(info.entry) == entry_idx {
-                return Some((lane_idx, info));
-            }
-            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        }
-        None
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_parallel_root(
-        &self,
-        entry_idx: usize,
-    ) -> Option<ScopeId> {
-        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
-            let parallel_root = info.parallel_root;
-            return (!parallel_root.is_none()).then_some(parallel_root);
-        }
-        None
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_representative_lane_state(
-        &self,
-        entry_idx: usize,
-    ) -> Option<LaneOfferState> {
-        if let Some((lane_idx, info)) =
-            self.offer_entry_representative_lane_from_route_state(entry_idx)
-        {
-            let lane_limit = self.cursor.logical_lane_count();
-            if lane_idx < lane_limit {
-                return Some(info);
-            }
-        }
-        None
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_representative_lane_idx(
-        &self,
-        entry_idx: usize,
-    ) -> Option<usize> {
-        if let Some(pair) = self.offer_entry_representative_lane_from_route_state(entry_idx) {
-            return Some(pair.0);
-        }
-        None
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_scope_id(&self, entry_idx: usize) -> ScopeId {
-        if !self.offer_entry_has_active_lanes(entry_idx) {
-            return ScopeId::none();
-        }
-        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
-            return info.scope;
-        }
-        ScopeId::none()
     }
 
     pub(in crate::endpoint::kernel) fn compute_offer_entry_selection_meta(
@@ -207,53 +200,16 @@ where
         meta
     }
 
-    pub(in crate::endpoint::kernel) fn next_active_frontier_entry(
-        &self,
-        active_entries: ActiveEntrySet,
-        next_slot: &mut usize,
-    ) -> Option<usize> {
-        while *next_slot < active_entries.len() {
-            let slot_idx = *next_slot;
-            *next_slot += 1;
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                continue;
-            };
-            if !self.offer_entry_has_active_lanes(entry_idx) {
-                continue;
-            }
-            if self.offer_entry_has_active_lanes(entry_idx)
-                && self
-                    .offer_entry_representative_lane_idx(entry_idx)
-                    .is_some()
-            {
-                return Some(entry_idx);
-            }
-        }
-        None
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_frontier(
-        &self,
-        entry_idx: usize,
-    ) -> FrontierKind {
-        if let Some(info) = self.offer_entry_representative_lane_state(entry_idx) {
-            return info.frontier;
-        }
-        FrontierKind::Route
-    }
-
     #[inline]
     pub(in crate::endpoint::kernel) fn preview_offer_entry_evidence_non_consuming(
         &mut self,
-        entry_idx: usize,
+        scope_id: ScopeId,
     ) -> OfferEntryEvidence {
-        let scope_id = self.offer_entry_scope_id(entry_idx);
         let mut evidence = OfferEntryEvidence::empty();
-        if !scope_id.is_none() && self.peek_live_scope_ack(scope_id).is_some() {
+        if self.peek_live_scope_ack(scope_id).is_some() {
             evidence = evidence.with_ack();
         }
-        if !scope_id.is_none() && self.scope_has_ready_arm_evidence(scope_id) {
+        if self.scope_has_ready_arm_evidence(scope_id) {
             evidence = evidence.with_ready_arm();
         }
         evidence
@@ -262,36 +218,30 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn offer_entry_candidate_from_observation(
         &self,
-        entry_idx: usize,
+        active: ActiveOfferEntry,
         evidence: OfferEntryEvidence,
     ) -> (OfferEntryObservedState, FrontierCandidate) {
-        let scope_id = self.offer_entry_scope_id(entry_idx);
-        let summary = self.compute_offer_entry_summary(entry_idx);
+        let scope_id = active.scope();
+        let summary = active.summary();
         let observed = offer_entry_observed_state(scope_id, summary, evidence);
         let candidate = offer_entry_frontier_candidate(
             scope_id,
-            entry_idx,
-            match self.offer_entry_parallel_root(entry_idx) {
-                Some(root) => root,
-                None => ScopeId::none(),
-            },
-            self.offer_entry_frontier(entry_idx),
+            state_index_to_usize(active.entry()),
+            active.parallel_root(),
+            active.frontier(),
             observed,
         );
         (observed, candidate)
     }
 
-    pub(in crate::endpoint::kernel) fn scan_offer_entry_candidate_non_consuming(
+    pub(in crate::endpoint::kernel) fn scan_active_offer_entry_non_consuming(
         &mut self,
-        entry_idx: usize,
-    ) -> Option<FrontierCandidate> {
-        if !self.offer_entry_has_active_lanes(entry_idx) {
-            return None;
-        }
-        let evidence = self.preview_offer_entry_evidence_non_consuming(entry_idx);
-        let (_observed, candidate) =
-            self.offer_entry_candidate_from_observation(entry_idx, evidence);
-        Some(candidate)
+        slot: ActiveEntrySlot,
+    ) -> (ActiveOfferEntry, OfferEntryObservedState, FrontierCandidate) {
+        let active = self.active_offer_entry_from_slot(slot);
+        let evidence = self.preview_offer_entry_evidence_non_consuming(active.scope());
+        let (observed, candidate) = self.offer_entry_candidate_from_observation(active, evidence);
+        (active, observed, candidate)
     }
 
     pub(in crate::endpoint::kernel) fn for_each_active_offer_candidate<R>(
@@ -301,11 +251,10 @@ where
     ) -> Option<R> {
         let active_entries = self.active_frontier_entries(current_parallel);
         let mut next_slot = 0usize;
-        while let Some(entry_idx) = self.next_active_frontier_entry(active_entries, &mut next_slot)
-        {
-            let Some(candidate) = self.scan_offer_entry_candidate_non_consuming(entry_idx) else {
-                continue;
-            };
+        while next_slot < active_entries.len() {
+            let slot = crate::invariant_some(active_entries.slot_at(next_slot));
+            next_slot += 1;
+            let (_, _, candidate) = self.scan_active_offer_entry_non_consuming(slot);
             if let ControlFlow::Break(result) = visitor(candidate) {
                 return Some(result);
             }

@@ -267,6 +267,52 @@ theorem production_frontier_capacity_has_no_former_eight_entry_limit :
       productionFrontierCapacity 256 = productionLaneCapacity := by
   decide
 
+/-- The production active-entry set stores one concrete owning lane for every
+entry. Scope, root, frontier, and flags stay unconstrained here so membership
+proves that lookup returns the owner's metadata verbatim. -/
+structure ActiveOfferLane where
+  lane : Nat
+  entry : Nat
+  scope : Nat
+  parallelRoot : Option Nat
+  frontier : Nat
+  flags : Nat
+deriving DecidableEq
+
+def firstOwningLane (target : Nat) : List ActiveOfferLane → Option ActiveOfferLane
+  | [] => none
+  | lane :: rest =>
+      if lane.entry = target then some lane else firstOwningLane target rest
+
+theorem first_owning_lane_is_exact_owner
+    {target : Nat}
+    {lanes : List ActiveOfferLane}
+    {owner : ActiveOfferLane}
+    (found : firstOwningLane target lanes = some owner) :
+    owner ∈ lanes ∧ owner.entry = target := by
+  induction lanes with
+  | nil => simp [firstOwningLane] at found
+  | cons head tail ih =>
+      by_cases owns : head.entry = target
+      · simp [firstOwningLane, owns] at found
+        subst owner
+        exact ⟨by simp, owns⟩
+      · simp [firstOwningLane, owns] at found
+        have tailOwner := ih found
+        exact ⟨by simp [tailOwner.1], tailOwner.2⟩
+
+theorem active_offer_entry_has_representative_iff_owned
+    (target : Nat)
+    (lanes : List ActiveOfferLane) :
+    firstOwningLane target lanes ≠ none ↔
+      ∃ owner ∈ lanes, owner.entry = target := by
+  induction lanes with
+  | nil => simp [firstOwningLane]
+  | cons head tail ih =>
+      by_cases owns : head.entry = target
+      · simp [firstOwningLane, owns]
+      · simp [firstOwningLane, owns, ih]
+
 def productionRoleEventOnlyCapacity : Nat :=
   productionDescriptorByteCapacity / productionRoleEventStride
 

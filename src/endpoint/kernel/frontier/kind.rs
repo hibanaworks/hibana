@@ -30,7 +30,7 @@ pub(crate) fn checked_state_index(idx: usize) -> Option<StateIndex> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LaneOfferState {
     pub(crate) scope: ScopeId,
     pub(crate) entry: StateIndex,

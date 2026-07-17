@@ -12,25 +12,18 @@ where
         let mut composed = self.empty_observed_entries_scratch();
         let mut slot_idx = 0usize;
         while slot_idx < active_entries.len() {
-            let Some(entry_idx) = active_entries.entry_at(slot_idx) else {
-                slot_idx += 1;
-                continue;
-            };
-            if !self.offer_entry_has_active_lanes(entry_idx) {
-                slot_idx += 1;
-                continue;
-            }
-            let Some(observed) = self.recompute_offer_entry_observed_state_non_consuming(entry_idx)
-            else {
-                slot_idx += 1;
-                continue;
-            };
+            let slot = crate::invariant_some(active_entries.slot_at(slot_idx));
+            let (active, observed, _) = self.scan_active_offer_entry_non_consuming(slot);
+            let entry_idx = active.entry().as_usize();
             let (observed_slot, _) = crate::invariant_some(composed.insert_entry(entry_idx));
             composed.record_observation(
                 observed_slot,
                 observed,
-                self.offer_entry_frontier_mask(entry_idx),
-                if self.entry_has_route_scope(entry_idx) {
+                active.summary().frontier_mask,
+                if self
+                    .cursor
+                    .route_scope_present_for_entry(entry_idx, Some(active.scope()))
+                {
                     OfferEntryAdmission::Selectable
                 } else {
                     OfferEntryAdmission::Excluded

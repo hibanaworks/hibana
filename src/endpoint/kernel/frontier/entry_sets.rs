@@ -51,16 +51,19 @@ impl ActiveEntrySet {
     }
 
     #[inline]
-    pub(crate) fn entry_at(&self, slot_idx: usize) -> Option<usize> {
+    pub(crate) fn slot_at(&self, slot_idx: usize) -> Option<ActiveEntrySlot> {
         if slot_idx >= self.len() {
             return None;
         }
-        Some(state_index_to_usize(self.slots[slot_idx].entry))
+        Some(self.slots[slot_idx])
     }
 
     #[inline]
     pub(crate) fn contains_only(&self, entry_idx: usize) -> bool {
-        self.len() == 1 && self.entry_at(0) == Some(entry_idx)
+        self.len() == 1
+            && self
+                .slot_at(0)
+                .is_some_and(|slot| state_index_to_usize(slot.entry) == entry_idx)
     }
 }
 

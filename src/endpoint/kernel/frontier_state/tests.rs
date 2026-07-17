@@ -75,7 +75,13 @@ fn root_frontier_shared_active_pool_stays_packed_after_row_removal() {
     assert_eq!(table[0].active_start, 0);
     assert_eq!(table[0].active_len, 1);
     assert_eq!(table.active_pool_used(), 1);
-    assert_eq!(table.active_entry_set(0).entry_at(0), Some(20));
+    assert_eq!(
+        table
+            .active_entry_set(0)
+            .slot_at(0)
+            .map(|slot| slot.entry.as_usize()),
+        Some(20)
+    );
 }
 
 #[test]
@@ -90,16 +96,31 @@ fn root_frontier_active_pool_stays_ordered_after_insert_and_remove() {
     assert!(table.insert_root_active_entry(0, 20, 1));
 
     let entries = table.active_entry_set(0);
-    assert_eq!(entries.entry_at(0), Some(10));
-    assert_eq!(entries.entry_at(1), Some(20));
-    assert_eq!(entries.entry_at(2), Some(30));
+    assert_eq!(
+        entries.slot_at(0).map(|slot| slot.entry.as_usize()),
+        Some(10)
+    );
+    assert_eq!(
+        entries.slot_at(1).map(|slot| slot.entry.as_usize()),
+        Some(20)
+    );
+    assert_eq!(
+        entries.slot_at(2).map(|slot| slot.entry.as_usize()),
+        Some(30)
+    );
 
     assert!(table.remove_root_active_entry(0, 20));
 
     let entries = table.active_entry_set(0);
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries.entry_at(0), Some(10));
-    assert_eq!(entries.entry_at(1), Some(30));
+    assert_eq!(
+        entries.slot_at(0).map(|slot| slot.entry.as_usize()),
+        Some(10)
+    );
+    assert_eq!(
+        entries.slot_at(1).map(|slot| slot.entry.as_usize()),
+        Some(30)
+    );
     assert_eq!(table.active_pool_used(), 2);
 }
 

@@ -68,37 +68,17 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    fn offer_entry_representative_lane_excluding(
-        &self,
-        entry_idx: usize,
-        excluded_lane_idx: usize,
-    ) -> Option<(usize, LaneOfferState)> {
-        let lane_limit = self.cursor.logical_lane_count();
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
-        let mut scan_idx = active_offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = scan_idx {
-            let info = self.decision_state.lane_offer_state(lane_idx);
-            if lane_idx != excluded_lane_idx && state_index_to_usize(info.entry) == entry_idx {
-                return Some((lane_idx, info));
-            }
-            scan_idx = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        }
-        None
-    }
-
     fn detach_lane_from_offer_entry(&mut self, info: LaneOfferState) {
         let entry_idx = state_index_to_usize(info.entry);
         if info.entry.is_absent() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
         self.detach_offer_entry_from_root_frontier(entry_idx, info.parallel_root);
-        if let Some((representative_lane_idx, representative)) =
-            self.offer_entry_representative_lane_from_route_state(entry_idx)
-        {
+        if let Some(active) = self.active_offer_entry(entry_idx) {
             self.attach_offer_entry_to_root_frontier(
                 entry_idx,
-                representative.parallel_root,
-                representative_lane_idx as u8,
+                active.parallel_root(),
+                active.representative_lane(),
             );
         }
     }
@@ -108,17 +88,14 @@ where
         if info.entry.is_absent() || entry_idx >= crate::global::typestate::MAX_STATES {
             return;
         }
-        if let Some((_, previous)) =
-            self.offer_entry_representative_lane_excluding(entry_idx, lane_idx)
-        {
-            self.detach_offer_entry_from_root_frontier(entry_idx, previous.parallel_root);
+        if let Some(previous) = self.active_offer_entry_excluding(entry_idx, Some(lane_idx)) {
+            self.detach_offer_entry_from_root_frontier(entry_idx, previous.parallel_root());
         }
-        let (representative_lane_idx, representative) =
-            crate::invariant_some(self.offer_entry_representative_lane_from_route_state(entry_idx));
+        let active = crate::invariant_some(self.active_offer_entry(entry_idx));
         self.attach_offer_entry_to_root_frontier(
             entry_idx,
-            representative.parallel_root,
-            representative_lane_idx as u8,
+            active.parallel_root(),
+            active.representative_lane(),
         );
     }
 

@@ -194,11 +194,11 @@ field. Runtime route history is a packed sparse table sized by emitted
 The temporary source is still a Rust type tree, but lowering stores events,
 scope markers, and resolver markers in one exact-count tagged arena. Its lane
 matching scratch is bounded by the 256-value wire lane domain rather than by
-event count. A const fixture lowers and emits the full 5,957-event atom-only
-image. Public typed fixtures separately track 289 messages and 258 parallel
-events under rustc's default recursion limit. A Pico-target compile gate also
-projects 256 cyclic sender handoffs and bounds compiler time and memory for
-causal validation. Large generated type trees should compose
+event count. A const fixture constructs and emits the full 5,957-event
+atom-only image. Public typed fixtures separately track 289 messages and 258
+parallel events under rustc's default recursion limit. A Pico-target compile
+gate also projects 256 cyclic sender handoffs and bounds compiler time and
+memory for causal validation. Large generated type trees should compose
 balanced subtrees; genuinely nested source semantics deeper than that compiler
 limit may require a crate-level `recursion_limit`. The dedicated `>128` scope
 test keeps this source constraint separate from runtime, descriptor, stack, and
@@ -660,8 +660,8 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | `SessionKitStorage` | 24 B | 32 B |
 | Fixed per-rendezvous storage, including the 252 B tap records | 412 B | 952 B |
 | Peak live runtime slab across tracked heavy shapes | 2,349 B | 4,323 B |
-| Runtime operation stack high-water | 2,879 B | 3,663 B |
-| Modeled runtime SRAM envelope | 5,584 B | 8,954 B |
+| Runtime operation stack high-water | 2,863 B | 3,663 B |
+| Modeled runtime SRAM envelope | 5,568 B | 8,954 B |
 | Minimal linked protocol artifact | 360 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,856 B | 16,384 B |
 | Complete no-default `libhibana.rlib` sections | 98,340 B | 169,965 B |

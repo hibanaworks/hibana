@@ -1,4 +1,4 @@
-use super::{FrontierKind, LaneOfferState, OfferEntryObservedState, ScopeId, StateIndex};
+use super::{FrontierKind, OfferEntryObservedState, ScopeId, StateIndex};
 
 #[derive(Clone, Copy)]
 pub(crate) struct RootFrontierState {
@@ -13,52 +13,6 @@ impl RootFrontierState {
         active_start: 0,
         active_len: 0,
     };
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct OfferEntrySummary {
-    pub(crate) frontier_mask: u8,
-    pub(crate) flags: u8,
-}
-
-impl OfferEntrySummary {
-    pub(crate) const FLAG_CONTROLLER: u8 = 1;
-    pub(crate) const FLAG_DYNAMIC: u8 = 1 << 1;
-    pub(crate) const FLAG_INTRINSIC_READY: u8 = 1 << 2;
-
-    pub(crate) const EMPTY: Self = Self {
-        frontier_mask: 0,
-        flags: 0,
-    };
-
-    #[inline]
-    pub(crate) fn observe_lane(&mut self, info: LaneOfferState) {
-        self.frontier_mask |= info.frontier.bit();
-        if info.is_controller() {
-            self.flags |= Self::FLAG_CONTROLLER;
-        }
-        if info.is_dynamic() {
-            self.flags |= Self::FLAG_DYNAMIC;
-        }
-        if info.intrinsic_ready() {
-            self.flags |= Self::FLAG_INTRINSIC_READY;
-        }
-    }
-
-    #[inline]
-    pub(crate) fn is_controller(self) -> bool {
-        (self.flags & Self::FLAG_CONTROLLER) != 0
-    }
-
-    #[inline]
-    pub(crate) fn is_dynamic(self) -> bool {
-        (self.flags & Self::FLAG_DYNAMIC) != 0
-    }
-
-    #[inline]
-    pub(crate) fn intrinsic_ready(self) -> bool {
-        (self.flags & Self::FLAG_INTRINSIC_READY) != 0
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

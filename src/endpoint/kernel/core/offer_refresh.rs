@@ -1,6 +1,6 @@
 use super::{
-    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, OfferEntrySummary,
-    ReentryScopeLiveness, ScopeId, StateIndex, Transport, state_index_to_usize,
+    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, ReentryScopeLiveness, ScopeId,
+    StateIndex, Transport, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -67,38 +67,6 @@ where
     ) {
         self.frontier_state
             .detach_offer_entry_from_root_frontier(entry_idx, root);
-    }
-
-    pub(in crate::endpoint::kernel) fn compute_offer_entry_summary_from_route_state(
-        &self,
-        entry_idx: usize,
-    ) -> OfferEntrySummary {
-        let mut summary = OfferEntrySummary::EMPTY;
-        let active_offer_lanes = self.decision_state.active_offer_lanes();
-        let lane_limit = self.cursor.logical_lane_count();
-        let mut next = active_offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            let info = self.decision_state.lane_offer_state(lane_idx);
-            if info.scope.is_none() || state_index_to_usize(info.entry) != entry_idx {
-                next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-                continue;
-            }
-            summary.observe_lane(info);
-            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        }
-        summary
-    }
-
-    pub(in crate::endpoint::kernel) fn compute_offer_entry_summary(
-        &self,
-        entry_idx: usize,
-    ) -> OfferEntrySummary {
-        self.compute_offer_entry_summary_from_route_state(entry_idx)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_frontier_mask(&self, entry_idx: usize) -> u8 {
-        self.compute_offer_entry_summary(entry_idx).frontier_mask
     }
 
     #[inline]

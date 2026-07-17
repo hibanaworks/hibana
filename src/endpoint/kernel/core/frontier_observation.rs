@@ -1,5 +1,5 @@
 use super::super::frontier::{
-    FrontierKind, OfferEntryObservedState, frontier_global_active_entries_view_from_storage,
+    FrontierKind, frontier_global_active_entries_view_from_storage,
     frontier_observed_entries_view_from_storage,
 };
 use super::{
@@ -74,19 +74,6 @@ where
         };
         observed.clear();
         observed
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn recompute_offer_entry_observed_state_non_consuming(
-        &mut self,
-        entry_idx: usize,
-    ) -> Option<OfferEntryObservedState> {
-        if !self.offer_entry_has_active_lanes(entry_idx) {
-            return None;
-        }
-        let evidence = self.preview_offer_entry_evidence_non_consuming(entry_idx);
-        let (observed, _) = self.offer_entry_candidate_from_observation(entry_idx, evidence);
-        Some(observed)
     }
 
     #[inline]

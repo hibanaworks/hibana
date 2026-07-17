@@ -10,6 +10,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
     let decision_state_harnesses = read("src/endpoint/kernel/decision_state/kani.rs");
+    let active_offer_harnesses = read("src/endpoint/kernel/frontier/active_offer_entry/kani.rs");
+    let frontier_state_harnesses = read("src/endpoint/kernel/frontier_state/kani.rs");
     let public_operation_harnesses = read("src/endpoint/kernel/core/public_types/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
@@ -87,6 +89,23 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(decision_state_harnesses.contains("assert!(empty.is_empty())"));
     assert!(decision_state_harnesses.contains("finish_for_lane(mismatched_lane)"));
     assert!(decision_state_harnesses.contains("assert!(rejected.is_err())"));
+    for harness in [
+        "active_offer_entry_aggregation_is_exact_and_owner_stable",
+        "active_offer_entry_foreign_entry_is_atomic_rejection",
+    ] {
+        assert!(active_offer_harnesses.contains(&format!("fn {harness}()")));
+    }
+    assert!(!active_offer_harnesses.contains("kani::assume"));
+    for harness in [
+        "root_frontier_owner_slots_preserve_symbolic_lane_order",
+        "root_frontier_owner_slot_survives_first_entry_removal",
+        "root_frontier_owner_slot_survives_last_entry_removal",
+        "root_frontier_owner_slot_survives_row_compaction",
+    ] {
+        assert!(frontier_state_harnesses.contains(&format!("fn {harness}()")));
+    }
+    assert!(frontier_state_harnesses.contains("table.remove_root_row(0)"));
+    assert!(!frontier_state_harnesses.contains("kani::assume"));
     assert!(harnesses.contains("kani::assume(left_start < left_end)"));
     assert!(
         harnesses

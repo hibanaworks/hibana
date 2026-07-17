@@ -10,6 +10,13 @@ The pinned gate exhausts the production arithmetic for:
   two-bit ready mask;
 - exact public-operation prepare classification over the complete endpoint
   operation-state product, including fail-closed rejection and poison reuse;
+- exact active-offer aggregation: the first concrete owning lane remains the
+  representative, all matching entry facts are combined across lane-local
+  scope/root identities, and a foreign entry is rejected without partial
+  update;
+- exact frontier owner-pool mutation under symbolic lane ordering, entry
+  removal, and root-row compaction, preserving every surviving `(entry, lane)`
+  witness across the production raw-pointer table;
 - exact acceptance domains for packed event-conflict rows and optional
   descriptor route-arm bytes;
 - exact packed lane-range round trips with formal rejection of the reserved

@@ -12,6 +12,7 @@ use core::{mem, slice};
 use crate::global::const_dsl::ScopeId;
 use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
 
+mod active_offer_entry;
 mod entry_sets;
 mod kind;
 mod observation;
@@ -20,6 +21,7 @@ mod scratch;
 mod select;
 mod snapshot;
 
+pub(crate) use active_offer_entry::*;
 pub(crate) use entry_sets::*;
 pub(crate) use kind::*;
 pub(crate) use observation::*;

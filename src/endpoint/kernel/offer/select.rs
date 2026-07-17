@@ -75,8 +75,9 @@ where
         ) {
             return Err(RecvError::PhaseInvariant);
         }
-        let current_entry_active = self.offer_entry_has_active_lanes(current_idx)
-            && self.offer_entry_scope_id(current_idx) == scope_id;
+        let current_active_entry = self.active_offer_entry(current_idx);
+        let current_entry_active =
+            current_active_entry.is_some_and(|active| active.scope() == scope_id);
         // Offer-lane choice remains local to the selected route scope.
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
         let lane_limit = self.cursor.logical_lane_count();
@@ -87,8 +88,7 @@ where
         let offer_lane = if let Some(lane) = carried_offer_lane {
             Some(lane)
         } else if current_entry_active {
-            self.offer_entry_representative_lane_idx(current_idx)
-                .map(|lane_idx| lane_idx as u8)
+            Some(crate::invariant_some(current_active_entry).representative_lane())
         } else {
             offer_lanes
                 .first_set(lane_limit)
@@ -276,34 +276,15 @@ where
         Some(CurrentScopeSelectionMeta { flags })
     }
 
-    #[inline]
-    pub(super) fn entry_has_route_scope(&self, entry_idx: usize) -> bool {
-        let entry_scope = if self.offer_entry_has_active_lanes(entry_idx) {
-            let scope_id = self.offer_entry_scope_id(entry_idx);
-            (!scope_id.is_none()).then_some(scope_id)
-        } else {
-            None
-        };
-        self.cursor
-            .route_scope_present_for_entry(entry_idx, entry_scope)
-    }
-
     pub(super) fn current_frontier_selection_state(
         &self,
         scope_id: ScopeId,
         current_idx: usize,
     ) -> CurrentFrontierSelectionState {
-        if let Some(info) = self.offer_entry_lane_state(scope_id, current_idx) {
-            let summary = self.compute_offer_entry_summary(current_idx);
-            let entry_parallel = self.offer_entry_parallel_root(current_idx);
-            let parallel_root = info.parallel_root;
-            let current_parallel = if !parallel_root.is_none()
-                && self.root_frontier_has_active_entries(parallel_root)
-            {
-                Some(parallel_root)
-            } else {
-                entry_parallel
-            };
+        let active_entry = self.active_offer_entry(current_idx);
+        if let Some(active) = active_entry.filter(|active| active.scope() == scope_id) {
+            let summary = active.summary();
+            let parallel_root = active.parallel_root();
             let mut flags = 0u8;
             if summary.is_controller() {
                 flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
@@ -315,11 +296,8 @@ where
                 flags |= CurrentFrontierSelectionState::FLAG_READY;
             }
             return CurrentFrontierSelectionState {
-                frontier: self.offer_entry_frontier(current_idx),
-                parallel_root: match current_parallel {
-                    Some(root) => root,
-                    None => ScopeId::none(),
-                },
+                frontier: active.frontier(),
+                parallel_root,
                 flags,
             };
         }
@@ -337,11 +315,13 @@ where
             CursorEndpoint::<ROLE, T>::parallel_scope_root(&self.cursor, scope_id);
         let cursor_parallel_has_offer =
             cursor_parallel.is_some_and(|root| self.root_frontier_has_active_entries(root));
-        let current_entry_has_offer = self.offer_entry_has_active_lanes(current_idx);
-        let current_entry_parallel = if cursor_parallel_has_offer || !current_entry_has_offer {
+        let current_entry_parallel = if cursor_parallel_has_offer {
             None
         } else {
-            self.offer_entry_parallel_root(current_idx)
+            active_entry.and_then(|active| {
+                let root = active.parallel_root();
+                (!root.is_none()).then_some(root)
+            })
         };
         let current_parallel = if cursor_parallel_has_offer {
             cursor_parallel
