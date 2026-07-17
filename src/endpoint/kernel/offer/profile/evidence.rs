@@ -1,22 +1,9 @@
-use super::{OfferCursorReadiness, OfferEarlyDecisionReadiness};
+use super::OfferCursorReadiness;
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer) enum OfferArmRecvEvidence {
     HasRecv,
     Recvless,
-}
-
-impl OfferEarlyDecisionReadiness {
-    #[inline]
-    pub(in crate::endpoint::kernel::offer) const fn from_arm_evidence(
-        evidence: Option<OfferArmRecvEvidence>,
-    ) -> Self {
-        match evidence {
-            None => Self::Unavailable,
-            Some(OfferArmRecvEvidence::Recvless) => Self::AvailableWithoutRecv,
-            Some(OfferArmRecvEvidence::HasRecv) => Self::AvailableWithRecv,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -104,23 +91,9 @@ impl OfferPassiveRecvEvidence {
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel::offer) enum OfferPassiveAckEvidence {
-    Materializable,
-    NotMaterializable,
-}
-
-impl OfferPassiveAckEvidence {
-    #[inline]
-    const fn is_materializable(self) -> bool {
-        matches!(self, Self::Materializable)
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer) struct OfferPassiveEvidence {
     ready_signal: OfferPassiveReadySignal,
     recv: OfferPassiveRecvEvidence,
-    ack: OfferPassiveAckEvidence,
 }
 
 impl OfferPassiveEvidence {
@@ -128,13 +101,8 @@ impl OfferPassiveEvidence {
     pub(in crate::endpoint::kernel::offer) const fn new(
         ready_signal: OfferPassiveReadySignal,
         recv: OfferPassiveRecvEvidence,
-        ack: OfferPassiveAckEvidence,
     ) -> Self {
-        Self {
-            ready_signal,
-            recv,
-            ack,
-        }
+        Self { ready_signal, recv }
     }
 
     #[inline]
@@ -145,10 +113,5 @@ impl OfferPassiveEvidence {
     #[inline]
     pub(in crate::endpoint::kernel::offer) const fn dynamic_scope_without_recv(self) -> bool {
         self.recv.is_recvless()
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer) const fn ack_materializable(self) -> bool {
-        self.ack.is_materializable()
     }
 }

@@ -2,6 +2,46 @@ import Hibana.GlobalSyntax
 
 namespace Hibana
 
+def fixedArraySchemaCapacity : Nat := 2 ^ 24
+
+def fixedArraySchemaIdentity (width : Nat) : Nat :=
+  fixedArraySchemaCapacity + width
+
+/-- The built-in fixed-array schema namespace is injective. Production Rust
+admits the exact 24-bit width subdomain; width remains proof metadata only and
+does not enlarge the runtime header. -/
+theorem fixed_array_schema_identity_injective
+    {left right : Nat}
+    (same : fixedArraySchemaIdentity left = fixedArraySchemaIdentity right) :
+    left = right := by
+  unfold fixedArraySchemaIdentity at same
+  omega
+
+theorem fixed_array_schema_identity_excludes_builtin_scalar_domain
+    {width : Nat} :
+    12 < fixedArraySchemaIdentity width := by
+  unfold fixedArraySchemaIdentity fixedArraySchemaCapacity
+  omega
+
+/-- Every width admitted by production Rust remains inside the fixed-array
+namespace and the `u32` schema domain. -/
+theorem fixed_array_schema_identity_stays_in_reserved_namespace
+    {width : Nat}
+    (bound : width < fixedArraySchemaCapacity) :
+    fixedArraySchemaCapacity <= fixedArraySchemaIdentity width /\
+      fixedArraySchemaIdentity width < 2 * fixedArraySchemaCapacity /\
+      fixedArraySchemaIdentity width < 2 ^ 32 := by
+  have belowDouble :
+      fixedArraySchemaIdentity width <
+        fixedArraySchemaCapacity + fixedArraySchemaCapacity := by
+    unfold fixedArraySchemaIdentity
+    exact Nat.add_lt_add_left bound fixedArraySchemaCapacity
+  constructor
+  · simp [fixedArraySchemaIdentity]
+  · constructor
+    · simpa [Nat.two_mul] using belowDouble
+    · exact Nat.lt_trans belowDouble (by decide)
+
 /-- A byte codec identified by a canonical wire schema. `Payload` is local to
 the evidence package: no theorem equates nominal Rust types across binaries. -/
 structure CodecImplementation (Payload : Type) where

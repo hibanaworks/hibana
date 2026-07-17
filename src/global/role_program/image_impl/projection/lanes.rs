@@ -1,9 +1,6 @@
-use crate::{
-    eff::EffKind,
-    global::{
-        const_dsl::EffList,
-        role_program::{LANE_DOMAIN_SIZE, PackedLaneRange, lane_byte_count, lane_byte_index},
-    },
+use crate::global::{
+    const_dsl::EffList,
+    role_program::{LANE_DOMAIN_SIZE, PackedLaneRange, lane_byte_count, lane_byte_index},
 };
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -65,30 +62,26 @@ impl LocalLaneFacts {
         }
         let mut lanes = LocalLaneAccumulator::new();
         let mut local_step = 0usize;
-        let mut local_start = usize::MAX;
+        let mut local_start = None;
         let mut local_len = 0usize;
         let mut eff_idx = 0usize;
         while eff_idx < end_eff {
-            let node = eff_list.node_at(eff_idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    if eff_idx >= start_eff {
-                        if local_start == usize::MAX {
-                            local_start = local_step;
-                        }
-                        lanes.record(atom.lane, local_step);
-                        local_len += 1;
+            let atom = eff_list.atom_at(eff_idx);
+            if atom.from == role || atom.to == role {
+                if eff_idx >= start_eff {
+                    if local_start.is_none() {
+                        local_start = Some(local_step);
                     }
-                    local_step += 1;
+                    lanes.record(atom.lane, local_step);
+                    local_len += 1;
                 }
+                local_step += 1;
             }
             eff_idx += 1;
         }
-        let local_row = if local_start == usize::MAX {
-            PackedLaneRange::new(0, 0)
-        } else {
-            PackedLaneRange::new(local_start, local_len)
+        let local_row = match local_start {
+            Some(start) => PackedLaneRange::new(start, local_len),
+            None => PackedLaneRange::new(0, 0),
         };
         Self {
             lanes,

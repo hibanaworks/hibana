@@ -7,7 +7,8 @@ fn transport_contract_separates_local_protocol_safety_from_affine_delivery() {
     let integration_transport = read("tests/common/mod.rs");
 
     for required in [
-        "Every successful [`poll_recv`](Transport::poll_recv) yields one carrier",
+        "A framed [`poll_recv`](Transport::poll_recv) yields one carrier observation.",
+        "A deterministic result has no header and is accepted only when its lane-bound",
         "does not prove delivery",
         "Global fidelity and progress additionally assume affine delivery",
         "cannot authenticate carrier identity",

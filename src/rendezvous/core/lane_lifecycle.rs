@@ -19,9 +19,13 @@ where
     fn resident_carve_layout(slab: &[u8]) -> Option<ResidentCarveLayout> {
         let base = slab.as_ptr() as usize;
         let len = slab.len();
-        let header_offset = Self::align_up(base, core::mem::align_of::<Self>());
+        let header_offset =
+            crate::runtime_core::layout::checked_align_up(base, core::mem::align_of::<Self>())?;
         let header_end = header_offset.checked_add(core::mem::size_of::<Self>())?;
-        let tap_offset = Self::align_up(header_end, core::mem::align_of::<TapRecord>());
+        let tap_offset = crate::runtime_core::layout::checked_align_up(
+            header_end,
+            core::mem::align_of::<TapRecord>(),
+        )?;
         let tap_end = tap_offset.checked_add(core::mem::size_of::<[TapRecord; TAP_EVENTS]>())?;
         let header_start = header_offset.checked_sub(base)?;
         let tap_start = tap_offset.checked_sub(base)?;

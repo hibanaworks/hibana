@@ -2,8 +2,8 @@ use super::super::ingress::OfferIngressMode;
 use super::super::{
     OfferScopeProfile,
     profile::{
-        OfferControllerLocalReadiness, OfferCursorReadiness, OfferEarlyDecisionReadiness,
-        OfferEntryPosition, OfferPassiveReadiness, OfferRouteShape,
+        OfferControllerLocalReadiness, OfferCursorReadiness, OfferEntryPosition,
+        OfferPassiveReadiness, OfferRouteShape,
     },
 };
 
@@ -12,7 +12,6 @@ pub(super) struct OfferIngressEvidence {
     pub(super) profile: OfferScopeProfile,
     pub(super) entry: OfferEntryPosition,
     pub(super) cursor: OfferCursorReadiness,
-    pub(super) early_decision: OfferEarlyDecisionReadiness,
     pub(super) controller: OfferControllerLocalReadiness,
     pub(super) passive: OfferPassiveReadiness,
 }
@@ -29,7 +28,6 @@ impl OfferIngressEvidence {
             profile: self.profile,
             entry: self.entry,
             cursor: self.cursor,
-            early_decision: self.early_decision,
             controller: self.controller,
             passive: self.passive,
         }

@@ -1,7 +1,4 @@
-use crate::{
-    eff::EffKind,
-    global::const_dsl::{EffList, ScopeEvent},
-};
+use crate::global::const_dsl::{EffList, ScopeEvent};
 
 use super::super::images::program::CompiledProgramCounts;
 

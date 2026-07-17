@@ -13,10 +13,7 @@ fn symbolic_atom() -> EffAtom {
 }
 
 fn outbound_selector(atom: EffAtom) -> EndpointSelector {
-    match EndpointSelector::outbound(atom) {
-        Some(selector) => selector,
-        None => unreachable!(),
-    }
+    EndpointSelector::outbound(atom)
 }
 
 #[kani::proof]

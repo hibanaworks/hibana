@@ -1,8 +1,8 @@
 use super::{
     CursorEndpoint, FrameEvidenceResolution, FrontierDeferOutcome, FrontierDeferRequest,
-    FrontierVisitSet, IngressEvidenceState, OfferProgressState, OfferResolveState,
-    OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult, ResolvePendingState,
-    ResolveTokenOutcome, RouteArmToken, Transport, lane_port,
+    FrontierScratchWorkspace, FrontierVisitSet, IngressEvidenceState, OfferProgressState,
+    OfferResolveState, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
+    ResolvePendingState, ResolveTokenOutcome, Transport, lane_port,
 };
 pub(super) struct PassiveRouteEvidenceInput {
     pub(super) selection: OfferScopeSelection,
@@ -16,9 +16,6 @@ pub(super) struct PassiveRouteEvidenceContext<'a, 'r> {
 }
 
 pub(super) enum PassiveRouteEvidenceOutcome {
-    Authority {
-        route_token: RouteArmToken,
-    },
     EvidenceOnly {
         frame_evidence: FrameEvidenceResolution,
     },
@@ -124,6 +121,7 @@ where
         mut state: PassiveRouteEvidenceContext<'_, 'r>,
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<PassiveRouteEvidenceOutcome>> {
         let PassiveRouteEvidenceInput {
             selection,
@@ -147,12 +145,6 @@ where
                 wire_turn = PassiveWireTurn::Polled;
                 continue;
             }
-            if let Some(token) = self.peek_live_scope_ack(scope_id) {
-                return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::Authority {
-                    route_token: token,
-                }));
-            }
-
             if frame_evidence.is_resolved() && wire_turn.has_polled() {
                 break;
             }
@@ -173,6 +165,7 @@ where
                     ingress: state.evidence_state(),
                 },
                 state.frontier_visited,
+                scratch,
             ) {
                 FrontierDeferOutcome::Continue => break,
                 FrontierDeferOutcome::Yielded => {

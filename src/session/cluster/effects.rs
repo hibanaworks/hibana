@@ -21,11 +21,13 @@ impl Iterator for ProgramImageRouteResolverSiteIter<'_> {
         while self.row < self.program.route_resolver_row_count() {
             let row = self.row;
             self.row += 1;
-            let scope = self.program.route_resolver_scope_at_row(row)?;
-            let Some(resolver_id) = self.program.route_resolver_id_at_row(row) else {
+            let Some((_, resolver)) = self.program.route_resolver_authority_at_row(row) else {
+                crate::invariant();
+            };
+            let Some(resolver) = resolver else {
                 continue;
             };
-            return Some(DynamicRouteResolver::new(scope, resolver_id));
+            return Some(resolver);
         }
         None
     }

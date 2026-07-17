@@ -31,8 +31,8 @@ use super::authority::RouteResolveStep;
 pub(in crate::endpoint::kernel) use super::authority::{Arm, RouteArmToken};
 use super::core::CursorEndpoint;
 use super::frontier::{
-    ActiveEntrySet, FrontierDeferOutcome, FrontierVisitSet, LaneOfferState, ObservedEntrySet,
-    OfferEntryKey, OfferEvidenceOutcome, OfferProgressState, OfferSelectPriority,
+    ActiveEntrySet, FrontierDeferOutcome, FrontierScratchWorkspace, FrontierVisitSet,
+    LaneOfferState, ObservedEntrySet, OfferEntryKey, OfferEvidenceOutcome, OfferProgressState,
     frontier_snapshot_from_scratch,
 };
 use super::lane_port;
@@ -169,13 +169,14 @@ where
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<u8>> {
         loop {
             let step = match state.execution.kind() {
                 OfferExecutionKind::Uninitialized => self.poll_offer_uninitialized(state),
-                OfferExecutionKind::Selecting => self.poll_offer_selecting(state, cx),
+                OfferExecutionKind::Selecting => self.poll_offer_selecting(state, cx, scratch),
                 OfferExecutionKind::Collecting => self.poll_offer_collecting(state, cx),
-                OfferExecutionKind::Resolving => self.poll_offer_resolving(state, cx),
+                OfferExecutionKind::Resolving => self.poll_offer_resolving(state, cx, scratch),
             };
             match step {
                 Poll::Pending => return Poll::Pending,
@@ -202,6 +203,7 @@ where
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<Option<u8>>> {
         if state.carried_transport_lane_wire().is_none() {
             match self.poll_any_active_offer_transport_frame(&mut state.pending_recv, cx) {
@@ -218,11 +220,22 @@ where
                 }
             }
         }
-        let selection = match self.select_scope(
-            state.carried_transport_lane_wire(),
-            state.carried_transport_frame_key(),
-            state.carried_transport_observation(self.sid.raw(), ROLE),
-        ) {
+        let carried_lane = state.carried_transport_lane_wire();
+        let carried_key = state.carried_transport_frame_key();
+        let carried_observation = state.carried_transport_observation(self.sid.raw(), ROLE);
+        let selection_result = {
+            let OfferExecution::Selecting { frontier_visited } = &mut state.execution else {
+                crate::invariant();
+            };
+            self.select_scope(
+                carried_lane,
+                carried_key,
+                carried_observation,
+                frontier_visited,
+                scratch,
+            )
+        };
+        let selection = match selection_result {
             Ok(selection) => selection,
             Err(err) => {
                 state.discard_terminal();
@@ -298,6 +311,7 @@ where
         &mut self,
         state: &mut OfferState<'r>,
         cx: &mut core::task::Context<'_>,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<Option<u8>>> {
         let mut restart = None;
         let mut branch_label = None;
@@ -309,15 +323,20 @@ where
             else {
                 crate::invariant();
             };
-            let resolved =
-                match self.resolve_token(stage, &mut state.pending_recv, frontier_visited, cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(err)) => {
-                        stage.discard_terminal();
-                        return Poll::Ready(Err(err));
-                    }
-                    Poll::Ready(Ok(resolved)) => resolved,
-                };
+            let resolved = match self.resolve_token(
+                stage,
+                &mut state.pending_recv,
+                frontier_visited,
+                cx,
+                scratch,
+            ) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(err)) => {
+                    stage.discard_terminal();
+                    return Poll::Ready(Err(err));
+                }
+                Poll::Ready(Ok(resolved)) => resolved,
+            };
             match resolved {
                 ResolveTokenOutcome::RestartFrontier => {
                     restart = Some((

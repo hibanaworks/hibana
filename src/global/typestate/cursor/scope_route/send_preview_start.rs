@@ -81,7 +81,7 @@ impl EventCursor {
         if self.enclosing_route_scope_rows_at(self.index()).is_some() {
             return Some(self.index());
         }
-        if let Some(idx) = self.first_pending_step_index(usize::MAX) {
+        if let Some(idx) = self.first_pending_step_index() {
             return Some(idx);
         }
         Some(self.index())

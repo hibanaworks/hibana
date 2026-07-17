@@ -28,8 +28,8 @@ The kernel-checked boundary covers:
   rejection, uninvolved-role erasure, and exact
   `(label, payload schema)` preservation for the normalized send projection;
 - structural validity of projected events, roll scopes, and route scopes;
-- rejection of trace commits whose `(label, payload schema)` key is absent from
-  the enabled frontier;
+- rejection of trace commits whose exact `(event ID, direction, peer, label,
+  payload schema)` operation is absent from the enabled frontier;
 - operation-admission soundness for runtime-erased endpoints: accepted operations
   name the exact descriptor event ID and match its direction, peer, label, and
   payload schema before the exact commit; stale IDs and action mismatches are
@@ -87,8 +87,15 @@ The kernel-checked boundary covers:
   `(session, generation, lane, sender, receiver)` channel, channel ownership is
   unique, and every queued raw frame carries only that channel, its affine
   sequence, and a byte-bounded frame label. A fail-closed descriptor admission
-  checker filters the current inbound frontier by
-  `(source, target, lane, frame-label)` and accepts exactly one candidate.
+  checker first fixes session and target at the endpoint preamble, then filters
+  the current enabled descriptor frontier by `(source, lane, frame-label)` and
+  accepts exactly one candidate. The selected resident operation retains its
+  exact event ID, direction, peer, logical label, schema, lane, and frame label.
+  Headerless deterministic ingress is modeled separately: its lane-bound receive
+  handle and requested logical label/schema must identify exactly one enabled
+  resident receive. It does not manufacture observed peer or frame-label facts;
+  missing and ambiguous interpretations fail closed through the same singleton
+  resolver as framed ingress.
   Ordered occurrences on one route path may reuse a frame label. Distinct paths
   sharing an elastic roll, route alternatives, and parallel frontiers are proved
   to have different evidence before admission reconstructs logical label,
@@ -222,7 +229,7 @@ The kernel-checked boundary covers:
   language across the deployment registry. A full payload claim requires
   round-trip, canonical-byte, and implementation-refinement laws for every
   choreography schema; schema-ID matching alone does not acquire those laws;
-- `PreparedKernelSemantics` and `RustKernelRefinement`, which state the pure
+- `PreparedKernelSemantics` and `PreparedKernelRefinement`, which state the pure
   prepare/commit, zero-or-one-transition production obligation explicitly.
   Kani and Miri discharge concrete Rust-side obligations; Lean does not recast
   their result as a source-level Lean proof. The same layer models route commit
@@ -231,10 +238,14 @@ The kernel-checked boundary covers:
 - one checked `ProductionKernelArtifact` covering the seven normalized effect
   classes, all six protocol operation constructors, and the eight production
   ownership boundaries exactly once. The generated artifact constructs the
-  canonical `RustKernelRefinement` for the normalized effect relation and for
-  each independent operation case. `CrossToolProductionRefinement` retains the
-  exact owner inventory instead of reducing it to an unnamed conjunction. This
-  is the finite exported-kernel witness, not a proof of arbitrary Rust source;
+  canonical `PreparedKernelRefinement` for the artifact's normalized effect
+  relation and for each independent operation case.
+  `CrossToolProductionRefinement` keeps that finite model separate from the
+  production kernel: it requires both an explicit refinement of the external
+  kernel and `ProductionOwnerEvidence` tied to that same kernel. Lean cannot
+  construct either premise from owner names or a successful artifact check.
+  This is the finite exported-kernel witness, not a proof of arbitrary Rust
+  source;
 - one eight-member accepted `VerifiedProtocolMember` family whose checked
   capability coverage contains communication, sequencing, parallel
   composition, intrinsic choice, resolved choice, and recursion. The witness
@@ -258,7 +269,9 @@ The kernel-checked boundary covers:
   after transport or resolver callbacks is permitted only if the same
   generation remains live.
 - two-phase endpoint lease allocation, including general failure-state identity,
-  exact successful commit, nonshrinking table capacity, and production-exported
+  exact successful commit, nonshrinking table capacity, the exact 65,536-slot
+  count/last-`u16`-index boundary, preservation of that boundary by every
+  successful plan from a well-formed allocator state, and production-exported
   initial/growth planning failures, exact post-plan aborts, and compaction-aware
   aborts that preserve endpoint and observed lane authority plus every resident
   owner capacity while allowing frontier shrink. The production snapshot binds
@@ -274,7 +287,16 @@ topology witness from Rust. The exact certificate derives its topology from the
 bytes rather than trusting that witness. General Lean theorems cover every
 accepted production-layout byte image, equate its action column with
 `projectGraph`, and join byte decoding, exact operation keys, and commit in one
-cursor-refinement result. The endpoint runtime additionally decides its mediated domain
+cursor-refinement result. Semantic requests use `(event ID, LocalAction)`;
+resident descriptor operations extend that identity with lane and frame label;
+inbound wire observations use `(source, lane, frame-label)` only after session
+and target validation, while headerless direct ingress uses only its lane-bound
+receive handle plus requested logical label and schema. Both resolve solely
+over the enabled frontier and have explicit singleton-to-exact-commit
+composition theorems. Route-offer evidence learning remains a separate
+distributed transition before branch-local admission. This
+separation permits sequential label reuse without conflating peers, directions,
+lanes, or route occurrences. The endpoint runtime additionally decides its mediated domain
 exactly: a request is accepted iff that descriptor operation can commit, and
 every other request is rejected. This is not completeness for arbitrary
 black-box processes. The generated
@@ -400,17 +422,19 @@ Rolled routes may choose differently after reentry without adding an iteration
 field to the wire header, descriptor row, or resident endpoint.
 
 The remaining trust boundaries are explicit. `RuntimeRefinement.lean`
-classifies normalized runtime effects, while `RustKernelRefinement.lean` states
-the pure prepare/commit simulation that production Kani/Miri evidence must
-discharge; Lean does not extract or verify arbitrary Rust source.
-`ProductionKernelArtifact.lean` removes that premise from the generated
-reference composition: its checker requires all seven effect classes and all
-six protocol operation constructors plus all eight production owners, proves
-every accepted row, and constructs the same canonical `RustKernelRefinement`
-for the effect relation and each operation relation.
-`ProductionEndToEnd.lean` joins that cross-tool evidence to the exact static
-deployment family and assumption-indexed end-to-end theorem. The Rust exporter,
-Kani owner harnesses, and
+classifies normalized runtime effects, while `PreparedKernelRefinement.lean`
+states the pure prepare/commit simulation that production Kani/Miri evidence
+must discharge; Lean does not extract or verify arbitrary Rust source.
+`ProductionKernelArtifact.lean` checks all seven effect classes, all six
+protocol operation constructors, and all eight production owners, proves every
+accepted row, and constructs a canonical `PreparedKernelRefinement` only for
+the artifact relation and each artifact operation relation. It does not identify
+that synthetic kernel with production Rust or manufacture a source-level
+simulation.
+`ProductionEndToEnd.lean` joins the exact artifact to the static deployment
+family and assumption-indexed end-to-end theorem only when both an external
+production-kernel refinement and explicit owner evidence are supplied. The
+Rust exporter, Kani owner harnesses, and
 strict-provenance Miri exporter case remain explicit members of the cross-tool
 TCB; no source-level Rust theorem is inferred from their exit status.
 `PublicOperationKernel.lean` independently specifies the nine public endpoint
@@ -521,11 +545,14 @@ active lane and that the complete 256-lane wire domain bounds the resulting
 allocation; the production selection kernel streams those keys instead of
 representing them in a fixed candidate bit mask. The representative lookup is
 proved total exactly when an owning lane exists, preserves the exact scope, and
-cannot collapse two scopes that share a local entry. Scope-specific authority
-and evidence remain separate exact witness rows while observations with the
-same cursor target are grouped for selection; Lean proves every erased row has
-one exact source and every post-erasure row predicate retains that source, so
-admission, readiness, and authority from different scopes cannot be combined.
+cannot collapse two scopes that share a local entry. The current offer's
+admission, readiness, progress, and authority are selected by its exact
+`(scope, entry)` key before erasure. Rows with the same entry but another scope
+cannot change that exact observation and are not alternative cursor targets.
+Only observations for a different entry enter scope-erased cursor scheduling;
+Lean also proves every erased row has one exact source and every post-erasure
+row predicate retains that source, so evidence from separate rows cannot be
+combined.
 The proof-side stable insertion preserves every row, increases the buffer by
 exactly one row, and keeps equal cursor targets in one ordered group.
 Visit tracking intentionally uses local-entry identity because it

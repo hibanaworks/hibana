@@ -1,6 +1,6 @@
 import Hibana.Deployment
 import Hibana.ElasticErasure
-import Hibana.RustKernelRefinement
+import Hibana.PreparedKernelRefinement
 
 namespace Hibana
 
@@ -24,8 +24,8 @@ structure AssumptionIndexedEndToEndRefinement
     RoleImagesExact certificate deployment.roleImages
   canonicalCodecCoverage :
     VerifiedCodecCoverage choreo deployment.codecs
-  rustKernelRefinement :
-    RustKernelRefinement kernel session roleCount choreo
+  kernelRefinement :
+    PreparedKernelRefinement kernel session roleCount choreo
   carrierGuarantees :
     profile.Holds deployment.carrier deployment.abstraction Fairness
   elasticTraceRefinement : ElasticErasureRefinement
@@ -46,7 +46,7 @@ theorem assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement
     (imagesAccepted :
       checkRoleImages certificate deployment.roleImages = true)
     (codecCoverage : VerifiedCodecCoverage choreo deployment.codecs)
-    (kernelRefinement : RustKernelRefinement kernel session roleCount choreo)
+    (kernelRefinement : PreparedKernelRefinement kernel session roleCount choreo)
     (carrierGuarantees :
       profile.Holds deployment.carrier deployment.abstraction Fairness) :
     AssumptionIndexedEndToEndRefinement profile Fairness certificate
@@ -60,7 +60,7 @@ theorem assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement
         protocolAccepted
     deploymentAgreement := role_images_checker_sound imagesAccepted
     canonicalCodecCoverage := codecCoverage
-    rustKernelRefinement := kernelRefinement
+    kernelRefinement
     carrierGuarantees := carrierGuarantees
     elasticTraceRefinement := elastic_erasure_refinement_holds
   }
@@ -86,7 +86,7 @@ theorem end_to_end_prepared_commit_refines_exact_lean_effect
     }
     transition.Refines session roleCount choreo :=
   prepared_kernel_commit_refines_exact_lean_effect
-    verified.rustKernelRefinement preparedExact
+    verified.kernelRefinement preparedExact
 
 theorem end_to_end_closing_profile_has_affine_carrier_refinement
     {Fairness : Prop}

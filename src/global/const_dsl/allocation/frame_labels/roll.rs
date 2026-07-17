@@ -1,8 +1,5 @@
 use super::{BYTE_DOMAIN_MASK_BYTES, first_available, insert};
-use crate::{
-    eff::EffKind,
-    global::const_dsl::{EffList, event_relations::events_share_route_path},
-};
+use crate::global::const_dsl::{EffList, event_relations::events_share_route_path};
 
 /// Canonicalize one roll body by inbound operation key and exact route path.
 /// Ordered occurrences on one path retain a shared color, while every path
@@ -18,11 +15,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
 
     let mut class_idx = start;
     while class_idx < end {
-        let class_node = eff_list.node_at(class_idx);
-        if !matches!(class_node.kind, EffKind::Atom) {
-            crate::invariant();
-        }
-        let class = class_node.atom_data();
+        let class = eff_list.atom_at(class_idx);
         if class.from == class.to {
             class_idx += 1;
             continue;
@@ -31,7 +24,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
         let mut already_colored = false;
         let mut prior_idx = start;
         while prior_idx < class_idx {
-            let prior = eff_list.node_at(prior_idx).atom_data();
+            let prior = eff_list.atom_at(prior_idx);
             if prior.from == class.from
                 && prior.to == class.to
                 && prior.lane == class.lane
@@ -47,7 +40,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
             let mut used = [0u8; BYTE_DOMAIN_MASK_BYTES];
             prior_idx = start;
             while prior_idx < class_idx {
-                let prior = eff_list.node_at(prior_idx).atom_data();
+                let prior = eff_list.atom_at(prior_idx);
                 if prior.from == class.from && prior.to == class.to && prior.lane == class.lane {
                     insert(&mut used, eff_list.frame_label_at(prior_idx));
                 }
@@ -59,7 +52,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
 
             let mut member_idx = class_idx;
             while member_idx < end {
-                let member = eff_list.node_at(member_idx).atom_data();
+                let member = eff_list.atom_at(member_idx);
                 if member.from == class.from
                     && member.to == class.to
                     && member.lane == class.lane

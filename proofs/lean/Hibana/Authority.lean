@@ -231,12 +231,11 @@ def decodeSingleReadyArmMask? : Nat -> Option (Option RouteArm)
   | 0 => some none
   | 1 => some (some .left)
   | 2 => some (some .right)
-  | 3 => some none
-  | _ + 4 => none
+  | _ + 3 => none
 
 theorem invalid_ready_arm_mask_rejected
     {mask : Nat}
-    (invalid : 4 <= mask) :
+    (invalid : 3 <= mask) :
     decodeSingleReadyArmMask? mask = none := by
   cases mask with
   | zero => simp at invalid
@@ -246,14 +245,11 @@ theorem invalid_ready_arm_mask_rejected
       | succ mask =>
           cases mask with
           | zero => simp at invalid
-          | succ mask =>
-              cases mask with
-              | zero => simp at invalid
-              | succ mask => rfl
+          | succ mask => rfl
 
-theorem valid_ready_arm_mask_is_accepted
+theorem unambiguous_ready_arm_mask_is_accepted
     {mask : Nat}
-    (valid : mask <= 3) :
+    (valid : mask <= 2) :
     (decodeSingleReadyArmMask? mask).isSome = true := by
   cases mask with
   | zero => rfl
@@ -263,10 +259,128 @@ theorem valid_ready_arm_mask_is_accepted
       | succ mask =>
           cases mask with
           | zero => rfl
-          | succ mask =>
-              cases mask with
-              | zero => rfl
-              | succ mask => simp at valid
+          | succ mask => simp at valid
+
+theorem conflicting_ready_arm_mask_rejected :
+    decodeSingleReadyArmMask? 3 = none := by
+  rfl
+
+/-- Runtime scope evidence admits one arm or enters a sticky conflict state.
+The authority source is deliberately absent: only the exact selected arm is
+resident, while resolver and frame provenance remain operation-local. -/
+inductive ScopeReadyEvidence where
+  | empty
+  | selected (arm : RouteArm)
+  | conflicted
+  deriving DecidableEq
+
+def recordScopeReadyArm
+    (state : ScopeReadyEvidence)
+    (arm : RouteArm) : ScopeReadyEvidence :=
+  match state with
+  | .empty => .selected arm
+  | .selected existing =>
+      if existing = arm then .selected existing else .conflicted
+  | .conflicted => .conflicted
+
+def selectedScopeReadyArm? : ScopeReadyEvidence -> Option RouteArm
+  | .selected arm => some arm
+  | .empty | .conflicted => none
+
+def recordScopeReadyArmAgainst
+    (selected : Option RouteArm)
+    (state : ScopeReadyEvidence)
+    (incoming : RouteArm) : ScopeReadyEvidence :=
+  match selected with
+  | some active =>
+      if active = incoming then recordScopeReadyArm state incoming else .conflicted
+  | none => recordScopeReadyArm state incoming
+
+def scopeReadySelectionCoherent
+    (selected : RouteArm)
+    (state : ScopeReadyEvidence) : Bool :=
+  match state with
+  | .empty => true
+  | .selected ready => decide (selected = ready)
+  | .conflicted => false
+
+def consumeScopeReadyArm
+    (state : ScopeReadyEvidence)
+    (arm : RouteArm) : ScopeReadyEvidence :=
+  match state with
+  | .selected ready => if ready = arm then .empty else state
+  | .empty | .conflicted => state
+
+def clearScopeReadyEvidence (_state : ScopeReadyEvidence) : ScopeReadyEvidence :=
+  .empty
+
+theorem first_ready_arm_record_is_exact (arm : RouteArm) :
+    recordScopeReadyArm .empty arm = .selected arm := by
+  rfl
+
+theorem matching_ready_arm_record_is_idempotent (arm : RouteArm) :
+    recordScopeReadyArm (.selected arm) arm = .selected arm := by
+  cases arm <;> rfl
+
+theorem distinct_ready_arm_record_conflicts
+    (existing incoming : RouteArm)
+    (different : existing ≠ incoming) :
+    recordScopeReadyArm (.selected existing) incoming = .conflicted := by
+  simp [recordScopeReadyArm, different]
+
+theorem ready_arm_conflict_is_sticky (arm : RouteArm) :
+    recordScopeReadyArm .conflicted arm = .conflicted := by
+  rfl
+
+theorem conflicted_ready_evidence_has_no_authority :
+    selectedScopeReadyArm? .conflicted = none := by
+  rfl
+
+theorem matching_live_selection_records_exact_ready_arm (arm : RouteArm) :
+    recordScopeReadyArmAgainst (some arm) .empty arm = .selected arm := by
+  cases arm <;> rfl
+
+theorem conflicting_live_selection_and_ready_arm_is_rejected
+    (selected incoming : RouteArm)
+    (different : selected ≠ incoming) :
+    recordScopeReadyArmAgainst (some selected) .empty incoming = .conflicted := by
+  simp [recordScopeReadyArmAgainst, different]
+
+theorem matching_live_selection_and_ready_evidence_is_coherent (arm : RouteArm) :
+    scopeReadySelectionCoherent arm (.selected arm) = true := by
+  cases arm <;> rfl
+
+theorem conflicting_live_selection_and_ready_evidence_is_incoherent
+    (selected ready : RouteArm)
+    (different : selected ≠ ready) :
+    scopeReadySelectionCoherent selected (.selected ready) = false := by
+  simp [scopeReadySelectionCoherent, different]
+
+theorem conflicted_ready_evidence_rejects_every_selection (arm : RouteArm) :
+    scopeReadySelectionCoherent arm .conflicted = false := by
+  rfl
+
+theorem empty_ready_evidence_consumption_is_empty (arm : RouteArm) :
+    consumeScopeReadyArm .empty arm = .empty := by
+  rfl
+
+theorem matching_ready_evidence_consumption_is_exact (arm : RouteArm) :
+    consumeScopeReadyArm (.selected arm) arm = .empty := by
+  cases arm <;> rfl
+
+theorem distinct_ready_evidence_consumption_preserves_selection
+    (ready consumed : RouteArm)
+    (different : ready ≠ consumed) :
+    consumeScopeReadyArm (.selected ready) consumed = .selected ready := by
+  simp [consumeScopeReadyArm, different]
+
+theorem conflicted_ready_evidence_consumption_is_sticky (arm : RouteArm) :
+    consumeScopeReadyArm .conflicted arm = .conflicted := by
+  rfl
+
+theorem ready_evidence_clear_is_exact (state : ScopeReadyEvidence) :
+    clearScopeReadyEvidence state = .empty := by
+  rfl
 
 theorem selected_ready_arm_mask_is_exact
     {mask : Nat} {arm : RouteArm}

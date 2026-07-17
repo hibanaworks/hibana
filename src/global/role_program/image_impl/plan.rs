@@ -129,28 +129,25 @@ impl RoleImageColumnCounts {
         let mut dependencies = projection::DependencyCursor::new(eff_list, role);
         let mut idx = 0usize;
         while idx < eff_list.len() {
-            let node = eff_list.node_at(idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    let lane_plus_one = atom.lane as usize + 1;
-                    if lane_plus_one > logical_lane_count {
-                        panic!("local event lane outside role logical domain");
-                    }
-                    if lane_plus_one > max_lane_plus_one {
-                        max_lane_plus_one = lane_plus_one;
-                    }
-                    if !dependencies
-                        .next(idx, atom.lane, local_step_count)
-                        .is_none()
-                    {
-                        dependency_rows += 1;
-                    }
-                    if has_route && !projection::route_conflict_for_eff(markers, idx).is_none() {
-                        conflict_rows += 1;
-                    }
-                    local_step_count += 1;
+            let atom = eff_list.atom_at(idx);
+            if atom.from == role || atom.to == role {
+                let lane_plus_one = atom.lane as usize + 1;
+                if lane_plus_one > logical_lane_count {
+                    panic!("local event lane outside role logical domain");
                 }
+                if lane_plus_one > max_lane_plus_one {
+                    max_lane_plus_one = lane_plus_one;
+                }
+                if !dependencies
+                    .next(idx, atom.lane, local_step_count)
+                    .is_none()
+                {
+                    dependency_rows += 1;
+                }
+                if has_route && !projection::route_conflict_for_eff(markers, idx).is_none() {
+                    conflict_rows += 1;
+                }
+                local_step_count += 1;
             }
             idx += 1;
         }
@@ -203,7 +200,7 @@ impl RoleImageColumnCounts {
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
             let marker = markers.at(marker_idx);
-            if projection::first_enter_for_scope(markers, marker_idx)
+            if markers.is_first_enter(marker_idx)
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 let scope = marker.scope_id;
@@ -248,10 +245,11 @@ impl RoleImageColumnCounts {
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
             let marker = markers.at(marker_idx);
-            if projection::first_enter_for_scope(markers, marker_idx)
+            if markers.is_first_enter(marker_idx)
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
             {
-                let end_eff = projection::scope_segment_end(markers, marker_idx, eff_list.len());
+                let end_eff =
+                    projection::scope_segment_end(markers, marker_idx, Some(eff_list.len()));
                 let row = projection::local_step_range_for_eff_range(
                     eff_list,
                     marker.offset(),

@@ -426,14 +426,15 @@ if [[ "${runtime_rs}" != *"pub struct SessionKitStorage"* ]] \
   exit 1
 fi
 
-if [[ "${eff_rs}" == *"pub union EffData"* ]] || [[ "${eff_rs}" == *"unsafe { self.atom }"* ]]; then
-  echo "effect node storage must not expose safe inactive-union reads" >&2
+if [[ "${eff_rs}" == *"EffKind"* ]] \
+  || [[ "${eff_rs}" == *"EffStruct"* ]] \
+  || [[ "${eff_rs}" == *"EffData"* ]]; then
+  echo "source events must not retain an uninhabited pure/atom tagged representation" >&2
   exit 1
 fi
 
-if [[ "${eff_rs}" != *"EffKind::Pure => crate::invariant()"* ]] \
-  || [[ "${eff_rs}" != *"EffKind::Atom => self.data.atom()"* ]]; then
-  echo "pure effect atom access must fail fast through the runtime invariant path" >&2
+if [[ "${eff_rs}" != *"pub(crate) struct EffAtom"* ]]; then
+  echo "source events must retain one direct EffAtom representation" >&2
   exit 1
 fi
 

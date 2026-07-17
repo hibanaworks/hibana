@@ -558,9 +558,7 @@ private theorem transport_admission_candidate_sound
 def Choreo.transportAdmissionFrom?
     (choreo : Choreo) (ids : List Nat) (frame : TransportFrame) :
     Option (Nat × GlobalEvent) :=
-  match transportAdmissionCandidates choreo frame ids with
-  | [candidate] => some candidate
-  | _ => none
+  resolveUnique? (transportAdmissionCandidates choreo frame ids)
 
 theorem transport_admission_is_unique
     {choreo : Choreo} {ids : List Nat} {frame : TransportFrame}
@@ -617,19 +615,13 @@ private theorem transport_admission_from_checker_sound
     (accepted : choreo.transportAdmissionFrom? ids frame = some (globalId, event)) :
     TransportAdmission choreo frame globalId event /\ globalId ∈ ids := by
   unfold Choreo.transportAdmissionFrom? at accepted
-  cases candidatesCase : transportAdmissionCandidates choreo frame ids with
-  | nil => simp [candidatesCase] at accepted
-  | cons candidate rest =>
-      cases rest with
-      | nil =>
-          have candidateEq : candidate = (globalId, event) := by
-            simpa [candidatesCase] using accepted
-          subst candidate
-          have sound := transport_admission_candidate_sound
-            (choreo := choreo) (frame := frame) (ids := ids)
-            (globalId := globalId) (event := event) (by simp [candidatesCase])
-          exact ⟨⟨sound.2.1, sound.2.2⟩, sound.1⟩
-      | cons second remaining => simp [candidatesCase] at accepted
+  have singleton :
+      transportAdmissionCandidates choreo frame ids = [(globalId, event)] :=
+    resolveUnique?_eq_some_iff.mp accepted
+  have sound := transport_admission_candidate_sound
+    (choreo := choreo) (frame := frame) (ids := ids)
+    (globalId := globalId) (event := event) (by simp [singleton])
+  exact ⟨⟨sound.2.1, sound.2.2⟩, sound.1⟩
 
 theorem transport_admission_checker_sound
     {choreo : Choreo} {frame : TransportFrame}

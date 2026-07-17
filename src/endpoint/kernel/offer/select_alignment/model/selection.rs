@@ -1,100 +1,4 @@
-use super::super::super::{CurrentFrontierSelectionState, OfferSelectPriority};
-use super::entry::{CandidateAuthority, ProgressEvidence};
-
-#[derive(Clone, Copy)]
-pub(in crate::endpoint::kernel::offer::select_alignment) struct CurrentOfferObservation {
-    flags: u8,
-}
-
-impl CurrentOfferObservation {
-    const PRESENT: u8 = 1;
-    const READY: u8 = 1 << 1;
-    const PROGRESS_EVIDENCE: u8 = 1 << 2;
-    const OBSERVED_PROGRESS_EVIDENCE: u8 = 1 << 3;
-    const CONTROLLER_PROGRESS_SIBLING_EXISTS: u8 = 1 << 4;
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn empty() -> Self {
-        Self { flags: 0 }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn with_present(self) -> Self {
-        Self {
-            flags: self.flags | Self::PRESENT,
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn with_ready(self) -> Self {
-        Self {
-            flags: self.flags | Self::READY,
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn with_progress_evidence(
-        self,
-    ) -> Self {
-        Self {
-            flags: self.flags | Self::PROGRESS_EVIDENCE,
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn with_observed_progress_evidence(
-        self,
-    ) -> Self {
-        Self {
-            flags: self.flags | Self::OBSERVED_PROGRESS_EVIDENCE,
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn with_controller_progress_sibling(
-        self,
-    ) -> Self {
-        Self {
-            flags: self.flags | Self::CONTROLLER_PROGRESS_SIBLING_EXISTS,
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn present(self) -> bool {
-        (self.flags & Self::PRESENT) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn ready(self) -> bool {
-        (self.flags & Self::READY) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn progress_evidence(
-        self,
-    ) -> bool {
-        (self.flags & Self::PROGRESS_EVIDENCE) != 0
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn accumulated_progress_evidence(
-        self,
-        state: CurrentFrontierSelectionState,
-    ) -> ProgressEvidence {
-        if (self.flags & Self::OBSERVED_PROGRESS_EVIDENCE) != 0 || state.has_progress_evidence() {
-            ProgressEvidence::Present
-        } else {
-            ProgressEvidence::Absent
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn controller_progress_sibling_exists(
-        self,
-    ) -> bool {
-        (self.flags & Self::CONTROLLER_PROGRESS_SIBLING_EXISTS) != 0
-    }
-}
+use super::entry::CandidateAuthority;
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer::select_alignment) enum OfferAlignmentOutcome {
@@ -182,6 +86,12 @@ impl CurrentOfferCandidateStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::endpoint::kernel::offer::select_alignment) enum OfferAlignmentDecision {
+    KeepCurrent,
+    Realign(usize),
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer::select_alignment) struct OfferAlignmentSelection {
     pub(in crate::endpoint::kernel::offer::select_alignment) ready_entry_filter: Option<usize>,
@@ -210,22 +120,63 @@ impl OfferAlignmentSelection {
         self,
         current: CurrentOfferCandidateStatus,
         current_idx: usize,
-    ) -> Option<(OfferSelectPriority, usize)> {
+    ) -> Option<OfferAlignmentDecision> {
         if current.is_selectable() {
-            return Some((OfferSelectPriority::CurrentOfferEntry, current_idx));
+            return Some(OfferAlignmentDecision::KeepCurrent);
         }
-        match self.outcome {
-            OfferAlignmentOutcome::UniqueDynamicController(idx) => {
-                Some((OfferSelectPriority::DynamicControllerUnique, idx))
-            }
-            OfferAlignmentOutcome::UniqueController(idx) => {
-                Some((OfferSelectPriority::ControllerUnique, idx))
-            }
-            OfferAlignmentOutcome::UniqueCandidate(idx) => {
-                Some((OfferSelectPriority::CandidateUnique, idx))
-            }
+        let entry_idx = match self.outcome {
+            OfferAlignmentOutcome::UniqueDynamicController(idx)
+            | OfferAlignmentOutcome::UniqueController(idx)
+            | OfferAlignmentOutcome::UniqueCandidate(idx) => idx,
             OfferAlignmentOutcome::CandidateAbsent
-            | OfferAlignmentOutcome::CandidateSetAmbiguous => None,
+            | OfferAlignmentOutcome::CandidateSetAmbiguous => return None,
+        };
+        if entry_idx == current_idx {
+            crate::invariant();
         }
+        Some(OfferAlignmentDecision::Realign(entry_idx))
+    }
+}
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    #[kani::proof]
+    fn erased_candidate_can_only_request_distinct_realign() {
+        let current = kani::any::<u8>() as usize;
+        let target = kani::any::<u8>() as usize;
+        kani::assume(current != target);
+        let class = kani::any::<u8>();
+        kani::assume(class < 3);
+        let outcome = match class {
+            0 => OfferAlignmentOutcome::UniqueCandidate(target),
+            1 => OfferAlignmentOutcome::UniqueController(target),
+            _ => OfferAlignmentOutcome::UniqueDynamicController(target),
+        };
+        let selection = OfferAlignmentSelection {
+            ready_entry_filter: None,
+            outcome,
+        };
+
+        assert_eq!(
+            selection.select(CurrentOfferCandidateStatus::NotSelectable, current),
+            Some(OfferAlignmentDecision::Realign(target))
+        );
+    }
+
+    #[kani::proof]
+    fn exact_current_selection_never_becomes_realign() {
+        let current = kani::any::<u8>() as usize;
+        let target = kani::any::<u8>() as usize;
+        let selection = OfferAlignmentSelection {
+            ready_entry_filter: None,
+            outcome: OfferAlignmentOutcome::UniqueDynamicController(target),
+        };
+
+        assert_eq!(
+            selection.select(CurrentOfferCandidateStatus::Selectable, current),
+            Some(OfferAlignmentDecision::KeepCurrent)
+        );
     }
 }

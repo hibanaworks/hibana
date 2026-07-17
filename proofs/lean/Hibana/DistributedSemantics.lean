@@ -484,12 +484,54 @@ private def DistributedConfig.eventConflictKnowledge
     (config : DistributedConfig)
     (role : Nat)
     (memberships : List ConflictArm) : Bool :=
+  let graph := projectGraph role config.choreo
   memberships.all fun membership =>
     match config.globalSelection membership.conflict with
-    | none => true
+    | none =>
+        match graph.routeForConflict? membership.conflict with
+        | some route =>
+            match route.authority with
+            | .intrinsic => true
+            | .dynamic _ => false
+        | none => false
     | some selected =>
         selected == membership.arm &&
           (config.roleState role).selected membership.conflict == some selected
+
+/-- An unresolved dynamic route is not local commit authority. Candidate
+readiness and global rejection cannot be used as a fallback for missing local
+resolver evidence. -/
+theorem unresolved_dynamic_conflict_denies_local_knowledge
+    {config : DistributedConfig}
+    {role : Nat}
+    {memberships : List ConflictArm}
+    {membership : ConflictArm}
+    {route : RouteInfo}
+    {resolver : Nat}
+    (inside : membership ∈ memberships)
+    (routeFound :
+      (projectGraph role config.choreo).routeForConflict? membership.conflict =
+        some route)
+    (dynamic : route.authority = .dynamic resolver)
+    (unselected : config.globalSelection membership.conflict = none) :
+    config.eventConflictKnowledge role memberships = false := by
+  unfold DistributedConfig.eventConflictKnowledge
+  cases allCase : memberships.all fun candidate =>
+      match config.globalSelection candidate.conflict with
+      | none =>
+          match (projectGraph role config.choreo).routeForConflict? candidate.conflict with
+          | some candidateRoute =>
+              match candidateRoute.authority with
+              | .intrinsic => true
+              | .dynamic _ => false
+          | none => false
+      | some selected =>
+          selected == candidate.arm &&
+            (config.roleState role).selected candidate.conflict == some selected with
+  | false => rfl
+  | true =>
+      have allowed := List.all_eq_true.mp allCase membership inside
+      simp [unselected, routeFound, dynamic] at allowed
 
 def DistributedConfig.localCommitAuthority?
     (config : DistributedConfig)
@@ -686,6 +728,23 @@ private def duplicateRouteEvidenceRegression : Bool :=
 /-- Route evidence is affine: the same accepted occurrence cannot publish the
 same route knowledge to one endpoint twice. -/
 example : duplicateRouteEvidenceRegression = false := by
+  native_decide
+
+private def dynamicAuthorityRegressionChoreo : Choreo :=
+  .route (.dynamic 0) (.send 0 1 21 4) (.send 0 1 22 4)
+
+private def dynamicAuthorityRegression : Bool :=
+  let initial := DistributedConfig.fromGlobalConfig
+    (GlobalConfig.initial 9 2 dynamicAuthorityRegressionChoreo)
+  !(initial.localCommitAuthority? 0 (.send 0)).isSome &&
+    !(initial.protocolStep? 0 (.send 0)).isSome &&
+      match initial.protocolStep? 0 (.resolve 0 0 0 .left) with
+      | none => false
+      | some selected => (selected.protocolStep? 0 (.send 0)).isSome
+
+/-- Dynamic choice cannot borrow intrinsic first-event authority. Exact
+resolver selection is required before the selected arm can commit. -/
+example : dynamicAuthorityRegression = true := by
   native_decide
 
 end Hibana

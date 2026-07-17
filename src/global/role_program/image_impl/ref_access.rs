@@ -1,9 +1,13 @@
 use super::super::{
     BlobPtr, LaneSetView, LaneStepLayout, LaneSteps, PackedLaneRange, PackedRollScopeRow,
     RoleCompiledCounts, RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts,
-    RuntimeRoleFootprint,
+    RuntimeRoleFootprint, lane_byte_count,
 };
 use super::lane_image::invalid_resident_descriptor;
+use super::metadata::{
+    derive_active_lane_metadata, lane_columns_are_coherent, roll_scope_columns_are_coherent,
+    route_commit_capacity_is_exact,
+};
 use crate::global::typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict};
 
 #[inline(always)]
@@ -51,26 +55,56 @@ impl RuntimeRoleFacts {
 }
 
 impl RoleImageRef {
-    #[inline(always)]
     pub(crate) const fn new<const N: usize>(
         program: &'static crate::global::compiled::images::CompiledProgramRef,
         role: u8,
         facts: RuntimeRoleFacts,
         columns: RoleImageColumns,
         bytes: &'static [u8; N],
-        active_lane_row: PackedLaneRange,
-        first_active_lane: u16,
     ) -> Self {
         let blob = BlobPtr::from_array(bytes, columns.blob_len());
-        Self {
+        let footprint = facts.footprint();
+        let active_lane_row = if footprint.active_lane_count == 0 {
+            PackedLaneRange::new(0, 0)
+        } else {
+            PackedLaneRange::new(0, lane_byte_count(footprint.logical_lane_count))
+        };
+        let metadata = match derive_active_lane_metadata(bytes, columns.lane_bits, active_lane_row)
+        {
+            Some(metadata) => metadata,
+            None => invalid_resident_descriptor(),
+        };
+        let image = Self {
             program,
             role,
             facts,
             columns,
             blob,
             active_lane_row,
-            first_active_lane,
+            first_active_lane: metadata.first_active_lane,
+        };
+        if metadata.active_lane_count != footprint.active_lane_count
+            || metadata.logical_lane_count != footprint.logical_lane_count
+            || metadata.logical_lane_count != footprint.endpoint_lane_slot_count
+        {
+            invalid_resident_descriptor();
         }
+        if !lane_columns_are_coherent(bytes, columns, active_lane_row, footprint) {
+            invalid_resident_descriptor();
+        }
+        if !roll_scope_columns_are_coherent(bytes, columns.roll_scopes, footprint.local_step_count)
+        {
+            invalid_resident_descriptor();
+        }
+        if !route_commit_capacity_is_exact(
+            bytes,
+            columns.route_commit_ranges,
+            columns.route_commit_rows.len as usize,
+            footprint.max_route_commit_count,
+        ) {
+            invalid_resident_descriptor();
+        }
+        image
     }
 
     #[inline(always)]
@@ -120,23 +154,24 @@ impl RoleImageRef {
         }
         let mut pos = row.start();
         let end = row.end();
-        let mut first = usize::MAX;
+        let mut first = None;
         let mut len = 0usize;
         let mut layout = LaneStepLayout::Contiguous;
         while pos < end {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
-                if first == usize::MAX {
-                    first = pos;
-                } else if pos != first + len {
-                    layout = LaneStepLayout::Sparse;
+                match first {
+                    Some(start) if pos != start + len => layout = LaneStepLayout::Sparse,
+                    Some(_) => {}
+                    None => first = Some(pos),
                 }
                 len += 1;
             }
             pos += 1;
         }
-        if len == 0 {
-            None
-        } else if first > u16::MAX as usize || len > u16::MAX as usize {
+        let Some(first) = first else {
+            return None;
+        };
+        if len > u16::MAX as usize {
             invalid_resident_descriptor();
         } else {
             Some(LaneSteps {
@@ -224,19 +259,25 @@ impl RoleImageRef {
         if step_idx >= self.local_step_count() {
             return None;
         }
-        self.lanes()
+        match self
+            .lanes()
             .local_step_lane(step_idx, self.footprint().logical_lane_count)
+        {
+            Some(lane) => Some(lane),
+            None => invalid_resident_descriptor(),
+        }
     }
 
     pub(crate) const fn local_step_node(&self, step_idx: usize) -> Option<LocalNode> {
         if step_idx >= self.local_step_count() {
             None
         } else {
-            let Some(node) = self
+            let node = match self
                 .lanes()
                 .local_step_node(step_idx, self.role, self.program)
-            else {
-                return None;
+            {
+                Some(node) => node,
+                None => invalid_resident_descriptor(),
             };
             let Some(expected_lane) = self.local_step_lane(step_idx) else {
                 invalid_resident_descriptor();

@@ -696,6 +696,7 @@ fn crate_package_artifact_is_a_first_class_gate() {
         "declared package integration test missing from package",
         "SOURCE_TEST_SUPPORT_PATTERN",
         "^src/.*/tests/",
+        "excluded test module `{mod_name}` lacks hibana_repo_tests cfg",
         "run_package_clean \"cargo package --list\"",
         "run_package_clean \"cargo package --no-verify\"",
         "package lib check",

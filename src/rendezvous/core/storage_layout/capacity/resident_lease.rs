@@ -36,7 +36,7 @@ where
         }
         let (slab_ptr, _) = self.slab_ptr_and_len();
         let base = slab_ptr as usize;
-        let mut start = Self::align_up(base, align).checked_sub(base)?;
+        let mut start = crate::runtime_core::layout::checked_align_offset(base, 0, align)?;
         loop {
             let end = start.checked_add(bytes)?;
             let mut conflict_end: Option<usize> = None;
@@ -52,7 +52,7 @@ where
                 }
             }
             if let Some(next) = conflict_end {
-                start = Self::align_up(base.checked_add(next)?, align).checked_sub(base)?;
+                start = crate::runtime_core::layout::checked_align_offset(base, next, align)?;
                 continue;
             }
             let reserved_end = end.checked_add(self.frontier_workspace_bytes.get() as usize)?;

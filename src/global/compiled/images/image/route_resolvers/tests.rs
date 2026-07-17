@@ -95,7 +95,11 @@ static PARTICIPANT_OUT_OF_RANGE: [u8; 12] =
 fn compiled_program_descriptor_decodes_canonical_resolver_rows() {
     let intrinsic = forged_program_ref(&INTRINSIC, 1, 4);
     let scope = ScopeId::route(0);
-    assert_eq!(intrinsic.route_resolver_scope_at_row(0), Some(scope));
+    let (decoded_scope, resolver) = intrinsic
+        .route_resolver_authority_at_row(0)
+        .expect("intrinsic route authority");
+    assert_eq!(decoded_scope, scope);
+    assert!(resolver.is_none());
     assert_eq!(intrinsic.route_controller_role(scope), 0);
     assert_eq!(intrinsic.route_participant_count(scope, 0), 2);
     assert_eq!(intrinsic.route_participant_at(scope, 0, 0), Some(0));
@@ -131,8 +135,11 @@ fn public_projection_preserves_the_full_u16_resolver_id_domain() {
     let program = role0.role_image_ref().program;
 
     assert_eq!(program.route_resolver_row_count(), 1);
+    let (_, resolver) = program
+        .route_resolver_authority_at_row(0)
+        .expect("dynamic route authority");
     assert_eq!(
-        program.route_resolver_id_at_row(0),
+        resolver.map(|resolver| resolver.resolver_id()),
         Some(MAX_ROUTE_RESOLVER)
     );
 }
@@ -200,70 +207,70 @@ fn compiled_program_descriptor_accepts_role_255_participant() {
 #[should_panic]
 fn compiled_program_descriptor_rejects_invalid_packed_scope() {
     let descriptor = forged_program_ref(&INVALID_PACKED_SCOPE, 0, 2);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_noncanonical_intrinsic_authority() {
     let descriptor = forged_program_ref(&NONCANONICAL_INTRINSIC, 0, 2);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_non_route_scope() {
     let descriptor = forged_program_ref(&NON_ROUTE_SCOPE, 0, 2);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_empty_right_participant_range() {
     let descriptor = forged_program_ref(&EMPTY_RIGHT_PARTICIPANTS, 1, 2);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_orphan_participant_prefix() {
     let descriptor = forged_program_ref(&ORPHAN_PARTICIPANT_PREFIX, 0, 3);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_controller_out_of_range() {
     let descriptor = forged_program_ref(&CONTROLLER_OUT_OF_RANGE, 1, 4);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_controller_missing_from_arm() {
     let descriptor = forged_program_ref(&CONTROLLER_MISSING_FROM_ARM, 1, 2);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_unsorted_participants() {
     let descriptor = forged_program_ref(&UNSORTED_PARTICIPANTS, 1, 4);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_duplicate_participants() {
     let descriptor = forged_program_ref(&DUPLICATE_PARTICIPANTS, 1, 4);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]
 #[should_panic]
 fn compiled_program_descriptor_rejects_participant_out_of_role_range() {
     let descriptor = forged_program_ref(&PARTICIPANT_OUT_OF_RANGE, 1, 4);
-    let _ = descriptor.route_resolver_scope_at_row(0);
+    let _ = descriptor.route_resolver_authority_at_row(0);
 }
 
 #[test]

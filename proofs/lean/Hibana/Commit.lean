@@ -11,14 +11,11 @@ def CommitState.initial : CommitState := {
   selected := fun _ => none
 }
 
-private def routeForConflict? (graph : EventGraph) (conflict : Nat) : Option RouteInfo :=
-  graph.routes.find? fun route => route.conflict == conflict
-
 private def conflictAllows
     (graph : EventGraph) (state : CommitState) (membership : ConflictArm) : Bool :=
   match state.selected membership.conflict with
   | none =>
-      match routeForConflict? graph membership.conflict with
+      match graph.routeForConflict? membership.conflict with
       | none => false
       | some route =>
           match route.authority with
@@ -28,7 +25,7 @@ private def conflictAllows
 
 private def commitAuthorityAllows
     (graph : EventGraph) (state : CommitState) (membership : ConflictArm) : Bool :=
-  match routeForConflict? graph membership.conflict with
+  match graph.routeForConflict? membership.conflict with
   | none => false
   | some route =>
       match route.authority with
@@ -116,13 +113,65 @@ private def rollReentryState?
       else
         none
 
+/-- Conflict identifiers follow choreography preorder, so the greatest
+candidate conflict is the innermost route containing one event. Maximal-key
+duplicates are malformed and fail closed through `resolveUnique?`. -/
+def maxRouteConflict (routes : List RouteInfo) : Nat :=
+  routes.foldl (fun current route => max current route.conflict) 0
+
+def selectInnermostReentryRoute? (routes : List RouteInfo) : Option RouteInfo :=
+  let innermostConflict := maxRouteConflict routes
+  resolveUnique? (routes.filter fun route => Nat.beq route.conflict innermostConflict)
+
+theorem max_route_conflict_is_permutation_invariant
+    {left right : List RouteInfo}
+    (permutation : left.Perm right) :
+    maxRouteConflict left = maxRouteConflict right := by
+  unfold maxRouteConflict
+  apply permutation.foldl_eq'
+  intro first _ second _ current
+  omega
+
+theorem select_innermost_reentry_route_eq_some_iff
+    {routes : List RouteInfo} {route : RouteInfo} :
+    selectInnermostReentryRoute? routes = some route ↔
+      routes.filter (fun candidate =>
+        Nat.beq candidate.conflict (maxRouteConflict routes)) = [route] := by
+  exact resolveUnique?_eq_some_iff
+
+/-- Route reentry authority depends on the canonical conflict key and singleton
+evidence, never on candidate traversal order. -/
+theorem select_innermost_reentry_route_is_permutation_invariant
+    {left right : List RouteInfo} {route : RouteInfo}
+    (permutation : left.Perm right)
+    (selected : selectInnermostReentryRoute? left = some route) :
+    selectInnermostReentryRoute? right = some route := by
+  have maxEq := max_route_conflict_is_permutation_invariant permutation
+  have exactLeft := select_innermost_reentry_route_eq_some_iff.mp selected
+  apply select_innermost_reentry_route_eq_some_iff.mpr
+  have filtered := permutation.filter fun candidate =>
+    Nat.beq candidate.conflict (maxRouteConflict left)
+  rw [maxEq] at filtered exactLeft
+  exact List.Perm.eq_singleton (exactLeft ▸ filtered).symm
+
+theorem select_innermost_reentry_route_pair_is_order_independent
+    (outer inner : RouteInfo)
+    (nested : outer.conflict < inner.conflict) :
+    selectInnermostReentryRoute? [outer, inner] = some inner ∧
+      selectInnermostReentryRoute? [inner, outer] = some inner := by
+  have outerNeInner : outer.conflict ≠ inner.conflict := Nat.ne_of_lt nested
+  simp [selectInnermostReentryRoute?, maxRouteConflict, resolveUnique?,
+    Nat.max_eq_right (Nat.le_of_lt nested), Nat.max_eq_left (Nat.le_of_lt nested),
+    outerNeInner, Nat.beq_refl]
+
 private def routeReentryState?
     (graph : EventGraph) (state : CommitState) (event : Event) : Option CommitState :=
-  match graph.routes.find? (fun route =>
+  let candidates := graph.routes.filter fun route =>
     route.reentry == .rolled && routeComplete graph state route &&
       match selectedRouteEvents? state route with
       | none => false
-      | some events => events.contains event.id) with
+      | some events => events.contains event.id
+  match selectInnermostReentryRoute? candidates with
   | none => none
   | some route =>
       match selectedRouteEvents? state route with
@@ -244,7 +293,7 @@ def applyResolver
     (state : CommitState)
     (conflict resolver : Nat)
     (outcome : ResolverOutcome) : Option ResolverResult :=
-  match routeForConflict? graph conflict with
+  match graph.routeForConflict? conflict with
   | none => none
   | some route =>
       match route.authority with
@@ -260,55 +309,72 @@ def applyResolver
           else
             none
 
-private def messageKeyBefore (left right : MessageKey) : Bool :=
-  left.label < right.label || (left.label == right.label && left.schema <= right.schema)
+def enabledOperations (graph : EventGraph) (state : CommitState) : List OperationRequest :=
+  graph.events.filterMap fun event =>
+    if eventEnabled graph state event then some event.operationRequest else none
 
-private def insertMessageKey (value : MessageKey) : List MessageKey -> List MessageKey
-  | [] => [value]
-  | head :: tail =>
-      if messageKeyBefore value head then
-        value :: head :: tail
-      else
-        head :: insertMessageKey value tail
-
-private def sortMessageKeys (values : List MessageKey) : List MessageKey :=
-  values.foldr insertMessageKey []
-
-def enabledKeys (graph : EventGraph) (state : CommitState) : List MessageKey :=
-  sortMessageKeys <| graph.events.filterMap fun event =>
-    if eventEnabled graph state event then some event.action.key else none
+def matchingOperationEvent?
+    (graph : EventGraph) (request : OperationRequest) : Option Event :=
+  match graph.events[request.eventId]? with
+  | none => none
+  | some event =>
+      if event.operationRequest = request then some event else none
 
 def matchingEvent?
     (graph : EventGraph)
     (state : CommitState)
-    (key : MessageKey) : Option Event :=
-  graph.events.find? fun event =>
-    decide (event.action.key = key) && eventCommitEnabled graph state event
+    (request : OperationRequest) : Option Event :=
+  match matchingOperationEvent? graph request with
+  | none => none
+  | some event => if eventCommitEnabled graph state event then some event else none
 
-def commitKey
+def commitOperation
     (graph : EventGraph)
     (state : CommitState)
-    (key : MessageKey) : Option CommitState :=
-  match matchingEvent? graph state key with
+    (request : OperationRequest) : Option CommitState :=
+  match matchingEvent? graph state request with
   | none => none
   | some event => commitEvent graph state event.id
 
+private def equalContractDistinctPeerGraph : EventGraph :=
+  projectGraph 0 (.par (.send 0 1 7 8) (.send 0 2 7 8))
+
+private def equalContractFirstOperation : OperationRequest :=
+  { eventId := 0, action := .send 1 7 8 }
+
+private def equalContractSecondOperation : OperationRequest :=
+  { eventId := 1, action := .send 2 7 8 }
+
+/-- Equal logical contracts on different peers remain distinct enabled
+operations. Event identity and the complete local action are both retained. -/
+theorem equal_contract_operations_retain_distinct_identity :
+    enabledOperations equalContractDistinctPeerGraph .initial =
+      [equalContractFirstOperation, equalContractSecondOperation] := by
+  decide
+
+/-- A request cannot borrow an enabled event ID while substituting another
+peer, even when label and schema are unchanged. -/
+theorem equal_contract_wrong_peer_is_rejected :
+    matchingEvent? equalContractDistinctPeerGraph .initial
+      { eventId := 0, action := .send 2 7 8 } = none := by
+  decide
+
 inductive TraceAction where
-  | commit (key : MessageKey)
+  | commit (request : OperationRequest)
   | resolve (conflict resolver : Nat) (arm : RouteArm)
   | reject (conflict resolver : Nat)
   | stop
   deriving Repr, DecidableEq
 
 structure TraceFrame where
-  enabled : List MessageKey
+  enabled : List OperationRequest
   action : TraceAction
   deriving Repr, DecidableEq
 
 def checkTrace (graph : EventGraph) : CommitState -> List TraceFrame -> Bool
   | _, [] => true
   | state, frame :: rest =>
-      if decide (enabledKeys graph state ≠ frame.enabled) then
+      if decide (enabledOperations graph state ≠ frame.enabled) then
         false
       else
         match frame.action with
@@ -317,7 +383,7 @@ def checkTrace (graph : EventGraph) : CommitState -> List TraceFrame -> Bool
             if decide (key ∉ frame.enabled) then
               false
             else
-              match commitKey graph state key with
+              match commitOperation graph state key with
               | none => false
               | some next => checkTrace graph next rest
         | .resolve conflict resolver arm =>
@@ -334,12 +400,12 @@ def checkTrace (graph : EventGraph) : CommitState -> List TraceFrame -> Bool
 def ValidTrace (graph : EventGraph) : CommitState -> List TraceFrame -> Prop
   | _, [] => True
   | state, frame :: rest =>
-      enabledKeys graph state = frame.enabled /\
+      enabledOperations graph state = frame.enabled /\
       match frame.action with
       | .stop => rest = []
       | .commit key =>
           key ∈ frame.enabled /\
-          ∃ next, commitKey graph state key = some next /\ ValidTrace graph next rest
+          ∃ next, commitOperation graph state key = some next /\ ValidTrace graph next rest
       | .resolve conflict resolver arm =>
           ∃ next, applyResolver graph state conflict resolver (.select arm) =
             some (.selected next) /\ ValidTrace graph next rest
@@ -355,7 +421,7 @@ theorem trace_checker_sound
   | nil => trivial
   | cons frame rest ih =>
       simp only [checkTrace] at accepted
-      by_cases frontier : enabledKeys graph state = frame.enabled
+      by_cases frontier : enabledOperations graph state = frame.enabled
       · simp [frontier] at accepted
         cases actionCase : frame.action with
         | stop =>
@@ -365,7 +431,7 @@ theorem trace_checker_sound
         | commit key =>
             by_cases enabled : key ∈ frame.enabled
             · simp [actionCase, enabled] at accepted
-              cases nextCase : commitKey graph state key with
+              cases nextCase : commitOperation graph state key with
               | none => simp [nextCase] at accepted
               | some next =>
                   simp [nextCase] at accepted
@@ -438,7 +504,7 @@ theorem resolver_reject_never_selects
     (next : CommitState) :
     applyResolver graph state conflict resolver .reject ≠ some (.selected next) := by
   unfold applyResolver
-  cases routeForConflict? graph conflict with
+  cases graph.routeForConflict? conflict with
   | none => simp
   | some route =>
       cases authorityCase : route.authority with
@@ -455,7 +521,7 @@ theorem resolver_select_never_rejects
     (arm : RouteArm) :
     applyResolver graph state conflict resolver (.select arm) ≠ some .rejected := by
   unfold applyResolver
-  cases routeForConflict? graph conflict with
+  cases graph.routeForConflict? conflict with
   | none => simp
   | some route =>
       cases authorityCase : route.authority with
@@ -473,14 +539,14 @@ theorem resolver_selection_exact_authority
     (resolved : applyResolver graph state conflict resolver (.select arm) =
       some (.selected next)) :
     ∃ route base,
-      routeForConflict? graph conflict = some route /\
+      graph.routeForConflict? conflict = some route /\
       route.authority = .dynamic resolver /\
       resolverBaseState? graph state route = some base /\
       next.done = base.done /\
       next.selected conflict = some arm /\
       ∀ other, other ≠ conflict -> next.selected other = base.selected other := by
   unfold applyResolver at resolved
-  cases routeCase : routeForConflict? graph conflict with
+  cases routeCase : graph.routeForConflict? conflict with
   | none => simp [routeCase] at resolved
   | some route =>
       cases authorityCase : route.authority with
@@ -511,7 +577,7 @@ theorem unresolved_dynamic_route_cannot_commit
     {graph : EventGraph} {state : CommitState} {event : Event}
     {membership : ConflictArm} {route : RouteInfo} {resolver : Nat}
     (inside : membership ∈ event.conflicts)
-    (routeFound : routeForConflict? graph membership.conflict = some route)
+    (routeFound : graph.routeForConflict? membership.conflict = some route)
     (dynamic : route.authority = .dynamic resolver)
     (unselected : state.selected membership.conflict = none) :
     eventCommitReady graph state event = false := by

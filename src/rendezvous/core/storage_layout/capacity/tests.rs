@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+    rendezvous::core::EndpointLeaseId,
     runtime_core::resources::RuntimeResources,
     session::types::RendezvousId,
     transport::{Outgoing, PortOpen, ReceivedFrame, TransportError},
@@ -74,6 +75,22 @@ fn bind_endpoint_lease_capacity(rv: &Rendezvous<'_, '_, FailingTransport>, requi
         .plan_endpoint_lease_capacity(required_slots)
         .expect("endpoint lease capacity plan");
     rv.commit_endpoint_lease_capacity(plan);
+}
+
+#[test]
+fn endpoint_lease_slot_count_uses_the_full_u16_index_domain() {
+    assert!(EndpointLeaseId::slot_count_is_representable(0));
+    assert!(EndpointLeaseId::slot_count_is_representable(1));
+    assert!(EndpointLeaseId::slot_count_is_representable(usize::from(
+        u16::MAX
+    )));
+    assert!(EndpointLeaseId::slot_count_is_representable(
+        usize::from(u16::MAX) + 1
+    ));
+    assert!(!EndpointLeaseId::slot_count_is_representable(
+        usize::from(u16::MAX) + 2
+    ));
+    assert!(crate::rendezvous::core::EndpointLeaseId::try_from(usize::from(u16::MAX)).is_ok());
 }
 
 fn populate_non_endpoint_sidecars(rv: &Rendezvous<'_, '_, FailingTransport>) {

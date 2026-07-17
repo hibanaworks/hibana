@@ -1,5 +1,6 @@
 use super::{
-    LANE_DOMAIN_SIZE, LANE_SET_VIEW_WORDS, LaneSet, LaneSetView, logical_lane_count_for_role,
+    LANE_DOMAIN_SIZE, LANE_SET_VIEW_WORDS, LaneSet, LaneSetView, LaneWord,
+    logical_lane_count_for_role,
 };
 
 #[kani::proof]
@@ -22,7 +23,7 @@ fn logical_lane_capacity_is_the_exact_descriptor_lane_span() {
 #[kani::proof]
 fn lane_set_mutation_is_exact_over_the_complete_lane_domain() {
     let lane: u8 = kani::any();
-    let mut words = [0usize; LANE_SET_VIEW_WORDS];
+    let mut words = [0u32; LANE_SET_VIEW_WORDS];
     let mut set = core::mem::MaybeUninit::<LaneSet>::uninit();
     /* SAFETY: `set` is writable uninitialized storage and `words` is one live,
     exclusively borrowed full-domain lane-word allocation. */
@@ -39,9 +40,9 @@ fn lane_set_mutation_is_exact_over_the_complete_lane_domain() {
 }
 
 #[kani::proof]
-#[kani::unwind(6)]
+#[kani::unwind(10)]
 fn lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain() {
-    let words: [usize; LANE_SET_VIEW_WORDS] = kani::any();
+    let words: [LaneWord; LANE_SET_VIEW_WORDS] = kani::any();
     let start: u16 = kani::any();
     let lane_limit: u16 = kani::any();
     let probe: u16 = kani::any();
@@ -67,6 +68,52 @@ fn lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain() {
             }
         }
     }
+}
+
+#[kani::proof]
+#[kani::unwind(34)]
+fn descriptor_lane_byte_iteration_returns_the_first_set_lane_in_the_exact_domain() {
+    let bytes: [u8; 32] = kani::any();
+    let start: u16 = kani::any();
+    let lane_limit: u16 = kani::any();
+    let probe: u16 = kani::any();
+    kani::assume(start as usize <= LANE_DOMAIN_SIZE);
+    kani::assume(lane_limit as usize <= LANE_DOMAIN_SIZE);
+
+    /* SAFETY: the symbolic byte array remains live and immutable for the
+    complete proof and spans the full descriptor lane domain. */
+    let view = unsafe { LaneSetView::from_bytes(bytes.as_ptr(), bytes.len(), LANE_SET_VIEW_WORDS) };
+    let actual = view.next_set_from(start as usize, lane_limit as usize);
+    match actual {
+        Some(found) => {
+            assert!(found >= start as usize);
+            assert!(found < lane_limit as usize);
+            assert!(view.contains(found));
+            if probe as usize >= start as usize && (probe as usize) < found {
+                assert!(!view.contains(probe as usize));
+            }
+        }
+        None => {
+            if probe as usize >= start as usize && (probe as usize) < lane_limit as usize {
+                assert!(!view.contains(probe as usize));
+            }
+        }
+    }
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn descriptor_lane_byte_view_rejects_lengths_beyond_the_lane_domain() {
+    let byte = 0u8;
+    /* SAFETY: the deliberately invalid length must be rejected before the
+    constructor can publish or read the one-byte allocation. */
+    let _ = unsafe {
+        LaneSetView::from_bytes(
+            core::ptr::addr_of!(byte),
+            super::lane_byte_count(LANE_DOMAIN_SIZE) + 1,
+            LANE_SET_VIEW_WORDS,
+        )
+    };
 }
 
 #[kani::proof]

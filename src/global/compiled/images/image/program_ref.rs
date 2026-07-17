@@ -2,7 +2,7 @@ use super::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, ProgramColumnRange, ProgramImageColumns, ProgramImageFacts,
 };
 use crate::{
-    eff::{EffAtom, EffStruct, EventOrigin},
+    eff::{EffAtom, EventOrigin},
     global::const_dsl::DynamicRouteResolver,
     global::role_program::BlobPtr,
 };
@@ -216,10 +216,10 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) const fn node_at(&self, eff_idx: usize) -> EffStruct {
+    pub(crate) const fn event_atom_at(&self, eff_idx: usize) -> EffAtom {
         match self.atom_at(eff_idx) {
-            Some(atom) => EffStruct::atom(atom),
-            None => EffStruct::pure(),
+            Some(atom) => atom,
+            None => crate::invariant(),
         }
     }
 

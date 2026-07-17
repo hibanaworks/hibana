@@ -1,17 +1,18 @@
 use super::common::*;
 
 #[test]
-fn effect_nodes_do_not_read_inactive_union_fields() {
+fn source_events_have_one_direct_atom_representation() {
     let eff = read("src/eff.rs");
+    let source = read("src/global/const_dsl/source_arena.rs");
 
     assert!(
-        !eff.contains("pub union EffData") && !eff.contains("unsafe { self.atom }"),
-        "effect nodes must not expose safe reads from inactive union fields"
+        eff.contains("pub(crate) struct EffAtom")
+            && source.contains("Event { atom: EffAtom, frame_label: u8 }"),
+        "source events must keep one direct atom representation"
     );
     assert!(
-        eff.contains("EffKind::Pure => crate::invariant()")
-            && eff.contains("EffKind::Atom => self.data.atom()"),
-        "pure effect atom access must fail fast through the runtime invariant path"
+        !eff.contains("EffKind") && !eff.contains("EffStruct") && !eff.contains("EffData"),
+        "source events must not retain an uninhabited pure/atom tagged representation"
     );
 }
 
@@ -600,7 +601,7 @@ fn resident_descriptor_metadata_stays_columnar() {
             && !lowering.contains("self.atom_rows[offset]")
             && !lowering.contains("route_scope_rows: [ProgramRouteScopeRow")
             && program_blob.contains("eff_list: &EffList")
-            && program_blob.contains("Self::atom_at(eff_list, idx)")
+            && program_blob.contains("eff_list.atom_at(idx)")
             && program_blob.contains("eff_list.resolver_for_scope(marker.scope_id)"),
         "resident descriptor metadata must not rebuild a compiled validation image; EffList remains the single atom/scope/resolver source for compact blobs"
     );
@@ -646,9 +647,9 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
             && !program_blob.contains("BlobPtr::from_array(")
             && !role_blob.contains("BlobPtr::from_array(")
             && program_blob.contains("CompiledProgramRef::compact(facts, columns, &self.bytes)")
-            && role_blob.contains(
-                "RoleImageRef::new(\n            program,\n            role,\n            facts,\n            columns,\n            &self.bytes,"
-            )
+            && role_blob
+                .contains("RoleImageRef::new(program, role, facts, columns, &self.bytes)")
+            && !role_blob.contains("RoleImageRef::new(program, role, facts, columns, &self.bytes,")
             && program_ref.contains("BlobPtr::from_array(bytes, columns.blob_len())")
             && role_ref_access.contains("BlobPtr::from_array(bytes, columns.blob_len())")
             && projection.contains("ProgramImagePlan::from_program")

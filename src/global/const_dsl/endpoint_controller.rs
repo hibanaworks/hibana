@@ -1,5 +1,5 @@
 use super::{
-    EffList, eff,
+    EffList,
     scope_ranges::{
         parallel_arm_ranges_from_enter, parallel_enter_at, route_arm_ranges_from_first_enter,
         route_enter_at,
@@ -41,29 +41,24 @@ pub(crate) const fn first_visible_controller<const E: usize>(
     end: usize,
 ) -> FirstVisibleController {
     let markers = eff_list.scope_markers();
-    let mut idx = start;
-    while idx < end && idx < eff_list.len() {
-        if let Some(route_enter) = route_enter_at(markers, idx, end, 0) {
-            let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
-                route_arm_ranges_from_first_enter(markers, route_enter);
-            return first_visible_controller(eff_list, arm0_start, arm0_end)
-                .merge(first_visible_controller(eff_list, arm1_start, arm1_end));
-        }
-        if let Some(par_enter) = parallel_enter_at(markers, idx, end, 0) {
-            let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
-                parallel_arm_ranges_from_enter(markers, par_enter)
-            else {
-                return FirstVisibleController::Absent;
-            };
-            return first_visible_controller(eff_list, arm0_start, arm0_end)
-                .merge(first_visible_controller(eff_list, arm1_start, arm1_end));
-        }
-
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            return FirstVisibleController::Unique(node.atom_data().from);
-        }
-        idx += 1;
+    if start >= end || start >= eff_list.len() {
+        return FirstVisibleController::Absent;
     }
-    FirstVisibleController::Absent
+    if let Some(route_enter) = route_enter_at(markers, start, end, 0) {
+        let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
+            route_arm_ranges_from_first_enter(markers, route_enter);
+        return first_visible_controller(eff_list, arm0_start, arm0_end)
+            .merge(first_visible_controller(eff_list, arm1_start, arm1_end));
+    }
+    if let Some(par_enter) = parallel_enter_at(markers, start, end, 0) {
+        let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
+            parallel_arm_ranges_from_enter(markers, par_enter)
+        else {
+            crate::invariant();
+        };
+        return first_visible_controller(eff_list, arm0_start, arm0_end)
+            .merge(first_visible_controller(eff_list, arm1_start, arm1_end));
+    }
+
+    FirstVisibleController::Unique(eff_list.atom_at(start).from)
 }

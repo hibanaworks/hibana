@@ -1,5 +1,6 @@
 use super::*;
 use crate::global::const_dsl::ScopeKind;
+use crate::global::typestate::StateIndex;
 
 fn lane_state(
     entry: u16,

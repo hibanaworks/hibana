@@ -1,6 +1,7 @@
 use super::{
-    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, OfferEntryKey,
-    ReentryScopeLiveness, ScopeId, StateIndex, Transport, state_index_to_usize,
+    ActiveEntrySet, ActiveEntrySlot, CursorEndpoint, CursorRefresh, FrontierScratchSectionLease,
+    LaneOfferState, OfferEntryKey, ReentryScopeLiveness, ScopeId, StateIndex, Transport,
+    frontier_global_active_entries_view, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -19,18 +20,30 @@ where
     pub(in crate::endpoint::kernel) fn root_frontier_active_entries(
         &self,
         root: ScopeId,
-    ) -> ActiveEntrySet {
+    ) -> ActiveEntrySet<'_> {
         self.frontier_state.root_frontier_active_entries(root)
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn active_frontier_entries(
-        &mut self,
+    pub(in crate::endpoint::kernel) fn active_frontier_entries<'a>(
+        &self,
         current_parallel: Option<ScopeId>,
-    ) -> ActiveEntrySet {
+        scratch: &'a mut FrontierScratchSectionLease<'_, ActiveEntrySlot>,
+    ) -> ActiveEntrySet<'a> {
         match current_parallel {
-            Some(root) => self.root_frontier_active_entries(root),
-            None => self.global_active_entries(),
+            Some(root) => {
+                let source = self.root_frontier_active_entries(root);
+                let mut active_entries = frontier_global_active_entries_view(scratch);
+                active_entries.clear();
+                let mut slot_idx = 0usize;
+                while slot_idx < source.len() {
+                    let slot = crate::invariant_some(source.slot_at(slot_idx));
+                    active_entries.insert_key(slot.key, slot.lane_idx);
+                    slot_idx += 1;
+                }
+                active_entries.seal()
+            }
+            None => self.global_active_entries(scratch),
         }
     }
 

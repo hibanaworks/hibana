@@ -160,13 +160,10 @@ where
 
     #[inline]
     pub(in crate::endpoint::kernel) fn preview_offer_entry_evidence_non_consuming(
-        &mut self,
+        &self,
         scope_id: ScopeId,
     ) -> OfferEntryEvidence {
         let mut evidence = OfferEntryEvidence::empty();
-        if self.peek_live_scope_ack(scope_id).is_some() {
-            evidence = evidence.with_ack();
-        }
         if self.scope_has_ready_arm_evidence(scope_id) {
             evidence = evidence.with_ready_arm();
         }
@@ -186,7 +183,7 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn scan_active_offer_entry_non_consuming(
-        &mut self,
+        &self,
         slot: ActiveEntrySlot,
     ) -> (ActiveOfferEntry, OfferEntryObservedState, FrontierCandidate) {
         let active = self.active_offer_entry_from_slot(slot);
@@ -196,11 +193,12 @@ where
     }
 
     pub(in crate::endpoint::kernel) fn for_each_active_offer_candidate<R>(
-        &mut self,
+        &self,
         current_parallel: Option<ScopeId>,
+        scratch: &mut super::FrontierScratchSectionLease<'_, ActiveEntrySlot>,
         mut visitor: impl FnMut(FrontierCandidate) -> ControlFlow<R>,
     ) -> Option<R> {
-        let active_entries = self.active_frontier_entries(current_parallel);
+        let active_entries = self.active_frontier_entries(current_parallel, scratch);
         let mut next_slot = 0usize;
         while next_slot < active_entries.len() {
             let slot = crate::invariant_some(active_entries.slot_at(next_slot));

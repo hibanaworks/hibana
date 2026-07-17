@@ -107,11 +107,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn checked_node_scope_id_at(&self, idx: usize) -> Option<ScopeId> {
-        Some(self.machine().checked_node(idx)?.scope())
-    }
-
-    #[inline(always)]
     pub(crate) fn try_send_meta_at(&self, idx: usize) -> Option<SendMeta> {
         self.try_send_meta_from_node(idx)
     }
@@ -132,8 +127,10 @@ impl EventCursor {
             return (ScopeId::none(), None);
         };
         let scope = region.scope();
-        let selected_arm = route_arm.or_else(|| self.route_arm_for_index(scope, idx));
-        (scope, selected_arm)
+        if route_arm != self.route_arm_for_index(scope, idx) {
+            crate::invariant();
+        }
+        (scope, route_arm)
     }
 
     pub(super) fn try_send_meta_from_node(&self, idx: usize) -> Option<SendMeta> {
@@ -150,8 +147,7 @@ impl EventCursor {
                 let payload_schema = self
                     .machine()
                     .program_ref()
-                    .node_at(eff_index.dense_ordinal())
-                    .atom_data()
+                    .event_atom_at(eff_index.dense_ordinal())
                     .payload_schema;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
@@ -190,8 +186,7 @@ impl EventCursor {
                 let payload_schema = self
                     .machine()
                     .program_ref()
-                    .node_at(eff_index.dense_ordinal())
-                    .atom_data()
+                    .event_atom_at(eff_index.dense_ordinal())
                     .payload_schema;
                 let scope = node.scope();
                 let route_arm = node.route_arm();
@@ -229,8 +224,7 @@ impl EventCursor {
                 let payload_schema = self
                     .machine()
                     .program_ref()
-                    .node_at(eff_index.dense_ordinal())
-                    .atom_data()
+                    .event_atom_at(eff_index.dense_ordinal())
                     .payload_schema;
                 let scope = node.scope();
                 let route_arm = node.route_arm();

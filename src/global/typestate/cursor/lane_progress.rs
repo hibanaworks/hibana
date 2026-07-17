@@ -91,10 +91,7 @@ impl EventCursor {
         self.index_for_lane_step(lane_idx).is_some()
     }
 
-    pub(crate) fn first_pending_step_index(&self, preferred_lane_idx: usize) -> Option<usize> {
-        if let Some(idx) = self.index_for_lane_step(preferred_lane_idx) {
-            return Some(idx);
-        }
+    pub(crate) fn first_pending_step_index(&self) -> Option<usize> {
         let lane_limit = self.logical_lane_count();
         let mut lane_idx = 0usize;
         while lane_idx < lane_limit {

@@ -29,12 +29,6 @@ inductive Choreo where
   | roll (body : Choreo)
   deriving Repr, DecidableEq, BEq
 
-/-- Compact identity of one choreography message contract. -/
-structure MessageKey where
-  label : Nat
-  schema : Nat
-  deriving Repr, DecidableEq
-
 /-- One role-local interpretation of a global send. -/
 inductive LocalAction where
   | send (peer label schema : Nat)
@@ -47,11 +41,6 @@ def LocalAction.label : LocalAction -> Nat
 
 def LocalAction.schema : LocalAction -> Nat
   | .send _ _ schema | .recv _ _ schema | .local _ schema => schema
-
-def LocalAction.key (action : LocalAction) : MessageKey := {
-  label := action.label
-  schema := action.schema
-}
 
 def Choreo.localAction?
     (role sender receiver label schema : Nat) : Option LocalAction :=
@@ -166,12 +155,5 @@ theorem local_action_preserves_schema
             cases actionEq
             rfl
           · simp [Choreo.localAction?, senderCase, receiverCase, unitSchema] at projected
-
-theorem local_action_preserves_key
-    {role sender receiver label schema : Nat} {action : LocalAction}
-    (projected : Choreo.localAction? role sender receiver label schema = some action) :
-    action.key = { label, schema } := by
-  unfold LocalAction.key
-  rw [local_action_preserves_label projected, local_action_preserves_schema projected]
 
 end Hibana

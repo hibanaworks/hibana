@@ -7,6 +7,7 @@ use super::frontier::{ActiveEntrySlot, LaneOfferState, RootFrontierState};
 use super::frontier_state::FrontierState;
 use crate::global::role_program::{DenseLaneOrdinal, LaneWord, RuntimeRoleFootprint};
 use crate::global::typestate::EventCursorState;
+use crate::runtime_core::layout::{add, align_up, mul, u32_word_count};
 
 pub(super) struct LeasedState<T> {
     ptr: *mut T,
@@ -128,7 +129,7 @@ impl EndpointArenaLayout {
         total_align = max_usize(total_align, event_cursor_current_step_label_codes.align());
 
         let event_cursor_completed_event_words =
-            Self::section_array::<u32>(offset, bit_word_count(footprint.local_step_count));
+            Self::section_array::<u32>(offset, u32_word_count(footprint.local_step_count));
         offset = event_cursor_completed_event_words.end_offset();
         total_align = max_usize(total_align, event_cursor_completed_event_words.align());
 
@@ -361,7 +362,7 @@ impl EndpointArenaLayout {
     #[inline(always)]
     const fn section_array<T>(offset: usize, count: usize) -> EndpointArenaSection {
         let align = core::mem::align_of::<T>();
-        let bytes = checked_usize_mul(core::mem::size_of::<T>(), count);
+        let bytes = mul(core::mem::size_of::<T>(), count);
         EndpointArenaSection {
             offset: narrow_u32(align_up(offset, align)),
             bytes: narrow_u32(bytes),
@@ -379,50 +380,13 @@ impl EndpointArenaSection {
 
     #[inline(always)]
     const fn end_offset(self) -> usize {
-        checked_usize_add(self.offset(), self.bytes())
+        add(self.offset(), self.bytes())
     }
 }
 
 #[inline(always)]
 const fn max_usize(lhs: usize, rhs: usize) -> usize {
     if lhs > rhs { lhs } else { rhs }
-}
-
-#[inline(always)]
-const fn bit_word_count(bits: usize) -> usize {
-    let pad = u32::BITS as usize - 1;
-    if bits > usize::MAX - pad {
-        crate::invariant();
-    }
-    (bits + pad) / u32::BITS as usize
-}
-
-#[inline(always)]
-const fn align_up(value: usize, align: usize) -> usize {
-    if align == 0 {
-        crate::invariant();
-    }
-    let mask = align - 1;
-    if value > usize::MAX - mask {
-        crate::invariant();
-    }
-    (value + mask) & !mask
-}
-
-#[inline(always)]
-const fn checked_usize_mul(lhs: usize, rhs: usize) -> usize {
-    if lhs != 0 && rhs > usize::MAX / lhs {
-        crate::invariant();
-    }
-    lhs * rhs
-}
-
-#[inline(always)]
-const fn checked_usize_add(lhs: usize, rhs: usize) -> usize {
-    if lhs > usize::MAX - rhs {
-        crate::invariant();
-    }
-    lhs + rhs
 }
 
 #[inline(always)]

@@ -373,7 +373,7 @@ private def canonicalMaxRouteCommitCount (source : CanonicalProgramSource) : Nat
     else
       depth
   ) ({ current := 0, maximum := 0 } : RouteDepthState)
-  if depth.maximum = 0 then 0 else depth.maximum + 1
+  depth.maximum
 
 private structure CanonicalRoleMetadata where
   roleCount : Nat
@@ -595,6 +595,26 @@ def Choreo.canonicalRoleRollRows
     else
       none
 
+private def rollRowsStructurallyCoherent
+    (rows : List DecodedRollRow) : Bool :=
+  decide (rows.Pairwise fun left right =>
+    left.scope ≠ right.scope ∧
+      (left.eventStart + left.eventLength ≤ right.eventStart ∨
+       right.eventStart + right.eventLength ≤ left.eventStart ∨
+       (left.eventStart ≤ right.eventStart ∧
+        right.eventStart + right.eventLength ≤ left.eventStart + left.eventLength) ∨
+       (right.eventStart ≤ left.eventStart ∧
+        left.eventStart + left.eventLength ≤ right.eventStart + right.eventLength)))
+
+/-- Resident iteration rows have unique scope identities and the laminar range
+shape required by runtime nesting. Equal projected ranges are permitted and use
+the source-preorder scope ordinal as their erased nesting order. -/
+def RustDescriptorImage.rollColumnsCoherent
+    (image : RustDescriptorImage) : Bool :=
+  match image.decodeRollRows? with
+  | some rows => rollRowsStructurallyCoherent rows
+  | none => false
+
 private def validPackedScope (raw : Nat) : Bool :=
   raw = packedU16Absent ||
     (raw < 3 * productionScopeCapacity &&
@@ -638,6 +658,15 @@ private def RustDescriptorImage.decodeRoleEventRow?
 private def RustDescriptorImage.decodeRoleEventRows?
     (image : RustDescriptorImage) : Option (List DecodedRoleEventRow) :=
   (List.range image.eventCount).mapM image.decodeRoleEventRow?
+
+/-- The resident lane byte for every local event must fit the exact logical
+lane span used by the Rust decoder. Agreement with a program atom alone is not
+enough when descriptor metadata is malformed. -/
+def RustDescriptorImage.eventLaneColumnCoherent
+    (image : RustDescriptorImage) : Bool :=
+  match (List.range image.eventCount).mapM image.eventLane? with
+  | some lanes => lanes.all (· < image.logicalLaneCount)
+  | none => false
 
 def RustDescriptorImage.decodeEventDependencyRows?
     (image : RustDescriptorImage) : Option (List Nat) :=
@@ -725,6 +754,123 @@ def RustDescriptorImage.decodeRouteArmRows?
     (image : RustDescriptorImage) : Option (List DecodedRouteArmRow) :=
   image.decodeRouteArmRowsFrom? (image.routeScopeCount * 2) 0 0
 
+private def RustDescriptorImage.decodedRouteMembershipsAt?
+    (image : RustDescriptorImage)
+    (eventId : Nat) : Option (List (Nat × Nat)) := do
+  let scopes ← image.decodeRouteScopeRows?
+  let arms ← image.decodeRouteArmRows?
+  pure ((List.range arms.length).filterMap fun rowIndex =>
+    match arms[rowIndex]?, scopes[rowIndex / 2]? with
+    | some row, some scope =>
+        if row.eventStart ≤ eventId && eventId < row.eventStart + row.eventLength then
+          some (scope, rowIndex % 2)
+        else
+          none
+    | _, _ => none)
+
+private def RustDescriptorImage.eventConflictMembership?
+    (image : RustDescriptorImage)
+    (eventId : Nat) : Option (Option (Nat × Nat)) := do
+  let event ← image.decodeRoleEventRow? eventId
+  if event.conflictRow = packedU16Absent then
+    some none
+  else
+    let raw ← image.conflictRow? event.conflictRow
+    some (some ((raw % 16384) / 2, raw % 2))
+
+private def packedConflictMembership? (raw : Nat) : Option (Option (Nat × Nat)) :=
+  if raw = packedU16Absent || raw = packedConflictReentryWithoutParent then
+    some none
+  else if validRouteArmConflict raw then
+    some (some ((raw % 16384) / 2, raw % 2))
+  else
+    none
+
+private def RustDescriptorImage.routeParentMembership?
+    (image : RustDescriptorImage) (scope : Nat) : Option (Option (Nat × Nat)) := do
+  let scopes ← image.decodeRouteScopeRows?
+  let slot ← (List.range scopes.length).find? fun index =>
+    scopes[index]? = some scope
+  let raw ← image.routeScopeConflictRow? slot
+  packedConflictMembership? raw
+
+/-- Every passive route child must name a distinct later scope whose recorded
+parent authority is exactly the route row and arm that owns the child pointer.
+This is the byte-level counterpart of
+`RoleLaneImage::passive_arm_child_ordinal_by_slot`; accepting less here would
+make the Lean checker accept descriptor images rejected by the Rust runtime. -/
+def RustDescriptorImage.passiveChildColumnsCoherent
+    (image : RustDescriptorImage) : Bool :=
+  match image.decodeRouteScopeRows?, image.decodeRouteArmRows? with
+  | some scopes, some arms =>
+      (List.range arms.length).all fun rowIndex =>
+        match arms[rowIndex]?, scopes[rowIndex / 2]? with
+        | some row, some parentScope =>
+            if row.childSlot = packedU16Absent then
+              true
+            else
+              match scopes[row.childSlot]?,
+                  image.routeScopeConflictRow? row.childSlot with
+              | some childScope, some childConflict =>
+                  childScope != parentScope &&
+                    packedConflictMembership? childConflict =
+                      some (some (parentScope, rowIndex % 2))
+              | _, _ => false
+        | _, _ => false
+  | _, _ => false
+
+private def RustDescriptorImage.runtimeRouteParentMembership?
+    (image : RustDescriptorImage) (scope : Nat) : Option (Option (Nat × Nat)) := do
+  let parent ← image.routeParentMembership? scope
+  match parent with
+  | some (parentScope, arm) =>
+      if parentScope = scope then some none else some (some (parentScope, arm))
+  | none => some none
+
+private def RustDescriptorImage.routeCommitChainMatches
+    (image : RustDescriptorImage) : List Nat -> (Nat × Nat) -> Bool
+  | [], _ => false
+  | current :: rest, expected =>
+      match packedConflictMembership? current with
+      | some (some membership) =>
+          membership = expected &&
+            match image.runtimeRouteParentMembership? membership.1, rest with
+            | some none, [] => true
+            | some (some parent), _ :: _ =>
+                image.routeCommitChainMatches rest parent
+            | _, _ => false
+      | _ => false
+
+private def RustDescriptorImage.routeScopeIsAncestorOrSelf
+    (image : RustDescriptorImage) (ancestor descendant : Nat) : Nat → Bool
+  | 0 => ancestor = descendant
+  | fuel + 1 =>
+      if ancestor = descendant then
+        true
+      else
+        match image.routeParentMembership? descendant with
+        | some (some (parent, _)) =>
+            image.routeScopeIsAncestorOrSelf ancestor parent fuel
+        | some none | none => false
+
+/-- The event conflict column and route-arm range column must identify the same
+innermost route membership for every resident event. The exact conflict key is
+the operation authority; every containing route range must be that scope or an
+ancestor recovered from the route-parent column. No range-length heuristic may
+silently override the exact key. -/
+def RustDescriptorImage.routeArmColumnsCoherent
+    (image : RustDescriptorImage) : Bool :=
+  (List.range image.eventCount).all fun eventId =>
+    match image.eventConflictMembership? eventId,
+        image.decodedRouteMembershipsAt? eventId with
+    | some none, some memberships => memberships.isEmpty
+    | some (some membership), some memberships =>
+        memberships.contains membership &&
+        memberships.all fun candidate =>
+          image.routeScopeIsAncestorOrSelf
+            candidate.1 membership.1 (image.routeScopeCount + 1)
+    | _, _ => false
+
 def RustDescriptorImage.decodeResidentBoundaries?
     (image : RustDescriptorImage) : Option (List Nat) :=
   (List.range image.residentBoundaryCount).mapM fun row =>
@@ -735,6 +881,42 @@ def RustDescriptorImage.decodeLaneBits?
     (image : RustDescriptorImage) : Option (List Nat) :=
   (List.range image.laneBitCount).mapM fun row =>
     readByte? image.roleBytes (image.roleLaneBitOffset + row)
+
+private def laneBitPresent (bytes : List Nat) (lane : Nat) : Bool :=
+  match bytes[lane / 8]? with
+  | none => false
+  | some byte => (byte / (2 ^ (lane % 8))) % 2 == 1
+
+private def activeLanesFromBytes (bytes : List Nat) : List Nat :=
+  (List.range (bytes.length * 8)).filter (laneBitPresent bytes)
+
+/-- The active bitmap is the sole authority for active-lane count, first lane,
+and the exact logical span. Empty and trailing-zero aliases are rejected, so
+metadata cannot independently resize endpoint storage. -/
+def RustDescriptorImage.activeLaneMetadataCoherent
+    (image : RustDescriptorImage) : Bool :=
+  match image.decodeLaneBits? with
+  | none => false
+  | some laneBits =>
+      let activeBytes :=
+        (laneBits.drop image.activeLaneStart).take image.activeLaneLength
+      let activeLanes := activeLanesFromBytes activeBytes
+      let expectedLogical := match activeLanes.getLast? with
+        | none => 1
+        | some lane => lane + 1
+      let expectedFirst := match activeLanes.head? with
+        | none => packedU16Absent
+        | some lane => lane
+      let expectedByteLength :=
+        if activeLanes.isEmpty then 0 else (expectedLogical + 7) / 8
+      decide (
+        image.activeLaneStart = 0 ∧
+        image.activeLaneStart + image.activeLaneLength ≤ laneBits.length ∧
+        image.activeLaneLength = expectedByteLength ∧
+        image.activeLaneCount = activeLanes.length ∧
+        image.firstActiveLane = expectedFirst ∧
+        image.logicalLaneCount = expectedLogical ∧
+        image.endpointLaneSlotCount = expectedLogical)
 
 private def residentBoundariesValid
     (eventCount : Nat) (boundaries : List Nat) : Bool :=
@@ -753,7 +935,10 @@ private def RustDescriptorImage.decodeLaneRangeAt?
   let raw ← readU32LE? image.roleBytes
     (offset + row * productionRoleLaneRangeStride)
   let (start, length) ← decodePackedLaneRange? raw capacity
-  if !nonempty || 0 < length then some (start, length) else none
+  if (length = 0 → start = 0) ∧ (!nonempty || 0 < length) then
+    some (start, length)
+  else
+    none
 
 def RustDescriptorImage.decodeRouteArmLaneRows?
     (image : RustDescriptorImage) : Option (List (Nat × Nat)) :=
@@ -772,6 +957,45 @@ def RustDescriptorImage.decodeRouteCommitRanges?
   (List.range (image.routeScopeCount * 2)).mapM fun row =>
     image.decodeLaneRangeAt? image.roleRouteCommitRangeOffset row
       (image.routeScopeCount * 2) image.routeCommitRowCount true
+
+/-- Every route-commit range is the exact ancestor-first chain consumed by the
+Rust runtime: reversing the bytes starts at the selected route arm, follows the
+single parent column, and ends exactly at a root. Truncation, duplication,
+foreign arms, and rows before the root are rejected. -/
+def RustDescriptorImage.routeCommitColumnsCoherent
+    (image : RustDescriptorImage) : Bool :=
+  match image.decodeRouteScopeRows?, image.decodeRouteCommitRanges?,
+      image.decodeRouteCommitRows? with
+  | some scopes, some ranges, some rows =>
+      (List.range ranges.length).all fun rowIndex =>
+        match scopes[rowIndex / 2]?, ranges[rowIndex]? with
+        | some scope, some (start, length) =>
+            image.routeCommitChainMatches
+              ((rows.drop start).take length).reverse
+              (scope, rowIndex % 2)
+        | _, _ => false
+  | _, _, _ => false
+
+def RustDescriptorImage.routeCommitCapacityExact
+    (image : RustDescriptorImage) : Bool :=
+  match image.decodeRouteCommitRanges? with
+  | none => false
+  | some [] =>
+      image.routeCommitRowCount = 0 && image.maxRouteCommitCount = 0
+  | some ranges@(_ :: _) =>
+      decide (image.maxRouteCommitCount =
+        ranges.foldl (fun largest range => max largest range.2) 0)
+
+/-- Empty route authority has one representation: no rows and no retained
+builder capacity. This matches the production constructor and prevents metadata
+from reserving runtime state for a route that does not exist. -/
+theorem route_commit_capacity_empty_is_exact
+    {image : RustDescriptorImage}
+    (decoded : image.decodeRouteCommitRanges? = some [])
+    (accepted : image.routeCommitCapacityExact = true) :
+    image.routeCommitRowCount = 0 ∧ image.maxRouteCommitCount = 0 := by
+  simp [RustDescriptorImage.routeCommitCapacityExact, decoded] at accepted
+  exact accepted
 
 private def rangePartitionFrom
     (expected capacity : Nat) : List (Nat × Nat) -> Bool
@@ -798,17 +1022,194 @@ def RustDescriptorImage.decodeRouteArmLaneSteps?
     (image : RustDescriptorImage) : Option (List DecodedRouteArmLaneStep) :=
   (List.range image.routeArmLaneStepCount).mapM image.decodeRouteArmLaneStep?
 
-private def RustDescriptorImage.routeArmLaneStepsFit?
-    (image : RustDescriptorImage)
-    (arm : DecodedRouteArmRow) : Option Unit := do
-  let steps ← (List.range arm.laneStepLength).mapM fun rowOffset =>
-    image.decodeRouteArmLaneStep? (arm.laneStepStart + rowOffset)
-  if steps.all fun step =>
-      arm.eventStart ≤ step.firstStep &&
-      step.lastStep < arm.eventStart + arm.eventLength then
-    some ()
+private def laneBitmapBytes
+    (laneBits : List Nat) (row : Nat × Nat) : List Nat :=
+  (laneBits.drop row.1).take row.2
+
+private def laneBitmapRowCanonical
+    (laneBits activeBytes activeLanes : List Nat)
+    (row : Nat × Nat) : Bool :=
+  let rowBytes := laneBitmapBytes laneBits row
+  if row.2 = 0 then
+    decide (row.1 = 0)
   else
-    none
+    decide (
+      row.1 + row.2 ≤ laneBits.length ∧
+      row.2 ≤ activeBytes.length ∧
+      rowBytes.getLast? ≠ some 0) &&
+    (activeLanesFromBytes rowBytes).all activeLanes.contains
+
+private def laneBitmapMatchesStepLanes
+    (logicalLaneCount : Nat)
+    (laneBits : List Nat)
+    (row : Nat × Nat)
+    (steps : List DecodedRouteArmLaneStep) : Bool :=
+  let rowBytes := laneBitmapBytes laneBits row
+  let stepLanes := steps.map DecodedRouteArmLaneStep.lane
+  (List.range logicalLaneCount).all fun lane =>
+    laneBitPresent rowBytes lane == stepLanes.contains lane
+
+private def routeArmEventIndices (arm : DecodedRouteArmRow) : List Nat :=
+  (List.range arm.eventLength).map (arm.eventStart + ·)
+
+private def routeArmLaneEventIndices
+    (eventLanes : List Nat)
+    (arm : DecodedRouteArmRow)
+    (lane : Nat) : List Nat :=
+  (routeArmEventIndices arm).filter fun eventId => eventLanes[eventId]? = some lane
+
+private def routeArmLaneStepExact
+    (eventLanes : List Nat)
+    (arm : DecodedRouteArmRow)
+    (step : DecodedRouteArmLaneStep) : Bool :=
+  let indices := routeArmLaneEventIndices eventLanes arm step.lane
+  indices.head? = some step.firstStep && indices.getLast? = some step.lastStep
+
+private def routeArmLaneRelationsExactFor
+    (eventLanes : List Nat)
+    (steps : List DecodedRouteArmLaneStep)
+    (arm : DecodedRouteArmRow) : Bool :=
+  let armSteps := (steps.drop arm.laneStepStart).take arm.laneStepLength
+  let stepLanes := armSteps.map DecodedRouteArmLaneStep.lane
+  decide stepLanes.Nodup &&
+    armSteps.all (routeArmLaneStepExact eventLanes arm) &&
+      (routeArmEventIndices arm).all fun eventId =>
+        match eventLanes[eventId]? with
+        | some lane => stepLanes.contains lane
+        | none => false
+
+/-- Every lane relation names the exact first and last event of that lane in
+its own arm, and every arm event is covered by one unique relation. -/
+def RustDescriptorImage.routeArmLaneRelationsExact
+    (image : RustDescriptorImage) : Bool :=
+  match (List.range image.eventCount).mapM image.eventLane?,
+      image.decodeRouteArmRows?, image.decodeRouteArmLaneSteps? with
+  | some eventLanes, some arms, some steps =>
+      rangePartitionFrom 0 image.routeArmLaneStepCount
+          (arms.map fun arm => (arm.laneStepStart, arm.laneStepLength)) &&
+        arms.all (routeArmLaneRelationsExactFor eventLanes steps)
+  | _, _, _ => false
+
+private def armLaneColumnsCoherent
+    (logicalLaneCount : Nat)
+    (laneBits activeBytes activeLanes : List Nat)
+    (steps : List DecodedRouteArmLaneStep) :
+    List (Nat × Nat) → List DecodedRouteArmRow → Bool
+  | [], [] => true
+  | row :: rows, arm :: arms =>
+      laneBitmapRowCanonical laneBits activeBytes activeLanes row &&
+      laneBitmapMatchesStepLanes logicalLaneCount laneBits row
+        ((steps.drop arm.laneStepStart).take arm.laneStepLength) &&
+      armLaneColumnsCoherent logicalLaneCount laneBits activeBytes activeLanes
+        steps rows arms
+  | _, _ => false
+
+private def laneBitmapUnionExact
+    (logicalLaneCount : Nat)
+    (laneBits : List Nat)
+    (left right offer : Nat × Nat) : Bool :=
+  let leftBytes := laneBitmapBytes laneBits left
+  let rightBytes := laneBitmapBytes laneBits right
+  let offerBytes := laneBitmapBytes laneBits offer
+  (List.range logicalLaneCount).all fun lane =>
+    laneBitPresent offerBytes lane ==
+      (laneBitPresent leftBytes lane || laneBitPresent rightBytes lane)
+
+private def offerLaneColumnsCoherent
+    (logicalLaneCount : Nat)
+    (laneBits activeBytes activeLanes : List Nat) :
+    List (Nat × Nat) → List (Nat × Nat) → Bool
+  | left :: right :: armRows, offer :: offers =>
+      laneBitmapRowCanonical laneBits activeBytes activeLanes offer &&
+      laneBitmapUnionExact logicalLaneCount laneBits left right offer &&
+      offerLaneColumnsCoherent logicalLaneCount laneBits activeBytes activeLanes
+        armRows offers
+  | [], [] => true
+  | _, _ => false
+
+private def optionalRangePartitionFrom
+    (expected capacity : Nat) : List (Nat × Nat) → Bool
+  | [] => expected = capacity
+  | (start, length) :: rest =>
+      if length = 0 then
+        start = 0 && optionalRangePartitionFrom expected capacity rest
+      else
+        start = expected &&
+          optionalRangePartitionFrom (start + length) capacity rest
+
+private def routeLaneRowsInEmissionOrder :
+    List (Nat × Nat) → List (Nat × Nat) → Option (List (Nat × Nat))
+  | left :: right :: armRows, offer :: offers => do
+      let rest ← routeLaneRowsInEmissionOrder armRows offers
+      pure (left :: right :: offer :: rest)
+  | [], [] => some []
+  | _, _ => none
+
+private def RustDescriptorImage.residentEventLanesMatchActive
+    (image : RustDescriptorImage) : Bool :=
+  image.eventLaneColumnCoherent &&
+  match image.decodeLaneBits?,
+      (List.range image.eventCount).mapM image.eventLane? with
+  | some laneBits, some eventLanes =>
+      let activeBytes :=
+        (laneBits.drop image.activeLaneStart).take image.activeLaneLength
+      (List.range image.logicalLaneCount).all fun lane =>
+        laneBitPresent activeBytes lane == eventLanes.contains lane
+  | _, _ => false
+
+/-- Every lane column carries one exact fact. Active lanes own the prefix;
+route rows follow in `(left, right, union)` order; arm bitmaps equal their
+lane-step lanes; and no bitmap or lane-step bytes remain unowned. -/
+def RustDescriptorImage.laneColumnsCoherent
+    (image : RustDescriptorImage) : Bool :=
+  image.activeLaneMetadataCoherent &&
+  image.residentEventLanesMatchActive &&
+  image.routeArmLaneRelationsExact &&
+  match image.decodeLaneBits?, image.decodeRouteArmLaneRows?,
+      image.decodeRouteOfferLaneRows?, image.decodeRouteArmRows?,
+      image.decodeRouteArmLaneSteps? with
+  | some laneBits, some armRows, some offerRows, some arms, some steps =>
+      let activeBytes :=
+        (laneBits.drop image.activeLaneStart).take image.activeLaneLength
+      let activeLanes := activeLanesFromBytes activeBytes
+      match routeLaneRowsInEmissionOrder armRows offerRows with
+      | some emittedRows =>
+          optionalRangePartitionFrom
+            (image.activeLaneStart + image.activeLaneLength)
+            laneBits.length emittedRows &&
+          armLaneColumnsCoherent image.logicalLaneCount laneBits activeBytes
+            activeLanes steps armRows arms &&
+          offerLaneColumnsCoherent image.logicalLaneCount laneBits activeBytes
+            activeLanes armRows offerRows
+      | none => false
+  | _, _, _, _, _ => false
+
+theorem lane_columns_coherent_binds_active_lane_metadata
+    {image : RustDescriptorImage}
+    (accepted : image.laneColumnsCoherent = true) :
+    image.activeLaneMetadataCoherent = true := by
+  unfold RustDescriptorImage.laneColumnsCoherent at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact accepted.1.1.1
+
+theorem lane_columns_coherent_binds_event_lane_column
+    {image : RustDescriptorImage}
+    (accepted : image.laneColumnsCoherent = true) :
+    image.eventLaneColumnCoherent = true := by
+  unfold RustDescriptorImage.laneColumnsCoherent at accepted
+  simp only [Bool.and_eq_true] at accepted
+  have eventLanes := accepted.1.1.2
+  unfold RustDescriptorImage.residentEventLanesMatchActive at eventLanes
+  simp only [Bool.and_eq_true] at eventLanes
+  exact eventLanes.1
+
+theorem lane_columns_coherent_binds_exact_route_arm_lane_relations
+    {image : RustDescriptorImage}
+    (accepted : image.laneColumnsCoherent = true) :
+    image.routeArmLaneRelationsExact = true := by
+  unfold RustDescriptorImage.laneColumnsCoherent at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact accepted.1.2
 
 private def RustDescriptorImage.roleRuntimeColumnsCheck
     (image : RustDescriptorImage) : Bool :=
@@ -829,7 +1230,7 @@ private def RustDescriptorImage.roleRuntimeColumnsCheck
         image.decodeLaneRangeAt? image.roleRouteCommitRangeOffset row
           (image.routeScopeCount * 2) image.routeCommitRowCount true,
       (List.range image.routeCommitRowCount).mapM image.routeCommitRow? with
-  | some events, some _, some _, some _, some arms, some boundaries,
+  | some events, some _, some _, some _, some _, some boundaries,
       some _, some _, some _, some commitRanges, some _ =>
       events.all (fun event =>
         (event.dependencyRow = packedU16Absent ||
@@ -837,11 +1238,77 @@ private def RustDescriptorImage.roleRuntimeColumnsCheck
         (event.conflictRow = packedU16Absent ||
           (image.conflictRow? event.conflictRow).isSome)) &&
       residentBoundariesValid image.eventCount boundaries &&
-      rangePartitionFrom 0 image.routeArmLaneStepCount
-        (arms.map fun arm => (arm.laneStepStart, arm.laneStepLength)) &&
-      arms.all (image.routeArmLaneStepsFit? · |>.isSome) &&
-      rangePartitionFrom 0 image.routeCommitRowCount commitRanges
+      image.laneColumnsCoherent &&
+      rangePartitionFrom 0 image.routeCommitRowCount commitRanges &&
+      image.routeArmColumnsCoherent &&
+      image.passiveChildColumnsCoherent &&
+      image.routeCommitColumnsCoherent &&
+      image.routeCommitCapacityExact &&
+      image.rollColumnsCoherent
   | _, _, _, _, _, _, _, _, _, _, _ => false
+
+theorem role_runtime_columns_check_binds_route_arm_columns
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.routeArmColumnsCoherent = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
+
+theorem role_runtime_columns_check_binds_lane_columns
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.laneColumnsCoherent = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
+
+theorem role_runtime_columns_check_binds_event_lane_column
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.eventLaneColumnCoherent = true := by
+  exact lane_columns_coherent_binds_event_lane_column
+    (role_runtime_columns_check_binds_lane_columns accepted)
+
+theorem role_runtime_columns_check_binds_active_lane_metadata
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.activeLaneMetadataCoherent = true := by
+  exact lane_columns_coherent_binds_active_lane_metadata
+    (role_runtime_columns_check_binds_lane_columns accepted)
+
+theorem role_runtime_columns_check_binds_exact_route_arm_lane_relations
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.routeArmLaneRelationsExact = true := by
+  exact lane_columns_coherent_binds_exact_route_arm_lane_relations
+    (role_runtime_columns_check_binds_lane_columns accepted)
+
+theorem role_runtime_columns_check_binds_passive_child_columns
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.passiveChildColumnsCoherent = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
+
+theorem role_runtime_columns_check_binds_route_commit_columns
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.routeCommitColumnsCoherent = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
+
+theorem role_runtime_columns_check_binds_exact_route_commit_capacity
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.routeCommitCapacityExact = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
+
+theorem role_runtime_columns_check_binds_roll_columns
+    {image : RustDescriptorImage}
+    (accepted : image.roleRuntimeColumnsCheck = true) :
+    image.rollColumnsCoherent = true := by
+  unfold RustDescriptorImage.roleRuntimeColumnsCheck at accepted
+  split at accepted <;> simp_all
 
 def RustDescriptorImage.decodeProjectionShape?
     (image : RustDescriptorImage) : Option ProjectionShape := do
@@ -888,10 +1355,13 @@ theorem decoded_projection_shape_binds_action_column
               subst shape
               exact congrArg some (projection_event_action_round_trip actions).symm
 
-private def decodedEffIndicesUnique (image : RustDescriptorImage) : Bool :=
+def RustDescriptorImage.atomEffIndicesStrict
+    (image : RustDescriptorImage) : Bool :=
   match image.decodeAtoms? with
   | none => false
-  | some atoms => decide (atoms.map DecodedProgramAtom.effIndex).Nodup
+  | some atoms =>
+      decide ((atoms.map DecodedProgramAtom.effIndex).Pairwise
+        (fun left right => left < right))
 
 private def decodedResolverScopesUnique (image : RustDescriptorImage) : Bool :=
   match image.decodeRouteResolvers? with
@@ -910,23 +1380,97 @@ def RustDescriptorImage.check (image : RustDescriptorImage) : Bool :=
     image.role < image.roleCount ∧
     0 < image.logicalLaneCount ∧
     image.logicalLaneCount ≤ 256 ∧
-    image.activeLaneCount ≤ image.logicalLaneCount ∧
-    0 < image.endpointLaneSlotCount ∧
-    image.endpointLaneSlotCount ≤ image.logicalLaneCount ∧
-    (image.firstActiveLane = packedU16Absent ∨
-      image.firstActiveLane < image.logicalLaneCount) ∧
-    image.activeLaneStart + image.activeLaneLength ≤ image.laneBitCount ∧
     image.routeParticipantCount ≤ packedU16Absent ∧
     (image.routeResolverCount = 0 ↔ image.routeParticipantCount = 0) ∧
     image.programBytes.length = image.programBlobLen ∧
     image.roleBytes.length = image.roleBlobLen ∧
     image.programBytes.all (· < 256) ∧
     image.roleBytes.all (· < 256)) &&
-  decodedEffIndicesUnique image &&
+  image.atomEffIndicesStrict &&
   decodedResolverScopesUnique image &&
   decodedRouteScopesUnique image &&
   image.decodeScopeMarkers?.isSome &&
   image.roleRuntimeColumnsCheck &&
   image.decodeProjectionShape?.isSome
+
+theorem checked_descriptor_binds_route_arm_columns
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.routeArmColumnsCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_route_arm_columns accepted.1.2
+
+theorem checked_descriptor_binds_event_lane_column
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.eventLaneColumnCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_event_lane_column accepted.1.2
+
+theorem checked_descriptor_binds_lane_columns
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.laneColumnsCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_lane_columns accepted.1.2
+
+theorem checked_descriptor_binds_active_lane_metadata
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.activeLaneMetadataCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_active_lane_metadata accepted.1.2
+
+theorem checked_descriptor_binds_exact_route_arm_lane_relations
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.routeArmLaneRelationsExact = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_exact_route_arm_lane_relations accepted.1.2
+
+theorem checked_descriptor_binds_strict_atom_order
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.atomEffIndicesStrict = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact accepted.1.1.1.1.1.2
+
+theorem checked_descriptor_binds_passive_child_columns
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.passiveChildColumnsCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_passive_child_columns accepted.1.2
+
+theorem checked_descriptor_binds_route_commit_columns
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.routeCommitColumnsCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_route_commit_columns accepted.1.2
+
+theorem checked_descriptor_binds_exact_route_commit_capacity
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.routeCommitCapacityExact = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_exact_route_commit_capacity accepted.1.2
+
+theorem checked_descriptor_binds_roll_columns
+    {image : RustDescriptorImage}
+    (accepted : image.check = true) :
+    image.rollColumnsCoherent = true := by
+  unfold RustDescriptorImage.check at accepted
+  simp only [Bool.and_eq_true] at accepted
+  exact role_runtime_columns_check_binds_roll_columns accepted.1.2
 
 end Hibana

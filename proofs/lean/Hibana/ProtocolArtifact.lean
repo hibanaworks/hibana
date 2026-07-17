@@ -195,24 +195,26 @@ theorem accepted_descriptor_pipelined_send_extends_elastic_history
       nextHistory.accepted = history.accepted ++ [key] /\
       key.iteration = history.nextIteration globalId /\
       nextHistory.MatchesEventChannel event := by
-  obtain ⟨_, action, localEvent, actionAt, localEventAt, _, actionExact, _⟩ :=
+  obtain ⟨_, operation, localEvent, operationAt, _operationEventId,
+      _operationLane, _operationFrameLabel, localEventAt, _, actionExact, _⟩ :=
     accepted_descriptor_cursor_step_refines_projection
       descriptorAccepted stepped
   have localActionAt :
       ((projectGraph descriptor.image.role descriptor.choreo).events.map
         Event.action)[descriptor.choreo.localEventId
-          descriptor.image.role globalId]? = some action := by
+          descriptor.image.role globalId]? = some operation.action := by
     rw [List.getElem?_map, localEventAt]
     simp [actionExact]
   have projectedAt := project_graph_action_at_global_event_local_id
     eventAt projected
-  have actionEq : action = .send peer label schema :=
+  have actionEq : operation.action = .send peer label schema :=
     Option.some.inj (localActionAt.symm.trans projectedAt)
+  have operationColumns := decoded_event_operation_binds_exact_columns operationAt
   have exactActionAt :
       descriptor.image.eventAction?
           (descriptor.choreo.localEventId descriptor.image.role globalId) =
         some (.send peer label schema) := by
-    simpa [actionEq] using actionAt
+    simpa [actionEq] using operationColumns.2.1
   exact ⟨
     exactActionAt,
     elastic_admission_preserves_well_formed

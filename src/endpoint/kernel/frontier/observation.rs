@@ -95,6 +95,47 @@ impl FrontierObservationSlot {
     }
 }
 
+/// One observation whose full `(scope, entry)` key matched a requested owner
+/// before the scope component was erased from frontier scratch.
+#[derive(Clone, Copy)]
+pub(crate) struct ExactOfferObservation(FrontierObservationSlot);
+
+impl ExactOfferObservation {
+    #[inline]
+    pub(crate) fn from_target(
+        target: OfferEntryKey,
+        observed: OfferEntryObservedState,
+        admission: OfferEntryAdmission,
+    ) -> Option<Self> {
+        if observed.key != target {
+            return None;
+        }
+        Some(Self(FrontierObservationSlot::from_exact_observation(
+            observed, admission,
+        )))
+    }
+
+    #[inline]
+    pub(crate) const fn is_selectable(self) -> bool {
+        self.0.is_selectable()
+    }
+
+    #[inline]
+    pub(crate) const fn is_ready(self) -> bool {
+        self.0.is_ready()
+    }
+
+    #[inline]
+    pub(crate) const fn has_progress(self) -> bool {
+        self.0.has_progress()
+    }
+
+    #[inline]
+    pub(crate) const fn has_ready_arm(self) -> bool {
+        self.0.has_ready_arm()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OfferEntryAdmission {
     Excluded,

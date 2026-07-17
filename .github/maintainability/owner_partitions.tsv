@@ -80,6 +80,7 @@ src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/entry_sets.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/kind.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/observation.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/offer_entries.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/scratch
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/scratch.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/select.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot
@@ -113,6 +114,7 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/facts/planner.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/facts.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/first_recv_dispatch.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/frontier_types.rs
+src/endpoint/kernel/offer	src/endpoint/kernel/offer/ingress
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/ingress.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/ingress_types.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/materialization.rs
@@ -128,6 +130,7 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_scope_selection.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/candidates.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model.rs
+src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/current.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/entry.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/pool.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/select_alignment/model/selection.rs
@@ -159,6 +162,7 @@ src/global/const_dsl	src/global/const_dsl/receive_lane_causality.rs
 src/global/const_dsl	src/global/const_dsl/route.rs
 src/global/const_dsl	src/global/const_dsl/scope
 src/global/const_dsl	src/global/const_dsl/scope.rs
+src/global/const_dsl	src/global/const_dsl/scope_ranges
 src/global/const_dsl	src/global/const_dsl/scope_ranges.rs
 src/global/const_dsl	src/global/const_dsl/source_arena.rs
 src/global/role_program	src/global/role_program/image_impl
@@ -173,6 +177,8 @@ src/global/role_program/image_impl	src/global/role_program/image_impl/event_rows
 src/global/role_program/image_impl	src/global/role_program/image_impl/kani.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/lane_image
 src/global/role_program/image_impl	src/global/role_program/image_impl/lane_image.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/metadata.rs
+src/global/role_program/image_impl	src/global/role_program/image_impl/metadata
 src/global/role_program/image_impl	src/global/role_program/image_impl/plan.rs
 src/global/role_program/image_impl	src/global/role_program/image_impl/projection
 src/global/role_program/image_impl	src/global/role_program/image_impl/projection.rs
@@ -182,6 +188,7 @@ src/global/typestate	src/global/typestate/cursor.rs
 src/global/typestate	src/global/typestate/facts
 src/global/typestate	src/global/typestate/facts.rs
 src/global/typestate/cursor	src/global/typestate/cursor/first_recv_dispatch.rs
+src/global/typestate/cursor	src/global/typestate/cursor/kani.rs
 src/global/typestate/cursor	src/global/typestate/cursor/lane_progress.rs
 src/global/typestate/cursor	src/global/typestate/cursor/navigation.rs
 src/global/typestate/cursor	src/global/typestate/cursor/scope_route
@@ -189,6 +196,7 @@ src/global/typestate/cursor	src/global/typestate/cursor/scope_route.rs
 src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/event_progress.rs
 src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/navigation.rs
 src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/roll.rs
+src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/roll
 src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/row_completion.rs
 src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/send_preview.rs
 src/global/typestate/cursor/scope_route	src/global/typestate/cursor/scope_route/send_preview_route.rs

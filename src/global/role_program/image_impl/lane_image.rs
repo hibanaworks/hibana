@@ -17,7 +17,8 @@ use crate::global::typestate::{
 mod decode;
 pub(super) use decode::{
     decode_resident_local_step_lane, decode_resident_roll_scope,
-    decode_resident_route_arm_lane_step, decode_resident_route_scope, route_commit_decisions_match,
+    decode_resident_route_arm_lane_step, decode_resident_route_scope, passive_child_parent_matches,
+    route_commit_decisions_match,
 };
 
 #[cold]
@@ -311,25 +312,21 @@ impl<'a> RoleLaneImage<'a> {
     }
 
     pub(crate) const fn route_scope_slot(&self, scope: ScopeId) -> Option<usize> {
-        let mut found = usize::MAX;
+        let mut found = None;
         let mut slot = 0usize;
         while slot < self.columns.route_scopes.len as usize {
             let Some(candidate) = self.route_scope_row(slot) else {
                 invalid_resident_descriptor();
             };
             if candidate.same(scope) {
-                if found != usize::MAX {
+                if found.is_some() {
                     invalid_resident_descriptor();
                 }
-                found = slot;
+                found = Some(slot);
             }
             slot += 1;
         }
-        if found == usize::MAX {
-            None
-        } else {
-            Some(found)
-        }
+        found
     }
 
     const fn route_commit_parent(&self, scope: ScopeId) -> PackedEventConflict {
@@ -426,15 +423,13 @@ impl<'a> RoleLaneImage<'a> {
                 let Some(scope) = self.route_scope_by_slot(child_slot) else {
                     invalid_resident_descriptor();
                 };
-                if scope.same(parent_scope) {
+                if !passive_child_parent_matches(
+                    parent_scope,
+                    arm,
+                    scope,
+                    self.route_scope_conflict_by_slot(child_slot),
+                ) {
                     invalid_resident_descriptor();
-                }
-                match self.route_scope_conflict_by_slot(child_slot).to_conflict() {
-                    Some(LocalConflict::RouteArm {
-                        scope: recorded_parent,
-                        arm: recorded_arm,
-                    }) if recorded_parent.same(parent_scope) && recorded_arm == arm => {}
-                    Some(_) | None => invalid_resident_descriptor(),
                 }
                 Some(scope.local_ordinal())
             }
@@ -478,7 +473,7 @@ impl<'a> RoleLaneImage<'a> {
         match self.read_u32(column, row_idx, ROLE_IMAGE_LANE_RANGE_STRIDE) {
             Some(raw) => {
                 let row = PackedLaneRange::from_raw(raw);
-                if row.is_empty() {
+                if !row.is_canonical_optional_range() {
                     invalid_resident_descriptor();
                 }
                 row

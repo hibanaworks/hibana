@@ -5,6 +5,36 @@ use super::super::{
 use crate::global::{const_dsl::ScopeKind, typestate::LocalConflict};
 
 impl EventCursor {
+    pub(crate) fn deeper_route_scope(&self, current: ScopeId, candidate: ScopeId) -> ScopeId {
+        if current.same(candidate) || self.route_scope_descends_from(current, candidate) {
+            return current;
+        }
+        if self.route_scope_descends_from(candidate, current) {
+            return candidate;
+        }
+        crate::invariant();
+    }
+
+    fn route_scope_descends_from(&self, scope: ScopeId, ancestor: ScopeId) -> bool {
+        let mut current = scope;
+        let mut depth = 0usize;
+        let depth_bound = self.route_chain_bound();
+        while depth < depth_bound {
+            if current.same(ancestor) {
+                return true;
+            }
+            let Some((parent, _)) = self.route_conflict_parent_arm(current) else {
+                return false;
+            };
+            if parent.same(current) {
+                crate::invariant();
+            }
+            current = parent;
+            depth += 1;
+        }
+        crate::invariant();
+    }
+
     #[inline(always)]
     pub(crate) fn route_scope_rows(&self, scope_id: ScopeId) -> Option<RouteScopeRows> {
         self.machine().route_scope_rows(scope_id)
@@ -16,20 +46,34 @@ impl EventCursor {
     }
 
     pub(crate) fn enclosing_route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
-        let mut selected = None;
-        let mut selected_len = usize::MAX;
-        let mut slot = 0usize;
-        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-            if idx >= region.start() && idx < region.end() {
-                let len = region.end() - region.start();
-                if len < selected_len {
-                    selected = Some(region);
-                    selected_len = len;
-                }
-            }
-            slot += 1;
+        if matches!(self.action_at(idx), LocalAction::Terminate) {
+            return None;
         }
-        selected
+        let conflict = self.machine().event_conflict_for_index(idx);
+        let Some(LocalConflict::RouteArm { scope, arm }) = conflict.to_conflict() else {
+            let mut slot = 0usize;
+            while slot < self.machine().route_scope_slot_count() {
+                if self
+                    .machine()
+                    .route_scope_rows_by_slot(slot)
+                    .is_some_and(|region| region.start() <= idx && idx < region.end())
+                {
+                    crate::invariant();
+                }
+                slot += 1;
+            }
+            return None;
+        };
+        let Some(region) = self.route_scope_rows(scope) else {
+            crate::invariant();
+        };
+        if idx < region.start()
+            || idx >= region.end()
+            || self.route_arm_for_index(scope, idx) != Some(arm)
+        {
+            crate::invariant();
+        }
+        Some(region)
     }
 
     pub(crate) fn visit_route_arms_for_index(
@@ -38,8 +82,9 @@ impl EventCursor {
         mut visit: impl FnMut(ScopeId, u8),
     ) {
         let mut slot = 0usize;
-        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-            if region.start() <= idx
+        while slot < self.machine().route_scope_slot_count() {
+            if let Some(region) = self.machine().route_scope_rows_by_slot(slot)
+                && region.start() <= idx
                 && idx < region.end()
                 && let Some(arm) = self.route_arm_for_index(region.scope(), idx)
             {
@@ -47,11 +92,6 @@ impl EventCursor {
             }
             slot += 1;
         }
-    }
-
-    #[inline(always)]
-    pub(crate) fn checked_route_scope_rows_at(&self, idx: usize) -> Option<RouteScopeRows> {
-        self.route_scope_rows(self.checked_node_scope_id_at(idx)?)
     }
 
     #[inline(always)]
@@ -177,20 +217,21 @@ impl EventCursor {
         key: InboundFrameKey,
     ) -> Option<ScopeId> {
         let mut selected = None;
-        let mut selected_len = usize::MAX;
         let mut slot = 0usize;
-        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-            if region.start() <= idx && idx < region.end() {
+        while slot < self.machine().route_scope_slot_count() {
+            if let Some(region) = self.machine().route_scope_rows_by_slot(slot)
+                && region.start() <= idx
+                && idx < region.end()
+            {
                 let scope = region.scope();
                 if self
                     .first_recv_descendant_target_for_key(scope, key)
                     .is_some_and(|(dispatch_arm, _)| dispatch_arm != ARM_SHARED)
                 {
-                    let len = region.end() - region.start();
-                    if len < selected_len {
-                        selected = Some(scope);
-                        selected_len = len;
-                    }
+                    selected = Some(match selected {
+                        Some(current) => self.deeper_route_scope(current, scope),
+                        None => scope,
+                    });
                 }
             }
             slot += 1;

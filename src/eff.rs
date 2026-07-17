@@ -34,13 +34,6 @@ impl core::fmt::Display for EffIndex {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EffKind {
-    Pure = 0,
-    Atom = 1,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EventOrigin {
     User = 0,
     Session = 1,
@@ -82,106 +75,9 @@ pub(crate) struct EffAtom {
     pub(crate) lane: u8,
 }
 
-impl EffAtom {
-    pub(crate) const ZERO: Self = Self {
-        from: 0,
-        to: 0,
-        label: 0,
-        payload_schema: 0,
-        origin: EventOrigin::User,
-        lane: 0,
-    };
-}
-
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub(crate) struct EffData {
-    atom: EffAtom,
-}
-
-impl EffData {
-    pub(crate) const fn empty() -> Self {
-        Self {
-            atom: EffAtom::ZERO,
-        }
-    }
-
-    pub(crate) const fn from_atom(atom: EffAtom) -> Self {
-        Self { atom }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn atom(&self) -> EffAtom {
-        self.atom
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct EffStruct {
-    pub(crate) kind: EffKind,
-    pub(crate) data: EffData,
-}
-
-impl EffStruct {
-    pub(crate) const fn pure() -> Self {
-        Self {
-            kind: EffKind::Pure,
-            data: EffData::empty(),
-        }
-    }
-
-    pub(crate) const fn atom(atom: EffAtom) -> Self {
-        Self {
-            kind: EffKind::Atom,
-            data: EffData::from_atom(atom),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn atom_data(&self) -> EffAtom {
-        match self.kind {
-            EffKind::Pure => crate::invariant(),
-            EffKind::Atom => self.data.atom(),
-        }
-    }
-}
-
-impl core::fmt::Debug for EffStruct {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.kind {
-            EffKind::Pure => f.debug_struct("EffStruct::Pure").finish(),
-            EffKind::Atom => f
-                .debug_struct("EffStruct::Atom")
-                .field("atom", &self.atom_data())
-                .finish(),
-        }
-    }
-}
-
-impl PartialEq for EffStruct {
-    fn eq(&self, other: &Self) -> bool {
-        if self.kind != other.kind {
-            return false;
-        }
-        match self.kind {
-            EffKind::Pure => true,
-            EffKind::Atom => self.atom_data() == other.atom_data(),
-        }
-    }
-}
-
-impl Eq for EffStruct {}
-
 #[cfg(test)]
 mod tests {
-    use super::{EffIndex, EffStruct};
-
-    #[test]
-    #[should_panic]
-    fn pure_effect_atom_data_fails_fast() {
-        let _ = EffStruct::pure().atom_data();
-    }
+    use super::EffIndex;
 
     #[test]
     fn eff_index_from_dense_ordinal_is_dense() {

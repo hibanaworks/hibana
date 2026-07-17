@@ -7,8 +7,8 @@ mod planning;
 
 pub(super) use self::evidence::{
     OfferArmRecvEvidence, OfferControllerCursorArm, OfferControllerLocalEvidence,
-    OfferMaterializationReadiness, OfferPassiveAckEvidence, OfferPassiveEvidence,
-    OfferPassiveReadySignal, OfferPassiveRecvEvidence,
+    OfferMaterializationReadiness, OfferPassiveEvidence, OfferPassiveReadySignal,
+    OfferPassiveRecvEvidence,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,25 +46,6 @@ pub(super) enum OfferCursorReadiness {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum OfferEarlyDecisionReadiness {
-    Unavailable,
-    AvailableWithRecv,
-    AvailableWithoutRecv,
-}
-
-impl OfferEarlyDecisionReadiness {
-    #[inline]
-    const fn available(self) -> bool {
-        !matches!(self, Self::Unavailable)
-    }
-
-    #[inline]
-    const fn arm_has_no_recv(self) -> bool {
-        matches!(self, Self::AvailableWithoutRecv)
-    }
-}
-
-#[derive(Clone, Copy)]
 pub(super) enum OfferControllerLocalReadiness {
     Ready,
     BlockedByMaterialization,
@@ -75,7 +56,6 @@ pub(super) enum OfferControllerLocalReadiness {
 pub(super) enum OfferPassiveReadiness {
     ReadyArm,
     DynamicScopeWithoutRecv,
-    DynamicAckMaterializable,
     NeedsTransport,
 }
 
@@ -84,7 +64,6 @@ pub(super) struct OfferRouteShape {
     pub(super) profile: OfferScopeProfile,
     pub(super) entry: OfferEntryPosition,
     pub(super) cursor: OfferCursorReadiness,
-    pub(super) early_decision: OfferEarlyDecisionReadiness,
     pub(super) controller: OfferControllerLocalReadiness,
     pub(super) passive: OfferPassiveReadiness,
 }
@@ -104,7 +83,7 @@ impl OfferRouteShape {
 
     #[inline]
     const fn controller_ingress_mode(self) -> OfferIngressMode {
-        if self.controller_resolved_without_frame() || self.early_decision.arm_has_no_recv() {
+        if self.controller_resolved_without_frame() {
             return OfferIngressMode::ResolvedWithoutFrame;
         }
         OfferIngressMode::TransportFrame
@@ -112,7 +91,7 @@ impl OfferRouteShape {
 
     #[inline]
     const fn passive_ingress_mode(self) -> OfferIngressMode {
-        if self.passive_resolved_without_frame() || self.early_decision.arm_has_no_recv() {
+        if self.passive_resolved_without_frame() {
             return OfferIngressMode::ResolvedWithoutFrame;
         }
         OfferIngressMode::TransportFrame
@@ -130,7 +109,6 @@ impl OfferRouteShape {
             (OfferEntryPosition::RouteEntry, _) => {
                 self.profile.is_dynamic()
                     || matches!(self.controller, OfferControllerLocalReadiness::Ready)
-                    || self.early_decision.available()
             }
             (OfferEntryPosition::AfterRouteEntry, OfferCursorReadiness::NonRecv) => true,
             (OfferEntryPosition::AfterRouteEntry, OfferCursorReadiness::Recv) => false,
@@ -141,9 +119,7 @@ impl OfferRouteShape {
     const fn passive_resolved_without_frame(self) -> bool {
         matches!(
             self.passive,
-            OfferPassiveReadiness::ReadyArm
-                | OfferPassiveReadiness::DynamicScopeWithoutRecv
-                | OfferPassiveReadiness::DynamicAckMaterializable
+            OfferPassiveReadiness::ReadyArm | OfferPassiveReadiness::DynamicScopeWithoutRecv
         )
     }
 }
@@ -165,7 +141,7 @@ impl OfferScopeProfile {
     }
 
     #[inline]
-    pub(super) const fn authority_path_after_ack_miss(self) -> OfferAuthorityPath {
+    pub(super) const fn authority_path(self) -> OfferAuthorityPath {
         match self {
             Self::ControllerDynamic => OfferAuthorityPath::ControllerResolver,
             Self::PassiveIntrinsic | Self::PassiveDynamic => OfferAuthorityPath::PassiveEvidence,

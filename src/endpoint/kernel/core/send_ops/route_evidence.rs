@@ -51,58 +51,14 @@ where
     ) {
         let scope_id = route_row.scope();
         let selected_arm = route_row.selected_arm();
-        let route_token = self.peek_live_scope_ack(scope_id);
-        if matches!(phase, SendRouteEvidencePhase::Begin) {
-            let arm = match route_token {
-                Some(RouteArmToken::Resolver(arm)) => arm,
-                None if self.cursor.route_scope_resolver(scope_id).is_some() => {
-                    Arm::from_raw(selected_arm)
-                }
-                Some(RouteArmToken::Ack(_) | RouteArmToken::Poll(_)) | None => crate::invariant(),
-            };
+        let has_resolver = self.cursor.route_scope_resolver(scope_id).is_some();
+        if matches!(phase, SendRouteEvidencePhase::Begin) && !has_resolver {
+            crate::invariant();
+        }
+        if has_resolver {
+            let arm = Arm::from_raw(selected_arm);
             self.emit_route_arm_selection(scope_id, RouteArmToken::from_resolver(arm), lane_wire);
-            if self.arm_has_recv(scope_id, selected_arm) {
-                self.consume_scope_ready_arm(scope_id, selected_arm);
-            }
-            self.clear_scope_evidence(scope_id);
-            return;
         }
-        match route_token {
-            Some(RouteArmToken::Ack(_)) => {
-                let arm = Arm::from_raw(selected_arm);
-                self.emit_route_arm_selection(scope_id, RouteArmToken::from_ack(arm), lane_wire);
-            }
-            Some(RouteArmToken::Poll(_)) => {
-                let arm = Arm::from_raw(selected_arm);
-                self.emit_route_arm_selection(
-                    scope_id,
-                    RouteArmToken::from_poll(arm),
-                    self.offer_lane_for_scope(scope_id),
-                );
-            }
-            Some(RouteArmToken::Resolver(_)) => crate::invariant(),
-            None if self.cursor.route_scope_resolver(scope_id).is_some() => {
-                let arm = Arm::from_raw(selected_arm);
-                self.emit_route_arm_selection(
-                    scope_id,
-                    RouteArmToken::from_resolver(arm),
-                    lane_wire,
-                );
-                if self.arm_has_recv(scope_id, selected_arm) {
-                    self.consume_scope_ready_arm(scope_id, selected_arm);
-                }
-                self.clear_scope_evidence(scope_id);
-                return;
-            }
-            None => {
-                if self.arm_has_recv(scope_id, selected_arm) {
-                    self.consume_scope_ready_arm(scope_id, selected_arm);
-                }
-                self.clear_scope_evidence(scope_id);
-                return;
-            }
-        }
-
         if self.arm_has_recv(scope_id, selected_arm) {
             self.consume_scope_ready_arm(scope_id, selected_arm);
         }
@@ -116,22 +72,22 @@ where
         begin_route_start: Option<usize>,
     ) {
         let routes = delta.selected_routes();
-        let Some(route_lane) = delta.selected_route_lane() else {
+        if routes.len() == 0 {
             return;
-        };
+        }
+        let route_lane = crate::invariant_some(delta.selected_route_lane());
         let mut idx = 0usize;
         while idx < routes.len() {
-            if let Some(route_row) = routes.get(&self.cursor, idx) {
-                let phase = if begin_route_start.is_some_and(|start| idx >= start) {
-                    if !delta.route_is_fresh(idx) {
-                        crate::invariant();
-                    }
-                    SendRouteEvidencePhase::Begin
-                } else {
-                    SendRouteEvidencePhase::Continue
-                };
-                self.commit_send_route_row_evidence(route_row, route_lane, phase);
-            }
+            let route_row = crate::invariant_some(routes.get(&self.cursor, idx));
+            let phase = if begin_route_start.is_some_and(|start| idx >= start) {
+                if !delta.route_is_fresh(idx) {
+                    crate::invariant();
+                }
+                SendRouteEvidencePhase::Begin
+            } else {
+                SendRouteEvidencePhase::Continue
+            };
+            self.commit_send_route_row_evidence(route_row, route_lane, phase);
             idx += 1;
         }
     }
@@ -143,9 +99,10 @@ where
         start: u16,
     ) {
         let routes = delta.selected_routes();
-        let Some(route_lane) = delta.selected_route_lane() else {
+        if routes.len() == 0 {
             return;
-        };
+        }
+        let route_lane = crate::invariant_some(delta.selected_route_lane());
         let mut idx = start as usize;
         while idx < routes.len() {
             let Some(route_row) = routes.get(&self.cursor, idx) else {

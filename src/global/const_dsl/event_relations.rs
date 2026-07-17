@@ -1,47 +1,14 @@
 use super::{
-    ScopeEvent, ScopeKind, ScopeMarkerView, parallel_arm_ranges_from_enter,
-    route_arm_ranges_from_first_enter,
+    ScopeKind, ScopeMarkerView, closed_route_arm_ranges_from_first_enter,
+    parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
 };
-
-const fn first_route_enter(markers: ScopeMarkerView<'_>, marker_idx: usize) -> bool {
-    let marker = markers.at(marker_idx);
-    if !matches!(marker.event, ScopeEvent::Enter)
-        || !matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-    {
-        return false;
-    }
-    let mut idx = 0usize;
-    while idx < marker_idx {
-        let candidate = markers.at(idx);
-        if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(marker.scope_id)
-        {
-            return false;
-        }
-        idx += 1;
-    }
-    true
-}
-
-const fn route_has_two_arms(markers: ScopeMarkerView<'_>, marker_idx: usize) -> bool {
-    let scope = markers.at(marker_idx).scope_id;
-    let mut enters = 0usize;
-    let mut idx = marker_idx;
-    while idx < markers.len() {
-        let candidate = markers.at(idx);
-        if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(scope) {
-            enters += 1;
-        }
-        idx += 1;
-    }
-    enters == 2
-}
 
 const fn route_arm_at(
     markers: ScopeMarkerView<'_>,
     route_enter_idx: usize,
     eff_idx: usize,
 ) -> Option<u8> {
-    let (_, left_start, left_end, _, right_start, right_end) =
+    let [(left_start, left_end), (right_start, right_end)] =
         route_arm_ranges_from_first_enter(markers, route_enter_idx);
     if left_start <= eff_idx && eff_idx < left_end {
         Some(0)
@@ -59,7 +26,11 @@ pub(super) const fn events_share_route_path(
 ) -> bool {
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
-        if first_route_enter(markers, marker_idx) && route_has_two_arms(markers, marker_idx) {
+        let marker = markers.at(marker_idx);
+        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+            && markers.is_first_enter(marker_idx)
+            && closed_route_arm_ranges_from_first_enter(markers, marker_idx).is_some()
+        {
             match (
                 route_arm_at(markers, marker_idx, left_eff_idx),
                 route_arm_at(markers, marker_idx, right_eff_idx),
@@ -99,7 +70,10 @@ pub(super) const fn events_are_route_exclusive(
 ) -> bool {
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
-        if first_route_enter(markers, marker_idx) {
+        let marker = markers.at(marker_idx);
+        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+            && markers.is_first_enter(marker_idx)
+        {
             let left_arm = route_arm_at(markers, marker_idx, left_eff_idx);
             let right_arm = route_arm_at(markers, marker_idx, right_eff_idx);
             if matches!(
@@ -122,7 +96,7 @@ pub(super) const fn events_are_parallel(
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
         let marker = markers.at(marker_idx);
-        if matches!(marker.event, ScopeEvent::Enter)
+        if marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
         {
             let left_arm = parallel_arm_at(markers, marker_idx, left_eff_idx);

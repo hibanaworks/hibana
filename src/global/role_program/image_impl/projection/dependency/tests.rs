@@ -17,12 +17,9 @@ const fn reference_lane_present<const E: usize>(
 ) -> bool {
     let mut eff_idx = start_eff;
     while eff_idx < end_eff {
-        let node = eff_list.node_at(eff_idx);
-        if matches!(node.kind, EffKind::Atom) {
-            let atom = node.atom_data();
-            if (atom.from == role || atom.to == role) && atom.lane == lane {
-                return true;
-            }
+        let atom = eff_list.atom_at(eff_idx);
+        if (atom.from == role || atom.to == role) && atom.lane == lane {
+            return true;
         }
         eff_idx += 1;
     }
@@ -42,7 +39,7 @@ const fn reference_dependency<const E: usize>(
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
         let marker = markers.at(marker_idx);
-        if matches!(marker.event, ScopeEvent::Enter)
+        if marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
         {
             let exit_eff = parallel_exit_for_enter(markers, marker_idx);
@@ -80,17 +77,14 @@ fn assert_cursor_matches_reference<const E: usize>(eff_list: &EffList<E>, role: 
     let mut local_step = 0usize;
     let mut eff_idx = 0usize;
     while eff_idx < eff_list.len() {
-        let node = eff_list.node_at(eff_idx);
-        if matches!(node.kind, EffKind::Atom) {
-            let atom = node.atom_data();
-            if atom.from == role || atom.to == role {
-                assert_eq!(
-                    cursor.next(eff_idx, atom.lane, local_step),
-                    reference_dependency(eff_list, role, eff_idx, atom.lane, local_step),
-                    "dependency cursor diverged at role {role} event {eff_idx} local step {local_step}",
-                );
-                local_step += 1;
-            }
+        let atom = eff_list.atom_at(eff_idx);
+        if atom.from == role || atom.to == role {
+            assert_eq!(
+                cursor.next(eff_idx, atom.lane, local_step),
+                reference_dependency(eff_list, role, eff_idx, atom.lane, local_step),
+                "dependency cursor diverged at role {role} event {eff_idx} local step {local_step}",
+            );
+            local_step += 1;
         }
         eff_idx += 1;
     }

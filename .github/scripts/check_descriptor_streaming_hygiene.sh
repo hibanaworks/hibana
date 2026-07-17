@@ -107,7 +107,7 @@ if [[ "${FAILED}" -ne 0 ]]; then
 fi
 
 check_absent \
-  'view\.as_slice\(\)|CompiledProgramView::as_slice|fn as_slice\(&self\) -> .*\[EffStruct\]' \
+  'view\.as_slice\(\)|CompiledProgramView::as_slice|fn as_slice\(&self\) -> .*\[EffAtom\]' \
   "flat lowering slice query detected" \
   src/global/compiled src/global/typestate
 if [[ "${FAILED}" -ne 0 ]]; then
@@ -125,7 +125,7 @@ if [[ "${FAILED}" -ne 0 ]]; then
 fi
 
 check_absent \
-  'impl (core::ops::Deref|AsRef<\[EffStruct\]>) for EffList' \
+  'impl (core::ops::Deref|AsRef<\[EffAtom\]>) for EffList' \
   "flat EffList trait view detected" \
   src/global/const_dsl.rs
 if [[ "${FAILED}" -ne 0 ]]; then
@@ -134,7 +134,7 @@ if [[ "${FAILED}" -ne 0 ]]; then
 fi
 
 for required in \
-  'src/global/const_dsl/eff_list.rs:pub(crate) const fn node_at' \
+  'src/global/const_dsl/eff_list.rs:pub(crate) const fn atom_at' \
   'src/global/compiled/lowering/driver/impls/image.rs:pub(crate) const fn scan_const' \
   'src/global/compiled/lowering/driver/impls/image.rs:Self::scan_impl(eff_list)' \
   'src/g.rs:SOURCE_EFF_LIST' \

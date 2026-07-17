@@ -8,8 +8,18 @@ The pinned gate exhausts the production arithmetic for:
 
 - exact binary decoding of every compact route-arm byte and every valid
   two-bit ready mask;
+- exact ready-evidence record, conflict, poll/materialization, consume, and
+  clear transitions, preserving a canonical single-arm mask and the invariant
+  that poll evidence is a subset of ready evidence;
 - exact public-operation prepare classification over the complete endpoint
   operation-state product, including fail-closed rejection and poison reuse;
+- exact framed inbound identity over source, lane, and frame label; exact
+  headerless identity over lane, logical label, and schema; plus one shared
+  zero/one/ambiguous candidate kernel whose ambiguity is absorbing;
+- exact preferred-first offer-lane enumeration over the complete 256-lane
+  bitset domain, using the same fixed 32-bit lane words on the Kani host and
+  Pico targets, with a monotonic remaining cursor that cannot repeat the
+  preferred lane;
 - exact active-offer aggregation: the first concrete owning lane remains the
   representative, all matching entry facts are combined across lane-local
   scope/root identities, and a foreign entry is rejected without partial
@@ -17,19 +27,30 @@ The pinned gate exhausts the production arithmetic for:
 - exact frontier owner-pool mutation under symbolic lane ordering, entry
   removal, and root-row compaction, preserving every surviving `(entry, lane)`
   witness across the production raw-pointer table;
-- exact acceptance domains for packed event-conflict rows and optional
-  descriptor route-arm bytes;
+- exact acceptance domains for packed event-conflict rows, optional descriptor
+  route-arm bytes, present state indices, and optional event-fact row indices;
 - exact packed lane-range round trips with formal rejection of the reserved
   sentinel;
+- exact derivation of active-lane count, first lane, and logical span from the
+  canonical resident bitmap, including lane 255 and trailing-zero rejection;
+- exact contiguous route-commit partition bounds against the lowering-derived
+  endpoint builder capacity;
 - exact resident decoding for route/roll scope rows, local event headers,
-  logical-lane rows, route-arm lane-step rows, and binary route-arm indexing;
+  logical-lane rows, route-arm lane-step rows, binary route-arm indexing, and
+  role-local send/receive/local direction over the complete `u8` role domain;
 - exact full-domain route-arm lane accumulation: duplicate events preserve one
   relation, lane bits remain exact, and the final local step is retained;
 - exact receive-causality witness indexing across the complete `u8` role
   domain: the first authority transfer is never overwritten and distinct roles
   cannot alias, and every symbolic three-event scope-free program gives the
   same result under the single-scan and pairwise checkers;
-- exact route-commit decision identity across scope, arm, and reentry metadata;
+- atomic normalized scope publication: route, parallel, and roll markers become
+  visible only as complete closed scopes; primary route bounds preserve every
+  valid compact offset, and proof-only entry metadata erases to the existing
+  descriptor marker tag;
+- exact route-commit decision identity across scope, arm, and reentry metadata,
+  plus exact passive-child binding to a distinct child scope and its recorded
+  parent route arm;
 - lane-exact route-commit finalization: canonical empty remains empty, a
   matching lane preserves all prepared rows, and a mismatched lane is rejected
   instead of becoming an empty commit;
@@ -49,8 +70,9 @@ The pinned gate exhausts the production arithmetic for:
 - exact preservation of every 32-bit payload-schema value through packed atom
   decoding, including the concrete little-endian blob layout;
 - exact canonical bytes, widths, schema identities, and rejection domains for
-  every built-in scalar and borrowed-byte codec, plus zero-, one-, and
-  four-byte representatives of the const-generic fixed-array codec;
+  every built-in scalar and borrowed-byte codec, plus complete-domain
+  injectivity and collision-boundary rejection for the const-generic
+  fixed-array schema and concrete zero-, one-, and four-byte codecs;
 - exact round-trip preservation and injective identity of all eight core frame
   header bytes across the complete input domain;
 - independent fail-closed fit-probe and direct-constructor obligations for
@@ -70,10 +92,18 @@ The pinned gate exhausts the production arithmetic for:
 - exact endpoint-operation and nested-scratch transitions, including restoration
   to the operation barrier rather than registry-visible availability;
 - aligned endpoint placement inside a selected gap;
-- exact endpoint-lease table sizing and 32-bit bounds across the full `u16`
-  capacity domain;
+- exact endpoint-lease slot-count/last-index correspondence, including all
+  65,536 identifiers, plus table sizing and 32-bit bounds for the empty table
+  and every nonempty table in that domain;
 - exact association-column sizing and 32-bit bounds across the full `u16`
   capacity domain;
+- one checked layout-arithmetic authority for scratch, endpoint, and resident
+  storage, including exact bit-word sizing, complete-`usize` alignment, and
+  absolute-offset overflow;
+- exact completion-bit presence and word/bit identity over the complete
+  `usize` local-step domain;
+- exact terminal cursor-position encoding across every `u16` value, including
+  `u16::MAX` after the last compact event identity;
 - aligned, monotonic resident-sidecar packing;
 - aligned, pairwise-disjoint sequential sidecar packing;
 - proof that compacted destinations for all three resident sidecar owners precede

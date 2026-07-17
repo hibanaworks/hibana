@@ -27,7 +27,7 @@ import Hibana.IterationErasure
 import Hibana.InBandChoiceKnowledge
 import Hibana.RuntimeRefinement
 import Hibana.PublicOperationKernel
-import Hibana.RustKernelRefinement
+import Hibana.PreparedKernelRefinement
 import Hibana.ProductionKernelArtifact
 import Hibana.ProtocolArtifact
 import Hibana.ProtocolCapability
@@ -53,12 +53,18 @@ theorem initial_state_has_no_completed_event (event : Nat) :
 private def resolverProofChoreo : Choreo :=
   .route (.dynamic 7) (.send 0 1 1 6) (.send 0 1 2 7)
 
-private def resolverProofFrontier : List MessageKey :=
-  [{ label := 1, schema := 6 }, { label := 2, schema := 7 }]
+private def resolverProofLeft : OperationRequest :=
+  { eventId := 0, action := .send 1 1 6 }
+
+private def resolverProofRight : OperationRequest :=
+  { eventId := 1, action := .send 1 2 7 }
+
+private def resolverProofFrontier : List OperationRequest :=
+  [resolverProofLeft, resolverProofRight]
 
 theorem unresolved_dynamic_commit_rejected :
     checkProgramTrace resolverProofChoreo 0 [
-      { enabled := resolverProofFrontier, action := .commit { label := 1, schema := 6 } }
+      { enabled := resolverProofFrontier, action := .commit resolverProofLeft }
     ] = false := by
   decide
 
@@ -71,7 +77,7 @@ theorem wrong_resolver_id_rejected :
 theorem resolver_reuse_without_reset_rejected :
     checkProgramTrace resolverProofChoreo 0 [
       { enabled := resolverProofFrontier, action := .resolve 0 7 .left },
-      { enabled := [{ label := 1, schema := 6 }], action := .resolve 0 7 .right }
+      { enabled := [resolverProofLeft], action := .resolve 0 7 .right }
     ] = false := by
   decide
 

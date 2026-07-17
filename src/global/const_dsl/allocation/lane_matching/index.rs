@@ -1,5 +1,5 @@
 use super::super::BYTE_DOMAIN;
-use crate::{eff::EffKind, global::const_dsl::EffList};
+use crate::global::const_dsl::EffList;
 
 #[derive(Clone, Copy)]
 pub(super) struct EndpointSet<const ROLE_BYTES: usize>([u8; ROLE_BYTES]);
@@ -82,24 +82,21 @@ impl<const ROLE_BYTES: usize> LaneEndpointIndex<ROLE_BYTES> {
         };
         let mut idx = start;
         while idx < end {
-            let node = eff_list.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                let lane = atom.lane as usize;
-                let slot = if index.slot_by_lane[lane] == u16::MAX {
-                    if index.len as usize >= BYTE_DOMAIN {
-                        panic!("parallel lane index exceeds wire domain");
-                    }
-                    let slot = index.len;
-                    index.len += 1;
-                    index.slot_by_lane[lane] = slot;
-                    slot
-                } else {
-                    index.slot_by_lane[lane]
-                };
-                index.endpoints[slot as usize].insert(atom.from);
-                index.endpoints[slot as usize].insert(atom.to);
-            }
+            let atom = eff_list.atom_at(idx);
+            let lane = atom.lane as usize;
+            let slot = if index.slot_by_lane[lane] == u16::MAX {
+                if index.len as usize >= BYTE_DOMAIN {
+                    panic!("parallel lane index exceeds wire domain");
+                }
+                let slot = index.len;
+                index.len += 1;
+                index.slot_by_lane[lane] = slot;
+                slot
+            } else {
+                index.slot_by_lane[lane]
+            };
+            index.endpoints[slot as usize].insert(atom.from);
+            index.endpoints[slot as usize].insert(atom.to);
             idx += 1;
         }
         index

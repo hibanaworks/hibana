@@ -6,12 +6,7 @@ pub(in crate::rendezvous::core) fn packed_sidecar_range(
     bytes: usize,
     align: usize,
 ) -> Option<(usize, usize)> {
-    if !align.is_power_of_two() {
-        crate::invariant();
-    }
-    let mask = align - 1;
-    let absolute = base.checked_add(frontier)?.checked_add(mask)? & !mask;
-    let start = absolute.checked_sub(base)?;
+    let start = crate::runtime_core::layout::checked_align_offset(base, frontier, align)?;
     let end = start.checked_add(bytes)?;
     Some((start, end))
 }

@@ -334,6 +334,46 @@ fn production_cursor_previews_repeated_label_continuation_inside_rolled_route_ar
 }
 
 #[test]
+fn empty_role_route_slot_does_not_hide_a_later_route_scope() {
+    const FIRST_LEFT: u8 = 217;
+    const FIRST_RIGHT: u8 = 218;
+    const SECOND_LEFT: u8 = 219;
+    const SECOND_RIGHT: u8 = 220;
+
+    let program = crate::g::seq(
+        crate::g::route(
+            crate::g::send::<0, 1, crate::g::Msg<{ FIRST_LEFT }, ()>>(),
+            crate::g::send::<0, 1, crate::g::Msg<{ FIRST_RIGHT }, ()>>(),
+        ),
+        crate::g::route(
+            crate::g::send::<0, 2, crate::g::Msg<{ SECOND_LEFT }, ()>>(),
+            crate::g::send::<0, 2, crate::g::Msg<{ SECOND_RIGHT }, ()>>(),
+        ),
+    );
+    let trace = ProductionCursorTrace::new::<2>(&program);
+
+    assert_eq!(trace.event_program.route_scope_slot_count(), 2);
+    assert!(trace.event_program.route_scope_rows_by_slot(0).is_none());
+    let later = trace
+        .event_program
+        .route_scope_rows_by_slot(1)
+        .expect("later role-local route rows");
+    assert_eq!((later.start(), later.end()), (0, 2));
+
+    let mut visited = Vec::new();
+    trace
+        .cursor()
+        .visit_route_arms_for_index(0, |scope, arm| visited.push((scope, arm)));
+    assert_eq!(visited, vec![(later.scope(), 0)]);
+
+    let key = trace.frame_key_for_label(SECOND_LEFT);
+    assert_eq!(
+        trace.cursor().enclosing_passive_route_scope_for_key(0, key),
+        Some(later.scope())
+    );
+}
+
+#[test]
 fn production_cursor_previews_repeated_intrinsic_route_segments() {
     const LEFT: u8 = 84;
     const RIGHT: u8 = 85;
@@ -456,6 +496,44 @@ fn production_cursor_commits_full_conflict_chain_for_triple_nested_route() {
         assert!(!trace.enabled_labels().contains(&label));
     }
     assert_sorted_eq(trace.enabled_labels(), &[7]);
+}
+
+#[test]
+fn production_cursor_route_authority_is_the_exact_event_conflict_key() {
+    let runtime = crate::g::route(
+        crate::g::route(
+            crate::g::route(
+                crate::g::send::<0, 1, crate::g::Msg<1, ()>>(),
+                crate::g::send::<0, 1, crate::g::Msg<2, ()>>(),
+            ),
+            crate::g::send::<0, 1, crate::g::Msg<3, ()>>(),
+        ),
+        crate::g::send::<0, 1, crate::g::Msg<4, ()>>(),
+    );
+    let trace = ProductionCursorTrace::new::<0>(&runtime);
+
+    let mut idx = 0usize;
+    while idx < trace.descriptor.local_len() {
+        let expected = trace
+            .event_program
+            .event_conflict_for_index(idx)
+            .to_conflict();
+        let actual = trace
+            .cursor()
+            .enclosing_route_scope_rows_at(idx)
+            .map(|region| {
+                let arm = trace
+                    .cursor()
+                    .route_arm_for_index(region.scope(), idx)
+                    .expect("route conflict scope must contain the exact arm row");
+                LocalConflict::RouteArm {
+                    scope: region.scope(),
+                    arm,
+                }
+            });
+        assert_eq!(actual, expected);
+        idx += 1;
+    }
 }
 
 #[test]
@@ -1350,18 +1428,14 @@ impl ProductionCursorTrace {
         let route_count = self.event_program.footprint().route_scope_count;
         let mut slot = 0usize;
         while slot < route_count {
-            let scope = self
-                .event_program
-                .route_scope_rows_by_slot(slot)
-                .expect("route slot must contain route rows")
-                .scope();
-            if self
-                .event_program
-                .route_scope_conflict_by_slot(slot)
-                .to_conflict()
-                .is_none()
+            if let Some(region) = self.event_program.route_scope_rows_by_slot(slot)
+                && self
+                    .event_program
+                    .route_scope_conflict_by_slot(slot)
+                    .to_conflict()
+                    .is_none()
             {
-                return scope;
+                return region.scope();
             }
             slot += 1;
         }
@@ -1374,29 +1448,27 @@ impl ProductionCursorTrace {
         let mut inner = ScopeId::none();
         let mut slot = 0usize;
         while slot < route_count {
-            let scope = self
-                .event_program
-                .route_scope_rows_by_slot(slot)
-                .expect("route slot must contain route rows")
-                .scope();
-            match self
-                .event_program
-                .route_scope_conflict_by_slot(slot)
-                .to_conflict()
-            {
-                Some(LocalConflict::RouteArm { scope: parent, arm }) => {
-                    if arm == child_arm {
-                        inner = scope;
-                        outer = parent;
+            if let Some(region) = self.event_program.route_scope_rows_by_slot(slot) {
+                let scope = region.scope();
+                match self
+                    .event_program
+                    .route_scope_conflict_by_slot(slot)
+                    .to_conflict()
+                {
+                    Some(LocalConflict::RouteArm { scope: parent, arm }) => {
+                        if arm == child_arm {
+                            inner = scope;
+                            outer = parent;
+                        }
                     }
-                }
-                None => {
-                    if outer.is_none() {
-                        outer = scope;
+                    None => {
+                        if outer.is_none() {
+                            outer = scope;
+                        }
                     }
-                }
-                Some(LocalConflict::Unconditional) | Some(LocalConflict::SharedRoute) => {
-                    panic!("route scope test expected route-arm conflict or no conflict")
+                    Some(LocalConflict::Unconditional) | Some(LocalConflict::SharedRoute) => {
+                        panic!("route scope test expected route-arm conflict or no conflict")
+                    }
                 }
             }
             slot += 1;
@@ -1752,21 +1824,25 @@ impl ProductionCursorTrace {
         }
         let _ = writeln!(out, "route rows:");
         let mut slot = 0usize;
-        while let Some(region) = self.event_program.route_scope_rows_by_slot(slot) {
-            let conflict = self
-                .event_program
-                .route_scope_conflict_by_slot(slot)
-                .to_conflict();
-            let left = self.event_program.route_arm_event_row_by_slot(slot, 0);
-            let right = self.event_program.route_arm_event_row_by_slot(slot, 1);
-            let _ = writeln!(
-                out,
-                "  slot={slot} scope={:?} rows=({}, {}) reentry={} conflict={conflict:?} left={left:?} right={right:?}",
-                region.scope(),
-                region.start(),
-                region.end(),
-                region.reentry()
-            );
+        while slot < self.event_program.route_scope_slot_count() {
+            if let Some(region) = self.event_program.route_scope_rows_by_slot(slot) {
+                let conflict = self
+                    .event_program
+                    .route_scope_conflict_by_slot(slot)
+                    .to_conflict();
+                let left = self.event_program.route_arm_event_row_by_slot(slot, 0);
+                let right = self.event_program.route_arm_event_row_by_slot(slot, 1);
+                let _ = writeln!(
+                    out,
+                    "  slot={slot} scope={:?} rows=({}, {}) reentry={} conflict={conflict:?} left={left:?} right={right:?}",
+                    region.scope(),
+                    region.start(),
+                    region.end(),
+                    region.reentry()
+                );
+            } else {
+                let _ = writeln!(out, "  slot={slot} local-rows=empty");
+            }
             slot += 1;
         }
         let _ = writeln!(out, "selected arms={:?}", self.selected);

@@ -144,7 +144,6 @@ where
                 _ => crate::invariant(),
             };
             self.emit_dynamic_resolver_success_audit(decision_lane, scope_id, resolver_id, arm);
-            self.record_scope_ack(scope_id, route_token);
             self.emit_route_arm_selection(scope_id, route_token, decision_lane);
         } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
             let arm = Arm::from_raw(selected_arm);

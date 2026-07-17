@@ -1,4 +1,20 @@
-use super::{ScopeEvent, ScopeKind, ScopeMarkerView};
+use super::{ScopeId, ScopeKind, ScopeMarkerView};
+
+mod nesting;
+pub(crate) use nesting::{StructuredScopeRange, innermost_scope_range, outermost_scope_range};
+
+mod route;
+pub(crate) use route::{
+    closed_route_arm_ranges_from_first_enter, passive_route_child_scope,
+    route_arm_event_ranges_for_scope, route_arm_ranges_from_first_enter,
+    route_parent_arm_for_scope, route_scope_slot_for_scope, structured_scope_event_range,
+};
+
+#[cfg(kani)]
+mod kani;
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
 
 pub(crate) const fn route_enter_at(
     markers: ScopeMarkerView<'_>,
@@ -13,9 +29,9 @@ pub(crate) const fn route_enter_at(
             break;
         }
         if marker.offset() == start
-            && matches!(marker.event, ScopeEvent::Enter)
+            && marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-            && first_enter_for_scope(markers, idx)
+            && markers.is_first_enter(idx)
             && route_exits_within(markers, idx, end)
         {
             return Some(idx);
@@ -25,23 +41,11 @@ pub(crate) const fn route_enter_at(
     None
 }
 
-const fn first_enter_for_scope(markers: ScopeMarkerView<'_>, marker_idx: usize) -> bool {
-    let marker = markers.at(marker_idx);
-    let mut idx = 0usize;
-    while idx < marker_idx {
-        let candidate = markers.at(idx);
-        if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(marker.scope_id)
-        {
-            return false;
-        }
-        idx += 1;
-    }
-    true
-}
-
 const fn route_exits_within(markers: ScopeMarkerView<'_>, enter_idx: usize, end: usize) -> bool {
-    let (_, _, _, _, _, arm1_end) = route_arm_ranges_from_first_enter(markers, enter_idx);
-    arm1_end <= end
+    match closed_route_arm_ranges_from_first_enter(markers, enter_idx) {
+        Some([_, (_, arm1_end)]) => arm1_end <= end,
+        None => false,
+    }
 }
 
 pub(crate) const fn parallel_enter_at(
@@ -57,7 +61,7 @@ pub(crate) const fn parallel_enter_at(
             break;
         }
         if marker.offset() == start
-            && matches!(marker.event, ScopeEvent::Enter)
+            && marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
             && parallel_exits_within(markers, idx, end)
         {
@@ -83,9 +87,7 @@ pub(crate) const fn roll_body_range_from_enter(
         return None;
     }
     let marker = scope_markers.at(enter_idx);
-    if !matches!(marker.event, ScopeEvent::Enter)
-        || !matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
-    {
+    if !marker.event.is_enter() || !matches!(marker.scope_id.kind(), Some(ScopeKind::Roll)) {
         return None;
     }
     let end = marker.segment_end();
@@ -94,6 +96,25 @@ pub(crate) const fn roll_body_range_from_enter(
     } else {
         Some((marker.offset(), end))
     }
+}
+
+pub(crate) const fn scope_segment_end_from_enter(
+    scope_markers: ScopeMarkerView<'_>,
+    enter_idx: usize,
+    segment_limit: Option<usize>,
+) -> usize {
+    if enter_idx >= scope_markers.len() {
+        panic!("scope enter marker index out of bounds");
+    }
+    let marker = scope_markers.at(enter_idx);
+    if !marker.event.is_enter() {
+        panic!("scope segment boundary requires an enter marker");
+    }
+    let end = marker.segment_end();
+    if end <= marker.offset() || matches!(segment_limit, Some(limit) if end > limit) {
+        crate::invariant();
+    }
+    end
 }
 
 pub(crate) const fn roll_continuation_end(
@@ -107,11 +128,13 @@ pub(crate) const fn roll_continuation_end(
     let mut idx = 0usize;
     while idx < roll_enter_idx {
         let marker = scope_markers.at(idx);
-        if matches!(marker.event, ScopeEvent::Enter) && marker.offset() <= roll_start {
-            let candidate = scope_boundary_for_enter(scope_markers, idx, roll_start);
-            if candidate > roll_end && candidate < boundary {
-                boundary = candidate;
-            }
+        if marker.event.is_enter()
+            && marker.offset() <= roll_start
+            && let Some(candidate) = scope_boundary_for_enter(scope_markers, idx, roll_start)
+            && candidate > roll_end
+            && candidate < boundary
+        {
+            boundary = candidate;
         }
         idx += 1;
     }
@@ -122,32 +145,27 @@ const fn scope_boundary_for_enter(
     scope_markers: ScopeMarkerView<'_>,
     enter_idx: usize,
     contained_offset: usize,
-) -> usize {
+) -> Option<usize> {
     let marker = scope_markers.at(enter_idx);
     match marker.scope_id.kind() {
         Some(ScopeKind::Parallel) => {
             let Some((_, left_end, _, right_end)) =
                 parallel_arm_ranges_from_enter(scope_markers, enter_idx)
             else {
-                return usize::MAX;
+                return None;
             };
             if contained_offset < left_end {
-                left_end
+                Some(left_end)
             } else {
-                right_end
+                Some(right_end)
             }
         }
-        Some(ScopeKind::Route) => match route_arm_exit_from_enter(scope_markers, enter_idx) {
-            Some(end) => end,
-            None => usize::MAX,
+        Some(ScopeKind::Route) => route_arm_exit_from_enter(scope_markers, enter_idx),
+        Some(ScopeKind::Roll) => match roll_body_range_from_enter(scope_markers, enter_idx) {
+            Some((_, end)) => Some(end),
+            None => None,
         },
-        Some(ScopeKind::Roll) => {
-            let Some((_, end)) = roll_body_range_from_enter(scope_markers, enter_idx) else {
-                return usize::MAX;
-            };
-            end
-        }
-        None => usize::MAX,
+        None => None,
     }
 }
 
@@ -159,9 +177,7 @@ const fn route_arm_exit_from_enter(
         return None;
     }
     let marker = scope_markers.at(enter_idx);
-    if !matches!(marker.event, ScopeEvent::Enter)
-        || !matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-    {
+    if !marker.event.is_enter() || !matches!(marker.scope_id.kind(), Some(ScopeKind::Route)) {
         return None;
     }
     let end = marker.segment_end();
@@ -180,82 +196,18 @@ pub(crate) const fn parallel_arm_ranges_from_enter(
         return None;
     }
     let marker = scope_markers.at(enter_idx);
-    if !matches!(marker.event, ScopeEvent::Enter)
+    if !marker.event.is_primary_enter()
         || !matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
     {
         return None;
     }
-    let mut split = usize::MAX;
+    let Some(split) = marker.event.parallel_split() else {
+        return None;
+    };
     let exit = marker.segment_end();
-    let mut idx = enter_idx + 1;
-    while idx < scope_markers.len() {
-        let candidate = scope_markers.at(idx);
-        if candidate.scope_id.same(marker.scope_id) {
-            match candidate.event {
-                ScopeEvent::Split => {
-                    if split == usize::MAX {
-                        split = candidate.offset();
-                    }
-                }
-                ScopeEvent::Exit => {}
-                ScopeEvent::Enter => {}
-            }
-        }
-        idx += 1;
-    }
-    if split == usize::MAX || exit == usize::MAX || marker.offset() > split || split > exit {
+    if marker.offset() >= split || split >= exit {
         None
     } else {
         Some((marker.offset(), split, split, exit))
     }
-}
-
-pub(crate) const fn route_arm_ranges_from_first_enter(
-    scope_markers: ScopeMarkerView<'_>,
-    enter_idx: usize,
-) -> (usize, usize, usize, usize, usize, usize) {
-    if enter_idx >= scope_markers.len() {
-        panic!("route enter marker index out of bounds");
-    }
-    let scope_id = scope_markers.at(enter_idx).scope_id;
-    let mut enter_marker_indices = [usize::MAX; 2];
-    let mut enter_offsets = [usize::MAX; 2];
-    let mut exit_offsets = [usize::MAX; 2];
-    let mut enter_len = 1usize;
-    enter_marker_indices[0] = enter_idx;
-    enter_offsets[0] = scope_markers.at(enter_idx).offset();
-    exit_offsets[0] = scope_markers.at(enter_idx).segment_end();
-    let mut idx = enter_idx + 1;
-    while idx < scope_markers.len() && enter_len < 2 {
-        let marker = scope_markers.at(idx);
-        if marker.scope_id.same(scope_id)
-            && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-        {
-            match marker.event {
-                ScopeEvent::Enter => {
-                    if enter_len < 2 {
-                        enter_marker_indices[enter_len] = idx;
-                        enter_offsets[enter_len] = marker.offset();
-                        exit_offsets[enter_len] = marker.segment_end();
-                    }
-                    enter_len += 1;
-                }
-                ScopeEvent::Exit => {}
-                ScopeEvent::Split => {}
-            }
-        }
-        idx += 1;
-    }
-
-    if enter_len != 2 {
-        panic!("route must have exactly 2 arms");
-    }
-    (
-        enter_marker_indices[0],
-        enter_offsets[0],
-        exit_offsets[0],
-        enter_marker_indices[1],
-        enter_offsets[1],
-        exit_offsets[1],
-    )
 }

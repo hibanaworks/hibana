@@ -1,5 +1,5 @@
 use super::*;
-use crate::eff::{EffAtom, EffStruct, EventOrigin};
+use crate::eff::{EffAtom, EventOrigin};
 use crate::g::{self, Msg, Program};
 use crate::global::compiled::images::{CompiledProgramRef, ProgramImageColumns, RoleDescriptorRef};
 use crate::global::compiled::lowering::RoleCompiledCounts;
@@ -18,15 +18,15 @@ const LOCAL_STEP_STRESS_ROW_BUDGET: usize = 512;
 const NESTED_PAR_ROUTE_RESOLVER: u16 = 0x91;
 const ROLL_ROUTE_INTERNAL_PARALLEL_RESOLVER: u16 = 0x92;
 
-const fn test_atom(label: u8, lane: u8) -> EffStruct {
-    EffStruct::atom(EffAtom {
+const fn test_atom(label: u8, lane: u8) -> EffAtom {
+    EffAtom {
         from: 0,
         to: 1,
         label,
         payload_schema: label as u32,
         origin: EventOrigin::User,
         lane,
-    })
+    }
 }
 
 type StressEffList = EffList<{ LOCAL_STEP_STRESS_ROW_BUDGET + 1 }>;
@@ -65,11 +65,11 @@ fn explicit_resolver_route_scope_survives_nested_parallel_head() {
     let program_ref = role0.role_image_ref().program;
 
     assert_eq!(program_ref.route_resolver_row_count(), 1);
-    let scope = program_ref
-        .route_resolver_scope_at_row(0)
-        .expect("route scope row");
+    let (scope, resolver) = program_ref
+        .route_resolver_authority_at_row(0)
+        .expect("route authority row");
     assert_eq!(
-        program_ref.route_resolver_id_at_row(0),
+        resolver.map(|resolver| resolver.resolver_id()),
         Some(NESTED_PAR_ROUTE_RESOLVER)
     );
     assert_eq!(program_ref.route_controller_role(scope), 0);
@@ -143,6 +143,9 @@ fn inactive_role_keeps_only_its_session_lane_and_no_frontier_reserve() {
     assert_eq!(footprint.active_lane_count, 0);
     assert_eq!(footprint.endpoint_lane_slot_count, 1);
     assert_eq!(footprint.logical_lane_count, 1);
+    assert_eq!(image.first_active_lane(), None);
+    assert_eq!(image.active_lane_row.start(), 0);
+    assert_eq!(image.active_lane_row.len(), 0);
     assert_eq!(footprint.frontier_entry_count(), 0);
     assert_eq!(layout.frontier_root_active_slots().count(), 0);
     assert_eq!(layout.frontier_visited_entries().count(), 0);
@@ -193,9 +196,9 @@ fn role_projections_share_program_wide_resolver_identity() {
 
     assert!(program.same_image(role1.role_image_ref().program));
     assert!(program.same_image(role2.role_image_ref().program));
-    let scope = program
-        .route_resolver_scope_at_row(0)
-        .expect("route scope row");
+    let (scope, _) = program
+        .route_resolver_authority_at_row(0)
+        .expect("route authority row");
     assert_eq!(program.route_participant_count(scope, 0), 3);
     assert_eq!(program.route_participant_count(scope, 1), 3);
     for role in 0..=2 {
@@ -374,35 +377,76 @@ fn logical_lane_count_stays_inside_wire_lane_domain() {
 #[test]
 #[should_panic]
 fn lane_set_mutation_rejects_a_lane_outside_its_exact_span() {
-    let mut words = [0usize; 1];
+    let mut words = [0u32; 1];
     let mut set = core::mem::MaybeUninit::<LaneSet>::uninit();
     unsafe {
         LaneSet::init_from_parts(set.as_mut_ptr(), words.as_mut_ptr(), words.len());
     }
     let mut set = unsafe { set.assume_init() };
-    set.insert(usize::BITS as usize);
+    set.insert(LaneWord::BITS as usize);
 }
 
 #[test]
 fn lane_set_view_iterates_set_bits_without_empty_lane_scan() {
-    let mut words = [0usize; 4];
+    let mut words = [0u32; 4];
     let (word, bit) = lane_word_index(3);
     words[word] |= bit;
-    let (word, bit) = lane_word_index(usize::BITS as usize + 5);
+    let (word, bit) = lane_word_index(LaneWord::BITS as usize + 5);
     words[word] |= bit;
-    let (word, bit) = lane_word_index(usize::BITS as usize * 2 + 1);
+    let (word, bit) = lane_word_index(LaneWord::BITS as usize * 2 + 1);
     words[word] |= bit;
     /* SAFETY: `words` remains live and immutable for the complete view use. */
     let view = unsafe { LaneSetView::from_parts(words.as_ptr(), words.len()) };
 
     assert_eq!(view.first_set(256), Some(3));
-    assert_eq!(view.next_set_from(4, 256), Some(usize::BITS as usize + 5));
     assert_eq!(
-        view.next_set_from(usize::BITS as usize + 6, 256),
-        Some(usize::BITS as usize * 2 + 1),
+        view.next_set_from(4, 256),
+        Some(LaneWord::BITS as usize + 5)
     );
-    assert_eq!(view.next_set_from(usize::BITS as usize * 2 + 2, 256), None,);
-    assert_eq!(view.next_set_from(usize::BITS as usize + 6, 65), None);
+    assert_eq!(
+        view.next_set_from(LaneWord::BITS as usize + 6, 256),
+        Some(LaneWord::BITS as usize * 2 + 1),
+    );
+    assert_eq!(
+        view.next_set_from(LaneWord::BITS as usize * 2 + 2, 256),
+        None,
+    );
+    assert_eq!(view.next_set_from(LaneWord::BITS as usize + 6, 65), None);
+}
+
+#[test]
+fn descriptor_lane_byte_view_remains_byte_aligned_and_covers_lane_255() {
+    let mut storage = [0u8; lane_byte_count(LANE_DOMAIN_SIZE) + 1];
+    storage[1] = 1 << 3;
+    storage[1 + lane_byte_count(LANE_DOMAIN_SIZE) - 1] = 1 << 7;
+    /* SAFETY: the deliberately unaligned byte span is live and immutable for
+    the complete view use. Byte mode must never reinterpret it as lane words. */
+    let view = unsafe {
+        LaneSetView::from_bytes(
+            storage.as_ptr().add(1),
+            lane_byte_count(LANE_DOMAIN_SIZE),
+            LANE_SET_VIEW_WORDS,
+        )
+    };
+
+    assert_eq!(view.first_set(LANE_DOMAIN_SIZE), Some(3));
+    assert_eq!(view.next_set_from(4, LANE_DOMAIN_SIZE), Some(255));
+    assert!(view.contains(255));
+}
+
+#[test]
+#[should_panic]
+fn descriptor_lane_byte_view_rejects_a_span_beyond_the_lane_domain() {
+    let byte = 0u8;
+    /* SAFETY: the invalid span must be rejected before it can read the
+    one-byte allocation. */
+    let _ = unsafe {
+        LaneSetView::from_bytes(
+            core::ptr::addr_of!(byte),
+            lane_byte_count(LANE_DOMAIN_SIZE) + 1,
+            LANE_SET_VIEW_WORDS,
+        )
+    };
 }
 
 #[test]
@@ -434,17 +478,17 @@ fn lane_set_view_word_compare_can_ignore_one_lane_without_empty_lane_scan() {
         true
     }
 
-    let mut lhs = [0usize; 4];
-    let mut rhs = [0usize; 4];
+    let mut lhs = [0u32; 4];
+    let mut rhs = [0u32; 4];
     let (word, bit) = lane_word_index(3);
     lhs[word] |= bit;
     rhs[word] |= bit;
-    let (word, bit) = lane_word_index(usize::BITS as usize + 5);
+    let (word, bit) = lane_word_index(LaneWord::BITS as usize + 5);
     lhs[word] |= bit;
     rhs[word] |= bit;
-    let (word, bit) = lane_word_index(usize::BITS as usize + 9);
+    let (word, bit) = lane_word_index(LaneWord::BITS as usize + 9);
     lhs[word] |= bit;
-    let (word, bit) = lane_word_index(usize::BITS as usize * 3 + 7);
+    let (word, bit) = lane_word_index(LaneWord::BITS as usize * 3 + 7);
     rhs[word] |= bit;
 
     /* SAFETY: both word arrays remain live and immutable for the complete
@@ -453,15 +497,20 @@ fn lane_set_view_word_compare_can_ignore_one_lane_without_empty_lane_scan() {
     /* SAFETY: see the shared comparison owner contract above. */
     let rhs = unsafe { LaneSetView::from_parts(rhs.as_ptr(), rhs.len()) };
 
-    assert!(!equals_until(lhs, rhs, usize::BITS as usize * 2));
+    assert!(!equals_until(lhs, rhs, LaneWord::BITS as usize * 2));
     assert!(equals_until_except_lane(
         lhs,
         rhs,
-        usize::BITS as usize * 2,
-        usize::BITS as usize + 9
+        LaneWord::BITS as usize * 2,
+        LaneWord::BITS as usize + 9
     ));
     assert!(
-        equals_until_except_lane(lhs, rhs, usize::BITS as usize * 3, usize::BITS as usize + 9),
+        equals_until_except_lane(
+            lhs,
+            rhs,
+            LaneWord::BITS as usize * 3,
+            LaneWord::BITS as usize + 9
+        ),
         "bits beyond the active lane limit are not semantic lane state"
     );
 }
@@ -582,17 +631,11 @@ fn streaming_role_image_accepts_more_than_256_resident_rows() {
     while phase < PHASES {
         let scope = crate::global::const_dsl::ScopeId::parallel(phase as u16);
         let start = source.len();
-        source.push_scope_enter_reentry_mut(
-            start,
-            scope,
-            crate::global::const_dsl::ReentryMark::SinglePass,
-        );
         source.push_event_mut(test_atom(1, 0));
-        source.push_scope_split_mut(source.len(), scope);
+        let split = source.len();
         source.push_event_mut(test_atom(2, 1));
         let end = source.len();
-        source.close_scope_segment_mut(scope, start, end);
-        source.push_scope_exit_mut(end, scope);
+        source.push_parallel_scope_mut(scope, start, split, end);
         phase += 1;
     }
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
@@ -846,6 +889,18 @@ fn roll_projection_marks_seq_body_with_roll_scope() {
         assert_eq!(first.scope().kind(), Some(ScopeKind::Roll));
         assert_eq!(second.scope().kind(), Some(ScopeKind::Roll));
         assert_eq!(first.scope(), second.scope());
+    });
+}
+
+#[test]
+fn equal_range_nested_rolls_assign_events_to_the_innermost_scope() {
+    let program: RoleProgram<0> = project(&g::send::<0, 1, Msg<203, ()>>().roll().roll().roll());
+    with_role_descriptor(&program, |descriptor| {
+        let rows = descriptor.local_event_rows();
+        let event = rows.local_step_node(0).expect("triple rolled event");
+        assert_eq!(event.scope().kind(), Some(ScopeKind::Roll));
+        assert_eq!(event.scope().local_ordinal(), 2);
+        assert!(rows.local_step_node(1).is_none());
     });
 }
 

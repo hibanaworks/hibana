@@ -36,7 +36,10 @@ pub(crate) use self::receive_lane_causality::validate_receive_lane_causality;
 pub(crate) use self::route::{DynamicRouteResolver, ReentryMark, RouteResolverMarker};
 pub(crate) use self::scope::{ScopeEvent, ScopeId, ScopeKind};
 pub(crate) use self::scope_ranges::{
-    parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
+    StructuredScopeRange, closed_route_arm_ranges_from_first_enter, innermost_scope_range,
+    parallel_arm_ranges_from_enter, passive_route_child_scope, route_arm_event_ranges_for_scope,
+    route_arm_ranges_from_first_enter, route_parent_arm_for_scope, route_scope_slot_for_scope,
+    scope_segment_end_from_enter, structured_scope_event_range,
 };
 use self::source_arena::SourceRow;
 pub(crate) use self::source_arena::{EffList, ScopeMarker, ScopeMarkerView};

@@ -5,6 +5,8 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
     let recv = read("src/endpoint/kernel/recv.rs");
     let recv_matching = read("src/endpoint/kernel/recv/matching.rs");
     let recv_evidence = read("src/endpoint/kernel/recv/evidence.rs");
+    let inbound_key = read("src/global/typestate/facts/inbound_key.rs");
+    let unique_match = read("src/runtime_core/unique_match.rs");
     let recv_commit_plan = read("src/endpoint/kernel/recv_commit_plan.rs");
     let core = read("src/endpoint/kernel/core.rs");
     let lane_port = read("src/endpoint/kernel/lane_port.rs");
@@ -13,20 +15,26 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
         recv.as_str(),
         recv_matching.as_str(),
         recv_evidence.as_str(),
+        inbound_key.as_str(),
+        unique_match.as_str(),
         recv_commit_plan.as_str(),
         core.as_str(),
     ]
     .join("\n");
 
     for required in [
-        "struct ObservedInboundKey",
-        "session_raw: u32,",
-        "lane_wire: u8,",
-        "source_role: u8,",
-        "target_role: u8,",
-        "frame_label: u8,",
-        "enum MatchAccumulator",
-        "None,\n    One(RecvCandidate),\n    Ambiguous,",
+        "struct InboundFrameKey",
+        "pub(crate) source_role: u8,",
+        "pub(crate) lane: u8,",
+        "pub(crate) frame_label: u8,",
+        "struct DeterministicInboundKey",
+        "pub(crate) schema: u32,",
+        "key.matches_recv(meta)",
+        "enum UniqueMatch<T>",
+        "None,\n    One(T),\n    Ambiguous,",
+        "enum UniqueMatchFailure",
+        "if lane_wire != meta.lane",
+        "observed.matches_recv(meta)",
         "pub(super) struct RecvCommitPlan<'r>",
         "enum RecvCommitPlanKind",
         "RecvCommitPlanKind::Direct",
@@ -81,6 +89,12 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
         recv_evidence.contains("struct RecvCandidate {\n    pub(in crate::endpoint::kernel::recv) desc: RecvDescriptor,\n}"),
         "RecvCandidate must be identity-only and must not carry references or codec hooks"
     );
+    assert!(
+        recv_evidence.contains(
+            "struct RecvDescriptor {\n    pub(in crate::endpoint::kernel::recv) meta: RecvMeta,\n    pub(in crate::endpoint::kernel::recv) cursor_index: StateIndex,\n}"
+        ),
+        "RecvDescriptor must not duplicate descriptor-derived lane identity"
+    );
 
     for forbidden in [
         "PreparedRecv",
@@ -92,6 +106,8 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
         "finish_recv_kernel_payload",
         "payload_validate",
         "payload: Payload<'a>",
+        "ObservedInboundKey",
+        "MatchAccumulator",
     ] {
         assert!(
             !surface.contains(forbidden),
@@ -119,6 +135,15 @@ fn offer_admission_prioritizes_the_unconsumed_current_frontier() {
     assert!(
         observed.contains("self.cursor.node_event_done_for_lane(current_idx, key.lane)"),
         "a consumed current occurrence must not shadow a legal rolled reentry frame"
+    );
+    assert!(
+        observed.contains("match self.active_reentry_scope_for_observed_frame(key)")
+            && observed.contains("Some(active_reentry) => Some(active_reentry)")
+            && !observed.contains(".or_else(")
+            && !observed.contains("return self.select_carried_ingress_scope(")
+            && observed.contains("info = self.decision_state.lane_offer_state(lane_idx);")
+            && observed.contains("state_index_to_usize(info.entry) != self.cursor.index()"),
+        "observed ingress must name reentry precedence and revalidate one exact owner after non-recursive realignment"
     );
 
     let roll_admission = roll

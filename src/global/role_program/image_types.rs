@@ -57,6 +57,11 @@ impl PackedLaneRange {
     }
 
     #[inline(always)]
+    pub(crate) const fn is_canonical_optional_range(self) -> bool {
+        !self.is_empty() && (!self.is_zero_len() || self.start() == 0)
+    }
+
+    #[inline(always)]
     pub(crate) const fn start(self) -> usize {
         (self.0 >> 16) as usize
     }
@@ -137,7 +142,7 @@ impl PackedRouteArmRow {
         child_slot: Option<usize>,
         lane_step_row: PackedLaneRange,
     ) -> Self {
-        if event_row.is_empty() {
+        if !event_row.is_canonical_optional_range() {
             panic!("route arm projection row event range overflow");
         }
         if lane_step_row.is_empty()
@@ -175,8 +180,12 @@ impl PackedRouteArmRow {
         if (lane_step_len_and_child_slot & Self::RESERVED_MASK) != 0 {
             crate::invariant();
         }
+        let event_row = PackedLaneRange::from_raw(event_row_raw);
+        if !event_row.is_canonical_optional_range() {
+            crate::invariant();
+        }
         Self {
-            event_row: PackedLaneRange::from_raw(event_row_raw),
+            event_row,
             lane_step_len_and_child_slot,
         }
     }
@@ -460,8 +469,6 @@ pub(crate) struct RoleImagePlan {
 pub(crate) struct RoleImageBuild<const N: usize> {
     pub(super) bytes: RoleImageBytes<N>,
     pub(super) columns: RoleImageColumns,
-    pub(super) active_lane_row: PackedLaneRange,
-    pub(super) first_active_lane: u16,
 }
 
 pub(crate) struct RoleImageRef {

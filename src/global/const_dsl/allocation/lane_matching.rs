@@ -1,5 +1,4 @@
 use super::{BYTE_DOMAIN, BYTE_DOMAIN_MASK_BYTES};
-use crate::eff::{EffKind, EffStruct};
 use crate::global::const_dsl::EffList;
 
 #[cfg(kani)]
@@ -16,8 +15,7 @@ const fn validate_lane_span<const E: usize>(
 ) {
     let mut idx = start;
     while idx < end {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) && node.atom_data().lane as u16 >= lane_span {
+        if eff_list.atom_at(idx).lane as u16 >= lane_span {
             panic!("parallel arm contains a lane outside its declared span");
         }
         idx += 1;
@@ -228,12 +226,9 @@ pub(crate) const fn merge_parallel_lanes<const E: usize>(
 
     let mut idx = left_end;
     while idx < right_end {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) {
-            let mut atom = node.atom_data();
-            atom.lane = remap[atom.lane as usize];
-            eff_list.replace_node(idx, EffStruct::atom(atom));
-        }
+        let mut atom = eff_list.atom_at(idx);
+        atom.lane = remap[atom.lane as usize];
+        eff_list.replace_atom(idx, atom);
         idx += 1;
     }
     result_span

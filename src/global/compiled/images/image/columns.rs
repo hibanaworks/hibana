@@ -1,9 +1,6 @@
-use crate::{
-    eff::EffKind,
-    global::{
-        compiled::lowering::CompiledProgramImage,
-        const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind, route_arm_ranges_from_first_enter},
-    },
+use crate::global::{
+    compiled::lowering::CompiledProgramImage,
+    const_dsl::{EffList, ScopeId, ScopeKind, route_arm_ranges_from_first_enter},
 };
 
 pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 11;
@@ -183,28 +180,19 @@ impl ProgramImagePlan {
 
 #[inline]
 const fn program_image_columns<const E: usize>(eff_list: &EffList<E>) -> ProgramImageColumns {
-    let mut atom_len = 0usize;
-    let mut idx = 0usize;
-    while idx < eff_list.len() {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) {
-            atom_len += 1;
-        }
-        idx += 1;
-    }
+    let atom_len = eff_list.len();
 
     let markers = eff_list.scope_markers();
     let mut route_resolver_len = 0usize;
     let mut route_participant_len = 0usize;
-    idx = 0;
+    let mut idx = 0;
     while idx < markers.len() {
         let marker = markers.at(idx);
-        if matches!(marker.event, ScopeEvent::Enter)
+        if marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-            && markers.is_first_enter(idx)
         {
             route_resolver_len += 1;
-            let (_, left_start, left_end, _, right_start, right_end) =
+            let [(left_start, left_end), (right_start, right_end)] =
                 route_arm_ranges_from_first_enter(markers, idx);
             route_participant_len += route_arm_participant_count(eff_list, left_start, left_end);
             route_participant_len += route_arm_participant_count(eff_list, right_start, right_end);
@@ -228,12 +216,9 @@ const fn role_occurs_before<const E: usize>(
 ) -> bool {
     let mut idx = start;
     while idx < end && idx < eff_list.len() {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) {
-            let atom = node.atom_data();
-            if atom.from == role || atom.to == role {
-                return true;
-            }
+        let atom = eff_list.atom_at(idx);
+        if atom.from == role || atom.to == role {
+            return true;
         }
         idx += 1;
     }
@@ -248,15 +233,12 @@ const fn route_arm_participant_count<const E: usize>(
     let mut count = 0usize;
     let mut idx = start;
     while idx < end && idx < eff_list.len() {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) {
-            let atom = node.atom_data();
-            if !role_occurs_before(eff_list, start, idx, atom.from) {
-                count += 1;
-            }
-            if atom.to != atom.from && !role_occurs_before(eff_list, start, idx, atom.to) {
-                count += 1;
-            }
+        let atom = eff_list.atom_at(idx);
+        if !role_occurs_before(eff_list, start, idx, atom.from) {
+            count += 1;
+        }
+        if atom.to != atom.from && !role_occurs_before(eff_list, start, idx, atom.to) {
+            count += 1;
         }
         idx += 1;
     }

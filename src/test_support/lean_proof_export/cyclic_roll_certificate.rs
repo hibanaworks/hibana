@@ -1,7 +1,7 @@
 use super::{
-    LeanChoreo, ProductionStep, ProofAction, ProofArm, ProofKey, projectability_certificate_source,
-    projection_certificate_source, record_production_steps, trace_proof_source,
-    verified_protocol_certificate_source,
+    LeanChoreo, ProductionStep, ProofAction, ProofArm, ProofOperation,
+    projectability_certificate_source, projection_certificate_source, record_production_steps,
+    trace_proof_source, verified_protocol_certificate_source,
 };
 use crate::g;
 use std::{string::String, vec::Vec};
@@ -51,7 +51,7 @@ pub(super) fn program() -> g::Program<Steps> {
     .roll()
 }
 
-pub(super) fn trace(program: &g::Program<Steps>) -> Vec<(Vec<ProofKey>, ProofAction)> {
+pub(super) fn trace(program: &g::Program<Steps>) -> Vec<(Vec<ProofOperation>, ProofAction)> {
     record_production_steps::<2>(
         program,
         &[
@@ -77,7 +77,7 @@ pub(super) fn trace(program: &g::Program<Steps>) -> Vec<(Vec<ProofKey>, ProofAct
     )
 }
 
-pub(super) fn trace_source(trace: &[(Vec<ProofKey>, ProofAction)]) -> String {
+pub(super) fn trace_source(trace: &[(Vec<ProofOperation>, ProofAction)]) -> String {
     trace_proof_source(
         "generatedCyclicRollChoreo",
         "generatedCyclicRollTraceRole2",

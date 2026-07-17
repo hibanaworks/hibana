@@ -159,7 +159,7 @@ fn root_frontier_insert_validates_all_offsets_before_pool_mutation() {
     let active_before = active_slot(&table, 0);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let _ = table.insert_root_active_entry(0, offer_key(10, 1), 0);
+        table.insert_root_active_entry(0, offer_key(10, 1), 0);
     }));
 
     assert!(result.is_err());
@@ -182,7 +182,7 @@ fn root_frontier_remove_validates_all_offsets_before_pool_mutation() {
     let active_before = active_slot(&table, 0);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let _ = table.remove_root_active_entry(0, offer_key(10, 1));
+        table.remove_root_active_entry(0, offer_key(10, 1));
     }));
 
     assert!(result.is_err());

@@ -1,6 +1,6 @@
 //! Scope-evidence owners for route selection.
 
-use super::authority::{Arm, RouteArmToken};
+use super::authority::Arm;
 use crate::global::const_dsl::ScopeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,21 +59,25 @@ impl ScopeReentryMeta {
     }
 }
 
-#[derive(Clone, Copy)]
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScopeEvidenceStatus {
+    Clear = 0,
+    Conflicted = 1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ScopeEvidence {
-    pub(super) ack: Option<RouteArmToken>,
     pub(super) ready_arm_mask: u8,
     pub(super) poll_ready_arm_mask: u8,
-    pub(super) flags: u8,
+    pub(super) status: ScopeEvidenceStatus,
 }
 
 impl ScopeEvidence {
-    pub(super) const FLAG_ACK_CONFLICT: u8 = 1;
     pub(super) const EMPTY: Self = Self {
-        ack: None,
         ready_arm_mask: 0,
         poll_ready_arm_mask: 0,
-        flags: 0,
+        status: ScopeEvidenceStatus::Clear,
     };
 
     #[inline]

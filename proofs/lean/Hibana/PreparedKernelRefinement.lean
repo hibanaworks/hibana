@@ -2,11 +2,9 @@ import Hibana.RuntimeRefinement
 
 namespace Hibana
 
-/-- Pure prepare/commit view of the production kernel. Rust supplies the
-concrete `State`, `Input`, and `Prepared` domains; Kani checks the finite packed
-operations and Miri checks provenance. Lean intentionally treats that
-cross-tool result as an explicit premise instead of pretending to verify Rust
-source. -/
+/-- Pure prepare/commit semantics. A production implementation may supply a
+concrete instance and an external refinement proof, while an accepted finite
+artifact may construct a separate model instance for translation validation. -/
 structure PreparedKernelSemantics where
   State : Type
   Input : Type
@@ -24,11 +22,13 @@ def PreparedKernelSemantics.transition?
   (kernel.prepare state input).map fun prepared =>
     (kernel.effect prepared, kernel.commit state prepared)
 
-/-- Cross-tool production obligation. `stateCanonical` fixes the exact compact
-snapshot boundary; `preparedCommitExact` says a successful commit is precisely
-one normalized Lean effect. A rejected pure preparation has no commit value and
-therefore denotes zero protocol transitions. -/
-structure RustKernelRefinement
+/-- Refinement obligation for any pure prepare/commit kernel.
+`stateCanonical` fixes the exact compact snapshot boundary;
+`preparedCommitExact` says a successful commit is precisely one normalized
+Lean effect. A rejected pure preparation has no commit value and therefore
+denotes zero protocol transitions. This proposition does not identify its
+kernel with Rust source; that connection remains an explicit external premise. -/
+structure PreparedKernelRefinement
     (kernel : PreparedKernelSemantics)
     (session roleCount : Nat)
     (choreo : Choreo) : Prop where
@@ -83,7 +83,7 @@ theorem prepared_kernel_commit_has_accepted_transition_certificate
     {kernel : PreparedKernelSemantics}
     {session roleCount : Nat}
     {choreo : Choreo}
-    (refinement : RustKernelRefinement kernel session roleCount choreo)
+    (refinement : PreparedKernelRefinement kernel session roleCount choreo)
     {state : kernel.State}
     {input : kernel.Input}
     {prepared : kernel.Prepared}
@@ -102,7 +102,7 @@ theorem prepared_kernel_commit_refines_exact_lean_effect
     {kernel : PreparedKernelSemantics}
     {session roleCount : Nat}
     {choreo : Choreo}
-    (refinement : RustKernelRefinement kernel session roleCount choreo)
+    (refinement : PreparedKernelRefinement kernel session roleCount choreo)
     {state : kernel.State}
     {input : kernel.Input}
     {prepared : kernel.Prepared}
@@ -121,7 +121,7 @@ theorem prepared_kernel_stutter_commit_erases_to_same_compact_state
     {kernel : PreparedKernelSemantics}
     {session roleCount : Nat}
     {choreo : Choreo}
-    (refinement : RustKernelRefinement kernel session roleCount choreo)
+    (refinement : PreparedKernelRefinement kernel session roleCount choreo)
     {state : kernel.State}
     {input : kernel.Input}
     {prepared : kernel.Prepared}

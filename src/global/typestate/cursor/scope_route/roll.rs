@@ -1,5 +1,8 @@
 use super::super::super::facts::LocalAction;
-use super::super::{EventCursor, RelocatableResidentLaneStep, ScopeId};
+use super::super::{EventCursor, ScopeId};
+
+mod nesting;
+mod reentry;
 
 #[derive(Clone, Copy)]
 enum ReentrantRouteCompletion {
@@ -70,6 +73,23 @@ impl EventCursor {
             | LocalAction::Recv { lane, .. }
             | LocalAction::Local { lane, .. } => Some(lane),
             LocalAction::Terminate => None,
+        }
+    }
+
+    #[inline(always)]
+    fn reentry_scope_event_bounds(&self, scope: ScopeId) -> Option<(usize, usize)> {
+        match scope.kind() {
+            Some(crate::global::const_dsl::ScopeKind::Roll) => self
+                .machine()
+                .roll_scope_row(scope)
+                .map(|row| (row.start(), row.end())),
+            Some(crate::global::const_dsl::ScopeKind::Route) if self.route_scope_reentry(scope) => {
+                self.route_scope_rows(scope)
+                    .map(|row| (row.start(), row.end()))
+            }
+            Some(crate::global::const_dsl::ScopeKind::Route)
+            | Some(crate::global::const_dsl::ScopeKind::Parallel)
+            | None => None,
         }
     }
 
@@ -153,31 +173,29 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<ScopeId> {
         let mut slot = 0usize;
-        let mut best = ScopeId::none();
-        let mut best_len = usize::MAX;
+        let mut best = None;
         let lane = self.event_lane_at(idx);
         while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
             if row.start() <= idx
                 && idx < row.end()
                 && self.roll_scope_events_complete(row, &mut *selected_arm_for_scope)
-                && row.len() < best_len
             {
-                best = scope;
-                best_len = row.len();
+                best = Some(match best {
+                    Some(current) => self.deeper_roll_scope(current, scope),
+                    None => scope,
+                });
             }
             slot += 1;
         }
-        let mut sequential_reentry = ScopeId::none();
-        let mut sequential_reentry_len = 0usize;
-        if !best.is_none()
-            && let Some(lane) = lane
-        {
+        let best = best?;
+        let mut sequential_reentry = None;
+        if let Some(lane) = lane {
             let mut slot = 0usize;
             while let Some((scope, row)) = self.machine().roll_scope_row_by_slot(slot) {
                 if row.start() <= idx
                     && idx < row.end()
-                    && row.len() > best_len
-                    && row.len() >= sequential_reentry_len
+                    && !scope.same(best)
+                    && self.roll_scope_nested_within(best, scope)
                     && self.roll_scope_events_complete(row, &mut *selected_arm_for_scope)
                     && self.roll_scope_has_later_sequential_done_event(
                         scope,
@@ -187,18 +205,17 @@ impl EventCursor {
                         &mut *selected_arm_for_scope,
                     )
                 {
-                    sequential_reentry = scope;
-                    sequential_reentry_len = row.len();
+                    sequential_reentry = Some(match sequential_reentry {
+                        Some(current) => self.outer_roll_scope(current, scope),
+                        None => scope,
+                    });
                 }
                 slot += 1;
             }
         }
-        if !sequential_reentry.is_none() {
-            Some(sequential_reentry)
-        } else if best.is_none() {
-            None
-        } else {
-            Some(best)
+        match sequential_reentry {
+            Some(scope) => Some(scope),
+            None => Some(best),
         }
     }
 
@@ -209,39 +226,37 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> ReentrantRouteCompletion {
         let mut contains_reentrant_route = false;
-        let mut selected = ScopeId::none();
-        let mut selected_len = usize::MAX;
+        let mut selected = None;
         let mut slot = 0usize;
-        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-            let scope = region.scope();
-            let len = region.end() - region.start();
-            if region.start() <= idx
-                && idx < region.end()
-                && self.route_scope_reentry(scope)
-                && self.roll_scope_contains_index(scope, idx)
-            {
-                contains_reentrant_route = true;
-                if len < selected_len
-                    && selected_arm_for_scope(scope).is_some_and(|arm| {
+        while slot < self.machine().route_scope_slot_count() {
+            if let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
+                let scope = region.scope();
+                if region.start() <= idx
+                    && idx < region.end()
+                    && self.route_scope_reentry(scope)
+                    && self.roll_scope_contains_index(scope, idx)
+                {
+                    contains_reentrant_route = true;
+                    if selected_arm_for_scope(scope).is_some_and(|arm| {
                         self.selected_route_arm_event_row_done(
                             scope,
                             arm,
                             &mut *selected_arm_for_scope,
                         )
-                    })
-                {
-                    selected = scope;
-                    selected_len = len;
+                    }) {
+                        selected = Some(match selected {
+                            Some(current) => self.deeper_route_scope(current, scope),
+                            None => scope,
+                        });
+                    }
                 }
             }
             slot += 1;
         }
-        if !selected.is_none() {
-            ReentrantRouteCompletion::Complete(selected)
-        } else if contains_reentrant_route {
-            ReentrantRouteCompletion::Incomplete
-        } else {
-            ReentrantRouteCompletion::Outside
+        match selected {
+            Some(scope) => ReentrantRouteCompletion::Complete(scope),
+            None if contains_reentrant_route => ReentrantRouteCompletion::Incomplete,
+            None => ReentrantRouteCompletion::Outside,
         }
     }
 
@@ -282,10 +297,8 @@ impl EventCursor {
             return false;
         }
         let preview_conflict = self.machine().event_conflict_for_index(idx);
-        let (mut scan, end) = if let Some(row) = self.machine().roll_scope_row(scope) {
-            (row.start(), row.end())
-        } else {
-            (0, usize::MAX)
+        let Some((mut scan, end)) = self.reentry_scope_event_bounds(scope) else {
+            crate::invariant();
         };
         while scan < idx && scan < end && self.contains_node_index(scan) {
             if self.roll_scope_contains_index(scope, scan)
@@ -356,7 +369,7 @@ impl EventCursor {
                 let live = live_arm_for_scope(scope);
                 let membership = self.route_arm_for_index(scope, idx);
                 let committed = membership.and_then(|_| committed_arm_for_scope(scope));
-                live.or(committed)
+                if live.is_some() { live } else { committed }
             };
             let allows = phase_matches
                 && self.roll_reentry_event_allows_index(idx, key.lane, &mut arm_for_candidate);
@@ -427,71 +440,5 @@ impl EventCursor {
             },
             selected_arm_for_scope,
         )
-    }
-
-    #[inline(never)]
-    pub(crate) fn roll_body_reentry_scope_for_step(
-        &self,
-        target: RelocatableResidentLaneStep,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<ScopeId> {
-        if !self.has_reentry_scopes() {
-            return None;
-        }
-        let idx = self.node_index_for_relocatable_step(target)?;
-        let lane = self
-            .machine()
-            .event_program()
-            .local_step_lane(target.0.step_idx as usize)?;
-        let scope = self.complete_roll_scope_for_index(idx, &mut *selected_arm_for_scope)?;
-        if !matches!(
-            scope.kind(),
-            Some(crate::global::const_dsl::ScopeKind::Roll)
-        ) {
-            return None;
-        }
-        self.roll_scope_lane_allows_index(
-            scope,
-            idx,
-            lane,
-            RollLaneAdmission::Head,
-            selected_arm_for_scope,
-        )
-        .then_some(scope)
-    }
-
-    #[inline(never)]
-    pub(crate) fn clear_reentry_scope_events(&mut self, scope: ScopeId) {
-        if !self.has_reentry_scopes() {
-            return;
-        }
-        let (mut idx, end) = if let Some(row) = self.machine().roll_scope_row(scope) {
-            (row.start(), row.end())
-        } else {
-            (0, usize::MAX)
-        };
-        while idx < end && self.contains_node_index(idx) {
-            if self.roll_scope_contains_index(scope, idx)
-                && let Some(lane) = self.event_lane_at(idx)
-            {
-                self.clear_node_event_done_for_lane(idx, lane);
-            }
-            idx += 1;
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_scope_contained_in_roll_scope(
-        &self,
-        route_scope: ScopeId,
-        roll_scope: ScopeId,
-    ) -> bool {
-        let Some(roll_row) = self.machine().roll_scope_row(roll_scope) else {
-            return false;
-        };
-        let Some(route_row) = self.machine().route_scope_rows(route_scope) else {
-            return false;
-        };
-        roll_row.start() <= route_row.start() && route_row.end() <= roll_row.end()
     }
 }

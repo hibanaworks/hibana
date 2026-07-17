@@ -122,10 +122,13 @@ where
         let cursor = &self.cursor;
         let decision_state = &self.decision_state;
         let Some(end) = cursor.selected_enclosing_route_scope_end_at(idx, |scope| {
-            Self::selected_arm_from_prepared_rows(rows, cursor, scope).or_else(|| {
-                let scope_slot = cursor.route_scope_slot(scope)?;
-                decision_state.selected_arm_for_scope_slot(scope_slot)
-            })
+            match Self::selected_arm_from_prepared_rows(rows, cursor, scope) {
+                Some(prepared) => Some(prepared),
+                None => {
+                    let scope_slot = cursor.route_scope_slot(scope)?;
+                    decision_state.selected_arm_for_scope_slot(scope_slot)
+                }
+            }
         }) else {
             return;
         };

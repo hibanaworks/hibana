@@ -1,32 +1,7 @@
 use super::{
     EventCursorMachine, InboundFrameKey, LocalAction, ScopeId, StateIndex, state_index_to_usize,
 };
-
-#[derive(Clone, Copy)]
-enum DispatchMatch {
-    None,
-    One(u8, StateIndex),
-    Ambiguous,
-}
-
-impl DispatchMatch {
-    #[inline(always)]
-    fn add(&mut self, arm: u8, target: StateIndex) {
-        match *self {
-            Self::None => *self = Self::One(arm, target),
-            Self::One(prev_arm, prev_target) if prev_arm == arm && prev_target == target => {}
-            Self::One(_, _) | Self::Ambiguous => *self = Self::Ambiguous,
-        }
-    }
-
-    #[inline(always)]
-    const fn one(self) -> Option<(u8, StateIndex)> {
-        match self {
-            Self::One(arm, target) => Some((arm, target)),
-            Self::None | Self::Ambiguous => None,
-        }
-    }
-}
+use crate::runtime_core::UniqueMatch;
 
 #[inline(always)]
 fn validated_dispatch_arm(arm: u8, target: StateIndex) -> u8 {
@@ -81,7 +56,7 @@ impl EventCursorMachine {
         scope_id: ScopeId,
         key: InboundFrameKey,
     ) -> Option<(u8, StateIndex)> {
-        let mut matched = DispatchMatch::None;
+        let mut matched = UniqueMatch::NONE;
         self.visit_first_recv_dispatch(scope_id, |arm, target| {
             let arm = validated_dispatch_arm(arm, target);
             let node = self.node(state_index_to_usize(target));
@@ -98,10 +73,10 @@ impl EventCursorMachine {
                 && target_lane == key.lane
                 && target_frame_label == key.frame_label
             {
-                matched.add(arm, target);
+                matched = matched.add((arm, target));
             }
         })?;
-        matched.one()
+        matched.into_option()
     }
 
     #[inline(always)]

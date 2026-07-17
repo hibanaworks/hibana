@@ -155,7 +155,12 @@ fn rendezvous_scratch_borrows_are_scoped_and_offer_progress_is_endpoint_resident
             && port.contains("RendezvousAccessState::RegistryLease")
             && port.contains("RendezvousAccessState::ScratchLease")
             && port.contains("RendezvousAccessState::EndpointOperation")
-            && port.contains("RendezvousAccessState::EndpointScratchLease"),
+            && port.contains("RendezvousAccessState::EndpointScratchLease")
+            && port.contains("lease: &'lease mut ScratchLease<'_>")
+            && port.contains(") -> &'lease mut [u8]")
+            && !port.contains("fn scratch_ptr(")
+            && !port.contains("fn frontier_scratch_ptr(")
+            && !lane_port.contains("&mut *scratch_ptr"),
         "offer progress and external endpoint destructors must remain under a scoped rendezvous lease"
     );
     assert!(
@@ -514,17 +519,23 @@ fn transport_docs_do_not_teach_u64_header() {
 #[test]
 fn inbound_frame_identity_is_scalar_and_label_masks_are_absent() {
     let labels = read("src/transport/labels.rs");
-    let meta = read("src/global/typestate/facts/meta.rs");
-    let key = named_struct_body(&meta, "InboundFrameKey");
+    let inbound_keys = read("src/global/typestate/facts/inbound_key.rs");
+    let key = named_struct_body(&inbound_keys, "InboundFrameKey");
+    let deterministic = named_struct_body(&inbound_keys, "DeterministicInboundKey");
 
     assert_eq!(
         key.trim(),
         "pub(crate) source_role: u8,\n    pub(crate) lane: u8,\n    pub(crate) frame_label: u8,",
         "the endpoint-fixed inbound identity must stay three scalar wire fields"
     );
+    assert_eq!(
+        deterministic.trim(),
+        "pub(crate) lane: u8,\n    pub(crate) label: u8,\n    pub(crate) schema: u32,",
+        "headerless identity must contain exactly the facts available to deterministic ingress"
+    );
     for forbidden in ["FrameLabelMask", "ScopeFrameLabelMasks", "[u8; 32]"] {
         assert!(
-            !labels.contains(forbidden) && !meta.contains(forbidden),
+            !labels.contains(forbidden) && !inbound_keys.contains(forbidden),
             "label-only masks must not return to the receive authority path: {forbidden}"
         );
     }
@@ -620,7 +631,11 @@ fn receive_hot_path_uses_descriptor_queries_and_complete_keys_without_mask_scrat
         read("src/endpoint/kernel/offer/passive.rs"),
         read("src/endpoint/kernel/offer/select.rs"),
         read("src/endpoint/kernel/offer/select_observed.rs"),
+        read("src/endpoint/kernel/recv.rs"),
+        read("src/endpoint/kernel/recv/evidence.rs"),
+        read("src/endpoint/kernel/recv/matching.rs"),
         read("src/global/typestate/cursor/first_recv_dispatch.rs"),
+        read("src/runtime_core/unique_match.rs"),
     ]
     .join("\n");
     for forbidden in [
@@ -629,6 +644,9 @@ fn receive_hot_path_uses_descriptor_queries_and_complete_keys_without_mask_scrat
         "ScopeFrameLabelMasks::EMPTY",
         "frame_label_masks",
         "FrameLabelMask",
+        "ObservedInboundKey",
+        "MatchAccumulator",
+        "DispatchMatch",
     ] {
         assert!(
             !hot_path.contains(forbidden),
@@ -638,8 +656,9 @@ fn receive_hot_path_uses_descriptor_queries_and_complete_keys_without_mask_scrat
     assert!(
         hot_path.contains("InboundFrameKey")
             && hot_path.contains("first_recv_descendant_target_for_key")
-            && hot_path.contains("matches_recv"),
-        "receive dispatch must compare source, lane, and frame label through one key"
+            && hot_path.contains("matches_recv")
+            && hot_path.contains("UniqueMatch"),
+        "receive dispatch must compare one complete key and use one fail-closed uniqueness kernel"
     );
 }
 

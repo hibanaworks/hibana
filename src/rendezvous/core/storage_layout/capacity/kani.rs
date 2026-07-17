@@ -5,7 +5,7 @@ use super::{
     resident_lease::sidecar_ranges_overlap,
 };
 use crate::rendezvous::core::{
-    EndpointLeaseRecord, EndpointLeaseState, RendezvousAccessState,
+    EndpointLeaseId, EndpointLeaseRecord, EndpointLeaseState, RendezvousAccessState,
     endpoint_leases::endpoint_offset_in_gap,
 };
 use crate::session::cluster::core::ResolverBucket;
@@ -24,6 +24,22 @@ fn endpoint_generation_advances_or_exhausts() {
             assert!(next != 0);
         }
         None => assert!(current == u32::MAX),
+    }
+}
+
+#[kani::proof]
+fn endpoint_lease_slot_count_matches_last_index_domain() {
+    let slot_count: usize = kani::any();
+    let representable = EndpointLeaseId::slot_count_is_representable(slot_count);
+
+    assert_eq!(representable, slot_count <= u16::MAX as usize + 1);
+    if slot_count == 0 {
+        assert!(representable);
+    } else {
+        assert_eq!(
+            representable,
+            EndpointLeaseId::try_from(slot_count - 1).is_ok()
+        );
     }
 }
 
@@ -120,13 +136,17 @@ fn endpoint_gap_placement_is_aligned_and_bounded() {
 
 #[kani::proof]
 fn endpoint_lease_storage_layout_is_bounded_and_exact() {
-    let capacity = usize::from(kani::any::<u16>());
+    let capacity = match kani::any::<Option<u16>>() {
+        Some(last_slot) => usize::from(last_slot) + 1,
+        None => 0,
+    };
     let record_bytes = core::mem::size_of::<EndpointLeaseRecord>();
     let storage_bytes = endpoint_lease_storage_bytes(capacity)
-        .expect("the full u16 endpoint capacity domain must fit resident storage arithmetic");
+        .expect("the full u16 endpoint slot domain must fit resident storage arithmetic");
 
     kani::cover!(capacity == 0);
-    kani::cover!(capacity == usize::from(u16::MAX));
+    kani::cover!(capacity == usize::from(u16::MAX) + 1);
+    assert!(EndpointLeaseId::slot_count_is_representable(capacity));
     assert!(record_bytes != 0);
     assert!(core::mem::align_of::<EndpointLeaseRecord>().is_power_of_two());
     assert!(record_bytes.checked_mul(capacity) == Some(storage_bytes));

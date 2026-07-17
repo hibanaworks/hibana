@@ -1,12 +1,10 @@
 use super::super::{
-    CursorEndpoint, OfferScopeProfile, OfferScopeSelection, RouteArmToken,
-    ScopeArmMaterializationMeta, Transport,
+    CursorEndpoint, OfferScopeProfile, OfferScopeSelection, ScopeArmMaterializationMeta, Transport,
     profile::{
         OfferArmRecvEvidence, OfferControllerCursorArm, OfferControllerLocalEvidence,
-        OfferControllerLocalReadiness, OfferCursorReadiness, OfferEarlyDecisionReadiness,
-        OfferEntryPosition, OfferMaterializationReadiness, OfferPassiveAckEvidence,
-        OfferPassiveEvidence, OfferPassiveReadiness, OfferPassiveReadySignal,
-        OfferPassiveRecvEvidence,
+        OfferControllerLocalReadiness, OfferCursorReadiness, OfferEntryPosition,
+        OfferMaterializationReadiness, OfferPassiveEvidence, OfferPassiveReadiness,
+        OfferPassiveReadySignal, OfferPassiveRecvEvidence,
     },
 };
 use super::evidence::OfferIngressEvidence;
@@ -15,7 +13,6 @@ struct OfferIngressPlannerInput {
     selection: OfferScopeSelection,
     entry: OfferEntryPosition,
     materialization: ScopeArmMaterializationMeta,
-    preview_route_arm_selection: Option<RouteArmToken>,
     cursor: OfferCursorReadiness,
 }
 
@@ -29,12 +26,10 @@ where
         entry: OfferEntryPosition,
         profile: OfferScopeProfile,
     ) -> OfferIngressEvidence {
-        let scope_id = selection.scope_id;
         let input = OfferIngressPlannerInput {
             selection,
             entry,
             materialization: self.selection_materialization_meta(selection),
-            preview_route_arm_selection: self.peek_live_scope_ack(scope_id),
             cursor: if self.cursor.is_recv() {
                 OfferCursorReadiness::Recv
             } else {
@@ -74,7 +69,6 @@ where
             profile: OfferScopeProfile::ControllerIntrinsic,
             entry: input.entry,
             cursor: input.cursor,
-            early_decision: self.controller_early_decision_readiness(&input),
             controller: self.controller_intrinsic_readiness(&input),
             passive: OfferPassiveReadiness::NeedsTransport,
         }
@@ -88,7 +82,6 @@ where
             profile: OfferScopeProfile::ControllerDynamic,
             entry: input.entry,
             cursor: input.cursor,
-            early_decision: self.controller_early_decision_readiness(&input),
             controller: self.controller_dynamic_readiness(&input),
             passive: OfferPassiveReadiness::NeedsTransport,
         }
@@ -102,7 +95,6 @@ where
             profile: OfferScopeProfile::PassiveIntrinsic,
             entry: input.entry,
             cursor: input.cursor,
-            early_decision: self.passive_early_decision_readiness(&input),
             controller: OfferControllerLocalReadiness::NeedsTransport,
             passive: self.passive_intrinsic_readiness(&input),
         }
@@ -116,7 +108,6 @@ where
             profile: OfferScopeProfile::PassiveDynamic,
             entry: input.entry,
             cursor: input.cursor,
-            early_decision: self.passive_early_decision_readiness(&input),
             controller: OfferControllerLocalReadiness::NeedsTransport,
             passive: self.passive_dynamic_readiness(&input),
         }
@@ -183,7 +174,6 @@ where
         OfferScopeProfile::PassiveIntrinsic.passive_readiness(OfferPassiveEvidence::new(
             self.passive_ready_signal(input),
             self.passive_recv_evidence(input),
-            OfferPassiveAckEvidence::NotMaterializable,
         ))
     }
 
@@ -191,7 +181,6 @@ where
         OfferScopeProfile::PassiveDynamic.passive_readiness(OfferPassiveEvidence::new(
             self.passive_ready_signal(input),
             self.passive_recv_evidence(input),
-            self.passive_ack_evidence(input),
         ))
     }
 
@@ -215,51 +204,6 @@ where
         } else {
             OfferPassiveRecvEvidence::Recvless
         }
-    }
-
-    fn passive_ack_evidence(&self, input: &OfferIngressPlannerInput) -> OfferPassiveAckEvidence {
-        let Some(token) = input.preview_route_arm_selection else {
-            return OfferPassiveAckEvidence::NotMaterializable;
-        };
-        let arm = token.arm().as_u8();
-        if self.scope_has_ready_arm(input.selection.scope_id, arm) {
-            return OfferPassiveAckEvidence::Materializable;
-        }
-        match self.arm_recv_evidence(input, arm) {
-            OfferArmRecvEvidence::Recvless => OfferPassiveAckEvidence::Materializable,
-            OfferArmRecvEvidence::HasRecv => OfferPassiveAckEvidence::NotMaterializable,
-        }
-    }
-
-    fn controller_early_decision_readiness(
-        &self,
-        input: &OfferIngressPlannerInput,
-    ) -> OfferEarlyDecisionReadiness {
-        self.arm_decision_readiness(input, input.preview_route_arm_selection)
-    }
-
-    fn passive_early_decision_readiness(
-        &self,
-        input: &OfferIngressPlannerInput,
-    ) -> OfferEarlyDecisionReadiness {
-        let Some(token) = input.preview_route_arm_selection else {
-            return self.arm_decision_readiness(input, None);
-        };
-        let decision = match self.arm_recv_evidence(input, token.arm().as_u8()) {
-            OfferArmRecvEvidence::Recvless => Some(token),
-            OfferArmRecvEvidence::HasRecv => None,
-        };
-        self.arm_decision_readiness(input, decision)
-    }
-
-    fn arm_decision_readiness(
-        &self,
-        input: &OfferIngressPlannerInput,
-        decision: Option<RouteArmToken>,
-    ) -> OfferEarlyDecisionReadiness {
-        OfferEarlyDecisionReadiness::from_arm_evidence(
-            decision.map(|token| self.arm_recv_evidence(input, token.arm().as_u8())),
-        )
     }
 
     fn arm_recv_evidence(&self, input: &OfferIngressPlannerInput, arm: u8) -> OfferArmRecvEvidence {

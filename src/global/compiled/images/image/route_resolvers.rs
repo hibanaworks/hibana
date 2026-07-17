@@ -301,15 +301,12 @@ impl CompiledProgramRef {
     }
 
     #[inline(always)]
-    pub(crate) fn route_resolver_scope_at_row(&self, row: usize) -> Option<ScopeId> {
-        Some(self.route_resolver_row_at(row)?.scope)
-    }
-
-    #[inline(always)]
-    pub(crate) fn route_resolver_id_at_row(&self, row: usize) -> Option<u16> {
-        self.route_resolver_row_at(row)?
-            .resolver()
-            .map(DynamicRouteResolver::resolver_id)
+    pub(crate) fn route_resolver_authority_at_row(
+        &self,
+        row: usize,
+    ) -> Option<(ScopeId, Option<DynamicRouteResolver>)> {
+        let authority = self.route_resolver_row_at(row)?;
+        Some((authority.scope, authority.resolver()))
     }
 }
 

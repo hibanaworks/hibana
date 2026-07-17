@@ -115,7 +115,7 @@ impl FrameHeader {
     #[inline]
     pub(crate) const fn from_parts(
         session: SessionId,
-        carrier: u8,
+        lane: u8,
         source_role: u8,
         target_role: u8,
         label: FrameLabel,
@@ -126,7 +126,7 @@ impl FrameHeader {
             session[1],
             session[2],
             session[3],
-            carrier,
+            lane,
             source_role,
             target_role,
             label.raw(),
@@ -174,7 +174,7 @@ pub(crate) enum IngressEvidence {
     /// Carrier-observed frame metadata.
     Framed {
         session: SessionId,
-        carrier: u8,
+        lane: u8,
         source: u8,
         target: u8,
         label: FrameLabel,
@@ -186,7 +186,7 @@ impl IngressEvidence {
     pub const fn from_header(header: FrameHeader) -> Self {
         Self::Framed {
             session: header.session(),
-            carrier: header.lane(),
+            lane: header.lane(),
             source: header.source_role(),
             target: header.target_role(),
             label: header.label(),
@@ -199,12 +199,12 @@ impl IngressEvidence {
             Self::Deterministic => None,
             Self::Framed {
                 session,
-                carrier,
+                lane,
                 source,
                 target,
                 label,
             } => Some(FrameHeader::from_parts(
-                session, carrier, source, target, label,
+                session, lane, source, target, label,
             )),
         }
     }
@@ -299,21 +299,22 @@ impl PortOpen {
 /// higher layers.
 ///
 /// # Endpoint enforcement boundary and delivery premise
-/// Every successful [`poll_recv`](Transport::poll_recv) yields one carrier
-/// observation. Hibana checks its session, lane, roles, frame label, and exact
-/// descriptor occurrence before commit but cannot authenticate carrier identity. An
-/// unexpected or repeated observation names an enabled event or fails closed; it is
-/// never normalized into progress. A successful `poll_send` does not prove delivery.
+/// A framed [`poll_recv`](Transport::poll_recv) yields one carrier observation.
+/// Hibana checks its session, lane, roles, frame label, and exact
+/// descriptor occurrence before commit but cannot authenticate carrier identity.
+/// A deterministic result has no header and is accepted only when its lane-bound
+/// Rx plus the requested label and schema identify one enabled descriptor receive.
+/// Unexpected, repeated, missing, or ambiguous evidence fails closed; it is
+/// never normalized into progress; successful `poll_send` does not prove delivery.
 /// Global fidelity and progress additionally assume affine delivery: accepted
 /// observations are bound to the mapped peer/direction, FIFO without unsolicited
 /// replay, and eventually arrive or end in terminal closure. Otherwise the
 /// protocol must make loss, retry, and freshness explicit. Exact local safety remains,
 /// but global theorems require that premise; `requeue` never creates a commit.
-/// A terminal carrier fault may abandon sends that were accepted locally but
-/// never exposed to the receiver. Those frames must not appear after closure or
-/// in another transport generation. A reused `SessionId` therefore needs fresh
-/// carrier-owned receive state. The lifetime of a fresh transport instance can
-/// provide that generation. Address migration or identifier rotation within the
+/// A terminal fault may abandon locally accepted sends not yet exposed to the
+/// receiver. Such frames must not appear after closure or in another generation.
+/// Reusing `SessionId` requires fresh carrier-owned receive state. A fresh
+/// transport instance provides it. Address migration or identifier rotation within the
 /// same instance preserves it; a fresh instance begins a new generation.
 ///
 /// This trait neither receives nor negotiates compiled protocol images. Initial
@@ -323,7 +324,6 @@ impl PortOpen {
 /// implement this trait. Replayable early data may be exposed only after the
 /// carrier or application profile has made it safe for Hibana's no-replay
 /// contract; otherwise it must be rejected or delayed.
-///
 /// The strong affine-delivery profile also requires observable peer closure:
 /// after accepted FIFO frames drain, a parked or later
 /// [`poll_recv`](Transport::poll_recv) must wake and return

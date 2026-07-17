@@ -1,7 +1,6 @@
 use super::{
     FrontierObservationSlot, MAX_STATES, OfferEntryAdmission, OfferEntryKey,
-    OfferEntryObservedState, cached_frontier_observation_slots_len, checked_state_index,
-    state_index_to_usize,
+    OfferEntryObservedState, cached_frontier_observation_slots_len, state_index_to_usize,
 };
 
 mod buffer;
@@ -40,17 +39,17 @@ impl ActiveEntrySlot {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ActiveEntrySet {
-    slots: EntryView<ActiveEntrySlot>,
+pub(crate) struct ActiveEntrySet<'a> {
+    slots: EntryView<'a, ActiveEntrySlot>,
 }
 
-impl ActiveEntrySet {
+impl ActiveEntrySet<'_> {
     pub(crate) const EMPTY: Self = Self {
-        slots: EntryView::EMPTY,
+        slots: EntryView::empty(),
     };
 
     #[inline]
-    pub(crate) const unsafe fn from_parts(slots: *const ActiveEntrySlot, capacity: usize) -> Self {
+    pub(crate) unsafe fn from_parts(slots: *const ActiveEntrySlot, capacity: usize) -> Self {
         Self {
             /* SAFETY: caller owns the active-entry resident span and keeps it
             initialized and immutable while this read-only view is used. */
@@ -84,17 +83,15 @@ impl ActiveEntrySet {
     }
 }
 
-pub(crate) struct ActiveEntrySetBuilder {
-    slots: EntryBuffer<ActiveEntrySlot>,
+pub(crate) struct ActiveEntrySetBuilder<'a> {
+    slots: EntryBuffer<'a, ActiveEntrySlot>,
 }
 
-impl ActiveEntrySetBuilder {
+impl<'a> ActiveEntrySetBuilder<'a> {
     #[inline]
-    pub(crate) const unsafe fn from_parts(slots: *mut ActiveEntrySlot, capacity: usize) -> Self {
+    pub(crate) fn from_slice(slots: &'a mut [ActiveEntrySlot]) -> Self {
         Self {
-            /* SAFETY: caller grants this builder exclusive access to the
-            active-entry span until `seal` consumes the mutation capability. */
-            slots: unsafe { EntryBuffer::from_parts(slots, capacity) },
+            slots: EntryBuffer::from_slice(slots),
         }
     }
 
@@ -154,7 +151,7 @@ impl ActiveEntrySetBuilder {
     }
 
     #[inline]
-    pub(crate) const fn seal(self) -> ActiveEntrySet {
+    pub(crate) const fn seal(self) -> ActiveEntrySet<'a> {
         ActiveEntrySet {
             slots: self.slots.into_view(),
         }
@@ -162,28 +159,14 @@ impl ActiveEntrySetBuilder {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ObservedEntrySet {
-    slots: EntryView<FrontierObservationSlot>,
+pub(crate) struct ObservedEntrySet<'a> {
+    slots: EntryView<'a, FrontierObservationSlot>,
 }
 
-impl ObservedEntrySet {
+impl ObservedEntrySet<'_> {
     #[inline]
     pub(crate) fn len(&self) -> usize {
         cached_frontier_observation_slots_len(self.slots.as_slice())
-    }
-
-    #[inline]
-    pub(crate) fn slot_for_entry(&self, entry_idx: usize) -> Option<usize> {
-        let entry = checked_state_index(entry_idx)?;
-        let len = self.len();
-        let mut slot_idx = 0usize;
-        while slot_idx < len {
-            if self.slots[slot_idx].entry == entry {
-                return Some(slot_idx);
-            }
-            slot_idx += 1;
-        }
-        None
     }
 
     #[inline]
@@ -236,20 +219,15 @@ impl ObservedEntrySet {
     }
 }
 
-pub(crate) struct ObservedEntrySetBuilder {
-    slots: EntryBuffer<FrontierObservationSlot>,
+pub(crate) struct ObservedEntrySetBuilder<'a> {
+    slots: EntryBuffer<'a, FrontierObservationSlot>,
 }
 
-impl ObservedEntrySetBuilder {
+impl<'a> ObservedEntrySetBuilder<'a> {
     #[inline]
-    pub(crate) const unsafe fn from_parts(
-        slots: *mut FrontierObservationSlot,
-        capacity: usize,
-    ) -> Self {
+    pub(crate) fn from_slice(slots: &'a mut [FrontierObservationSlot]) -> Self {
         Self {
-            /* SAFETY: caller grants this builder exclusive access to the
-            observation span until `seal` consumes the mutation capability. */
-            slots: unsafe { EntryBuffer::from_parts(slots, capacity) },
+            slots: EntryBuffer::from_slice(slots),
         }
     }
 
@@ -291,7 +269,7 @@ impl ObservedEntrySetBuilder {
     }
 
     #[inline]
-    pub(crate) const fn seal(self) -> ObservedEntrySet {
+    pub(crate) const fn seal(self) -> ObservedEntrySet<'a> {
         ObservedEntrySet {
             slots: self.slots.into_view(),
         }

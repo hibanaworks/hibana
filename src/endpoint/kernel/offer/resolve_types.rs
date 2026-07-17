@@ -43,7 +43,7 @@ impl ResolvePendingState {
 
 #[derive(Clone, Copy, Debug)]
 pub(in crate::endpoint::kernel) enum RouteArmCommitEvidence {
-    CachedOrDemux,
+    Resolver,
     PollFrame,
 }
 

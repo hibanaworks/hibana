@@ -440,7 +440,7 @@ check_absent \
   src/endpoint/kernel/core.rs src/endpoint/kernel/offer.rs
 
 check_absent \
-  "standard slice traits|EffStruct slices|EffStruct slice via standard slice traits" \
+  "standard slice traits|flat effect slices|effect slice via standard slice traits" \
   "EffList docs must not describe the forbidden flat slice surface" \
   src/global/const_dsl.rs
 

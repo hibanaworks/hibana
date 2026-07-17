@@ -408,10 +408,9 @@ where
         &mut self,
         idx: usize,
     ) -> Result<(), CursorInvariantError> {
-        if idx > u16::MAX as usize {
-            return Err(CursorInvariantError::INVARIANT);
-        }
-        let delta = CommitDelta::cursor_only(StateIndex::from_usize(idx));
+        let cursor_after =
+            StateIndex::checked_from_usize(idx).ok_or(CursorInvariantError::INVARIANT)?;
+        let delta = CommitDelta::cursor_only(cursor_after);
         let delta = self.prepare_commit_delta(delta)?;
         self.commit_prepared_delta(delta);
         Ok(())

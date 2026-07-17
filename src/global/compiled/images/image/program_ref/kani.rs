@@ -1,6 +1,6 @@
 use super::{CompiledProgramRef, PackedProgramAtomFields, ProgramAtomRow};
 use crate::global::compiled::images::image::blob_storage::{
-    ProgramImageBytes, scope_marker_identity_tag,
+    DescriptorScopeEvent, ProgramImageBytes, erase_scope_event, scope_marker_identity_tag,
 };
 use crate::global::compiled::images::image::columns::{
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
@@ -143,15 +143,15 @@ fn program_image_constructor_rejects_undersized_storage() {
 }
 
 #[kani::proof]
-fn scope_marker_identity_tag_is_exact_and_injective() {
+fn descriptor_scope_marker_tag_is_exact_and_injective() {
     let left_event_raw = kani::any::<u8>() % 3;
     let right_event_raw = kani::any::<u8>() % 3;
     let left_reentry_raw = kani::any::<u8>() % 2;
     let right_reentry_raw = kani::any::<u8>() % 2;
     let event = |raw| match raw {
-        0 => ScopeEvent::Enter,
-        1 => ScopeEvent::Split,
-        2 => ScopeEvent::Exit,
+        0 => DescriptorScopeEvent::Enter,
+        1 => DescriptorScopeEvent::Split,
+        2 => DescriptorScopeEvent::Exit,
         _ => crate::invariant(),
     };
     let reentry = |raw| match raw {
@@ -168,6 +168,31 @@ fn scope_marker_identity_tag_is_exact_and_injective() {
     assert!(
         (left == right)
             == (left_event_raw == right_event_raw && left_reentry_raw == right_reentry_raw)
+    );
+}
+
+#[kani::proof]
+fn proof_only_scope_entry_metadata_is_erased_from_descriptor_tags() {
+    let reentry = if kani::any::<bool>() {
+        ReentryMark::SinglePass
+    } else {
+        ReentryMark::Reentrant
+    };
+    let expected = scope_marker_identity_tag(erase_scope_event(ScopeEvent::roll_enter()), reentry);
+
+    assert!(
+        scope_marker_identity_tag(erase_scope_event(ScopeEvent::route_enter(2)), reentry)
+            == expected
+    );
+    assert!(
+        scope_marker_identity_tag(
+            erase_scope_event(ScopeEvent::route_arm_continuation()),
+            reentry,
+        ) == expected
+    );
+    assert!(
+        scope_marker_identity_tag(erase_scope_event(ScopeEvent::parallel_enter(1)), reentry,)
+            == expected
     );
 }
 

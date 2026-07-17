@@ -8,7 +8,7 @@ RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
 EXPECTED_MARKER="hibana Lean generated proof passed traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
-EXPECTED_PRODUCTION_MARKER="hibana Lean production evidence passed transitions=7 operations=6 owners=8 codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
+EXPECTED_PRODUCTION_MARKER="hibana Lean production artifact passed transitions=7 operations=6 owners=8 kernel-refinement=external-premise owner-evidence=external-premise codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
 EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=4 poison=1 generation=1 atomic-failures=4"
 EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof passed states=9 transitions=81"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
@@ -38,20 +38,8 @@ if rg -n 'Mathlib|^[[:space:]]*\[\[require\]\]|^[[:space:]]*git[[:space:]]*=' \
   exit 1
 fi
 
-declared_theorems="$(mktemp "${TMPDIR:-/tmp}/hibana-lean-theorems.XXXXXX")"
-audited_theorems="$(mktemp "${TMPDIR:-/tmp}/hibana-lean-audit.XXXXXX")"
-trap 'rm -f "${declared_theorems}" "${audited_theorems}"' EXIT
-rg --no-filename '^(protected[[:space:]]+)?theorem[[:space:]]+[A-Za-z0-9_.]+' \
-  "${PROOF_DIR}/Hibana" --glob '*.lean' \
-  | sed -E 's/^(protected[[:space:]]+)?theorem[[:space:]]+([A-Za-z0-9_.]+).*/\2/' \
-  | LC_ALL=C sort -u >"${declared_theorems}"
-sed -n 's/^#print axioms Hibana\.\([A-Za-z0-9_.]*\)$/\1/p' \
-  "${PROOF_DIR}/Hibana/AxiomAudit.lean" \
-  | LC_ALL=C sort -u >"${audited_theorems}"
-if ! diff -u "${declared_theorems}" "${audited_theorems}"; then
-  echo "Lean proof gate requires an axiom audit for every exported theorem" >&2
-  exit 1
-fi
+python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" --self-test
+python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" "${PROOF_DIR}"
 
 (
   cd "${PROOF_DIR}"
@@ -65,10 +53,10 @@ axiom_both_count="$(awk '
   /depends on axioms: \[propext,$/ { count += 1 }
   END { print count + 0 }
 ' <<<"${axiom_output}")"
-readonly EXPECTED_AXIOM_BOTH_COUNT=288
-readonly EXPECTED_AXIOM_PROPEXT_COUNT=206
-readonly EXPECTED_AXIOM_FREE_COUNT=70
-readonly EXPECTED_EXPORTED_THEOREM_COUNT=564
+readonly EXPECTED_AXIOM_BOTH_COUNT=343
+readonly EXPECTED_AXIOM_PROPEXT_COUNT=237
+readonly EXPECTED_AXIOM_FREE_COUNT=87
+readonly EXPECTED_EXPORTED_THEOREM_COUNT=667
 if [[ "${axiom_both_count}" != "${EXPECTED_AXIOM_BOTH_COUNT}" ]] \
   || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
   || [[ "$(grep -Fc "native_decide.ax" <<<"${axiom_output}")" != "0" ]] \

@@ -27,10 +27,10 @@ impl Arm {
     #[inline]
     const fn decode_single_ready_mask(mask: u8) -> Option<Option<Self>> {
         match mask {
-            0 | 3 => Some(None),
+            0 => Some(None),
             1 => Some(Some(Self::LEFT)),
             2 => Some(Some(Self::RIGHT)),
-            4..=u8::MAX => None,
+            3..=u8::MAX => None,
         }
     }
 
@@ -133,17 +133,22 @@ mod tests {
         for raw in 0..=u8::MAX {
             assert_eq!(Arm::decode_raw(raw).is_some(), raw <= 1);
             let expected = match raw {
-                0 | 3 => Some(None),
+                0 => Some(None),
                 1 => Some(Some(Arm::LEFT)),
                 2 => Some(Some(Arm::RIGHT)),
-                4..=u8::MAX => None,
+                3..=u8::MAX => None,
             };
             assert_eq!(Arm::decode_single_ready_mask(raw), expected);
         }
         assert_eq!(Arm::from_single_ready_mask(0), None);
         assert_eq!(Arm::from_single_ready_mask(1), Some(Arm::LEFT));
         assert_eq!(Arm::from_single_ready_mask(2), Some(Arm::RIGHT));
-        assert_eq!(Arm::from_single_ready_mask(3), None);
+    }
+
+    #[test]
+    #[should_panic]
+    fn conflicting_ready_mask_fails_closed() {
+        let _ = Arm::from_single_ready_mask(3);
     }
 
     #[test]

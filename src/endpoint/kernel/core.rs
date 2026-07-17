@@ -29,7 +29,10 @@ use crate::{
     observe::core::{TapEvent, emit},
     observe::{events, ids},
     rendezvous::SessionFaultKind,
-    rendezvous::{core::EndpointLeaseId, port::Port},
+    rendezvous::{
+        core::EndpointLeaseId,
+        port::{Port, ScratchLease},
+    },
     session::{
         brand::Owner,
         cluster::error::ClusterError,
@@ -384,26 +387,21 @@ where
     }
 
     #[inline]
-    pub(crate) fn frontier_scratch_view(&self) -> FrontierScratchView {
+    pub(crate) fn frontier_scratch_workspace<'lease>(
+        &self,
+        lease: &'lease mut ScratchLease<'r>,
+    ) -> FrontierScratchWorkspace<'lease> {
         let port = self.port_for_lane(self.primary_lane);
-        let scratch_ptr = lane_port::frontier_scratch_ptr(port);
+        let scratch = lane_port::frontier_scratch(port, lease);
         let layout = self.cursor.frontier_scratch_layout();
-        /* SAFETY: this endpoint operation owns the port scratch lease; the
-        returned non-Copy view is consumed before the operation can yield. */
-        unsafe {
-            frontier_scratch_view_from_storage(
-                scratch_ptr,
-                layout,
-                self.cursor.max_frontier_entries(),
-            )
-        }
+        FrontierScratchWorkspace::from_storage(scratch, layout)
     }
 
     #[inline]
     pub(crate) fn offer_lane_set_for_scope(&self, scope_id: ScopeId) -> LaneSetView<'static> {
         match self.cursor.route_scope_offer_lane_set(scope_id) {
             Some(lanes) => lanes,
-            None => LaneSetView::EMPTY,
+            None => crate::invariant(),
         }
     }
 

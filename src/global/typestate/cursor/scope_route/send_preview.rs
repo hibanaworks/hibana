@@ -275,7 +275,7 @@ impl EventCursor {
         target_label: u8,
         target_schema: u32,
     ) -> SendPreviewError {
-        if let Some(idx) = self.first_pending_step_index(usize::MAX)
+        if let Some(idx) = self.first_pending_step_index()
             && let Some((expected_label, expected_schema)) =
                 self.send_preview_contract_at_index(idx)
         {

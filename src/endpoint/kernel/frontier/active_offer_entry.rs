@@ -1,4 +1,4 @@
-use super::{FrontierKind, LaneOfferState, ScopeId, StateIndex};
+use super::{FrontierKind, LaneOfferState, ScopeId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveOfferEntry {
@@ -34,11 +34,6 @@ impl ActiveOfferEntry {
     #[inline]
     pub(crate) const fn scope(self) -> ScopeId {
         self.representative.scope
-    }
-
-    #[inline]
-    pub(crate) const fn entry(self) -> StateIndex {
-        self.representative.entry
     }
 
     #[inline]

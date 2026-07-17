@@ -1,5 +1,5 @@
 use crate::{
-    eff::{EffAtom, EffStruct},
+    eff::EffAtom,
     global::const_dsl::{
         EffList, ReentryMark, ScopeId, ScopeKind, color_roll_frame_labels, merge_parallel_lanes,
         merge_route_frame_labels,
@@ -73,7 +73,7 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
     const fn emit(&mut self, node: &ProgramSourceNode, route_reentry: ReentryMark) -> u16 {
         match node {
             ProgramSourceNode::Send(atom) => {
-                self.eff.push_event_mut(EffStruct::atom(*atom));
+                self.eff.push_event_mut(*atom);
                 1
             }
             ProgramSourceNode::Seq { left, right } => {
@@ -88,20 +88,17 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
             } => {
                 let scope = self.allocate_scope(ScopeKind::Route);
                 let left_start = self.eff.len();
-                self.eff
-                    .push_scope_enter_reentry_mut(left_start, scope, route_reentry);
                 let left_span = self.emit(left, route_reentry);
                 let right_start = self.eff.len();
-                self.eff
-                    .close_scope_segment_mut(scope, left_start, right_start);
-                self.eff.push_scope_exit_mut(right_start, scope);
-                self.eff
-                    .push_scope_enter_reentry_mut(right_start, scope, route_reentry);
                 let right_span = self.emit(right, route_reentry);
                 let right_end = self.eff.len();
-                self.eff
-                    .close_scope_segment_mut(scope, right_start, right_end);
-                self.eff.push_scope_exit_mut(right_end, scope);
+                self.eff.push_route_scope_mut(
+                    scope,
+                    left_start,
+                    right_start,
+                    right_end,
+                    route_reentry,
+                );
                 merge_route_frame_labels(&mut self.eff, left_start, right_start, right_end);
                 if let SourceRouteResolver::Dynamic(resolver_id) = *resolver {
                     self.eff.push_route_resolver_mut(scope, resolver_id);
@@ -111,16 +108,12 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
             ProgramSourceNode::Parallel { left, right } => {
                 let scope = self.allocate_scope(ScopeKind::Parallel);
                 let left_start = self.eff.len();
-                self.eff
-                    .push_scope_enter_reentry_mut(left_start, scope, ReentryMark::SinglePass);
                 let left_span = self.emit(left, route_reentry);
                 let right_start = self.eff.len();
-                self.eff.push_scope_split_mut(right_start, scope);
                 let right_span = self.emit(right, route_reentry);
                 let right_end = self.eff.len();
                 self.eff
-                    .close_scope_segment_mut(scope, left_start, right_end);
-                self.eff.push_scope_exit_mut(right_end, scope);
+                    .push_parallel_scope_mut(scope, left_start, right_start, right_end);
                 merge_parallel_lanes(
                     &mut self.eff,
                     left_start,
@@ -133,12 +126,9 @@ impl<const CAPACITY: usize> SourceLowering<CAPACITY> {
             ProgramSourceNode::Roll(inner) => {
                 let scope = self.allocate_scope(ScopeKind::Roll);
                 let start = self.eff.len();
-                self.eff
-                    .push_scope_enter_reentry_mut(start, scope, ReentryMark::SinglePass);
                 let lane_span = self.emit(inner, ReentryMark::Reentrant);
                 let end = self.eff.len();
-                self.eff.close_scope_segment_mut(scope, start, end);
-                self.eff.push_scope_exit_mut(end, scope);
+                self.eff.push_roll_scope_mut(scope, start, end);
                 color_roll_frame_labels(&mut self.eff, start, end);
                 lane_span
             }

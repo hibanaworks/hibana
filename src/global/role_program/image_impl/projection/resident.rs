@@ -1,10 +1,7 @@
 use super::parallel_exit_for_enter;
-use crate::{
-    eff::EffKind,
-    global::{
-        const_dsl::{EffList, ScopeEvent, ScopeKind},
-        role_program::PackedLaneRange,
-    },
+use crate::global::{
+    const_dsl::{EffList, ScopeKind},
+    role_program::PackedLaneRange,
 };
 
 struct LocalStepCursor<'a, const E: usize> {
@@ -31,12 +28,9 @@ impl<'a, const E: usize> LocalStepCursor<'a, E> {
             self.eff_list.len()
         };
         while self.eff_index < limit {
-            let node = self.eff_list.node_at(self.eff_index);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == self.role || atom.to == self.role {
-                    self.local_step += 1;
-                }
+            let atom = self.eff_list.atom_at(self.eff_index);
+            if atom.from == self.role || atom.to == self.role {
+                self.local_step += 1;
             }
             self.eff_index += 1;
         }
@@ -104,7 +98,7 @@ impl<'a, const E: usize> ResidentRowCursor<'a, E> {
             let marker_index = self.marker_index;
             let marker = markers.at(marker_index);
             self.marker_index += 1;
-            if !matches!(marker.event, ScopeEvent::Enter)
+            if !marker.event.is_primary_enter()
                 || !matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
             {
                 continue;

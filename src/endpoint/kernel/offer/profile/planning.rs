@@ -40,9 +40,6 @@ impl OfferScopeProfile {
             Self::PassiveDynamic if evidence.dynamic_scope_without_recv() => {
                 OfferPassiveReadiness::DynamicScopeWithoutRecv
             }
-            Self::PassiveDynamic if evidence.ack_materializable() => {
-                OfferPassiveReadiness::DynamicAckMaterializable
-            }
             Self::ControllerIntrinsic
             | Self::ControllerDynamic
             | Self::PassiveIntrinsic

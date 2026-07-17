@@ -4,23 +4,19 @@ impl CompiledProgramImage {
     const fn scan_into<const E: usize>(summary: &mut Self, eff_list: &EffList<E>) {
         let mut scope_count = 0u16;
         let mut max_role = 0u8;
-        let mut has_atom = false;
+        let has_atom = eff_list.len() != 0;
         if eff_list.len() > u16::MAX as usize {
             panic!("choreography exceeds compact event domain");
         }
         summary.program.lowering_facts.eff_count = eff_list.len() as u16;
         let mut idx = 0usize;
         while idx < eff_list.len() {
-            let node = eff_list.node_at(idx);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                has_atom = true;
-                if atom.from > max_role {
-                    max_role = atom.from;
-                }
-                if atom.to > max_role {
-                    max_role = atom.to;
-                }
+            let atom = eff_list.atom_at(idx);
+            if atom.from > max_role {
+                max_role = atom.from;
+            }
+            if atom.to > max_role {
+                max_role = atom.to;
             }
             idx += 1;
         }
@@ -34,7 +30,7 @@ impl CompiledProgramImage {
         while scope_idx < src_scope_markers.len() {
             let marker = src_scope_markers.at(scope_idx);
             match marker.event {
-                ScopeEvent::Enter => {
+                ScopeEvent::Enter(_) => {
                     scope_count = increment_compact_count(scope_count);
                     active_scope_depth = increment_compact_count(active_scope_depth);
                     if active_scope_depth > max_active_scope_depth {
@@ -98,11 +94,7 @@ impl CompiledProgramImage {
 
         summary.program.lowering_facts.scope_count = scope_count;
         summary.program.lowering_facts.max_active_scope_depth = max_active_scope_depth;
-        summary.program.lowering_facts.max_route_commit_count = if max_route_depth == 0 {
-            0
-        } else {
-            increment_compact_count(max_route_depth)
-        };
+        summary.program.lowering_facts.max_route_commit_count = max_route_depth;
         summary.max_role = max_role;
     }
 

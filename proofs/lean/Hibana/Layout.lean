@@ -2,6 +2,33 @@ import Std
 
 namespace Hibana
 
+def completedEventWordIndex (step : Nat) : Nat := step / 32
+
+def completedEventBitIndex (step : Nat) : Nat := step % 32
+
+def completedEventWordCount (eventCount : Nat) : Nat :=
+  (eventCount + 31) / 32
+
+/-- The compact completion-bit locator loses no event identity. -/
+theorem completed_event_word_and_bit_reconstruct_step (step : Nat) :
+    completedEventWordIndex step * 32 + completedEventBitIndex step = step := by
+  unfold completedEventWordIndex completedEventBitIndex
+  omega
+
+/-- The descriptor-derived completion bitmap covers every admitted local event. -/
+theorem completed_event_word_count_covers_events (eventCount : Nat) :
+    eventCount <= completedEventWordCount eventCount * 32 := by
+  unfold completedEventWordCount
+  omega
+
+/-- Every admitted event selects an allocated completion word. -/
+theorem completed_event_word_index_in_bounds
+    {step eventCount : Nat}
+    (within : step < eventCount) :
+    completedEventWordIndex step < completedEventWordCount eventCount := by
+  unfold completedEventWordIndex completedEventWordCount
+  omega
+
 inductive SlabRegionKind where
   | resident
   | endpoint

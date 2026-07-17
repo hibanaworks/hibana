@@ -44,6 +44,18 @@ pub(crate) use access_state::{EndpointOperationLease, RendezvousAccessState};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct EndpointLeaseId(u16);
 
+impl EndpointLeaseId {
+    #[inline]
+    pub(in crate::rendezvous::core) const fn slot_count_is_representable(
+        slot_count: usize,
+    ) -> bool {
+        match slot_count.checked_sub(1) {
+            None => true,
+            Some(last_slot) => last_slot <= u16::MAX as usize,
+        }
+    }
+}
+
 impl From<u8> for EndpointLeaseId {
     #[inline]
     fn from(value: u8) -> Self {
@@ -215,7 +227,7 @@ impl EndpointLeaseRecord {
             crate::invariant();
         }
         let slots = storage.bytes() / slot_bytes;
-        if u16::try_from(slots).is_err() {
+        if !EndpointLeaseId::slot_count_is_representable(slots) {
             crate::invariant();
         }
         slots

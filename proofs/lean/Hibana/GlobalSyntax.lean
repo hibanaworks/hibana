@@ -2,6 +2,22 @@ import Hibana.Syntax
 
 namespace Hibana
 
+/-- Fail-closed resolution shared by all finite semantic candidate sets. Empty
+and ambiguous sets are both rejected; only a singleton carries authority. -/
+def resolveUnique? {α : Type} : List α → Option α
+  | [value] => some value
+  | [] | _ :: _ :: _ => none
+
+theorem resolveUnique?_eq_some_iff
+    {α : Type} {values : List α} {value : α} :
+    resolveUnique? values = some value ↔ values = [value] := by
+  cases values with
+  | nil => simp [resolveUnique?]
+  | cons head tail =>
+      cases tail with
+      | nil => simp [resolveUnique?]
+      | cons next rest => simp [resolveUnique?]
+
 /-- One globally unique communication occurrence. Its index in
 `Choreo.globalEvents` is the protocol event identity. -/
 structure GlobalEvent where
@@ -137,8 +153,10 @@ def maximumParallelLaneReuse
     (left right : List CompiledOccurrence)
     (leftSpan rightSpan : Nat) : List LaneRemap :=
   (List.range rightSpan).foldl (fun remap rightLane =>
-    (augmentParallelLane left right leftSpan rightLane remap []
-      (leftSpan + 1)).remap?.getD remap) []
+    match (augmentParallelLane left right leftSpan rightLane remap []
+      (leftSpan + 1)).remap? with
+    | some extended => extended
+    | none => remap) []
 
 def parallelLaneRemap
     (left right : List CompiledOccurrence)
@@ -213,7 +231,9 @@ def routeFrameLabelRemap
         entry.sender == occurrence.sender &&
           entry.receiver == occurrence.receiver &&
           entry.lane == occurrence.lane).map FrameLabelRemap.newLabel
-      let selected := (firstAvailableFrameLabel (usedLeft ++ usedRight)).getD 256
+      let selected := match firstAvailableFrameLabel (usedLeft ++ usedRight) with
+        | some label => label
+        | none => 256
       remap ++ [{
         sender := occurrence.sender
         receiver := occurrence.receiver
@@ -277,28 +297,34 @@ def recolorRollOccurrencesFrom
       List CompiledOccurrence
   | _, _, [] => []
   | classes, index, occurrence :: rest =>
-      let conflicts := (conflictRows[index]?).getD []
       if occurrence.sender == occurrence.receiver then
         occurrence :: recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
       else
-        match classes.find? (fun entry => entry.matches occurrence conflicts) with
-        | some entry =>
-            { occurrence with frameLabel := entry.frameLabel } ::
-              recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+        match conflictRows[index]? with
         | none =>
-            let used := (classes.filter fun entry =>
-              entry.sameInboundKey occurrence).map RollFrameLabelClass.frameLabel
-            let selected := (firstAvailableFrameLabel used).getD 256
-            let nextClass : RollFrameLabelClass := {
-              sender := occurrence.sender
-              receiver := occurrence.receiver
-              lane := occurrence.lane
-              conflicts
-              frameLabel := selected
-            }
-            { occurrence with frameLabel := selected } ::
-              recolorRollOccurrencesFrom conflictRows
-                (classes ++ [nextClass]) (index + 1) rest
+            { occurrence with frameLabel := 256 } ::
+              recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+        | some conflicts =>
+            match classes.find? (fun entry => entry.matches occurrence conflicts) with
+            | some entry =>
+                { occurrence with frameLabel := entry.frameLabel } ::
+                  recolorRollOccurrencesFrom conflictRows classes (index + 1) rest
+            | none =>
+                let used := (classes.filter fun entry =>
+                  entry.sameInboundKey occurrence).map RollFrameLabelClass.frameLabel
+                let selected := match firstAvailableFrameLabel used with
+                  | some label => label
+                  | none => 256
+                let nextClass : RollFrameLabelClass := {
+                  sender := occurrence.sender
+                  receiver := occurrence.receiver
+                  lane := occurrence.lane
+                  conflicts
+                  frameLabel := selected
+                }
+                { occurrence with frameLabel := selected } ::
+                  recolorRollOccurrencesFrom conflictRows
+                    (classes ++ [nextClass]) (index + 1) rest
 
 def recolorRollOccurrences
     (occurrences : List CompiledOccurrence)
@@ -316,6 +342,18 @@ theorem recolor_roll_local_effect_head_is_unchanged
   have sameRole : (occurrence.sender == occurrence.receiver) = true :=
     beq_iff_eq.mpr localEffect
   cases rest <;> simp only [recolorRollOccurrencesFrom, sameRole, if_true]
+
+theorem recolor_roll_missing_conflict_row_is_unencodable
+    (conflictRows : List (List ConflictArm))
+    (classes : List RollFrameLabelClass) (index : Nat)
+    (occurrence : CompiledOccurrence) (rest : List CompiledOccurrence)
+    (remote : occurrence.sender ≠ occurrence.receiver)
+    (missing : conflictRows[index]? = none) :
+    (recolorRollOccurrencesFrom conflictRows classes index (occurrence :: rest)).head? =
+      some { occurrence with frameLabel := 256 } := by
+  have differentRole : (occurrence.sender == occurrence.receiver) = false :=
+    beq_eq_false_iff_ne.mpr remote
+  simp [recolorRollOccurrencesFrom, differentRole, missing]
 
 def recolorRollSource
     (source : CompiledOccurrenceSource)
@@ -380,7 +418,9 @@ theorem recolor_roll_occurrences_from_length
       simp only [recolorRollOccurrencesFrom]
       split
       · simp [tailIH]
-      · split <;> simp [tailIH]
+      · split
+        · simp [tailIH]
+        · split <;> simp [tailIH]
 
 @[simp]
 theorem compiled_occurrence_action_update_frame_label
@@ -402,9 +442,12 @@ theorem recolor_roll_occurrences_from_actions
       split
       · simp only [List.filterMap_cons]
         rw [tailIH]
-      · split <;>
-          simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label] <;>
+      · split
+        · simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label]
           rw [tailIH]
+        · split <;>
+            simp only [List.filterMap_cons, compiled_occurrence_action_update_frame_label] <;>
+            rw [tailIH]
 
 @[simp]
 theorem recolor_roll_source_actions
@@ -594,9 +637,7 @@ def Choreo.firstVisibleSenders : Choreo -> List Nat
   | .roll body => body.firstVisibleSenders
 
 def Choreo.routeController? (left right : Choreo) : Option Nat :=
-  match (left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups with
-  | [controller] => some controller
-  | _ => none
+  resolveUnique? ((left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups)
 
 /-- Controller rows follow the same preorder as route conflict identifiers. -/
 def Choreo.routeControllers : Choreo -> List (Option Nat)

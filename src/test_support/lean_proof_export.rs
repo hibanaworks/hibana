@@ -17,25 +17,50 @@ mod cyclic_roll_certificate;
 mod production_kernel_artifact;
 #[path = "lean_proof_export/projection_certificate.rs"]
 mod projection_certificate;
+#[path = "lean_proof_export/protocol_fixtures.rs"]
+mod protocol_fixtures;
 use choreo_source::LeanChoreo;
 use projection_certificate::{
     progress_certificate_source, projectability_certificate_source, projection_certificate_source,
     verified_protocol_certificate_source,
 };
+use protocol_fixtures::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct ProofKey {
+enum ProofOperationKind {
+    Send,
+    Recv,
+    Local,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ProofOperation {
+    event_id: usize,
+    kind: ProofOperationKind,
+    peer: Option<u8>,
     label: u8,
     schema: u32,
 }
 
-impl ProofKey {
+impl ProofOperation {
     fn lean_source(self) -> String {
-        format!("{{ label := {}, schema := {} }}", self.label, self.schema)
+        let action = match (self.kind, self.peer) {
+            (ProofOperationKind::Send, Some(peer)) => {
+                format!(".send {peer} {} {}", self.label, self.schema)
+            }
+            (ProofOperationKind::Recv, Some(peer)) => {
+                format!(".recv {peer} {} {}", self.label, self.schema)
+            }
+            (ProofOperationKind::Local, None) => {
+                format!(".local {} {}", self.label, self.schema)
+            }
+            _ => panic!("proof operation kind and peer identity diverged"),
+        };
+        format!("{{ eventId := {}, action := {action} }}", self.event_id)
     }
 }
 
-fn lean_key_list(values: &[ProofKey]) -> String {
+fn lean_operation_list(values: &[ProofOperation]) -> String {
     let body = values
         .iter()
         .map(|key| key.lean_source())
@@ -68,7 +93,7 @@ impl ProofArm {
 
 #[derive(Clone, Copy)]
 enum ProofAction {
-    Commit(ProofKey),
+    Commit(ProofOperation),
     Resolve {
         conflict: u16,
         resolver: u16,
@@ -112,61 +137,70 @@ impl ProofAction {
     }
 }
 
-fn frame_source(enabled: &[ProofKey], action: ProofAction) -> String {
+fn frame_source(enabled: &[ProofOperation], action: ProofAction) -> String {
     format!(
         "  {{ enabled := {}, action := {} }}",
-        lean_key_list(enabled),
+        lean_operation_list(enabled),
         action.lean_source()
     )
 }
 
-fn unique_enabled_key(enabled: &[ProofKey], label: u8) -> ProofKey {
-    let mut matches = enabled.iter().copied().filter(|key| key.label == label);
-    let key = matches
+fn unique_enabled_operation(enabled: &[ProofOperation], label: u8) -> ProofOperation {
+    let mut matches = enabled
+        .iter()
+        .copied()
+        .filter(|operation| operation.label == label);
+    let operation = matches
         .next()
-        .expect("Lean proof fixture label must name an enabled message contract");
+        .expect("Lean proof fixture label must name an enabled operation");
     assert!(
-        matches.all(|candidate| candidate == key),
-        "Lean proof fixture label must not hide distinct enabled payload schemas"
+        matches.next().is_none(),
+        "Lean proof fixture label must name exactly one enabled operation"
     );
-    key
+    operation
 }
 
 fn record_trace<const ROLE: u8>(
     program: &impl crate::global::program::Projectable,
     commits: &[u8],
-) -> Vec<(Vec<ProofKey>, ProofAction)> {
+) -> Vec<(Vec<ProofOperation>, ProofAction)> {
     let mut production = ProductionCursorTrace::new::<ROLE>(program);
     let mut frames = Vec::new();
     for &label in commits {
-        let mut enabled = production.enabled_keys();
+        let mut enabled = production.enabled_operations();
         enabled.sort_unstable();
-        let key = unique_enabled_key(&enabled, label);
+        let operation = unique_enabled_operation(&enabled, label);
         assert!(
-            enabled.contains(&key),
+            enabled.contains(&operation),
             "Lean proof fixture attempted disabled label {label}; enabled={enabled:?}"
         );
-        frames.push((enabled, ProofAction::Commit(key)));
-        production.commit_label(label);
+        frames.push((enabled, ProofAction::Commit(operation)));
+        production.commit_proof_operation(operation);
     }
-    let mut enabled = production.enabled_keys();
+    let mut enabled = production.enabled_operations();
     enabled.sort_unstable();
     frames.push((enabled, ProofAction::Stop));
     frames
 }
 
 impl ProductionCursorTrace {
-    fn action_key_at(&self, index: usize) -> Option<ProofKey> {
-        let (eff_index, label) = match self.event_program.node(index).action() {
+    fn proof_operation_at(&self, index: usize) -> Option<ProofOperation> {
+        let (eff_index, kind, peer, label) = match self.event_program.node(index).action() {
             crate::global::typestate::LocalAction::Send {
+                eff_index,
+                peer,
+                label,
+                ..
+            } => (eff_index, ProofOperationKind::Send, Some(peer), label),
+            crate::global::typestate::LocalAction::Recv {
+                eff_index,
+                peer,
+                label,
+                ..
+            } => (eff_index, ProofOperationKind::Recv, Some(peer), label),
+            crate::global::typestate::LocalAction::Local {
                 eff_index, label, ..
-            }
-            | crate::global::typestate::LocalAction::Recv {
-                eff_index, label, ..
-            }
-            | crate::global::typestate::LocalAction::Local {
-                eff_index, label, ..
-            } => (eff_index, label),
+            } => (eff_index, ProofOperationKind::Local, None, label),
             crate::global::typestate::LocalAction::Terminate => return None,
         };
         let atom = self
@@ -174,25 +208,47 @@ impl ProductionCursorTrace {
             .program_ref()
             .atom_at(eff_index.dense_ordinal())
             .expect("production event must retain its global atom");
-        Some(ProofKey {
+        Some(ProofOperation {
+            event_id: index,
+            kind,
+            peer,
             label,
             schema: atom.payload_schema,
         })
     }
 
-    fn enabled_keys(&self) -> Vec<ProofKey> {
-        let mut keys = Vec::new();
+    fn enabled_operations(&self) -> Vec<ProofOperation> {
+        let mut operations = Vec::new();
         let mut index = 0usize;
         while index < self.descriptor.local_len() {
             if self.enabled_commit_at(index).is_some() {
-                keys.push(
-                    self.action_key_at(index)
-                        .expect("enabled production event must have a message key"),
+                operations.push(
+                    self.proof_operation_at(index)
+                        .expect("enabled production event must have an operation identity"),
                 );
             }
             index += 1;
         }
-        keys
+        operations
+    }
+
+    fn commit_proof_operation(&mut self, operation: ProofOperation) {
+        assert_eq!(
+            self.proof_operation_at(operation.event_id),
+            Some(operation),
+            "proof operation must match the exact production event"
+        );
+        let (_, cursor_after, progress_step) = self
+            .enabled_commit_at(operation.event_id)
+            .expect("proof operation must name an enabled production event");
+        let reentry_scope = self.body_reentry_scope_for_step(progress_step);
+        self.clear_body_reentry_scope(reentry_scope);
+        self.record_event_conflict_selection(operation.event_id);
+        self.cursor_mut().set_index(cursor_after);
+        let _ = self
+            .cursor_mut()
+            .advance_lane_to_relocatable_step(progress_step);
+        self.apply_selected_route_completion_cursor();
     }
 
     fn proof_dynamic_scope(&self, conflict: u16, expected_resolver: u16) -> ScopeId {
@@ -236,7 +292,7 @@ impl ProductionCursorTrace {
         }
         self.record_or_replace_selected_arm(scope, arm.index());
         assert!(
-            !self.enabled_keys().is_empty(),
+            !self.enabled_operations().is_empty(),
             "resolver selection must expose a production frontier"
         );
     }
@@ -255,21 +311,21 @@ impl ProductionCursorTrace {
 fn record_production_steps<const ROLE: u8>(
     program: &impl crate::global::program::Projectable,
     steps: &[ProductionStep],
-) -> Vec<(Vec<ProofKey>, ProofAction)> {
+) -> Vec<(Vec<ProofOperation>, ProofAction)> {
     let mut production = ProductionCursorTrace::new::<ROLE>(program);
     let mut frames = Vec::new();
     for (index, &step) in steps.iter().enumerate() {
-        let mut enabled = production.enabled_keys();
+        let mut enabled = production.enabled_operations();
         enabled.sort_unstable();
         match step {
             ProductionStep::Commit(label) => {
-                let key = unique_enabled_key(&enabled, label);
+                let operation = unique_enabled_operation(&enabled, label);
                 assert!(
-                    enabled.contains(&key),
+                    enabled.contains(&operation),
                     "Lean resolver fixture attempted disabled label {label}; enabled={enabled:?}"
                 );
-                frames.push((enabled, ProofAction::Commit(key)));
-                production.commit_label(label);
+                frames.push((enabled, ProofAction::Commit(operation)));
+                production.commit_proof_operation(operation);
             }
             ProductionStep::Resolve {
                 conflict,
@@ -298,7 +354,7 @@ fn record_production_steps<const ROLE: u8>(
             }
         }
     }
-    let mut enabled = production.enabled_keys();
+    let mut enabled = production.enabled_operations();
     enabled.sort_unstable();
     frames.push((enabled, ProofAction::Stop));
     frames
@@ -308,7 +364,7 @@ fn trace_proof_source(
     choreo: &str,
     name: &str,
     role: u8,
-    frames: &[(Vec<ProofKey>, ProofAction)],
+    frames: &[(Vec<ProofOperation>, ProofAction)],
 ) -> String {
     let frame_source = frames
         .iter()
@@ -325,64 +381,6 @@ fn trace_proof_source(
 #[test]
 #[ignore = "host-only Lean proof artifact export"]
 fn export_production_trace_for_lean() {
-    const RESOLVED_ROUTE: u16 = 901;
-    const NESTED_OUTER_RESOLVER: u16 = 902;
-    const NESTED_INNER_RESOLVER: u16 = 903;
-    const ROLLED_RESOLVER: u16 = 904;
-    const REJECTING_RESOLVER: u16 = 905;
-    const FULL_ROLE_DOMAIN_RESOLVER: u16 = u16::MAX;
-
-    type A = g::Send<0, 1, g::Msg<11, u32>>;
-    type B = g::Send<0, 2, g::Msg<12, i32>>;
-    type LeftHead = g::Send<0, 1, g::Msg<21, ()>>;
-    type LeftTail = g::Send<1, 0, g::Msg<22, ()>>;
-    type Left = g::Seq<LeftHead, LeftTail>;
-    type Right = g::Send<0, 1, g::Msg<23, ()>>;
-    type Choice = g::Route<Left, Right>;
-    type Post = g::Send<0, 3, g::Msg<31, ()>>;
-    type Steps = g::Seq<g::Par<A, B>, g::Seq<Choice, Post>>;
-    type RollLeft = g::Send<0, 1, g::Msg<41, ()>>;
-    type RollRight = g::Send<0, 1, g::Msg<42, ()>>;
-    type RollPost = g::Send<0, 1, g::Msg<43, ()>>;
-    type RolledSteps = g::Roll<g::Seq<g::Route<RollLeft, RollRight>, RollPost>>;
-    type NestedHead = g::Send<0, 1, g::Msg<71, ()>>;
-    type NestedInnerTail = g::Send<0, 1, g::Msg<72, ()>>;
-    type NestedOuterTail = g::Send<0, 1, g::Msg<73, ()>>;
-    type NestedRolledSteps =
-        g::Roll<g::Seq<g::Roll<g::Seq<NestedHead, NestedInnerTail>>, NestedOuterTail>>;
-    type ResolvedLeft = g::Send<0, 1, g::Msg<51, u32>>;
-    type ResolvedRight = g::Send<0, 1, g::Msg<51, i32>>;
-    type ResolvedSteps = g::Resolve<g::Route<ResolvedLeft, ResolvedRight>, RESOLVED_ROUTE>;
-    type NestedResolvedPrefix = g::Send<0, 1, g::Msg<61, ()>>;
-    type NestedResolvedLeft = g::Send<0, 1, g::Msg<62, ()>>;
-    type NestedResolvedRight = g::Send<0, 1, g::Msg<63, ()>>;
-    type NestedResolvedTail = g::Send<0, 1, g::Msg<64, ()>>;
-    type NestedResolvedInner =
-        g::Resolve<g::Route<NestedResolvedLeft, NestedResolvedRight>, NESTED_INNER_RESOLVER>;
-    type NestedResolvedOuterLeft = g::Seq<NestedResolvedPrefix, NestedResolvedInner>;
-    type NestedResolvedSteps =
-        g::Resolve<g::Route<NestedResolvedOuterLeft, NestedResolvedTail>, NESTED_OUTER_RESOLVER>;
-    type RolledResolvedLeft = g::Send<0, 1, g::Msg<81, ()>>;
-    type RolledResolvedRight = g::Send<0, 1, g::Msg<82, ()>>;
-    type RolledResolvedSteps =
-        g::Roll<g::Resolve<g::Route<RolledResolvedLeft, RolledResolvedRight>, ROLLED_RESOLVER>>;
-    type RejectLeft = g::Send<0, 1, g::Msg<91, ()>>;
-    type RejectRight = g::Send<0, 1, g::Msg<92, ()>>;
-    type RejectSteps = g::Resolve<g::Route<RejectLeft, RejectRight>, REJECTING_RESOLVER>;
-    type FullRoleDomainLeft = g::Send<254, 255, g::Msg<101, u32>>;
-    type FullRoleDomainRight = g::Send<254, 255, g::Msg<102, u32>>;
-    type FullRoleDomainSteps = g::Roll<
-        g::Resolve<g::Route<FullRoleDomainLeft, FullRoleDomainRight>, FULL_ROLE_DOMAIN_RESOLVER>,
-    >;
-    type MatchingLeftZero = g::Send<0, 1, g::Msg<111, ()>>;
-    type MatchingLeftOne = g::Send<0, 2, g::Msg<112, ()>>;
-    type MatchingRightZero = g::Send<3, 4, g::Msg<113, ()>>;
-    type MatchingRightOne = g::Send<2, 3, g::Msg<114, ()>>;
-    type MatchingSteps = g::Par<
-        g::Par<MatchingLeftZero, MatchingLeftOne>,
-        g::Par<MatchingRightZero, MatchingRightOne>,
-    >;
-
     let program = g::seq(
         g::par(
             g::send::<0, 1, g::Msg<11, u32>>(),

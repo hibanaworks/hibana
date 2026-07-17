@@ -56,9 +56,9 @@ fn high_role_route_participants_are_canonical_sorted_lists() {
     );
     let controller: RoleProgram<255> = project(&program);
     let descriptor = controller.role_image_ref().program;
-    let scope = descriptor
-        .route_resolver_scope_at_row(0)
-        .expect("high-role route scope");
+    let (scope, _) = descriptor
+        .route_resolver_authority_at_row(0)
+        .expect("high-role route authority");
 
     assert_eq!(descriptor.role_count(), 256);
     assert_eq!(descriptor.route_controller_role(scope), u8::MAX);

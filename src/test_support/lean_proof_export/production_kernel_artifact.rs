@@ -153,16 +153,16 @@ example : generatedProductionKernelArtifact.check
     generatedProductionSession 4 generatedChoreo = true := by
   native_decide
 
-example : Hibana.RustKernelRefinement generatedProductionKernelArtifact.kernel
+example : Hibana.PreparedKernelRefinement generatedProductionKernelArtifact.kernel
     generatedProductionSession 4 generatedChoreo :=
-  Hibana.accepted_production_kernel_artifact_refines_rust_kernel (by native_decide)
+  Hibana.accepted_production_kernel_artifact_refines_artifact_kernel (by native_decide)
 
-theorem generated_production_protocol_cases_refine_rust_kernel :
+theorem generated_production_protocol_cases_refine_prepared_kernels :
     forall protocolCase,
       protocolCase ∈ generatedProductionKernelArtifact.protocolCases ->
-        Hibana.RustKernelRefinement protocolCase.kernel protocolCase.session
+        Hibana.PreparedKernelRefinement protocolCase.kernel protocolCase.session
           protocolCase.roleCount protocolCase.choreo :=
-  Hibana.accepted_production_kernel_artifact_refines_protocol_cases
+  Hibana.accepted_production_kernel_artifact_refines_protocol_case_kernels
     (artifact := generatedProductionKernelArtifact)
     (session := generatedProductionSession)
     (roleCount := 4)
@@ -317,10 +317,19 @@ theorem generated_production_closing_carrier :
   Hibana.affine_carrier_refinement_supports_closing_profile
     Hibana.reference_carrier_refines_affine_boundary
 
-def generatedProductionRefinement :
-    Hibana.AssumptionIndexedProductionRefinement .closing True
+def generatedProductionRefinement
+    (kernel : Hibana.PreparedKernelSemantics)
+    (kernelRefinement : Hibana.PreparedKernelRefinement kernel
+      generatedVerifiedProtocolPrimary.session
+      generatedVerifiedProtocolPrimary.roleCount
+      generatedVerifiedProtocolPrimary.choreo)
+    (OwnerVerified : Hibana.ProductionKernelOwner ->
+      Hibana.PreparedKernelSemantics -> Prop)
+    (ownerEvidence : Hibana.ProductionOwnerEvidence OwnerVerified
+      generatedProductionKernelArtifact kernel) :
+    Hibana.AssumptionIndexedProductionRefinement OwnerVerified .closing True
       generatedVerifiedProtocolPrimary generatedVerifiedProtocolFamily
-      generatedProductionDeployment generatedProductionKernelArtifact
+      generatedProductionDeployment generatedProductionKernelArtifact kernel
       generatedStaticDeploymentCertificate :=
   Hibana.assumption_indexed_static_cross_tool_production_refinement
     (by simp [generatedVerifiedProtocolFamily])
@@ -329,9 +338,11 @@ def generatedProductionRefinement :
     (by native_decide)
     rfl
     (by native_decide)
+    kernelRefinement
+    ownerEvidence
     generated_production_closing_carrier
 
-#eval IO.println "hibana Lean production evidence passed transitions=7 operations=6 owners=8 codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
+#eval IO.println "hibana Lean production artifact passed transitions=7 operations=6 owners=8 kernel-refinement=external-premise owner-evidence=external-premise codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
 "#,
     )
 }

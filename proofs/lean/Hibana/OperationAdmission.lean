@@ -2,29 +2,10 @@ import Hibana.Commit
 
 namespace Hibana
 
-/-- Descriptor resolution identifies one exact event before runtime state may
-commit. The action carries direction, peer, label, and payload schema. -/
-structure OperationRequest where
-  eventId : Nat
-  action : LocalAction
-  deriving Repr, DecidableEq
-
 /-- Result of checking one runtime-erased endpoint operation. -/
 inductive AdmissionResult where
   | accepted (state : CommitState)
   | rejected
-
-/-- Resolve only the requested descriptor event, rejecting stale IDs and every
-operation-contract mismatch before commit. -/
-def matchingOperationEvent?
-    (graph : EventGraph) (request : OperationRequest) : Option Event :=
-  match graph.events[request.eventId]? with
-  | none => none
-  | some event =>
-      if event.id = request.eventId ∧ event.action = request.action then
-        some event
-      else
-        none
 
 def admitOperation
     (graph : EventGraph) (state : CommitState) (request : OperationRequest) : AdmissionResult :=
@@ -60,12 +41,15 @@ theorem matching_operation_event_is_exact
   cases eventCase : graph.events[request.eventId]? with
   | none => simp [eventCase] at matched
   | some candidate =>
-      by_cases exact : candidate.id = request.eventId ∧ candidate.action = request.action
-      · have matchedOptions : some candidate = some event := by
-          simpa [eventCase, exact] using matched
-        have candidateEq : candidate = event := Option.some.inj matchedOptions
+      by_cases exact : candidate.operationRequest = request
+      · have candidateEq : candidate = event := by
+          exact Option.some.inj (by simpa [eventCase, exact] using matched)
         subst event
-        exact ⟨rfl, exact⟩
+        have eventId : candidate.id = request.eventId := by
+          exact congrArg OperationRequest.eventId exact
+        have action : candidate.action = request.action := by
+          exact congrArg OperationRequest.action exact
+        exact ⟨rfl, eventId, action⟩
       · simp [eventCase, exact] at matched
 
 theorem admission_rejects_missing_event
@@ -79,14 +63,20 @@ theorem admission_rejects_descriptor_id_mismatch
     (present : graph.events[request.eventId]? = some event)
     (mismatch : event.id ≠ request.eventId) :
     admitOperation graph state request = .rejected := by
-  simp [admitOperation, matchingOperationEvent?, present, mismatch]
+  have requestMismatch : event.operationRequest ≠ request := by
+    intro same
+    exact mismatch (congrArg OperationRequest.eventId same)
+  simp [admitOperation, matchingOperationEvent?, present, requestMismatch]
 
 theorem admission_rejects_action_mismatch
     {graph : EventGraph} {state : CommitState} {request : OperationRequest} {event : Event}
     (present : graph.events[request.eventId]? = some event)
     (mismatch : event.action ≠ request.action) :
     admitOperation graph state request = .rejected := by
-  simp [admitOperation, matchingOperationEvent?, present, mismatch]
+  have requestMismatch : event.operationRequest ≠ request := by
+    intro same
+    exact mismatch (congrArg OperationRequest.action same)
+  simp [admitOperation, matchingOperationEvent?, present, requestMismatch]
 
 theorem admission_rejection_preserves_state
     {graph : EventGraph} {state : CommitState} {request : OperationRequest}

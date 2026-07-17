@@ -94,28 +94,21 @@ impl<const N: usize> RoleImageBytes<N> {
         let mut emitted = [0u8; LANE_BITMAP_BYTES];
         let mut eff_idx = start_eff;
         while eff_idx < end_eff {
-            let node = eff_list.node_at(eff_idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    let lane = atom.lane as usize;
-                    let byte_idx = lane / 8;
-                    let bit = 1u8 << (lane % 8);
-                    if emitted[byte_idx] & bit == 0 {
-                        emitted[byte_idx] |= bit;
-                        self.write_route_arm_lane_step(
-                            column,
-                            row_start + written,
-                            RouteArmLaneStepRow::new(
-                                atom.lane,
-                                local_step,
-                                facts.last_step(atom.lane),
-                            ),
-                        );
-                        written += 1;
-                    }
-                    local_step += 1;
+            let atom = eff_list.atom_at(eff_idx);
+            if atom.from == role || atom.to == role {
+                let lane = atom.lane as usize;
+                let byte_idx = lane / 8;
+                let bit = 1u8 << (lane % 8);
+                if emitted[byte_idx] & bit == 0 {
+                    emitted[byte_idx] |= bit;
+                    self.write_route_arm_lane_step(
+                        column,
+                        row_start + written,
+                        RouteArmLaneStepRow::new(atom.lane, local_step, facts.last_step(atom.lane)),
+                    );
+                    written += 1;
                 }
+                local_step += 1;
             }
             eff_idx += 1;
         }

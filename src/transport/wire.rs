@@ -11,6 +11,17 @@
 
 use core::fmt;
 
+const FIXED_ARRAY_SCHEMA_PREFIX: u32 = 0x0100_0000;
+const FIXED_ARRAY_SCHEMA_MAX_LEN: usize = 0x00ff_ffff;
+
+#[inline(always)]
+pub(crate) const fn fixed_array_schema_id(len: usize) -> u32 {
+    if len > FIXED_ARRAY_SCHEMA_MAX_LEN {
+        crate::invariant();
+    }
+    FIXED_ARRAY_SCHEMA_PREFIX | len as u32
+}
+
 /// Errors surfaced by wire encode/decode helpers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecError {
@@ -221,12 +232,7 @@ impl<const N: usize> WireEncode for [u8; N] {
 }
 
 impl<const N: usize> WirePayload for [u8; N] {
-    const SCHEMA_ID: u32 = {
-        if N > 0x00ff_ffff {
-            crate::invariant();
-        }
-        0x0100_0000 | N as u32
-    };
+    const SCHEMA_ID: u32 = fixed_array_schema_id(N);
 
     type Decoded<'a> = Self;
 
@@ -301,6 +307,18 @@ mod tests {
         assert_eq!(<[u8; 0] as WirePayload>::SCHEMA_ID, 0x0100_0000);
         assert_eq!(<[u8; 4] as WirePayload>::SCHEMA_ID, 0x0100_0004);
         assert_eq!(<[u8; 0x00ff_ffff] as WirePayload>::SCHEMA_ID, 0x01ff_ffff);
+    }
+
+    #[test]
+    fn fixed_array_schema_identity_is_exact_at_its_domain_boundary() {
+        assert_eq!(fixed_array_schema_id(0), 0x0100_0000);
+        assert_eq!(fixed_array_schema_id(0x00ff_ffff), 0x01ff_ffff);
+    }
+
+    #[test]
+    #[should_panic]
+    fn fixed_array_schema_identity_rejects_the_first_colliding_width() {
+        let _ = fixed_array_schema_id(0x0100_0000);
     }
 }
 

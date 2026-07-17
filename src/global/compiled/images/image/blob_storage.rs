@@ -5,7 +5,7 @@ use super::columns::{
 };
 use super::route_resolvers::PackedRouteAuthority;
 use crate::{
-    eff::{EffAtom, EffKind},
+    eff::EffAtom,
     global::compiled::lowering::CompiledProgramImage,
     global::const_dsl::{
         DynamicRouteResolver, EffList, ReentryMark, ScopeEvent, ScopeId, ScopeKind, ScopeMarker,
@@ -13,12 +13,30 @@ use crate::{
     },
 };
 
-/// Injective compact tag for the two non-numeric scope-marker fields.
-pub(super) const fn scope_marker_identity_tag(event: ScopeEvent, reentry: ReentryMark) -> u8 {
+#[derive(Clone, Copy)]
+pub(super) enum DescriptorScopeEvent {
+    Enter,
+    Split,
+    Exit,
+}
+
+pub(super) const fn erase_scope_event(event: ScopeEvent) -> DescriptorScopeEvent {
+    match event {
+        ScopeEvent::Enter(_) => DescriptorScopeEvent::Enter,
+        ScopeEvent::Split => DescriptorScopeEvent::Split,
+        ScopeEvent::Exit => DescriptorScopeEvent::Exit,
+    }
+}
+
+/// Injective compact tag for the two descriptor-resident marker fields.
+pub(super) const fn scope_marker_identity_tag(
+    event: DescriptorScopeEvent,
+    reentry: ReentryMark,
+) -> u8 {
     let event = match event {
-        ScopeEvent::Enter => 0,
-        ScopeEvent::Split => 1,
-        ScopeEvent::Exit => 2,
+        DescriptorScopeEvent::Enter => 0,
+        DescriptorScopeEvent::Split => 1,
+        DescriptorScopeEvent::Exit => 2,
     };
     let reentry = match reentry {
         ReentryMark::SinglePass => 0,
@@ -140,26 +158,24 @@ impl<const N: usize> ProgramImageBytes<N> {
         let mut candidate = None;
         let mut idx = start;
         while idx < end && idx < eff_list.len() {
-            if matches!(eff_list.node_at(idx).kind, EffKind::Atom) {
-                let atom = eff_list.node_at(idx).atom_data();
-                let from = atom.from as u16;
-                if from >= role_floor
-                    && match candidate {
-                        Some(current) => atom.from < current,
-                        None => true,
-                    }
-                {
-                    candidate = Some(atom.from);
+            let atom = eff_list.atom_at(idx);
+            let from = atom.from as u16;
+            if from >= role_floor
+                && match candidate {
+                    Some(current) => atom.from < current,
+                    None => true,
                 }
-                let to = atom.to as u16;
-                if to >= role_floor
-                    && match candidate {
-                        Some(current) => atom.to < current,
-                        None => true,
-                    }
-                {
-                    candidate = Some(atom.to);
+            {
+                candidate = Some(atom.from);
+            }
+            let to = atom.to as u16;
+            if to >= role_floor
+                && match candidate {
+                    Some(current) => atom.to < current,
+                    None => true,
                 }
+            {
+                candidate = Some(atom.to);
             }
             idx += 1;
         }
@@ -203,7 +219,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         self.write_u16(out + 2, marker.scope_id.raw());
         self.write_u8(
             out + 4,
-            scope_marker_identity_tag(marker.event, marker.reentry),
+            scope_marker_identity_tag(erase_scope_event(marker.event), marker.reentry),
         );
     }
 
@@ -216,7 +232,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         if route_enter_marker_idx >= scope_markers.len() {
             crate::invariant();
         }
-        let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
+        let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
             route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
         match first_visible_controller(eff_list, arm0_start, arm0_end)
             .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
@@ -224,19 +240,6 @@ impl<const N: usize> ProgramImageBytes<N> {
         {
             Some(role) => role,
             None => crate::invariant(),
-        }
-    }
-
-    #[inline(always)]
-    const fn atom_at<const E: usize>(eff_list: &EffList<E>, idx: usize) -> Option<EffAtom> {
-        if idx >= eff_list.len() {
-            return None;
-        }
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, EffKind::Atom) {
-            Some(node.atom_data())
-        } else {
-            None
         }
     }
 
@@ -257,10 +260,8 @@ impl<const N: usize> ProgramImageBytes<N> {
         let mut atom_row = 0usize;
         let mut idx = 0usize;
         while idx < eff_list.len() {
-            if let Some(atom) = Self::atom_at(eff_list, idx) {
-                out.write_atom(columns.atoms(), atom_row, idx, atom);
-                atom_row += 1;
-            }
+            out.write_atom(columns.atoms(), atom_row, idx, eff_list.atom_at(idx));
+            atom_row += 1;
             idx += 1;
         }
         if atom_row != columns.atom_count() {
@@ -272,16 +273,12 @@ impl<const N: usize> ProgramImageBytes<N> {
         idx = 0;
         while idx < markers.len() {
             let marker = markers.at(idx);
-            if matches!(marker.event, ScopeEvent::Enter)
+            if marker.event.is_primary_enter()
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
-                if !markers.is_first_enter(idx) {
-                    idx += 1;
-                    continue;
-                }
                 let controller = Self::route_controller_role(eff_list, idx);
                 let resolver = eff_list.resolver_for_scope(marker.scope_id);
-                let (_, left_start, left_end, _, right_start, right_end) =
+                let [(left_start, left_end), (right_start, right_end)] =
                     route_arm_ranges_from_first_enter(markers, idx);
                 let participant_start = participant_row;
                 participant_row = out.write_route_arm_participants(

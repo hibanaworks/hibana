@@ -10,6 +10,11 @@ use crate::{
 
 use crate::endpoint::kernel::lane_port;
 
+#[cfg(kani)]
+mod kani;
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
+
 #[derive(Clone, Copy)]
 pub(super) struct OfferFrontierFacts {
     pub(super) selection: OfferScopeSelection,
@@ -130,11 +135,9 @@ where
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
         let lane_limit = self.cursor.logical_lane_count();
         let lanes = self.transport_lane_set_for_offer(facts);
-        let preferred_lane = self.preferred_transport_lane_for_offer(facts, lane_limit);
-        let mut scan_idx = 0usize;
-        while let Some(lane_idx) =
-            next_preferred_transport_lane(preferred_lane, lanes, lane_limit, &mut scan_idx)
-        {
+        let preferred_lane = self.preferred_transport_lane_for_offer(facts);
+        let mut lanes = OfferLaneScan::new(preferred_lane, lanes, lane_limit);
+        while let Some(lane_idx) = lanes.next() {
             match self.poll_received_framed_transport_frame_for_lane(
                 pending_recv,
                 lane_idx,
@@ -153,57 +156,72 @@ where
         &self,
         facts: OfferFrontierFacts,
     ) -> crate::global::role_program::LaneSetView<'static> {
-        if let Some(token) = self.peek_live_scope_ack(facts.scope_id())
-            && let Some(lanes) =
-                self.route_scope_arm_lane_set_for_scope(facts.scope_id(), token.arm().as_u8())
-        {
-            return lanes;
-        }
         self.offer_lane_set_for_scope(facts.scope_id())
     }
 
-    fn preferred_transport_lane_for_offer(
-        &self,
-        facts: OfferFrontierFacts,
-        lane_limit: usize,
-    ) -> usize {
-        if let Some(token) = self.peek_live_scope_ack(facts.scope_id())
-            && let Some(arm_lanes) =
-                self.route_scope_arm_lane_set_for_scope(facts.scope_id(), token.arm().as_u8())
-            && let Some(lane_idx) = arm_lanes.first_set(lane_limit)
-        {
-            return lane_idx;
-        }
+    fn preferred_transport_lane_for_offer(&self, facts: OfferFrontierFacts) -> usize {
         facts.offer_lane_idx()
     }
 }
 
-#[inline]
-fn next_preferred_transport_lane(
-    preferred_lane_idx: usize,
-    offer_lanes: crate::global::role_program::LaneSetView<'_>,
+#[derive(Clone, Copy)]
+enum OfferLaneScanCursor {
+    Preferred(usize),
+    Remaining(usize),
+    Exhausted,
+}
+
+struct OfferLaneScan<'a> {
+    offer_lanes: crate::global::role_program::LaneSetView<'a>,
     lane_limit: usize,
-    scan_idx: &mut usize,
-) -> Option<usize> {
-    if *scan_idx == 0 {
-        *scan_idx = 1;
-        if preferred_lane_idx < lane_limit && offer_lanes.contains(preferred_lane_idx) {
-            return Some(preferred_lane_idx);
+    preferred_lane: Option<usize>,
+    cursor: OfferLaneScanCursor,
+}
+
+impl<'a> OfferLaneScan<'a> {
+    #[inline]
+    fn new(
+        preferred_lane: usize,
+        offer_lanes: crate::global::role_program::LaneSetView<'a>,
+        lane_limit: usize,
+    ) -> Self {
+        let preferred_lane = if preferred_lane < lane_limit && offer_lanes.contains(preferred_lane)
+        {
+            Some(preferred_lane)
+        } else {
+            None
+        };
+        let cursor = match preferred_lane {
+            Some(lane) => OfferLaneScanCursor::Preferred(lane),
+            None => OfferLaneScanCursor::Remaining(0),
+        };
+        Self {
+            offer_lanes,
+            lane_limit,
+            preferred_lane,
+            cursor,
         }
     }
-    let mut candidate = offer_lanes.first_set(lane_limit);
-    let mut advanced = 1usize;
-    while advanced < *scan_idx {
-        let lane_idx = candidate?;
-        candidate = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        advanced += 1;
-    }
-    while let Some(lane_idx) = candidate {
-        *scan_idx += 1;
-        if lane_idx != preferred_lane_idx {
-            return Some(lane_idx);
+
+    fn next(&mut self) -> Option<usize> {
+        loop {
+            match self.cursor {
+                OfferLaneScanCursor::Preferred(lane) => {
+                    self.cursor = OfferLaneScanCursor::Remaining(0);
+                    return Some(lane);
+                }
+                OfferLaneScanCursor::Remaining(start) => {
+                    let Some(lane) = self.offer_lanes.next_set_from(start, self.lane_limit) else {
+                        self.cursor = OfferLaneScanCursor::Exhausted;
+                        return None;
+                    };
+                    self.cursor = OfferLaneScanCursor::Remaining(lane + 1);
+                    if self.preferred_lane != Some(lane) {
+                        return Some(lane);
+                    }
+                }
+                OfferLaneScanCursor::Exhausted => return None,
+            }
         }
-        candidate = offer_lanes.next_set_from(lane_idx + 1, lane_limit);
     }
-    None
 }

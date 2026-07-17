@@ -92,10 +92,12 @@ impl EventCursor {
         mut selected_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
         let mut selected = None;
-        let mut selected_len = usize::MAX;
         let mut slot = 0usize;
-        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-            if idx >= region.start() && idx < region.end() {
+        while slot < self.machine().route_scope_slot_count() {
+            if let Some(region) = self.machine().route_scope_rows_by_slot(slot)
+                && idx >= region.start()
+                && idx < region.end()
+            {
                 let scope = region.scope();
                 if let Some(arm) = selected_arm_for_scope(scope)
                     && self.selected_route_arm_completes_scope(
@@ -104,16 +106,15 @@ impl EventCursor {
                         &mut selected_arm_for_scope,
                     )
                 {
-                    let len = region.end() - region.start();
-                    if len < selected_len {
-                        selected = Some(region.end());
-                        selected_len = len;
-                    }
+                    selected = Some(match selected {
+                        Some(current) => self.deeper_route_scope(current, scope),
+                        None => scope,
+                    });
                 }
             }
             slot += 1;
         }
-        selected
+        selected.and_then(|scope| self.route_scope_end_by_id(scope))
     }
 
     pub(crate) fn visit_branch_recv_reentry_route_rows(
@@ -177,9 +178,10 @@ impl EventCursor {
                     depth += 1;
                     continue;
                 }
-                return self
-                    .route_scope_arm_recv_index(target_scope, arm)
-                    .or_else(|| self.passive_observer_arm_entry_index(target_scope, arm));
+                return match self.route_scope_arm_recv_index(target_scope, arm) {
+                    Some(recv_index) => Some(recv_index),
+                    None => self.passive_observer_arm_entry_index(target_scope, arm),
+                };
             }
             return self.route_scope_materialization_index(target_scope);
         }
@@ -520,11 +522,11 @@ impl EventCursor {
         if position.is_at_entry() {
             return true;
         }
-        selected_arm
-            .or_else(|| self.route_arm_for_index(scope_id, current_idx))
-            .is_some_and(|arm| {
-                self.route_current_index_allows_selected_arm(scope_id, current_idx, arm)
-            })
+        match selected_arm {
+            Some(arm) => Some(arm),
+            None => self.route_arm_for_index(scope_id, current_idx),
+        }
+        .is_some_and(|arm| self.route_current_index_allows_selected_arm(scope_id, current_idx, arm))
     }
 
     #[inline]
@@ -538,7 +540,11 @@ impl EventCursor {
         if offer_entry.is_absent() || current_idx == state_index_to_usize(offer_entry) {
             return Some(RouteOfferEntryCursorPosition::AtEntry);
         }
-        if let Some(arm) = selected_arm.or_else(|| self.route_arm_for_index(scope_id, current_idx))
+        let effective_arm = match selected_arm {
+            Some(arm) => Some(arm),
+            None => self.route_arm_for_index(scope_id, current_idx),
+        };
+        if let Some(arm) = effective_arm
             && self.route_arm_entry_matches_current(scope_id, current_idx, arm)
         {
             return Some(RouteOfferEntryCursorPosition::AtEntry);
@@ -586,20 +592,6 @@ impl EventCursor {
         } else {
             state_index_to_usize(canonical_entry)
         }
-    }
-
-    #[inline]
-    pub(crate) fn route_scope_present_for_entry(
-        &self,
-        entry_idx: usize,
-        entry_scope: Option<ScopeId>,
-    ) -> bool {
-        if let Some(scope_id) = entry_scope
-            && self.has_route_scope(scope_id)
-        {
-            return true;
-        }
-        self.checked_route_scope_rows_at(entry_idx).is_some()
     }
 
     pub(crate) fn current_route_arm_authorization(

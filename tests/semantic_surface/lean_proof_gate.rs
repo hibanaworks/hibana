@@ -1,4 +1,4 @@
-use super::common::read;
+use super::common::{read, read_all_rs_tree};
 
 #[test]
 fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
@@ -50,11 +50,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let session_composition = read("proofs/lean/Hibana/SessionComposition.lean");
     let session_lifecycle = read("proofs/lean/Hibana/SessionLifecycle.lean");
     let runtime_refinement = read("proofs/lean/Hibana/RuntimeRefinement.lean");
-    let rust_kernel_refinement = read("proofs/lean/Hibana/RustKernelRefinement.lean");
+    let prepared_kernel_refinement = read("proofs/lean/Hibana/PreparedKernelRefinement.lean");
     let protocol_artifact = read("proofs/lean/Hibana/ProtocolArtifact.lean");
     let carrier_refinement = read("proofs/lean/Hibana/CarrierRefinement.lean");
     let mediated_carrier = read("proofs/lean/Hibana/MediatedCarrier.lean");
     let deployment = read("proofs/lean/Hibana/Deployment.lean");
+    let codec_evidence = read("proofs/lean/Hibana/CodecEvidence.lean");
     let allocation = read("proofs/lean/Hibana/Allocation.lean");
     let authority = read("proofs/lean/Hibana/Authority.lean");
     let lowering_seal = read("src/global/compiled/lowering/seal.rs");
@@ -62,16 +63,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let production_cursor_tests = read("src/global/event_program_cursor_tests.rs");
     let route_branch_send = read("tests/route_branch_send.rs");
     let main_theorems = read("proofs/lean/Hibana/MainTheorems.lean");
-    let exporter_root = read("src/test_support/lean_proof_export.rs");
-    let choreo_exporter = read("src/test_support/lean_proof_export/choreo_source.rs");
-    let cyclic_roll_exporter =
-        read("src/test_support/lean_proof_export/cyclic_roll_certificate.rs");
-    let exporter = [
-        exporter_root.as_str(),
-        choreo_exporter.as_str(),
-        cyclic_roll_exporter.as_str(),
-    ]
-    .join("\n");
+    let exporter = read("src/test_support/lean_proof_export.rs")
+        + &read_all_rs_tree("src/test_support/lean_proof_export");
     let projection_exporter = read("src/test_support/lean_proof_export/projection_certificate.rs");
     let runtime_exporter =
         read("src/rendezvous/core/storage_layout/capacity/tests/formal_certificate_export.rs");
@@ -111,11 +104,12 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         session_composition.as_str(),
         session_lifecycle.as_str(),
         runtime_refinement.as_str(),
-        rust_kernel_refinement.as_str(),
+        prepared_kernel_refinement.as_str(),
         protocol_artifact.as_str(),
         carrier_refinement.as_str(),
         mediated_carrier.as_str(),
         deployment.as_str(),
+        codec_evidence.as_str(),
         allocation.as_str(),
         authority.as_str(),
         main_theorems.as_str(),
@@ -123,12 +117,32 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     .join("\n");
 
     assert_eq!(lean_toolchain.trim(), "leanprover/lean4:v4.30.0");
+    for theorem in [
+        "completed_event_word_and_bit_reconstruct_step",
+        "completed_event_word_count_covers_events",
+        "completed_event_word_index_in_bounds",
+    ] {
+        assert!(layout.contains(&format!("theorem {theorem}")));
+    }
+    assert!(layout.contains("def completedEventWordCount (eventCount : Nat) : Nat :="));
+    assert!(
+        codec_evidence.contains("theorem fixed_array_schema_identity_injective")
+            && codec_evidence
+                .contains("theorem fixed_array_schema_identity_excludes_builtin_scalar_domain")
+            && codec_evidence
+                .contains("theorem fixed_array_schema_identity_stays_in_reserved_namespace")
+            && codec_evidence.contains("def fixedArraySchemaCapacity : Nat := 2 ^ 24"),
+        "fixed-array schema identity must stay injective over the exact Rust width domain"
+    );
     assert!(
         descriptor_topology.contains("import Hibana.DescriptorImage")
             && descriptor_refinement_leaf.contains("import Hibana.DescriptorTopology"),
         "descriptor refinement must remain split into byte-image, topology, and certificate layers"
     );
     for theorem in [
+        "select_innermost_scope_equal_range_uses_source_preorder",
+        "canonical_role_event_scope_for_triple_roll_is_innermost",
+        "select_innermost_route_arm_equal_range_uses_source_preorder",
         "active_offer_key_count_is_bounded_by_active_lane_count",
         "active_offer_key_mem_iff_owned",
         "production_frontier_capacity_covers_every_active_offer_key_witness",
@@ -136,15 +150,118 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "active_offer_entry_has_representative_iff_owned",
         "first_owning_lane_preserves_scope",
         "offer_keys_with_same_entry_and_distinct_scope_are_distinct",
+        "exact_current_offer_observations_are_key_exact",
+        "exact_current_offer_observations_ignore_same_entry_foreign_scope",
+        "excluded_exact_current_offer_cannot_authorize_retention",
+        "exact_current_retention_ignores_same_entry_foreign_scope",
+        "alternative_cursor_observations_have_distinct_entry",
+        "same_entry_foreign_scope_is_not_alternative_cursor_candidate",
         "cursor_target_observations_are_entry_exact",
         "erased_cursor_target_observations_preserve_witness_count",
         "erased_cursor_target_observation_has_exact_source",
         "erased_cursor_target_predicate_has_exact_source",
+        "scope_erased_realign_never_authorizes_operation",
+        "exact_current_operation_authority_has_one_exact_source",
+        "repeated_alignment_source_is_rejected",
+        "fresh_alignment_source_is_recorded_exactly",
+        "fresh_alignment_source_preserves_no_duplicates",
         "insert_erased_cursor_observation_mem_iff",
         "insert_erased_cursor_observation_length",
         "insert_erased_cursor_observation_preserves_entry_order",
     ] {
         assert!(descriptor_image.contains(&format!("theorem {theorem}")));
+    }
+    for theorem in [
+        "role_runtime_columns_check_binds_route_arm_columns",
+        "checked_descriptor_binds_route_arm_columns",
+        "role_runtime_columns_check_binds_event_lane_column",
+        "checked_descriptor_binds_event_lane_column",
+        "lane_columns_coherent_binds_active_lane_metadata",
+        "lane_columns_coherent_binds_event_lane_column",
+        "lane_columns_coherent_binds_exact_route_arm_lane_relations",
+        "role_runtime_columns_check_binds_lane_columns",
+        "checked_descriptor_binds_lane_columns",
+        "role_runtime_columns_check_binds_active_lane_metadata",
+        "checked_descriptor_binds_active_lane_metadata",
+        "role_runtime_columns_check_binds_exact_route_arm_lane_relations",
+        "checked_descriptor_binds_exact_route_arm_lane_relations",
+        "checked_descriptor_binds_strict_atom_order",
+        "role_runtime_columns_check_binds_passive_child_columns",
+        "checked_descriptor_binds_passive_child_columns",
+        "role_runtime_columns_check_binds_route_commit_columns",
+        "checked_descriptor_binds_route_commit_columns",
+        "role_runtime_columns_check_binds_exact_route_commit_capacity",
+        "checked_descriptor_binds_exact_route_commit_capacity",
+        "role_runtime_columns_check_binds_roll_columns",
+        "checked_descriptor_binds_roll_columns",
+        "route_commit_capacity_empty_is_exact",
+    ] {
+        assert!(descriptor_topology.contains(&format!("theorem {theorem}")));
+    }
+    assert!(
+        descriptor_topology.contains("def RustDescriptorImage.atomEffIndicesStrict")
+            && descriptor_topology.contains(".Pairwise")
+            && descriptor_topology.contains("fun left right => left < right")
+            && !descriptor_topology.contains("decodedEffIndicesUnique"),
+        "the accepted-byte checker must require the strict atom order used by Rust binary search"
+    );
+    assert!(
+        descriptor_topology.contains("def RustDescriptorImage.eventLaneColumnCoherent")
+            && descriptor_topology.contains("lanes.all (· < image.logicalLaneCount)"),
+        "the accepted-byte checker must reject resident event lanes outside the logical span"
+    );
+    assert!(
+        descriptor_topology.contains("def RustDescriptorImage.activeLaneMetadataCoherent")
+            && descriptor_topology.contains("activeLanesFromBytes")
+            && descriptor_topology.contains("image.activeLaneStart = 0")
+            && descriptor_topology.contains("image.logicalLaneCount = expectedLogical")
+            && descriptor_topology.contains("image.endpointLaneSlotCount = expectedLogical"),
+        "active-lane bitmap must be the only endpoint lane-span metadata authority"
+    );
+    assert!(
+        descriptor_topology.contains("def RustDescriptorImage.laneColumnsCoherent")
+            && descriptor_topology.contains("routeLaneRowsInEmissionOrder")
+            && descriptor_topology.contains("laneBitmapUnionExact")
+            && descriptor_topology.contains("laneBitmapMatchesStepLanes")
+            && descriptor_topology.contains("residentEventLanesMatchActive")
+            && descriptor_topology.contains("optionalRangePartitionFrom"),
+        "accepted lane columns must bind their exact partition, arm steps, and offer union"
+    );
+    assert!(
+        descriptor_topology.contains("def RustDescriptorImage.passiveChildColumnsCoherent")
+            && descriptor_topology.contains("childScope != parentScope")
+            && descriptor_topology.contains("some (some (parentScope, rowIndex % 2))"),
+        "the accepted-byte checker must bind every passive child to its exact parent route arm"
+    );
+    assert!(
+        descriptor_topology.contains("def RustDescriptorImage.routeCommitColumnsCoherent")
+            && descriptor_topology.contains("routeCommitChainMatches")
+            && descriptor_topology.contains("runtimeRouteParentMembership?")
+            && descriptor_topology.contains("((rows.drop start).take length).reverse"),
+        "the accepted-byte checker must validate the exact route-commit parent chain"
+    );
+    for theorem in [
+        "invalid_ready_arm_mask_rejected",
+        "unambiguous_ready_arm_mask_is_accepted",
+        "conflicting_ready_arm_mask_rejected",
+        "first_ready_arm_record_is_exact",
+        "matching_ready_arm_record_is_idempotent",
+        "distinct_ready_arm_record_conflicts",
+        "ready_arm_conflict_is_sticky",
+        "conflicted_ready_evidence_has_no_authority",
+        "matching_live_selection_records_exact_ready_arm",
+        "conflicting_live_selection_and_ready_arm_is_rejected",
+        "matching_live_selection_and_ready_evidence_is_coherent",
+        "conflicting_live_selection_and_ready_evidence_is_incoherent",
+        "conflicted_ready_evidence_rejects_every_selection",
+        "empty_ready_evidence_consumption_is_empty",
+        "matching_ready_evidence_consumption_is_exact",
+        "distinct_ready_evidence_consumption_preserves_selection",
+        "conflicted_ready_evidence_consumption_is_sticky",
+        "ready_evidence_clear_is_exact",
+        "selected_ready_arm_mask_is_exact",
+    ] {
+        assert!(authority.contains(&format!("theorem {theorem}")));
     }
     assert!(
         !lean_sources.lines().any(|line| {
@@ -167,7 +284,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && syntax.contains("| dynamic (resolver : Nat)")
             && syntax.contains("| route (authority : RouteAuthority)")
             && syntax.contains("| roll")
-            && syntax.contains("structure MessageKey")
+            && event_graph.contains("structure OperationRequest")
             && syntax.contains("schema : Nat")
             && syntax.contains("if schema = 0 then some (.local label schema) else none")
             && syntax.contains("theorem local_action_payload_self_send_rejected")
@@ -180,7 +297,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && exporter.contains("g::Msg<12, i32>")
             && exporter.contains("type ResolvedLeft = g::Send<0, 1, g::Msg<51, u32>>;")
             && exporter.contains("type ResolvedRight = g::Send<0, 1, g::Msg<51, i32>>;")
-            && exporter.contains("schema := {}")
+            && exporter.contains("eventId := {}, action := {action}")
             && exporter.contains("generatedRolledChoreo")
             && exporter.contains("&[41, 43, 41, 43]")
             && exporter.contains("&[42, 43, 42, 43]")
@@ -219,9 +336,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && commit.contains("eventBaseState?")
             && commit.contains("eventCommitReady")
             && commit.contains("def applyResolver")
-            && commit.contains("def enabledKeys")
+            && commit.contains("def enabledOperations")
             && commit.contains("def matchingEvent?")
-            && commit.contains("def commitKey")
+            && commit.contains("def commitOperation")
+            && commit.contains("theorem equal_contract_operations_retain_distinct_identity")
+            && commit.contains("theorem equal_contract_wrong_peer_is_rejected")
             && !commit.contains("enabledLabels")
             && !commit.contains("commitLabel")
             && commit.contains("| resolve (conflict resolver : Nat) (arm : RouteArm)")
@@ -236,9 +355,15 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && refinement.contains("route.leftEvents.isEmpty && route.rightEvents.isEmpty")
             && !refinement.contains("laneCount")
             && projection_exporter.contains("production.event_program.program_ref()")
-            && projection_exporter.contains("route_resolver_scope_at_row")
+            && projection_exporter
+                .contains("while slot < production.event_program.route_scope_slot_count()")
+            && !projection_exporter.contains(
+                "while let Some(region) = production.event_program.route_scope_rows_by_slot(slot)"
+            )
+            && projection_exporter.contains("route_resolver_authority_at_row")
             && projection_exporter.contains("let Some((conflict, resolver_id)) = authority_row")
-            && projection_exporter.contains("key.schema")
+            && projection_exporter.contains("proof_operation_at(index)")
+            && projection_exporter.contains("operation.schema")
             && projection_exporter.contains("payload_schema")
             && projection_exporter.contains("progress_certificate_source")
             && projection_exporter.contains("state.decode?")
@@ -276,6 +401,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && descriptor_refinement
                 .contains("productionRouteResolverDynamicScopeBit : Nat := 32768")
             && descriptor_refinement.contains("productionPackedU16Capacity : Nat := 65536")
+            && descriptor_refinement
+                .contains("theorem production_cursor_accepts_terminal_event_count")
+            && descriptor_refinement
+                .contains("theorem optional_packed_u16_index_acceptance_is_exact")
             && descriptor_refinement
                 .contains("productionResolverCapacity : Nat := productionPackedU16Capacity")
             && descriptor_refinement.contains("def decodePackedRouteAuthority?")
@@ -316,12 +445,36 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && descriptor_refinement.contains("image.roleBytes.length = image.roleBlobLen")
             && descriptor_refinement
                 .contains("theorem accepted_descriptor_actions_match_projection")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_exact_route_arm_columns")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_exact_passive_child_columns")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_exact_route_commit_columns")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_event_lane_domain")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_exact_lane_columns")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_exact_route_arm_lane_relations",)
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_exact_active_lane_metadata")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_exact_route_commit_capacity")
+            && descriptor_refinement.contains("theorem accepted_descriptor_binds_roll_columns")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_binds_strict_atom_order")
+            && descriptor_refinement
+                .contains("theorem sparse_route_slot_filter_preserves_later_route")
+            && descriptor_refinement
+                .contains("theorem packed_route_arm_rejects_noncanonical_empty_event_range")
             && descriptor_refinement.contains("theorem exact_descriptor_certificate_sound")
             && descriptor_refinement.contains("theorem descriptor_cursor_step_simulates_admission")
             && descriptor_refinement
                 .contains("theorem accepted_descriptor_cursor_step_refines_projection")
             && descriptor_refinement.contains("def applyDescriptorCursorStep")
             && !descriptor_refinement.contains("| none => True")
+            && !lean_sources.contains(".getD")
             && global_semantics.contains("routeSelection : Nat -> Option RouteArm")
             && global_semantics.contains("structure AdmittedMessage")
             && !lean_sources.contains("WireMessage")
@@ -338,6 +491,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && global_syntax.contains("theorem compiled_occurrences_lane_span_exact")
             && global_syntax.contains("def Choreo.globalEventConflictsFrom")
             && global_syntax.contains("theorem global_event_conflicts_from_length")
+            && global_syntax.contains("theorem recolor_roll_missing_conflict_row_is_unencodable")
+            && !global_syntax.contains(".getD")
             && global_semantics.contains("queue : Nat -> Option AdmittedMessage")
             && global_semantics.contains("lane := event.lane")
             && global_semantics.contains("def GlobalConfig.queueForChannel")
@@ -554,6 +709,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && distributed_semantics.contains("routeEvidenceCompatible")
             && distributed_semantics.contains("localCommitAuthority?")
             && distributed_semantics.contains("distributed_protocol_step_is_role_owned")
+            && distributed_semantics.contains("unresolved_dynamic_conflict_denies_local_knowledge")
+            && distributed_semantics.contains("dynamicAuthorityRegression")
             && distributed_semantics
                 .contains("route_selection_observation_has_exact_queued_evidence")
             && distributed_semantics.contains("role_selection_observation_is_global_stutter")
@@ -710,17 +867,22 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && main_theorems.contains("import Hibana.ElasticRouteHistory")
             && main_theorems.contains("import Hibana.ElasticAdmissionHistory")
             && main_theorems.contains("import Hibana.ElasticErasure")
-            && main_theorems.contains("import Hibana.RustKernelRefinement")
+            && main_theorems.contains("import Hibana.PreparedKernelRefinement")
             && main_theorems.contains("import Hibana.EndToEndRefinement"),
         "asynchronous cancellation, projectability, distributed simulation, runtime refinement, and multi-session isolation must remain gate-owned"
     );
     assert!(
-        operation_admission.contains("structure OperationRequest")
-            && operation_admission.contains("eventId : Nat")
-            && operation_admission.contains("action : LocalAction")
-            && operation_admission.contains("def matchingOperationEvent?")
-            && operation_admission.contains("event.id = request.eventId")
-            && operation_admission.contains("event.action = request.action")
+        event_graph.contains("structure OperationRequest")
+            && event_graph.contains("eventId : Nat")
+            && event_graph.contains("action : LocalAction")
+            && event_graph.contains("def Event.operationRequest")
+            && event_graph.contains("eventId := event.id")
+            && event_graph.contains("action := event.action")
+            && commit.contains("def matchingOperationEvent?")
+            && commit.contains("graph.events[request.eventId]?")
+            && commit.contains("event.operationRequest = request")
+            && !operation_admission.contains("def matchingOperationEvent?")
+            && operation_admission.contains("matchingOperationEvent? graph request")
             && operation_admission.contains("def admitOperation")
             && operation_admission.contains("def applyAdmission")
             && operation_admission.contains("def OperationAdmissible")
@@ -730,7 +892,68 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && operation_admission.contains("process monitorability")
             && operation_admission.contains("theorem admission_rejects_send_schema_mismatch")
             && operation_admission.contains("theorem admission_rejects_send_peer_mismatch")
-            && operation_admission.contains("theorem admission_rejects_wrong_direction"),
+            && operation_admission.contains("theorem admission_rejects_wrong_direction")
+            && descriptor_image.contains("structure DescriptorOperation")
+            && descriptor_image.contains("eventId : Nat")
+            && descriptor_image.contains("lane : Nat")
+            && descriptor_image.contains("frameLabel : Nat")
+            && descriptor_image.contains("structure InboundOperationKey")
+            && descriptor_image.contains("source : Nat")
+            && descriptor_image.contains("def RustDescriptorImage.eventOperation?")
+            && global_syntax.contains("def resolveUnique?")
+            && global_syntax.contains("theorem resolveUnique?_eq_some_iff")
+            && global_syntax.contains(
+                "resolveUnique? ((left.firstVisibleSenders ++ right.firstVisibleSenders).eraseDups)"
+            )
+            && descriptor_participants.contains("resolveUnique? roles")
+            && static_projectability
+                .contains("resolveUnique? (transportAdmissionCandidates choreo frame ids)")
+            && global_syntax.matches("| [value] => some value").count() == 1
+            && event_graph.contains("theorem resolved_route_for_conflict_is_unique")
+            && commit.contains("def selectInnermostReentryRoute?")
+            && commit.contains("theorem max_route_conflict_is_permutation_invariant")
+            && commit.contains("theorem select_innermost_reentry_route_eq_some_iff")
+            && commit.contains("theorem select_innermost_reentry_route_is_permutation_invariant")
+            && commit.contains("theorem select_innermost_reentry_route_pair_is_order_independent")
+            && !commit.contains("graph.routes.find?")
+            && descriptor_image.contains("theorem decoded_event_atom_is_unique")
+            && descriptor_image.contains("def RustDescriptorImage.resolveInboundOperation?")
+            && descriptor_image.contains("resolveUnique? candidates")
+            && descriptor_image.contains("theorem resolved_inbound_operation_is_unique")
+            && descriptor_image
+                .contains("theorem resolved_inbound_operation_matches_complete_enabled_key")
+            && descriptor_image
+                .contains("theorem resolved_inbound_operation_binds_exact_event_columns")
+            && descriptor_image.contains("def DescriptorOperation.enabledCandidate")
+            && descriptor_image.contains("operation.enabledCandidate graph state")
+            && descriptor_image.contains("structure DeterministicInboundKey")
+            && descriptor_image.contains("def DescriptorOperation.matchesDeterministicInbound")
+            && descriptor_image
+                .contains("def RustDescriptorImage.resolveDeterministicInboundOperation?")
+            && descriptor_image
+                .contains("theorem resolved_deterministic_inbound_operation_is_unique")
+            && descriptor_image.contains(
+                "theorem resolved_deterministic_inbound_operation_matches_complete_enabled_key"
+            )
+            && descriptor_image.contains(
+                "theorem resolved_deterministic_inbound_operation_binds_exact_event_columns"
+            )
+            && descriptor_image
+                .matches("def resolveUniqueDescriptorOperation?")
+                .count()
+                == 1
+            && !descriptor_image.contains("atoms.find?")
+            && !event_graph.contains("graph.routes.find?")
+            && descriptor_refinement.contains("def descriptorInboundStep")
+            && descriptor_refinement.contains("def descriptorDeterministicInboundStep")
+            && descriptor_refinement
+                .contains("theorem accepted_descriptor_inbound_step_refines_projection")
+            && descriptor_refinement.contains(
+                "theorem accepted_descriptor_deterministic_inbound_step_refines_projection"
+            )
+            && descriptor_refinement_leaf.contains("image.eventOperation? eventId")
+            && !commit.contains("MessageKey")
+            && !commit.contains("event.action.key"),
         "runtime-erased endpoint operations must be proved against exact descriptor event identity"
     );
     assert!(
@@ -768,6 +991,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("production lease generation must fail closed at exhaustion")
             && runtime_exporter.contains("a poisoned generation must reject new lane attachment")
             && allocation.contains("def prepareLeaseAllocation")
+            && allocation.contains("abbrev endpointLeaseSlotCountRepresentable")
+            && allocation.contains("slotCount <= endpointLeaseSlotDomain")
+            && allocation.contains("def LeaseAllocatorState.WellFormed")
+            && allocation
+                .contains("if endpointLeaseSlotCountRepresentable requiredTableSlots then")
             && allocation.contains("def commitLeaseAllocation")
             && allocation.contains("| initializationRejected")
             && allocation.contains("if publishReady then")
@@ -815,8 +1043,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem local_action_payload_self_send_rejected",
         "theorem local_action_preserves_label",
         "theorem local_action_preserves_schema",
-        "theorem local_action_preserves_key",
         "theorem commit_exact_successor",
+        "theorem equal_contract_operations_retain_distinct_identity",
+        "theorem equal_contract_wrong_peer_is_rejected",
         "theorem resolver_reject_never_selects",
         "theorem resolver_select_never_rejects",
         "theorem resolver_selection_exact_authority",
@@ -847,7 +1076,14 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem failed_lease_allocation_preserves_state",
         "theorem poisoned_generation_aborts_lease_publication",
         "theorem successful_lease_allocation_commits_exact_plan",
+        "theorem endpoint_lease_slot_count_check_is_exact",
+        "theorem endpoint_lease_slot_domain_is_exact",
+        "theorem endpoint_lease_full_slot_count_is_representable",
+        "theorem endpoint_lease_slot_count_above_domain_is_rejected",
+        "theorem endpoint_lease_nonempty_count_has_representable_last_index",
         "theorem prepared_lease_generation_strictly_increases",
+        "theorem prepared_lease_required_slot_count_is_representable",
+        "theorem prepared_lease_capacity_is_representable",
         "theorem prepared_lease_capacity_never_shrinks",
         "theorem lease_allocation_failure_certificate_sound",
         "theorem lease_allocation_abort_certificate_sound",
@@ -884,6 +1120,37 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem canonical_program_source_frame_labels",
         "theorem accepted_descriptor_global_events_bind_canonical_lanes",
         "theorem accepted_descriptor_frame_labels_bind_compiled_coloring",
+        "theorem accepted_descriptor_binds_exact_route_arm_columns",
+        "theorem accepted_descriptor_binds_exact_passive_child_columns",
+        "theorem accepted_descriptor_binds_exact_route_commit_columns",
+        "theorem accepted_descriptor_binds_event_lane_domain",
+        "theorem accepted_descriptor_binds_exact_lane_columns",
+        "theorem accepted_descriptor_binds_exact_route_arm_lane_relations",
+        "theorem accepted_descriptor_binds_exact_active_lane_metadata",
+        "theorem accepted_descriptor_binds_exact_route_commit_capacity",
+        "theorem accepted_descriptor_binds_roll_columns",
+        "theorem accepted_descriptor_binds_strict_atom_order",
+        "theorem decoded_event_operation_binds_exact_columns",
+        "theorem resolveUnique?_eq_some_iff",
+        "theorem resolved_route_for_conflict_is_unique",
+        "theorem max_route_conflict_is_permutation_invariant",
+        "theorem select_innermost_reentry_route_eq_some_iff",
+        "theorem select_innermost_reentry_route_is_permutation_invariant",
+        "theorem select_innermost_reentry_route_pair_is_order_independent",
+        "theorem decoded_event_atom_is_unique",
+        "theorem decoded_operations_member_binds_exact_event_columns",
+        "theorem resolved_inbound_operation_is_unique",
+        "theorem resolved_inbound_operation_matches_complete_enabled_key",
+        "theorem resolved_inbound_operation_binds_exact_event_columns",
+        "theorem resolved_deterministic_inbound_operation_is_unique",
+        "theorem resolved_deterministic_inbound_operation_matches_complete_enabled_key",
+        "theorem resolved_deterministic_inbound_operation_binds_exact_event_columns",
+        "theorem descriptor_inbound_step_simulates_exact_admission",
+        "theorem descriptor_deterministic_inbound_step_simulates_exact_admission",
+        "theorem accepted_descriptor_inbound_step_refines_projection",
+        "theorem accepted_descriptor_deterministic_inbound_step_refines_projection",
+        "theorem sparse_route_slot_filter_preserves_later_route",
+        "theorem packed_route_arm_rejects_noncanonical_empty_event_range",
         "theorem transport_admission_is_unique",
         "theorem transport_admission_from_depends_only_on_observation",
         "theorem transport_admission_checker_sound",
@@ -933,6 +1200,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem distributed_step_weakly_simulates_global",
         "theorem distributed_protocol_step_is_role_owned",
         "theorem distributed_protocol_step_has_local_authority",
+        "theorem unresolved_dynamic_conflict_denies_local_knowledge",
         "theorem route_selection_observation_has_exact_queued_evidence",
         "theorem distributed_successor_abstraction",
         "theorem distributed_roll_step_simulates_global",
@@ -1034,7 +1302,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || session_composition.contains(theorem)
                 || session_lifecycle.contains(theorem)
                 || runtime_refinement.contains(theorem)
-                || rust_kernel_refinement.contains(theorem)
+                || prepared_kernel_refinement.contains(theorem)
                 || protocol_artifact.contains(theorem)
                 || carrier_refinement.contains(theorem)
                 || deployment.contains(theorem)

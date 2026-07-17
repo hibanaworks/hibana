@@ -1,11 +1,4 @@
 use super::{FrontierCandidate, LaneOfferState, OfferEntryObservedState};
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OfferSelectPriority {
-    CurrentOfferEntry,
-    DynamicControllerUnique,
-    ControllerUnique,
-    CandidateUnique,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OfferEntryEvidence {
@@ -13,20 +6,12 @@ pub(crate) struct OfferEntryEvidence {
 }
 
 impl OfferEntryEvidence {
-    pub(crate) const FLAG_ACK: u8 = 1;
-    pub(crate) const FLAG_READY_ARM: u8 = 1 << 1;
-    pub(crate) const FLAG_INGRESS_READY: u8 = 1 << 2;
+    pub(crate) const FLAG_READY_ARM: u8 = 1;
+    pub(crate) const FLAG_INGRESS_READY: u8 = 1 << 1;
 
     #[inline]
     pub(crate) const fn empty() -> Self {
         Self { bits: 0 }
-    }
-
-    #[inline]
-    pub(crate) const fn with_ack(self) -> Self {
-        Self {
-            bits: self.bits | Self::FLAG_ACK,
-        }
     }
 
     #[inline]
@@ -44,11 +29,6 @@ impl OfferEntryEvidence {
     }
 
     #[inline]
-    pub(crate) const fn has_ack(self) -> bool {
-        (self.bits & Self::FLAG_ACK) != 0
-    }
-
-    #[inline]
     pub(crate) const fn has_ready_arm(self) -> bool {
         (self.bits & Self::FLAG_READY_ARM) != 0
     }
@@ -61,7 +41,7 @@ impl OfferEntryEvidence {
 
 #[inline]
 pub(crate) fn candidate_has_progress_evidence(evidence: OfferEntryEvidence) -> bool {
-    evidence.has_ready_arm() || evidence.has_ack() || evidence.ingress_ready()
+    evidence.has_ready_arm() || evidence.ingress_ready()
 }
 
 #[inline]

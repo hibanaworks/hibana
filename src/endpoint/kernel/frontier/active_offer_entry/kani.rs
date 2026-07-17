@@ -1,5 +1,6 @@
-use super::{ActiveOfferEntry, FrontierKind, LaneOfferState, ScopeId, StateIndex};
+use super::{ActiveOfferEntry, FrontierKind, LaneOfferState, ScopeId};
 use crate::global::const_dsl::ScopeKind;
+use crate::global::typestate::StateIndex;
 
 fn frontier_from_raw(raw: u8) -> FrontierKind {
     match raw & 3 {

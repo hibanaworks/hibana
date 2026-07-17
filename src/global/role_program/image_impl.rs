@@ -3,6 +3,7 @@ mod event_rows;
 #[cfg(kani)]
 mod kani;
 mod lane_image;
+mod metadata;
 mod plan;
 mod projection;
 mod ref_access;

@@ -69,8 +69,8 @@ private def resolverRejectAvailableForRoute
 def compactSuccessors
     (graph : EventGraph) (state : CompactCommitState) : List CompactCommitState :=
   let decoded := state.toCommitState
-  let commits := (enabledKeys graph decoded).filterMap fun key =>
-    (commitKey graph decoded key).map (CompactCommitState.fromCommitState graph)
+  let commits := (enabledOperations graph decoded).filterMap fun request =>
+    (commitOperation graph decoded request).map (CompactCommitState.fromCommitState graph)
   let resolutions := graph.routes.flatMap (resolverSuccessorsForRoute graph decoded)
   commits ++ resolutions
 

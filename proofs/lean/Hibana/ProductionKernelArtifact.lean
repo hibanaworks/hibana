@@ -1,4 +1,4 @@
-import Hibana.RustKernelRefinement
+import Hibana.PreparedKernelRefinement
 
 namespace Hibana
 
@@ -278,13 +278,13 @@ def ProductionKernelArtifact.kernel
 the canonical prepare/commit kernel. This single proof is reused by both the
 normalized effect relation and each independently checked protocol operation;
 there is no weaker operation-only simulation path. -/
-theorem production_kernel_transition_relation_refines_rust_kernel
+theorem production_transition_relation_refines_prepared_kernel
     {transitions : List RuntimeTransitionCertificate}
     {session roleCount : Nat}
     {choreo : Choreo}
     (accepted : forall transition, transition ∈ transitions ->
       transition.check session roleCount choreo = true) :
-    RustKernelRefinement (productionTransitionKernel transitions)
+    PreparedKernelRefinement (productionTransitionKernel transitions)
       session roleCount choreo := by
   refine {
     stateCanonical := ?_
@@ -334,72 +334,106 @@ def ProductionProtocolCase.kernel
     (protocolCase : ProductionProtocolCase) : PreparedKernelSemantics :=
   productionTransitionKernel [protocolCase.transition]
 
-theorem accepted_production_protocol_case_refines_rust_kernel
+theorem accepted_production_protocol_case_refines_prepared_kernel
     {protocolCase : ProductionProtocolCase}
     (accepted : protocolCase.check = true) :
-    RustKernelRefinement protocolCase.kernel protocolCase.session
+    PreparedKernelRefinement protocolCase.kernel protocolCase.session
       protocolCase.roleCount protocolCase.choreo := by
   unfold ProductionProtocolCase.kernel
-  apply production_kernel_transition_relation_refines_rust_kernel
+  apply production_transition_relation_refines_prepared_kernel
   intro transition member
   have transitionExact : transition = protocolCase.transition := by
     simpa using member
   subst transition
   simpa [ProductionProtocolCase.check] using accepted
 
-/-- A checked production artifact constructs the existing canonical
-`RustKernelRefinement`; no alternate end-to-end theorem or weaker fallback path
-is introduced. The cross-tool TCB is the Rust exporter plus the Kani/Miri owners
-named by the artifact. -/
-theorem accepted_production_kernel_artifact_refines_rust_kernel
+/-- A checked artifact constructs a canonical finite prepare/commit model for
+its accepted rows. This theorem is translation validation of the artifact
+kernel; it does not identify that model with the production Rust kernel. -/
+theorem accepted_production_kernel_artifact_refines_artifact_kernel
     {artifact : ProductionKernelArtifact}
     {session roleCount : Nat}
     {choreo : Choreo}
     (accepted : artifact.check session roleCount choreo = true) :
-    RustKernelRefinement artifact.kernel session roleCount choreo := by
+    PreparedKernelRefinement artifact.kernel session roleCount choreo := by
   unfold ProductionKernelArtifact.kernel
-  exact production_kernel_transition_relation_refines_rust_kernel fun _ member =>
+  exact production_transition_relation_refines_prepared_kernel fun _ member =>
     production_kernel_artifact_transition_accepted accepted member
 
-theorem accepted_production_kernel_artifact_refines_protocol_cases
+theorem accepted_production_kernel_artifact_refines_protocol_case_kernels
     {artifact : ProductionKernelArtifact}
     {session roleCount : Nat}
     {choreo : Choreo}
     (accepted : artifact.check session roleCount choreo = true) :
     forall protocolCase, protocolCase ∈ artifact.protocolCases ->
-      RustKernelRefinement protocolCase.kernel protocolCase.session
+      PreparedKernelRefinement protocolCase.kernel protocolCase.session
         protocolCase.roleCount protocolCase.choreo := by
   intro protocolCase member
-  exact accepted_production_protocol_case_refines_rust_kernel
+  exact accepted_production_protocol_case_refines_prepared_kernel
     (production_kernel_artifact_protocol_case_accepted accepted member)
+
+/-- Evidence supplied outside Lean for every owner named by the exact artifact.
+`OwnerVerified` is deliberately abstract: a deployment may bind it to pinned
+Kani/Miri results, while Lean never turns an owner name into a proof. -/
+structure ProductionOwnerEvidence
+    (OwnerVerified : ProductionKernelOwner -> PreparedKernelSemantics -> Prop)
+    (artifact : ProductionKernelArtifact)
+    (kernel : PreparedKernelSemantics) : Prop where
+  verified : forall owner, owner ∈ artifact.owners -> OwnerVerified owner kernel
 
 /-- One explicit cross-tool boundary for the production prepare/commit kernel.
 Lean proves the exact finite transition relation and complete owner inventory;
-the named Rust owners are discharged by the separately gated Kani and Miri
-checks. This structure does not claim that Lean parsed or verified Rust source. -/
+the named Rust owners remain an explicit external premise discharged by the
+separately gated Kani and Miri checks. This structure does not claim that Lean
+parsed or verified Rust source. -/
 structure CrossToolProductionRefinement
+    (OwnerVerified : ProductionKernelOwner -> PreparedKernelSemantics -> Prop)
     (artifact : ProductionKernelArtifact)
+    (kernel : PreparedKernelSemantics)
     (session roleCount : Nat)
     (choreo : Choreo) : Prop where
   artifactExact : artifact.Refines session roleCount choreo
-  normalizedKernel :
-    RustKernelRefinement artifact.kernel session roleCount choreo
-  protocolKernels : forall protocolCase,
+  artifactKernel :
+    PreparedKernelRefinement artifact.kernel session roleCount choreo
+  protocolArtifactKernels : forall protocolCase,
     protocolCase ∈ artifact.protocolCases ->
-      RustKernelRefinement protocolCase.kernel protocolCase.session
+      PreparedKernelRefinement protocolCase.kernel protocolCase.session
         protocolCase.roleCount protocolCase.choreo
+  productionKernel : PreparedKernelRefinement kernel session roleCount choreo
+  ownerEvidence : ProductionOwnerEvidence OwnerVerified artifact kernel
 
-theorem accepted_production_kernel_artifact_establishes_cross_tool_refinement
+theorem accepted_production_kernel_artifact_combines_with_external_kernel_refinement
+    {OwnerVerified : ProductionKernelOwner -> PreparedKernelSemantics -> Prop}
     {artifact : ProductionKernelArtifact}
+    {kernel : PreparedKernelSemantics}
     {session roleCount : Nat}
     {choreo : Choreo}
-    (accepted : artifact.check session roleCount choreo = true) :
-    CrossToolProductionRefinement artifact session roleCount choreo := {
+    (accepted : artifact.check session roleCount choreo = true)
+    (kernelRefinement : PreparedKernelRefinement kernel session roleCount choreo)
+    (ownerEvidence : ProductionOwnerEvidence OwnerVerified artifact kernel) :
+    CrossToolProductionRefinement OwnerVerified artifact kernel session roleCount choreo := {
   artifactExact := production_kernel_artifact_sound accepted
-  normalizedKernel :=
-    accepted_production_kernel_artifact_refines_rust_kernel accepted
-  protocolKernels :=
-    accepted_production_kernel_artifact_refines_protocol_cases accepted
+  artifactKernel :=
+    accepted_production_kernel_artifact_refines_artifact_kernel accepted
+  protocolArtifactKernels :=
+    accepted_production_kernel_artifact_refines_protocol_case_kernels accepted
+  productionKernel := kernelRefinement
+  ownerEvidence
 }
+
+theorem cross_tool_refinement_verifies_every_required_owner
+    {OwnerVerified : ProductionKernelOwner -> PreparedKernelSemantics -> Prop}
+    {artifact : ProductionKernelArtifact}
+    {kernel : PreparedKernelSemantics}
+    {session roleCount : Nat}
+    {choreo : Choreo}
+    (refinement : CrossToolProductionRefinement OwnerVerified artifact kernel
+      session roleCount choreo)
+    {owner : ProductionKernelOwner}
+    (required : owner ∈ requiredProductionKernelOwners) :
+    OwnerVerified owner kernel := by
+  apply refinement.ownerEvidence.verified owner
+  rw [refinement.artifactExact.ownersExact]
+  exact required
 
 end Hibana

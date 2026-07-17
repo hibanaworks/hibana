@@ -53,20 +53,29 @@ def productionPackedU16Capacity : Nat := 65536
 
 def productionLocalStepCapacity : Nat := productionPackedU16Capacity
 
+abbrev productionCursorPositionRepresentable (position : Nat) : Prop :=
+  position < productionPackedU16Capacity
+
+/-- The terminal cursor after all compact event identities have been consumed
+is a value, not another event identity, and therefore may use `u16::MAX`. -/
+theorem production_cursor_accepts_terminal_event_count :
+    productionCursorPositionRepresentable productionEventIdentityCapacity := by
+  decide
+
 def productionResolverCapacity : Nat := productionPackedU16Capacity
 
 def productionRouteResolverDynamicScopeBit : Nat := 32768
 
 /-- Capacity facts emitted by a well-formed program image. Every structured
-scope owns at least an enter/exit marker pair, and a route commit chain has at
-most one row beyond the number of active structured scopes. -/
+scope owns at least an enter/exit marker pair, and each route-commit row is
+owned by a distinct active route scope. -/
 structure ProgramCapacityWitness where
   scopeCount : Nat
   scopeMarkerCount : Nat
   routeCommitCount : Nat
   programByteLength : Nat
   scopeMarkersCoverScopes : scopeCount * 2 ≤ scopeMarkerCount
-  routeCommitsCoveredByScopes : routeCommitCount ≤ scopeCount + 1
+  routeCommitsCoveredByScopes : routeCommitCount ≤ scopeCount
   scopeMarkerBytesFit : scopeMarkerCount * productionProgramScopeMarkerStride ≤ programByteLength
   descriptorFits : programByteLength ≤ productionDescriptorByteCapacity
 
@@ -83,7 +92,7 @@ theorem descriptor_byte_ceiling_dominates_scope_and_route_commit_counts
     witness.descriptorFits
   have scopesCovered : witness.scopeCount * 2 ≤ witness.scopeMarkerCount :=
     witness.scopeMarkersCoverScopes
-  have routeCovered : witness.routeCommitCount ≤ witness.scopeCount + 1 :=
+  have routeCovered : witness.routeCommitCount ≤ witness.scopeCount :=
     witness.routeCommitsCoveredByScopes
   constructor
   · dsimp [productionScopeCapacity]
@@ -92,10 +101,10 @@ theorem descriptor_byte_ceiling_dominates_scope_and_route_commit_counts
     omega
 
 def routeCommit257CapacityWitness : ProgramCapacityWitness := {
-  scopeCount := 256
-  scopeMarkerCount := 1024
+  scopeCount := 257
+  scopeMarkerCount := 1028
   routeCommitCount := 257
-  programByteLength := 5120
+  programByteLength := 5140
   scopeMarkersCoverScopes := by decide
   routeCommitsCoveredByScopes := by decide
   scopeMarkerBytesFit := by decide
@@ -107,6 +116,8 @@ theorem route_commit_count_257_fits_the_descriptor_derived_domain :
       routeCommit257CapacityWitness.programByteLength < productionDescriptorByteCapacity := by
   decide
 
+/-- Loop-iteration bound for traversing an acyclic parent chain. The extra one
+is the terminating iteration, not retained route-commit capacity. -/
 def productionRouteTraversalBound (routeScopeCount : Nat) : Nat :=
   routeScopeCount + 1
 
@@ -401,6 +412,93 @@ structure ActiveOfferObservation where
   selectable : Bool
 deriving DecidableEq
 
+/-- The current offer keeps its full owner key. Scope erasure is not involved
+in admission, readiness, progress, or authority for this observation. -/
+def exactCurrentOfferObservations
+    (target : ActiveOfferKey)
+    (observations : List ActiveOfferObservation) : List ActiveOfferObservation :=
+  observations.filter fun observation => decide (observation.key = target)
+
+theorem exact_current_offer_observations_are_key_exact
+    (target : ActiveOfferKey)
+    (observations : List ActiveOfferObservation)
+    (observation : ActiveOfferObservation) :
+    observation ∈ exactCurrentOfferObservations target observations ↔
+      observation ∈ observations ∧ observation.key = target := by
+  simp [exactCurrentOfferObservations]
+
+/-- A foreign scope sharing the current cursor entry cannot affect any exact
+current-scope predicate, regardless of its flags or admission bit. -/
+theorem exact_current_offer_observations_ignore_same_entry_foreign_scope
+    (target : ActiveOfferKey)
+    (foreign : ActiveOfferObservation)
+    (observations : List ActiveOfferObservation)
+    (_sameEntry : foreign.key.entry = target.entry)
+    (scopeNe : foreign.key.scope ≠ target.scope) :
+    exactCurrentOfferObservations target (foreign :: observations) =
+      exactCurrentOfferObservations target observations := by
+  have keyNe : foreign.key ≠ target := by
+    intro keyEq
+    exact scopeNe (congrArg ActiveOfferKey.scope keyEq)
+  simp [exactCurrentOfferObservations, keyNe]
+
+/-- Descriptor-owned current state may remain when there is no active exact
+observation. If an exact observation is present, retention requires that one
+exact witness to be admitted; an excluded witness cannot fall through to the
+descriptor-only retention path. Duplicate exact owners fail closed. -/
+def exactCurrentRetentionAllowed
+    (target : ActiveOfferKey)
+    (observations : List ActiveOfferObservation) : Bool :=
+  match exactCurrentOfferObservations target observations with
+  | [] => true
+  | [observation] => observation.selectable
+  | _ => false
+
+theorem excluded_exact_current_offer_cannot_authorize_retention
+    (target : ActiveOfferKey)
+    (observation : ActiveOfferObservation)
+    (observations : List ActiveOfferObservation)
+    (exactRows : exactCurrentOfferObservations target observations = [observation])
+    (excluded : observation.selectable = false) :
+    exactCurrentRetentionAllowed target observations = false := by
+  simp [exactCurrentRetentionAllowed, exactRows, excluded]
+
+theorem exact_current_retention_ignores_same_entry_foreign_scope
+    (target : ActiveOfferKey)
+    (foreign : ActiveOfferObservation)
+    (observations : List ActiveOfferObservation)
+    (sameEntry : foreign.key.entry = target.entry)
+    (scopeNe : foreign.key.scope ≠ target.scope) :
+    exactCurrentRetentionAllowed target (foreign :: observations) =
+      exactCurrentRetentionAllowed target observations := by
+  unfold exactCurrentRetentionAllowed
+  rw [exact_current_offer_observations_ignore_same_entry_foreign_scope
+    target foreign observations sameEntry scopeNe]
+
+/-- Scope-erased rows are used only to move to a different cursor entry. The
+current entry is authorized exclusively by `exactCurrentOfferObservations`. -/
+def alternativeCursorObservations
+    (current : ActiveOfferKey)
+    (observations : List ActiveOfferObservation) : List ActiveOfferObservation :=
+  observations.filter fun observation =>
+    decide (observation.key.entry ≠ current.entry)
+
+theorem alternative_cursor_observations_have_distinct_entry
+    (current : ActiveOfferKey)
+    (observations : List ActiveOfferObservation)
+    (observation : ActiveOfferObservation) :
+    observation ∈ alternativeCursorObservations current observations ↔
+      observation ∈ observations ∧ observation.key.entry ≠ current.entry := by
+  simp [alternativeCursorObservations]
+
+theorem same_entry_foreign_scope_is_not_alternative_cursor_candidate
+    (current : ActiveOfferKey)
+    (foreign : ActiveOfferObservation)
+    (observations : List ActiveOfferObservation)
+    (sameEntry : foreign.key.entry = current.entry) :
+    foreign ∉ alternativeCursorObservations current (foreign :: observations) := by
+  simp [alternativeCursorObservations, sameEntry]
+
 /-- Scope-specific evidence remains one row per exact witness while alignment
 groups rows that have the same cursor transition target. -/
 def cursorTargetObservations
@@ -449,9 +547,9 @@ theorem erased_cursor_target_observation_has_exact_source
         observation.key.entry = entry ∧ observation.erase = erased := by
   simp [erasedCursorTargetObservations, cursorTargetObservations, and_assoc]
 
-/-- Every predicate used after scope erasure, including conjunctions over
-authority, readiness, and admission, is evaluated on one row with one exact
-scope source. Erasure cannot satisfy a predicate by combining separate rows. -/
+/-- Every predicate evaluated on one scope-erased row still has one exact
+scope source. Group-level cursor scheduling may compare several rows, but the
+result is only a realignment target and never operation authority. -/
 theorem erased_cursor_target_predicate_has_exact_source
     (predicate : ErasedCursorObservation → Prop)
     (entry : Nat)
@@ -466,6 +564,85 @@ theorem erased_cursor_target_predicate_has_exact_source
     (erased_cursor_target_observation_has_exact_source entry observations erased).mp member
   refine ⟨observation, sourceMember, entryExact, sourceExact, ?_⟩
   rwa [sourceExact]
+
+inductive CursorAlignmentDecision where
+  | keepCurrent
+  | realign (entry : Nat)
+deriving DecidableEq
+
+/-- Only the exact-current branch can retain operation authority. A decision
+derived from scope-erased rows can request cursor movement but cannot authorize
+an endpoint operation. -/
+def CursorAlignmentDecision.authorizesOperation : CursorAlignmentDecision → Bool
+  | .keepCurrent => true
+  | .realign _ => false
+
+theorem scope_erased_realign_never_authorizes_operation (entry : Nat) :
+    (CursorAlignmentDecision.realign entry).authorizesOperation = false := by
+  rfl
+
+/-- After any realignment, operation authority is reconstructed from exactly
+one admitted observation whose complete `(scope, entry)` key matches the new
+current owner. Zero, duplicate, or foreign-scope witnesses fail closed. -/
+def exactCurrentOperationAuthorized
+    (target : ActiveOfferKey)
+    (observations : List ActiveOfferObservation) : Bool :=
+  match exactCurrentOfferObservations target observations with
+  | [observation] => observation.selectable
+  | _ => false
+
+theorem exact_current_operation_authority_has_one_exact_source
+    (target : ActiveOfferKey)
+    (observations : List ActiveOfferObservation)
+    (authorized : exactCurrentOperationAuthorized target observations = true) :
+    ∃ observation,
+      exactCurrentOfferObservations target observations = [observation] ∧
+      observation ∈ observations ∧
+      observation.key = target ∧
+      observation.selectable = true := by
+  unfold exactCurrentOperationAuthorized at authorized
+  generalize rowsEq : exactCurrentOfferObservations target observations = rows at authorized
+  cases rows with
+  | nil => simp at authorized
+  | cons observation tail =>
+      cases tail with
+      | nil =>
+          have exactMember : observation ∈ exactCurrentOfferObservations target observations := by
+            rw [rowsEq]
+            simp
+          have source :=
+            (exact_current_offer_observations_are_key_exact
+              target observations observation).mp exactMember
+          exact ⟨observation, rfl, source.1, source.2, authorized⟩
+      | cons second rest => simp at authorized
+
+/-- Production records each alignment source before moving. A repeated source
+therefore denotes a deterministic cursor cycle and is rejected instead of
+recursing or consuming stack. -/
+def recordAlignmentSource (source : Nat) (visited : List Nat) : Option (List Nat) :=
+  if source ∈ visited then none else some (source :: visited)
+
+theorem repeated_alignment_source_is_rejected
+    (source : Nat)
+    (visited : List Nat)
+    (seen : source ∈ visited) :
+    recordAlignmentSource source visited = none := by
+  simp [recordAlignmentSource, seen]
+
+theorem fresh_alignment_source_is_recorded_exactly
+    (source : Nat)
+    (visited : List Nat)
+    (fresh : source ∉ visited) :
+    recordAlignmentSource source visited = some (source :: visited) := by
+  simp [recordAlignmentSource, fresh]
+
+theorem fresh_alignment_source_preserves_no_duplicates
+    (source : Nat)
+    (visited : List Nat)
+    (fresh : source ∉ visited)
+    (unique : visited.Nodup) :
+    (source :: visited).Nodup := by
+  exact List.nodup_cons.mpr ⟨fresh, unique⟩
 
 /-- Proof-side counterpart of production's stable insertion into the erased
 cursor-target observation buffer. Equal entries remain adjacent. -/
@@ -546,6 +723,13 @@ theorem role_event_bytes_dominate_local_step_field :
   decide
 
 def packedU16Absent : Nat := 65535
+
+def encodeOptionalPackedU16Index? (row : Nat) : Option Nat :=
+  if row < packedU16Absent then some row else none
+
+theorem optional_packed_u16_index_acceptance_is_exact (row : Nat) :
+    (encodeOptionalPackedU16Index? row).isSome = true <-> row < packedU16Absent := by
+  simp [encodeOptionalPackedU16Index?]
 
 def packedU32Absent : Nat := 4294967295
 
@@ -663,7 +847,7 @@ def insertScopeMarkerAfterEquals
       else head :: insertScopeMarkerAfterEquals marker tail
 
 /-- Insert with the outer-enter ordering used by
-`EffList::push_scope_marker_outer_enter_reentry_mut`. -/
+`EffList::push_scope_enter_marker_mut`. -/
 def insertScopeMarkerBeforeEquals
     (marker : DecodedScopeMarker) : List DecodedScopeMarker -> List DecodedScopeMarker
   | [] => [marker]
@@ -1052,7 +1236,9 @@ def Choreo.canonicalRoleEffIndices (choreo : Choreo) (role : Nat) : List Nat :=
     if (atom.localAction? role).isSome then some atom.effIndex else none
 
 def Choreo.canonicalFrameLabel (choreo : Choreo) (index : Nat) : Nat :=
-  ((canonicalProgramSource choreo).atoms[index]?).map ProgramAtomBody.frameLabel |>.getD 256
+  match (canonicalProgramSource choreo).atoms[index]? with
+  | some atom => atom.frameLabel
+  | none => 256
 
 def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
   (canonicalProgramSource choreo).atoms.filterMap fun atom =>
@@ -1063,7 +1249,7 @@ def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
 structure ScopeSelection where
   scope : Nat
   start : Nat
-  equalStartSpan : Option Nat
+  stop : Nat
 
 def scopeSegmentEnd
     (markers : List DecodedScopeMarker)
@@ -1076,20 +1262,26 @@ def scopeSegmentEnd
 
 def selectInnermostScope
     (current : Option ScopeSelection)
-    (scope start span : Nat) : Option ScopeSelection :=
+    (scope start stop : Nat) : Option ScopeSelection :=
   match current with
-  | none => some { scope, start, equalStartSpan := none }
+  | none => some { scope, start, stop }
   | some selected =>
       if selected.start < start then
-        some { scope, start, equalStartSpan := none }
-      else if selected.start = start then
-        match selected.equalStartSpan with
-        | none => some { scope, start, equalStartSpan := some span }
-        | some best =>
-            if span < best then some { scope, start, equalStartSpan := some span }
-            else current
+        some { scope, start, stop }
+      else if selected.start = start && stop < selected.stop then
+        some { scope, start, stop }
+      else if selected.start = start && stop = selected.stop &&
+          selected.scope % 8192 < scope % 8192 then
+        some { scope, start, stop }
       else
         current
+
+theorem select_innermost_scope_equal_range_uses_source_preorder
+    (outer inner start stop : Nat)
+    (preorder : outer % 8192 < inner % 8192) :
+    selectInnermostScope (some { scope := outer, start, stop }) inner start stop =
+      some { scope := inner, start, stop } := by
+  simp [selectInnermostScope, preorder]
 
 def canonicalScopeAt
     (markers : List DecodedScopeMarker) (atomCount effIndex : Nat) : Nat :=
@@ -1100,7 +1292,7 @@ def canonicalScopeAt
         if marker.offset ≤ effIndex && marker.tag % 4 = 0 then
           let stop := scopeSegmentEnd markers index atomCount marker
           if effIndex < stop then
-            selectInnermostScope current marker.scope marker.offset (stop - marker.offset)
+            selectInnermostScope current marker.scope marker.offset stop
           else
             current
         else
@@ -1117,6 +1309,13 @@ def Choreo.canonicalRoleEventScopes (choreo : Choreo) (role : Nat) : List Nat :=
       some (canonicalScopeAt markers atoms.length atom.effIndex)
     else
       none
+
+/-- Equal projected event ranges do not collapse nested roll identity: source
+preorder selects the innermost of three erased iteration scopes. -/
+theorem canonical_role_event_scope_for_triple_roll_is_innermost :
+    Choreo.canonicalRoleEventScopes
+        (.roll (.roll (.roll (.send 0 1 203 1)))) 0 = [8194] := by
+  decide
 
 structure RouteArmSelection where
   scope : Nat
@@ -1156,10 +1355,21 @@ def selectInnermostRouteArm
       let candidateSpan := candidate.stop - candidate.start
       let selectedSpan := selected.stop - selected.start
       if candidateSpan < selectedSpan ||
-          (candidateSpan = selectedSpan && selected.start < candidate.start) then
+          (candidateSpan = selectedSpan && selected.start < candidate.start) ||
+          (candidate.start = selected.start && candidate.stop = selected.stop &&
+            selected.scope % 8192 < candidate.scope % 8192) then
         some candidate
       else
         current
+
+theorem select_innermost_route_arm_equal_range_uses_source_preorder
+    (outer inner arm start stop : Nat)
+    (preorder : outer % 8192 < inner % 8192) :
+    selectInnermostRouteArm
+        (some { scope := outer, arm, start, stop })
+        { scope := inner, arm, start, stop } =
+      some { scope := inner, arm, start, stop } := by
+  simp [selectInnermostRouteArm, preorder]
 
 def canonicalRouteArmAt?
     (source : CanonicalProgramSource) (effIndex : Nat) : Option RouteArmSelection :=
@@ -1337,7 +1547,25 @@ def RustDescriptorImage.eventAtom?
     (image : RustDescriptorImage) (eventId : Nat) : Option DecodedProgramAtom := do
   let effIndex ← image.eventEffIndex? eventId
   let atoms ← image.decodeAtoms?
-  atoms.find? fun candidate => candidate.effIndex = effIndex
+  resolveUnique? (atoms.filter fun candidate => candidate.effIndex = effIndex)
+
+theorem decoded_event_atom_is_unique
+    {image : RustDescriptorImage} {eventId : Nat} {atom : DecodedProgramAtom}
+    (decoded : image.eventAtom? eventId = some atom) :
+    ∃ effIndex atoms,
+      image.eventEffIndex? eventId = some effIndex ∧
+      image.decodeAtoms? = some atoms ∧
+      atoms.filter (fun candidate => candidate.effIndex = effIndex) = [atom] := by
+  unfold RustDescriptorImage.eventAtom? at decoded
+  cases effIndexCase : image.eventEffIndex? eventId with
+  | none => simp [effIndexCase] at decoded
+  | some effIndex =>
+      cases atomsCase : image.decodeAtoms? with
+      | none => simp [effIndexCase, atomsCase] at decoded
+      | some atoms =>
+          refine ⟨effIndex, atoms, rfl, rfl, ?_⟩
+          exact resolveUnique?_eq_some_iff.mp
+            (by simpa [effIndexCase, atomsCase] using decoded)
 
 def RustDescriptorImage.eventAction?
     (image : RustDescriptorImage) (eventId : Nat) : Option LocalAction := do
@@ -1345,6 +1573,297 @@ def RustDescriptorImage.eventAction?
   let atom ← image.eventAtom? eventId
   let lane ← image.eventLane? eventId
   if lane = atom.lane then atom.localAction? image.role else none
+
+/-- Complete resident identity of one descriptor operation. `eventId` is the
+local occurrence selected by the cursor; `lane` and `frameLabel` are decoded
+from the exact role image rather than recomputed by the monitor. -/
+structure DescriptorOperation where
+  eventId : Nat
+  lane : Nat
+  frameLabel : Nat
+  action : LocalAction
+  deriving Repr, DecidableEq
+
+def DescriptorOperation.request (operation : DescriptorOperation) : OperationRequest := {
+  eventId := operation.eventId
+  action := operation.action
+}
+
+def RustDescriptorImage.eventOperation?
+    (image : RustDescriptorImage) (eventId : Nat) : Option DescriptorOperation := do
+  let action ← image.eventAction? eventId
+  let lane ← image.eventLane? eventId
+  let frameLabel ← image.eventFrameLabel? eventId
+  pure { eventId, lane, frameLabel, action }
+
+theorem decoded_event_operation_binds_exact_columns
+    {image : RustDescriptorImage} {eventId : Nat}
+    {operation : DescriptorOperation}
+    (decoded : image.eventOperation? eventId = some operation) :
+    operation.eventId = eventId ∧
+      image.eventAction? eventId = some operation.action ∧
+      image.eventLane? eventId = some operation.lane ∧
+      image.eventFrameLabel? eventId = some operation.frameLabel := by
+  unfold RustDescriptorImage.eventOperation? at decoded
+  cases actionCase : image.eventAction? eventId with
+  | none => simp [actionCase] at decoded
+  | some action =>
+      cases laneCase : image.eventLane? eventId with
+      | none => simp [actionCase, laneCase] at decoded
+      | some lane =>
+          cases labelCase : image.eventFrameLabel? eventId with
+          | none => simp [actionCase, laneCase, labelCase] at decoded
+          | some frameLabel =>
+              have exact :
+                  ({ eventId, lane, frameLabel, action } : DescriptorOperation) = operation :=
+                Option.some.inj (by simpa [actionCase, laneCase, labelCase] using decoded)
+              rw [← exact]
+              simp
+
+def RustDescriptorImage.decodeOperations?
+    (image : RustDescriptorImage) : Option (List DescriptorOperation) :=
+  (List.range image.eventCount).mapM image.eventOperation?
+
+private theorem event_operation_mapM_member_binds_exact_event
+    {image : RustDescriptorImage}
+    {indices : List Nat} {operations : List DescriptorOperation}
+    {operation : DescriptorOperation}
+    (decoded : indices.mapM image.eventOperation? = some operations)
+    (member : operation ∈ operations) :
+    image.eventOperation? operation.eventId = some operation := by
+  induction indices generalizing operations with
+  | nil => simp at decoded; subst operations; simp at member
+  | cons index rest ih =>
+      cases headCase : image.eventOperation? index with
+      | none => simp [headCase] at decoded
+      | some head =>
+          cases tailCase : rest.mapM image.eventOperation? with
+          | none => simp [headCase, tailCase] at decoded
+          | some tail =>
+              have exact : operations = head :: tail := by
+                exact (Option.some.inj (by simpa [headCase, tailCase] using decoded)).symm
+              rw [exact] at member
+              simp only [List.mem_cons] at member
+              cases member with
+              | inl same =>
+                  rw [same]
+                  have eventIdExact :=
+                    (decoded_event_operation_binds_exact_columns headCase).1
+                  simpa [eventIdExact] using headCase
+              | inr tailMember => exact ih tailCase tailMember
+
+theorem decoded_operations_member_binds_exact_event_columns
+    {image : RustDescriptorImage} {operations : List DescriptorOperation}
+    {operation : DescriptorOperation}
+    (decoded : image.decodeOperations? = some operations)
+    (member : operation ∈ operations) :
+    image.eventOperation? operation.eventId = some operation := by
+  unfold RustDescriptorImage.decodeOperations? at decoded
+  exact event_operation_mapM_member_binds_exact_event decoded member
+
+/-- Carrier-visible identity of an inbound operation. Session and target role
+are fixed by the attached endpoint and therefore do not duplicate descriptor
+state here. -/
+structure InboundOperationKey where
+  source : Nat
+  lane : Nat
+  frameLabel : Nat
+  deriving Repr, DecidableEq
+
+def DescriptorOperation.matchesInbound
+    (operation : DescriptorOperation) (key : InboundOperationKey) : Bool :=
+  match operation.action with
+  | .recv peer _ _ =>
+      operation.lane == key.lane && operation.frameLabel == key.frameLabel && peer == key.source
+  | .send _ _ _ | .local _ _ => false
+
+def DescriptorOperation.enabledCandidate
+    (operation : DescriptorOperation) (graph : EventGraph) (state : CommitState) : Bool :=
+  match graph.events[operation.eventId]? with
+  | none => false
+  | some event =>
+      decide (event.operationRequest = operation.request) && eventEnabled graph state event
+
+def RustDescriptorImage.matchingInboundOperations?
+    (image : RustDescriptorImage) (graph : EventGraph) (state : CommitState)
+    (key : InboundOperationKey) :
+    Option (List DescriptorOperation) :=
+  match image.decodeOperations? with
+  | none => none
+  | some operations => some (operations.filter fun operation =>
+      operation.matchesInbound key && operation.enabledCandidate graph state)
+
+private def resolveUniqueDescriptorOperation?
+    (operations : Option (List DescriptorOperation)) : Option DescriptorOperation :=
+  match operations with
+  | none => none
+  | some candidates => resolveUnique? candidates
+
+/-- Inbound evidence is admitted only when the complete source/lane/frame-label
+key identifies exactly one resident operation. Missing and ambiguous evidence
+both fail closed. -/
+def RustDescriptorImage.resolveInboundOperation?
+    (image : RustDescriptorImage) (graph : EventGraph) (state : CommitState)
+    (key : InboundOperationKey) : Option DescriptorOperation :=
+  resolveUniqueDescriptorOperation? (image.matchingInboundOperations? graph state key)
+
+private theorem resolved_unique_descriptor_operation_is_singleton
+    {operations : Option (List DescriptorOperation)}
+    {operation : DescriptorOperation}
+    (resolved : resolveUniqueDescriptorOperation? operations = some operation) :
+    operations = some [operation] := by
+  unfold resolveUniqueDescriptorOperation? at resolved
+  cases matching : operations with
+  | none => simp [matching] at resolved
+  | some candidates =>
+      have singleton : candidates = [operation] :=
+        resolveUnique?_eq_some_iff.mp (by simpa [matching] using resolved)
+      simp [singleton]
+
+theorem resolved_inbound_operation_is_unique
+    {image : RustDescriptorImage} {graph : EventGraph} {state : CommitState}
+    {key : InboundOperationKey}
+    {operation : DescriptorOperation}
+    (resolved : image.resolveInboundOperation? graph state key = some operation) :
+    image.matchingInboundOperations? graph state key = some [operation] := by
+  unfold RustDescriptorImage.resolveInboundOperation? at resolved
+  exact resolved_unique_descriptor_operation_is_singleton resolved
+
+theorem resolved_inbound_operation_matches_complete_enabled_key
+    {image : RustDescriptorImage} {graph : EventGraph} {state : CommitState}
+    {key : InboundOperationKey}
+    {operation : DescriptorOperation}
+    (resolved : image.resolveInboundOperation? graph state key = some operation) :
+    operation.matchesInbound key = true ∧
+      operation.enabledCandidate graph state = true := by
+  have unique := resolved_inbound_operation_is_unique resolved
+  unfold RustDescriptorImage.matchingInboundOperations? at unique
+  cases decoded : image.decodeOperations? with
+  | none => simp [decoded] at unique
+  | some operations =>
+      have filtered :
+          operations.filter (fun candidate =>
+            candidate.matchesInbound key && candidate.enabledCandidate graph state) =
+            [operation] := by
+        exact Option.some.inj (by simpa [decoded] using unique)
+      have member : operation ∈ operations.filter (fun candidate =>
+          candidate.matchesInbound key && candidate.enabledCandidate graph state) := by
+        rw [filtered]
+        simp
+      exact Bool.and_eq_true_iff.mp (List.mem_filter.mp member).2
+
+theorem resolved_inbound_operation_binds_exact_event_columns
+    {image : RustDescriptorImage} {graph : EventGraph} {state : CommitState}
+    {key : InboundOperationKey}
+    {operation : DescriptorOperation}
+    (resolved : image.resolveInboundOperation? graph state key = some operation) :
+    image.eventOperation? operation.eventId = some operation := by
+  have unique := resolved_inbound_operation_is_unique resolved
+  unfold RustDescriptorImage.matchingInboundOperations? at unique
+  cases decoded : image.decodeOperations? with
+  | none => simp [decoded] at unique
+  | some operations =>
+      have filtered :
+          operations.filter (fun candidate =>
+            candidate.matchesInbound key && candidate.enabledCandidate graph state) =
+            [operation] := by
+        exact Option.some.inj (by simpa [decoded] using unique)
+      have member : operation ∈ operations.filter (fun candidate =>
+          candidate.matchesInbound key && candidate.enabledCandidate graph state) := by
+        rw [filtered]
+        simp
+      exact decoded_operations_member_binds_exact_event_columns decoded
+        (List.mem_filter.mp member).1
+
+/-- Headerless deterministic ingress contributes no peer or frame-label
+observation. The endpoint call supplies logical label and schema, while its
+lane-bound Rx handle supplies the lane. Such evidence is admissible only when
+those facts identify one enabled resident receive operation. -/
+structure DeterministicInboundKey where
+  lane : Nat
+  label : Nat
+  schema : Nat
+  deriving Repr, DecidableEq
+
+def DescriptorOperation.matchesDeterministicInbound
+    (operation : DescriptorOperation) (key : DeterministicInboundKey) : Bool :=
+  match operation.action with
+  | .recv _ label schema =>
+      operation.lane == key.lane && label == key.label && schema == key.schema
+  | .send _ _ _ | .local _ _ => false
+
+def RustDescriptorImage.matchingDeterministicInboundOperations?
+    (image : RustDescriptorImage) (graph : EventGraph) (state : CommitState)
+    (key : DeterministicInboundKey) : Option (List DescriptorOperation) :=
+  match image.decodeOperations? with
+  | none => none
+  | some operations => some (operations.filter fun operation =>
+      operation.matchesDeterministicInbound key && operation.enabledCandidate graph state)
+
+/-- A headerless frame can select an operation only when its lane-bound direct
+receive request has one enabled descriptor interpretation. -/
+def RustDescriptorImage.resolveDeterministicInboundOperation?
+    (image : RustDescriptorImage) (graph : EventGraph) (state : CommitState)
+    (key : DeterministicInboundKey) : Option DescriptorOperation :=
+  resolveUniqueDescriptorOperation?
+    (image.matchingDeterministicInboundOperations? graph state key)
+
+theorem resolved_deterministic_inbound_operation_is_unique
+    {image : RustDescriptorImage} {graph : EventGraph} {state : CommitState}
+    {key : DeterministicInboundKey}
+    {operation : DescriptorOperation}
+    (resolved : image.resolveDeterministicInboundOperation? graph state key = some operation) :
+    image.matchingDeterministicInboundOperations? graph state key = some [operation] := by
+  unfold RustDescriptorImage.resolveDeterministicInboundOperation? at resolved
+  exact resolved_unique_descriptor_operation_is_singleton resolved
+
+theorem resolved_deterministic_inbound_operation_matches_complete_enabled_key
+    {image : RustDescriptorImage} {graph : EventGraph} {state : CommitState}
+    {key : DeterministicInboundKey}
+    {operation : DescriptorOperation}
+    (resolved : image.resolveDeterministicInboundOperation? graph state key = some operation) :
+    operation.matchesDeterministicInbound key = true ∧
+      operation.enabledCandidate graph state = true := by
+  have unique := resolved_deterministic_inbound_operation_is_unique resolved
+  unfold RustDescriptorImage.matchingDeterministicInboundOperations? at unique
+  cases decoded : image.decodeOperations? with
+  | none => simp [decoded] at unique
+  | some operations =>
+      have filtered :
+          operations.filter (fun candidate =>
+            candidate.matchesDeterministicInbound key &&
+              candidate.enabledCandidate graph state) = [operation] := by
+        exact Option.some.inj (by simpa [decoded] using unique)
+      have member : operation ∈ operations.filter (fun candidate =>
+          candidate.matchesDeterministicInbound key &&
+            candidate.enabledCandidate graph state) := by
+        rw [filtered]
+        simp
+      exact Bool.and_eq_true_iff.mp (List.mem_filter.mp member).2
+
+theorem resolved_deterministic_inbound_operation_binds_exact_event_columns
+    {image : RustDescriptorImage} {graph : EventGraph} {state : CommitState}
+    {key : DeterministicInboundKey}
+    {operation : DescriptorOperation}
+    (resolved : image.resolveDeterministicInboundOperation? graph state key = some operation) :
+    image.eventOperation? operation.eventId = some operation := by
+  have unique := resolved_deterministic_inbound_operation_is_unique resolved
+  unfold RustDescriptorImage.matchingDeterministicInboundOperations? at unique
+  cases decoded : image.decodeOperations? with
+  | none => simp [decoded] at unique
+  | some operations =>
+      have filtered :
+          operations.filter (fun candidate =>
+            candidate.matchesDeterministicInbound key &&
+              candidate.enabledCandidate graph state) = [operation] := by
+        exact Option.some.inj (by simpa [decoded] using unique)
+      have member : operation ∈ operations.filter (fun candidate =>
+          candidate.matchesDeterministicInbound key &&
+            candidate.enabledCandidate graph state) := by
+        rw [filtered]
+        simp
+      exact decoded_operations_member_binds_exact_event_columns decoded
+        (List.mem_filter.mp member).1
 
 def RustDescriptorImage.decodeActions?
     (image : RustDescriptorImage) : Option (List LocalAction) :=
@@ -1503,6 +2022,7 @@ def decodePackedRouteArm?
   let encodedLaneStepLength := (laneStepLenAndChild / 65536) % 256
   let laneStepLength := if eventLength = 0 then 0 else encodedLaneStepLength + 1
   if laneStepLenAndChild / 16777216 = 0 ∧
+      (eventLength = 0 → eventStart = 0) ∧
       (eventLength = 0 → encodedLaneStepLength = 0) then
     pure {
       eventStart
@@ -1543,6 +2063,10 @@ theorem packed_route_arm_encodes_full_lane_domain :
         laneStepLength := 256
         childSlot := 65535
       } := by
+  decide
+
+theorem packed_route_arm_rejects_noncanonical_empty_event_range :
+    decodePackedRouteArm? 65536 65535 1 = none := by
   decide
 
 def RustDescriptorImage.decodeRouteArmEvents?
@@ -1586,6 +2110,15 @@ def RustDescriptorImage.decodeRoutes?
   let resolvers ← image.decodeRouteResolvers?
   let routes ← (List.range image.routeScopeCount).mapM (image.decodeRoute? resolvers)
   pure (normalizeProjectionRoutes (routes.filterMap id))
+
+/-- Empty role-local route slots are filtered as values; they never terminate
+the exact descriptor slot traversal or hide a later projected route. -/
+theorem sparse_route_slot_filter_preserves_later_route
+    (before after : List (Option ProjectionRoute))
+    (route : ProjectionRoute) :
+    (before ++ none :: some route :: after).filterMap id =
+      before.filterMap id ++ route :: after.filterMap id := by
+  simp
 
 structure DecodedRollRow where
   scope : Nat

@@ -11,7 +11,7 @@ fn parallel_lane_coloring_reuses_disjoint_class() {
 
     let lane_span = merge_parallel_lanes(&mut source, 0, 1, 2, 1, 1);
 
-    assert!(source.node_at(1).atom_data().lane == 0);
+    assert!(source.atom_at(1).lane == 0);
     assert!(lane_span == 1);
 }
 
@@ -22,7 +22,7 @@ fn parallel_lane_coloring_separates_conflicting_class() {
 
     let lane_span = merge_parallel_lanes(&mut source, 0, 1, 2, 1, 1);
 
-    assert!(source.node_at(1).atom_data().lane == 1);
+    assert!(source.atom_at(1).lane == 1);
     assert!(lane_span == 2);
 }
 

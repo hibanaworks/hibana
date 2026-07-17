@@ -141,7 +141,7 @@ impl RootFrontierTable {
     }
 
     #[inline]
-    fn active_entry_set(&self, slot_idx: usize) -> ActiveEntrySet {
+    fn active_entry_set(&self, slot_idx: usize) -> ActiveEntrySet<'_> {
         let (start, len, _) = self.checked_active_span(slot_idx);
         if len == 0 {
             return ActiveEntrySet::EMPTY;
@@ -429,7 +429,7 @@ impl FrontierState {
     }
 
     #[inline]
-    pub(super) fn root_frontier_active_entries(&self, root: ScopeId) -> ActiveEntrySet {
+    pub(super) fn root_frontier_active_entries(&self, root: ScopeId) -> ActiveEntrySet<'_> {
         match self.root_frontier_slot(root) {
             Some(slot) => self.root_frontier_state.active_entry_set(slot),
             None => ActiveEntrySet::EMPTY,

@@ -554,9 +554,17 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         read("src/global/typestate/cursor/scope_route/navigation.rs");
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let role_scope_rows = read("src/global/role_program/image_impl/projection.rs");
+    let route_scope_ranges = read("src/global/const_dsl/scope_ranges/route.rs");
     let cursor_send_preview = read("src/global/typestate/cursor/scope_route/send_preview.rs");
+    let cursor_send_preview_route =
+        read("src/global/typestate/cursor/scope_route/send_preview_route.rs");
     let cursor_send_preview_start =
         read("src/global/typestate/cursor/scope_route/send_preview_start.rs");
+    let cursor_roll = format!(
+        "{}\n{}",
+        read("src/global/typestate/cursor/scope_route/roll.rs"),
+        read("src/global/typestate/cursor/scope_route/roll/nesting.rs")
+    );
     let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let passive_child = read("src/global/compiled/lowering/seal/passive_child.rs");
     let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
@@ -583,6 +591,20 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && cursor_scope_route.contains("pub(crate) fn route_commit_row_at")
             && !cursor_scope_route.contains("node_in_selected_route_arm")
             && !cursor_scope_route_navigation.contains("node_in_selected_route_arm")
+            && cursor_scope_route_navigation
+                .contains("let conflict = self.machine().event_conflict_for_index(idx);")
+            && cursor_scope_route_navigation
+                .contains("let Some(LocalConflict::RouteArm { scope, arm })")
+            && !cursor_scope_route_navigation.contains("selected_len")
+            && cursor_scope_route_navigation.contains("fn route_scope_descends_from")
+            && cursor_scope_route_navigation.contains("pub(crate) fn deeper_route_scope")
+            && !cursor_scope_route.contains("selected_len")
+            && !cursor_send_preview_route.contains("selected_len")
+            && !cursor_roll.contains("selected_len")
+            && !cursor_roll.contains("best_len")
+            && cursor_roll.contains("fn roll_scope_nested_within")
+            && cursor_roll.contains("fn deeper_roll_scope")
+            && cursor_roll.contains("fn outer_roll_scope")
             && !cursor_scope_route.contains("selected_route_label_index")
             && !cursor_scope_route_navigation.contains("selected_route_label_index")
             && !runtime_types.contains("pub(crate) struct SelectedRouteCommitRow")
@@ -694,8 +716,10 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             "send route authority must not carry references, payloads, or codec hooks: {forbidden}"
         );
     }
-    let route_lowering_source =
-        role_scope_rows.as_str().to_owned() + &first_recv_dispatch + &passive_child;
+    let route_lowering_source = role_scope_rows.as_str().to_owned()
+        + &route_scope_ranges
+        + &first_recv_dispatch
+        + &passive_child;
     for forbidden in [
         "left_start == usize::MAX || right_start == usize::MAX",
         "None => Self::scope_segment_end(markers, idx, segment_limit)",
@@ -708,7 +732,10 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
         );
     }
     assert!(
-        role_scope_rows.contains("let Some(ranges) = route_arm_ranges(markers, scope_id) else {\n        crate::invariant();\n    };"),
+        role_scope_rows.contains("let (start, end) = match structured_scope_event_range")
+            && role_scope_rows.contains("None => crate::invariant(),")
+            && route_scope_ranges.contains("closed_route_arm_ranges_from_first_enter")
+            && route_scope_ranges.contains("None => return None,"),
         "route scope dependency bounds must fail closed when binary arm ranges are missing"
     );
     let send_preview_start = cursor_send_preview_start
@@ -720,7 +747,7 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && send_preview_start
                 .contains("if self.enclosing_route_scope_rows_at(self.index()).is_some()")
             && send_preview_start.contains(") -> Option<usize>")
-            && send_preview_start.contains("self.first_pending_step_index(usize::MAX)")
+            && send_preview_start.contains("self.first_pending_step_index()")
             && send_preview_start.contains("Some(self.index())")
             && cursor_send_preview_start.contains("selected_arm_for_reentry_preview_conflict")
             && cursor_send_preview_start.contains("event_conflict_row_allows_with_preview")

@@ -76,9 +76,9 @@ where
             scope,
             nested_scope,
             arm,
-            |candidate| {
-                self.route_only_rows_arm_for_scope(routes, candidate)
-                    .or_else(|| self.selected_arm_for_scope(candidate))
+            |candidate| match self.route_only_rows_arm_for_scope(routes, candidate) {
+                Some(prepared) => Some(prepared),
+                None => self.selected_arm_for_scope(candidate),
             },
             |candidate, selected| {
                 self.route_only_rows_arm_for_scope(routes, candidate) == Some(selected)

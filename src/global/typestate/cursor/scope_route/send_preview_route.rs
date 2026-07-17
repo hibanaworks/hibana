@@ -7,15 +7,18 @@ impl EventCursor {
         idx: usize,
     ) -> Option<ScopeId> {
         let mut selected = None;
-        let mut selected_len = usize::MAX;
         let mut slot = 0usize;
-        while let Some(region) = self.machine().route_scope_rows_by_slot(slot) {
-            if idx >= region.start() && idx < region.end() {
+        while slot < self.machine().route_scope_slot_count() {
+            if let Some(region) = self.machine().route_scope_rows_by_slot(slot)
+                && idx >= region.start()
+                && idx < region.end()
+            {
                 let scope = region.scope();
-                let len = region.end() - region.start();
-                if self.is_route_controller(scope) && len <= selected_len {
-                    selected = Some(scope);
-                    selected_len = len;
+                if self.is_route_controller(scope) {
+                    selected = Some(match selected {
+                        Some(current) => self.deeper_route_scope(current, scope),
+                        None => scope,
+                    });
                 }
             }
             slot += 1;

@@ -66,13 +66,12 @@ where
                     .route_scope_for_offer_node(node_scope, target_idx)
                     .ok_or(RecvError::PhaseInvariant)?;
                 (scope_id, target_idx, true)
-            } else if let Some(scope_id) = self
-                .active_reentry_scope_for_observed_frame(key)
-                .or_else(|| {
-                    self.cursor
-                        .enclosing_passive_route_scope_for_key(current_idx, key)
-                })
-            {
+            } else if let Some(scope_id) = match self.active_reentry_scope_for_observed_frame(key) {
+                Some(active_reentry) => Some(active_reentry),
+                None => self
+                    .cursor
+                    .enclosing_passive_route_scope_for_key(current_idx, key),
+            } {
                 let target_idx = self
                     .cursor
                     .passive_descendant_target_index_for_key(scope_id, key)
@@ -114,11 +113,15 @@ where
                 .map_err(|_| RecvError::PhaseInvariant)?;
             self.sync_lane_offer_state();
         }
+        let effective_arm = match selected_arm_for_observed {
+            Some(selected) => Some(selected),
+            None => observed_arm,
+        };
         let mut selection = self.offer_scope_selection_for_scope_lane_with_selected_arm(
             scope_id,
             target_idx,
             key.lane,
-            selected_arm_for_observed.or(observed_arm),
+            effective_arm,
         )?;
         selection.observed_target =
             checked_state_index(target_idx).ok_or(RecvError::PhaseInvariant)?;
@@ -135,7 +138,7 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return Err(RecvError::PhaseInvariant);
         }
-        let info = self.decision_state.lane_offer_state(lane_idx);
+        let mut info = self.decision_state.lane_offer_state(lane_idx);
         if info.scope.is_none() {
             return Ok(None);
         }
@@ -143,7 +146,13 @@ where
             self.commit_cursor_realign_index(state_index_to_usize(info.entry))
                 .map_err(|_| RecvError::PhaseInvariant)?;
             self.sync_lane_offer_state();
-            return self.select_carried_ingress_scope(carried_lane);
+            info = self.decision_state.lane_offer_state(lane_idx);
+            if info.scope.is_none()
+                || info.entry.is_absent()
+                || state_index_to_usize(info.entry) != self.cursor.index()
+            {
+                return Err(RecvError::PhaseInvariant);
+            }
         }
         let scope_id = info.scope;
         let current_idx = self.cursor.index();

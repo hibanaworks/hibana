@@ -15,10 +15,10 @@ fn route_arm_decoding_accepts_exact_binary_domain() {
 fn single_ready_mask_decoding_is_exact() {
     let mask: u8 = kani::any();
     let expected = match mask {
-        0 | 3 => Some(None),
+        0 => Some(None),
         1 => Some(Some(Arm::LEFT)),
         2 => Some(Some(Arm::RIGHT)),
-        4..=u8::MAX => None,
+        3..=u8::MAX => None,
     };
 
     assert!(Arm::decode_single_ready_mask(mask) == expected);

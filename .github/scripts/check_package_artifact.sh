@@ -160,47 +160,52 @@ def rust_module_candidates(source: Path, mod_name: str) -> list[Path]:
 
 violations: list[str] = []
 for source in sorted(Path("src").rglob("*.rs")):
+    if is_excluded_test_support(source):
+        continue
     text = source.read_text(encoding="utf-8")
-    repo_cfg = False
+    attributes: list[str] = []
     path_attr: str | None = None
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("#[cfg(") and "hibana_repo_tests" in stripped:
-            repo_cfg = True
-            path_attr = None
-            continue
-        if not repo_cfg:
-            continue
         path_match = PATH_RE.match(line)
         if path_match:
             path_attr = path_match.group(1)
+            attributes.append(stripped)
+            continue
+        if stripped.startswith("#["):
+            attributes.append(stripped)
             continue
         mod_match = MOD_RE.match(line)
         if mod_match:
             mod_name = mod_match.group(1)
+            repo_cfg = "hibana_repo_tests" in " ".join(attributes)
             if path_attr is not None:
                 targets = [(source.parent / path_attr).resolve().relative_to(ROOT)]
             else:
                 targets = [p for p in rust_module_candidates(source, mod_name) if p.exists()]
-            if not targets:
+            if repo_cfg and not targets:
                 violations.append(f"{source}: repo-only module `{mod_name}` target not found")
-            else:
-                for target in targets:
-                    if not is_excluded_test_support(target):
-                        violations.append(
-                            f"{source}: repo-only module `{mod_name}` targets package source {target}"
-                        )
-            repo_cfg = False
+            for target in targets:
+                excluded = is_excluded_test_support(target)
+                if repo_cfg and not excluded:
+                    violations.append(
+                        f"{source}: repo-only module `{mod_name}` targets package source {target}"
+                    )
+                if excluded and not repo_cfg:
+                    violations.append(
+                        f"{source}: excluded test module `{mod_name}` lacks hibana_repo_tests cfg"
+                    )
+            attributes.clear()
             path_attr = None
             continue
-        if stripped.startswith("#[") or stripped == "":
+        if stripped == "":
             continue
-        repo_cfg = False
+        attributes.clear()
         path_attr = None
 
 if violations:
     print(
-        "package artifact check failed: repo-only test modules must target excluded source-tree test support",
+        "package artifact check failed: source test modules must preserve the package boundary",
         file=sys.stderr,
     )
     for violation in violations:

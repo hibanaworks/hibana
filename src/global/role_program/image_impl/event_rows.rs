@@ -7,6 +7,26 @@ use crate::global::{
     },
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RoleLocalDirection {
+    Local,
+    Send,
+    Recv,
+}
+
+#[inline(always)]
+pub(super) const fn role_local_direction(role: u8, from: u8, to: u8) -> Option<RoleLocalDirection> {
+    if from == role && to == role {
+        Some(RoleLocalDirection::Local)
+    } else if from == role {
+        Some(RoleLocalDirection::Send)
+    } else if to == role {
+        Some(RoleLocalDirection::Recv)
+    } else {
+        None
+    }
+}
+
 pub(super) const fn decode_resident_event_header(
     eff_index: u16,
     scope_raw: u16,
@@ -22,6 +42,30 @@ pub(super) const fn decode_resident_event_header(
         None => return None,
     };
     Some(scope)
+}
+
+#[inline(always)]
+pub(super) const fn encode_optional_event_fact_row(row: usize) -> Option<u16> {
+    if row < u16::MAX as usize {
+        Some(row as u16)
+    } else {
+        None
+    }
+}
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests {
+    use super::encode_optional_event_fact_row;
+
+    #[test]
+    fn optional_event_fact_row_preserves_the_reserved_absent_value() {
+        assert_eq!(encode_optional_event_fact_row(0), Some(0));
+        assert_eq!(
+            encode_optional_event_fact_row(u16::MAX as usize - 1),
+            Some(u16::MAX - 1)
+        );
+        assert_eq!(encode_optional_event_fact_row(u16::MAX as usize), None);
+    }
 }
 
 impl PackedLocalEventRow {
@@ -81,19 +125,19 @@ impl PackedLocalEventRow {
 
     #[inline(always)]
     pub(crate) const fn with_dependency_row(mut self, row: usize) -> Self {
-        if row > u16::MAX as usize {
-            panic!("local event dependency row index overflow");
-        }
-        self.dependency_row = row as u16;
+        self.dependency_row = match encode_optional_event_fact_row(row) {
+            Some(row) => row,
+            None => panic!("local event dependency row index overflow"),
+        };
         self
     }
 
     #[inline(always)]
     pub(crate) const fn with_conflict_row(mut self, row: usize) -> Self {
-        if row > u16::MAX as usize {
-            panic!("local event conflict row index overflow");
-        }
-        self.conflict_row = row as u16;
+        self.conflict_row = match encode_optional_event_fact_row(row) {
+            Some(row) => row,
+            None => panic!("local event conflict row index overflow"),
+        };
         self
     }
 
@@ -122,12 +166,12 @@ impl PackedLocalEventRow {
         action_ordinal: usize,
         program: &CompiledProgramRef,
         conflict: PackedEventConflict,
-    ) -> Option<LocalNode> {
+    ) -> LocalNode {
         if self.is_empty() {
-            return None;
+            crate::invariant();
         }
         let eff_idx = self.eff_index as usize;
-        let atom = program.node_at(eff_idx).atom_data();
+        let atom = program.event_atom_at(eff_idx);
         let scope = self.scope;
         let semantic = EventSemanticKind::ProtocolEvent;
         let route_arm = match conflict.to_conflict() {
@@ -150,14 +194,11 @@ impl PackedLocalEventRow {
             route_arm,
             choice: self.choice_mark(),
         };
-        if atom.from == role && atom.to == role {
-            Some(LocalNode::local(facts, meta))
-        } else if atom.from == role {
-            Some(LocalNode::send(atom.to, facts, meta))
-        } else if atom.to == role {
-            Some(LocalNode::recv(atom.from, facts, meta))
-        } else {
-            None
+        match role_local_direction(role, atom.from, atom.to) {
+            Some(RoleLocalDirection::Local) => LocalNode::local(facts, meta),
+            Some(RoleLocalDirection::Send) => LocalNode::send(atom.to, facts, meta),
+            Some(RoleLocalDirection::Recv) => LocalNode::recv(atom.from, facts, meta),
+            None => crate::invariant(),
         }
     }
 }
@@ -171,12 +212,12 @@ impl<'a> RoleLaneImage<'a> {
         program: &CompiledProgramRef,
     ) -> Option<LocalNode> {
         match self.local_step_event(step_idx) {
-            Some(event) => event.to_node(
+            Some(event) => Some(event.to_node(
                 role,
                 step_idx,
                 program,
                 self.event_conflict_for_index(step_idx),
-            ),
+            )),
             None => None,
         }
     }

@@ -23,6 +23,43 @@ structure LeaseAllocationPlan where
   payloadBytes : Nat
   deriving DecidableEq
 
+/-- A `u16` slot identifier names 65,536 slots: the count is one greater than
+the largest representable index. -/
+def endpointLeaseSlotDomain : Nat := 2 ^ 16
+
+abbrev endpointLeaseSlotCountRepresentable (slotCount : Nat) : Prop :=
+  slotCount <= endpointLeaseSlotDomain
+
+def LeaseAllocatorState.WellFormed (state : LeaseAllocatorState) : Prop :=
+  endpointLeaseSlotCountRepresentable state.tableSlots
+
+def endpointLeaseSlotCountCheck (slotCount : Nat) : Bool :=
+  decide (endpointLeaseSlotCountRepresentable slotCount)
+
+theorem endpoint_lease_slot_count_check_is_exact (slotCount : Nat) :
+    endpointLeaseSlotCountCheck slotCount = true <->
+      endpointLeaseSlotCountRepresentable slotCount := by
+  simp [endpointLeaseSlotCountCheck]
+
+theorem endpoint_lease_slot_domain_is_exact : endpointLeaseSlotDomain = 65536 := by
+  decide
+
+theorem endpoint_lease_full_slot_count_is_representable :
+    endpointLeaseSlotCountRepresentable endpointLeaseSlotDomain := by
+  exact Nat.le_refl _
+
+theorem endpoint_lease_slot_count_above_domain_is_rejected :
+    Not (endpointLeaseSlotCountRepresentable (endpointLeaseSlotDomain + 1)) := by
+  simp [endpointLeaseSlotCountRepresentable]
+
+theorem endpoint_lease_nonempty_count_has_representable_last_index
+    {slotCount : Nat}
+    (nonempty : 0 < slotCount)
+    (representable : endpointLeaseSlotCountRepresentable slotCount) :
+    slotCount - 1 < endpointLeaseSlotDomain := by
+  unfold endpointLeaseSlotCountRepresentable at representable
+  omega
+
 /-- Allocation planning is read-only. Only a complete plan may enter commit. -/
 def prepareLeaseAllocation
     (state : LeaseAllocatorState)
@@ -32,18 +69,20 @@ def prepareLeaseAllocation
   match nextLeaseGeneration? state.generation with
   | none => .error .generationExhausted
   | some generation =>
-      match plannedImageFrontier with
-      | none => .error .tableUnavailable
-      | some imageFrontier =>
-          match payloadOffset with
-          | none => .error .payloadUnavailable
-          | some offset => .ok {
-              generation
-              tableSlots := max state.tableSlots requiredTableSlots
-              imageFrontier
-              payloadOffset := offset
-              payloadBytes
-            }
+      if endpointLeaseSlotCountRepresentable requiredTableSlots then
+        match plannedImageFrontier with
+        | none => .error .tableUnavailable
+        | some imageFrontier =>
+            match payloadOffset with
+            | none => .error .payloadUnavailable
+            | some offset => .ok {
+                generation
+                tableSlots := max state.tableSlots requiredTableSlots
+                imageFrontier
+                payloadOffset := offset
+                payloadBytes
+              }
+      else .error .tableUnavailable
 
 def commitLeaseAllocation
     (_state : LeaseAllocatorState) (plan : LeaseAllocationPlan) : LeaseAllocatorState := {
@@ -125,15 +164,58 @@ theorem prepared_lease_generation_strictly_increases
   cases advanced : nextLeaseGeneration? state.generation with
   | none => simp [advanced] at prepared
   | some generation =>
-      cases plannedImageFrontier with
-      | none => simp [advanced] at prepared
-      | some imageFrontier =>
-          cases payloadOffset with
-          | none => simp [advanced] at prepared
-          | some offset =>
-              simp [advanced] at prepared
-              subst plan
-              exact next_lease_generation_strictly_increases advanced
+      by_cases capacity : endpointLeaseSlotCountRepresentable requiredTableSlots
+      · cases plannedImageFrontier with
+        | none => simp [advanced, capacity] at prepared
+        | some imageFrontier =>
+            cases payloadOffset with
+            | none => simp [advanced, capacity] at prepared
+            | some offset =>
+                simp [advanced, capacity] at prepared
+                subst plan
+                exact next_lease_generation_strictly_increases advanced
+      · simp [advanced, capacity] at prepared
+
+theorem prepared_lease_required_slot_count_is_representable
+    {state : LeaseAllocatorState}
+    {requiredTableSlots payloadBytes : Nat}
+    {plannedImageFrontier payloadOffset : Option Nat}
+    {plan : LeaseAllocationPlan}
+    (prepared : prepareLeaseAllocation state requiredTableSlots payloadBytes
+      plannedImageFrontier payloadOffset = .ok plan) :
+    endpointLeaseSlotCountRepresentable requiredTableSlots := by
+  unfold prepareLeaseAllocation at prepared
+  cases advanced : nextLeaseGeneration? state.generation with
+  | none => simp [advanced] at prepared
+  | some generation =>
+      by_cases capacity : endpointLeaseSlotCountRepresentable requiredTableSlots
+      · exact capacity
+      · simp [advanced, capacity] at prepared
+
+theorem prepared_lease_capacity_is_representable
+    {state : LeaseAllocatorState}
+    {requiredTableSlots payloadBytes : Nat}
+    {plannedImageFrontier payloadOffset : Option Nat}
+    {plan : LeaseAllocationPlan}
+    (stateValid : state.WellFormed)
+    (prepared : prepareLeaseAllocation state requiredTableSlots payloadBytes
+      plannedImageFrontier payloadOffset = .ok plan) :
+    endpointLeaseSlotCountRepresentable plan.tableSlots := by
+  unfold prepareLeaseAllocation at prepared
+  cases advanced : nextLeaseGeneration? state.generation with
+  | none => simp [advanced] at prepared
+  | some generation =>
+      by_cases capacity : endpointLeaseSlotCountRepresentable requiredTableSlots
+      · cases plannedImageFrontier with
+        | none => simp [advanced, capacity] at prepared
+        | some imageFrontier =>
+            cases payloadOffset with
+            | none => simp [advanced, capacity] at prepared
+            | some offset =>
+                simp [advanced, capacity] at prepared
+                subst plan
+                exact (Nat.max_le).2 ⟨stateValid, capacity⟩
+      · simp [advanced, capacity] at prepared
 
 theorem prepared_lease_capacity_never_shrinks
     {state : LeaseAllocatorState}
@@ -147,15 +229,17 @@ theorem prepared_lease_capacity_never_shrinks
   cases advanced : nextLeaseGeneration? state.generation with
   | none => simp [advanced] at prepared
   | some generation =>
-      cases plannedImageFrontier with
-      | none => simp [advanced] at prepared
-      | some imageFrontier =>
-          cases payloadOffset with
-          | none => simp [advanced] at prepared
-          | some offset =>
-              simp [advanced] at prepared
-              subst plan
-              exact Nat.le_max_left _ _
+      by_cases capacity : endpointLeaseSlotCountRepresentable requiredTableSlots
+      · cases plannedImageFrontier with
+        | none => simp [advanced, capacity] at prepared
+        | some imageFrontier =>
+            cases payloadOffset with
+            | none => simp [advanced, capacity] at prepared
+            | some offset =>
+                simp [advanced, capacity] at prepared
+                subst plan
+                exact Nat.le_max_left _ _
+      · simp [advanced, capacity] at prepared
 
 structure LeaseSlotSnapshot where
   generation : Nat

@@ -1,10 +1,10 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
-    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, OfferEntryKey,
-    OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll,
-    RecvError, RecvResult, RouteArmToken, ScopeId, Transport, frontier_snapshot_from_scratch,
-    lane_port, state_index_to_usize,
+    FrontierDeferOutcome, FrontierScratchWorkspace, FrontierVisitSet, IngressEvidenceState,
+    OfferEntryKey, OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection,
+    OfferStagedIngress, Poll, RecvError, RecvResult, ScopeId, Transport,
+    frontier_snapshot_from_scratch, lane_port, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 
@@ -39,6 +39,8 @@ where
         carried_lane: Option<u8>,
         carried_key: Option<InboundFrameKey>,
         carried_observation: Option<lane_port::FrameObservation>,
+        frontier_visited: &mut FrontierVisitSet,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> RecvResult<OfferScopeSelection> {
         if let Some(selection) = self.select_current_materialized_ingress_scope(carried_key)? {
             return Ok(selection);
@@ -60,7 +62,7 @@ where
         if let Some(selection) = self.select_carried_ingress_scope(carried_lane)? {
             return Ok(selection);
         }
-        let node_scope = self.align_cursor_to_selected_scope()?;
+        let node_scope = self.align_cursor_to_selected_scope(frontier_visited, scratch)?;
         let current_idx = self.cursor.index();
         let Some(scope_id) = self
             .cursor
@@ -98,17 +100,6 @@ where
             return Err(RecvError::PhaseInvariant);
         };
         self.offer_scope_selection_for_scope_lane(scope_id, current_idx, offer_lane)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn record_scope_ack(
-        &mut self,
-        scope_id: ScopeId,
-        token: RouteArmToken,
-    ) {
-        if let Some(slot) = self.scope_slot_for_route(scope_id) {
-            self.decision_state.scope_evidence.record_ack(slot, token);
-        }
     }
 
     #[inline]
@@ -188,6 +179,7 @@ where
         progress: &mut OfferProgressState,
         request: FrontierDeferRequest,
         visited: &mut FrontierVisitSet,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> FrontierDeferOutcome {
         let FrontierDeferRequest {
             scope_id,
@@ -200,9 +192,8 @@ where
         let current_entry_idx = self.cursor.index();
         visited.record(current_entry_idx);
         let current_is_controller = self.cursor.is_route_controller(scope_id);
-        let mut scratch = self.frontier_scratch_view();
         let mut snapshot = frontier_snapshot_from_scratch(
-            &mut scratch,
+            &mut scratch.candidates,
             scope_id,
             current_entry_idx,
             match current_parallel {
@@ -215,12 +206,16 @@ where
                 current_is_controller,
             ),
         );
-        self.for_each_active_offer_candidate(current_parallel, |candidate| {
-            if !snapshot.push_candidate(candidate) {
-                crate::invariant();
-            }
-            ControlFlow::<()>::Continue(())
-        });
+        self.for_each_active_offer_candidate(
+            current_parallel,
+            &mut scratch.global_active_entries,
+            |candidate| {
+                if !snapshot.push_candidate(candidate) {
+                    crate::invariant();
+                }
+                ControlFlow::<()>::Continue(())
+            },
+        );
         if is_pending {
             let Some(candidate) = snapshot.select_yield_candidate(visited) else {
                 return FrontierDeferOutcome::Pending;

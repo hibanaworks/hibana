@@ -6,5 +6,10 @@
 
 /// Runtime constants.
 pub(crate) mod consts;
+/// Checked arithmetic shared by resident and scratch layout owners.
+pub(crate) mod layout;
 /// Runtime resource substrate.
 pub(crate) mod resources;
+mod unique_match;
+
+pub(crate) use unique_match::{UniqueMatch, UniqueMatchFailure};

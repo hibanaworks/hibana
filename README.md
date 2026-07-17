@@ -192,7 +192,10 @@ bounded by descriptor structure rather than by an unrelated 255-entry runtime
 field. Runtime route history is a packed sparse table sized by emitted
 `(lane, route)` relations, not by `active lanes × maximum route depth`.
 The temporary source is still a Rust type tree, but lowering stores events,
-scope markers, and resolver markers in one exact-count tagged arena. Its lane
+normalized closed scope markers, and resolver markers in one exact-count tagged
+arena. Scope publication is atomic, and primary markers carry the proof-only arm
+boundaries needed by later passes; that metadata is erased from the descriptor.
+Its lane
 matching scratch is bounded by the 256-value wire lane domain rather than by
 event count. A const fixture constructs and emits the full 5,957-event
 atom-only image. Public typed fixtures separately track 289 messages and 258
@@ -428,7 +431,7 @@ execution seals local membership.
 | Choreography | Projection and exact local descriptor admission | Distributing the accepted role images |
 | Endpoint | Affine, fail-closed progress | Driving enabled operations fairly |
 | Payload | Schema identity and validation at the endpoint | Correct canonical codec implementations |
-| Carrier | Checking observed session, lane, peer, direction, event, label, and schema | Peer binding, FIFO delivery, replay exclusion, generation isolation, and closure notification |
+| Carrier | Framed header checks; unique lane/label/schema interpretation for headerless ingress; exact descriptor event admission in both cases | Peer binding, FIFO delivery, replay exclusion, generation isolation, and closure notification |
 | Security | No hidden security claim | Authentication, cryptography, admission control, and failure detection |
 
 ### Transport
@@ -481,9 +484,13 @@ session id (4 bytes, big endian) | lane | source role | target role | frame labe
 ```
 
 The transport stores the `PortOpen` facts needed to build or validate that
-framing. Every received frame is checked against the endpoint's exact session,
-lane, source, target, frame label, descriptor event, logical label, and schema
-before progress commits. Reordering, repetition, and mismatch are not repaired
+framing. A framed receive is checked against the endpoint's exact session, lane,
+source, target, frame label, descriptor event, logical label, and schema before
+progress commits. A deterministic receive does not claim to observe source,
+target, or frame label: its lane-bound Rx handle plus the requested logical label
+and schema must identify exactly one enabled descriptor receive. Zero or multiple
+matches fail closed. Peer authenticity and affine delivery remain carrier-profile
+premises in both cases; reordering, repetition, and mismatch are not repaired
 into ordinary progress.
 
 A successful `poll_send` proves carrier acceptance, not remote receipt. To lift
@@ -659,12 +666,12 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | --- | ---: | ---: |
 | `SessionKitStorage` | 24 B | 32 B |
 | Fixed per-rendezvous storage, including the 252 B tap records | 412 B | 952 B |
-| Peak live runtime slab across tracked heavy shapes | 2,351 B | 4,323 B |
-| Runtime operation stack high-water | 2,879 B | 3,663 B |
-| Modeled runtime SRAM envelope | 5,586 B | 8,954 B |
-| Minimal linked protocol artifact | 360 B | 2,048 B |
-| Largest linked artifact in the tracked protocol matrix | 1,856 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 100,887 B | 169,965 B |
+| Peak live runtime slab across tracked heavy shapes | 2,287 B | 4,323 B |
+| Runtime operation stack high-water | 2,863 B | 3,663 B |
+| Modeled runtime SRAM envelope | 5,506 B | 8,954 B |
+| Minimal linked protocol artifact | 352 B | 2,048 B |
+| Largest linked artifact in the tracked protocol matrix | 1,824 B | 16,384 B |
+| Complete no-default `libhibana.rlib` sections | 99,931 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release

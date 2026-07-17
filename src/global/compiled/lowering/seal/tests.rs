@@ -1,10 +1,10 @@
 use super::*;
 use crate::{
-    eff::{EffAtom, EffStruct, EventOrigin},
+    eff::{EffAtom, EventOrigin},
     global::const_dsl::{ReentryMark, ScopeId, merge_route_frame_labels},
 };
 
-const ROUTE_DEPTH: usize = 256;
+const ROUTE_DEPTH: usize = 257;
 const EVENT_COUNT: usize = ROUTE_DEPTH + 1;
 const SCOPE_MARKER_COUNT: usize = ROUTE_DEPTH * 4;
 const SOURCE_CAPACITY: usize = EVENT_COUNT + SCOPE_MARKER_COUNT + ROUTE_DEPTH;
@@ -13,26 +13,27 @@ fn route_commit_count_257_source() -> EffList<SOURCE_CAPACITY> {
     let mut source = EffList::new_partitioned(EVENT_COUNT, SCOPE_MARKER_COUNT, ROUTE_DEPTH);
     let mut event = 0usize;
     while event < EVENT_COUNT {
-        source.push_event_mut(EffStruct::atom(EffAtom {
+        source.push_event_mut(EffAtom {
             from: 0,
             to: 0,
             label: event as u8,
             payload_schema: 0,
             origin: EventOrigin::User,
             lane: 0,
-        }));
+        });
         event += 1;
     }
 
     let mut route = 0usize;
     while route < ROUTE_DEPTH {
         let scope = ScopeId::route(route as u16);
-        source.push_scope_enter_reentry_mut(route, scope, ReentryMark::SinglePass);
-        source.close_scope_segment_mut(scope, route, route + 1);
-        source.push_scope_exit_mut(route + 1, scope);
-        source.push_scope_enter_reentry_mut(route + 1, scope, ReentryMark::SinglePass);
-        source.close_scope_segment_mut(scope, route + 1, EVENT_COUNT);
-        source.push_scope_exit_mut(EVENT_COUNT, scope);
+        source.push_route_scope_mut(
+            scope,
+            route,
+            route + 1,
+            EVENT_COUNT,
+            ReentryMark::SinglePass,
+        );
         source.push_route_resolver_mut(scope, route as u16);
         route += 1;
     }
@@ -46,7 +47,7 @@ fn route_commit_count_257_source() -> EffList<SOURCE_CAPACITY> {
 }
 
 #[test]
-fn projection_accepts_a_route_chain_beyond_the_former_256_bound() {
+fn projection_derives_exact_route_capacity_beyond_256_rows() {
     let source = route_commit_count_257_source();
     let summary = CompiledProgramImage::scan_const(&source);
 
@@ -59,5 +60,29 @@ fn projection_accepts_a_route_chain_beyond_the_former_256_bound() {
             .role_lowering_counts(&source, 0)
             .max_route_commit_count,
         257
+    );
+}
+
+#[test]
+fn projection_derives_one_row_for_one_route() {
+    let mut source = EffList::<6>::new_partitioned(2, 4, 0);
+    for label in 0..2 {
+        source.push_event_mut(EffAtom {
+            from: 0,
+            to: 0,
+            label,
+            payload_schema: 0,
+            origin: EventOrigin::User,
+            lane: 0,
+        });
+    }
+    source.push_route_scope_mut(ScopeId::route(0), 0, 1, 2, ReentryMark::SinglePass);
+
+    let summary = CompiledProgramImage::scan_const(&source);
+    assert_eq!(
+        summary
+            .role_lowering_counts(&source, 0)
+            .max_route_commit_count,
+        1
     );
 }

@@ -8,6 +8,7 @@ use super::facts::{
     state_index_to_usize,
 };
 use crate::endpoint::kernel::FrontierScratchLayout;
+use crate::runtime_core::layout::u32_word_count;
 use crate::{
     eff::EffIndex,
     global::{
@@ -19,9 +20,23 @@ use crate::{
 };
 
 mod first_recv_dispatch;
+#[cfg(kani)]
+mod kani;
 mod lane_progress;
 mod navigation;
 mod scope_route;
+
+#[cfg(all(test, hibana_repo_tests))]
+mod compact_cursor_position_tests {
+    use super::compact_cursor_position;
+
+    #[test]
+    fn terminal_cursor_position_uses_the_full_u16_value_domain() {
+        assert_eq!(compact_cursor_position(0), Some(0));
+        assert_eq!(compact_cursor_position(u16::MAX as usize), Some(u16::MAX));
+        assert_eq!(compact_cursor_position(u16::MAX as usize + 1), None);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ResidentLaneStep {
@@ -213,11 +228,6 @@ impl EventCursorMachine {
     }
 
     #[inline(always)]
-    fn checked_node(&self, idx: usize) -> Option<LocalNode> {
-        self.event_program().checked_node(idx)
-    }
-
-    #[inline(always)]
     fn state_for_step_index(&self, step_idx: usize) -> Option<StateIndex> {
         self.event_program().state_for_step_index(step_idx)
     }
@@ -230,6 +240,11 @@ impl EventCursorMachine {
     #[inline(always)]
     fn route_scope_rows_by_slot(&self, slot: usize) -> Option<RouteScopeRows> {
         self.event_program().route_scope_rows_by_slot(slot)
+    }
+
+    #[inline(always)]
+    fn route_scope_slot_count(&self) -> usize {
+        self.event_program().route_scope_slot_count()
     }
 
     #[inline(always)]
@@ -344,23 +359,25 @@ impl EventCursorMachine {
 
     #[inline(always)]
     fn route_scope_offer_entry_by_slot(&self, slot: usize) -> StateIndex {
-        let mut start = usize::MAX;
+        let mut start: Option<usize> = None;
         let mut arm = 0u8;
         while arm <= 1 {
             if let Some(row) = self.event_program().route_arm_event_row_by_slot(slot, arm)
-                && row.start() < start
+                && row.start() < row.end()
             {
-                start = row.start();
+                start = Some(match start {
+                    Some(current) => current.min(row.start()),
+                    None => row.start(),
+                });
             }
             if arm == 1 {
                 break;
             }
             arm += 1;
         }
-        if start == usize::MAX {
-            StateIndex::ABSENT
-        } else {
-            StateIndex::from_usize(start)
+        match start {
+            Some(start) => StateIndex::from_usize(start),
+            None => StateIndex::ABSENT,
         }
     }
 
@@ -415,6 +432,27 @@ pub(crate) struct EventCursorState {
 
 const CURRENT_STEP_UNLABELED_CODE: u16 = u16::MAX;
 
+#[inline(always)]
+const fn compact_cursor_position(position: usize) -> Option<u16> {
+    if position <= u16::MAX as usize {
+        Some(position as u16)
+    } else {
+        None
+    }
+}
+
+#[inline(always)]
+const fn local_event_bit(step_idx: usize, local_step_count: usize) -> Option<(usize, u32)> {
+    if step_idx >= local_step_count {
+        None
+    } else {
+        Some((
+            step_idx / u32::BITS as usize,
+            1u32 << (step_idx % u32::BITS as usize),
+        ))
+    }
+}
+
 impl EventCursorState {
     pub(crate) unsafe fn init_empty(
         dst: *mut Self,
@@ -466,10 +504,10 @@ pub(crate) struct EventCursor {
 impl EventCursor {
     #[inline(always)]
     const fn encode_index(idx: usize) -> u16 {
-        if idx >= u16::MAX as usize {
-            crate::invariant();
+        match compact_cursor_position(idx) {
+            Some(encoded) => encoded,
+            None => crate::invariant(),
         }
-        idx as u16
     }
 
     #[inline(always)]
@@ -521,11 +559,6 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    pub(crate) fn max_frontier_entries(&self) -> usize {
-        self.machine().max_frontier_entries()
-    }
-
-    #[inline(always)]
     pub(crate) fn logical_lane_count(&self) -> usize {
         self.machine().logical_lane_count()
     }
@@ -561,7 +594,7 @@ impl EventCursor {
 
     #[inline(always)]
     fn completed_event_word_count(&self) -> usize {
-        completed_event_word_count(self.local_steps_len())
+        u32_word_count(self.local_steps_len())
     }
 
     #[inline(always)]
@@ -591,41 +624,35 @@ impl EventCursor {
 
     #[inline(always)]
     fn local_event_done(&self, step_idx: usize) -> bool {
-        if step_idx >= self.local_steps_len() {
-            return false;
-        }
-        let word_idx = step_idx / u32::BITS as usize;
-        let bit = step_idx % u32::BITS as usize;
+        let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
+            crate::invariant();
+        };
         let Some(word) = self.completed_event_words().get(word_idx) else {
             crate::invariant();
         };
-        (word & (1u32 << bit)) != 0
+        (word & bit) != 0
     }
 
     #[inline(always)]
     fn clear_local_event_done(&mut self, step_idx: usize) {
-        if step_idx >= self.local_steps_len() {
-            return;
-        }
-        let word_idx = step_idx / u32::BITS as usize;
-        let bit = step_idx % u32::BITS as usize;
+        let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
+            crate::invariant();
+        };
         let Some(word) = self.completed_event_words_mut().get_mut(word_idx) else {
             crate::invariant();
         };
-        *word &= !(1u32 << bit);
+        *word &= !bit;
     }
 
     #[inline(always)]
     fn mark_local_event_done(&mut self, step_idx: usize) {
-        if step_idx >= self.local_steps_len() {
-            return;
-        }
-        let word_idx = step_idx / u32::BITS as usize;
-        let bit = step_idx % u32::BITS as usize;
+        let Some((word_idx, bit)) = local_event_bit(step_idx, self.local_steps_len()) else {
+            crate::invariant();
+        };
         let Some(word) = self.completed_event_words_mut().get_mut(word_idx) else {
             crate::invariant();
         };
-        *word |= 1u32 << bit;
+        *word |= bit;
     }
 
     #[inline(always)]
@@ -696,7 +723,7 @@ impl EventCursor {
                 current_step_label_codes,
                 completed_event_words,
                 role_descriptor.logical_lane_count(),
-                completed_event_word_count(role_descriptor.local_len()),
+                u32_word_count(role_descriptor.local_len()),
             );
             (&mut *dst).rebuild_current_step_label_codes();
         }
@@ -758,13 +785,4 @@ impl EventCursor {
     }
 
     // =========================================================================
-}
-
-#[inline(always)]
-const fn completed_event_word_count(bits: usize) -> usize {
-    let pad = u32::BITS as usize - 1;
-    if bits > usize::MAX - pad {
-        crate::invariant();
-    }
-    (bits + pad) / u32::BITS as usize
 }

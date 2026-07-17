@@ -1,18 +1,18 @@
 use super::{color_roll_frame_labels, merge_parallel_lanes, merge_route_frame_labels};
 use crate::{
-    eff::{EffAtom, EffStruct, EventOrigin},
+    eff::{EffAtom, EventOrigin},
     global::const_dsl::{EffList, ReentryMark, ScopeId, ScopeKind},
 };
 
-const fn atom(from: u8, to: u8, lane: u8) -> EffStruct {
-    EffStruct::atom(EffAtom {
+const fn atom(from: u8, to: u8, lane: u8) -> EffAtom {
+    EffAtom {
         from,
         to,
         label: 0,
         payload_schema: 0,
         origin: EventOrigin::User,
         lane,
-    })
+    }
 }
 
 #[test]
@@ -49,11 +49,11 @@ fn route_arms_separate_only_competing_receive_lane_classes() {
 fn parallel_lanes_reuse_colors_exactly_for_disjoint_endpoint_sets() {
     let mut disjoint = EffList::<2>::new().push(atom(0, 1, 0)).push(atom(2, 3, 0));
     assert_eq!(merge_parallel_lanes(&mut disjoint, 0, 1, 2, 1, 1), 1);
-    assert_eq!(disjoint.node_at(1).atom_data().lane, 0);
+    assert_eq!(disjoint.atom_at(1).lane, 0);
 
     let mut shared = EffList::<2>::new().push(atom(0, 1, 0)).push(atom(1, 2, 0));
     assert_eq!(merge_parallel_lanes(&mut shared, 0, 1, 2, 1, 1), 2);
-    assert_eq!(shared.node_at(1).atom_data().lane, 1);
+    assert_eq!(shared.atom_at(1).lane, 1);
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn parallel_lane_matching_reassigns_an_earlier_class_for_a_constrained_class() {
         .push(atom(2, 6, 1));
 
     assert_eq!(merge_parallel_lanes(&mut source, 0, 2, 4, 2, 2), 2);
-    assert_eq!(source.node_at(2).atom_data().lane, 1);
-    assert_eq!(source.node_at(3).atom_data().lane, 0);
+    assert_eq!(source.atom_at(2).lane, 1);
+    assert_eq!(source.atom_at(3).lane, 0);
 }
 
 #[test]
@@ -79,8 +79,8 @@ fn parallel_lane_matching_avoids_a_false_two_hundred_fifty_seventh_lane() {
     source.push_event_mut(atom(2, 6, 1));
 
     assert_eq!(merge_parallel_lanes(&mut source, 0, 256, 258, 256, 2), 256);
-    assert_eq!(source.node_at(256).atom_data().lane, 1);
-    assert_eq!(source.node_at(257).atom_data().lane, 0);
+    assert_eq!(source.atom_at(256).lane, 1);
+    assert_eq!(source.atom_at(257).lane, 0);
 }
 
 #[test]
@@ -119,27 +119,15 @@ fn nested_roll_source(prefix_from: u8, nested_from: u8) -> EffList<14> {
     let outer = ScopeId::new(ScopeKind::Route, 1);
     let inner = ScopeId::new(ScopeKind::Route, 2);
 
-    source.push_scope_enter_reentry_mut(0, roll, ReentryMark::SinglePass);
-    source.push_scope_enter_reentry_mut(0, outer, ReentryMark::Reentrant);
     source.push_event_mut(atom(9, 1, 0));
-    source.close_scope_segment_mut(outer, 0, 1);
-    source.push_scope_exit_mut(1, outer);
-    source.push_scope_enter_reentry_mut(1, outer, ReentryMark::Reentrant);
     source.push_event_mut(atom(prefix_from, 1, 0));
-    source.push_scope_enter_reentry_mut(2, inner, ReentryMark::Reentrant);
     source.push_event_mut(atom(nested_from, 1, 0));
-    source.close_scope_segment_mut(inner, 2, 3);
-    source.push_scope_exit_mut(3, inner);
-    source.push_scope_enter_reentry_mut(3, inner, ReentryMark::Reentrant);
     source.push_event_mut(atom(nested_from, 1, 0));
-    source.close_scope_segment_mut(inner, 3, 4);
-    source.push_scope_exit_mut(4, inner);
+    source.push_route_scope_mut(inner, 2, 3, 4, ReentryMark::Reentrant);
     merge_route_frame_labels(&mut source, 2, 3, 4);
-    source.close_scope_segment_mut(outer, 1, 4);
-    source.push_scope_exit_mut(4, outer);
+    source.push_route_scope_mut(outer, 0, 1, 4, ReentryMark::Reentrant);
     merge_route_frame_labels(&mut source, 0, 1, 4);
-    source.close_scope_segment_mut(roll, 0, 4);
-    source.push_scope_exit_mut(4, roll);
+    source.push_roll_scope_mut(roll, 0, 4);
     color_roll_frame_labels(&mut source, 0, 4);
     source
 }
@@ -155,4 +143,18 @@ fn roll_coloring_separates_route_paths_for_the_complete_inbound_key() {
     let distinct_source = nested_roll_source(0, 2);
     assert_eq!(distinct_source.frame_label_at(1), 0);
     assert_eq!(distinct_source.frame_label_at(2), 0);
+}
+
+#[test]
+fn roll_coloring_consumes_only_atomically_published_scopes() {
+    let mut source = EffList::<4>::new_partitioned(2, 2, 0);
+    let roll = ScopeId::roll_scope(1);
+    source.push_event_mut(atom(0, 1, 0));
+    source.push_event_mut(atom(0, 1, 0));
+    source.push_roll_scope_mut(roll, 0, 2);
+
+    color_roll_frame_labels(&mut source, 0, 2);
+
+    assert_eq!(source.frame_label_at(0), 0);
+    assert_eq!(source.frame_label_at(1), 0);
 }

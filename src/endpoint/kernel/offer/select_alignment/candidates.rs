@@ -1,8 +1,8 @@
-use super::super::{CurrentFrontierSelectionState, ObservedEntrySet, OfferSelectPriority};
+use super::super::{CurrentFrontierSelectionState, ObservedEntrySet};
 use super::model::{
     CurrentOfferAuthority, CurrentOfferCandidateStatus, CurrentOfferEntry, CurrentOfferObservation,
-    OfferAlignmentCandidateInput, OfferAlignmentCandidatePool, OfferAlignmentSelection,
-    ProgressEvidence, ProgressSiblingPresence,
+    OfferAlignmentCandidateInput, OfferAlignmentCandidatePool, OfferAlignmentDecision,
+    OfferAlignmentSelection, ProgressEvidence, ProgressSiblingPresence,
 };
 use super::{CursorEndpoint, Transport};
 use crate::endpoint::kernel::frontier::FrontierKind;
@@ -40,7 +40,7 @@ impl OfferAlignmentCandidates {
     pub(super) fn select(
         &self,
         current_state: CurrentFrontierSelectionState,
-    ) -> Option<(OfferSelectPriority, usize)> {
+    ) -> Option<OfferAlignmentDecision> {
         let current = self.current.candidate_status(current_state, self.selection);
         self.selection.select(current, self.current.idx)
     }
@@ -78,13 +78,13 @@ impl OfferAlignmentCurrent {
     }
 
     #[inline]
-    const fn present(self) -> bool {
-        self.observation.present()
+    const fn admitted(self) -> bool {
+        self.observation.selectable()
     }
 
     #[inline]
     fn merge_into_state(self, state: &mut CurrentFrontierSelectionState) {
-        if !self.present() {
+        if !self.admitted() {
             return;
         }
         if self.observation.ready() {
@@ -101,7 +101,7 @@ impl OfferAlignmentCurrent {
         current_state: CurrentFrontierSelectionState,
         selection: OfferAlignmentSelection,
     ) -> CurrentOfferCandidateStatus {
-        if !self.present() {
+        if !self.admitted() {
             return CurrentOfferCandidateStatus::NotSelectable;
         }
 
@@ -132,7 +132,7 @@ impl OfferAlignmentCurrent {
     ) -> bool {
         if !self.entry.is_route_entry()
             || !self.entry.has_offer_lanes()
-            || !self.present()
+            || !self.admitted()
             || admission == CurrentEntryAdmission::Excluded
         {
             return false;
@@ -159,7 +159,8 @@ impl OfferAlignmentCurrent {
 
     #[inline]
     const fn can_remain_after_alignment(self, state: CurrentFrontierSelectionState) -> bool {
-        self.entry.has_offer_lanes()
+        self.observation.permits_retention()
+            && self.entry.has_offer_lanes()
             && (self.entry.is_route_entry() || state.ready() || state.has_progress_evidence())
     }
 }
@@ -170,7 +171,7 @@ where
 {
     pub(super) fn offer_alignment_candidates(
         &self,
-        observed_entries: ObservedEntrySet,
+        observed_entries: ObservedEntrySet<'_>,
         input: OfferAlignmentCandidateInput,
     ) -> OfferAlignmentCandidates {
         let candidates = OfferAlignmentCandidatePool::from_observed(observed_entries, input);

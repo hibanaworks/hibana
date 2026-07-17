@@ -228,25 +228,30 @@ impl LocalEventProgram {
         self.route_scope_rows_by_slot(slot)
     }
 
+    #[inline(always)]
+    pub(crate) fn route_scope_slot_count(&self) -> usize {
+        self.footprint().route_scope_count
+    }
+
     pub(crate) fn route_scope_rows_by_slot(&self, slot: usize) -> Option<RouteScopeRows> {
         let scope_id = self.rows().route_scope_by_slot(slot)?;
-        let mut start = usize::MAX;
-        let mut end = 0usize;
+        let mut bounds: Option<(usize, usize)> = None;
         let mut arm = 0u8;
         while arm <= 1 {
-            if let Some(row) = self.route_arm_event_row_by_slot(slot, arm) {
-                if row.start() < start {
-                    start = row.start();
-                }
-                if row.end() > end {
-                    end = row.end();
-                }
+            if let Some(row) = self.route_arm_event_row_by_slot(slot, arm)
+                && row.start() < row.end()
+            {
+                bounds = Some(match bounds {
+                    Some((start, end)) => (start.min(row.start()), end.max(row.end())),
+                    None => (row.start(), row.end()),
+                });
             }
             if arm == 1 {
                 break;
             }
             arm += 1;
         }
+        let (start, end) = bounds?;
         let reentry = if self.rows().route_scope_reentry_by_slot(slot) {
             ReentryMark::Reentrant
         } else {
@@ -384,11 +389,6 @@ impl LocalEventRowSet {
     #[inline(always)]
     pub(crate) const fn end(self) -> usize {
         self.end as usize
-    }
-
-    #[inline(always)]
-    pub(crate) const fn len(self) -> usize {
-        self.end() - self.start()
     }
 }
 

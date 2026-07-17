@@ -1,4 +1,4 @@
-use crate::eff::EffStruct;
+use crate::eff::EffAtom;
 
 use super::{ReentryMark, RouteResolverMarker, ScopeEvent, ScopeId};
 
@@ -14,7 +14,7 @@ pub(crate) struct ScopeMarker {
 #[derive(Clone, Copy)]
 pub(super) enum SourceRow {
     Empty,
-    Event { node: EffStruct, frame_label: u8 },
+    Event { atom: EffAtom, frame_label: u8 },
     Scope(ScopeMarker),
     Resolver(RouteResolverMarker),
 }
@@ -44,21 +44,22 @@ impl ScopeMarkerView<'_> {
     }
 
     pub(crate) const fn is_first_enter(self, index: usize) -> bool {
-        let marker = self.at(index);
-        if !matches!(marker.event, ScopeEvent::Enter) {
-            return false;
+        self.at(index).event.is_primary_enter()
+    }
+
+    pub(crate) const fn first_enter_index(self, scope: ScopeId) -> Option<usize> {
+        if scope.is_none() {
+            return None;
         }
-        let mut previous = 0usize;
-        while previous < index {
-            let candidate = self.at(previous);
-            if matches!(candidate.event, ScopeEvent::Enter)
-                && candidate.scope_id.same(marker.scope_id)
-            {
-                return false;
+        let mut index = 0usize;
+        while index < self.len {
+            let marker = self.at(index);
+            if marker.event.is_primary_enter() && marker.scope_id.same(scope) {
+                return Some(index);
             }
-            previous += 1;
+            index += 1;
         }
-        true
+        None
     }
 }
 
@@ -73,8 +74,38 @@ impl ScopeMarker {
         if offset > u16::MAX as usize || segment_end > u16::MAX as usize {
             panic!("scope marker offset overflow");
         }
-        if matches!(event, ScopeEvent::Enter) && segment_end < offset {
-            panic!("scope segment ends before it starts");
+        if scope_id.is_none() {
+            panic!("scope marker requires a present scope");
+        }
+        if event.is_enter() {
+            if segment_end <= offset {
+                panic!("scope segment must be non-empty");
+            }
+            let entry_matches_scope = match scope_id.kind() {
+                Some(super::ScopeKind::Route) => event.route_arm().is_some(),
+                Some(super::ScopeKind::Parallel) => event.parallel_split().is_some(),
+                Some(super::ScopeKind::Roll) => event.is_roll_enter(),
+                None => false,
+            };
+            if !entry_matches_scope {
+                panic!("scope entry kind mismatch");
+            }
+            if let Some(right_end) = event.route_end()
+                && right_end <= segment_end
+            {
+                panic!("route right arm must be non-empty");
+            }
+            if let Some(split) = event.parallel_split()
+                && (split <= offset || split >= segment_end)
+            {
+                panic!("parallel arms must be non-empty");
+            }
+        } else if segment_end != offset {
+            panic!("scope boundary marker cannot carry a segment");
+        } else if matches!(event, ScopeEvent::Split)
+            && !matches!(scope_id.kind(), Some(super::ScopeKind::Parallel))
+        {
+            panic!("split marker requires a parallel scope");
         }
         Self {
             offset: offset as u16,

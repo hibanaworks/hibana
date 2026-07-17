@@ -70,7 +70,7 @@ check_required 'pub(crate) struct EffList<const ARENA_CAPACITY: usize>' \
   src/global/const_dsl/source_arena.rs
 for required in \
   'enum SourceRow {' \
-  'Event { node: EffStruct, frame_label: u8 }' \
+  'Event { atom: EffAtom, frame_label: u8 }' \
   'Scope(ScopeMarker)' \
   'Resolver(RouteResolverMarker)' \
   'rows: [SourceRow; ARENA_CAPACITY]' \
@@ -80,7 +80,7 @@ do
     "single source arena contract missing: ${required}" \
     src/global/const_dsl/source_arena.rs src/g/source.rs
 done
-check_absent 'events:[[:space:]]*\[EffStruct|frame_labels:[[:space:]]*\[u8|scope_markers:[[:space:]]*\[ScopeMarker|resolver_markers:[[:space:]]*\[RouteResolverMarker|from_raw_parts' \
+check_absent 'events:[[:space:]]*\[EffAtom|frame_labels:[[:space:]]*\[u8|scope_markers:[[:space:]]*\[ScopeMarker|resolver_markers:[[:space:]]*\[RouteResolverMarker|from_raw_parts' \
   "source lowering must not restore parallel maximum-capacity arrays or raw prefix slices" \
   src/global/const_dsl.rs src/global/const_dsl/source_arena.rs src/global/const_dsl/eff_list.rs
 check_absent 'EffList<[^>]*,|EffList::<[^>]*,|const SCOPE_MARKER_CAPACITY: usize|const RESOLVER_CAPACITY: usize' \
@@ -98,6 +98,33 @@ check_required 'source_end: usize' \
 check_absent '#\[derive\([^]]*(Clone|Copy)[^]]*\)\][[:space:]]*pub\(crate\) struct EffList|struct SegmentSummary|segment_summaries:|segment_summary\(|segment_count\(|segment_len\(' \
   "source metadata must not be copied or retain segmented summary residue" \
   src/global/const_dsl.rs src/global/const_dsl/source_arena.rs src/global/const_dsl/eff_list.rs
+for required in \
+  'pub(crate) const fn first_enter_index(self, scope: ScopeId)' \
+  'self.at(index).event.is_primary_enter()'
+do
+  check_required "${required}" \
+    "scope-marker first-enter authority missing: ${required}" \
+    src/global/const_dsl/source_arena.rs
+done
+check_required 'pub(crate) const fn route_arm_event_ranges_for_scope(' \
+  "route-arm scope lookup must have one canonical owner" \
+  src/global/const_dsl/scope_ranges/route.rs
+check_required 'pub(crate) const fn scope_segment_end_from_enter(' \
+  "closed scope-segment bounds must have one canonical owner" \
+  src/global/const_dsl/scope_ranges.rs
+for required in \
+  'pub(crate) const fn structured_scope_event_range(' \
+  'pub(crate) const fn route_scope_slot_for_scope(' \
+  'pub(crate) const fn route_parent_arm_for_scope(' \
+  'pub(crate) const fn passive_route_child_scope('
+do
+  check_required "${required}" \
+    "scope topology must have one canonical owner: ${required}" \
+    src/global/const_dsl/scope_ranges/route.rs
+done
+check_absent 'first_enter_for_scope|scope_first_enter_index|scope_full_end|scope_first_enter_offset|passive_child_route_(scope|enter_index)|nearest_route_parent_for_scope|const[[:space:]]+fn[[:space:]]+(route_arm_ranges|scope_segment_end|route_scope_slot_for_scope)\(' \
+  "scope-marker and route-arm lookup must not regain duplicate authorities" \
+  src/global/compiled src/global/role_program
 
 for required in \
   'if required_rows <= 8' \
@@ -154,7 +181,7 @@ done
 check_absent 'struct[[:space:]]+ProgramImageSegmentData|struct[[:space:]]+ProgramImageValidationData|struct[[:space:]]+ProgramAtomRow|CompiledProgramView|atom_rows:|route_resolver_sites:' \
   "compiled lowering must not rebuild source atom or resolver authority" \
   src/global/compiled/lowering/driver.rs src/global/compiled/lowering/driver
-check_required_regex 'node_at\(|resolver_for_scope\(' \
+check_required_regex 'atom_at\(|resolver_for_scope\(' \
   "compact lowering must consume EffList as its single source" \
   src/global/const_dsl/eff_list.rs
 

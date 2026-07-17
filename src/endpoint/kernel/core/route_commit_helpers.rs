@@ -40,6 +40,13 @@ fn prepare_selected_route_commit_row_from_parts(
     if scope_slot > u16::MAX as usize {
         return None;
     }
+    let arm_value = Arm::decode_raw(arm)?;
+    if !decision_state
+        .scope_evidence
+        .selection_is_coherent(scope_slot, arm_value)
+    {
+        return None;
+    }
     let reentry = route_reentry_from_cursor(cursor, scope);
     if reentry.is_reentrant()
         && let Some(existing) = selected_arm_for_scope_from_parts(decision_state, cursor, scope)
@@ -170,12 +177,7 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     if let Some(arm) = selected_arm_for_scope_from_parts(decision_state, cursor, scope_id) {
         return Some(arm);
     }
-    scope_slot_for_route_from_cursor(cursor, scope_id)
-        .and_then(|slot| decision_state.scope_evidence.peek_ack(slot))
-        .map(|token| token.arm().as_u8())
-        .or_else(|| {
-            let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
-            let mask = decision_state.scope_evidence.poll_ready_arm_mask(slot);
-            Arm::from_single_ready_mask(mask).map(Arm::as_u8)
-        })
+    let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
+    let mask = decision_state.scope_evidence.poll_ready_arm_mask(slot);
+    Arm::from_single_ready_mask(mask).map(Arm::as_u8)
 }

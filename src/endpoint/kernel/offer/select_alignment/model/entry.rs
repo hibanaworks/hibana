@@ -115,4 +115,6 @@ pub(in crate::endpoint::kernel::offer::select_alignment) struct OfferAlignmentCa
         CurrentOfferAuthority,
     pub(in crate::endpoint::kernel::offer::select_alignment) progress_sibling_presence:
         ProgressSiblingPresence,
+    pub(in crate::endpoint::kernel::offer::select_alignment) current_observation:
+        super::current::CurrentOfferObservation,
 }

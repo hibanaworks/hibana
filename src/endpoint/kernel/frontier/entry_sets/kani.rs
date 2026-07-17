@@ -1,4 +1,4 @@
-use super::{ActiveEntrySetBuilder, ActiveEntrySlot, EntryBuffer, FrontierObservationSlot};
+use super::{ActiveEntrySetBuilder, ActiveEntrySlot, FrontierObservationSlot};
 use crate::endpoint::kernel::frontier::{
     FrontierKind, OfferEntryAdmission, OfferEntryKey, OfferEntryObservedState,
 };
@@ -14,10 +14,7 @@ fn offer_key(entry: u16, scope: u16) -> OfferEntryKey {
 #[kani::proof]
 fn frontier_entry_identity_distinguishes_scope_at_same_entry() {
     let mut storage = [ActiveEntrySlot::EMPTY; 2];
-    /* SAFETY: `storage` is a live two-slot array exclusively borrowed by the
-    builder until both exact keys have been inserted and the view is sealed. */
-    let mut entries =
-        unsafe { ActiveEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut entries = ActiveEntrySetBuilder::from_slice(&mut storage);
     let first = offer_key(7, 1);
     let second = offer_key(7, 2);
 
@@ -33,10 +30,7 @@ fn frontier_entry_identity_distinguishes_scope_at_same_entry() {
 #[kani::should_panic]
 fn active_frontier_entry_rejects_absent_exact_key() {
     let mut storage = [ActiveEntrySlot::EMPTY; 1];
-    /* SAFETY: the proof builder owns the initialized slot until the production
-    insert rejects the absent identity. */
-    let mut entries =
-        unsafe { ActiveEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut entries = ActiveEntrySetBuilder::from_slice(&mut storage);
     entries.insert_key(OfferEntryKey::EMPTY, 0);
 }
 
@@ -69,9 +63,7 @@ fn frontier_entry_capacity_preserves_the_full_lane_domain() {
         logical_lane_count: 1,
     };
     let capacity = footprint.frontier_entry_count();
-    /* SAFETY: the symbolic capacity is bounded by the live storage array and
-    the builder owns it exclusively for this proof. */
-    let entries = unsafe { ActiveEntrySetBuilder::from_parts(storage.as_mut_ptr(), capacity) };
+    let entries = ActiveEntrySetBuilder::from_slice(&mut storage[..capacity]);
 
     assert_eq!(entries.capacity(), capacity);
     assert_eq!(entries.capacity(), active_lane_count as usize);
@@ -88,14 +80,6 @@ fn frontier_entry_capacity_preserves_the_full_lane_domain() {
         );
         assert!(footprint.frontier_visit_count() > capacity);
     }
-}
-
-#[kani::proof]
-#[kani::should_panic]
-fn nonempty_frontier_entry_buffer_rejects_null_storage() {
-    /* SAFETY: this deliberately violates the constructor contract to prove the
-    owner fails before dereferencing null storage. */
-    let _ = unsafe { EntryBuffer::<ActiveEntrySlot>::from_parts(core::ptr::null_mut(), 1) };
 }
 
 #[kani::proof]
@@ -196,10 +180,7 @@ fn exact_observation_buffer_retains_same_entry_witness_rows() {
         flags: OfferEntryObservedState::FLAG_PROGRESS,
     };
     let mut storage = [FrontierObservationSlot::EMPTY; 2];
-    /* SAFETY: the proof builder exclusively owns both initialized slots until
-    the exact-witness view is sealed below. */
-    let mut observations =
-        unsafe { super::ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observations = super::ObservedEntrySetBuilder::from_slice(&mut storage);
     observations.clear();
 
     assert_eq!(
@@ -223,10 +204,7 @@ fn exact_observation_buffer_retains_same_entry_witness_rows() {
 
 fn verify_cursor_target_order_class(left: u8, right: u8) {
     let mut storage = [FrontierObservationSlot::EMPTY; 2];
-    /* SAFETY: this helper exclusively owns the live two-row observation array
-    through insertion and seals the builder before reading either row. */
-    let mut observations =
-        unsafe { super::ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observations = super::ObservedEntrySetBuilder::from_slice(&mut storage);
     observations.clear();
     for (entry, scope) in [(left, 1), (right, 2)] {
         observations.push_exact_observation(
@@ -262,10 +240,7 @@ fn exact_observation_buffer_groups_all_cursor_target_order_classes() {
 #[kani::proof]
 fn selectable_ready_query_never_admits_an_excluded_exact_witness() {
     let mut storage = [FrontierObservationSlot::EMPTY; 2];
-    /* SAFETY: the proof keeps the exact-witness array live and exclusively
-    mutable until both rows are initialized, then queries only the sealed view. */
-    let mut observations =
-        unsafe { super::ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observations = super::ObservedEntrySetBuilder::from_slice(&mut storage);
     observations.clear();
     observations.push_exact_observation(
         OfferEntryObservedState {
@@ -294,10 +269,7 @@ fn selectable_ready_query_never_admits_an_excluded_exact_witness() {
 #[kani::should_panic]
 fn exact_observation_capacity_exhaustion_is_fail_closed() {
     let mut storage = [FrontierObservationSlot::EMPTY; 1];
-    /* SAFETY: the one-row array remains live and exclusively owned while the
-    first insert initializes it; the second insert must fail before any overrun. */
-    let mut observations =
-        unsafe { super::ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observations = super::ObservedEntrySetBuilder::from_slice(&mut storage);
     observations.clear();
     for entry in [7, 8] {
         observations.push_exact_observation(

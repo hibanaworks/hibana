@@ -1,90 +1,65 @@
 #[cfg(all(test, hibana_repo_tests))]
 use super::MAX_STATES;
 use super::{
-    FrontierCandidate, FrontierKind, FrontierScratchView, OfferEntryEvidence, ScopeId, StateIndex,
-    checked_state_index,
+    FrontierCandidate, FrontierKind, FrontierScratchSectionLease, OfferEntryEvidence, ScopeId,
+    StateIndex, checked_state_index, frontier_candidates_mut,
 };
-pub(crate) fn frontier_snapshot_from_scratch(
-    scratch: &mut FrontierScratchView,
+pub(crate) fn frontier_snapshot_from_scratch<'a>(
+    candidates: &'a mut FrontierScratchSectionLease<'_, FrontierCandidate>,
     current_scope: ScopeId,
     current_entry_idx: usize,
     current_parallel_root: ScopeId,
     current_frontier: FrontierKind,
-) -> FrontierSnapshot {
+) -> FrontierSnapshot<'a> {
     let current_entry = crate::invariant_some(checked_state_index(current_entry_idx));
-    let candidate_capacity = scratch.candidates_mut().len();
-    /* SAFETY: `scratch` is the endpoint frontier scratch borrow for the active
-    operation. Its candidate slice remains live for the returned snapshot, and
-    the snapshot initializes at most `candidate_capacity` cells. */
-    unsafe {
-        FrontierSnapshot::from_parts(
-            current_scope,
-            current_entry,
-            current_parallel_root,
-            current_frontier,
-            scratch.candidates_mut().as_mut_ptr(),
-            candidate_capacity,
-        )
-    }
+    FrontierSnapshot::new(
+        current_scope,
+        current_entry,
+        current_parallel_root,
+        current_frontier,
+        frontier_candidates_mut(candidates),
+    )
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct FrontierSnapshot {
+#[derive(Debug)]
+pub(crate) struct FrontierSnapshot<'a> {
     pub(crate) current_scope: ScopeId,
     pub(crate) current_entry: StateIndex,
     pub(crate) current_parallel_root: ScopeId,
     pub(crate) current_frontier: FrontierKind,
-    candidates: *mut FrontierCandidate,
-    candidate_capacity: usize,
+    candidates: &'a mut [FrontierCandidate],
     pub(crate) candidate_len: usize,
 }
 
-impl FrontierSnapshot {
+impl<'a> FrontierSnapshot<'a> {
     #[inline]
-    pub(crate) unsafe fn from_parts(
+    pub(crate) fn new(
         current_scope: ScopeId,
         current_entry: StateIndex,
         current_parallel_root: ScopeId,
         current_frontier: FrontierKind,
-        candidates: *mut FrontierCandidate,
-        candidate_capacity: usize,
+        candidates: &'a mut [FrontierCandidate],
     ) -> Self {
-        if candidate_capacity > u16::MAX as usize
-            || (candidate_capacity != 0 && candidates.is_null())
-        {
+        if candidates.len() > u16::MAX as usize {
             crate::invariant();
         }
-        let mut idx = 0usize;
-        while idx < candidate_capacity {
-            /* SAFETY: `idx < candidate_capacity` bounds the scratch candidate
-            buffer owned by this snapshot; every slot is reset before
-            `candidate_len` exposes any candidate. */
-            unsafe {
-                candidates.add(idx).write(FrontierCandidate::EMPTY);
-            }
-            idx += 1;
-        }
+        candidates.fill(FrontierCandidate::EMPTY);
         Self {
             current_scope,
             current_entry,
             current_parallel_root,
             current_frontier,
             candidates,
-            candidate_capacity,
             candidate_len: 0,
         }
     }
 
     #[inline]
     pub(crate) fn push_candidate(&mut self, candidate: FrontierCandidate) -> bool {
-        if self.candidate_len >= self.candidate_capacity {
+        let Some(slot) = self.candidates.get_mut(self.candidate_len) else {
             return false;
-        }
-        /* SAFETY: `candidate_len < candidate_capacity` bounds the next
-        snapshot candidate slot; the length is increased only after the write. */
-        unsafe {
-            self.candidates.add(self.candidate_len).write(candidate);
-        }
+        };
+        *slot = candidate;
         self.candidate_len += 1;
         true
     }
@@ -94,10 +69,7 @@ impl FrontierSnapshot {
         if idx >= self.candidate_len {
             crate::invariant();
         }
-        /* SAFETY: `idx < candidate_len` bounds the initialized prefix of the
-        snapshot's scratch candidate buffer; this copies one candidate without
-        mutating the scratch slice. */
-        unsafe { *self.candidates.add(idx) }
+        *crate::invariant_some(self.candidates.get(idx))
     }
 
     #[inline]
@@ -232,18 +204,13 @@ mod tests {
     fn visit_set_distinguishes_entries_that_share_a_scope() {
         let scope = ScopeId::route(1);
         let mut candidates = [FrontierCandidate::EMPTY; 2];
-        /* SAFETY: `candidates` is a live, exclusive two-cell allocation and
-        remains in scope for the complete snapshot use. */
-        let mut snapshot = unsafe {
-            FrontierSnapshot::from_parts(
-                ScopeId::none(),
-                StateIndex::new(0),
-                ScopeId::none(),
-                FrontierKind::Route,
-                candidates.as_mut_ptr(),
-                candidates.len(),
-            )
-        };
+        let mut snapshot = FrontierSnapshot::new(
+            ScopeId::none(),
+            StateIndex::new(0),
+            ScopeId::none(),
+            FrontierKind::Route,
+            &mut candidates,
+        );
         for entry_idx in [1u16, 2u16] {
             assert!(snapshot.push_candidate(FrontierCandidate {
                 scope_id: scope,
@@ -327,14 +294,11 @@ impl EvidenceFingerprint {
     #[inline]
     pub(crate) const fn from_offer_entry_evidence(evidence: OfferEntryEvidence) -> Self {
         let mut bits = 0u8;
-        if evidence.has_ack() {
+        if evidence.has_ready_arm() {
             bits |= 1 << 0;
         }
-        if evidence.has_ready_arm() {
-            bits |= 1 << 1;
-        }
         if evidence.ingress_ready() {
-            bits |= 1 << 2;
+            bits |= 1 << 1;
         }
         Self(bits)
     }
@@ -369,15 +333,6 @@ impl OfferProgressState {
             OfferEvidenceOutcome::Pending
         }
     }
-}
-
-#[inline(always)]
-pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-    let mask = match align.checked_sub(1) {
-        Some(mask) => mask,
-        None => crate::invariant(),
-    };
-    (value + mask) & !mask
 }
 
 #[inline(always)]

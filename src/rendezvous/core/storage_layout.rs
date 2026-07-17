@@ -87,30 +87,15 @@ where
     'cfg: 'rv,
 {
     #[inline(always)]
-    pub(crate) const fn align_up(value: usize, align: usize) -> usize {
-        if !align.is_power_of_two() {
-            crate::invariant();
-        }
-        let mask = align - 1;
-        if value > usize::MAX - mask {
-            crate::invariant();
-        }
-        (value + mask) & !mask
-    }
-
-    #[inline(always)]
     pub(crate) const fn frontier_workspace_guard_bytes(
         layout: crate::endpoint::kernel::FrontierScratchLayout,
     ) -> usize {
         let align = layout.total_align();
-        if align == 0 {
+        if !align.is_power_of_two() {
             crate::invariant();
         }
         let pad = align - 1;
-        if layout.total_bytes() > usize::MAX - pad {
-            crate::invariant();
-        }
-        layout.total_bytes() + pad
+        crate::runtime_core::layout::add(layout.total_bytes(), pad)
     }
 
     #[inline]

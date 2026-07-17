@@ -1,6 +1,6 @@
 use super::event_relations::{events_are_locally_ordered, events_are_route_exclusive};
 use super::scope_ranges::roll_body_range_from_enter;
-use super::{EffList, ScopeEvent, ScopeKind, ScopeMarkerView, route_arm_ranges_from_first_enter};
+use super::{EffList, ScopeKind, ScopeMarkerView, route_arm_ranges_from_first_enter};
 
 const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
 const NO_CAUSAL_WITNESS: u32 = u32::MAX;
@@ -104,31 +104,12 @@ struct UnfoldedOccurrence {
     iteration: RollIteration,
 }
 
-const fn is_first_route_enter(markers: ScopeMarkerView<'_>, marker_idx: usize) -> bool {
-    let marker = markers.at(marker_idx);
-    if !matches!(marker.event, ScopeEvent::Enter)
-        || !matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-    {
-        return false;
-    }
-    let mut idx = 0usize;
-    while idx < marker_idx {
-        let candidate = markers.at(idx);
-        if matches!(candidate.event, ScopeEvent::Enter) && candidate.scope_id.same(marker.scope_id)
-        {
-            return false;
-        }
-        idx += 1;
-    }
-    true
-}
-
 const fn route_arm_at(
     markers: ScopeMarkerView<'_>,
     route_enter_idx: usize,
     eff_idx: usize,
 ) -> Option<u8> {
-    let (_, left_start, left_end, _, right_start, right_end) =
+    let [(left_start, left_end), (right_start, right_end)] =
         route_arm_ranges_from_first_enter(markers, route_enter_idx);
     if left_start <= eff_idx && eff_idx < left_end {
         Some(0)
@@ -147,7 +128,9 @@ const fn on_endpoint_route_path(
 ) -> bool {
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
-        if is_first_route_enter(markers, marker_idx)
+        let marker = markers.at(marker_idx);
+        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+            && markers.is_first_enter(marker_idx)
             && let Some(candidate_arm) = route_arm_at(markers, marker_idx, candidate_eff_idx)
         {
             let earlier_matches = match route_arm_at(markers, marker_idx, earlier_eff_idx) {
@@ -202,19 +185,13 @@ const fn receive_precedes_later_send<const E: usize>(
     later_eff_idx: usize,
 ) -> bool {
     let markers = eff_list.scope_markers();
-    let earlier_node = eff_list.node_at(earlier_eff_idx);
-    if !matches!(earlier_node.kind, crate::eff::EffKind::Atom) {
-        return false;
-    }
-    let mut witnesses = FirstCausalWitnesses::new(earlier_node.atom_data().to, earlier_eff_idx);
+    let earlier = eff_list.atom_at(earlier_eff_idx);
+    let mut witnesses = FirstCausalWitnesses::new(earlier.to, earlier_eff_idx);
 
     let mut eff_idx = earlier_eff_idx + 1;
     while eff_idx <= later_eff_idx {
-        let node = eff_list.node_at(eff_idx);
-        if matches!(node.kind, crate::eff::EffKind::Atom)
-            && on_endpoint_route_path(markers, eff_idx, earlier_eff_idx, later_eff_idx)
-        {
-            let atom = node.atom_data();
+        if on_endpoint_route_path(markers, eff_idx, earlier_eff_idx, later_eff_idx) {
+            let atom = eff_list.atom_at(eff_idx);
             if propagate_causal_witness(markers, &mut witnesses, eff_idx, atom)
                 && eff_idx == later_eff_idx
             {
@@ -234,11 +211,7 @@ const fn validate_linear_later_senders<const E: usize>(
     eff_list: &EffList<E>,
     earlier_eff_idx: usize,
 ) -> bool {
-    let earlier_node = eff_list.node_at(earlier_eff_idx);
-    if !matches!(earlier_node.kind, crate::eff::EffKind::Atom) {
-        return false;
-    }
-    let earlier = earlier_node.atom_data();
+    let earlier = eff_list.atom_at(earlier_eff_idx);
     let markers = eff_list.scope_markers();
     if markers.len() != 0 {
         return false;
@@ -246,19 +219,16 @@ const fn validate_linear_later_senders<const E: usize>(
     let mut witnesses = FirstCausalWitnesses::new(earlier.to, earlier_eff_idx);
     let mut eff_idx = earlier_eff_idx + 1;
     while eff_idx < eff_list.len() {
-        let node = eff_list.node_at(eff_idx);
-        if matches!(node.kind, crate::eff::EffKind::Atom) {
-            let candidate = node.atom_data();
-            let causally_preceded =
-                propagate_causal_witness(markers, &mut witnesses, eff_idx, candidate);
-            if candidate.from != candidate.to
-                && earlier.to == candidate.to
-                && earlier.lane == candidate.lane
-                && earlier.from != candidate.from
-                && !causally_preceded
-            {
-                return false;
-            }
+        let candidate = eff_list.atom_at(eff_idx);
+        let causally_preceded =
+            propagate_causal_witness(markers, &mut witnesses, eff_idx, candidate);
+        if candidate.from != candidate.to
+            && earlier.to == candidate.to
+            && earlier.lane == candidate.lane
+            && earlier.from != candidate.from
+            && !causally_preceded
+        {
+            return false;
         }
         eff_idx += 1;
     }
@@ -268,14 +238,9 @@ const fn validate_linear_later_senders<const E: usize>(
 const fn validate_linear_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
     let mut earlier_eff_idx = 0usize;
     while earlier_eff_idx < eff_list.len() {
-        let node = eff_list.node_at(earlier_eff_idx);
-        if matches!(node.kind, crate::eff::EffKind::Atom) {
-            let earlier = node.atom_data();
-            if earlier.from != earlier.to
-                && !validate_linear_later_senders(eff_list, earlier_eff_idx)
-            {
-                return false;
-            }
+        let earlier = eff_list.atom_at(earlier_eff_idx);
+        if earlier.from != earlier.to && !validate_linear_later_senders(eff_list, earlier_eff_idx) {
+            return false;
         }
         earlier_eff_idx += 1;
     }
@@ -287,7 +252,7 @@ const fn route_reexecutes_in_roll_body(
     route_enter_idx: usize,
     body: RollBodyRange,
 ) -> bool {
-    let (_, left_start, _, _, _, right_end) =
+    let [(left_start, _), (_, right_end)] =
         route_arm_ranges_from_first_enter(markers, route_enter_idx);
     body.start <= left_start && right_end <= body.end
 }
@@ -322,7 +287,9 @@ const fn on_unfolded_endpoint_route_path(
 ) -> bool {
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
-        if is_first_route_enter(markers, marker_idx)
+        let marker = markers.at(marker_idx);
+        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+            && markers.is_first_enter(marker_idx)
             && route_arm_at(markers, marker_idx, candidate.eff_idx).is_some()
             && !unfolded_route_path_contains(markers, marker_idx, candidate, earlier, body)
             && !unfolded_route_path_contains(markers, marker_idx, candidate, later, body)
@@ -371,39 +338,32 @@ const fn receive_precedes_after_roll_reentry<const E: usize>(
     let later_unfolded_idx = body_len + later_eff_idx - body.start;
 
     let markers = eff_list.scope_markers();
-    let earlier_node = eff_list.node_at(earlier_eff_idx);
-    if !matches!(earlier_node.kind, crate::eff::EffKind::Atom) {
-        return false;
-    }
-    let mut witnesses =
-        FirstCausalWitnesses::new(earlier_node.atom_data().to, earlier_unfolded_idx);
+    let earlier = eff_list.atom_at(earlier_eff_idx);
+    let mut witnesses = FirstCausalWitnesses::new(earlier.to, earlier_unfolded_idx);
 
     let mut unfolded_idx = earlier_unfolded_idx + 1;
     while unfolded_idx <= later_unfolded_idx {
         let candidate_occurrence = body.unfolded_occurrence(unfolded_idx);
-        let node = eff_list.node_at(candidate_occurrence.eff_idx);
-        if matches!(node.kind, crate::eff::EffKind::Atom) {
-            let candidate = node.atom_data();
-            if on_unfolded_endpoint_route_path(
-                markers,
-                candidate_occurrence,
-                UnfoldedOccurrence {
-                    eff_idx: earlier_eff_idx,
-                    iteration: RollIteration::Current,
-                },
-                UnfoldedOccurrence {
-                    eff_idx: later_eff_idx,
-                    iteration: RollIteration::Next,
-                },
-                body,
-            ) && let Some(witness) = witnesses.first(candidate.from)
-                && unfolded_locally_ordered(markers, body, witness, unfolded_idx)
-            {
-                if unfolded_idx == later_unfolded_idx {
-                    return true;
-                }
-                witnesses.record_first(candidate.to, unfolded_idx);
+        let candidate = eff_list.atom_at(candidate_occurrence.eff_idx);
+        if on_unfolded_endpoint_route_path(
+            markers,
+            candidate_occurrence,
+            UnfoldedOccurrence {
+                eff_idx: earlier_eff_idx,
+                iteration: RollIteration::Current,
+            },
+            UnfoldedOccurrence {
+                eff_idx: later_eff_idx,
+                iteration: RollIteration::Next,
+            },
+            body,
+        ) && let Some(witness) = witnesses.first(candidate.from)
+            && unfolded_locally_ordered(markers, body, witness, unfolded_idx)
+        {
+            if unfolded_idx == later_unfolded_idx {
+                return true;
             }
+            witnesses.record_first(candidate.to, unfolded_idx);
         }
         unfolded_idx += 1;
     }
@@ -419,28 +379,20 @@ const fn validate_roll_body_receive_lane_causality<const E: usize>(
     }
     let mut left_idx = body.start;
     while left_idx < body.end {
-        let left_node = eff_list.node_at(left_idx);
-        if matches!(left_node.kind, crate::eff::EffKind::Atom) {
-            let left = left_node.atom_data();
-            if left.from != left.to {
-                let mut right_idx = body.start;
-                while right_idx < body.end {
-                    let right_node = eff_list.node_at(right_idx);
-                    if matches!(right_node.kind, crate::eff::EffKind::Atom) {
-                        let right = right_node.atom_data();
-                        if right.from != right.to
-                            && left.to == right.to
-                            && left.lane == right.lane
-                            && left.from != right.from
-                            && !receive_precedes_after_roll_reentry(
-                                eff_list, body, left_idx, right_idx,
-                            )
-                        {
-                            return false;
-                        }
-                    }
-                    right_idx += 1;
+        let left = eff_list.atom_at(left_idx);
+        if left.from != left.to {
+            let mut right_idx = body.start;
+            while right_idx < body.end {
+                let right = eff_list.atom_at(right_idx);
+                if right.from != right.to
+                    && left.to == right.to
+                    && left.lane == right.lane
+                    && left.from != right.from
+                    && !receive_precedes_after_roll_reentry(eff_list, body, left_idx, right_idx)
+                {
+                    return false;
                 }
+                right_idx += 1;
             }
         }
         left_idx += 1;
@@ -453,7 +405,7 @@ const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList
     let mut marker_idx = 0usize;
     while marker_idx < markers.len() {
         let marker = markers.at(marker_idx);
-        if matches!(marker.event, ScopeEvent::Enter)
+        if marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
         {
             let Some((body_start, body_end)) = roll_body_range_from_enter(markers, marker_idx)
@@ -476,27 +428,21 @@ const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &E
     let markers = eff_list.scope_markers();
     let mut left_idx = 0usize;
     while left_idx < eff_list.len() {
-        let left_node = eff_list.node_at(left_idx);
-        if matches!(left_node.kind, crate::eff::EffKind::Atom) {
-            let left = left_node.atom_data();
-            if left.from != left.to {
-                let mut right_idx = left_idx + 1;
-                while right_idx < eff_list.len() {
-                    let right_node = eff_list.node_at(right_idx);
-                    if matches!(right_node.kind, crate::eff::EffKind::Atom) {
-                        let right = right_node.atom_data();
-                        if right.from != right.to
-                            && left.to == right.to
-                            && left.lane == right.lane
-                            && left.from != right.from
-                            && !events_are_route_exclusive(markers, left_idx, right_idx)
-                            && !receive_precedes_later_send(eff_list, left_idx, right_idx)
-                        {
-                            return false;
-                        }
-                    }
-                    right_idx += 1;
+        let left = eff_list.atom_at(left_idx);
+        if left.from != left.to {
+            let mut right_idx = left_idx + 1;
+            while right_idx < eff_list.len() {
+                let right = eff_list.atom_at(right_idx);
+                if right.from != right.to
+                    && left.to == right.to
+                    && left.lane == right.lane
+                    && left.from != right.from
+                    && !events_are_route_exclusive(markers, left_idx, right_idx)
+                    && !receive_precedes_later_send(eff_list, left_idx, right_idx)
+                {
+                    return false;
                 }
+                right_idx += 1;
             }
         }
         left_idx += 1;

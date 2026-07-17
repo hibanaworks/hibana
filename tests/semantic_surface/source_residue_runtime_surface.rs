@@ -177,6 +177,26 @@ fn transport_surface_has_no_custom_error_axis() {
 }
 
 #[test]
+fn frame_header_lane_is_not_misnamed_as_carrier_identity() {
+    let transport = read("src/transport.rs");
+    assert!(
+        transport.contains("pub struct FrameHeader([u8; 8]);"),
+        "frame header must remain the compact eight-byte wire observation"
+    );
+    assert!(
+        transport.contains("pub(crate) const fn lane(self) -> u8")
+            && transport.contains("lane: header.lane()"),
+        "wire byte four and framed ingress evidence must share lane vocabulary"
+    );
+    for forbidden in ["carrier: header.lane()", "session, carrier, source"] {
+        assert!(
+            !transport.contains(forbidden),
+            "lane identity must not be confused with transport carrier identity: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn endpoint_lease_slot_is_session_role_authority() {
     let lease_core = read("src/session/lease/core.rs");
     let rendezvous_core = read("src/rendezvous/core.rs");
@@ -307,6 +327,21 @@ fn endpoint_lease_slot_is_session_role_authority() {
 }
 
 #[test]
+fn endpoint_lease_capacity_uses_the_last_representable_slot_id() {
+    let core = read("src/rendezvous/core.rs");
+    let capacity = read("src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs");
+
+    assert!(
+        core.contains("match slot_count.checked_sub(1)")
+            && core.contains("Some(last_slot) => last_slot <= u16::MAX as usize")
+            && core.contains("!EndpointLeaseId::slot_count_is_representable(slots)")
+            && capacity.contains("!EndpointLeaseId::slot_count_is_representable(required_slots)")
+            && !capacity.contains("EndpointLeaseId::try_from(required_slots)")
+            && !core.contains("u16::try_from(slots)")
+    );
+}
+
+#[test]
 fn scope_id_is_single_u16_identity_without_compact_shadow() {
     let scope = read("src/global/const_dsl/scope.rs");
     let const_dsl = read("src/global/const_dsl.rs");
@@ -420,14 +455,16 @@ fn route_resolver_authority_is_complete_identity_keyed() {
 
     for required in [
         "type Item = DynamicRouteResolver;",
-        "return Some(DynamicRouteResolver::new(scope, resolver_id));",
+        "let Some((_, resolver)) = self.program.route_resolver_authority_at_row(row) else {",
+        "return Some(resolver);",
+        "Some((authority.scope, authority.resolver()))",
         "PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8",
         "PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE: usize = 1",
         "PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5",
         "scope_marker_len: u16,",
         "route_participant_len: u16,",
         "pub(crate) const fn scope_markers(self) -> ProgramColumnRange",
-        "scope_marker_identity_tag(marker.event, marker.reentry)",
+        "scope_marker_identity_tag(erase_scope_event(marker.event), marker.reentry)",
         "out.write_scope_marker(columns.scope_markers(), idx, markers.at(idx));",
         "scope.raw() | ScopeId::RESERVED_BIT",
         "packed_scope & !ScopeId::RESERVED_BIT",
@@ -488,6 +525,8 @@ fn route_resolver_authority_is_complete_identity_keyed() {
         "pub(crate) const fn resolver_at(",
         "pub(crate) const fn resolver_with_scope(",
         "PROGRAM_IMAGE_RESOLVER_STRIDE",
+        "route_resolver_scope_at_row",
+        "route_resolver_id_at_row",
         "ProgramResolverRow",
         "INTRINSIC_ROUTE_RESOLVER_ID",
         "resident_resolver_at",
@@ -580,7 +619,11 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
     let endpoint_selectors = read("src/global/const_dsl/endpoint_selectors.rs");
     let receive_lane_causality = read("src/global/const_dsl/receive_lane_causality.rs");
     let event_relations = read("src/global/const_dsl/event_relations.rs");
-    let scope_ranges = read("src/global/const_dsl/scope_ranges.rs");
+    let scope_ranges = format!(
+        "{}\n{}",
+        read("src/global/const_dsl/scope_ranges.rs"),
+        read("src/global/const_dsl/scope_ranges/route.rs")
+    );
     let eff_list = read("src/global/const_dsl/eff_list.rs");
     let route = read("src/global/const_dsl/route.rs");
     let seal = read("src/global/compiled/lowering/seal.rs");
@@ -614,7 +657,9 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
     for required in [
         "ScopeEvent::Split",
         "let right_start = self.eff.len();",
-        "self.eff.push_scope_split_mut(right_start, scope);",
+        ".push_parallel_scope_mut(scope, left_start, right_start, right_end);",
+        "self.eff.push_route_scope_mut(",
+        "self.eff.push_roll_scope_mut(scope, start, end);",
         "pub(crate) const fn validate_parallel_endpoint_selectors<",
         "pub(crate) const fn validate_roll_reentry_endpoint_selectors<",
         "const fn parallel_endpoint_selector_conflicts<const E: usize>(",
@@ -654,7 +699,9 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "while role < summary.compiled_program_role_count()",
         "validate_compiled_layout(role as u8, eff_list)",
         "pub(crate) const fn parallel_arm_ranges_from_enter(",
-        "scope_markers.is_first_enter(marker_idx)",
+        "pub(crate) const fn closed_route_arm_ranges_from_first_enter(",
+        "route requires exactly 2 contiguous non-empty closed arms",
+        "marker.event.is_primary_enter()",
         "const SOURCE: ProgramSourceData<CAPACITY> = ProgramSourceData::lower::<Steps>();",
         "pub(super) const SOURCE_EFF_LIST: &'static crate::global::const_dsl::EffList<CAPACITY>",
         "let source = Self::SOURCE_EFF_LIST;",
@@ -677,6 +724,10 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "local_step_range_for_eff_range::<ROLE>",
         "fill_dependency_rows::<ROLE>",
         "push_resident_rows::<ROLE>",
+        "push_scope_enter_reentry_mut",
+        "close_scope_segment_mut",
+        "push_scope_split_mut",
+        "push_scope_exit_mut",
         "push_route_arm_lane_rows::<ROLE>",
         "push_roll_scope_rows::<ROLE>",
         "local_event_row_for_eff::<ROLE>",
@@ -689,6 +740,9 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "let mut left_seen = false;",
         "let mut right_seen = false;",
         "struct EndpointSelector(u32);",
+        "const fn first_route_enter(",
+        "const fn route_has_two_closed_arms(",
+        "const fn is_first_route_enter(",
     ] {
         assert!(
             !combined.contains(forbidden),

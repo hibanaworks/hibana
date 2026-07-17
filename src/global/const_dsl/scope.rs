@@ -13,9 +13,102 @@ pub(crate) enum ScopeKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScopeEvent {
-    Enter,
+    Enter(ScopeEntry),
     Split,
     Exit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScopeEntry {
+    Route { right_end: u16 },
+    RouteArmContinuation,
+    Parallel { split: u16 },
+    Roll,
+}
+
+impl ScopeEvent {
+    #[inline(always)]
+    pub(crate) const fn route_enter(right_end: usize) -> Self {
+        if right_end > u16::MAX as usize {
+            panic!("route end offset overflow");
+        }
+        Self::Enter(ScopeEntry::Route {
+            right_end: right_end as u16,
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_arm_continuation() -> Self {
+        Self::Enter(ScopeEntry::RouteArmContinuation)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn parallel_enter(split: usize) -> Self {
+        if split > u16::MAX as usize {
+            panic!("parallel split offset overflow");
+        }
+        Self::Enter(ScopeEntry::Parallel {
+            split: split as u16,
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) const fn roll_enter() -> Self {
+        Self::Enter(ScopeEntry::Roll)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_enter(self) -> bool {
+        matches!(self, Self::Enter(_))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_primary_enter(self) -> bool {
+        matches!(
+            self,
+            Self::Enter(ScopeEntry::Route { .. } | ScopeEntry::Parallel { .. } | ScopeEntry::Roll)
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_end(self) -> Option<usize> {
+        match self {
+            Self::Enter(ScopeEntry::Route { right_end }) => Some(right_end as usize),
+            Self::Enter(
+                ScopeEntry::RouteArmContinuation | ScopeEntry::Parallel { .. } | ScopeEntry::Roll,
+            )
+            | Self::Split
+            | Self::Exit => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn route_arm(self) -> Option<u8> {
+        match self {
+            Self::Enter(ScopeEntry::Route { .. }) => Some(0),
+            Self::Enter(ScopeEntry::RouteArmContinuation) => Some(1),
+            Self::Enter(ScopeEntry::Parallel { .. } | ScopeEntry::Roll)
+            | Self::Split
+            | Self::Exit => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn is_roll_enter(self) -> bool {
+        matches!(self, Self::Enter(ScopeEntry::Roll))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn parallel_split(self) -> Option<usize> {
+        match self {
+            Self::Enter(ScopeEntry::Parallel { split }) => Some(split as usize),
+            Self::Enter(
+                ScopeEntry::Route { .. } | ScopeEntry::RouteArmContinuation | ScopeEntry::Roll,
+            )
+            | Self::Split
+            | Self::Exit => None,
+        }
+    }
 }
 
 /// Encoded scope identifier carried by lowering, descriptor rows, resolver

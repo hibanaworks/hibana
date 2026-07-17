@@ -49,13 +49,14 @@ where
         }
         let mut offer_state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         let poll = {
-            let Some(_scratch_lease) = self.port_for_lane(self.primary_lane).try_scratch_lease()
+            let Some(mut scratch_lease) = self.port_for_lane(self.primary_lane).try_scratch_lease()
             else {
                 self.public_offer_state = offer_state;
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             };
-            self.poll_offer_state(&mut offer_state, cx)
+            let mut frontier_scratch = self.frontier_scratch_workspace(&mut scratch_lease);
+            self.poll_offer_state(&mut offer_state, cx, &mut frontier_scratch)
         };
         match poll {
             Poll::Pending => {

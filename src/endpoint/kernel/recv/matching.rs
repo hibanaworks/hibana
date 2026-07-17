@@ -1,10 +1,9 @@
-use super::evidence::{
-    MatchAccumulator, MatchOutcome, ObservedInboundKey, RecvCandidate, RecvDescriptor,
-};
+use super::evidence::{RecvCandidate, RecvDescriptor};
 use crate::{
     endpoint::kernel::{core::CursorEndpoint, lane_port},
     endpoint::{RecvError, RecvResult},
-    global::typestate::{EventCommitMeta, StateIndex},
+    global::typestate::{DeterministicInboundKey, EventCommitMeta, InboundFrameKey, StateIndex},
+    runtime_core::{UniqueMatch, UniqueMatchFailure},
     transport::Transport,
 };
 
@@ -17,7 +16,7 @@ where
         idx: usize,
         target_label: u8,
         target_schema: u32,
-        observed: ObservedInboundKey,
+        observed: InboundFrameKey,
     ) -> RecvResult<Option<RecvCandidate>> {
         let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
             return Ok(None);
@@ -33,7 +32,10 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
-        if !observed.matches_recv_meta(self.sid.raw(), lane_wire, ROLE, meta) {
+        if lane_wire != meta.lane {
+            return Err(RecvError::PhaseInvariant);
+        }
+        if !observed.matches_recv(meta) {
             return Ok(None);
         }
         let preview_conflict = self.cursor.event_conflict_for_index(idx);
@@ -49,25 +51,18 @@ where
             desc: RecvDescriptor {
                 meta,
                 cursor_index: StateIndex::from_usize(idx),
-                lane_idx,
-                lane_wire,
             },
         }))
     }
 
-    fn recv_candidate_for_deterministic_lane(
+    fn recv_candidate_for_deterministic_key(
         &self,
         idx: usize,
-        target_label: u8,
-        target_schema: u32,
-        lane_wire: u8,
+        key: DeterministicInboundKey,
     ) -> RecvResult<Option<RecvCandidate>> {
         let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
             return Ok(None);
         };
-        if meta.label != target_label || meta.payload_schema != target_schema {
-            return Ok(None);
-        }
         if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
         }
@@ -76,7 +71,10 @@ where
             return Err(RecvError::PhaseInvariant);
         }
         let candidate_lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
-        if candidate_lane_wire != lane_wire {
+        if candidate_lane_wire != meta.lane {
+            return Err(RecvError::PhaseInvariant);
+        }
+        if !key.matches_recv(meta) {
             return Ok(None);
         }
         let preview_conflict = self.cursor.event_conflict_for_index(idx);
@@ -92,8 +90,6 @@ where
             desc: RecvDescriptor {
                 meta,
                 cursor_index: StateIndex::from_usize(idx),
-                lane_idx,
-                lane_wire: candidate_lane_wire,
             },
         }))
     }
@@ -102,9 +98,9 @@ where
         &self,
         target_label: u8,
         target_schema: u32,
-        observed: ObservedInboundKey,
-    ) -> RecvResult<Result<RecvCandidate, MatchOutcome>> {
-        let mut accumulator = MatchAccumulator::None;
+        observed: InboundFrameKey,
+    ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
+        let mut accumulator = UniqueMatch::NONE;
         let mut idx = 0usize;
         while idx < self.cursor.local_steps_len() {
             if let Some(candidate) = self.recv_candidate_for_observed_evidence(
@@ -114,7 +110,7 @@ where
                 observed,
             )? {
                 accumulator = accumulator.add(candidate);
-                if matches!(accumulator, MatchAccumulator::Ambiguous) {
+                if accumulator.is_ambiguous() {
                     break;
                 }
             }
@@ -125,21 +121,14 @@ where
 
     pub(in crate::endpoint::kernel::recv) fn unique_deterministic_recv_candidate(
         &self,
-        target_label: u8,
-        target_schema: u32,
-        lane_wire: u8,
-    ) -> RecvResult<Result<RecvCandidate, MatchOutcome>> {
-        let mut accumulator = MatchAccumulator::None;
+        key: DeterministicInboundKey,
+    ) -> RecvResult<Result<RecvCandidate, UniqueMatchFailure>> {
+        let mut accumulator = UniqueMatch::NONE;
         let mut idx = 0usize;
         while idx < self.cursor.local_steps_len() {
-            if let Some(candidate) = self.recv_candidate_for_deterministic_lane(
-                idx,
-                target_label,
-                target_schema,
-                lane_wire,
-            )? {
+            if let Some(candidate) = self.recv_candidate_for_deterministic_key(idx, key)? {
                 accumulator = accumulator.add(candidate);
-                if matches!(accumulator, MatchAccumulator::Ambiguous) {
+                if accumulator.is_ambiguous() {
                     break;
                 }
             }
@@ -155,11 +144,8 @@ where
         frame: &lane_port::PreambleFrame<'_>,
     ) -> lane_port::FrameMismatch {
         let observed = frame.observed_transport_frame(self.sid.raw(), frame.lane_wire(), ROLE);
-        match self.unique_deterministic_recv_candidate(
-            target_label,
-            target_schema,
-            frame.lane_wire(),
-        ) {
+        let key = DeterministicInboundKey::new(frame.lane_wire(), target_label, target_schema);
+        match self.unique_deterministic_recv_candidate(key) {
             Ok(Ok(candidate)) => lane_port::FrameMismatch::source_label_mismatch(
                 observed,
                 candidate.desc.meta.peer,

@@ -1,4 +1,24 @@
-use super::{CodecError, Payload, WireEncode, WirePayload};
+use super::{CodecError, Payload, WireEncode, WirePayload, fixed_array_schema_id};
+
+#[kani::proof]
+fn fixed_array_schema_identity_is_injective_over_the_complete_admitted_domain() {
+    let left: u32 = kani::any();
+    let right: u32 = kani::any();
+    kani::assume(left <= 0x00ff_ffff);
+    kani::assume(right <= 0x00ff_ffff);
+
+    let left_schema = fixed_array_schema_id(left as usize);
+    let right_schema = fixed_array_schema_id(right as usize);
+    assert_eq!(left_schema & 0x00ff_ffff, left);
+    assert_eq!(right_schema & 0x00ff_ffff, right);
+    assert!(left_schema != right_schema || left == right);
+}
+
+#[kani::proof]
+#[kani::should_panic]
+fn fixed_array_schema_identity_rejects_the_first_colliding_width() {
+    let _ = fixed_array_schema_id(0x0100_0000);
+}
 
 macro_rules! check_integer_codec {
     ($ty:ty, $width:expr, $schema:expr) => {{

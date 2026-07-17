@@ -79,22 +79,20 @@ where
         &self,
         scope_id: ScopeId,
     ) -> Option<u8> {
-        self.selected_live_arm_for_scope(scope_id)
-            .or_else(|| {
-                self.preview_live_route_arm_selection_non_consuming(scope_id)
-                    .map(Arm::as_u8)
-            })
-            .or_else(|| self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8))
+        let selected = self.selected_live_arm_for_scope(scope_id);
+        let ready = self.poll_arm_from_ready_mask(scope_id).map(Arm::as_u8);
+        match (selected, ready) {
+            (Some(selected), Some(ready)) if selected != ready => crate::invariant(),
+            (Some(selected), _) => Some(selected),
+            (None, ready) => ready,
+        }
     }
 
     #[inline]
     pub(crate) fn current_offer_scope_id(&self) -> ScopeId {
         let mut selected_arm_for_scope = |scope| self.selected_live_arm_for_scope(scope);
-        let mut preview_selected_arm_for_scope = |scope| {
-            self.preview_live_route_arm_selection_non_consuming(scope)
-                .map(Arm::as_u8)
-                .or_else(|| self.poll_arm_from_ready_mask(scope).map(Arm::as_u8))
-        };
+        let mut preview_selected_arm_for_scope =
+            |scope| self.poll_arm_from_ready_mask(scope).map(Arm::as_u8);
         self.cursor.current_offer_scope_id(
             &mut selected_arm_for_scope,
             &mut preview_selected_arm_for_scope,
@@ -108,8 +106,7 @@ where
     ) -> ScopeId {
         self.cursor
             .rebase_passive_descendant_scope(stop_scope, initial_scope, |scope| {
-                self.selected_live_arm_for_scope(scope)
-                    .or_else(|| self.preview_live_selected_arm_for_scope(scope))
+                self.preview_live_selected_arm_for_scope(scope)
             })
     }
 

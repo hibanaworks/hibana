@@ -1,8 +1,8 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, CursorEndpoint, EventCursor, EvidenceFingerprint, IngressEvidenceState,
-    OfferEntryEvidence, RouteArmToken, ScopeArmMaterializationMeta, ScopeEvidence, ScopeId,
-    Transport, state_index_to_usize,
+    OfferEntryEvidence, ScopeArmMaterializationMeta, ScopeEvidence, ScopeId, Transport,
+    state_index_to_usize,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -17,46 +17,19 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn peek_scope_ack(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<RouteArmToken> {
-        let slot = self.scope_slot_for_route(scope_id)?;
-        self.decision_state.scope_evidence.peek_ack(slot)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn peek_live_scope_ack(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<RouteArmToken> {
-        let token = self.peek_scope_ack(scope_id)?;
-        if self.reentrant_selected_arm_complete(scope_id, token.arm().as_u8()) {
-            None
-        } else {
-            Some(token)
-        }
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn clear_scope_ack(&mut self, scope_id: ScopeId) {
-        let Some(slot) = self.scope_slot_for_route(scope_id) else {
-            return;
-        };
-        self.decision_state.scope_evidence.take_ack(slot);
-    }
-
-    #[inline]
     pub(in crate::endpoint::kernel) fn mark_scope_ready_arm_inner(
         &mut self,
         scope_id: ScopeId,
         arm: Arm,
         evidence_kind: ReadyArmEvidence,
     ) {
+        let selected = self
+            .selected_live_arm_for_scope(scope_id)
+            .map(Arm::from_raw);
         if let Some(slot) = self.scope_slot_for_route(scope_id) {
             self.decision_state
                 .scope_evidence
-                .mark_ready_arm(slot, arm, evidence_kind);
+                .mark_ready_arm(slot, arm, selected, evidence_kind);
         }
     }
 
@@ -155,9 +128,6 @@ where
         ingress: IngressEvidenceState,
     ) -> EvidenceFingerprint {
         let mut evidence = OfferEntryEvidence::empty();
-        if self.peek_live_scope_ack(scope_id).is_some() {
-            evidence = evidence.with_ack();
-        }
         if self.scope_has_ready_arm_evidence(scope_id) {
             evidence = evidence.with_ready_arm();
         }
@@ -264,14 +234,6 @@ where
         self.cursor
             .route_scope_arm_recv_index(scope_id, arm)
             .is_some()
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn preview_live_route_arm_selection_non_consuming(
-        &self,
-        scope_id: ScopeId,
-    ) -> Option<Arm> {
-        self.peek_live_scope_ack(scope_id).map(RouteArmToken::arm)
     }
 
     pub(in crate::endpoint::kernel) fn arm_has_recv(&self, scope_id: ScopeId, arm: u8) -> bool {

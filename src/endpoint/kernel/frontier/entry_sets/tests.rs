@@ -16,10 +16,7 @@ fn offer_key(entry: u16, scope: u16) -> OfferEntryKey {
 #[test]
 fn active_entry_set_accepts_the_complete_lane_domain() {
     let mut storage = [ActiveEntrySlot::EMPTY; 256];
-    /* SAFETY: the builder exclusively owns the complete initialized test
-    storage until it is sealed below. */
-    let mut entries =
-        unsafe { ActiveEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut entries = ActiveEntrySetBuilder::from_slice(&mut storage);
 
     for lane in 0u8..=u8::MAX {
         entries.insert_key(offer_key(lane as u16, lane as u16), lane);
@@ -40,8 +37,7 @@ fn active_entry_set_accepts_the_complete_lane_domain() {
 #[test]
 fn active_entry_set_distinguishes_scopes_that_share_an_entry() {
     let mut storage = [ActiveEntrySlot::EMPTY; 2];
-    let mut entries =
-        unsafe { ActiveEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut entries = ActiveEntrySetBuilder::from_slice(&mut storage);
     let first = offer_key(7, 1);
     let second = offer_key(7, 2);
 
@@ -58,10 +54,7 @@ fn active_entry_set_distinguishes_scopes_that_share_an_entry() {
 #[should_panic]
 fn active_entry_set_rejects_an_absent_key() {
     let mut storage = [ActiveEntrySlot::EMPTY; 1];
-    /* SAFETY: the builder exclusively owns the initialized test slot for the
-    duration of the expected invariant failure. */
-    let mut entries =
-        unsafe { ActiveEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut entries = ActiveEntrySetBuilder::from_slice(&mut storage);
     entries.insert_key(OfferEntryKey::EMPTY, 0);
 }
 
@@ -77,10 +70,7 @@ fn offer_entry_key_accepts_only_route_scopes() {
 #[test]
 fn observed_entry_set_streams_beyond_the_former_eight_slot_mask() {
     let mut storage = [FrontierObservationSlot::EMPTY; 256];
-    /* SAFETY: the builder exclusively owns the complete initialized test
-    storage until it is sealed below. */
-    let mut observed =
-        unsafe { ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observed = ObservedEntrySetBuilder::from_slice(&mut storage);
     observed.clear();
 
     for entry_idx in 0..256 {
@@ -107,8 +97,7 @@ fn observed_entry_set_streams_beyond_the_former_eight_slot_mask() {
 #[test]
 fn observed_entry_set_preserves_each_exact_scope_witness() {
     let mut storage = [FrontierObservationSlot::EMPTY; 2];
-    let mut observed =
-        unsafe { ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observed = ObservedEntrySetBuilder::from_slice(&mut storage);
     observed.clear();
     observed.push_exact_observation(
         OfferEntryObservedState {
@@ -145,8 +134,7 @@ fn observed_entry_set_preserves_each_exact_scope_witness() {
 #[test]
 fn exact_observations_group_equal_entries_after_out_of_order_insertion() {
     let mut storage = [FrontierObservationSlot::EMPTY; 4];
-    let mut observed =
-        unsafe { ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observed = ObservedEntrySetBuilder::from_slice(&mut storage);
     observed.clear();
     for (entry, scope) in [(9, 1), (7, 2), (8, 3), (7, 4)] {
         observed.push_exact_observation(
@@ -170,8 +158,7 @@ fn exact_observations_group_equal_entries_after_out_of_order_insertion() {
 #[test]
 fn selectable_ready_query_ignores_excluded_exact_witnesses() {
     let mut storage = [FrontierObservationSlot::EMPTY; 3];
-    let mut observed =
-        unsafe { ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observed = ObservedEntrySetBuilder::from_slice(&mut storage);
     observed.clear();
     observed.push_exact_observation(
         OfferEntryObservedState {
@@ -207,8 +194,7 @@ fn selectable_ready_query_ignores_excluded_exact_witnesses() {
 #[should_panic]
 fn exact_observation_capacity_exhaustion_is_an_invariant_failure() {
     let mut storage = [FrontierObservationSlot::EMPTY; 1];
-    let mut observed =
-        unsafe { ObservedEntrySetBuilder::from_parts(storage.as_mut_ptr(), storage.len()) };
+    let mut observed = ObservedEntrySetBuilder::from_slice(&mut storage);
     observed.clear();
     for entry in [7, 8] {
         observed.push_exact_observation(

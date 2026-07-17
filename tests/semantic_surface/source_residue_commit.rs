@@ -267,6 +267,8 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && !commit_delta.contains("route_scope_conflict_for_scope(scope)")
             && commit_delta_apply.contains(".get(&self.cursor, idx)")
             && commit_delta.contains("fn commit_cursor_realign_index(")
+            && commit_delta.contains("StateIndex::checked_from_usize(idx)")
+            && !commit_delta.contains("if idx > u16::MAX as usize")
             && commit_delta.contains("struct CommitDeltaApplyPermit")
             && commit_delta_apply.contains("CommitDeltaApplyPermit::new()")
             && commit_delta.contains("let routes = delta.selected_routes();")
@@ -439,6 +441,11 @@ fn route_history_and_traversal_are_descriptor_derived() {
     let lowering_driver = lowering_driver_source();
     let lowering_seal = read("src/global/compiled/lowering/seal.rs");
     let passive_child_seal = read("src/global/compiled/lowering/seal/passive_child.rs");
+    let scope_ranges = format!(
+        "{}\n{}",
+        read("src/global/const_dsl/scope_ranges.rs"),
+        read("src/global/const_dsl/scope_ranges/route.rs")
+    );
     let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
     let route_history = read("src/endpoint/kernel/decision_state/route_arm_history.rs");
@@ -471,7 +478,11 @@ fn route_history_and_traversal_are_descriptor_derived() {
             && first_recv_dispatch.contains("visit_first_recv_dispatch(")
             && first_recv_dispatch.contains("footprint().route_scope_count")
             && first_recv_dispatch.contains("passive_arm_child_fact_by_slot")
-            && passive_child_seal.contains("passive_child_route_scope("),
+            && passive_child_seal.contains("passive_route_child_scope(")
+            && scope_ranges.contains("pub(crate) const fn passive_route_child_scope(")
+            && scope_ranges.contains("pub(crate) const fn route_parent_arm_for_scope(")
+            && !passive_child_seal.contains("fn passive_child_route_scope(")
+            && !passive_child_seal.contains("fn nearest_route_parent_for_scope("),
         "passive first-recv dispatch must stream from descriptor route-scope child-slot authority without an arbitrary fixed table"
     );
 }
@@ -572,12 +583,18 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
             && !entry_sets.contains("ready_arm_mask")
             && entry_sets.contains("struct ActiveEntrySetBuilder")
             && entry_sets.contains("struct ObservedEntrySetBuilder")
-            && entry_sets.contains("const fn seal(self) -> ActiveEntrySet")
-            && entry_sets.contains("const fn seal(self) -> ObservedEntrySet")
-            && entry_buffer.contains("const unsafe fn from_parts")
+            && entry_sets.contains("const fn seal(self) -> ActiveEntrySet<'a>")
+            && entry_sets.contains("const fn seal(self) -> ObservedEntrySet<'a>")
+            && entry_sets.contains("fn from_slice(slots: &'a mut [ActiveEntrySlot])")
+            && entry_sets.contains("fn from_slice(slots: &'a mut [FrontierObservationSlot])")
+            && !entry_sets.contains("EntrySetBuilder::from_parts")
+            && entry_buffer.contains("slots: &'a mut [T]")
+            && entry_buffer.contains("fn from_slice(slots: &'a mut [T])")
+            && !entry_buffer.contains("*mut T")
+            && entry_buffer.contains("unsafe fn from_parts(ptr: *const T")
             && !entry_buffer.contains("#[derive(Clone, Copy)]\npub(super) struct EntryBuffer")
-            && entry_buffer.contains("const fn into_view(self) -> EntryView<T>")
-            && !entry_buffer.contains("const fn view(&self) -> EntryView<T>")
+            && entry_buffer.contains("const fn into_view(self) -> EntryView<'a, T>")
+            && !entry_buffer.contains("const fn view(&self) -> EntryView<'a, T>")
             && snapshot.contains("slots: *mut StateIndex")
             && snapshot.contains("visited.contains(candidate.entry.as_usize())")
             && snapshot.contains("if self.len >= self.capacity")
@@ -665,7 +682,8 @@ fn compact_state_and_route_reference_identities_fail_closed() {
 
     assert!(
         facts.contains("if raw == u16::MAX")
-            && facts.contains("if idx >= MAX_STATES")
+            && facts.contains("if idx < MAX_STATES")
+            && facts.contains("Self::checked_from_usize(idx)")
             && reselection.contains("if self.refs != 1")
             && reselection.contains("self.arm = selected_arm")
             && !reselection.contains("self.refs = 1")
@@ -819,7 +837,8 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
         offer_refresh.contains(".selected_arm_for_scope(")
             && offer_select.contains(".route_scope_for_offer_node(")
             && offer_select.contains(".route_offer_entry_allows_current(")
-            && offer_cache_refresh.contains(".route_scope_present_for_entry(")
+            && offer_cache_refresh.contains(".has_route_scope(active.scope())")
+            && !offer_cache_refresh.contains("route_scope_present_for_entry")
             && current_offer_scope_id.contains(".route_scope_slot_inner(node_scope).is_some()")
             && !current_offer_scope_id.contains("node_scope.kind()")
             && !current_offer_scope_id.contains("ScopeKind::Route")
@@ -1067,6 +1086,7 @@ fn ready_reentry_alignment_requires_an_exact_selectable_witness() {
     let entry_sets = read("src/endpoint/kernel/frontier/entry_sets.rs");
     let frontier_select = read("src/endpoint/kernel/core/frontier_select.rs");
     let alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
+    let alignment_selection = read("src/endpoint/kernel/offer/select_alignment/model/selection.rs");
 
     assert!(
         entry_sets.contains("pub(crate) fn first_selectable_ready_entry_except(")
@@ -1075,7 +1095,15 @@ fn ready_reentry_alignment_requires_an_exact_selectable_witness() {
             )
             && alignment
                 .contains("observed_entries.first_selectable_ready_entry_except(current_idx)")
+            && alignment.contains("visited.contains(current_idx)")
+            && alignment.contains("visited.record(current_idx)")
+            && alignment.contains("loop {")
+            && !alignment.contains("return self.align_cursor_to_selected_scope(")
+            && alignment_selection.contains("enum OfferAlignmentDecision")
+            && alignment_selection.contains("KeepCurrent")
+            && alignment_selection.contains("Realign(usize)")
+            && !alignment_selection.contains("OfferSelectPriority")
             && !frontier_select.contains("observed_ready_reentry_entry_idx"),
-        "ready reentry alignment must not admit an excluded exact-scope observation"
+        "scope-erased alignment may only request bounded cursor movement before exact revalidation"
     );
 }

@@ -67,7 +67,10 @@ impl RouteState {
             match classify_reentry_scope(scope) {
                 ReentryScopeLiveness::NotReentry => {}
                 ReentryScopeLiveness::Incomplete => {
-                    return completed_reentry.or(Some(scope));
+                    return match completed_reentry {
+                        Some(completed) => Some(completed),
+                        None => Some(scope),
+                    };
                 }
                 ReentryScopeLiveness::Complete => completed_reentry = Some(scope),
             }

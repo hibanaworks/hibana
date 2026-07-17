@@ -3,6 +3,7 @@ use core::{
     marker::PhantomData,
 };
 
+use crate::runtime_core::layout::{add, align_up, mul, sub};
 use crate::session::types::SessionId;
 
 use super::AssocTable;
@@ -38,71 +39,32 @@ impl AssocTable {
     }
 
     #[inline]
-    const fn align_up(value: usize, align: usize) -> usize {
-        if align == 0 {
-            crate::invariant();
-        }
-        let mask = align - 1;
-        if value > usize::MAX - mask {
-            crate::invariant();
-        }
-        (value + mask) & !mask
-    }
-
-    #[inline]
-    const fn checked_add_usize(lhs: usize, rhs: usize) -> usize {
-        if lhs > usize::MAX - rhs {
-            crate::invariant();
-        }
-        lhs + rhs
-    }
-
-    #[inline]
-    const fn checked_mul_usize(lhs: usize, rhs: usize) -> usize {
-        if lhs != 0 && rhs > usize::MAX / lhs {
-            crate::invariant();
-        }
-        lhs * rhs
-    }
-
-    #[inline]
-    const fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
-        if lhs < rhs {
-            crate::invariant();
-        }
-        lhs - rhs
-    }
-
-    #[inline]
     pub(in crate::rendezvous) const fn storage_bytes(assoc_slots: usize) -> usize {
-        let sid_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<SessionId>());
-        let lane_offset = Self::align_up(sid_bytes, core::mem::align_of::<u8>());
-        let lane_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u8>());
-        let state_offset = Self::align_up(
-            Self::checked_add_usize(lane_offset, lane_bytes),
-            core::mem::align_of::<u16>(),
-        );
-        let state_bytes = Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u16>());
-        Self::checked_add_usize(state_offset, state_bytes)
+        let sid_bytes = mul(assoc_slots, core::mem::size_of::<SessionId>());
+        let lane_offset = align_up(sid_bytes, core::mem::align_of::<u8>());
+        let lane_bytes = mul(assoc_slots, core::mem::size_of::<u8>());
+        let state_offset = align_up(add(lane_offset, lane_bytes), core::mem::align_of::<u16>());
+        let state_bytes = mul(assoc_slots, core::mem::size_of::<u16>());
+        add(state_offset, state_bytes)
     }
 
     unsafe fn storage_parts(storage: *mut u8, assoc_slots: usize) -> AssocStorageParts {
         let entry_sids = storage.cast::<SessionId>();
-        let lane_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
+        let lane_offset = sub(
+            align_up(
+                add(
                     storage as usize,
-                    Self::checked_mul_usize(assoc_slots, core::mem::size_of::<SessionId>()),
+                    mul(assoc_slots, core::mem::size_of::<SessionId>()),
                 ),
                 core::mem::align_of::<u8>(),
             ),
             storage as usize,
         );
-        let state_offset = Self::checked_sub_usize(
-            Self::align_up(
-                Self::checked_add_usize(
-                    Self::checked_add_usize(storage as usize, lane_offset),
-                    Self::checked_mul_usize(assoc_slots, core::mem::size_of::<u8>()),
+        let state_offset = sub(
+            align_up(
+                add(
+                    add(storage as usize, lane_offset),
+                    mul(assoc_slots, core::mem::size_of::<u8>()),
                 ),
                 core::mem::align_of::<u16>(),
             ),

@@ -4,7 +4,7 @@ use super::{
     merge_route_frame_labels,
 };
 use crate::{
-    eff::{EffAtom, EffStruct, EventOrigin},
+    eff::{EffAtom, EventOrigin},
     global::const_dsl::EffList,
 };
 
@@ -12,15 +12,15 @@ mod maximum_certificate;
 mod production_coloring;
 mod roll_coloring;
 
-const fn atom(from: u8, to: u8, lane: u8) -> EffStruct {
-    EffStruct::atom(EffAtom {
+const fn atom(from: u8, to: u8, lane: u8) -> EffAtom {
+    EffAtom {
         from,
         to,
         label: 0,
         payload_schema: 0,
         origin: EventOrigin::User,
         lane,
-    })
+    }
 }
 
 #[kani::proof]

@@ -2,13 +2,10 @@ use super::{
     dependency_conflict_for_scope, local_step_range_for_eff_range, nearest_parent_parallel_end,
     parallel_exit_for_enter, scope_markers_contain_kind,
 };
-use crate::{
-    eff::EffKind,
-    global::{
-        const_dsl::{EffList, ScopeEvent, ScopeKind, ScopeMarkerView},
-        role_program::LANE_DOMAIN_SIZE,
-        typestate::{LocalConflict, LocalDependency, PackedLocalDependency},
-    },
+use crate::global::{
+    const_dsl::{EffList, ScopeEvent, ScopeKind, ScopeMarkerView},
+    role_program::LANE_DOMAIN_SIZE,
+    typestate::{LocalConflict, LocalDependency, PackedLocalDependency},
 };
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -93,7 +90,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         let mut index = 0usize;
         while index < markers.len() {
             let marker = markers.at(index);
-            if matches!(marker.event, ScopeEvent::Enter)
+            if marker.event.is_primary_enter()
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
                 && marker.scope_id.same(exit.scope_id)
             {
@@ -112,13 +109,10 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
     ) {
         let mut eff_index = start_eff;
         while eff_index < end_eff {
-            let node = self.eff_list.node_at(eff_index);
-            if matches!(node.kind, EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == self.role || atom.to == self.role {
-                    let lane = atom.lane as usize;
-                    self.lane_candidates[lane] = self.lane_candidates[lane].later(candidate);
-                }
+            let atom = self.eff_list.atom_at(eff_index);
+            if atom.from == self.role || atom.to == self.role {
+                let lane = atom.lane as usize;
+                self.lane_candidates[lane] = self.lane_candidates[lane].later(candidate);
             }
             eff_index += 1;
         }
@@ -201,11 +195,7 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         if local_step != self.next_local_step || !ordered {
             crate::invariant();
         }
-        let node = self.eff_list.node_at(current_eff);
-        if !matches!(node.kind, EffKind::Atom) {
-            crate::invariant();
-        }
-        let atom = node.atom_data();
+        let atom = self.eff_list.atom_at(current_eff);
         if (atom.from != self.role && atom.to != self.role) || atom.lane != current_lane {
             crate::invariant();
         }

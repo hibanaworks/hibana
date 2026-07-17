@@ -1,5 +1,53 @@
 use super::common::*;
 
+fn miri_owner_stanza<'a>(gate: &'a str, label: &str) -> &'a str {
+    let marker = format!("  {label} \\\n");
+    assert_eq!(
+        gate.matches(&marker).count(),
+        1,
+        "Miri owner must be unique: {label}"
+    );
+    let label_pos = gate
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing Miri owner: {label}"));
+    let start = gate[..label_pos]
+        .rfind("run_miri_test \\\n")
+        .unwrap_or_else(|| panic!("missing Miri runner for owner: {label}"));
+    let tail = &gate[start..];
+    let end = tail.find("\n\n").unwrap_or(tail.len());
+    &tail[..end]
+}
+
+fn miri_numeric_argument(line: Option<&str>, label: &str) -> usize {
+    line.unwrap_or_else(|| panic!("missing Miri count for owner: {label}"))
+        .trim()
+        .strip_suffix('\\')
+        .unwrap_or_else(|| panic!("unterminated Miri count for owner: {label}"))
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("invalid Miri count for owner: {label}"))
+}
+
+fn assert_miri_owner(gate: &str, label: &str, target: &str) {
+    let stanza = miri_owner_stanza(gate, label);
+    let mut lines = stanza.lines();
+    assert_eq!(lines.next(), Some("run_miri_test \\"));
+    let actual_label = lines
+        .next()
+        .unwrap_or_else(|| panic!("missing Miri label: {label}"))
+        .trim()
+        .strip_suffix('\\')
+        .unwrap_or_else(|| panic!("unterminated Miri label: {label}"))
+        .trim();
+    assert_eq!(actual_label, label);
+    let listed = miri_numeric_argument(lines.next(), label);
+    let passed = miri_numeric_argument(lines.next(), label);
+    let ignored = miri_numeric_argument(lines.next(), label);
+    assert!(listed > 0, "empty Miri owner: {label}");
+    assert_eq!(listed, passed + ignored, "invalid Miri counts: {label}");
+    assert!(stanza.contains(target), "wrong Miri target: {label}");
+}
+
 #[test]
 fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
     let final_gate = read(".github/scripts/check_final_form_measurements.sh");
@@ -306,7 +354,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 .contains("pub fn projected_pair() -> (RoleProgram<0>, RoleProgram<1>)")
             && thumbv6m_example.contains("g::send::<0, 1, Msg<1, u32>>()")
             && thumbv6m_example.contains("g::send::<1, 0, Msg<2, u32>>()"),
-        "thumbv6m measurement must use one tracked no_std projection example instead of generated compatibility source"
+        "thumbv6m measurement must use one tracked no_std projection example instead of a generated surrogate"
     );
 
     assert!(
@@ -342,6 +390,167 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 .contains("if [[ \"${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}\" != \"1\" ]]; then"),
         "CI must run fixed thumbv6m snapshots and the worktree size snapshot unless an explicit local override is set"
     );
+    let miri_owners = [
+        ("public-runtime-owner", "--test miri_runtime_owner"),
+        (
+            "transport-requeue-owner",
+            "transport_requeue_callback_reentry_revalidates_generation",
+        ),
+        (
+            "receive-frame-receipt-owner",
+            "rendezvous::recv_frame_receipt::tests",
+        ),
+        (
+            "public-operation-kernel",
+            "endpoint::kernel::core::public_types::tests",
+        ),
+        ("tap-ring-owner", "observe::core::tests"),
+        (
+            "descriptor-derived-route-history-owner",
+            "route_arm_history_crosses_the_former_256_boundary",
+        ),
+        (
+            "descriptor-domain-offer-frontier-owner",
+            "observed_entry_set_streams_beyond_the_former_eight_slot_mask",
+        ),
+        (
+            "exact-frontier-visit-identity-owner",
+            "frontier::snapshot::tests",
+        ),
+        ("root-frontier-packed-pool-owner", "frontier_state::tests"),
+        (
+            "frontier-scratch-workspace-owner",
+            "frontier::scratch::tests",
+        ),
+        (
+            "production-proof-artifact-exporter",
+            "lean_proof_export::export_production_trace_for_lean",
+        ),
+        (
+            "rolled-output-pipeline-owner",
+            "production_cursor_pipelines_rolled_send_before_remote_receive",
+        ),
+        ("endpoint-waiter-owner", "endpoint_waiter::tests"),
+        ("affine-send-owner", "--test affine_progression"),
+        ("direct-recv-owner", "--test cursor_send_recv_direct_recv"),
+        (
+            "forgotten-recv-owner",
+            "--test cursor_send_recv_session_forget_recv",
+        ),
+        (
+            "forgotten-send-owner",
+            "--test cursor_send_recv_session_forget_send",
+        ),
+        (
+            "endpoint-drop-wake-owner",
+            "--test cursor_send_recv_session_drop_wake",
+        ),
+        (
+            "session-fault-cancel-owner",
+            "--test cursor_send_recv_session_fault_cancel",
+        ),
+        ("local-action-owner", "--test local_action"),
+        (
+            "transport-contract-owner",
+            "transport::tests::transport_contract_",
+        ),
+        (
+            "rolled-causal-exit-owner",
+            "rolled_same_label_recv_requires_causal_exit_handoff",
+        ),
+        (
+            "intrinsic-route-in-band-owner",
+            "intrinsic_route_passive_same_label_recv_commits_by_frame_evidence",
+        ),
+        (
+            "rolled-resolved-route-reentry-owner",
+            "rolled_resolved_route_reenters_left_right_left_rows",
+        ),
+        (
+            "rolled-buffered-route-order-owner",
+            "rolled_resolved_route_preserves_buffered_decision_order",
+        ),
+        (
+            "rolled-same-label-schema-reentry-owner",
+            "rolled_resolved_same_label_reenters_with_selected_schema",
+        ),
+        (
+            "rolled-nested-resolver-reentry-owner",
+            "rolled_nested_resolved_route_reenters_asymmetric_paths",
+        ),
+        (
+            "rolled-current-frontier-reuse-owner",
+            "rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths",
+        ),
+        (
+            "rolled-elastic-route-path-color-owner",
+            "rolled_deep_right_spine_passive_offer_reenters_across_all_depths",
+        ),
+        (
+            "session-family-isolation",
+            "session_template_instances_interleave_and_fault_independently",
+        ),
+        (
+            "session-waiter-isolation",
+            "same_lane_session_waiters_are_isolated",
+        ),
+        ("route-branch-send-owner", "--test route_branch_send"),
+        ("resolved-send-owner", "--test send_route_authority"),
+        (
+            "resolver-identity-owner",
+            "same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority",
+        ),
+        (
+            "resolver-full-id-domain-owner",
+            "maximum_resolver_id_runs_end_to_end",
+        ),
+        (
+            "resolver-reject-cancellation-owner",
+            "resolver_reject_does_not_encode_or_stage_send_payload",
+        ),
+        (
+            "dynamic-membership-seal-owner",
+            "dynamic_resolution_seals_runtime_local_membership_before_evaluation",
+        ),
+        ("offer-branch-owner", "--test offer_branch_recv_evidence"),
+        ("resident-sidecar-owner", "storage_layout::capacity::tests"),
+        (
+            "resident-descriptor-validation",
+            "global::role_program::image_impl::tests::resident_",
+        ),
+        (
+            "descriptor-lane-byte-view-owner",
+            "descriptor_lane_byte_view_remains_byte_aligned_and_covers_lane_255",
+        ),
+        (
+            "compiled-program-descriptor-validation",
+            "route_resolvers::tests::compiled_program_descriptor_rejects_",
+        ),
+        (
+            "compiled-program-atom-validation",
+            "program_ref::tests::compiled_program_atom_descriptor_",
+        ),
+        (
+            "compiled-program-atom-lookup",
+            "compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows",
+        ),
+        (
+            "compiled-program-atom-order-rejection",
+            "compiled_program_descriptor_rejects_noncanonical_atom_order",
+        ),
+        (
+            "program-image-storage-validation",
+            "program_ref::tests::program_image_",
+        ),
+    ];
+    assert_eq!(
+        miri_gate.matches("run_miri_test \\\n").count(),
+        miri_owners.len(),
+        "every Miri execution must have one reviewed owner"
+    );
+    for (label, target) in miri_owners {
+        assert_miri_owner(&miri_gate, label, target);
+    }
     assert!(
         manifest_test_gate.contains("import tomllib")
             && manifest_test_gate.contains("get(\"workspace\", {}).get(\"members\")")
@@ -354,145 +563,12 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
             && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
             && miri_gate.contains(
-                "public-runtime-owner \\\n  28 \\\n  28 \\\n  0 \\\n  -p hibana \\\n  --test miri_runtime_owner"
-            )
-            && miri_gate.contains(
-                "transport-requeue-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport_requeue_callback_reentry_revalidates_generation"
-            )
-            && miri_gate.contains(
-                "endpoint-waiter-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  rendezvous::core::endpoint_waiter::tests"
-            )
-            && miri_gate.contains(
-                "affine-send-owner \\\n  4 \\\n  4 \\\n  0 \\\n  -p hibana \\\n  --test affine_progression"
-            )
-            && miri_gate.contains(
-                "direct-recv-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_direct_recv"
-            )
-            && miri_gate.contains(
-                "forgotten-recv-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_forget_recv"
-            )
-            && miri_gate.contains(
-                "forgotten-send-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_forget_send"
-            )
-            && miri_gate.contains(
-                "endpoint-drop-wake-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_drop_wake"
-            )
-            && miri_gate.contains(
-                "session-fault-cancel-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_session_fault_cancel"
-            )
-            && miri_gate.contains(
-                "local-action-owner \\\n  4 \\\n  4 \\\n  0 \\\n  -p hibana \\\n  --test local_action"
-            )
-            && miri_gate.contains(
-                "transport-contract-owner \\\n  6 \\\n  6 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  transport::tests::transport_contract_"
-            )
-            && miri_gate.contains(
-                "rolled-causal-exit-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  rolled_same_label_recv_requires_causal_exit_handoff"
-            )
-            && miri_gate.contains(
-                "rolled-resolved-route-reentry-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_resolved_route_reenters_left_right_left_rows"
-            )
-            && miri_gate.contains(
-                "rolled-buffered-route-order-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_resolved_route_preserves_buffered_decision_order"
-            )
-            && miri_gate.contains(
-                "session-family-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  session_template_instances_interleave_and_fault_independently"
-            )
-            && miri_gate.contains(
-                "session-waiter-isolation \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test cursor_send_recv_send_recv \\\n  same_lane_session_waiters_are_isolated"
-            )
-            && miri_gate.contains(
-                "route-branch-send-owner \\\n  6 \\\n  6 \\\n  0 \\\n  -p hibana \\\n  --test route_branch_send"
-            )
-            && miri_gate.contains(
-                "resolved-send-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --test send_route_authority"
-            )
-            && miri_gate.contains(
-                "resolver-identity-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority"
-            )
-            && miri_gate.contains(
-                "resolver-full-id-domain-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  maximum_resolver_id_runs_end_to_end"
-            )
-            && miri_gate.contains(
-                "resolver-reject-cancellation-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  resolver_reject_does_not_encode_or_stage_send_payload"
-            )
-            && miri_gate.contains(
-                "dynamic-membership-seal-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test dynamic_route_scope_resolver \\\n  dynamic_resolution_seals_runtime_local_membership_before_evaluation"
-            )
-            && miri_gate.contains(
-                "offer-branch-owner \\\n  11 \\\n  11 \\\n  0 \\\n  -p hibana \\\n  --test offer_branch_recv_evidence"
-            )
-            && miri_gate.contains(
-                "resident-sidecar-owner \\\n  17 \\\n  16 \\\n  1 \\\n  -p hibana \\\n  --lib \\\n  storage_layout::capacity::tests"
-            )
-            && miri_gate.contains(
-                "resident-descriptor-validation \\\n  40 \\\n  40 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::role_program::image_impl::tests::resident_"
-            )
-            && miri_gate.contains("receive-frame-receipt-owner")
-            && miri_gate.contains("public-operation-kernel")
-            && miri_gate.contains(
-                "tap-ring-owner \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  observe::core::tests"
-            )
-            && miri_gate.contains("production-proof-artifact-exporter")
-            && miri_gate.contains(
                 "MIRI_TIMEOUT_SECONDS=\"${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}\""
             )
             && miri_gate.contains(
                 "MIRIFLAGS=\"${MIRIFLAGS} -Zmiri-disable-isolation\" run_miri_test"
             )
-            && miri_gate.contains(
-                "global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean"
-            )
-            && miri_gate.contains("endpoint::kernel::core::public_types::tests")
-            && miri_gate.contains("descriptor-derived-route-history-owner")
-            && miri_gate.contains("exact-frontier-visit-identity-owner")
-            && miri_gate.contains("root-frontier-packed-pool-owner")
-            && miri_gate.contains("endpoint::kernel::frontier_state::tests")
-            && miri_gate.contains(
-                "endpoint::kernel::decision_state::tests::route_arm_history_crosses_the_former_256_boundary"
-            )
-            && miri_gate.contains("descriptor-domain-offer-frontier-owner")
-            && miri_gate.contains(
-                "endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_beyond_the_former_eight_slot_mask"
-            )
-            && miri_gate.contains("rolled-output-pipeline-owner")
-            && miri_gate.contains(
-                "global::event_program_cursor_tests::production_cursor_pipelines_rolled_send_before_remote_receive"
-            )
-            && miri_gate.contains("rendezvous::recv_frame_receipt::tests")
-            && miri_gate.contains("compiled-program-descriptor-validation")
-            && miri_gate.contains(
-                "global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_"
-            )
-            && miri_gate.contains(
-                "compiled-program-atom-validation \\\n  7 \\\n  7 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_"
-            )
-            && miri_gate.contains("compiled-program-atom-lookup")
-            && miri_gate.contains(
-                "compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows"
-            )
-            && miri_gate.contains("compiled-program-atom-order-rejection")
-            && miri_gate.contains(
-                "compiled_program_descriptor_rejects_noncanonical_atom_order"
-            )
-            && miri_gate.contains(
-                "program-image-storage-validation \\\n  2 \\\n  2 \\\n  0 \\\n  -p hibana \\\n  --lib \\\n  global::compiled::images::image::program_ref::tests::program_image_"
-            )
             && miri_gate.contains("miri_passed_total=$((miri_passed_total + expected_passed))")
-            && miri_gate.contains("rolled-same-label-schema-reentry-owner")
-            && miri_gate.contains("rolled_resolved_same_label_reenters_with_selected_schema")
-            && miri_gate.contains("rolled-nested-resolver-reentry-owner")
-            && miri_gate.contains("rolled_nested_resolved_route_reenters_asymmetric_paths")
-            && miri_gate.contains(
-                "rolled-current-frontier-reuse-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths"
-            )
-            && miri_gate.contains(
-                "rolled-elastic-route-path-color-owner \\\n  1 \\\n  1 \\\n  0 \\\n  -p hibana \\\n  --test rolled_resolver_reentry \\\n  rolled_deep_right_spine_passive_offer_reenters_across_all_depths"
-            )
-            && miri_gate.contains("intrinsic-route-in-band-owner")
-            && miri_gate.contains(
-                "intrinsic_route_passive_same_label_recv_commits_by_frame_evidence"
-            )
             && miri_gate.contains("miri_ignored_total=$((miri_ignored_total + expected_ignored))")
             && miri_gate.contains(
                 "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"
@@ -501,7 +577,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_gate.contains("local expected_passed=\"$3\"")
             && miri_gate.contains("local expected_ignored=\"$4\"")
             && !miri_gate.contains("--exact")
-            && miri_gate.contains("storage_layout::capacity::tests")
             && miri_gate.contains("miri gate test-count mismatch")
             && workflow.contains("--profile minimal --component miri --component rust-src"),
         "final-form validation must execute every manifest target and the pinned nonzero Miri owner suite"

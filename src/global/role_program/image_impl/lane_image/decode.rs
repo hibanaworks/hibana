@@ -58,6 +58,24 @@ pub(in crate::global::role_program::image_impl) const fn route_commit_decisions_
     }
 }
 
+pub(in crate::global::role_program::image_impl) const fn passive_child_parent_matches(
+    parent_scope: ScopeId,
+    arm: u8,
+    child_scope: ScopeId,
+    child_conflict: PackedEventConflict,
+) -> bool {
+    if child_scope.same(parent_scope) {
+        return false;
+    }
+    matches!(
+        child_conflict.to_conflict(),
+        Some(LocalConflict::RouteArm {
+            scope: recorded_parent,
+            arm: recorded_arm,
+        }) if recorded_parent.same(parent_scope) && recorded_arm == arm
+    )
+}
+
 pub(in crate::global::role_program::image_impl) const fn decode_resident_route_arm_lane_step(
     row: RouteArmLaneStepRow,
     logical_lane_count: usize,

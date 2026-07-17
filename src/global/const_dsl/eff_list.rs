@@ -1,8 +1,8 @@
-use crate::eff::EffStruct;
+use crate::eff::EffAtom;
 
 use super::{
     DynamicRouteResolver, EffList, ReentryMark, RouteResolverMarker, ScopeEvent, ScopeId,
-    ScopeKind, ScopeMarker, ScopeMarkerView, SourceRow, eff,
+    ScopeKind, ScopeMarker, ScopeMarkerView, SourceRow,
 };
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -46,29 +46,29 @@ impl<const E: usize> EffList<E> {
     }
 
     #[inline(always)]
-    pub(crate) const fn node_at(&self, offset: usize) -> EffStruct {
+    pub(crate) const fn atom_at(&self, offset: usize) -> EffAtom {
         if offset >= self.len {
-            panic!("EffList node offset out of bounds");
+            panic!("EffList atom offset out of bounds");
         }
         match self.rows[offset] {
-            SourceRow::Event { node, .. } => node,
+            SourceRow::Event { atom, .. } => atom,
             _ => crate::invariant(),
         }
     }
 
-    pub(super) const fn replace_node(&mut self, offset: usize, node: EffStruct) {
+    pub(super) const fn replace_atom(&mut self, offset: usize, atom: EffAtom) {
         if offset >= self.len {
-            panic!("EffList node offset out of bounds");
+            panic!("EffList atom offset out of bounds");
         }
         let frame_label = match self.rows[offset] {
             SourceRow::Event { frame_label, .. } => frame_label,
             _ => crate::invariant(),
         };
-        self.rows[offset] = SourceRow::Event { node, frame_label };
+        self.rows[offset] = SourceRow::Event { atom, frame_label };
     }
 
     pub(crate) const fn frame_label_at(&self, offset: usize) -> u8 {
-        if offset >= self.len || !matches!(self.node_at(offset).kind, eff::EffKind::Atom) {
+        if offset >= self.len {
             panic!("frame label event offset out of bounds");
         }
         match self.rows[offset] {
@@ -78,140 +78,159 @@ impl<const E: usize> EffList<E> {
     }
 
     pub(super) const fn set_frame_label(&mut self, offset: usize, frame_label: u8) {
-        if offset >= self.len || !matches!(self.node_at(offset).kind, eff::EffKind::Atom) {
+        if offset >= self.len {
             panic!("frame label event offset out of bounds");
         }
-        let node = self.node_at(offset);
-        self.rows[offset] = SourceRow::Event { node, frame_label };
+        let atom = self.atom_at(offset);
+        self.rows[offset] = SourceRow::Event { atom, frame_label };
     }
 
     /// Append a single node to the accumulator.
     #[cfg(any(kani, all(test, hibana_repo_tests)))]
-    pub(crate) const fn push(mut self, node: EffStruct) -> Self {
-        self.push_mut(node);
+    pub(crate) const fn push(mut self, atom: EffAtom) -> Self {
+        self.push_mut(atom);
         self
     }
 
-    const fn push_mut(&mut self, node: EffStruct) {
+    const fn push_mut(&mut self, atom: EffAtom) {
         if self.len >= self.scope_marker_start {
             panic!("EffList capacity exceeded");
         }
         self.rows[self.len] = SourceRow::Event {
-            node,
+            atom,
             frame_label: 0,
         };
         self.len += 1;
     }
 
-    pub(crate) const fn push_event_mut(&mut self, node: EffStruct) {
-        if !matches!(node.kind, eff::EffKind::Atom) {
-            panic!("source lowering accepts protocol events only");
-        }
-        self.push_mut(node);
+    pub(crate) const fn push_event_mut(&mut self, atom: EffAtom) {
+        self.push_mut(atom);
     }
 
-    const fn push_scope_marker_full_mut(
-        &mut self,
-        offset: usize,
-        scope_id: ScopeId,
-        event: ScopeEvent,
-        reentry: ReentryMark,
-    ) {
+    const fn insert_scope_marker_mut(&mut self, marker: ScopeMarker) {
         if self.scope_marker_len >= self.resolver_start - self.scope_marker_start {
             panic!("EffList scope marker capacity exceeded");
         }
-        let _ = scope_id.local_ordinal();
+        let _ = marker.scope_id.local_ordinal();
         let mut idx = self.scope_marker_len;
         while idx > 0 {
             let prev = self.scope_marker_at(idx - 1);
-            if prev.offset() > offset {
-                self.write_scope_marker(idx, prev);
-                idx -= 1;
-            } else {
-                break;
-            }
-        }
-        self.write_scope_marker(
-            idx,
-            ScopeMarker::new(offset, offset, scope_id, event, reentry),
-        );
-        self.scope_marker_len += 1;
-    }
-
-    const fn push_scope_enter_marker_mut(
-        &mut self,
-        offset: usize,
-        scope: ScopeId,
-        reentry: ReentryMark,
-    ) {
-        if self.scope_marker_len >= self.resolver_start - self.scope_marker_start {
-            panic!("EffList scope marker capacity exceeded");
-        }
-        let _ = scope.local_ordinal();
-        let mut idx = self.scope_marker_len;
-        while idx > 0 {
-            let prev = self.scope_marker_at(idx - 1);
-            let precedes_equal_boundary = prev.offset() == offset
+            let enter_precedes_equal_boundary = marker.event.is_enter()
+                && prev.offset() == marker.offset()
                 && (matches!(prev.event, ScopeEvent::Split)
-                    || (matches!(prev.event, ScopeEvent::Enter)
-                        && prev.scope_id.local_ordinal() > scope.local_ordinal()));
-            if prev.offset() > offset || precedes_equal_boundary {
+                    || (prev.event.is_enter()
+                        && prev.scope_id.local_ordinal() > marker.scope_id.local_ordinal()));
+            if prev.offset() > marker.offset() || enter_precedes_equal_boundary {
                 self.write_scope_marker(idx, prev);
                 idx -= 1;
             } else {
                 break;
             }
         }
-        self.write_scope_marker(
-            idx,
-            ScopeMarker::new(offset, offset, scope, ScopeEvent::Enter, reentry),
-        );
+        self.write_scope_marker(idx, marker);
         self.scope_marker_len += 1;
     }
 
-    pub(crate) const fn close_scope_segment_mut(
+    pub(crate) const fn push_route_scope_mut(
+        &mut self,
+        scope: ScopeId,
+        left_start: usize,
+        right_start: usize,
+        right_end: usize,
+        reentry: ReentryMark,
+    ) {
+        if !matches!(scope.kind(), Some(ScopeKind::Route))
+            || left_start >= right_start
+            || right_start >= right_end
+            || right_end > self.len
+        {
+            panic!("route scope requires two contiguous non-empty arms");
+        }
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            left_start,
+            right_start,
+            scope,
+            ScopeEvent::route_enter(right_end),
+            reentry,
+        ));
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            right_start,
+            right_start,
+            scope,
+            ScopeEvent::Exit,
+            ReentryMark::SinglePass,
+        ));
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            right_start,
+            right_end,
+            scope,
+            ScopeEvent::route_arm_continuation(),
+            reentry,
+        ));
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            right_end,
+            right_end,
+            scope,
+            ScopeEvent::Exit,
+            ReentryMark::SinglePass,
+        ));
+    }
+
+    pub(crate) const fn push_parallel_scope_mut(
         &mut self,
         scope: ScopeId,
         start: usize,
+        split: usize,
         end: usize,
     ) {
-        if start >= end || end > self.len {
-            panic!("scope segment must contain protocol events");
+        if !matches!(scope.kind(), Some(ScopeKind::Parallel))
+            || start >= split
+            || split >= end
+            || end > self.len
+        {
+            panic!("parallel scope requires two contiguous non-empty arms");
         }
-        let mut idx = 0usize;
-        while idx < self.scope_marker_len {
-            let marker = self.scope_marker_at(idx);
-            if matches!(marker.event, ScopeEvent::Enter)
-                && marker.scope_id.same(scope)
-                && marker.offset() == start
-                && marker.segment_end() == start
-            {
-                self.write_scope_marker(
-                    idx,
-                    ScopeMarker::new(start, end, scope, ScopeEvent::Enter, marker.reentry),
-                );
-                return;
-            }
-            idx += 1;
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            start,
+            end,
+            scope,
+            ScopeEvent::parallel_enter(split),
+            ReentryMark::SinglePass,
+        ));
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            split,
+            split,
+            scope,
+            ScopeEvent::Split,
+            ReentryMark::SinglePass,
+        ));
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            end,
+            end,
+            scope,
+            ScopeEvent::Exit,
+            ReentryMark::SinglePass,
+        ));
+    }
+
+    pub(crate) const fn push_roll_scope_mut(&mut self, scope: ScopeId, start: usize, end: usize) {
+        if !matches!(scope.kind(), Some(ScopeKind::Roll)) || start >= end || end > self.len {
+            panic!("roll scope requires a non-empty body");
         }
-        panic!("scope segment enter marker missing");
-    }
-
-    pub(crate) const fn push_scope_enter_reentry_mut(
-        &mut self,
-        offset: usize,
-        scope: ScopeId,
-        reentry: ReentryMark,
-    ) {
-        self.push_scope_enter_marker_mut(offset, scope, reentry);
-    }
-
-    pub(crate) const fn push_scope_split_mut(&mut self, offset: usize, scope: ScopeId) {
-        self.push_scope_marker_full_mut(offset, scope, ScopeEvent::Split, ReentryMark::SinglePass);
-    }
-
-    pub(crate) const fn push_scope_exit_mut(&mut self, offset: usize, scope: ScopeId) {
-        self.push_scope_marker_full_mut(offset, scope, ScopeEvent::Exit, ReentryMark::SinglePass);
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            start,
+            end,
+            scope,
+            ScopeEvent::roll_enter(),
+            ReentryMark::SinglePass,
+        ));
+        self.insert_scope_marker_mut(ScopeMarker::new(
+            end,
+            end,
+            scope,
+            ScopeEvent::Exit,
+            ReentryMark::SinglePass,
+        ));
     }
 
     pub(crate) const fn push_route_resolver_mut(&mut self, scope: ScopeId, resolver_id: u16) {
@@ -302,13 +321,13 @@ where
     M: crate::global::Message,
     M::Payload: crate::transport::wire::WireEncode + crate::transport::wire::WirePayload,
 {
-    let atom = eff::EffAtom {
+    let atom = crate::eff::EffAtom {
         from: FROM,
         to: TO,
         label: <M as crate::global::Message>::LOGICAL_LABEL,
         payload_schema: crate::global::payload_schema::<M>(),
-        origin: eff::EventOrigin::User,
+        origin: crate::eff::EventOrigin::User,
         lane: LANE,
     };
-    EffList::new().push(EffStruct::atom(atom))
+    EffList::new().push(atom)
 }

@@ -46,6 +46,8 @@ fn route_arm_lane_first_last_use_resident_columns() {
 fn compact_bucket_backing_stays_byte_only_and_program_ref_shared() {
     let program_blob = read("src/global/compiled/images/image/blob_storage.rs");
     let role_types = read("src/global/role_program/image_types.rs");
+    let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
+    let role_ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let role_projection = read("src/g/role_projection.rs");
     let per_role_program_ref = "RoleProjection::<ROLE, Steps, CAPACITY>::PROGRAM_REF";
 
@@ -74,6 +76,23 @@ fn compact_bucket_backing_stays_byte_only_and_program_ref_shared() {
             && !role_bytes.contains("active_lane_row")
             && !role_bytes.contains("first_active_lane"),
         "RoleImageBytes must own only packed bytes; columns and lane metadata live in RoleImageRef"
+    );
+
+    let role_build = role_types
+        .split("pub(crate) struct RoleImageBuild<const N: usize> {")
+        .nth(1)
+        .and_then(|tail| tail.split("}").next())
+        .expect("role image build");
+    assert!(
+        !role_build.contains("first_active_lane")
+            && !role_build.contains("active_lane_row")
+            && !role_blob.contains("let mut first_active_lane")
+            && role_ref_access.contains("if footprint.active_lane_count == 0")
+            && role_ref_access.contains("PackedLaneRange::new(0, 0)")
+            && role_ref_access
+                .contains("PackedLaneRange::new(0, lane_byte_count(footprint.logical_lane_count))")
+            && role_ref_access.contains("first_active_lane: metadata.first_active_lane"),
+        "the resident lane bitmap must be the only active-lane metadata authority"
     );
 
     let role_ref = role_types

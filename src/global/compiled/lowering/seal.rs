@@ -1,10 +1,9 @@
 use crate::{
-    eff,
     g::ProgramSourceError,
     global::{
         compiled::lowering::CompiledProgramImage,
         const_dsl::{
-            EffList, ScopeEvent, ScopeKind, first_visible_controller,
+            EffList, ScopeKind, first_visible_controller,
             first_visible_endpoint_selector_conflicts_from_markers,
             local_route_observer_paths_mergeable, route_arm_ranges_from_first_enter,
             validate_parallel_endpoint_selectors, validate_receive_lane_causality,
@@ -33,7 +32,7 @@ pub(super) struct ExactRoleFacts {
 #[inline(always)]
 const fn lane_word_parts(lane: usize) -> (usize, LaneWord) {
     let bits = LaneWord::BITS as usize;
-    (lane / bits, 1usize << (lane % bits))
+    (lane / bits, 1u32 << (lane % bits))
 }
 
 #[inline(always)]
@@ -58,25 +57,22 @@ pub(super) const fn exact_role_facts<const E: usize>(
     eff_list: &EffList<E>,
     role: u8,
 ) -> ExactRoleFacts {
-    let mut active_lanes = [0usize; LANE_FACT_WORDS];
+    let mut active_lanes = [0u32; LANE_FACT_WORDS];
     let mut local_len = 0usize;
     let mut active_lane_count = 0usize;
     let mut endpoint_lane_slot_count = 0usize;
     let mut idx = 0usize;
     while idx < eff_list.len() {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            if atom.from == role || atom.to == role {
-                local_len += 1;
-                let lane = atom.lane as usize;
-                let lane_slot_count = lane + 1;
-                if lane_slot_count > endpoint_lane_slot_count {
-                    endpoint_lane_slot_count = lane_slot_count;
-                }
-                if insert_lane(&mut active_lanes, lane) {
-                    active_lane_count += 1;
-                }
+        let atom = eff_list.atom_at(idx);
+        if atom.from == role || atom.to == role {
+            local_len += 1;
+            let lane = atom.lane as usize;
+            let lane_slot_count = lane + 1;
+            if lane_slot_count > endpoint_lane_slot_count {
+                endpoint_lane_slot_count = lane_slot_count;
+            }
+            if insert_lane(&mut active_lanes, lane) {
+                active_lane_count += 1;
             }
         }
         idx += 1;
@@ -113,7 +109,7 @@ const fn validate_route_projection_guarantees<const E: usize>(
     while marker_idx < scope_markers.len() {
         let marker = scope_markers.at(marker_idx);
         if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-            && matches!(marker.event, ScopeEvent::Enter)
+            && marker.event.is_primary_enter()
             && scope_markers.is_first_enter(marker_idx)
             && let Some(error) = validate_route_scope(role, eff_list, scope_markers, marker_idx)
         {
@@ -130,7 +126,7 @@ const fn validate_route_scope<const E: usize>(
     scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
     route_enter_marker_idx: usize,
 ) -> Option<ProgramSourceError> {
-    let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
+    let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
         route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
     let route_scope = scope_markers.at(route_enter_marker_idx).scope_id;
     let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);

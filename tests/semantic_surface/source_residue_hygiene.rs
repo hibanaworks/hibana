@@ -1,6 +1,52 @@
 use super::common::*;
 
 #[test]
+fn lane_searches_do_not_encode_absence_as_a_preferred_lane_sentinel() {
+    let production = read_production_rs_tree("src");
+    let ingress = read("src/endpoint/kernel/offer/ingress.rs");
+
+    for forbidden in [
+        "first_pending_step_index(usize::MAX)",
+        "next_preferred_transport_lane",
+        "while advanced < *scan_idx",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "lane search must not restore a sentinel or restart-from-zero iterator: {forbidden}"
+        );
+    }
+    assert!(
+        ingress.contains("enum OfferLaneScanCursor")
+            && ingress.contains("Preferred(usize)")
+            && ingress.contains("Remaining(usize)")
+            && ingress.contains("Exhausted")
+            && ingress.contains("self.offer_lanes.next_set_from(start, self.lane_limit)"),
+        "offer ingress must enumerate its preferred lane and monotonic remainder through explicit states"
+    );
+}
+
+#[test]
+fn sparse_role_route_rows_never_define_the_route_slot_boundary() {
+    let production = read_production_rs_tree("src");
+    let event_program = read("src/global/event_program.rs");
+
+    for forbidden in [
+        "while let Some(region) = self.machine().route_scope_rows_by_slot(slot)",
+        "while let Some(region) = self.event_program.route_scope_rows_by_slot(slot)",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "an empty role-local route row is not the end of the exact route-slot domain: {forbidden}"
+        );
+    }
+    assert!(
+        event_program.contains("pub(crate) fn route_scope_slot_count(&self) -> usize")
+            && event_program.contains("self.footprint().route_scope_count"),
+        "all route traversal must retain the exact descriptor slot count as its boundary"
+    );
+}
+
+#[test]
 fn role_projection_does_not_hide_exact_count_dispatch() {
     let production = read_production_rs_tree("src");
     let role_projection = read("src/g/role_projection.rs");
@@ -396,16 +442,43 @@ fn production_sources_do_not_reintroduce_implicit_initializers() {
 #[test]
 fn route_arm_selection_uses_only_endpoint_or_in_band_authority() {
     let production = read_production_rs_tree("src");
+    let cursor_navigation = read("src/global/typestate/cursor/navigation.rs");
     for forbidden in [
         "ack_route_arm_selection",
         "acknowledge_with_role_count",
-        "record_scope_ack(scope_id, RouteArmToken::from_ack",
+        "record_scope_ack",
+        "peek_scope_ack",
+        "peek_live_scope_ack",
+        "clear_scope_ack",
+        "preview_live_route_arm_selection_non_consuming",
+        "ScopeEvidence {\n    pub(super) ack:",
+        "OfferPassiveAckEvidence",
+        "DynamicAckMaterializable",
+        "FLAG_ACK",
     ] {
         assert!(
             !production.contains(forbidden),
             "route arm selection must not regain a generationless ack-consume side path: {forbidden}"
         );
     }
+    for forbidden in [
+        ".or_else(",
+        ".or(",
+        ".unwrap_or(",
+        ".unwrap_or_else(",
+        ".unwrap_or_default(",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "production authority must not hide precedence or absence behind option fallback: {forbidden}"
+        );
+    }
+    assert!(
+        cursor_navigation.contains("if route_arm != self.route_arm_for_index(scope, idx)")
+            && cursor_navigation.contains("crate::invariant();")
+            && cursor_navigation.contains("(scope, route_arm)"),
+        "event conflict and route-arm range membership must agree before metadata publication"
+    );
 
     let resolve = read("src/endpoint/kernel/offer/resolve.rs");
     assert!(
@@ -428,6 +501,7 @@ fn compact_route_arm_authority_fails_closed_before_commit() {
     let first_recv_dispatch = read("src/endpoint/kernel/offer/first_recv_dispatch.rs");
     let scope_evidence = read("src/endpoint/kernel/core/scope_evidence_logic.rs");
     let route_commit = read("src/endpoint/kernel/core/route_commit_helpers.rs");
+    let route_preview = read("src/endpoint/kernel/core/route_preview.rs");
     let offer_select = read("src/endpoint/kernel/offer/select.rs");
     let offer_resolve = read("src/endpoint/kernel/offer/resolve.rs");
     let route_authority_paths =
@@ -450,8 +524,10 @@ fn compact_route_arm_authority_fails_closed_before_commit() {
             && authority
                 .contains("const fn decode_single_ready_mask(mask: u8) -> Option<Option<Self>>")
             && authority.contains("pub(super) const fn from_single_ready_mask(mask: u8)")
-            && authority.contains("0 | 3 => Some(None)")
-            && authority.contains("4..=u8::MAX => None")
+            && authority.contains("0 => Some(None)")
+            && authority.contains("1 => Some(Some(Self::LEFT))")
+            && authority.contains("2 => Some(Some(Self::RIGHT))")
+            && authority.contains("3..=u8::MAX => None")
             && authority.contains("match Self::decode_single_ready_mask(mask)")
             && authority.contains("None => crate::invariant()"),
         "compact route authority must have one explicit fail-closed decoding boundary"
@@ -470,8 +546,15 @@ fn compact_route_arm_authority_fails_closed_before_commit() {
     assert!(
         scope_evidence.contains("Arm::from_single_ready_mask(mask)")
             && route_commit.contains("Arm::from_single_ready_mask(mask).map(Arm::as_u8)")
-            && route_commit.contains("decision_state.scope_evidence.peek_ack(slot)")
-            && evidence_store.contains("arm: Arm")
+            && !route_commit.contains("scope_evidence.peek_ack")
+            && route_commit.contains("let arm_value = Arm::decode_raw(arm)?;")
+            && route_commit.contains(".selection_is_coherent(scope_slot, arm_value)")
+            && evidence.contains("pub(super) enum ScopeEvidenceStatus")
+            && evidence.contains("Conflicted = 1")
+            && !evidence.contains("RouteArmToken")
+            && evidence_store.contains("selected: Option<Arm>")
+            && route_preview.contains("(Some(selected), Some(ready)) if selected != ready")
+            && !route_preview.contains(".or_else(|| self.poll_arm_from_ready_mask")
             && first_recv_dispatch.contains("if arm_mask & !0b11 != 0")
             && !first_recv_dispatch.contains("arm_mask & 0b11")
             && !evidence.contains("_ => false"),
@@ -508,15 +591,18 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
     let image_impl = read("src/global/role_program/image_impl.rs");
     let event_rows = read("src/global/role_program/image_impl/event_rows.rs");
     let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
+    let lane_image_decode = read("src/global/role_program/image_impl/lane_image/decode.rs");
     let scope_rows = format!(
-        "{}\n{}",
+        "{}\n{}\n{}\n{}",
         read("src/global/role_program/image_impl/projection.rs"),
-        read("src/global/role_program/image_impl/projection/route.rs")
+        read("src/global/role_program/image_impl/projection/route.rs"),
+        read("src/global/const_dsl/scope_ranges/route.rs"),
+        read("src/global/const_dsl/scope.rs")
     );
     let blob_image = read("src/global/role_program/image_impl/blob_image.rs");
     let facts = read("src/global/typestate/facts.rs");
     let first_recv_dispatch = read("src/global/typestate/cursor/first_recv_dispatch.rs");
-    let descriptor_arm_paths = format!("{event_rows}\n{lane_image}\n{scope_rows}\n{blob_image}");
+    let resident_descriptor_arm_paths = format!("{event_rows}\n{lane_image}\n{blob_image}");
     let child_scope_accessor = lane_image
         .split("pub(crate) const fn passive_arm_child_ordinal_by_slot")
         .nth(1)
@@ -543,7 +629,7 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
     );
     for forbidden in ["if arm >= 2", "if arm > 1"] {
         assert!(
-            !descriptor_arm_paths.contains(forbidden),
+            !resident_descriptor_arm_paths.contains(forbidden),
             "resident descriptor arm access must not collapse an invalid arm into absence: {forbidden}"
         );
     }
@@ -552,24 +638,31 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
             && scope_rows.contains("let arm = binary_route_arm_index(arm);")
             && scope_rows.contains("let Some(ranges) = route_arm_ranges(eff_list.scope_markers(), route) else {\n        crate::invariant();")
             && scope_rows.contains("let arm = binary_route_arm_index(arm) as u8;")
-            && scope_rows.contains("Some(binary_route_arm_index(arm) as u8)")
+            && scope_rows.contains("marker.event.route_arm()")
+            && scope_rows.contains("Self::Enter(ScopeEntry::Route { .. }) => Some(0)")
+            && scope_rows.contains("Self::Enter(ScopeEntry::RouteArmContinuation) => Some(1)")
             && scope_rows.contains("let Some((_, start, _)) = scope_dependency_bounds(markers, view_len, scope) else {")
             && blob_image.contains("route_arm_row_index(route_slot, arm as u8)")
             && child_scope_accessor.contains("let child_slot = child_slot as usize;")
             && child_scope_accessor.contains("if child_slot <= slot {")
             && child_scope_accessor.contains("let Some(scope) = self.route_scope_by_slot(child_slot) else {\n                    invalid_resident_descriptor();")
+            && child_scope_accessor.contains("if !passive_child_parent_matches(")
             && child_scope_accessor
-                .contains("self.route_scope_conflict_by_slot(child_slot).to_conflict()")
-            && child_scope_accessor.contains("recorded_parent.same(parent_scope)")
-            && child_scope_accessor.contains("recorded_arm == arm")
-            && scope_rows.contains("let mut child_span = 0usize;")
+                .contains("self.route_scope_conflict_by_slot(child_slot),")
+            && lane_image_decode.contains("child_scope.same(parent_scope)")
+            && lane_image_decode.contains("recorded_parent.same(parent_scope)")
+            && lane_image_decode.contains("recorded_arm == arm")
+            && scope_rows.contains("outermost_scope_range(current, candidate)")
+            && !scope_rows.contains("child_span")
             && lane_step_row_accessor.contains("logical_lane_count: usize")
             && lane_step_row_accessor.contains("event_row: PackedLaneRange")
             && lane_step_row_accessor.contains("decode_resident_route_arm_lane_step(")
             && lane_step_row_accessor.contains("None => invalid_resident_descriptor(),")
             && !lane_image.contains("let Some(row) = self.route_arm_lane_step_row_at(pos) else")
             && lane_image.contains("decode_resident_local_step_lane(raw, logical_lane_count)")
-            && lane_image.contains("if found != usize::MAX {")
+            && !lane_image.contains("if found != usize::MAX {")
+            && lane_image.contains("if row.lane() == lane {")
+            && lane_image.contains("return Some(row);")
             && lane_image.contains("if !route_commit_decisions_match(current, expected) {")
             && lane_image.contains("let parent = self.route_commit_parent(scope);")
             && facts
@@ -590,6 +683,13 @@ fn resident_route_arm_descriptors_reject_invalid_compact_values() {
 fn resident_descriptor_columns_reject_in_range_sentinels() {
     let lane_image = read("src/global/role_program/image_impl/lane_image.rs");
     let lane_decode = read("src/global/role_program/image_impl/lane_image/decode.rs");
+    let image_types = read("src/global/role_program/image_types.rs");
+    let metadata = format!(
+        "{}\n{}",
+        read("src/global/role_program/image_impl/metadata.rs"),
+        read("src/global/role_program/image_impl/metadata/scope_ranges.rs")
+    );
+    let program_ref = read("src/global/compiled/images/image/program_ref.rs");
     let ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let event_rows = read("src/global/role_program/image_impl/event_rows.rs");
     let tests = read("src/global/role_program/image_impl/tests.rs");
@@ -629,7 +729,9 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
         "duplicate_route_scope_authority",
         "empty_route_arm_row",
         "noncanonical_empty_route_arm_lane_step_range",
+        "noncanonical_empty_route_arm_event_range",
         "empty_lane_range_row",
+        "noncanonical_empty_lane_range_row",
         "empty_roll_scope_row",
         "empty_roll_scope_event_range",
         "roll_scope_ordinal_out_of_range",
@@ -639,6 +741,9 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
         "out_of_domain_local_event_scope",
         "local_step_lane_outside_logical_domain",
         "program_lane_mismatch",
+        "foreign_role_event",
+        "missing_program_event",
+        "in_range_missing_event_and_lane_columns",
         "empty_referenced_dependency_row",
         "empty_referenced_conflict_row",
         "out_of_domain_conflict_route_scope",
@@ -669,6 +774,19 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
             .contains("const fn invalid_resident_descriptor() -> ! {\n    crate::invariant()\n}")
             && lane_image.matches("crate::invariant()").count() == 1
             && !ref_access.contains("crate::invariant()")
+            && ref_access.contains("derive_active_lane_metadata(")
+            && ref_access.contains("lane_columns_are_coherent(")
+            && ref_access.contains("route_commit_capacity_is_exact(")
+            && metadata.contains("pub(super) const fn derive_active_lane_metadata")
+            && metadata.contains("pub(super) const fn lane_columns_are_coherent")
+            && metadata.contains("offer_bitmap_is_arm_union")
+            && metadata.contains("arm_bitmap_matches_lane_steps")
+            && metadata.contains("resident_event_lanes_match_active")
+            && metadata.contains(
+                "pub(in crate::global::role_program::image_impl) const fn route_commit_capacity_is_exact"
+            )
+            && metadata.contains("active_lane_row.start() != 0")
+            && metadata.contains("observed_max == max_route_commit_count")
             && roll_scope.contains("decode_resident_roll_scope(self.read_u16_at(offset))")
             && roll_scope.contains("let event_row = row.event_row();")
             && roll_scope.contains("event_row.end() > self.columns.events.len as usize")
@@ -676,15 +794,27 @@ fn resident_descriptor_columns_reject_in_range_sentinels() {
             && route_scope.contains("decode_resident_route_scope(self.read_u16_at(offset))")
             && route_scope.contains("None => invalid_resident_descriptor(),")
             && lane_decode.contains("if raw_ordinal >= ScopeId::LOCAL_CAPACITY")
+            && image_types.contains("!event_row.is_canonical_optional_range()")
+            && image_types.contains("!self.is_zero_len() || self.start() == 0")
             && route_arm.contains("if row.is_empty() {")
             && route_arm.contains("event_row.end() > self.columns.events.len as usize")
             && route_arm.contains("event_row.is_zero_len() != (row.lane_step_len() == 0)")
             && route_arm
                 .contains("lane_step_end > self.columns.route_arm_lane_step_rows.len as usize")
             && route_arm.contains("invalid_resident_descriptor();")
-            && lane_range.contains("if row.is_empty() {")
+            && lane_range.contains("if !row.is_canonical_optional_range() {")
             && lane_range.contains("invalid_resident_descriptor();")
             && event_rows.contains("decode_resident_event_header(eff_index, scope_raw, flags)")
+            && event_rows.contains("const fn role_local_direction(")
+            && event_rows.contains("program.event_atom_at(eff_idx)")
+            && event_rows.contains("None => crate::invariant(),")
+            && tests.contains("fn lane_columns_bind_partition_arm_steps_and_offer_union()")
+            && program_ref.contains("pub(crate) const fn event_atom_at")
+            && program_ref.contains("None => crate::invariant(),")
+            && ref_access
+                .matches("None => invalid_resident_descriptor(),")
+                .count()
+                >= 2
             && lane_image.contains("Some(dependency) => Some(dependency)")
             && lane_image.contains("if conflict.is_none() {")
             && lane_image.contains("if start >= end || end > self.columns.lanes.len as usize")
@@ -743,6 +873,22 @@ fn production_sources_keep_absence_codes_named_by_meaning() {
             "PublicEndpointStorageLayout must carry only fields consumed by endpoint attach: {forbidden}"
         );
     }
+}
+
+#[test]
+fn offer_lane_lookup_distinguishes_empty_membership_from_missing_scope() {
+    let core = read("src/endpoint/kernel/core.rs");
+    let accessor = core
+        .split("pub(crate) fn offer_lane_set_for_scope")
+        .nth(1)
+        .expect("offer lane-set accessor")
+        .split("pub(crate) fn route_scope_arm_lane_set_for_scope")
+        .next()
+        .expect("offer lane-set accessor body");
+
+    assert!(accessor.contains("Some(lanes) => lanes"));
+    assert!(accessor.contains("None => crate::invariant()"));
+    assert!(!accessor.contains("None => LaneSetView::EMPTY"));
 }
 
 #[test]

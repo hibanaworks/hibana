@@ -1,4 +1,57 @@
-use super::{LocalNode, PackedEventConflict, PackedLocalDependency, StateIndex};
+use super::{
+    DeterministicInboundKey, InboundFrameKey, LocalNode, PackedEventConflict,
+    PackedLocalDependency, StateIndex,
+};
+
+#[kani::proof]
+fn inbound_frame_key_matching_is_exact_on_every_wire_axis() {
+    let key = InboundFrameKey::new(kani::any(), kani::any(), kani::any());
+    let source_role: u8 = kani::any();
+    let lane: u8 = kani::any();
+    let frame_label: u8 = kani::any();
+
+    assert_eq!(
+        key.matches_parts(source_role, lane, frame_label),
+        key == InboundFrameKey::new(source_role, lane, frame_label)
+    );
+}
+
+#[kani::proof]
+fn inbound_frame_key_rejects_each_single_axis_mismatch() {
+    let source_role: u8 = kani::any();
+    let lane: u8 = kani::any();
+    let frame_label: u8 = kani::any();
+    let key = InboundFrameKey::new(source_role, lane, frame_label);
+
+    assert!(!key.matches_parts(source_role.wrapping_add(1), lane, frame_label));
+    assert!(!key.matches_parts(source_role, lane.wrapping_add(1), frame_label));
+    assert!(!key.matches_parts(source_role, lane, frame_label.wrapping_add(1)));
+}
+
+#[kani::proof]
+fn deterministic_inbound_key_matching_is_exact_on_every_available_axis() {
+    let key = DeterministicInboundKey::new(kani::any(), kani::any(), kani::any());
+    let lane: u8 = kani::any();
+    let label: u8 = kani::any();
+    let schema: u32 = kani::any();
+
+    assert_eq!(
+        key.matches_parts(lane, label, schema),
+        key == DeterministicInboundKey::new(lane, label, schema)
+    );
+}
+
+#[kani::proof]
+fn deterministic_inbound_key_rejects_each_single_axis_mismatch() {
+    let lane: u8 = kani::any();
+    let label: u8 = kani::any();
+    let schema: u32 = kani::any();
+    let key = DeterministicInboundKey::new(lane, label, schema);
+
+    assert!(!key.matches_parts(lane.wrapping_add(1), label, schema));
+    assert!(!key.matches_parts(lane, label.wrapping_add(1), schema));
+    assert!(!key.matches_parts(lane, label, schema.wrapping_add(1)));
+}
 
 #[kani::proof]
 fn state_index_preserves_the_exact_present_identity_domain() {
@@ -9,6 +62,21 @@ fn state_index_preserves_the_exact_present_identity_domain() {
 
     assert_eq!(state.raw(), raw);
     assert!(!state.is_absent());
+}
+
+#[kani::proof]
+fn checked_state_index_acceptance_is_the_exact_present_identity_domain() {
+    let index: usize = kani::any();
+    let state = StateIndex::checked_from_usize(index);
+
+    assert_eq!(
+        state.is_some(),
+        index < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
+    );
+    if let Some(state) = state {
+        assert_eq!(state.as_usize(), index);
+        assert!(!state.is_absent());
+    }
 }
 
 #[kani::proof]

@@ -143,6 +143,15 @@ run_miri_test \
   --lib \
   endpoint::kernel::frontier_state::tests
 
+run_miri_test \
+  frontier-scratch-workspace-owner \
+  6 \
+  6 \
+  0 \
+  -p hibana \
+  --lib \
+  endpoint::kernel::frontier::scratch::tests
+
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}" \
 MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
   production-proof-artifact-exporter \
@@ -390,8 +399,8 @@ run_miri_test \
 
 run_miri_test \
   resident-sidecar-owner \
+  18 \
   17 \
-  16 \
   1 \
   -p hibana \
   --lib \
@@ -399,12 +408,21 @@ run_miri_test \
 
 run_miri_test \
   resident-descriptor-validation \
-  40 \
-  40 \
+  45 \
+  45 \
   0 \
   -p hibana \
   --lib \
   global::role_program::image_impl::tests::resident_
+
+run_miri_test \
+  descriptor-lane-byte-view-owner \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  global::role_program::tests::descriptor_lane_byte_view_remains_byte_aligned_and_covers_lane_255
 
 run_miri_test \
   compiled-program-descriptor-validation \

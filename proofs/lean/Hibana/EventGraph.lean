@@ -10,6 +10,20 @@ structure Event where
   conflicts : List ConflictArm
   deriving Repr, DecidableEq, BEq
 
+/-- Exact semantic identity of one role-local endpoint operation. The event ID
+prevents equal message contracts on different peers, directions, lanes, or
+route occurrences from being conflated. Physical lane and frame-label evidence
+is bound separately by the exact descriptor refinement. -/
+structure OperationRequest where
+  eventId : Nat
+  action : LocalAction
+  deriving Repr, DecidableEq
+
+def Event.operationRequest (event : Event) : OperationRequest := {
+  eventId := event.id
+  action := event.action
+}
+
 structure RollInfo where
   events : List Nat
   entries : List Nat
@@ -31,6 +45,16 @@ structure EventGraph where
   rolls : List RollInfo
   routes : List RouteInfo
   deriving Repr, DecidableEq, BEq
+
+def EventGraph.routeForConflict?
+    (graph : EventGraph) (conflict : Nat) : Option RouteInfo :=
+  resolveUnique? (graph.routes.filter fun route => route.conflict == conflict)
+
+theorem resolved_route_for_conflict_is_unique
+    {graph : EventGraph} {conflict : Nat} {route : RouteInfo}
+    (resolved : graph.routeForConflict? conflict = some route) :
+    graph.routes.filter (fun candidate => candidate.conflict == conflict) = [route] := by
+  exact resolveUnique?_eq_some_iff.mp resolved
 
 structure ProjectionContext where
   incoming : List Nat

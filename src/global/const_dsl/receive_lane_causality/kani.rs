@@ -4,7 +4,7 @@ use super::{
     validate_structured_receive_lane_causality,
 };
 use crate::{
-    eff::{EffAtom, EffStruct, EventOrigin},
+    eff::{EffAtom, EventOrigin},
     global::const_dsl::EffList,
 };
 
@@ -12,15 +12,15 @@ fn symbolic_role() -> u8 {
     kani::any()
 }
 
-fn event(from: u8, to: u8, lane: u8) -> EffStruct {
-    EffStruct::atom(EffAtom {
+fn event(from: u8, to: u8, lane: u8) -> EffAtom {
+    EffAtom {
         from,
         to,
         label: 0,
         payload_schema: 0,
         origin: EventOrigin::User,
         lane,
-    })
+    }
 }
 
 fn distinct_role_permutation() -> (u8, u8, u8) {

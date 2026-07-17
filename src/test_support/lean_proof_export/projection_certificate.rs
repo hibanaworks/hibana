@@ -37,12 +37,15 @@ fn lean_projection_events(production: &ProductionCursorTrace) -> String {
     let mut events = Vec::new();
     let mut index = 0usize;
     while index < production.event_program.local_len() {
-        let key = production
-            .action_key_at(index)
-            .expect("production projection event must retain a message key");
+        let operation = production
+            .proof_operation_at(index)
+            .expect("production projection event must retain an operation identity");
         events.push(format!(
             "    {{ action := {} }}",
-            lean_local_action(production.event_program.node(index).action(), key.schema)
+            lean_local_action(
+                production.event_program.node(index).action(),
+                operation.schema,
+            )
         ));
         index += 1;
     }
@@ -52,44 +55,49 @@ fn lean_projection_events(production: &ProductionCursorTrace) -> String {
 fn lean_projection_routes(production: &ProductionCursorTrace) -> String {
     let mut routes = Vec::new();
     let mut slot = 0usize;
-    while let Some(region) = production.event_program.route_scope_rows_by_slot(slot) {
-        let program = production.event_program.program_ref();
-        let mut authority_row = None;
-        let mut row = 0usize;
-        while row < program.route_resolver_row_count() {
-            if program.route_resolver_scope_at_row(row) == Some(region.scope()) {
-                authority_row = Some((row, program.route_resolver_id_at_row(row)));
-                break;
+    while slot < production.event_program.route_scope_slot_count() {
+        if let Some(region) = production.event_program.route_scope_rows_by_slot(slot) {
+            let program = production.event_program.program_ref();
+            let mut authority_row = None;
+            let mut row = 0usize;
+            while row < program.route_resolver_row_count() {
+                let Some((scope, resolver)) = program.route_resolver_authority_at_row(row) else {
+                    crate::invariant();
+                };
+                if scope.same(region.scope()) {
+                    authority_row = Some((row, resolver.map(|resolver| resolver.resolver_id())));
+                    break;
+                }
+                row += 1;
             }
-            row += 1;
+            let Some((conflict, resolver_id)) = authority_row else {
+                panic!("production route scope is missing its global authority row");
+            };
+            let authority = match resolver_id {
+                None => ".intrinsic".to_string(),
+                Some(resolver_id) => format!(".dynamic {resolver_id}"),
+            };
+            let arm_events = |arm| {
+                production
+                    .event_program
+                    .route_arm_event_row_by_slot(slot, arm)
+                    .map_or_else(
+                        || "[]".to_string(),
+                        |row| lean_usize_list(row.start()..row.end()),
+                    )
+            };
+            let reentry = if region.reentry() {
+                ".rolled"
+            } else {
+                ".singlePass"
+            };
+            routes.push(format!(
+                "    {{ conflict := {conflict}, authority := {authority}, leftEvents := {}, \
+                 rightEvents := {}, reentry := {reentry} }}",
+                arm_events(0),
+                arm_events(1)
+            ));
         }
-        let Some((conflict, resolver_id)) = authority_row else {
-            panic!("production route scope is missing its global authority row");
-        };
-        let authority = match resolver_id {
-            None => ".intrinsic".to_string(),
-            Some(resolver_id) => format!(".dynamic {resolver_id}"),
-        };
-        let arm_events = |arm| {
-            production
-                .event_program
-                .route_arm_event_row_by_slot(slot, arm)
-                .map_or_else(
-                    || "[]".to_string(),
-                    |row| lean_usize_list(row.start()..row.end()),
-                )
-        };
-        let reentry = if region.reentry() {
-            ".rolled"
-        } else {
-            ".singlePass"
-        };
-        routes.push(format!(
-            "    {{ conflict := {conflict}, authority := {authority}, leftEvents := {}, \
-             rightEvents := {}, reentry := {reentry} }}",
-            arm_events(0),
-            arm_events(1)
-        ));
         slot += 1;
     }
     format!("[\n{}\n  ]", routes.join(",\n"))
@@ -455,4 +463,27 @@ pub(super) fn verified_protocol_certificate_source(
          example : {name}.AllRolesRefine 0 {role_count} {choreo} :=\n  \
          Hibana.verified_protocol_certificate_establishes_all_role_refinement (by native_decide)\n"
     )
+}
+
+#[test]
+fn projection_export_keeps_a_later_route_after_an_empty_role_slot() {
+    let program = g::seq(
+        g::route(
+            g::send::<0, 1, g::Msg<217, ()>>(),
+            g::send::<0, 1, g::Msg<218, ()>>(),
+        ),
+        g::route(
+            g::send::<0, 2, g::Msg<219, ()>>(),
+            g::send::<0, 2, g::Msg<220, ()>>(),
+        ),
+    );
+    let source = projection_certificate_source::<2>(
+        &program,
+        "sparseRouteChoreo",
+        "sparseRouteProjectionRole2",
+    );
+
+    assert_eq!(source.matches("reentry := .singlePass").count(), 1);
+    assert!(source.contains("leftEvents := [0]"));
+    assert!(source.contains("rightEvents := [1]"));
 }

@@ -1,50 +1,42 @@
-use core::{
-    ops::{Deref, DerefMut, Index, IndexMut},
-    slice,
-};
+use core::ops::{Deref, DerefMut, Index, IndexMut};
 
 #[derive(Clone, Copy)]
-pub(super) struct EntryView<T> {
-    ptr: *const T,
-    capacity: u16,
+pub(super) struct EntryView<'a, T> {
+    slots: &'a [T],
 }
 
-impl<T> EntryView<T> {
-    pub(super) const EMPTY: Self = Self {
-        ptr: core::ptr::null(),
-        capacity: 0,
-    };
+impl<'a, T> EntryView<'a, T> {
+    pub(super) const fn empty() -> Self {
+        Self { slots: &[] }
+    }
 
     #[inline]
-    pub(super) const unsafe fn from_parts(ptr: *const T, capacity: usize) -> Self {
+    pub(super) unsafe fn from_parts(ptr: *const T, capacity: usize) -> Self {
         if capacity > u16::MAX as usize || (capacity != 0 && ptr.is_null()) {
             crate::invariant();
         }
-        Self {
-            ptr,
-            capacity: capacity as u16,
-        }
+        let slots = if capacity == 0 {
+            &[]
+        } else {
+            /* SAFETY: the caller grants an initialized immutable span for the
+            complete lifetime represented by this view. */
+            unsafe { core::slice::from_raw_parts(ptr, capacity) }
+        };
+        Self { slots }
     }
 
     #[inline]
     pub(super) const fn capacity(&self) -> usize {
-        self.capacity as usize
+        self.slots.len()
     }
 
     #[inline]
-    pub(super) fn as_slice(&self) -> &[T] {
-        if self.ptr.is_null() {
-            &[]
-        } else {
-            /* SAFETY: only an unsafe owner constructor can create a nonempty
-            view, and that owner guarantees an initialized resident slice for
-            the complete use of this compact view. */
-            unsafe { slice::from_raw_parts(self.ptr, self.capacity()) }
-        }
+    pub(super) const fn as_slice(&self) -> &[T] {
+        self.slots
     }
 }
 
-impl<T> Index<usize> for EntryView<T> {
+impl<T> Index<usize> for EntryView<'_, T> {
     type Output = T;
 
     #[inline]
@@ -53,60 +45,41 @@ impl<T> Index<usize> for EntryView<T> {
     }
 }
 
-pub(super) struct EntryBuffer<T> {
-    ptr: *mut T,
-    capacity: u16,
+pub(super) struct EntryBuffer<'a, T> {
+    slots: &'a mut [T],
 }
 
-impl<T> EntryBuffer<T> {
+impl<'a, T> EntryBuffer<'a, T> {
     #[inline]
     pub(super) const fn capacity(&self) -> usize {
-        self.capacity as usize
+        self.slots.len()
     }
 
     #[inline]
-    pub(super) const unsafe fn from_parts(ptr: *mut T, capacity: usize) -> Self {
-        if capacity > u16::MAX as usize || (capacity != 0 && ptr.is_null()) {
+    pub(super) fn from_slice(slots: &'a mut [T]) -> Self {
+        if slots.len() > u16::MAX as usize {
             crate::invariant();
         }
-        Self {
-            ptr,
-            capacity: capacity as u16,
-        }
+        Self { slots }
     }
 
     #[inline]
-    pub(super) const fn into_view(self) -> EntryView<T> {
-        /* SAFETY: this buffer's unsafe constructor established the initialized
-        backing slice. Consuming the mutation capability prevents an immutable view
-        from coexisting with this buffer owner. */
-        unsafe { EntryView::from_parts(self.ptr.cast_const(), self.capacity()) }
+    pub(super) const fn into_view(self) -> EntryView<'a, T> {
+        EntryView { slots: self.slots }
     }
 
     #[inline]
-    pub(super) fn as_slice(&self) -> &[T] {
-        if self.ptr.is_null() {
-            &[]
-        } else {
-            /* SAFETY: the unsafe owner constructor established one initialized
-            entry slice; shared slicing is tied to `&self`. */
-            unsafe { slice::from_raw_parts(self.ptr, self.capacity()) }
-        }
+    pub(super) const fn as_slice(&self) -> &[T] {
+        self.slots
     }
 
     #[inline]
     pub(super) fn as_mut_slice(&mut self) -> &mut [T] {
-        if self.ptr.is_null() {
-            &mut []
-        } else {
-            /* SAFETY: `&mut self` is the entry-buffer mutation token, and the
-            stored pointer/capacity describe its initialized resident slice. */
-            unsafe { slice::from_raw_parts_mut(self.ptr, self.capacity()) }
-        }
+        self.slots
     }
 }
 
-impl<T> Deref for EntryBuffer<T> {
+impl<T> Deref for EntryBuffer<'_, T> {
     type Target = [T];
 
     #[inline]
@@ -115,14 +88,14 @@ impl<T> Deref for EntryBuffer<T> {
     }
 }
 
-impl<T> DerefMut for EntryBuffer<T> {
+impl<T> DerefMut for EntryBuffer<'_, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.as_mut_slice()
     }
 }
 
-impl<T, I> Index<I> for EntryBuffer<T>
+impl<T, I> Index<I> for EntryBuffer<'_, T>
 where
     [T]: Index<I>,
 {
@@ -134,7 +107,7 @@ where
     }
 }
 
-impl<T, I> IndexMut<I> for EntryBuffer<T>
+impl<T, I> IndexMut<I> for EntryBuffer<'_, T>
 where
     [T]: IndexMut<I>,
 {

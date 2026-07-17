@@ -1,5 +1,5 @@
 use super::PhantomData;
-pub(crate) use core::primitive::usize as LaneWord;
+pub(crate) use core::primitive::u32 as LaneWord;
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DenseLaneOrdinal(u16);
@@ -39,7 +39,7 @@ pub(crate) const fn lane_word_count(lane_count: usize) -> usize {
 #[inline(always)]
 pub(crate) const fn lane_word_index(lane: usize) -> (usize, LaneWord) {
     let bits = LaneWord::BITS as usize;
-    (lane / bits, 1usize << (lane % bits))
+    (lane / bits, 1u32 << (lane % bits))
 }
 
 #[inline(always)]
@@ -67,19 +67,10 @@ pub(crate) struct LaneSetView<'a> {
 
 impl<'a> LaneSetView<'a> {
     const WORD_MODE: u16 = u16::MAX;
-    pub(crate) const EMPTY: Self = Self {
-        ptr: core::ptr::null(),
-        word_len: 0,
-        byte_len: 0,
-        _marker: PhantomData,
-    };
 
     #[inline]
     pub(crate) const unsafe fn from_parts(ptr: *const LaneWord, word_len: usize) -> Self {
-        if word_len > u16::MAX as usize || (word_len != 0 && ptr.is_null()) {
-            crate::invariant();
-        }
-        if word_len > LANE_SET_VIEW_WORDS {
+        if word_len > LANE_SET_VIEW_WORDS || (word_len != 0 && ptr.is_null()) {
             crate::invariant();
         }
         Self {
@@ -96,13 +87,10 @@ impl<'a> LaneSetView<'a> {
         byte_len: usize,
         word_len: usize,
     ) -> Self {
-        if byte_len > u16::MAX as usize || word_len > u16::MAX as usize {
-            crate::invariant();
-        }
-        if byte_len != 0 && ptr.is_null() {
-            crate::invariant();
-        }
-        if word_len > LANE_SET_VIEW_WORDS {
+        if byte_len > lane_byte_count(LANE_DOMAIN_SIZE)
+            || word_len > LANE_SET_VIEW_WORDS
+            || (byte_len != 0 && ptr.is_null())
+        {
             crate::invariant();
         }
         Self {
@@ -196,7 +184,7 @@ impl<'a> LaneSetView<'a> {
             let bits = LaneWord::BITS as usize;
             let word_start = word_idx * bits;
             let word_end = word_start + bits;
-            let mut word = 0usize;
+            let mut word = 0u32;
             let mut byte_idx = word_start / (u8::BITS as usize);
             while byte_idx < self.byte_len() && byte_idx * (u8::BITS as usize) < word_end {
                 let lane_start = byte_idx * (u8::BITS as usize);

@@ -13,8 +13,10 @@ use super::{
 use crate::{
     endpoint::{RecvError, RecvResult},
     global::typestate::{
-        CursorInvariantError, EventCommitMeta, PackedEventConflict, state_index_to_usize,
+        CursorInvariantError, DeterministicInboundKey, EventCommitMeta, InboundFrameKey,
+        PackedEventConflict, state_index_to_usize,
     },
+    runtime_core::UniqueMatchFailure,
     transport::{
         Transport,
         wire::{CodecError, Payload},
@@ -26,7 +28,7 @@ mod evidence;
 mod matching;
 
 pub(crate) use evidence::MatchedRecvFrame;
-use evidence::{MatchOutcome, ObservedInboundKey, RecvDescriptor};
+use evidence::RecvDescriptor;
 
 pub(crate) struct RecvState {
     pending_recv: lane_port::PendingRecv,
@@ -98,20 +100,24 @@ where
         target_schema: u32,
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<MatchedRecvFrame<'r>> {
-        let observed = ObservedInboundKey::from_frame::<ROLE>(self.sid.raw(), &frame);
+        let observed = InboundFrameKey::new(
+            frame.observed_source_role(),
+            frame.lane_wire(),
+            frame.observed_frame_label_raw(),
+        );
         match self.unique_recv_candidate(target_label, target_schema, observed)? {
             Ok(candidate) => {
                 let desc = candidate.desc;
                 let frame = self.accept_materialized_transport_frame(
-                    desc.lane_idx,
-                    desc.lane_wire,
+                    desc.meta.lane as usize,
+                    desc.meta.lane,
                     desc.meta.peer,
                     desc.meta.frame_label,
                     frame,
                 )?;
                 Ok(MatchedRecvFrame { desc, frame })
             }
-            Err(MatchOutcome::None) => {
+            Err(UniqueMatchFailure::None) => {
                 let mismatch = self.framed_recv_mismatch_for_unmatched_candidate(
                     target_label,
                     target_schema,
@@ -125,7 +131,7 @@ where
                 frame.discard_uncommitted();
                 Err(RecvError::PhaseInvariant)
             }
-            Err(MatchOutcome::Ambiguous) => {
+            Err(UniqueMatchFailure::Ambiguous) => {
                 frame.discard_uncommitted();
                 Err(RecvError::PhaseInvariant)
             }
@@ -139,19 +145,20 @@ where
         frame: lane_port::PreambleFrame<'r>,
     ) -> RecvResult<MatchedRecvFrame<'r>> {
         let lane_wire = frame.lane_wire();
-        match self.unique_deterministic_recv_candidate(target_label, target_schema, lane_wire)? {
+        let key = DeterministicInboundKey::new(lane_wire, target_label, target_schema);
+        match self.unique_deterministic_recv_candidate(key)? {
             Ok(candidate) => {
                 let desc = candidate.desc;
                 let frame = self.accept_materialized_transport_frame(
-                    desc.lane_idx,
-                    desc.lane_wire,
+                    desc.meta.lane as usize,
+                    desc.meta.lane,
                     desc.meta.peer,
                     desc.meta.frame_label,
                     frame,
                 )?;
                 Ok(MatchedRecvFrame { desc, frame })
             }
-            Err(MatchOutcome::None) => {
+            Err(UniqueMatchFailure::None) => {
                 self.emit_materialization_mismatch_observation(
                     frame.lane_idx(),
                     lane_wire,
@@ -160,7 +167,7 @@ where
                 frame.discard_uncommitted();
                 Err(RecvError::PhaseInvariant)
             }
-            Err(MatchOutcome::Ambiguous) => {
+            Err(UniqueMatchFailure::Ambiguous) => {
                 frame.discard_uncommitted();
                 Err(RecvError::PhaseInvariant)
             }
@@ -217,7 +224,7 @@ where
                 }
             };
         Ok(RecvCommitPlan::direct(
-            EndpointRxEventPlan::direct(desc.lane_wire, desc.meta.label),
+            EndpointRxEventPlan::direct(desc.meta.lane, desc.meta.label),
             delta,
             frame,
         ))
@@ -246,7 +253,7 @@ where
         if meta.origin.is_session() {
             return Err(RecvError::PhaseInvariant);
         }
-        if frame.frame_label_raw() != meta.frame_label || frame.lane_wire() != desc.lane_wire {
+        if frame.frame_label_raw() != meta.frame_label || frame.lane_wire() != meta.lane {
             return Err(RecvError::PhaseInvariant);
         }
         let cursor_index = state_index_to_usize(desc.cursor_index);

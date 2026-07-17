@@ -1,5 +1,5 @@
 use super::{
-    EffList, ScopeEvent, ScopeKind, ScopeMarkerView, eff,
+    EffList, ScopeKind, ScopeMarkerView, eff,
     scope_ranges::{
         parallel_arm_ranges_from_enter, parallel_enter_at, roll_body_range_from_enter,
         roll_continuation_end, route_arm_ranges_from_first_enter, route_enter_at,
@@ -14,13 +14,13 @@ impl EndpointSelector {
     const INBOUND_EVIDENCE: u64 = 1;
     const KIND_SHIFT: u32 = 56;
 
-    const fn outbound(atom: eff::EffAtom) -> Option<Self> {
-        Some(Self(
+    const fn outbound(atom: eff::EffAtom) -> Self {
+        Self(
             (Self::OUTBOUND << Self::KIND_SHIFT)
                 | ((atom.from as u64) << 48)
                 | ((atom.label as u64) << 40)
                 | atom.payload_schema as u64,
-        ))
+        )
     }
 
     const fn inbound_evidence(atom_idx: usize) -> Option<Self> {
@@ -83,7 +83,7 @@ pub(crate) const fn validate_parallel_endpoint_selectors<const E: usize>(
     let mut idx = 0usize;
     while idx < markers.len() {
         let marker = markers.at(idx);
-        if matches!(marker.event, ScopeEvent::Enter)
+        if marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
         {
             let Some((left_start, left_end, right_start, right_end)) =
@@ -113,7 +113,7 @@ pub(crate) const fn validate_roll_reentry_endpoint_selectors<const E: usize>(
     let mut idx = 0usize;
     while idx < markers.len() {
         let marker = markers.at(idx);
-        if matches!(marker.event, ScopeEvent::Enter)
+        if marker.event.is_primary_enter()
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
         {
             let Some((body_start, body_end)) = roll_body_range_from_enter(markers, idx) else {
@@ -148,19 +148,19 @@ const fn parallel_endpoint_selector_conflicts<const E: usize>(
 ) -> bool {
     let mut idx = left_start;
     while idx < left_end && idx < eff_list.len() {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            if let Some(selector) = EndpointSelector::outbound(atom)
-                && range_contains_endpoint_selector(eff_list, right_start, right_end, selector)
-            {
-                return true;
-            }
-            if let Some(selector) = inbound_selector_at(idx)
-                && range_contains_endpoint_selector(eff_list, right_start, right_end, selector)
-            {
-                return true;
-            }
+        let atom = eff_list.atom_at(idx);
+        if range_contains_endpoint_selector(
+            eff_list,
+            right_start,
+            right_end,
+            EndpointSelector::outbound(atom),
+        ) {
+            return true;
+        }
+        if let Some(selector) = inbound_selector_at(idx)
+            && range_contains_endpoint_selector(eff_list, right_start, right_end, selector)
+        {
+            return true;
         }
         idx += 1;
     }
@@ -175,12 +175,8 @@ const fn range_contains_endpoint_selector<const E: usize>(
 ) -> bool {
     let mut idx = start;
     while idx < end && idx < eff_list.len() {
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            if atom_matches_selector(idx, atom, target) {
-                return true;
-            }
+        if atom_matches_selector(idx, eff_list.atom_at(idx), target) {
+            return true;
         }
         idx += 1;
     }
@@ -197,70 +193,64 @@ pub(crate) const fn first_visible_endpoint_selector_conflicts_from_markers<const
     right_marker_floor: usize,
 ) -> bool {
     let markers = eff_list.scope_markers();
-    let mut idx = left_start;
-    while idx < left_end && idx < eff_list.len() {
-        if let Some(route_enter) = route_enter_at(markers, idx, left_end, left_marker_floor) {
-            let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
-                route_arm_ranges_from_first_enter(markers, route_enter);
-            return first_visible_endpoint_selector_conflicts_from_markers(
-                eff_list,
-                arm0_start,
-                arm0_end,
-                right_start,
-                right_end,
-                route_enter + 1,
-                right_marker_floor,
-            ) || first_visible_endpoint_selector_conflicts_from_markers(
-                eff_list,
-                arm1_start,
-                arm1_end,
-                right_start,
-                right_end,
-                route_enter + 1,
-                right_marker_floor,
-            );
-        }
-        if let Some(par_enter) = parallel_enter_at(markers, idx, left_end, left_marker_floor) {
-            let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
-                parallel_arm_ranges_from_enter(markers, par_enter)
-            else {
-                return true;
-            };
-            return first_visible_endpoint_selector_conflicts_from_markers(
-                eff_list,
-                arm0_start,
-                arm0_end,
-                right_start,
-                right_end,
-                par_enter + 1,
-                right_marker_floor,
-            ) || first_visible_endpoint_selector_conflicts_from_markers(
-                eff_list,
-                arm1_start,
-                arm1_end,
-                right_start,
-                right_end,
-                par_enter + 1,
-                right_marker_floor,
-            );
-        }
-
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            return first_visible_endpoint_matches_atom(
-                markers,
-                eff_list,
-                right_start,
-                right_end,
-                idx,
-                atom,
-                right_marker_floor,
-            );
-        }
-        idx += 1;
+    if left_start >= left_end || left_start >= eff_list.len() {
+        return false;
     }
-    false
+    if let Some(route_enter) = route_enter_at(markers, left_start, left_end, left_marker_floor) {
+        let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
+            route_arm_ranges_from_first_enter(markers, route_enter);
+        return first_visible_endpoint_selector_conflicts_from_markers(
+            eff_list,
+            arm0_start,
+            arm0_end,
+            right_start,
+            right_end,
+            route_enter + 1,
+            right_marker_floor,
+        ) || first_visible_endpoint_selector_conflicts_from_markers(
+            eff_list,
+            arm1_start,
+            arm1_end,
+            right_start,
+            right_end,
+            route_enter + 1,
+            right_marker_floor,
+        );
+    }
+    if let Some(par_enter) = parallel_enter_at(markers, left_start, left_end, left_marker_floor) {
+        let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
+            parallel_arm_ranges_from_enter(markers, par_enter)
+        else {
+            return true;
+        };
+        return first_visible_endpoint_selector_conflicts_from_markers(
+            eff_list,
+            arm0_start,
+            arm0_end,
+            right_start,
+            right_end,
+            par_enter + 1,
+            right_marker_floor,
+        ) || first_visible_endpoint_selector_conflicts_from_markers(
+            eff_list,
+            arm1_start,
+            arm1_end,
+            right_start,
+            right_end,
+            par_enter + 1,
+            right_marker_floor,
+        );
+    }
+
+    first_visible_endpoint_matches_atom(
+        markers,
+        eff_list,
+        right_start,
+        right_end,
+        left_start,
+        eff_list.atom_at(left_start),
+        right_marker_floor,
+    )
 }
 
 const fn first_visible_endpoint_matches_atom<const E: usize>(
@@ -272,20 +262,15 @@ const fn first_visible_endpoint_matches_atom<const E: usize>(
     atom: eff::EffAtom,
     marker_floor: usize,
 ) -> bool {
-    match EndpointSelector::outbound(atom) {
-        Some(selector)
-            if first_visible_endpoint_matches(
-                markers,
-                eff_list,
-                start,
-                end,
-                selector,
-                marker_floor,
-            ) =>
-        {
-            return true;
-        }
-        _ => {}
+    if first_visible_endpoint_matches(
+        markers,
+        eff_list,
+        start,
+        end,
+        EndpointSelector::outbound(atom),
+        marker_floor,
+    ) {
+        return true;
     }
     match inbound_selector_at(atom_idx) {
         Some(selector) => {
@@ -303,58 +288,52 @@ const fn first_visible_endpoint_matches<const E: usize>(
     target: EndpointSelector,
     marker_floor: usize,
 ) -> bool {
-    let mut idx = start;
-    while idx < end && idx < eff_list.len() {
-        if let Some(route_enter) = route_enter_at(markers, idx, end, marker_floor) {
-            let (_, arm0_start, arm0_end, _, arm1_start, arm1_end) =
-                route_arm_ranges_from_first_enter(markers, route_enter);
-            return first_visible_endpoint_matches(
-                markers,
-                eff_list,
-                arm0_start,
-                arm0_end,
-                target,
-                route_enter + 1,
-            ) || first_visible_endpoint_matches(
-                markers,
-                eff_list,
-                arm1_start,
-                arm1_end,
-                target,
-                route_enter + 1,
-            );
-        }
-        if let Some(par_enter) = parallel_enter_at(markers, idx, end, marker_floor) {
-            let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
-                parallel_arm_ranges_from_enter(markers, par_enter)
-            else {
-                return true;
-            };
-            return first_visible_endpoint_matches(
-                markers,
-                eff_list,
-                arm0_start,
-                arm0_end,
-                target,
-                par_enter + 1,
-            ) || first_visible_endpoint_matches(
-                markers,
-                eff_list,
-                arm1_start,
-                arm1_end,
-                target,
-                par_enter + 1,
-            );
-        }
-
-        let node = eff_list.node_at(idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            return atom_matches_selector(idx, atom, target);
-        }
-        idx += 1;
+    if start >= end || start >= eff_list.len() {
+        return false;
     }
-    false
+    if let Some(route_enter) = route_enter_at(markers, start, end, marker_floor) {
+        let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
+            route_arm_ranges_from_first_enter(markers, route_enter);
+        return first_visible_endpoint_matches(
+            markers,
+            eff_list,
+            arm0_start,
+            arm0_end,
+            target,
+            route_enter + 1,
+        ) || first_visible_endpoint_matches(
+            markers,
+            eff_list,
+            arm1_start,
+            arm1_end,
+            target,
+            route_enter + 1,
+        );
+    }
+    if let Some(par_enter) = parallel_enter_at(markers, start, end, marker_floor) {
+        let Some((arm0_start, arm0_end, arm1_start, arm1_end)) =
+            parallel_arm_ranges_from_enter(markers, par_enter)
+        else {
+            return true;
+        };
+        return first_visible_endpoint_matches(
+            markers,
+            eff_list,
+            arm0_start,
+            arm0_end,
+            target,
+            par_enter + 1,
+        ) || first_visible_endpoint_matches(
+            markers,
+            eff_list,
+            arm1_start,
+            arm1_end,
+            target,
+            par_enter + 1,
+        );
+    }
+
+    atom_matches_selector(start, eff_list.atom_at(start), target)
 }
 
 pub(crate) const fn local_route_observer_paths_mergeable<const E: usize>(
@@ -385,20 +364,17 @@ const fn next_local_endpoint_selector<const E: usize>(
     role: u8,
 ) -> Option<EndpointSelector> {
     while *idx < end && *idx < eff_list.len() {
-        let node = eff_list.node_at(*idx);
-        if matches!(node.kind, eff::EffKind::Atom) {
-            let atom = node.atom_data();
-            let selector = if atom.from == role {
-                EndpointSelector::outbound(atom)
-            } else if atom.to == role {
-                inbound_selector_at(*idx)
-            } else {
-                None
-            };
-            if let Some(selector) = selector {
-                *idx += 1;
-                return Some(selector);
-            }
+        let atom = eff_list.atom_at(*idx);
+        let selector = if atom.from == role {
+            Some(EndpointSelector::outbound(atom))
+        } else if atom.to == role {
+            inbound_selector_at(*idx)
+        } else {
+            None
+        };
+        if let Some(selector) = selector {
+            *idx += 1;
+            return Some(selector);
         }
         *idx += 1;
     }
@@ -415,7 +391,7 @@ const fn atom_matches_selector(
     target: EndpointSelector,
 ) -> bool {
     if target.is_outbound() {
-        return matches!(EndpointSelector::outbound(atom), Some(selector) if selector.same(target));
+        return EndpointSelector::outbound(atom).same(target);
     }
     matches!(inbound_selector_at(atom_idx), Some(selector) if selector.same(target))
 }

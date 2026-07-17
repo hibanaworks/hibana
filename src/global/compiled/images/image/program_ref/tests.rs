@@ -1,5 +1,5 @@
 use super::{CompiledProgramRef, PackedProgramAtomFields, ProgramAtomRow};
-use crate::eff::{EffAtom, EffStruct, EventOrigin};
+use crate::eff::{EffAtom, EventOrigin};
 use crate::global::{
     compiled::images::image::{
         blob_storage::ProgramImageBytes,
@@ -16,14 +16,14 @@ const ATOM_ONLY_IMAGE_BYTES: usize =
 
 const fn maximum_atom_only_source() -> EffList<PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY> {
     let mut source = EffList::new();
-    let atom = EffStruct::atom(EffAtom {
+    let atom = EffAtom {
         from: 0,
         to: 1,
         label: 0,
         payload_schema: 0,
         origin: EventOrigin::User,
         lane: 0,
-    });
+    };
     let mut event = 0usize;
     while event < PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY {
         source.push_event_mut(atom);

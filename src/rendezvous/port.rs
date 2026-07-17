@@ -18,36 +18,13 @@ use crate::{
 };
 
 #[inline(always)]
-const fn align_up(value: usize, align: usize) -> usize {
-    if align == 0 {
-        crate::invariant();
-    }
-    let mask = align - 1;
-    if value > usize::MAX - mask {
-        crate::invariant();
-    }
-    (value + mask) & !mask
-}
-
-#[inline(always)]
 fn align_up_absolute_offset(base: usize, offset: usize, align: usize) -> usize {
-    checked_sub_usize(align_up(checked_add_usize(base, offset), align), base)
+    crate::runtime_core::layout::align_offset(base, offset, align)
 }
 
 #[inline(always)]
 fn checked_add_usize(lhs: usize, rhs: usize) -> usize {
-    match lhs.checked_add(rhs) {
-        Some(value) => value,
-        None => crate::invariant(),
-    }
-}
-
-#[inline(always)]
-fn checked_sub_usize(lhs: usize, rhs: usize) -> usize {
-    match lhs.checked_sub(rhs) {
-        Some(value) => value,
-        None => crate::invariant(),
-    }
+    crate::runtime_core::layout::add(lhs, rhs)
 }
 
 mod membership;
@@ -113,6 +90,13 @@ impl Drop for ScratchLease<'_> {
             crate::invariant();
         }
         self.state.set(self.restore);
+    }
+}
+
+impl ScratchLease<'_> {
+    #[inline]
+    fn authorizes(&self, state: &Cell<RendezvousAccessState>) -> bool {
+        core::ptr::eq(self.state, state)
     }
 }
 
@@ -194,11 +178,13 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
-    fn require_scratch_lease(&self) {
-        if !matches!(
-            self.access_state.get(),
-            RendezvousAccessState::ScratchLease | RendezvousAccessState::EndpointScratchLease
-        ) {
+    fn require_scratch_lease(&self, lease: &ScratchLease<'_>) {
+        if !lease.authorizes(self.access_state)
+            || !matches!(
+                self.access_state.get(),
+                RendezvousAccessState::ScratchLease | RendezvousAccessState::EndpointScratchLease
+            )
+        {
             crate::invariant();
         }
     }
@@ -254,8 +240,8 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
     }
 
     #[inline]
-    pub(crate) fn scratch_ptr(&self) -> *mut [u8] {
-        self.require_scratch_lease();
+    pub(crate) fn scratch<'lease>(&self, lease: &'lease mut ScratchLease<'_>) -> &'lease mut [u8] {
+        self.require_scratch_lease(lease);
         let (ptr, _) = self.slab_ptr_and_len();
         // The owner cells hold initialized offsets into the pinned rendezvous slab.
         let base = self.image_frontier.get() as usize;
@@ -266,14 +252,18 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             crate::invariant();
         }
         let len = end - start;
-        // SAFETY: `start..start+len` is bounded by the endpoint storage floor
-        // inside the pinned slab returned by `slab_ptr_and_len`.
-        unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(start), len) }
+        /* SAFETY: `start..start+len` is bounded by the endpoint storage floor
+        inside the initialized pinned slab. The scratch owner and alias
+        lifetime are tied to the unique mutable lease borrow. */
+        unsafe { core::slice::from_raw_parts_mut(ptr.add(start), len) }
     }
 
     #[inline]
-    pub(crate) fn frontier_scratch_ptr(&self) -> *mut [u8] {
-        self.require_scratch_lease();
+    pub(crate) fn frontier_scratch<'lease>(
+        &self,
+        lease: &'lease mut ScratchLease<'_>,
+    ) -> &'lease mut [u8] {
+        self.require_scratch_lease(lease);
         let (ptr, _) = self.slab_ptr_and_len();
         // The owner cells hold initialized offsets into the pinned rendezvous slab.
         let start = self.image_frontier.get() as usize;
@@ -294,9 +284,10 @@ impl<'r, T: Transport + 'r> Port<'r, T> {
             scratch_start
         };
         let len = workspace_end - scratch_start;
-        // SAFETY: `scratch_start..scratch_start+len` is bounded by the
-        // frontier workspace region inside the pinned port slab.
-        unsafe { core::ptr::slice_from_raw_parts_mut(ptr.add(scratch_start), len) }
+        /* SAFETY: `scratch_start..scratch_start+len` is bounded by the
+        initialized frontier workspace region. The scratch owner and alias
+        lifetime are tied to the unique mutable lease borrow. */
+        unsafe { core::slice::from_raw_parts_mut(ptr.add(scratch_start), len) }
     }
 
     #[inline]

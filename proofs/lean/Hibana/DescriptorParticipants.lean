@@ -30,9 +30,8 @@ def insertParticipant (role : Nat) : List Nat -> List Nat
 def canonicalParticipants (roles : List Nat) : List Nat :=
   roles.foldl (fun sorted role => insertParticipant role sorted) []
 
-def uniqueController : List Nat -> Option Nat
-  | [role] => some role
-  | _ => none
+def uniqueController (roles : List Nat) : Option Nat :=
+  resolveUnique? roles
 
 def validRouteParticipants
     (participants : List Nat) (controller roleCount : Nat) : Bool :=

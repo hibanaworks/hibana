@@ -137,11 +137,14 @@ impl RawSendPayload {
 }
 
 #[inline]
-pub(super) fn frontier_scratch_ptr<'r, T>(port: &Port<'r, T>) -> *mut [u8]
+pub(super) fn frontier_scratch<'lease, 'r, T>(
+    port: &Port<'r, T>,
+    lease: &'lease mut crate::rendezvous::port::ScratchLease<'_>,
+) -> &'lease mut [u8]
 where
     T: Transport + 'r,
 {
-    port.frontier_scratch_ptr()
+    port.frontier_scratch(lease)
 }
 
 /// # Safety
@@ -331,17 +334,11 @@ where
         let mut unit_payload = [];
         return Poll::Ready(pending.payload.encode_into(&mut unit_payload).map(|_| ()));
     }
-    let Some(_scratch_lease) = port.try_scratch_lease() else {
+    let Some(mut scratch_lease) = port.try_scratch_lease() else {
         cx.waker().wake_by_ref();
         return Poll::Pending;
     };
-    let scratch_ptr = port.scratch_ptr();
-    let scratch = /* SAFETY: the scoped rendezvous scratch lease excludes
-    reentrant scratch access and resident layout mutation for this encode/poll
-    call. `Port` bounded the pointer and length to initialized slab bytes, and
-    no reference to them escapes the transport call below. */ unsafe {
-        &mut *scratch_ptr
-    };
+    let scratch = port.scratch(&mut scratch_lease);
     let encoded_len = match pending.payload.encode_into(scratch) {
         Ok(encoded_len) => encoded_len,
         Err(err) => {

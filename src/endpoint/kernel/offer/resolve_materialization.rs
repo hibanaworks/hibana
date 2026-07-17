@@ -4,8 +4,8 @@ use core::task::Poll;
 
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
-    CursorEndpoint, FrontierDeferOutcome, FrontierDeferRequest, FrontierVisitSet,
-    OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmToken, Transport,
+    CursorEndpoint, FrontierDeferOutcome, FrontierDeferRequest, FrontierScratchWorkspace,
+    FrontierVisitSet, OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmToken, Transport,
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -20,6 +20,7 @@ where
         authority: RouteAuthorityResolution,
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let RouteAuthorityResolution {
             mut route_token,
@@ -55,6 +56,7 @@ where
                 frontier_visited,
                 cx,
                 route_token,
+                scratch,
             );
         };
         Poll::Ready(Ok(MaterializationReadyOutcome::Ready(ResolvedRouteArm {
@@ -161,15 +163,13 @@ where
         frontier_visited: &mut FrontierVisitSet,
         cx: &mut core::task::Context<'_>,
         route_token: RouteArmToken,
+        scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<MaterializationReadyOutcome>> {
         let selection = state.selection();
         if let Some(payload) = state.ingress.take_transport()
             && let Err(err) = self.requeue_offer_transport_payload(payload)
         {
             return Poll::Ready(Err(err));
-        }
-        if route_token.is_resolver() {
-            self.clear_scope_ack(selection.scope_id);
         }
         if state
             .facts
@@ -192,6 +192,7 @@ where
                 ingress: state.ingress.evidence_state(),
             },
             frontier_visited,
+            scratch,
         ) {
             FrontierDeferOutcome::Continue => {
                 if state.facts.profile.intrinsic_passive_progress_after_defer() {

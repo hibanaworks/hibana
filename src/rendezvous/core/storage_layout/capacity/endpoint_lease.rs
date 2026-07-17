@@ -217,7 +217,7 @@ where
         if required_slots <= current {
             return Ok(EndpointLeaseCapacityPlan::Retained);
         }
-        if EndpointLeaseId::try_from(required_slots).is_err() {
+        if !EndpointLeaseId::slot_count_is_representable(required_slots) {
             return Err(ResourceScope::EndpointLease);
         }
         let bytes =

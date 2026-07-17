@@ -5,7 +5,7 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
     let carrier = read("proofs/lean/Hibana/CarrierProfile.lean");
     let codec = read("proofs/lean/Hibana/CodecEvidence.lean");
     let elastic = read("proofs/lean/Hibana/ElasticErasure.lean");
-    let rust_kernel = read("proofs/lean/Hibana/RustKernelRefinement.lean");
+    let prepared_kernel = read("proofs/lean/Hibana/PreparedKernelRefinement.lean");
     let production_kernel = read("proofs/lean/Hibana/ProductionKernelArtifact.lean");
     let protocol_capability = read("proofs/lean/Hibana/ProtocolCapability.lean");
     let deployment = read("proofs/lean/Hibana/Deployment.lean");
@@ -76,12 +76,12 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
     assert!(!elastic.contains("wireEpoch"));
     assert!(!elastic.contains("residentEpoch"));
 
-    assert!(rust_kernel.contains("structure PreparedKernelSemantics"));
-    assert!(rust_kernel.contains("prepare : State -> Input -> Option Prepared"));
-    assert!(rust_kernel.contains("structure RustKernelRefinement"));
-    assert!(rust_kernel.contains("preparedCommitExact"));
-    assert!(rust_kernel.contains("rejected_kernel_preparation_is_zero_transition"));
-    assert!(rust_kernel.contains("cross-tool result as an explicit premise"));
+    assert!(prepared_kernel.contains("structure PreparedKernelSemantics"));
+    assert!(prepared_kernel.contains("prepare : State -> Input -> Option Prepared"));
+    assert!(prepared_kernel.contains("structure PreparedKernelRefinement"));
+    assert!(prepared_kernel.contains("preparedCommitExact"));
+    assert!(prepared_kernel.contains("rejected_kernel_preparation_is_zero_transition"));
+    assert!(prepared_kernel.contains("does not identify its\nkernel with Rust source"));
 
     for effect in [
         "| protocol",
@@ -138,21 +138,39 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
     assert!(production_kernel.contains("requiredProductionEffectClasses"));
     assert!(production_kernel.contains("requiredProductionProtocolClasses.map some"));
     assert!(production_kernel.contains("production_kernel_artifact_covers_every_protocol_class"));
-    assert!(production_kernel.contains("accepted_production_protocol_case_refines_rust_kernel"));
     assert!(
-        production_kernel.contains("accepted_production_kernel_artifact_refines_protocol_cases")
+        production_kernel.contains("accepted_production_protocol_case_refines_prepared_kernel")
     );
-    assert!(production_kernel.contains("structure CrossToolProductionRefinement"));
     assert!(
         production_kernel
-            .contains("accepted_production_kernel_artifact_establishes_cross_tool_refinement")
+            .contains("accepted_production_kernel_artifact_refines_protocol_case_kernels")
+    );
+    assert!(production_kernel.contains("structure CrossToolProductionRefinement"));
+    assert!(production_kernel.contains("structure ProductionOwnerEvidence"));
+    assert!(
+        production_kernel
+            .contains("ownerEvidence : ProductionOwnerEvidence OwnerVerified artifact")
+    );
+    assert!(
+        production_kernel.contains("theorem cross_tool_refinement_verifies_every_required_owner")
+    );
+    assert!(
+        production_kernel.contains(
+            "accepted_production_kernel_artifact_combines_with_external_kernel_refinement"
+        )
     );
     assert!(!production_kernel.contains("accepted_production_kernel_artifact_refines_all_kernels"));
     assert!(
         production_kernel
-            .contains("theorem accepted_production_kernel_artifact_refines_rust_kernel")
+            .contains("theorem accepted_production_kernel_artifact_refines_artifact_kernel")
     );
-    assert!(production_kernel.contains("RustKernelRefinement artifact.kernel"));
+    assert!(production_kernel.contains("PreparedKernelRefinement artifact.kernel"));
+    assert!(
+        production_kernel.contains(
+            "productionKernel : PreparedKernelRefinement kernel session roleCount choreo"
+        )
+    );
+    assert!(!production_kernel.contains("refines_rust_kernel"));
 
     assert!(deployment.contains("RoleImagesExact"));
     assert!(deployment.contains("roleImages : List RustDescriptorImage"));
@@ -173,7 +191,7 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
     assert!(end_to_end.contains("structure AssumptionIndexedEndToEndRefinement"));
     assert!(end_to_end.contains("translationValidated"));
     assert!(end_to_end.contains("canonicalCodecCoverage"));
-    assert!(end_to_end.contains("rustKernelRefinement"));
+    assert!(end_to_end.contains("kernelRefinement"));
     assert!(end_to_end.contains("carrierGuarantees"));
     assert!(end_to_end.contains("elasticTraceRefinement"));
     assert!(
@@ -187,6 +205,11 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
 
     assert!(production_end_to_end.contains("structure AssumptionIndexedProductionRefinement"));
     assert!(production_end_to_end.contains("CrossToolProductionRefinement"));
+    assert!(
+        production_end_to_end.contains(
+            "ownerEvidence : ProductionOwnerEvidence OwnerVerified kernelArtifact kernel"
+        )
+    );
     assert!(production_end_to_end.contains("staticCertificate.Refines family"));
     assert!(
         production_end_to_end
@@ -230,6 +253,14 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
 
     assert!(production_exporter.contains("generatedProductionKernelArtifact"));
     assert!(production_exporter.contains("generatedProductionRefinement"));
+    assert!(production_exporter.contains(
+        "OwnerVerified : Hibana.ProductionKernelOwner ->\n      Hibana.PreparedKernelSemantics -> Prop"
+    ));
+    assert!(
+        production_exporter
+            .contains("ownerEvidence : Hibana.ProductionOwnerEvidence OwnerVerified")
+    );
+    assert!(!production_exporter.contains("OwnerVerified := fun _ => True"));
     assert!(production_exporter.contains("generatedStaticDeploymentCertificate"));
     assert!(production_exporter.contains("generatedMissingStaticDeploymentCertificate"));
     assert!(production_exporter.contains("generatedExtraStaticDeploymentCertificate"));
@@ -238,7 +269,9 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
         production_exporter
             .contains("generated_static_deployment_certificate_refines_exact_family")
     );
-    assert!(production_exporter.contains("generated_production_protocol_cases_refine_rust_kernel"));
+    assert!(
+        production_exporter.contains("generated_production_protocol_cases_refine_prepared_kernels")
+    );
     assert!(production_exporter.contains("roleImages := generatedVerifiedProtocol.descriptors"));
     assert!(production_exporter.contains("generated_production_codec_coverage"));
     assert!(production_exporter.contains("generatedVerifiedProtocolFamily"));
@@ -246,7 +279,7 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
         production_exporter.contains("generated_verified_protocol_family_covers_core_capabilities")
     );
     assert!(production_exporter.contains(
-        "transitions=7 operations=6 owners=8 codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6"
+        "transitions=7 operations=6 owners=8 kernel-refinement=external-premise owner-evidence=external-premise codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6"
     ));
 
     for harness in [

@@ -43,14 +43,7 @@ impl<const N: usize> RoleImageBuild<N> {
         role: u8,
         facts: RuntimeRoleFacts,
     ) -> RoleImageRef {
-        self.bytes.image_ref(
-            program,
-            role,
-            facts,
-            self.columns,
-            self.active_lane_row,
-            self.first_active_lane,
-        )
+        self.bytes.image_ref(program, role, facts, self.columns)
     }
 }
 
@@ -67,18 +60,8 @@ impl<const N: usize> RoleImageBytes<N> {
         role: u8,
         facts: RuntimeRoleFacts,
         columns: RoleImageColumns,
-        active_lane_row: PackedLaneRange,
-        first_active_lane: u16,
     ) -> RoleImageRef {
-        RoleImageRef::new(
-            program,
-            role,
-            facts,
-            columns,
-            &self.bytes,
-            active_lane_row,
-            first_active_lane,
-        )
+        RoleImageRef::new(program, role, facts, columns, &self.bytes)
     }
 
     #[inline(always)]
@@ -204,51 +187,44 @@ impl<const N: usize> RoleImageBytes<N> {
         let mut dependency_row = 0usize;
         let mut conflict_row = 0usize;
         let mut local_step = 0usize;
-        let mut first_active_lane = u16::MAX;
         let mut dependencies = projection::DependencyCursor::new(eff_list, role);
         let mut eff_idx = 0usize;
         while eff_idx < eff_list.len() {
-            let node = eff_list.node_at(eff_idx);
-            if matches!(node.kind, crate::eff::EffKind::Atom) {
-                let atom = node.atom_data();
-                if atom.from == role || atom.to == role {
-                    if atom.lane as usize >= footprint.logical_lane_count {
-                        panic!("local event lane outside role logical domain");
-                    }
-                    if (atom.lane as u16) < first_active_lane {
-                        first_active_lane = atom.lane as u16;
-                    }
-                    let mut event = projection::local_event_row_for_eff(
-                        eff_list,
-                        eff_idx,
-                        eff_list.frame_label_at(eff_idx),
-                        role,
-                    );
-                    let dependency = dependencies.next(eff_idx, atom.lane, local_step);
-                    if !dependency.is_none() {
-                        out.write_dependency_row(columns.dependencies, dependency_row, dependency);
-                        event = event.with_dependency_row(dependency_row);
-                        dependency_row += 1;
-                    }
-                    let conflict = if has_route {
-                        projection::route_conflict_for_eff(markers, eff_idx)
-                    } else {
-                        PackedEventConflict::none()
-                    };
-                    if !conflict.is_none() {
-                        out.w16(
-                            columns.conflicts,
-                            conflict_row,
-                            ROLE_IMAGE_CONFLICT_STRIDE,
-                            conflict.raw(),
-                        );
-                        event = event.with_conflict_row(conflict_row);
-                        conflict_row += 1;
-                    }
-                    out.write_event(columns.events, local_step, event);
-                    out.w8(columns.lanes, local_step, ROLE_IMAGE_LANE_STRIDE, atom.lane);
-                    local_step += 1;
+            let atom = eff_list.atom_at(eff_idx);
+            if atom.from == role || atom.to == role {
+                if atom.lane as usize >= footprint.logical_lane_count {
+                    panic!("local event lane outside role logical domain");
                 }
+                let mut event = projection::local_event_row_for_eff(
+                    eff_list,
+                    eff_idx,
+                    eff_list.frame_label_at(eff_idx),
+                    role,
+                );
+                let dependency = dependencies.next(eff_idx, atom.lane, local_step);
+                if !dependency.is_none() {
+                    out.write_dependency_row(columns.dependencies, dependency_row, dependency);
+                    event = event.with_dependency_row(dependency_row);
+                    dependency_row += 1;
+                }
+                let conflict = if has_route {
+                    projection::route_conflict_for_eff(markers, eff_idx)
+                } else {
+                    PackedEventConflict::none()
+                };
+                if !conflict.is_none() {
+                    out.w16(
+                        columns.conflicts,
+                        conflict_row,
+                        ROLE_IMAGE_CONFLICT_STRIDE,
+                        conflict.raw(),
+                    );
+                    event = event.with_conflict_row(conflict_row);
+                    conflict_row += 1;
+                }
+                out.write_event(columns.events, local_step, event);
+                out.w8(columns.lanes, local_step, ROLE_IMAGE_LANE_STRIDE, atom.lane);
+                local_step += 1;
             }
             eff_idx += 1;
         }
@@ -307,7 +283,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let mut marker_idx = 0usize;
         while marker_idx < markers.len() {
             let marker = markers.at(marker_idx);
-            if projection::first_enter_for_scope(markers, marker_idx)
+            if markers.is_first_enter(marker_idx)
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             {
                 let scope = marker.scope_id;
@@ -361,27 +337,23 @@ impl<const N: usize> RoleImageBytes<N> {
                     let lane_step_row =
                         PackedLaneRange::new(route_arm_lane_step_row, written_steps);
                     route_arm_lane_step_row += written_steps;
-                    let child_slot = match projection::passive_arm_child_scope(
-                        markers,
-                        eff_list.len(),
-                        scope,
-                        arm as u8,
-                        start_eff,
-                        end_eff,
-                    ) {
-                        Some(child_scope) => {
-                            let Some(child_slot) =
-                                projection::route_scope_slot_for_scope(markers, child_scope)
-                            else {
-                                panic!("passive route child scope missing route row slot");
-                            };
-                            if child_slot <= route_slot {
-                                panic!("passive route child scope must follow parent route slot");
+                    let child_slot =
+                        match projection::passive_arm_child_scope(markers, scope, arm as u8) {
+                            Some(child_scope) => {
+                                let Some(child_slot) =
+                                    projection::route_scope_slot_for_scope(markers, child_scope)
+                                else {
+                                    panic!("passive route child scope missing route row slot");
+                                };
+                                if child_slot <= route_slot {
+                                    panic!(
+                                        "passive route child scope must follow parent route slot"
+                                    );
+                                }
+                                Some(child_slot)
                             }
-                            Some(child_slot)
-                        }
-                        None => None,
-                    };
+                            None => None,
+                        };
                     out.write_route_arm_row(
                         columns.route_arms,
                         arm_row_index,
@@ -443,10 +415,11 @@ impl<const N: usize> RoleImageBytes<N> {
         marker_idx = 0;
         while marker_idx < markers.len() {
             let marker = markers.at(marker_idx);
-            if projection::first_enter_for_scope(markers, marker_idx)
+            if markers.is_first_enter(marker_idx)
                 && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
             {
-                let end_eff = projection::scope_segment_end(markers, marker_idx, eff_list.len());
+                let end_eff =
+                    projection::scope_segment_end(markers, marker_idx, Some(eff_list.len()));
                 let row = projection::local_step_range_for_eff_range(
                     eff_list,
                     marker.offset(),
@@ -486,8 +459,6 @@ impl<const N: usize> RoleImageBytes<N> {
         RoleImageBuild {
             bytes: out,
             columns,
-            active_lane_row,
-            first_active_lane,
         }
     }
 }
