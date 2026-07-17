@@ -830,6 +830,7 @@ fn export_production_trace_for_lean() {
     let production_kernel_artifact = production_kernel_artifact::source();
     let generated = format!(
         "import Hibana.MainTheorems\n\n\
+         set_option maxRecDepth 100000\n\n\
          def generatedChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedRolledChoreo : Hibana.Choreo :=\n  {}\n\n\
          def generatedNestedRolledChoreo : Hibana.Choreo :=\n  {}\n\n\
@@ -846,7 +847,7 @@ fn export_production_trace_for_lean() {
          {}\n\
          {}\n\
          {}\n\
-         #eval IO.println \"hibana Lean generated proof passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} distributed-progress={} verified-protocols={}\"\n",
+         #eval IO.println \"hibana Lean generated certificate check passed traces={} frames={} projections={} exact-descriptors={} progress={} projectability={} distributed-progress={} verified-protocols={}\"\n",
         Steps::lean_source(),
         RolledSteps::lean_source(),
         NestedRolledSteps::lean_source(),

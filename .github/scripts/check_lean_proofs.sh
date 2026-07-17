@@ -7,10 +7,13 @@ GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
-EXPECTED_MARKER="hibana Lean generated proof passed traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
+EXPECTED_MARKER="hibana Lean generated certificate check passed traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
 EXPECTED_PRODUCTION_MARKER="hibana Lean production artifact passed transitions=7 operations=6 owners=8 kernel-refinement=external-premise owner-evidence=external-premise codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
 EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=4 poison=1 generation=1 atomic-failures=4"
 EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof passed states=9 transitions=81"
+EXPECTED_GENERATED_AXIOM_MARKER="Generated Lean axiom audit passed theorems=48 kernel=27 native=21 native-decisions=16"
+STATIC_PROJECTABILITY_EXAMPLES="${PROOF_DIR}/Hibana/StaticProjectabilityExamples.lean"
+DISTRIBUTED_SEMANTICS_EXAMPLES="${PROOF_DIR}/Hibana/DistributedSemanticsExamples.lean"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
 if [[ ! -f "${PROOF_DIR}/lean-toolchain" ]] \
@@ -37,14 +40,52 @@ if rg -n 'Mathlib|^[[:space:]]*\[\[require\]\]|^[[:space:]]*git[[:space:]]*=' \
   echo "Lean proof gate must remain Core/Std-only" >&2
   exit 1
 fi
+set +e
+native_core_output="$(rg -n '\bnative_decide\b' \
+  --glob '*.lean' \
+  --glob '!StaticProjectabilityExamples.lean' \
+  --glob '!DistributedSemanticsExamples.lean' \
+  "${PROOF_DIR}/Hibana")"
+native_core_status="$?"
+set -e
+if [[ "${native_core_status}" -gt 1 ]]; then
+  echo "Lean proof gate failed to scan the static native-decision boundary" >&2
+  exit "${native_core_status}"
+fi
+if [[ "${native_core_status}" -eq 0 ]]; then
+  printf '%s\n' "${native_core_output}" >&2
+  echo "Lean proof gate confines native regression execution to example modules" >&2
+  exit 1
+fi
+if rg -n '^import Hibana\..*Examples$' "${PROOF_DIR}/Hibana/MainTheorems.lean"; then
+  echo "Lean theorem aggregate must not import native regression examples" >&2
+  exit 1
+fi
+if rg -n '^[[:space:]]*(theorem|lemma)\b' \
+  "${STATIC_PROJECTABILITY_EXAMPLES}" "${DISTRIBUTED_SEMANTICS_EXAMPLES}"; then
+  echo "Native regression modules may contain anonymous examples, not named claims" >&2
+  exit 1
+fi
+readonly EXPECTED_NATIVE_REGRESSION_COUNT=32
+native_regression_count="$(rg -o '\bnative_decide\b' \
+  "${STATIC_PROJECTABILITY_EXAMPLES}" "${DISTRIBUTED_SEMANTICS_EXAMPLES}" \
+  | wc -l | tr -d '[:space:]')"
+if [[ "${native_regression_count}" != "${EXPECTED_NATIVE_REGRESSION_COUNT}" ]]; then
+  echo \
+    "Lean native regression inventory changed: expected ${EXPECTED_NATIVE_REGRESSION_COUNT}, found ${native_regression_count}" \
+    >&2
+  exit 1
+fi
 
 python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" --self-test
 python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" "${PROOF_DIR}"
+python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" --self-test
 
 (
   cd "${PROOF_DIR}"
   lake build
 )
+bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 
 axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
 printf '%s\n' "${axiom_output}"
@@ -98,8 +139,14 @@ if [[ ! -s "${PUBLIC_OPERATION_GENERATED}" ]]; then
   echo "Lean proof gate public-operation exporter did not create a nonempty artifact" >&2
   exit 1
 fi
+if rg -n '\b(sorry|admit|native_decide)\b|^[[:space:]]*(axiom|constant|opaque|unsafe)\b' \
+  "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}"; then
+  echo "Lean proof gate runtime-generated artifacts must remain kernel-checked" >&2
+  exit 1
+fi
 
-lean_output="$(cd "${PROOF_DIR}" && lake env lean "${GENERATED}")"
+lean_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+  "${GENERATED}" "${PROOF_DIR}")"
 printf '%s\n' "${lean_output}"
 if [[ "${lean_output}" != *"${EXPECTED_MARKER}"* ]]; then
   echo "Lean proof gate generated certificate mismatch" >&2
@@ -107,6 +154,10 @@ if [[ "${lean_output}" != *"${EXPECTED_MARKER}"* ]]; then
 fi
 if [[ "${lean_output}" != *"${EXPECTED_PRODUCTION_MARKER}"* ]]; then
   echo "Lean proof gate production evidence mismatch" >&2
+  exit 1
+fi
+if [[ "${lean_output}" != *"${EXPECTED_GENERATED_AXIOM_MARKER}"* ]]; then
+  echo "Lean proof gate generated axiom boundary mismatch" >&2
   exit 1
 fi
 runtime_lean_output="$(cd "${PROOF_DIR}" && lake env lean "${RUNTIME_GENERATED}")"
@@ -122,4 +173,4 @@ if [[ "${public_operation_lean_output}" != *"${EXPECTED_PUBLIC_OPERATION_MARKER}
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-transitions=81"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-transitions=81 native-regressions=32"

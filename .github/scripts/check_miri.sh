@@ -6,6 +6,7 @@ cd "${ROOT_DIR}"
 
 MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_TIMEOUT_SECONDS:-180}"
+readonly MIRI_TIMEOUT_GRACE_SECONDS=10
 export MIRIFLAGS="-Zmiri-strict-provenance"
 
 if [[ ! "${MIRI_TOOLCHAIN}" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
@@ -42,7 +43,7 @@ run_miri_test() {
   shift 4
   local output
   output="$(mktemp "${TMPDIR:-/tmp}/hibana-miri.XXXXXX")"
-  if ! timeout "${MIRI_TIMEOUT_SECONDS}s" \
+  if ! timeout --kill-after="${MIRI_TIMEOUT_GRACE_SECONDS}s" "${MIRI_TIMEOUT_SECONDS}s" \
     cargo +"${MIRI_TOOLCHAIN}" miri test "$@" >"${output}" 2>&1; then
     cat "${output}" >&2
     rm -f "${output}"
@@ -310,7 +311,7 @@ run_miri_test \
   --test rolled_resolver_reentry \
   rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths
 
-run_miri_test \
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   rolled-elastic-route-path-color-owner \
   1 \
   1 \

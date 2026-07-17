@@ -23,29 +23,31 @@ cleanup() {
 trap cleanup EXIT
 
 generate_case() {
-  local count="$1"
-  local crate_dir="${MATRIX_DIR}/causal_handoff_${count}"
+  local shape="$1"
+  local count="$2"
+  local crate_dir="${MATRIX_DIR}/causal_handoff_${shape}_${count}"
   mkdir -p "${crate_dir}/src"
 
   cat >"${crate_dir}/Cargo.toml" <<EOF
 [package]
-name = "hibana-causal-handoff-${count}"
+name = "hibana-causal-handoff-${shape}-${count}"
 version = "0.0.0"
 edition = "2024"
 publish = false
 
 [lib]
-name = "hibana_causal_handoff_${count}"
+name = "hibana_causal_handoff_${shape}_${count}"
 
 [dependencies]
 hibana = { path = "${ROOT_DIR}", default-features = false }
 EOF
 
-  python3 - "${count}" "${crate_dir}/src/lib.rs" <<'PY'
+  python3 - "${shape}" "${count}" "${crate_dir}/src/lib.rs" <<'PY'
 import sys
 
-count = int(sys.argv[1])
-dst = sys.argv[2]
+shape = sys.argv[1]
+count = int(sys.argv[2])
+dst = sys.argv[3]
 
 
 def send_expr(idx: int) -> str:
@@ -61,7 +63,17 @@ def seq_expr(start: int, end: int) -> str:
     return f"g::seq({seq_expr(start, mid)}, {seq_expr(mid, end)})"
 
 
-program = seq_expr(0, count)
+if shape == "linear":
+    program = seq_expr(0, count)
+elif shape == "route":
+    program = (
+        f"g::route({seq_expr(0, count)}, {seq_expr(count, count * 2)})"
+        ".resolve::<7>()"
+    )
+elif shape == "roll":
+    program = f"({seq_expr(0, count)}).roll()"
+else:
+    raise ValueError(f"unsupported causal pressure shape: {shape}")
 
 with open(dst, "w", encoding="utf-8") as f:
     f.write(
@@ -83,22 +95,27 @@ declare -A COMPILE_SECONDS=()
 declare -A COMPILE_RSS_MIB=()
 
 build_case() {
-  local count="$1"
-  local crate_dir="${MATRIX_DIR}/causal_handoff_${count}"
-  local crate_name="hibana_causal_handoff_${count}"
+  local shape="$1"
+  local count="$2"
+  local crate_dir="${MATRIX_DIR}/causal_handoff_${shape}_${count}"
+  local crate_name="hibana_causal_handoff_${shape}_${count}"
+  local pressure_label="causal_handoff_${shape}_${count}"
   local output
   local observed
   local status
 
-  generate_case "${count}"
+  generate_case "${shape}" "${count}"
   output="$(mktemp "${TMPDIR:-/tmp}/hibana-causal-handoff-pressure.XXXXXX")"
   set +e
-  HIBANA_COMPILE_PRESSURE_LABEL="causal_handoff_${count}" \
+  if [[ "${shape}" == "linear" ]]; then
+    pressure_label="causal_handoff_${count}"
+  fi
+  HIBANA_COMPILE_PRESSURE_LABEL="${pressure_label}" \
     HIBANA_COMPILE_PRESSURE_BUDGETS="${ROOT_DIR}/.github/measurement_snapshots/hibana-compile-pressure-budget.tsv" \
     HIBANA_COMPILE_PRESSURE_CRATE_NAME="${crate_name}" \
     HIBANA_COMPILE_PRESSURE_POLL_SECONDS=0.1 \
     run_with_compile_pressure_guard \
-      "causal-handoff ${count}" \
+      "causal-handoff ${shape} ${count}" \
       env \
         PATH="${TOOLCHAIN_BIN_DIR}:$PATH" \
         RUSTC="${TOOLCHAIN_RUSTC}" \
@@ -119,27 +136,42 @@ build_case() {
     rm -f "${output}"
     exit "${status}"
   fi
-  observed="$(grep -E "^compile pressure observed: causal-handoff ${count} " "${output}" | tail -n 1)"
+  observed="$(grep -E "^compile pressure observed: causal-handoff ${shape} ${count} " "${output}" | tail -n 1)"
   rm -f "${output}"
   if [[ ! "${observed}" =~ elapsed=([0-9]+)s[[:space:]]seconds_budget=[0-9]+s[[:space:]]max_rss=([0-9]+)MiB ]]; then
-    echo "causal-handoff pressure missing observation for ${count}" >&2
+    echo "causal-handoff pressure missing observation for ${shape} ${count}" >&2
     exit 1
   fi
-  COMPILE_SECONDS["${count}"]="${BASH_REMATCH[1]}"
-  COMPILE_RSS_MIB["${count}"]="${BASH_REMATCH[2]}"
+  COMPILE_SECONDS["${shape}_${count}"]="${BASH_REMATCH[1]}"
+  COMPILE_RSS_MIB["${shape}_${count}"]="${BASH_REMATCH[2]}"
 }
 
 for count in 4 64 256; do
-  build_case "${count}"
+  build_case linear "${count}"
+done
+for shape in route roll; do
+  for count in 4 32 64; do
+    build_case "${shape}" "${count}"
+  done
 done
 
-if (( COMPILE_SECONDS[256] > COMPILE_SECONDS[64] * 6 + 8 )); then
+if (( COMPILE_SECONDS[linear_256] > COMPILE_SECONDS[linear_64] * 6 + 8 )); then
   echo "causal-handoff compile time became superlinear" >&2
   exit 1
 fi
-if (( COMPILE_RSS_MIB[256] > COMPILE_RSS_MIB[64] * 2 + 128 )); then
+if (( COMPILE_RSS_MIB[linear_256] > COMPILE_RSS_MIB[linear_64] * 2 + 128 )); then
   echo "causal-handoff compile RSS regained event-capacity witness scratch" >&2
   exit 1
 fi
+for shape in route roll; do
+  if (( COMPILE_SECONDS[${shape}_64] > COMPILE_SECONDS[${shape}_32] * 6 + 8 )); then
+    echo "causal-handoff ${shape} compile time became superlinear" >&2
+    exit 1
+  fi
+  if (( COMPILE_RSS_MIB[${shape}_64] > COMPILE_RSS_MIB[${shape}_32] * 2 + 128 )); then
+    echo "causal-handoff ${shape} compile RSS regained event-capacity witness scratch" >&2
+    exit 1
+  fi
+done
 
-echo "causal-handoff pressure passed target=${TARGET} events=256 elapsed=${COMPILE_SECONDS[256]}s rss=${COMPILE_RSS_MIB[256]}MiB"
+echo "causal-handoff pressure passed target=${TARGET} linear-events=256 route-arm-events=64 roll-events=64 linear-elapsed=${COMPILE_SECONDS[linear_256]}s route-elapsed=${COMPILE_SECONDS[route_64]}s roll-elapsed=${COMPILE_SECONDS[roll_64]}s linear-rss=${COMPILE_RSS_MIB[linear_256]}MiB route-rss=${COMPILE_RSS_MIB[route_64]}MiB roll-rss=${COMPILE_RSS_MIB[roll_64]}MiB"

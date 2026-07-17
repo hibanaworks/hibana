@@ -37,6 +37,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let static_projectability = read("proofs/lean/Hibana/StaticProjectability.lean");
     let static_projectability_examples =
         read("proofs/lean/Hibana/StaticProjectabilityExamples.lean");
+    let distributed_semantics_examples =
+        read("proofs/lean/Hibana/DistributedSemanticsExamples.lean");
     let iteration_erasure = read("proofs/lean/Hibana/IterationErasure.lean");
     let in_band_choice_knowledge = read("proofs/lean/Hibana/InBandChoiceKnowledge.lean");
     let global_coherence = read("proofs/lean/Hibana/GlobalCoherence.lean");
@@ -617,7 +619,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .contains("projectability_certificate_establishes_semantic_unstuckness")
             && global_coherence.contains("def GlobalSemanticallyUnstuck")
             && distributed_semantics.contains("routeEvidenceAddsKnowledge")
-            && distributed_semantics.contains("duplicateRouteEvidenceRegression")
+            && distributed_semantics_examples.contains("duplicateRouteEvidenceRegression")
             && distributed_progress.contains("structure CompactDistributedState")
             && distributed_progress.contains("def CompactDistributedState.decode?")
             && distributed_progress
@@ -699,7 +701,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && distributed_semantics.contains("localQueue?")
             && distributed_semantics.contains("message.globalId = globalId")
             && distributed_semantics.contains("message.lane = globalEvent.lane")
-            && distributed_semantics.contains("wrongLaneLocalQueueWitness")
+            && distributed_semantics_examples.contains("wrongLaneLocalQueueWitness")
             && distributed_semantics.contains("local_queued_frame_has_canonical_lane")
             && distributed_semantics.contains("operationOwner?")
             && distributed_semantics.contains("fromGlobalSuccessor")
@@ -710,7 +712,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && distributed_semantics.contains("localCommitAuthority?")
             && distributed_semantics.contains("distributed_protocol_step_is_role_owned")
             && distributed_semantics.contains("unresolved_dynamic_conflict_denies_local_knowledge")
-            && distributed_semantics.contains("dynamicAuthorityRegression")
+            && distributed_semantics_examples.contains("dynamicAuthorityRegression")
             && distributed_semantics
                 .contains("route_selection_observation_has_exact_queued_evidence")
             && distributed_semantics.contains("role_selection_observation_is_global_stutter")

@@ -436,7 +436,8 @@ family and assumption-indexed end-to-end theorem only when both an external
 production-kernel refinement and explicit owner evidence are supplied. The
 Rust exporter, Kani owner harnesses, and
 strict-provenance Miri exporter case remain explicit members of the cross-tool
-TCB; no source-level Rust theorem is inferred from their exit status.
+trusted boundary; no source-level Rust theorem is inferred from their exit
+status.
 `PublicOperationKernel.lean` independently specifies the nine public endpoint
 operation phases and their lease classifier. The host-only Rust exporter emits
 all 81 production outcomes; the Lean gate accepts them only when the generated
@@ -535,9 +536,32 @@ The normalized model separates the production cursor's candidate frontier from
 commit authority, so a dynamic route can expose candidate labels while remaining
 uncommittable until its resolver transition succeeds. Aeneas, Verus, Mathlib,
 custom axioms, `Classical.choice`, `sorry`, and `admit` are not part of this
-boundary. The axiom audit permits only the `propext` and `Quot.sound`
-dependencies introduced by the checked Core/Std proofs, and the gate requires
-every exported theorem in the package to appear in that audit.
+boundary. Every exported theorem in the static package is audited and permits
+only the `propext` and `Quot.sound` dependencies introduced by the checked
+Core/Std proofs. Its fifteen externally relevant claim types are also pinned
+verbatim, so retaining a theorem name while weakening its conclusion or adding
+an assumption fails the gate.
+
+Thirty-two anonymous finite regression checks use `native_decide`. They are
+confined to `StaticProjectabilityExamples.lean` and
+`DistributedSemanticsExamples.lean`, are not imported by `MainTheorems.lean`,
+and cannot contain named theorems or lemmas. The gate rejects `native_decide`
+anywhere else in the static source tree. These executable examples test the
+decision procedures; no exported theorem depends on their native-evaluator
+axioms.
+
+Concrete generated artifacts have a separate, explicit boundary. The twenty-two
+exact descriptor certificates plus the production kernel and codec checks use
+kernel-reduced `decide`. Constructing the complete finite closure remains much
+more expensive: exactly eight projectability and eight verified-protocol
+acceptance theorems use `native_decide`, making the pinned Lean native evaluator
+and compiler part of the explicit trusted boundary for those sixteen concrete
+witnesses, but not for their general soundness theorems. An independent gate
+discovers all 48 named generated theorems, rejects `sorry`, custom axioms,
+theorem additions or deletions, requires the kernel/native classification
+exactly, and rejects any
+axiom other than `propext`, `Quot.sound`, and the sixteen declared theorem-local
+native decisions. This boundary is not described as Lean-kernel verification.
 
 Frontier scratch capacity is derived from the projected active-lane count. Lean
 proves that every exact `(route scope, local entry)` offer key has an owning

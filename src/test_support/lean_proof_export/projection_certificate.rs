@@ -186,7 +186,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \
              {exact_name}.image.programBytes.set \
              ({exact_name}.image.programScopeMarkerOffset + 4) {mismatched_tag}\n  }}\n}}\n\n\
-             example : {mismatch_name}.check = false := by\n  native_decide"
+             example : {mismatch_name}.check = false := by\n  decide"
         )
     };
     let route_mismatch_source = if role_columns.route_scopes.len == 0 {
@@ -200,7 +200,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              {exact_name}.image.roleBytes.set ({exact_name}.image.roleRouteScopeOffset + 1) \
              {mismatched_route_scope}\n  }}\n}}\n\n\
-             example : {route_mismatch_name}.check = false := by\n  native_decide"
+             example : {route_mismatch_name}.check = false := by\n  decide"
         )
     };
     let dependency_mismatch_source = if role_columns.dependencies.len == 0 {
@@ -217,12 +217,12 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              {exact_name}.image.roleBytes.set \
              ({exact_name}.image.roleDependencyOffset + 4) {mismatched_scope}\n  }}\n}}\n\n\
-             example : {scope_mismatch_name}.check = false := by\n  native_decide\n\n\
+             example : {scope_mismatch_name}.check = false := by\n  decide\n\n\
              def {conflict_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              {exact_name}.image.roleBytes.set \
              ({exact_name}.image.roleDependencyOffset + 6) {mismatched_conflict}\n  }}\n}}\n\n\
-             example : {conflict_mismatch_name}.check = false := by\n  native_decide"
+             example : {conflict_mismatch_name}.check = false := by\n  decide"
         )
     };
     let metadata_mismatch_name = format!("{exact_name}LogicalLaneCountMismatch");
@@ -238,12 +238,12 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
         "\n\ndef {metadata_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    logicalLaneCount := \
          {mismatched_logical_lane_count}\n  }}\n}}\n\n\
-         example : {metadata_mismatch_name}.check = false := by\n  native_decide\n\n\
+         example : {metadata_mismatch_name}.check = false := by\n  decide\n\n\
          def {lane_bit_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          {exact_name}.image.roleBytes.set {exact_name}.image.roleLaneBitOffset \
          {mismatched_lane_bit}\n  }}\n}}\n\n\
-         example : {lane_bit_mismatch_name}.check = false := by\n  native_decide"
+         example : {lane_bit_mismatch_name}.check = false := by\n  decide"
     );
     let lane_step_mismatch_source =
         if role_columns.route_arm_lane_step_rows.len == 0 || descriptor.logical_lane_count() < 2 {
@@ -259,7 +259,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              {exact_name}.image.roleBytes.set {exact_name}.image.roleRouteArmLaneStepOffset \
              {mismatched_lane}\n  }}\n}}\n\n\
-             example : {mismatch_name}.check = false := by\n  native_decide"
+             example : {mismatch_name}.check = false := by\n  decide"
             )
         };
     let route_child_mismatch_source = if role_columns.route_scopes.len < 2 {
@@ -274,7 +274,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              {exact_name}.image.roleBytes.set ({exact_name}.image.roleRouteArmOffset + 3) \
              {mismatched_child}\n  }}\n}}\n\n\
-             example : {mismatch_name}.check = false := by\n  native_decide"
+             example : {mismatch_name}.check = false := by\n  decide"
         )
     };
     let route_commit_mismatch_source = if role_columns.route_commit_rows.len == 0 {
@@ -288,7 +288,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              {exact_name}.image.roleBytes.set {exact_name}.image.roleRouteCommitRowOffset \
              {mismatched_commit}\n  }}\n}}\n\n\
-             example : {mismatch_name}.check = false := by\n  native_decide"
+             example : {mismatch_name}.check = false := by\n  decide"
         )
     };
     let resolver_mismatch_source = if program_columns.route_resolver_count() == 0 {
@@ -311,12 +311,12 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \
              {exact_name}.image.programBytes.set \
              ({exact_name}.image.programRouteResolverOffset + 2) {mismatched_resolver}\n  }}\n}}\n\n\
-             example : {resolver_mismatch_name}.check = false := by\n  native_decide\n\n\
+             example : {resolver_mismatch_name}.check = false := by\n  decide\n\n\
              def {controller_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
              {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \
              {exact_name}.image.programBytes.set \
              ({exact_name}.image.programRouteResolverOffset + 4) {mismatched_controller}\n  }}\n}}\n\n\
-             example : {controller_mismatch_name}.check = false := by\n  native_decide"
+             example : {controller_mismatch_name}.check = false := by\n  decide"
         )
     };
     let roll_mismatch_source = if role_columns.roll_scopes.len == 0 {
@@ -330,7 +330,7 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
              {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
              {exact_name}.image.roleBytes.set {exact_name}.image.roleRollScopeOffset \
              {mismatched_roll_scope}\n  }}\n}}\n\n\
-             example : {roll_mismatch_name}.check = false := by\n  native_decide"
+             example : {roll_mismatch_name}.check = false := by\n  decide"
         )
     };
     format!(
@@ -347,42 +347,43 @@ pub(super) fn projection_certificate_source<const ROLE: u8>(
          laneBitCount := {}\n    routeArmLaneStepCount := {}\n    routeCommitRowCount := {}\n    \
          rollScopeCount := {}\n    \
          programBytes := {program_bytes}\n    roleBytes := {role_bytes}\n  }}\n  choreo := {choreo}\n}}\n\n\
-         example : {exact_name}.check = true := by\n  native_decide\n\n\
+         theorem {exact_name}Accepted : {exact_name}.check = true := by\n  decide\n\n\
+         example : {exact_name}.check = true := {exact_name}Accepted\n\n\
          example : {exact_name}.Refines :=\n  \
-         Hibana.exact_descriptor_certificate_sound (by native_decide)\n\n\
+         Hibana.exact_descriptor_certificate_sound {exact_name}Accepted\n\n\
          def {lane_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          {exact_name}.image.roleBytes.set {exact_name}.image.roleLaneOffset \
          {mismatched_first_lane}\n  }}\n}}\n\n\
-         example : {lane_mismatch_name}.check = false := by\n  native_decide\
+         example : {lane_mismatch_name}.check = false := by\n  decide\
          \n\ndef {eff_index_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          {exact_name}.image.roleBytes.set 0 {mismatched_first_eff_index}\n  }}\n}}\n\n\
-         example : {eff_index_mismatch_name}.check = false := by\n  native_decide\
+         example : {eff_index_mismatch_name}.check = false := by\n  decide\
          \n\ndef {frame_label_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          {exact_name}.image.roleBytes.set 8 {mismatched_first_frame_label}\n  }}\n}}\n\n\
-         example : {frame_label_mismatch_name}.check = false := by\n  native_decide\
+         example : {frame_label_mismatch_name}.check = false := by\n  decide\
          \n\ndef {event_scope_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          ({exact_name}.image.roleBytes.set 6 {}).set 7 {}\n  }}\n}}\n\n\
-         example : {event_scope_mismatch_name}.check = false := by\n  native_decide\
+         example : {event_scope_mismatch_name}.check = false := by\n  decide\
          \n\ndef {event_flag_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    roleBytes := \
          {exact_name}.image.roleBytes.set 9 {mismatched_first_event_flag}\n  }}\n}}\n\n\
-         example : {event_flag_mismatch_name}.check = false := by\n  native_decide\
+         example : {event_flag_mismatch_name}.check = false := by\n  decide\
          \n\ndef {global_action_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \
          {exact_name}.image.programBytes.set 4 {mismatched_first_global_label}\n  }}\n}}\n\n\
-         example : {global_action_mismatch_name}.check = false := by\n  native_decide\
+         example : {global_action_mismatch_name}.check = false := by\n  decide\
          \n\ndef {global_origin_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \
          {exact_name}.image.programBytes.set 9 {mismatched_first_global_origin}\n  }}\n}}\n\n\
-         example : {global_origin_mismatch_name}.check = false := by\n  native_decide\
+         example : {global_origin_mismatch_name}.check = false := by\n  decide\
          \n\ndef {global_lane_mismatch_name} : Hibana.ExactDescriptorCertificate := {{\n  \
          {exact_name} with\n  image := {{ {exact_name}.image with\n    programBytes := \
          {exact_name}.image.programBytes.set 10 {mismatched_first_global_lane}\n  }}\n}}\n\n\
-         example : {global_lane_mismatch_name}.check = false := by\n  native_decide\
+         example : {global_lane_mismatch_name}.check = false := by\n  decide\
          {scope_marker_mismatch_source}{route_mismatch_source}{dependency_mismatch_source}{resident_mismatch_source}{lane_step_mismatch_source}{route_child_mismatch_source}{route_commit_mismatch_source}{resolver_mismatch_source}{roll_mismatch_source}\n",
         program.role_count(),
         descriptor.logical_lane_count(),
@@ -430,14 +431,15 @@ pub(super) fn projectability_certificate_source(
     format!(
         "def {name} : Hibana.ProjectabilityCertificate :=\n  \
          Hibana.buildProjectabilityCertificate 0 {role_count} {choreo}\n\n\
-         example : {name}.check 0 {role_count} {choreo} = true := by\n  native_decide\n\n\
+         theorem {name}Accepted : {name}.check 0 {role_count} {choreo} = true := by\n  native_decide\n\n\
+         example : {name}.check 0 {role_count} {choreo} = true := {name}Accepted\n\n\
          example {{state : Hibana.CompactGlobalState}}\n    \
          (reachable : Hibana.CompactGlobalReachable 0 {role_count} {choreo} state) :\n    \
          ∃ config,\n    \
            state.decode? 0 {role_count} {choreo} = some config ∧\n    \
            Hibana.GlobalLogicalProgress config :=\n  \
          Hibana.projectability_certificate_removes_global_progress_premise\n    \
-           (certificate := {name}) (by native_decide) reachable\n"
+           (certificate := {name}) {name}Accepted reachable\n"
     )
 }
 
@@ -459,9 +461,10 @@ pub(super) fn verified_protocol_certificate_source(
          projectability := {projectability}\n  \
          distributedProgress := Hibana.buildDistributedProgressCertificate 0 {role_count} {choreo}\n  \
          descriptors := [{descriptor_list}]\n}}\n\n\
-         example : {name}.check 0 {role_count} {choreo} = true := by\n  native_decide\n\n\
+         theorem {name}Accepted : {name}.check 0 {role_count} {choreo} = true := by\n  native_decide\n\n\
+         example : {name}.check 0 {role_count} {choreo} = true := {name}Accepted\n\n\
          example : {name}.AllRolesRefine 0 {role_count} {choreo} :=\n  \
-         Hibana.verified_protocol_certificate_establishes_all_role_refinement (by native_decide)\n"
+         Hibana.verified_protocol_certificate_establishes_all_role_refinement {name}Accepted\n"
     )
 }
 

@@ -173,4 +173,38 @@ example :
     (repeatedInboundEvidence 256).checkInboundOccurrenceColoring = true := by
   native_decide
 
+private def transportAdmissionRegressionChoreo : Choreo :=
+  .send 0 1 9 4
+
+private def transportAdmissionRegressionFrame
+    (session lane : Nat) : TransportFrame := {
+  channel := {
+    session
+    generation := 3
+    lane
+    sender := 0
+    receiver := 1
+  }
+  sequence := 0
+  frameLabel := ⟨0, by omega⟩
+}
+
+private def transportAdmissionRegressionConfig : GlobalConfig :=
+  (GlobalConfig.initial 7 2 transportAdmissionRegressionChoreo).withPhase 0 (.queued 0)
+
+example :
+    (transportAdmissionRegressionConfig.admitTransportFrame?
+        (transportAdmissionRegressionFrame 7 0)).isSome = true := by
+  native_decide
+
+example :
+    (transportAdmissionRegressionConfig.admitTransportFrame?
+        (transportAdmissionRegressionFrame 7 1)).isSome = false := by
+  native_decide
+
+example :
+    (transportAdmissionRegressionConfig.admitTransportFrame?
+        (transportAdmissionRegressionFrame 8 0)).isSome = false := by
+  native_decide
+
 end Hibana

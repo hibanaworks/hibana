@@ -200,12 +200,12 @@ matching scratch is bounded by the 256-value wire lane domain rather than by
 event count. A const fixture constructs and emits the full 5,957-event
 atom-only image. Public typed fixtures separately track 289 messages and 258
 parallel events under rustc's default recursion limit. A Pico-target compile
-gate also projects 256 cyclic sender handoffs and bounds compiler time and
-memory for causal validation. Large generated type trees should compose
-balanced subtrees; genuinely nested source semantics deeper than that compiler
-limit may require a crate-level `recursion_limit`. The dedicated `>128` scope
-test keeps this source constraint separate from runtime, descriptor, stack, and
-SRAM measurements.
+gate projects 256 linear cyclic sender handoffs, 64 handoffs per route arm, and
+a 64-event rolled cycle while bounding compiler time and memory for each causal
+validation path. Large generated type trees should compose balanced subtrees;
+genuinely nested source semantics deeper than that compiler limit may require a
+crate-level `recursion_limit`. The dedicated `>128` scope test keeps this source
+constraint separate from runtime, descriptor, stack, and SRAM measurements.
 
 ### Messages And Payloads
 
@@ -708,9 +708,19 @@ evidence only for the part it checks. Kani and Miri strengthen the Rust
 implementation evidence; neither is presented as a Lean proof of arbitrary
 Rust source.
 
+The static Lean theorem package and exact descriptor/kernel certificates are
+kernel-checked. Thirty-two anonymous finite regression examples run separately
+through the pinned Lean native evaluator; they are isolated from the theorem
+aggregate and are not proof dependencies. Building the eight projectability
+and eight verified-protocol finite closures also uses that evaluator; those
+sixteen named concrete witnesses are audited as an explicit trusted boundary
+rather than presented as kernel-only proofs.
+
 The repository also gates the proof inventory itself: new public operations,
 compact transition effects, ownership classes, Lean theorems, Miri scenarios,
-and Kani harnesses cannot silently bypass their checked inventories.
+and Kani harnesses cannot silently bypass their checked inventories. The gate
+also pins fifteen principal Lean claim types, so a theorem cannot retain its
+name while silently acquiring assumptions or losing guarantees.
 
 ## Build And Release
 

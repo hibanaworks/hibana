@@ -4,6 +4,10 @@ use super::common::read;
 fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
     let proof_gate = read(".github/scripts/check_lean_proofs.sh");
     let theorem_inventory = read(".github/scripts/check_lean_theorem_inventory.py");
+    let generated_axiom_audit = read(".github/scripts/check_generated_lean_axioms.py");
+    let claim_gate = read(".github/scripts/check_lean_claim_surface.sh");
+    let claim_source = read("proofs/lean/ClaimSurface.lean");
+    let claim_snapshot = read("proofs/lean/claim-surface.txt");
     let final_gate = read(".github/scripts/run_final_form_gates.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
 
@@ -12,7 +16,17 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && proof_gate.contains("must remain Core/Std-only")
             && proof_gate.contains("check_lean_theorem_inventory.py")
             && proof_gate.contains("check_lean_theorem_inventory.py\" --self-test")
+            && proof_gate.contains("check_generated_lean_axioms.py")
+            && proof_gate.contains("check_generated_lean_axioms.py\" --self-test")
+            && proof_gate.contains("check_lean_claim_surface.sh")
             && proof_gate.contains("AxiomAudit.lean")
+            && proof_gate.contains("EXPECTED_NATIVE_REGRESSION_COUNT=32")
+            && proof_gate.contains("confines native regression execution to example modules")
+            && proof_gate.contains("must not import native regression examples")
+            && proof_gate.contains(
+                "Native regression modules may contain anonymous examples, not named claims"
+            )
+            && proof_gate.contains("native-regressions=32")
             && theorem_inventory.contains("def erase_non_code(source: str)")
             && theorem_inventory.contains("def theorem_names(source: str)")
             && theorem_inventory.contains("if previous is not None")
@@ -21,6 +35,27 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && theorem_inventory.contains("def self_test()")
             && theorem_inventory.contains("unicode_一意?")
             && theorem_inventory.contains("punctuation!'")
+            && generated_axiom_audit.contains("NATIVE_DECISION_COUNT = 16")
+            && generated_axiom_audit.contains("sys.dont_write_bytecode = True")
+            && generated_axiom_audit.contains("EXACT_CERTIFICATE_COUNT = 22")
+            && generated_axiom_audit.contains("PROJECTABILITY_CERTIFICATE_COUNT = 8")
+            && generated_axiom_audit.contains("VERIFIED_PROTOCOL_CERTIFICATE_COUNT = 8")
+            && generated_axiom_audit.contains("def validate_axioms(")
+            && generated_axiom_audit.contains("NATIVE_AXIOM_OWNER")
+            && generated_axiom_audit.contains("kernel-checked generated theorem")
+            && generated_axiom_audit.contains("gained forbidden axioms")
+            && generated_axiom_audit.contains("has the wrong closure dependencies")
+            && generated_axiom_audit.contains("EXACT_CERTIFICATE_THEOREMS")
+            && generated_axiom_audit.contains("PROJECTABILITY_CERTIFICATE_THEOREMS")
+            && generated_axiom_audit.contains("VERIFIED_PROTOCOL_CERTIFICATE_THEOREMS")
+            && claim_gate.contains("EXPECTED_CLAIMS=15")
+            && claim_gate.contains("diff -u \"${SNAPSHOT}\" \"${actual}\"")
+            && claim_source.matches("#check @Hibana.").count() == 15
+            && claim_snapshot.contains(
+                "@Hibana.assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement"
+            )
+            && claim_snapshot
+                .contains("@Hibana.assumption_indexed_static_cross_tool_production_refinement")
             && proof_gate.contains("Lean proof gate axiom set changed")
             && proof_gate.contains("axiom_both_count=\"$(awk")
             && proof_gate.contains("count += 1")
@@ -42,6 +77,8 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
                 "production artifact passed transitions=7 operations=6 owners=8 kernel-refinement=external-premise owner-evidence=external-premise codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
             )
             && proof_gate.contains("EXPECTED_PRODUCTION_MARKER")
+            && proof_gate.contains("EXPECTED_GENERATED_AXIOM_MARKER")
+            && proof_gate.contains("theorems=48 kernel=27 native=21 native-decisions=16")
             && proof_gate.contains(
                 "production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6"
             )

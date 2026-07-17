@@ -1,0 +1,115 @@
+@Hibana.exact_descriptor_certificate_sound : ∀ {certificate : Hibana.ExactDescriptorCertificate},
+  @Eq.{1} Bool certificate.check true → certificate.Refines
+@Hibana.static_projectability_checker_sound : ∀ {roleCount : Nat} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (Hibana.checkStaticProjectability roleCount choreo) true →
+    Hibana.Choreo.StaticProjectable roleCount choreo
+@Hibana.verified_protocol_certificate_establishes_all_role_refinement : ∀
+  {certificate : Hibana.VerifiedProtocolCertificate} {session roleCount : Nat} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (certificate.check session roleCount choreo) true → certificate.AllRolesRefine session roleCount choreo
+@Hibana.verified_protocol_establishes_execution_guarantees : ∀ {certificate : Hibana.VerifiedProtocolCertificate}
+  {session roleCount : Nat} {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (certificate.check session roleCount choreo) true →
+    Hibana.ProtocolExecutionGuarantees certificate session roleCount choreo
+@Hibana.assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement : ∀ {profile : Hibana.CarrierProfile}
+  {Fairness : Prop} {certificate : Hibana.VerifiedProtocolCertificate} {session roleCount : Nat}
+  {choreo : Hibana.Choreo} {deployment : Hibana.DeploymentEvidence} {kernel : Hibana.PreparedKernelSemantics},
+  @Eq.{1} Bool (certificate.check session roleCount choreo) true →
+    @Eq.{1} Bool (Hibana.checkRoleImages certificate deployment.roleImages) true →
+      Hibana.VerifiedCodecCoverage choreo deployment.codecs →
+        Hibana.PreparedKernelRefinement kernel session roleCount choreo →
+          profile.Holds deployment.carrier deployment.abstraction Fairness →
+            Hibana.AssumptionIndexedEndToEndRefinement profile Fairness certificate session roleCount choreo deployment
+              kernel
+@Hibana.prepared_kernel_commit_refines_exact_lean_effect : ∀ {kernel : Hibana.PreparedKernelSemantics}
+  {session roleCount : Nat} {choreo : Hibana.Choreo},
+  Hibana.PreparedKernelRefinement kernel session roleCount choreo →
+    ∀ {state : kernel.State} {input : kernel.Input} {prepared : kernel.Prepared},
+      @Eq.{1} (Option.{0} kernel.Prepared) (kernel.prepare state input) (@some.{0} kernel.Prepared prepared) →
+        have certificate :=
+          { before := kernel.abstractState state, effect := kernel.effect prepared,
+            after := kernel.abstractState (kernel.commit state prepared) };
+        certificate.Refines session roleCount choreo
+@Hibana.public_operation_table_certificate_sound : ∀ {table : List.{0} Hibana.PublicOperationLease},
+  @Eq.{1} Bool (Hibana.checkPublicOperationTable table) true → Hibana.PublicOperationTableExact table
+@Hibana.production_kernel_artifact_sound : ∀ {artifact : Hibana.ProductionKernelArtifact} {session roleCount : Nat}
+  {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (artifact.check session roleCount choreo) true → artifact.Refines session roleCount choreo
+@Hibana.accepted_production_kernel_artifact_combines_with_external_kernel_refinement : ∀
+  {OwnerVerified : Hibana.ProductionKernelOwner → Hibana.PreparedKernelSemantics → Prop}
+  {artifact : Hibana.ProductionKernelArtifact} {kernel : Hibana.PreparedKernelSemantics} {session roleCount : Nat}
+  {choreo : Hibana.Choreo},
+  @Eq.{1} Bool (artifact.check session roleCount choreo) true →
+    Hibana.PreparedKernelRefinement kernel session roleCount choreo →
+      Hibana.ProductionOwnerEvidence OwnerVerified artifact kernel →
+        Hibana.CrossToolProductionRefinement OwnerVerified artifact kernel session roleCount choreo
+@Hibana.assumption_indexed_static_cross_tool_production_refinement : ∀
+  {OwnerVerified : Hibana.ProductionKernelOwner → Hibana.PreparedKernelSemantics → Prop}
+  {profile : Hibana.CarrierProfile} {Fairness : Prop} {primary : Hibana.VerifiedProtocolMember}
+  {family : List.{1} Hibana.VerifiedProtocolMember} {deployment : Hibana.DeploymentEvidence}
+  {kernelArtifact : Hibana.ProductionKernelArtifact} {kernel : Hibana.PreparedKernelSemantics}
+  {staticCertificate : Hibana.StaticDeploymentCertificate},
+  @Membership.mem.{1, 1} Hibana.VerifiedProtocolMember (List.{1} Hibana.VerifiedProtocolMember)
+      (@List.instMembership.{1} Hibana.VerifiedProtocolMember) family primary →
+    @Eq.{1} Bool (Hibana.checkVerifiedProtocolFamilyCapabilities family) true →
+      @Eq.{1} Bool (staticCertificate.check family) true →
+        @Eq.{1} Bool (Hibana.checkRoleImages primary.certificate deployment.roleImages) true →
+          @Eq.{2} (List.{1} Hibana.VerifiedCodec) deployment.codecs primary.codecs →
+            @Eq.{1} Bool (kernelArtifact.check primary.session primary.roleCount primary.choreo) true →
+              Hibana.PreparedKernelRefinement kernel primary.session primary.roleCount primary.choreo →
+                Hibana.ProductionOwnerEvidence OwnerVerified kernelArtifact kernel →
+                  profile.Holds deployment.carrier deployment.abstraction Fairness →
+                    Hibana.AssumptionIndexedProductionRefinement OwnerVerified profile Fairness primary family
+                      deployment kernelArtifact kernel staticCertificate
+Hibana.elastic_erasure_refinement_holds : Hibana.ElasticErasureRefinement
+Hibana.carrier_profile_hierarchy_is_strict : And
+  (Hibana.CarrierProfile.mediated.StrictStep Hibana.CarrierProfile.authentic)
+  (And (Hibana.CarrierProfile.authentic.StrictStep Hibana.CarrierProfile.ordered)
+    (And (Hibana.CarrierProfile.ordered.StrictStep Hibana.CarrierProfile.closing)
+      (Hibana.CarrierProfile.closing.StrictStep Hibana.CarrierProfile.fair)))
+@Hibana.static_deployment_certificate_sound : ∀ {certificate : Hibana.StaticDeploymentCertificate}
+  {family : List.{1} Hibana.VerifiedProtocolMember},
+  @Eq.{1} Bool (certificate.check family) true → certificate.Refines family
+@Hibana.end_to_end_fair_run_schedules_recurrently_enabled_operation : ∀ {initial : Hibana.GlobalConfig}
+  {run : Hibana.GlobalRun initial} {certificate : Hibana.VerifiedProtocolCertificate} {session roleCount : Nat}
+  {choreo : Hibana.Choreo} {deployment : Hibana.DeploymentEvidence} {kernel : Hibana.PreparedKernelSemantics},
+  Hibana.AssumptionIndexedEndToEndRefinement Hibana.CarrierProfile.fair (@Hibana.GlobalFairnessAssumptions initial run)
+      certificate session roleCount choreo deployment kernel →
+    ∀ {operation : Hibana.GlobalOperation},
+      (∀ (time : Nat),
+          @Exists.{1} Nat fun later =>
+            @Exists.{1} Hibana.GlobalConfig fun next =>
+              And (@LE.le.{0} Nat instLENat time later)
+                (@Eq.{1} (Option.{0} Hibana.GlobalConfig) ((@Hibana.GlobalRun.state initial run later).step? operation)
+                  (@some.{0} Hibana.GlobalConfig next))) →
+        ∀ (time : Nat),
+          @Exists.{1} Nat fun later =>
+            And (@LE.le.{0} Nat instLENat time later)
+              (@Eq.{1} (Option.{0} Hibana.GlobalOperation) (@Hibana.GlobalRun.operation initial run later)
+                (@some.{0} Hibana.GlobalOperation operation))
+@Hibana.verified_protocol_roll_reentry_has_fifo_or_causal_order : ∀ {certificate : Hibana.VerifiedProtocolCertificate}
+  {session roleCount : Nat} {choreo body : Hibana.Choreo},
+  @Eq.{1} Bool (certificate.check session roleCount choreo) true →
+    @Membership.mem.{0, 0} Hibana.Choreo (List.{0} Hibana.Choreo) (@List.instMembership.{0} Hibana.Choreo)
+        choreo.rollBodies body →
+      ∀ {left right : Hibana.StaticGlobalOccurrence},
+        @Membership.mem.{0, 0} Hibana.StaticGlobalOccurrence (List.{0} Hibana.StaticGlobalOccurrence)
+            (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) body.staticGlobalOccurrences left →
+          @Membership.mem.{0, 0} Hibana.StaticGlobalOccurrence (List.{0} Hibana.StaticGlobalOccurrence)
+              (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) body.staticGlobalOccurrences right →
+            @Ne.{1} Nat left.event.sender left.event.receiver →
+              @Ne.{1} Nat right.event.sender right.event.receiver →
+                @Eq.{1} Nat left.event.receiver right.event.receiver →
+                  @Eq.{1} Nat left.event.lane right.event.lane →
+                    @LT.lt.{0} Nat instLTNat right.event.receiver roleCount →
+                      Or (@Eq.{1} Nat left.event.sender right.event.sender)
+                        (Hibana.CausalHandoffPath body.rollUnfoldedOccurrences
+                          (Hibana.StaticGlobalOccurrence.inRollIteration
+                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.current
+                            left)
+                          (Hibana.StaticGlobalOccurrence.inRollIteration
+                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next
+                            right)
+                          roleCount
+                          (Hibana.StaticGlobalOccurrence.inRollIteration
+                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next
+                            right))

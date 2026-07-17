@@ -214,15 +214,24 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && causal_handoff_pressure_gate.contains("TARGET=\"thumbv6m-none-eabi\"")
             && causal_handoff_pressure_gate.contains("((0, 2), (2, 1), (1, 2), (2, 0))[idx % 4]")
             && causal_handoff_pressure_gate.contains("for count in 4 64 256")
+            && causal_handoff_pressure_gate.contains("for shape in route roll")
+            && causal_handoff_pressure_gate.contains("for count in 4 32 64")
+            && causal_handoff_pressure_gate.contains(".resolve::<7>()")
+            && causal_handoff_pressure_gate.contains(".roll()")
             && causal_handoff_pressure_gate
-                .contains("HIBANA_COMPILE_PRESSURE_LABEL=\"causal_handoff_${count}\"")
+                .contains("pressure_label=\"causal_handoff_${count}\"")
             && causal_handoff_pressure_gate
                 .contains("causal-handoff compile time became superlinear")
             && causal_handoff_pressure_gate
-                .contains("causal-handoff pressure passed target=${TARGET} events=256")
+                .contains("causal-handoff ${shape} compile time became superlinear")
+            && causal_handoff_pressure_gate.contains(
+                "causal-handoff pressure passed target=${TARGET} linear-events=256 route-arm-events=64 roll-events=64"
+            )
             && !causal_handoff_pressure_gate.contains("recursion_limit")
-            && compile_pressure_budget.contains("causal_handoff_256\t"),
-        "causal handoff must retain a Pico-target compile-pressure regression gate"
+            && compile_pressure_budget.contains("causal_handoff_256\t")
+            && compile_pressure_budget.contains("causal_handoff_route_64\t")
+            && compile_pressure_budget.contains("causal_handoff_roll_64\t"),
+        "causal handoff must retain Pico-target linear, route, and roll compile-pressure gates"
     );
     assert!(
         !huge_choreography.contains("recursion_limit")
@@ -561,9 +570,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && miri_toolchain.trim() == "nightly-2026-05-28"
             && !miri_gate.contains("MIRI_TOOLCHAIN:-")
             && miri_gate.contains("export MIRIFLAGS=\"-Zmiri-strict-provenance\"")
+            && miri_gate.contains("readonly MIRI_TIMEOUT_GRACE_SECONDS=10")
+            && miri_gate.contains(
+                "timeout --kill-after=\"${MIRI_TIMEOUT_GRACE_SECONDS}s\" \"${MIRI_TIMEOUT_SECONDS}s\""
+            )
             && miri_gate.contains("cargo +\"${MIRI_TOOLCHAIN}\" miri test")
             && miri_gate.contains(
                 "MIRI_TIMEOUT_SECONDS=\"${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}\""
+            )
+            && miri_gate.contains(
+                "MIRI_TIMEOUT_SECONDS=\"${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}\" run_miri_test"
             )
             && miri_gate.contains(
                 "MIRIFLAGS=\"${MIRIFLAGS} -Zmiri-disable-isolation\" run_miri_test"

@@ -36,7 +36,6 @@ import Hibana.CodecEvidence
 import Hibana.Deployment
 import Hibana.EndToEndRefinement
 import Hibana.ProductionEndToEnd
-import Hibana.StaticProjectabilityExamples
 import Hibana.Layout
 import Hibana.Progress
 import Hibana.Refinement

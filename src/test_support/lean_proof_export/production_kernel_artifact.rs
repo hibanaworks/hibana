@@ -9,11 +9,11 @@ def generatedProductionInitial : Hibana.CompactGlobalState :=
 
 def generatedProductionAfterProtocol : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 4 generatedChoreo
-    generatedProductionInitial (.protocol (.send 0))).get (by native_decide)
+    generatedProductionInitial (.protocol (.send 0))).get (by decide)
 
 def generatedProductionAfterReceive : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 4 generatedChoreo
-    generatedProductionAfterProtocol (.protocol (.recv 0))).get (by native_decide)
+    generatedProductionAfterProtocol (.protocol (.recv 0))).get (by decide)
 
 def generatedProductionLocalChoreo : Hibana.Choreo :=
   .send 0 0 201 0
@@ -25,7 +25,7 @@ def generatedProductionLocalInitial : Hibana.CompactGlobalState :=
 def generatedProductionAfterLocal : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 1
     generatedProductionLocalChoreo generatedProductionLocalInitial
-    (.protocol (.localAction 0))).get (by native_decide)
+    (.protocol (.localAction 0))).get (by decide)
 
 def generatedProductionResolvedInitial : Hibana.CompactGlobalState :=
   Hibana.CompactGlobalState.initial generatedProductionSession 2
@@ -34,12 +34,12 @@ def generatedProductionResolvedInitial : Hibana.CompactGlobalState :=
 def generatedProductionAfterResolve : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 2 generatedResolvedChoreo
     generatedProductionResolvedInitial
-    (.protocol (.resolve 0 0 901 .left))).get (by native_decide)
+    (.protocol (.resolve 0 0 901 .left))).get (by decide)
 
 def generatedProductionAfterResolverReject : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 2 generatedResolvedChoreo
     generatedProductionResolvedInitial
-    (.protocol (.rejectResolver 0 0 901))).get (by native_decide)
+    (.protocol (.rejectResolver 0 0 901))).get (by decide)
 
 def generatedProductionRolledInitial : Hibana.CompactGlobalState :=
   Hibana.CompactGlobalState.initial generatedProductionSession 2
@@ -47,35 +47,35 @@ def generatedProductionRolledInitial : Hibana.CompactGlobalState :=
 
 def generatedProductionRolledAfterSend : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 2 generatedRolledChoreo
-    generatedProductionRolledInitial (.protocol (.send 0))).get (by native_decide)
+    generatedProductionRolledInitial (.protocol (.send 0))).get (by decide)
 
 def generatedProductionRolledAfterReceive : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 2 generatedRolledChoreo
-    generatedProductionRolledAfterSend (.protocol (.recv 0))).get (by native_decide)
+    generatedProductionRolledAfterSend (.protocol (.recv 0))).get (by decide)
 
 def generatedProductionRolledAfterTailSend : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 2 generatedRolledChoreo
-    generatedProductionRolledAfterReceive (.protocol (.send 2))).get (by native_decide)
+    generatedProductionRolledAfterReceive (.protocol (.send 2))).get (by decide)
 
 def generatedProductionRolledBeforeRoll : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 2 generatedRolledChoreo
-    generatedProductionRolledAfterTailSend (.protocol (.recv 2))).get (by native_decide)
+    generatedProductionRolledAfterTailSend (.protocol (.recv 2))).get (by decide)
 
 def generatedProductionRolledAfterRoll : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 2 generatedRolledChoreo
-    generatedProductionRolledBeforeRoll (.protocol (.roll 0))).get (by native_decide)
+    generatedProductionRolledBeforeRoll (.protocol (.roll 0))).get (by decide)
 
 def generatedProductionAfterFault : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 4 generatedChoreo
-    generatedProductionInitial (.fault 0 .transportOffline)).get (by native_decide)
+    generatedProductionInitial (.fault 0 .transportOffline)).get (by decide)
 
 def generatedProductionAfterAmbiguousReceive : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 4 generatedChoreo
-    generatedProductionInitial (.ambiguousReceive 0)).get (by native_decide)
+    generatedProductionInitial (.ambiguousReceive 0)).get (by decide)
 
 def generatedProductionAfterCancellationObservation : Hibana.CompactGlobalState :=
   (Hibana.applyRuntimeEffect? generatedProductionSession 4 generatedChoreo
-    generatedProductionAfterFault (.observeCancellation 1)).get (by native_decide)
+    generatedProductionAfterFault (.observeCancellation 1)).get (by decide)
 
 def generatedProductionKernelArtifact : Hibana.ProductionKernelArtifact := {
   transitions := [
@@ -149,13 +149,19 @@ def generatedProductionKernelArtifact : Hibana.ProductionKernelArtifact := {
     .receiveReceipt, .transport, .callbackReentry]
 }
 
+theorem generatedProductionKernelArtifactAccepted :
+    generatedProductionKernelArtifact.check
+      generatedProductionSession 4 generatedChoreo = true := by
+  decide
+
 example : generatedProductionKernelArtifact.check
-    generatedProductionSession 4 generatedChoreo = true := by
-  native_decide
+    generatedProductionSession 4 generatedChoreo = true :=
+  generatedProductionKernelArtifactAccepted
 
 example : Hibana.PreparedKernelRefinement generatedProductionKernelArtifact.kernel
     generatedProductionSession 4 generatedChoreo :=
-  Hibana.accepted_production_kernel_artifact_refines_artifact_kernel (by native_decide)
+  Hibana.accepted_production_kernel_artifact_refines_artifact_kernel
+    generatedProductionKernelArtifactAccepted
 
 theorem generated_production_protocol_cases_refine_prepared_kernels :
     forall protocolCase,
@@ -167,7 +173,7 @@ theorem generated_production_protocol_cases_refine_prepared_kernels :
     (session := generatedProductionSession)
     (roleCount := 4)
     (choreo := generatedChoreo)
-    (by native_decide)
+    generatedProductionKernelArtifactAccepted
 
 def generatedProductionCodecEntries : List (Nat × Nat) :=
   [(0, 0), (6, 4), (7, 4)]
@@ -183,7 +189,7 @@ theorem generated_production_codec_coverage_for
     Hibana.VerifiedCodecCoverage choreo generatedProductionCodecs := by
   constructor
   · exact Hibana.fixed_width_codec_registry_agrees
-      (Hibana.fixed_width_schema_registry_checker_sound (by native_decide))
+      (Hibana.fixed_width_schema_registry_checker_sound (by decide))
   · intro event member
     rcases supported event member with unitSchema | u32Schema | i32Schema
     · refine ⟨Hibana.fixedWidthVerifiedCodec 0 0, ?_, ?_⟩
@@ -204,7 +210,7 @@ theorem generated_production_codec_coverage_for
 
 theorem generated_production_codec_coverage :
     Hibana.VerifiedCodecCoverage generatedChoreo generatedProductionCodecs :=
-  generated_production_codec_coverage_for generatedChoreo (by native_decide)
+  generated_production_codec_coverage_for generatedChoreo (by decide)
 
 def generatedVerifiedProtocolMember
     (roleCount : Nat)
@@ -226,30 +232,36 @@ def generatedVerifiedProtocolMember
 
 def generatedVerifiedProtocolPrimary : Hibana.VerifiedProtocolMember :=
   generatedVerifiedProtocolMember 4 generatedChoreo generatedVerifiedProtocol
-    (by native_decide) (by native_decide)
+    generatedVerifiedProtocolAccepted (by decide)
 
 def generatedVerifiedProtocolFamily : List Hibana.VerifiedProtocolMember := [
   generatedVerifiedProtocolPrimary,
   generatedVerifiedProtocolMember 2 generatedRolledChoreo
-    generatedRolledVerifiedProtocol (by native_decide) (by native_decide),
+    generatedRolledVerifiedProtocol generatedRolledVerifiedProtocolAccepted (by decide),
   generatedVerifiedProtocolMember 2 generatedNestedRolledChoreo
-    generatedNestedRolledVerifiedProtocol (by native_decide) (by native_decide),
+    generatedNestedRolledVerifiedProtocol generatedNestedRolledVerifiedProtocolAccepted (by decide),
   generatedVerifiedProtocolMember 2 generatedResolvedChoreo
-    generatedResolvedVerifiedProtocol (by native_decide) (by native_decide),
+    generatedResolvedVerifiedProtocol generatedResolvedVerifiedProtocolAccepted (by decide),
   generatedVerifiedProtocolMember 2 generatedNestedResolvedChoreo
-    generatedNestedResolvedVerifiedProtocol (by native_decide) (by native_decide),
+    generatedNestedResolvedVerifiedProtocol generatedNestedResolvedVerifiedProtocolAccepted (by decide),
   generatedVerifiedProtocolMember 2 generatedRolledResolvedChoreo
-    generatedRolledResolvedVerifiedProtocol (by native_decide) (by native_decide),
+    generatedRolledResolvedVerifiedProtocol generatedRolledResolvedVerifiedProtocolAccepted (by decide),
   generatedVerifiedProtocolMember 2 generatedRejectingChoreo
-    generatedRejectingVerifiedProtocol (by native_decide) (by native_decide),
+    generatedRejectingVerifiedProtocol generatedRejectingVerifiedProtocolAccepted (by decide),
   generatedVerifiedProtocolMember 3 generatedCyclicRollChoreo
-    generatedCyclicRollVerifiedProtocol (by native_decide) (by native_decide)
+    generatedCyclicRollVerifiedProtocol generatedCyclicRollVerifiedProtocolAccepted (by decide)
 ]
+
+theorem generatedVerifiedProtocolFamilyCapabilitiesAccepted :
+    Hibana.checkVerifiedProtocolFamilyCapabilities
+      generatedVerifiedProtocolFamily = true := by
+  decide
 
 theorem generated_verified_protocol_family_covers_core_capabilities :
     Hibana.VerifiedProtocolFamilyCapabilityCoverage
       generatedVerifiedProtocolFamily :=
-  Hibana.verified_protocol_family_capability_checker_sound (by native_decide)
+  Hibana.verified_protocol_family_capability_checker_sound
+    generatedVerifiedProtocolFamilyCapabilitiesAccepted
 
 def generatedStaticDeploymentEntry
     (member : Hibana.VerifiedProtocolMember) : Hibana.StaticDeploymentEntry := {
@@ -264,13 +276,19 @@ def generatedStaticDeploymentCertificate : Hibana.StaticDeploymentCertificate :=
   entries := generatedVerifiedProtocolFamily.map generatedStaticDeploymentEntry
 }
 
+theorem generatedStaticDeploymentCertificateAccepted :
+    generatedStaticDeploymentCertificate.check
+      generatedVerifiedProtocolFamily = true := by
+  decide
+
 example : generatedStaticDeploymentCertificate.check
-    generatedVerifiedProtocolFamily = true := by
-  native_decide
+    generatedVerifiedProtocolFamily = true :=
+  generatedStaticDeploymentCertificateAccepted
 
 theorem generated_static_deployment_certificate_refines_exact_family :
     generatedStaticDeploymentCertificate.Refines generatedVerifiedProtocolFamily :=
-  Hibana.static_deployment_certificate_sound (by native_decide)
+  Hibana.static_deployment_certificate_sound
+    generatedStaticDeploymentCertificateAccepted
 
 def generatedMissingStaticDeploymentCertificate :
     Hibana.StaticDeploymentCertificate := {
@@ -279,7 +297,7 @@ def generatedMissingStaticDeploymentCertificate :
 
 example : generatedMissingStaticDeploymentCertificate.check
     generatedVerifiedProtocolFamily = false := by
-  native_decide
+  decide
 
 def generatedExtraStaticDeploymentCertificate :
     Hibana.StaticDeploymentCertificate := {
@@ -289,7 +307,7 @@ def generatedExtraStaticDeploymentCertificate :
 
 example : generatedExtraStaticDeploymentCertificate.check
     generatedVerifiedProtocolFamily = false := by
-  native_decide
+  decide
 
 def generatedCorruptStaticDeploymentCertificate :
     Hibana.StaticDeploymentCertificate := {
@@ -300,7 +318,7 @@ def generatedCorruptStaticDeploymentCertificate :
 
 example : generatedCorruptStaticDeploymentCertificate.check
     generatedVerifiedProtocolFamily = false := by
-  native_decide
+  decide
 
 def generatedProductionDeployment : Hibana.DeploymentEvidence := {
   roleImages := generatedVerifiedProtocol.descriptors.map
@@ -309,6 +327,11 @@ def generatedProductionDeployment : Hibana.DeploymentEvidence := {
   carrier := Hibana.referenceCarrierSemantics
   abstraction := id
 }
+
+theorem generatedProductionRoleImagesAccepted :
+    Hibana.checkRoleImages generatedVerifiedProtocolPrimary.certificate
+      generatedProductionDeployment.roleImages = true := by
+  decide
 
 theorem generated_production_closing_carrier :
     Hibana.CarrierProfile.closing.Holds
@@ -333,11 +356,11 @@ def generatedProductionRefinement
       generatedStaticDeploymentCertificate :=
   Hibana.assumption_indexed_static_cross_tool_production_refinement
     (by simp [generatedVerifiedProtocolFamily])
-    (by native_decide)
-    (by native_decide)
-    (by native_decide)
+    generatedVerifiedProtocolFamilyCapabilitiesAccepted
+    generatedStaticDeploymentCertificateAccepted
+    generatedProductionRoleImagesAccepted
     rfl
-    (by native_decide)
+    generatedProductionKernelArtifactAccepted
     kernelRefinement
     ownerEvidence
     generated_production_closing_carrier

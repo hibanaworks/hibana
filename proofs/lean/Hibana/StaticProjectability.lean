@@ -682,40 +682,6 @@ theorem global_transport_admission_checker_sound
     exact ⟨sameSession, transport_admission_from_checker_sound candidateAccepted⟩
   · simp [sameSession] at accepted
 
-private def transportAdmissionRegressionChoreo : Choreo :=
-  .send 0 1 9 4
-
-private def transportAdmissionRegressionFrame
-    (session lane : Nat) : TransportFrame := {
-  channel := {
-    session
-    generation := 3
-    lane
-    sender := 0
-    receiver := 1
-  }
-  sequence := 0
-  frameLabel := ⟨0, by omega⟩
-}
-
-private def transportAdmissionRegressionConfig : GlobalConfig :=
-  (GlobalConfig.initial 7 2 transportAdmissionRegressionChoreo).withPhase 0 (.queued 0)
-
-example :
-    (transportAdmissionRegressionConfig.admitTransportFrame?
-        (transportAdmissionRegressionFrame 7 0)).isSome = true := by
-  native_decide
-
-example :
-    (transportAdmissionRegressionConfig.admitTransportFrame?
-        (transportAdmissionRegressionFrame 7 1)).isSome = false := by
-  native_decide
-
-example :
-    (transportAdmissionRegressionConfig.admitTransportFrame?
-        (transportAdmissionRegressionFrame 8 0)).isSome = false := by
-  native_decide
-
 theorem transport_admission_binds_exact_descriptor_occurrence
     {choreo : Choreo} {frame : TransportFrame}
     {globalId : Nat} {event : GlobalEvent}

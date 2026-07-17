@@ -16,3 +16,9 @@ route_arm_heavy_256	3	153	20	256
 causal_handoff_4	1	1	15	128
 causal_handoff_64	1	83	15	128
 causal_handoff_256	1	117	15	128
+causal_handoff_route_4	1	1	15	128
+causal_handoff_route_32	1	110	20	256
+causal_handoff_route_64	5	300	25	384
+causal_handoff_roll_4	1	1	15	128
+causal_handoff_roll_32	1	95	20	256
+causal_handoff_roll_64	3	206	25	384
