@@ -1,9 +1,8 @@
 use super::{
     ActiveEntrySlot, ActiveOfferEntry, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint,
-    FrontierCandidate, LaneOfferState, ObservedEntrySet, OfferEntryEvidence,
-    OfferEntryObservedState, ScopeArmMaterializationMeta, ScopeId, StateIndex, Transport,
-    checked_state_index, offer_entry_frontier_candidate, offer_entry_observed_state,
-    state_index_to_usize,
+    FrontierCandidate, LaneOfferState, OfferEntryEvidence, OfferEntryKey, OfferEntryObservedState,
+    ScopeArmMaterializationMeta, ScopeId, Transport, offer_entry_frontier_candidate,
+    offer_entry_observed_state,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -11,51 +10,33 @@ where
 {
     fn active_offer_entry_from_owner_lane(
         &self,
-        entry: StateIndex,
+        key: OfferEntryKey,
         owner_lane_idx: usize,
-        excluded_lane_idx: Option<usize>,
     ) -> ActiveOfferEntry {
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.decision_state.active_offer_lanes();
-        if owner_lane_idx >= lane_limit
-            || excluded_lane_idx == Some(owner_lane_idx)
-            || !active_offer_lanes.contains(owner_lane_idx)
-        {
+        if owner_lane_idx >= lane_limit || !active_offer_lanes.contains(owner_lane_idx) {
             crate::invariant();
         }
         let owner = self.decision_state.lane_offer_state(owner_lane_idx);
-        if owner.entry != entry {
+        if owner.key() != Some(key) {
             crate::invariant();
         }
         let owner_lane = match u8::try_from(owner_lane_idx) {
             Ok(lane) => lane,
             Err(_) => crate::invariant(),
         };
-        let mut active = crate::invariant_some(ActiveOfferEntry::new(owner_lane, owner));
-        let mut next = active_offer_lanes.first_set(lane_limit);
-        while let Some(lane_idx) = next {
-            let info = self.decision_state.lane_offer_state(lane_idx);
-            if info.entry.is_absent() || info.scope.is_none() {
-                crate::invariant();
-            }
-            if lane_idx != owner_lane_idx
-                && excluded_lane_idx != Some(lane_idx)
-                && info.entry == entry
-                && !active.observe_lane(info)
-            {
-                crate::invariant();
-            }
-            next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
-        }
-        active
+        crate::invariant_some(ActiveOfferEntry::new(owner_lane, owner))
     }
 
     pub(in crate::endpoint::kernel) fn active_offer_entry_excluding(
         &self,
-        entry_idx: usize,
+        key: OfferEntryKey,
         excluded_lane_idx: Option<usize>,
     ) -> Option<ActiveOfferEntry> {
-        let entry = checked_state_index(entry_idx)?;
+        if key.is_absent() {
+            crate::invariant();
+        }
         let lane_limit = self.cursor.logical_lane_count();
         let active_offer_lanes = self.decision_state.active_offer_lanes();
         let mut active: Option<ActiveOfferEntry> = None;
@@ -65,9 +46,9 @@ where
             if info.entry.is_absent() || info.scope.is_none() {
                 crate::invariant();
             }
-            if excluded_lane_idx != Some(lane_idx) && info.entry == entry {
-                if let Some(active) = active.as_mut() {
-                    if !active.observe_lane(info) {
+            if excluded_lane_idx != Some(lane_idx) && info.key() == Some(key) {
+                if let Some(active) = active {
+                    if !active.accepts_lane(info) {
                         crate::invariant();
                     }
                 } else {
@@ -86,9 +67,9 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn active_offer_entry(
         &self,
-        entry_idx: usize,
+        key: OfferEntryKey,
     ) -> Option<ActiveOfferEntry> {
-        self.active_offer_entry_excluding(entry_idx, None)
+        self.active_offer_entry_excluding(key, None)
     }
 
     #[inline]
@@ -96,28 +77,10 @@ where
         &self,
         slot: ActiveEntrySlot,
     ) -> ActiveOfferEntry {
-        if slot.entry.is_absent() {
+        if slot.key.is_absent() {
             crate::invariant();
         }
-        self.active_offer_entry_from_owner_lane(slot.entry, slot.lane_idx as usize, None)
-    }
-
-    #[inline]
-    pub(in crate::endpoint::kernel) fn observed_ready_reentry_entry_idx(
-        &self,
-        observed_entries: ObservedEntrySet,
-        current_idx: usize,
-    ) -> Option<usize> {
-        let mut slot_idx = 0usize;
-        while slot_idx < observed_entries.len() {
-            let slot = observed_entries.slot(slot_idx)?;
-            let entry_idx = observed_entries.entry_idx(slot_idx)?;
-            if entry_idx != current_idx && slot.is_ready() {
-                return Some(entry_idx);
-            }
-            slot_idx += 1;
-        }
-        None
+        self.active_offer_entry_from_owner_lane(slot.key, slot.lane_idx as usize)
     }
 
     #[inline]
@@ -126,12 +89,9 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<CurrentScopeSelectionMeta> {
-        let active = self.active_offer_entry(entry_idx)?;
-        if active.scope() != scope_id {
-            return None;
-        }
+        let key = OfferEntryKey::from_index(scope_id, entry_idx)?;
+        let active = self.active_offer_entry(key)?;
         Some(self.compute_offer_entry_selection_meta(
-            scope_id,
             active.representative(),
             !self.offer_lane_set_for_scope(scope_id).is_empty(),
         ))
@@ -143,19 +103,17 @@ where
         scope_id: ScopeId,
         entry_idx: usize,
     ) -> Option<ScopeArmMaterializationMeta> {
-        let active = self.active_offer_entry(entry_idx)?;
-        if active.scope() != scope_id {
-            return None;
-        }
+        let key = OfferEntryKey::from_index(scope_id, entry_idx)?;
+        self.active_offer_entry(key)?;
         Some(self.compute_scope_arm_materialization_meta(scope_id))
     }
 
     pub(in crate::endpoint::kernel) fn compute_offer_entry_selection_meta(
         &self,
-        scope_id: ScopeId,
         info: LaneOfferState,
         has_offer_lanes: bool,
     ) -> CurrentScopeSelectionMeta {
+        let scope_id = info.scope;
         if !self.cursor.has_route_scope(scope_id) {
             return CurrentScopeSelectionMeta::EMPTY;
         }
@@ -221,16 +179,9 @@ where
         active: ActiveOfferEntry,
         evidence: OfferEntryEvidence,
     ) -> (OfferEntryObservedState, FrontierCandidate) {
-        let scope_id = active.scope();
-        let summary = active.summary();
-        let observed = offer_entry_observed_state(scope_id, summary, evidence);
-        let candidate = offer_entry_frontier_candidate(
-            scope_id,
-            state_index_to_usize(active.entry()),
-            active.parallel_root(),
-            active.frontier(),
-            observed,
-        );
+        let info = active.representative();
+        let observed = offer_entry_observed_state(info, evidence);
+        let candidate = offer_entry_frontier_candidate(info, observed);
         (observed, candidate)
     }
 

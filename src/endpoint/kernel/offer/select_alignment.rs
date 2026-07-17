@@ -1,4 +1,4 @@
-use super::{CursorEndpoint, RecvError, RecvResult, Transport};
+use super::{CursorEndpoint, OfferEntryKey, RecvError, RecvResult, Transport};
 
 mod candidates;
 mod model;
@@ -46,7 +46,8 @@ where
             return Ok(node_scope);
         }
         let active_entries = self.active_frontier_entries(current_parallel);
-        if active_entries.contains_only(current_idx) {
+        let current_key = OfferEntryKey::from_index(node_scope, current_idx);
+        if current_key.is_some_and(|key| active_entries.contains_only(key)) {
             let Some(meta) = current_scope_meta else {
                 return Ok(node_scope);
             };
@@ -56,7 +57,7 @@ where
         }
         let observed_entries = self.compose_frontier_observed_entries(active_entries);
         let reentry_ready_entry_idx =
-            self.observed_ready_reentry_entry_idx(observed_entries, current_idx);
+            observed_entries.first_selectable_ready_entry_except(current_idx);
         let reentry_controller_evidence = current_frontier_state.reentry_controller_evidence();
         let progress_sibling_presence = ProgressSiblingPresence::from_observed_progress_sibling(
             self.observed_frontier_progress_sibling_exists(

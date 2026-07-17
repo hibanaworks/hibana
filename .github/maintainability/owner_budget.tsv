@@ -16,7 +16,7 @@ src/endpoint/kernel/offer/profile/planning.rs	170	1	recursive
 src/endpoint/kernel/offer/resolve.rs	520	1	recursive
 src/endpoint/kernel/offer/resolve_materialization.rs	238	1	recursive
 src/endpoint/kernel/offer/resolve_types.rs	120	1	recursive
-src/endpoint/kernel/offer/select.rs	540	1	recursive
+src/endpoint/kernel/offer/select.rs	500	1	recursive
 src/endpoint/kernel/offer/select_observed.rs	180	1	recursive
 src/endpoint/kernel/offer/select_alignment.rs	220	1	recursive
 src/endpoint/kernel/offer/select_alignment/candidates.rs	220	1	recursive

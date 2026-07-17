@@ -540,6 +540,11 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
     let snapshot = read("src/endpoint/kernel/frontier/snapshot.rs");
     let layout = read("src/endpoint/kernel/layout.rs");
     let cache_refresh = read("src/endpoint/kernel/offer/cache_refresh.rs");
+    let exact_observation_push = entry_sets
+        .split("pub(crate) fn push_exact_observation")
+        .nth(1)
+        .and_then(|tail| tail.split("pub(crate) const fn seal").next())
+        .expect("exact observation push must stay visible");
     let selection_pool = read("src/endpoint/kernel/offer/select_alignment/model/pool.rs");
     let observation = read("src/endpoint/kernel/frontier/observation.rs");
     let decision_state = read("src/endpoint/kernel/decision_state.rs");
@@ -592,12 +597,22 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
             && layout.contains("footprint.frontier_visit_count()")
             && !repo_file_exists("src/endpoint/kernel/offer/select_alignment/model/set.rs")
             && selection_pool.contains("while slot_idx < self.observed_entries.len()")
-            && observation.contains("frontier_mask & !FrontierKind::ALL_BITS")
-            && observation.contains("self.frontier_mask = frontier_mask;")
+            && selection_pool.contains("entry_group_end(slot_idx)")
+            && observation.contains("observed.frontier_mask & !FrontierKind::ALL_BITS")
+            && observation.contains("fn from_exact_observation(")
+            && observation.contains("entry: observed.key.entry()")
+            && observation.contains("frontier_mask: observed.frontier_mask")
+            && !observation.contains("self.frontier_mask |= observed.frontier_mask;")
+            && !observation.contains("self.flags |= flags;")
+            && !observation.contains("FLAG_BINDING_READY")
             && !observation.contains("frontier_mask & 0x0f")
-            && cache_refresh.contains("crate::invariant_some(composed.insert_entry(entry_idx))")
+            && cache_refresh.contains("composed.push_exact_observation(")
+            && exact_observation_push.contains(") -> usize {")
+            && !exact_observation_push.contains("Option<usize>")
+            && !cache_refresh.contains("composed.insert_entry(")
+            && !cache_refresh.contains("record_observation(")
             && cache_refresh.contains("composed.seal()"),
-        "offer arbitration and exact entry-identity visits must stream the active-lane-derived frontier without a fixed mask or silent truncation"
+        "offer arbitration must preserve exact scope witnesses until cursor-target selection without a fixed mask or silent truncation"
     );
 }
 
@@ -954,23 +969,80 @@ fn active_offer_entries_are_owner_derived_without_frontier_fallback() {
     let frontier_select = read("src/endpoint/kernel/core/frontier_select.rs");
     let active_offer_entry = read("src/endpoint/kernel/frontier/active_offer_entry.rs");
     let entry_sets = read("src/endpoint/kernel/frontier/entry_sets.rs");
+    let frontier_kind = read("src/endpoint/kernel/frontier/kind.rs");
+    let offer = read("src/endpoint/kernel/offer.rs");
+    let offer_select = read("src/endpoint/kernel/offer/select.rs");
+    let decision_state = read("src/endpoint/kernel/decision_state.rs");
+    let frontier_state = read("src/endpoint/kernel/frontier_state.rs");
+    let sync_lane_offer_state = offer
+        .split("pub(crate) fn sync_lane_offer_state")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("pub(in crate::endpoint::kernel) fn refresh_lane_offer_state")
+                .next()
+        })
+        .expect("lane offer cache rebuild must stay factored");
+    let root_insert = frontier_state
+        .split("fn insert_root_active_entry")
+        .nth(1)
+        .and_then(|tail| tail.split("fn remove_root_active_entry").next())
+        .expect("root active-entry insert must stay visible");
+    let root_remove = frontier_state
+        .split("fn remove_root_active_entry")
+        .nth(1)
+        .and_then(|tail| tail.split("fn remove_root_row").next())
+        .expect("root active-entry removal must stay visible");
 
     assert!(
         entry_sets.contains("pub(crate) fn slot_at(")
             && !entry_sets.contains("pub(crate) fn entry_at(")
             && frontier_select.contains("active_offer_entry_from_slot")
             && frontier_select.contains("slot.lane_idx as usize")
-            && frontier_select.contains("owner.entry != entry")
+            && frontier_select.contains("owner.key() != Some(key)")
+            && frontier_select.contains("if key.is_absent() {")
+            && frontier_select.contains("crate::invariant();")
             && frontier_select
                 .matches("active_offer_entry_from_owner_lane(")
                 .count()
                 == 2
             && active_offer_entry.contains("pub(crate) struct ActiveOfferEntry")
-            && active_offer_entry.contains("info.entry != self.representative.entry")
-            && !active_offer_entry.contains("info.scope != self.representative.scope")
-            && !active_offer_entry
-                .contains("info.parallel_root != self.representative.parallel_root"),
-        "active frontier selection must retain and validate its concrete owning lane"
+            && active_offer_entry.contains("info == self.representative")
+            && offer.contains("let key = crate::invariant_some(info.key());")
+            && offer.contains("if info == LaneOfferState::EMPTY {")
+            && !offer.contains("let Some(key) = info.key() else")
+            && entry_sets.contains("pub(crate) key: OfferEntryKey")
+            && frontier_kind
+                .contains("!matches!(scope.kind(), Some(ScopeKind::Route)) || entry.is_absent()")
+            && !entry_sets.contains("pub(crate) fn slot_for_key(")
+            && entry_sets.contains(
+                "pub(crate) fn insert_key(&mut self, key: OfferEntryKey, lane_idx: u8) {"
+            )
+            && !entry_sets
+                .contains("fn insert_key(&mut self, key: OfferEntryKey, lane_idx: u8) -> bool")
+            && !entry_sets.contains("insert_entry(&mut self, entry_idx: usize, lane_idx")
+            && !offer_select.contains("current_entry_parallel")
+            && offer_select
+                .contains(".filter(|&root| self.root_frontier_has_active_entries(root))")
+            && !root_insert.contains("-> bool")
+            && !root_remove.contains("-> bool"),
+        "active frontier ownership must retain one concrete lane for the exact (scope, entry) identity"
+    );
+    assert!(
+        sync_lane_offer_state.contains("take_lane_offer_state_for_rebuild(lane_idx)")
+            && sync_lane_offer_state
+                .matches("while lane_idx < logical_lane_count")
+                .count()
+                == 2
+            && !sync_lane_offer_state.contains("lane_reentry_lanes().next_set_from")
+            && !sync_lane_offer_state.contains("lane_offer_reentry_lanes().next_set_from")
+            && decision_state.contains("fn take_lane_offer_state(")
+            && decision_state.contains("fn take_lane_offer_state_for_rebuild(")
+            && decision_state.contains("self.take_lane_offer_state(lane_idx)")
+            && decision_state.contains("self.lane_offer_reentry_lanes.remove(lane_idx)")
+            && sync_lane_offer_state.contains("!= LaneOfferState::EMPTY")
+            && !sync_lane_offer_state
+                .contains("let _ = self.decision_state.clear_lane_offer_state"),
+        "offer cache refresh must detach every old exact owner before one lane-domain rebuild pass"
     );
     for removed in [
         "offer_entry_has_active_lanes",
@@ -987,5 +1059,23 @@ fn active_offer_entries_are_owner_derived_without_frontier_fallback() {
     assert!(
         !frontier_select.contains("FrontierKind::Route"),
         "a missing active-entry representative must never become a Route frontier"
+    );
+}
+
+#[test]
+fn ready_reentry_alignment_requires_an_exact_selectable_witness() {
+    let entry_sets = read("src/endpoint/kernel/frontier/entry_sets.rs");
+    let frontier_select = read("src/endpoint/kernel/core/frontier_select.rs");
+    let alignment = read("src/endpoint/kernel/offer/select_alignment.rs");
+
+    assert!(
+        entry_sets.contains("pub(crate) fn first_selectable_ready_entry_except(")
+            && entry_sets.contains(
+                "entry_idx != excluded_entry_idx && slot.is_selectable() && slot.is_ready()"
+            )
+            && alignment
+                .contains("observed_entries.first_selectable_ready_entry_except(current_idx)")
+            && !frontier_select.contains("observed_ready_reentry_entry_idx"),
+        "ready reentry alignment must not admit an excluded exact-scope observation"
     );
 }

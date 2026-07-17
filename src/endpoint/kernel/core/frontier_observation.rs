@@ -4,7 +4,7 @@ use super::super::frontier::{
 };
 use super::{
     ActiveEntrySet, CursorEndpoint, FrontierScratchLayout, ObservedEntrySet,
-    ObservedEntrySetBuilder, Transport, lane_port, state_index_to_usize,
+    ObservedEntrySetBuilder, Transport, lane_port,
 };
 use crate::endpoint::kernel::offer::CurrentReentryControllerEvidence;
 
@@ -45,12 +45,8 @@ where
             if info.entry.is_absent() || info.scope.is_none() {
                 crate::invariant();
             }
-            let entry_idx = state_index_to_usize(info.entry);
-            if active_entries.slot_for_entry(entry_idx).is_none()
-                && !active_entries.insert_entry(entry_idx, lane_idx as u8)
-            {
-                crate::invariant();
-            }
+            let key = crate::invariant_some(info.key());
+            active_entries.insert_key(key, lane_idx as u8);
             next = active_offer_lanes.next_set_from(lane_idx + 1, lane_limit);
         }
         active_entries.seal()

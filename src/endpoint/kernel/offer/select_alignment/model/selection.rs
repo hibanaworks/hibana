@@ -1,18 +1,5 @@
 use super::super::super::{CurrentFrontierSelectionState, OfferSelectPriority};
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-#[repr(u8)]
-pub(in crate::endpoint::kernel::offer::select_alignment) enum ProgressEvidence {
-    Absent,
-    Present,
-}
-
-impl ProgressEvidence {
-    #[inline]
-    pub(in crate::endpoint::kernel::offer::select_alignment) const fn is_absent(self) -> bool {
-        matches!(self, Self::Absent)
-    }
-}
+use super::entry::{CandidateAuthority, ProgressEvidence};
 
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer::select_alignment) struct CurrentOfferObservation {
@@ -116,6 +103,69 @@ pub(in crate::endpoint::kernel::offer::select_alignment) enum OfferAlignmentOutc
     UniqueDynamicController(usize),
     UniqueController(usize),
     UniqueCandidate(usize),
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ClassifiedCandidates {
+    candidate_count: usize,
+    first_candidate: Option<usize>,
+    controller_count: usize,
+    first_controller: Option<usize>,
+    dynamic_controller_count: usize,
+    first_dynamic_controller: Option<usize>,
+}
+
+impl ClassifiedCandidates {
+    pub(super) const EMPTY: Self = Self {
+        candidate_count: 0,
+        first_candidate: None,
+        controller_count: 0,
+        first_controller: None,
+        dynamic_controller_count: 0,
+        first_dynamic_controller: None,
+    };
+
+    pub(super) fn record(&mut self, entry_idx: usize, authority: CandidateAuthority) {
+        if self.first_candidate.is_none() {
+            self.first_candidate = Some(entry_idx);
+        }
+        self.candidate_count += 1;
+        match authority {
+            CandidateAuthority::Passive => {}
+            CandidateAuthority::Controller | CandidateAuthority::DynamicController => {
+                if self.first_controller.is_none() {
+                    self.first_controller = Some(entry_idx);
+                }
+                self.controller_count += 1;
+                if authority == CandidateAuthority::DynamicController {
+                    if self.first_dynamic_controller.is_none() {
+                        self.first_dynamic_controller = Some(entry_idx);
+                    }
+                    self.dynamic_controller_count += 1;
+                }
+            }
+        }
+    }
+
+    pub(super) fn outcome(self) -> OfferAlignmentOutcome {
+        if self.dynamic_controller_count == 1 {
+            return OfferAlignmentOutcome::UniqueDynamicController(crate::invariant_some(
+                self.first_dynamic_controller,
+            ));
+        }
+        if self.controller_count == 1 {
+            return OfferAlignmentOutcome::UniqueController(crate::invariant_some(
+                self.first_controller,
+            ));
+        }
+        match self.candidate_count {
+            0 => OfferAlignmentOutcome::CandidateAbsent,
+            1 => {
+                OfferAlignmentOutcome::UniqueCandidate(crate::invariant_some(self.first_candidate))
+            }
+            _ => OfferAlignmentOutcome::CandidateSetAmbiguous,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

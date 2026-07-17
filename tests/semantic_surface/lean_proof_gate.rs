@@ -129,8 +129,20 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "descriptor refinement must remain split into byte-image, topology, and certificate layers"
     );
     for theorem in [
+        "active_offer_key_count_is_bounded_by_active_lane_count",
+        "active_offer_key_mem_iff_owned",
+        "production_frontier_capacity_covers_every_active_offer_key_witness",
         "first_owning_lane_is_exact_owner",
         "active_offer_entry_has_representative_iff_owned",
+        "first_owning_lane_preserves_scope",
+        "offer_keys_with_same_entry_and_distinct_scope_are_distinct",
+        "cursor_target_observations_are_entry_exact",
+        "erased_cursor_target_observations_preserve_witness_count",
+        "erased_cursor_target_observation_has_exact_source",
+        "erased_cursor_target_predicate_has_exact_source",
+        "insert_erased_cursor_observation_mem_iff",
+        "insert_erased_cursor_observation_length",
+        "insert_erased_cursor_observation_preserves_entry_order",
     ] {
         assert!(descriptor_image.contains(&format!("theorem {theorem}")));
     }

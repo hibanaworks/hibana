@@ -9,7 +9,8 @@
 use core::ops::{Index, IndexMut};
 
 use super::frontier::{
-    ActiveEntrySet, ActiveEntrySlot, FrontierVisitSet, LaneOfferState, RootFrontierState,
+    ActiveEntrySet, ActiveEntrySlot, FrontierVisitSet, LaneOfferState, OfferEntryKey,
+    RootFrontierState,
 };
 use crate::global::{
     const_dsl::ScopeId, role_program::frontier_visit_capacity, typestate::StateIndex,
@@ -171,34 +172,27 @@ impl RootFrontierTable {
         row.active_len = 0;
     }
 
-    fn insert_root_active_entry(
-        &mut self,
-        slot_idx: usize,
-        entry_idx: usize,
-        lane_idx: u8,
-    ) -> bool {
+    fn insert_root_active_entry(&mut self, slot_idx: usize, key: OfferEntryKey, lane_idx: u8) {
         if slot_idx >= self.len() {
             crate::invariant();
         }
-        let Some(entry) = super::frontier::checked_state_index(entry_idx) else {
-            return false;
+        let Some(incoming) = ActiveEntrySlot::new(key, lane_idx) else {
+            crate::invariant();
         };
         let (start, len, used) = self.checked_active_span(slot_idx);
         let mut insert_rel = 0usize;
         while insert_rel < len {
             let existing = /* SAFETY: `insert_rel < row.active_len` bounds a shared read inside the root row active-entry span. */ unsafe { *self.active_entries.add(start + insert_rel) };
-            if existing.entry == entry {
-                return false;
+            if existing.key == key {
+                crate::invariant();
             }
-            if existing.lane_idx > lane_idx
-                || (existing.lane_idx == lane_idx && existing.entry.raw() > entry.raw())
-            {
+            if incoming.precedes(existing) {
                 break;
             }
             insert_rel += 1;
         }
         if used >= self.pool_capacity() {
-            return false;
+            crate::invariant();
         }
         let row_len = self.len();
         if self[slot_idx].active_len == u16::MAX {
@@ -224,9 +218,7 @@ impl RootFrontierTable {
         }
         /* SAFETY: `insert_idx < pool_capacity`; active entry is written before row lengths change. */
         unsafe {
-            self.active_entries
-                .add(insert_idx)
-                .write(ActiveEntrySlot { entry, lane_idx });
+            self.active_entries.add(insert_idx).write(incoming);
         }
         self[slot_idx].active_len += 1;
         let mut idx = slot_idx + 1;
@@ -234,26 +226,27 @@ impl RootFrontierTable {
             self[idx].active_start += 1;
             idx += 1;
         }
-        true
     }
 
-    fn remove_root_active_entry(&mut self, slot_idx: usize, entry_idx: usize) -> bool {
+    fn remove_root_active_entry(&mut self, slot_idx: usize, key: OfferEntryKey) {
         if slot_idx >= self.len() {
+            crate::invariant();
+        }
+        if key.is_absent() {
             crate::invariant();
         }
         let (start, len, used) = self.checked_active_span(slot_idx);
         let mut remove_rel = 0usize;
-        let entry = crate::invariant_some(super::frontier::checked_state_index(entry_idx));
         while remove_rel < len {
             if
             /* SAFETY: `remove_rel < row.active_len` bounds this shared read inside the root row active-entry span. */
-            unsafe { (*self.active_entries.add(start + remove_rel)).entry } == entry {
+            unsafe { (*self.active_entries.add(start + remove_rel)).key } == key {
                 break;
             }
             remove_rel += 1;
         }
         if remove_rel >= len {
-            return false;
+            crate::invariant();
         }
         if self[slot_idx].active_len == 0 {
             crate::invariant();
@@ -291,7 +284,6 @@ impl RootFrontierTable {
             self[idx].active_start -= 1;
             idx += 1;
         }
-        true
     }
 
     fn remove_root_row(&mut self, slot_idx: usize) {
@@ -451,7 +443,7 @@ impl FrontierState {
     #[inline]
     pub(super) fn attach_offer_entry_to_root_frontier(
         &mut self,
-        entry_idx: usize,
+        key: OfferEntryKey,
         root: ScopeId,
         lane_idx: u8,
     ) {
@@ -461,18 +453,14 @@ impl FrontierState {
         let Some(slot_idx) = self.root_frontier_slot(root) else {
             crate::invariant();
         };
-        if !self
-            .root_frontier_state
-            .insert_root_active_entry(slot_idx, entry_idx, lane_idx)
-        {
-            crate::invariant();
-        }
+        self.root_frontier_state
+            .insert_root_active_entry(slot_idx, key, lane_idx);
     }
 
     #[inline]
     pub(super) fn detach_offer_entry_from_root_frontier(
         &mut self,
-        entry_idx: usize,
+        key: OfferEntryKey,
         root: ScopeId,
     ) {
         if root.is_none() {
@@ -481,12 +469,8 @@ impl FrontierState {
         let Some(slot_idx) = self.root_frontier_slot(root) else {
             crate::invariant();
         };
-        if !self
-            .root_frontier_state
-            .remove_root_active_entry(slot_idx, entry_idx)
-        {
-            crate::invariant();
-        }
+        self.root_frontier_state
+            .remove_root_active_entry(slot_idx, key);
     }
 
     pub(super) fn detach_lane_from_root_frontier(&mut self, info: LaneOfferState) {

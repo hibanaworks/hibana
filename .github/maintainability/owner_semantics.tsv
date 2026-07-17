@@ -7,6 +7,7 @@ src/session	session-root	session authority, brand witness, lease, and cluster ow
 src/test_support	proof-and-scale-fixture-export	large choreography fixtures and generated Lean certificate ownership
 src/endpoint	endpoint-public-and-kernel-root	public endpoint API, futures, carrier, and kernel ownership
 src/endpoint/kernel	endpoint-kernel-root	endpoint send, recv, decode, route frontier, and resident state ownership
+src/endpoint/kernel/frontier	offer-frontier-identity-and-scratch	exact offer identity, observation grouping, candidate snapshots, and scratch ownership
 src/endpoint/kernel/core	endpoint-kernel-core-ops	kernel public ops, send ops, route preview, and commit ownership
 src/endpoint/kernel/offer	offer-frontier-lifecycle	offer ingress, resolution, selection, materialization, and restore ownership
 src/global	choreography-compile-root	global choreography DSL, program image, role program, and typestate ownership

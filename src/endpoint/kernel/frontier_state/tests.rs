@@ -2,10 +2,14 @@ use super::*;
 use core::mem::MaybeUninit;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::global::const_dsl::ScopeId;
+use crate::global::{const_dsl::ScopeId, typestate::StateIndex};
 
 fn test_scope(raw: u16) -> ScopeId {
     ScopeId::parallel(raw)
+}
+
+fn offer_key(entry: u16, scope: u16) -> OfferEntryKey {
+    OfferEntryKey::new(ScopeId::route(scope), StateIndex::new(entry)).expect("present offer key")
 }
 
 fn init_table<'a>(
@@ -61,8 +65,8 @@ fn root_frontier_shared_active_pool_stays_packed_after_row_removal() {
 
     table.prepare_row(0, test_scope(1));
     table.prepare_row(1, test_scope(2));
-    assert!(table.insert_root_active_entry(0, 10, 0));
-    assert!(table.insert_root_active_entry(1, 20, 1));
+    table.insert_root_active_entry(0, offer_key(10, 1), 0);
+    table.insert_root_active_entry(1, offer_key(20, 2), 1);
 
     assert_eq!(table.active_pool_used(), 2);
     assert_eq!(table[0].active_start, 0);
@@ -79,7 +83,7 @@ fn root_frontier_shared_active_pool_stays_packed_after_row_removal() {
         table
             .active_entry_set(0)
             .slot_at(0)
-            .map(|slot| slot.entry.as_usize()),
+            .map(|slot| slot.key.entry().as_usize()),
         Some(20)
     );
 }
@@ -91,37 +95,55 @@ fn root_frontier_active_pool_stays_ordered_after_insert_and_remove() {
     let mut table = init_table(&mut rows, &mut active, 2);
 
     table.prepare_row(0, test_scope(1));
-    assert!(table.insert_root_active_entry(0, 30, 2));
-    assert!(table.insert_root_active_entry(0, 10, 0));
-    assert!(table.insert_root_active_entry(0, 20, 1));
+    table.insert_root_active_entry(0, offer_key(30, 3), 2);
+    table.insert_root_active_entry(0, offer_key(10, 1), 0);
+    table.insert_root_active_entry(0, offer_key(20, 2), 1);
 
     let entries = table.active_entry_set(0);
     assert_eq!(
-        entries.slot_at(0).map(|slot| slot.entry.as_usize()),
+        entries.slot_at(0).map(|slot| slot.key.entry().as_usize()),
         Some(10)
     );
     assert_eq!(
-        entries.slot_at(1).map(|slot| slot.entry.as_usize()),
+        entries.slot_at(1).map(|slot| slot.key.entry().as_usize()),
         Some(20)
     );
     assert_eq!(
-        entries.slot_at(2).map(|slot| slot.entry.as_usize()),
+        entries.slot_at(2).map(|slot| slot.key.entry().as_usize()),
         Some(30)
     );
 
-    assert!(table.remove_root_active_entry(0, 20));
+    table.remove_root_active_entry(0, offer_key(20, 2));
 
     let entries = table.active_entry_set(0);
     assert_eq!(entries.len(), 2);
     assert_eq!(
-        entries.slot_at(0).map(|slot| slot.entry.as_usize()),
+        entries.slot_at(0).map(|slot| slot.key.entry().as_usize()),
         Some(10)
     );
     assert_eq!(
-        entries.slot_at(1).map(|slot| slot.entry.as_usize()),
+        entries.slot_at(1).map(|slot| slot.key.entry().as_usize()),
         Some(30)
     );
     assert_eq!(table.active_pool_used(), 2);
+}
+
+#[test]
+fn root_frontier_preserves_distinct_scopes_at_the_same_entry() {
+    let mut rows = [RootFrontierState::EMPTY; 1];
+    let mut active = [ActiveEntrySlot::EMPTY; 2];
+    let mut table = init_table(&mut rows, &mut active, 1);
+    let first = offer_key(10, 1);
+    let second = offer_key(10, 2);
+
+    table.prepare_row(0, test_scope(1));
+    table.insert_root_active_entry(0, first, 0);
+    table.insert_root_active_entry(0, second, 1);
+
+    let entries = table.active_entry_set(0);
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.slot_at(0).map(|slot| slot.key), Some(first));
+    assert_eq!(entries.slot_at(1).map(|slot| slot.key), Some(second));
 }
 
 #[test]
@@ -137,7 +159,7 @@ fn root_frontier_insert_validates_all_offsets_before_pool_mutation() {
     let active_before = active_slot(&table, 0);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let _ = table.insert_root_active_entry(0, 10, 0);
+        let _ = table.insert_root_active_entry(0, offer_key(10, 1), 0);
     }));
 
     assert!(result.is_err());
@@ -154,13 +176,13 @@ fn root_frontier_remove_validates_all_offsets_before_pool_mutation() {
     for idx in 0..3 {
         table.prepare_row(idx, test_scope(idx as u16 + 1));
     }
-    assert!(table.insert_root_active_entry(0, 10, 0));
+    table.insert_root_active_entry(0, offer_key(10, 1), 0);
     table[1].active_start = 0;
     table[2].active_start = 1;
     let active_before = active_slot(&table, 0);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        let _ = table.remove_root_active_entry(0, 10);
+        let _ = table.remove_root_active_entry(0, offer_key(10, 1));
     }));
 
     assert!(result.is_err());
@@ -176,8 +198,8 @@ fn root_frontier_row_remove_validates_offsets_before_compaction() {
     let mut table = init_table(&mut rows, &mut active, 2);
     table.prepare_row(0, test_scope(1));
     table.prepare_row(1, test_scope(2));
-    assert!(table.insert_root_active_entry(0, 10, 0));
-    assert!(table.insert_root_active_entry(0, 20, 1));
+    table.insert_root_active_entry(0, offer_key(10, 1), 0);
+    table.insert_root_active_entry(0, offer_key(20, 2), 1);
     table[1].active_start = 1;
     let first_before = active_slot(&table, 0);
     let second_before = active_slot(&table, 1);

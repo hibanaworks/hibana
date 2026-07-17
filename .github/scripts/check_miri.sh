@@ -136,8 +136,8 @@ run_miri_test \
 
 run_miri_test \
   root-frontier-packed-pool-owner \
-  7 \
-  7 \
+  8 \
+  8 \
   0 \
   -p hibana \
   --lib \

@@ -1,10 +1,10 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
-    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, OfferEvidenceOutcome,
-    OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult,
-    RouteArmToken, ScopeId, Transport, frontier_snapshot_from_scratch, lane_port,
-    state_index_to_usize,
+    FrontierDeferOutcome, FrontierVisitSet, IngressEvidenceState, OfferEntryKey,
+    OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection, OfferStagedIngress, Poll,
+    RecvError, RecvResult, RouteArmToken, ScopeId, Transport, frontier_snapshot_from_scratch,
+    lane_port, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 
@@ -75,9 +75,9 @@ where
         ) {
             return Err(RecvError::PhaseInvariant);
         }
-        let current_active_entry = self.active_offer_entry(current_idx);
-        let current_entry_active =
-            current_active_entry.is_some_and(|active| active.scope() == scope_id);
+        let current_key = crate::invariant_some(OfferEntryKey::from_index(scope_id, current_idx));
+        let current_active_entry = self.active_offer_entry(current_key);
+        let current_entry_active = current_active_entry.is_some();
         // Offer-lane choice remains local to the selected route scope.
         let offer_lanes = self.offer_lane_set_for_scope(scope_id);
         let lane_limit = self.cursor.logical_lane_count();
@@ -281,18 +281,19 @@ where
         scope_id: ScopeId,
         current_idx: usize,
     ) -> CurrentFrontierSelectionState {
-        let active_entry = self.active_offer_entry(current_idx);
-        if let Some(active) = active_entry.filter(|active| active.scope() == scope_id) {
-            let summary = active.summary();
+        let active_entry = OfferEntryKey::from_index(scope_id, current_idx)
+            .and_then(|key| self.active_offer_entry(key));
+        if let Some(active) = active_entry {
+            let info = active.representative();
             let parallel_root = active.parallel_root();
             let mut flags = 0u8;
-            if summary.is_controller() {
+            if info.is_controller() {
                 flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
             }
-            if summary.is_dynamic() {
+            if info.is_dynamic() {
                 flags |= CurrentFrontierSelectionState::FLAG_DYNAMIC;
             }
-            if summary.intrinsic_ready() {
+            if info.intrinsic_ready() {
                 flags |= CurrentFrontierSelectionState::FLAG_READY;
             }
             return CurrentFrontierSelectionState {
@@ -311,23 +312,9 @@ where
             current_is_dynamic,
             current_idx,
         );
-        let cursor_parallel =
-            CursorEndpoint::<ROLE, T>::parallel_scope_root(&self.cursor, scope_id);
-        let cursor_parallel_has_offer =
-            cursor_parallel.is_some_and(|root| self.root_frontier_has_active_entries(root));
-        let current_entry_parallel = if cursor_parallel_has_offer {
-            None
-        } else {
-            active_entry.and_then(|active| {
-                let root = active.parallel_root();
-                (!root.is_none()).then_some(root)
-            })
-        };
-        let current_parallel = if cursor_parallel_has_offer {
-            cursor_parallel
-        } else {
-            current_entry_parallel
-        };
+        let current_parallel =
+            CursorEndpoint::<ROLE, T>::parallel_scope_root(&self.cursor, scope_id)
+                .filter(|&root| self.root_frontier_has_active_entries(root));
         let mut flags = 0u8;
         if current_is_controller {
             flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;

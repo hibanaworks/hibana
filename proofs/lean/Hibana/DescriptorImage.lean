@@ -221,9 +221,9 @@ theorem production_logical_lane_count_has_no_reserved_lane_overhead
     productionLogicalLaneCount witness ≤ productionLaneCapacity := by
   exact witness.spanFitsWireDomain
 
-/-- Runtime offer entries are keyed by the active lane that owns them. The
-production kernel may merge several lanes into one entry, but it cannot create
-an entry without an owning active lane. -/
+/-- Runtime offer entries have one exact `(scope, local entry)` key and retain
+the active lane that owns each key. Several exact keys may target the same
+cursor entry, but no key can exist without an owning active lane. -/
 structure FrontierCapacityWitness where
   activeLaneCount : Nat
   activeEntryCount : Nat
@@ -267,8 +267,15 @@ theorem production_frontier_capacity_has_no_former_eight_entry_limit :
       productionFrontierCapacity 256 = productionLaneCapacity := by
   decide
 
+/-- Exact identity used by production offer ownership before cursor-target
+observations erase scope while retaining one row per witness. -/
+structure ActiveOfferKey where
+  entry : Nat
+  scope : Nat
+deriving DecidableEq
+
 /-- The production active-entry set stores one concrete owning lane for every
-entry. Scope, root, frontier, and flags stay unconstrained here so membership
+exact key. Root, frontier, and flags stay unconstrained here so membership
 proves that lookup returns the owner's metadata verbatim. -/
 structure ActiveOfferLane where
   lane : Nat
@@ -279,21 +286,79 @@ structure ActiveOfferLane where
   flags : Nat
 deriving DecidableEq
 
-def firstOwningLane (target : Nat) : List ActiveOfferLane → Option ActiveOfferLane
+def ActiveOfferLane.key (lane : ActiveOfferLane) : ActiveOfferKey :=
+  { entry := lane.entry, scope := lane.scope }
+
+def activeOfferKeys : List ActiveOfferLane → List ActiveOfferKey
+  | [] => []
+  | lane :: rest =>
+      let keys := activeOfferKeys rest
+      if lane.key ∈ keys then keys else lane.key :: keys
+
+theorem active_offer_key_count_is_bounded_by_active_lane_count
+    (lanes : List ActiveOfferLane) :
+    (activeOfferKeys lanes).length ≤ lanes.length := by
+  induction lanes with
+  | nil => simp [activeOfferKeys]
+  | cons lane rest ih =>
+      simp only [activeOfferKeys]
+      split
+      · exact Nat.le_trans ih (Nat.le_succ rest.length)
+      · exact Nat.succ_le_succ ih
+
+theorem active_offer_key_mem_iff_owned
+    (target : ActiveOfferKey)
+    (lanes : List ActiveOfferLane) :
+    target ∈ activeOfferKeys lanes ↔
+      ∃ owner ∈ lanes, owner.key = target := by
+  induction lanes with
+  | nil => simp [activeOfferKeys]
+  | cons lane rest ih =>
+      simp only [activeOfferKeys]
+      by_cases duplicate : lane.key ∈ activeOfferKeys rest
+      · rw [if_pos duplicate]
+        constructor
+        · intro member
+          obtain ⟨owner, inRest, exactKey⟩ := ih.mp member
+          exact ⟨owner, List.mem_cons_of_mem lane inRest, exactKey⟩
+        · rintro ⟨owner, inLanes, exactKey⟩
+          rcases List.mem_cons.mp inLanes with rfl | inRest
+          · simpa [exactKey] using duplicate
+          · exact ih.mpr ⟨owner, inRest, exactKey⟩
+      · rw [if_neg duplicate]
+        constructor
+        · intro member
+          rcases List.mem_cons.mp member with head | inRest
+          · exact ⟨lane, List.mem_cons_self, head.symm⟩
+          · obtain ⟨owner, ownerInRest, exactKey⟩ := ih.mp inRest
+            exact ⟨owner, List.mem_cons_of_mem lane ownerInRest, exactKey⟩
+        · rintro ⟨owner, inLanes, exactKey⟩
+          rcases List.mem_cons.mp inLanes with rfl | inRest
+          · exact List.mem_cons.mpr (Or.inl exactKey.symm)
+          · exact List.mem_cons.mpr (Or.inr (ih.mpr ⟨owner, inRest, exactKey⟩))
+
+theorem production_frontier_capacity_covers_every_active_offer_key_witness
+    (lanes : List ActiveOfferLane) :
+    (activeOfferKeys lanes).length ≤ productionFrontierCapacity lanes.length := by
+  simpa [productionFrontierCapacity] using
+    active_offer_key_count_is_bounded_by_active_lane_count lanes
+
+def firstOwningLane
+    (target : ActiveOfferKey) : List ActiveOfferLane → Option ActiveOfferLane
   | [] => none
   | lane :: rest =>
-      if lane.entry = target then some lane else firstOwningLane target rest
+      if lane.key = target then some lane else firstOwningLane target rest
 
 theorem first_owning_lane_is_exact_owner
-    {target : Nat}
+    {target : ActiveOfferKey}
     {lanes : List ActiveOfferLane}
     {owner : ActiveOfferLane}
     (found : firstOwningLane target lanes = some owner) :
-    owner ∈ lanes ∧ owner.entry = target := by
+    owner ∈ lanes ∧ owner.key = target := by
   induction lanes with
   | nil => simp [firstOwningLane] at found
   | cons head tail ih =>
-      by_cases owns : head.entry = target
+      by_cases owns : head.key = target
       · simp [firstOwningLane, owns] at found
         subst owner
         exact ⟨by simp, owns⟩
@@ -302,16 +367,168 @@ theorem first_owning_lane_is_exact_owner
         exact ⟨by simp [tailOwner.1], tailOwner.2⟩
 
 theorem active_offer_entry_has_representative_iff_owned
-    (target : Nat)
+    (target : ActiveOfferKey)
     (lanes : List ActiveOfferLane) :
     firstOwningLane target lanes ≠ none ↔
-      ∃ owner ∈ lanes, owner.entry = target := by
+      ∃ owner ∈ lanes, owner.key = target := by
   induction lanes with
   | nil => simp [firstOwningLane]
   | cons head tail ih =>
-      by_cases owns : head.entry = target
+      by_cases owns : head.key = target
       · simp [firstOwningLane, owns]
       · simp [firstOwningLane, owns, ih]
+
+theorem first_owning_lane_preserves_scope
+    {target : ActiveOfferKey}
+    {lanes : List ActiveOfferLane}
+    {owner : ActiveOfferLane}
+    (found : firstOwningLane target lanes = some owner) :
+    owner.scope = target.scope := by
+  have exactOwner := first_owning_lane_is_exact_owner found
+  exact congrArg ActiveOfferKey.scope exactOwner.2
+
+theorem offer_keys_with_same_entry_and_distinct_scope_are_distinct
+    (entry leftScope rightScope : Nat)
+    (scopeNe : leftScope ≠ rightScope) :
+    ({ entry := entry, scope := leftScope } : ActiveOfferKey) ≠
+      ({ entry := entry, scope := rightScope } : ActiveOfferKey) := by
+  intro keyEq
+  exact scopeNe (congrArg ActiveOfferKey.scope keyEq)
+
+structure ActiveOfferObservation where
+  key : ActiveOfferKey
+  flags : Nat
+  selectable : Bool
+deriving DecidableEq
+
+/-- Scope-specific evidence remains one row per exact witness while alignment
+groups rows that have the same cursor transition target. -/
+def cursorTargetObservations
+    (entry : Nat)
+    (observations : List ActiveOfferObservation) : List ActiveOfferObservation :=
+  observations.filter fun observation => decide (observation.key.entry = entry)
+
+theorem cursor_target_observations_are_entry_exact
+    (entry : Nat)
+    (observations : List ActiveOfferObservation)
+    (observation : ActiveOfferObservation) :
+    observation ∈ cursorTargetObservations entry observations ↔
+      observation ∈ observations ∧ observation.key.entry = entry := by
+  simp [cursorTargetObservations]
+
+structure ErasedCursorObservation where
+  entry : Nat
+  flags : Nat
+  selectable : Bool
+deriving DecidableEq
+
+def ActiveOfferObservation.erase : ActiveOfferObservation → ErasedCursorObservation
+  | observation =>
+      { entry := observation.key.entry
+        flags := observation.flags
+        selectable := observation.selectable }
+
+def erasedCursorTargetObservations
+    (entry : Nat)
+    (observations : List ActiveOfferObservation) : List ErasedCursorObservation :=
+  (cursorTargetObservations entry observations).map ActiveOfferObservation.erase
+
+theorem erased_cursor_target_observations_preserve_witness_count
+    (entry : Nat)
+    (observations : List ActiveOfferObservation) :
+    (erasedCursorTargetObservations entry observations).length =
+      (cursorTargetObservations entry observations).length := by
+  simp [erasedCursorTargetObservations]
+
+theorem erased_cursor_target_observation_has_exact_source
+    (entry : Nat)
+    (observations : List ActiveOfferObservation)
+    (erased : ErasedCursorObservation) :
+    erased ∈ erasedCursorTargetObservations entry observations ↔
+      ∃ observation ∈ observations,
+        observation.key.entry = entry ∧ observation.erase = erased := by
+  simp [erasedCursorTargetObservations, cursorTargetObservations, and_assoc]
+
+/-- Every predicate used after scope erasure, including conjunctions over
+authority, readiness, and admission, is evaluated on one row with one exact
+scope source. Erasure cannot satisfy a predicate by combining separate rows. -/
+theorem erased_cursor_target_predicate_has_exact_source
+    (predicate : ErasedCursorObservation → Prop)
+    (entry : Nat)
+    (observations : List ActiveOfferObservation)
+    (erased : ErasedCursorObservation)
+    (member : erased ∈ erasedCursorTargetObservations entry observations)
+    (holds : predicate erased) :
+    ∃ observation ∈ observations,
+      observation.key.entry = entry ∧
+        observation.erase = erased ∧ predicate observation.erase := by
+  obtain ⟨observation, sourceMember, entryExact, sourceExact⟩ :=
+    (erased_cursor_target_observation_has_exact_source entry observations erased).mp member
+  refine ⟨observation, sourceMember, entryExact, sourceExact, ?_⟩
+  rwa [sourceExact]
+
+/-- Proof-side counterpart of production's stable insertion into the erased
+cursor-target observation buffer. Equal entries remain adjacent. -/
+def insertErasedCursorObservation
+    (incoming : ErasedCursorObservation) :
+    List ErasedCursorObservation → List ErasedCursorObservation
+  | [] => [incoming]
+  | head :: tail =>
+      if incoming.entry < head.entry then
+        incoming :: head :: tail
+      else
+        head :: insertErasedCursorObservation incoming tail
+
+theorem insert_erased_cursor_observation_mem_iff
+    (incoming row : ErasedCursorObservation)
+    (rows : List ErasedCursorObservation) :
+    row ∈ insertErasedCursorObservation incoming rows ↔
+      row = incoming ∨ row ∈ rows := by
+  induction rows with
+  | nil => simp [insertErasedCursorObservation]
+  | cons head tail ih =>
+      simp only [insertErasedCursorObservation]
+      split <;> simp_all [eq_comm, or_left_comm]
+
+theorem insert_erased_cursor_observation_length
+    (incoming : ErasedCursorObservation)
+    (rows : List ErasedCursorObservation) :
+    (insertErasedCursorObservation incoming rows).length = rows.length + 1 := by
+  induction rows with
+  | nil => simp [insertErasedCursorObservation]
+  | cons head tail ih =>
+      simp only [insertErasedCursorObservation]
+      split <;> simp_all
+
+theorem insert_erased_cursor_observation_preserves_entry_order
+    (incoming : ErasedCursorObservation)
+    (rows : List ErasedCursorObservation)
+    (ordered : rows.Pairwise fun left right => left.entry ≤ right.entry) :
+    (insertErasedCursorObservation incoming rows).Pairwise
+      (fun left right => left.entry ≤ right.entry) := by
+  induction rows with
+  | nil => simp [insertErasedCursorObservation]
+  | cons head tail ih =>
+      rw [insertErasedCursorObservation]
+      by_cases before : incoming.entry < head.entry
+      · rw [if_pos before]
+        apply List.pairwise_cons.mpr
+        constructor
+        · intro row member
+          rcases List.mem_cons.mp member with rfl | inTail
+          · exact Nat.le_of_lt before
+          · exact Nat.le_trans (Nat.le_of_lt before)
+              ((List.pairwise_cons.mp ordered).1 row inTail)
+        · exact ordered
+      · rw [if_neg before]
+        apply List.pairwise_cons.mpr
+        constructor
+        · intro row member
+          rcases (insert_erased_cursor_observation_mem_iff incoming row tail).mp member with
+            rfl | inTail
+          · exact Nat.le_of_not_gt before
+          · exact (List.pairwise_cons.mp ordered).1 row inTail
+        · exact ih (List.pairwise_cons.mp ordered).2
 
 def productionRoleEventOnlyCapacity : Nat :=
   productionDescriptorByteCapacity / productionRoleEventStride

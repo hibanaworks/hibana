@@ -18,7 +18,7 @@ fn lane_state(
 }
 
 #[test]
-fn active_offer_entry_keeps_one_exact_owner_and_aggregates_all_lanes() {
+fn active_offer_entry_accepts_only_identical_scope_entry_metadata() {
     let scope = ScopeId::new(ScopeKind::Route, 3);
     let root = ScopeId::new(ScopeKind::Parallel, 1);
     let first = lane_state(
@@ -28,29 +28,19 @@ fn active_offer_entry_keeps_one_exact_owner_and_aggregates_all_lanes() {
         FrontierKind::Route,
         LaneOfferState::FLAG_CONTROLLER,
     );
-    let second = lane_state(
-        7,
-        ScopeId::new(ScopeKind::Route, 4),
-        ScopeId::new(ScopeKind::Parallel, 2),
-        FrontierKind::Reentry,
-        LaneOfferState::FLAG_DYNAMIC | LaneOfferState::FLAG_INTRINSIC_READY,
-    );
-    let mut active = ActiveOfferEntry::new(2, first).expect("valid active owner");
+    let active = ActiveOfferEntry::new(2, first).expect("valid active owner");
 
-    assert!(active.observe_lane(second));
+    assert!(active.accepts_lane(first));
     assert_eq!(active.representative_lane(), 2);
     assert_eq!(active.representative(), first);
     assert_eq!(
-        active.summary().frontier_mask,
-        FrontierKind::Route.bit() | FrontierKind::Reentry.bit()
+        active.representative().key(),
+        Some(first.key().expect("exact offer key"))
     );
-    assert!(active.summary().is_controller());
-    assert!(active.summary().is_dynamic());
-    assert!(active.summary().intrinsic_ready());
 }
 
 #[test]
-fn active_offer_entry_rejects_foreign_entry_without_partial_update() {
+fn active_offer_entry_rejects_foreign_scope_even_when_entry_matches() {
     let scope = ScopeId::new(ScopeKind::Route, 3);
     let first = lane_state(
         7,
@@ -59,17 +49,15 @@ fn active_offer_entry_rejects_foreign_entry_without_partial_update() {
         FrontierKind::Route,
         LaneOfferState::FLAG_CONTROLLER,
     );
-    let mut active = ActiveOfferEntry::new(2, first).expect("valid active owner");
-    let before = active;
+    let active = ActiveOfferEntry::new(2, first).expect("valid active owner");
     let foreign = lane_state(
-        8,
-        scope,
+        7,
+        ScopeId::new(ScopeKind::Route, 4),
         ScopeId::none(),
         FrontierKind::Parallel,
         LaneOfferState::FLAG_DYNAMIC,
     );
 
-    assert!(!active.observe_lane(foreign));
-    assert_eq!(active, before);
+    assert!(!active.accepts_lane(foreign));
     assert!(ActiveOfferEntry::new(2, LaneOfferState::EMPTY).is_none());
 }

@@ -726,14 +726,25 @@ impl RouteState {
     }
 
     #[inline]
-    pub(super) fn clear_lane_offer_state(&mut self, lane_idx: usize) -> LaneOfferState {
+    fn take_lane_offer_state(&mut self, lane_idx: usize) -> LaneOfferState {
         let detached = self.lane_offer_state(lane_idx);
         if let Some(state) = self.lane_offer_state_mut(lane_idx) {
             *state = LaneOfferState::EMPTY;
         }
         self.active_offer_lanes.remove(lane_idx);
+        detached
+    }
+
+    #[inline]
+    pub(super) fn clear_lane_offer_state(&mut self, lane_idx: usize) -> LaneOfferState {
+        let detached = self.take_lane_offer_state(lane_idx);
         self.lane_offer_reentry_lanes.remove(lane_idx);
         detached
+    }
+
+    #[inline]
+    pub(super) fn take_lane_offer_state_for_rebuild(&mut self, lane_idx: usize) -> LaneOfferState {
+        self.take_lane_offer_state(lane_idx)
     }
 
     #[inline]

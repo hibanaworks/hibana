@@ -1,6 +1,6 @@
-//! Compact observation records streamed by offer arbitration.
+//! Compact cursor-target observations streamed by offer arbitration.
 
-use super::{FrontierKind, ScopeId, StateIndex};
+use super::{FrontierKind, OfferEntryKey, StateIndex};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FrontierObservationSlot {
@@ -23,23 +23,14 @@ impl FrontierObservationSlot {
         flags: 0,
     };
 
-    #[inline]
-    pub(crate) const fn new(entry: StateIndex) -> Self {
-        Self {
-            entry,
-            frontier_mask: 0,
-            flags: 0,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn record(
-        &mut self,
+    pub(crate) fn from_exact_observation(
         observed: OfferEntryObservedState,
-        frontier_mask: u8,
         admission: OfferEntryAdmission,
-    ) {
-        if frontier_mask & !FrontierKind::ALL_BITS != 0 {
+    ) -> Self {
+        if observed.key.is_absent()
+            || observed.frontier_mask & !FrontierKind::ALL_BITS != 0
+            || observed.flags & !OfferEntryObservedState::ALL_FLAGS != 0
+        {
             crate::invariant();
         }
         let mut flags = 0u8;
@@ -61,8 +52,11 @@ impl FrontierObservationSlot {
         if admission.is_selectable() {
             flags |= Self::FLAG_SELECTABLE;
         }
-        self.frontier_mask = frontier_mask;
-        self.flags = flags;
+        Self {
+            entry: observed.key.entry(),
+            frontier_mask: observed.frontier_mask,
+            flags,
+        }
     }
 
     #[inline]
@@ -128,7 +122,7 @@ pub(crate) fn cached_frontier_observation_slots_len(slots: &[FrontierObservation
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OfferEntryObservedState {
-    pub(crate) scope_id: ScopeId,
+    pub(crate) key: OfferEntryKey,
     pub(crate) frontier_mask: u8,
     pub(crate) flags: u8,
 }
@@ -138,8 +132,8 @@ impl OfferEntryObservedState {
     pub(crate) const FLAG_DYNAMIC: u8 = 1 << 1;
     pub(crate) const FLAG_PROGRESS: u8 = 1 << 2;
     pub(crate) const FLAG_READY_ARM: u8 = 1 << 3;
-    pub(crate) const FLAG_BINDING_READY: u8 = 1 << 4;
-    pub(crate) const FLAG_READY: u8 = 1 << 5;
+    pub(crate) const FLAG_READY: u8 = 1 << 4;
+    pub(crate) const ALL_FLAGS: u8 = (1 << 5) - 1;
 
     #[inline]
     pub(crate) fn is_controller(self) -> bool {

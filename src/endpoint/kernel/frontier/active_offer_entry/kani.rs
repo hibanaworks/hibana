@@ -1,6 +1,4 @@
-use super::{
-    ActiveOfferEntry, FrontierKind, LaneOfferState, OfferEntrySummary, ScopeId, StateIndex,
-};
+use super::{ActiveOfferEntry, FrontierKind, LaneOfferState, ScopeId, StateIndex};
 use crate::global::const_dsl::ScopeKind;
 
 fn frontier_from_raw(raw: u8) -> FrontierKind {
@@ -23,45 +21,24 @@ fn lane_state(frontier: FrontierKind, flags: u8) -> LaneOfferState {
 }
 
 #[kani::proof]
-fn active_offer_entry_aggregation_is_exact_and_owner_stable() {
+fn active_offer_entry_accepts_only_exact_scope_entry_metadata() {
     let first_lane: u8 = kani::any();
     let first_frontier = frontier_from_raw(kani::any());
-    let second_frontier = frontier_from_raw(kani::any());
     let first_flags: u8 = kani::any();
-    let second_flags: u8 = kani::any();
     let first = lane_state(first_frontier, first_flags);
-    let mut second = lane_state(second_frontier, second_flags);
-    if kani::any() {
-        second.scope = ScopeId::new(ScopeKind::Route, 4);
-    }
-    if kani::any() {
-        second.parallel_root = ScopeId::new(ScopeKind::Parallel, 2);
-    }
-    let mut active = ActiveOfferEntry::new(first_lane, first).unwrap();
+    let active = ActiveOfferEntry::new(first_lane, first).unwrap();
 
-    assert!(active.observe_lane(second));
+    assert!(active.accepts_lane(first));
     assert_eq!(active.representative_lane(), first_lane);
     assert_eq!(active.representative(), first);
-    assert_eq!(
-        active.summary().frontier_mask,
-        first_frontier.bit() | second_frontier.bit()
-    );
-    assert_eq!(
-        active.summary().flags,
-        (first_flags | second_flags)
-            & (OfferEntrySummary::FLAG_CONTROLLER
-                | OfferEntrySummary::FLAG_DYNAMIC
-                | OfferEntrySummary::FLAG_INTRINSIC_READY)
-    );
 }
 
 #[kani::proof]
-fn active_offer_entry_foreign_entry_is_atomic_rejection() {
-    let mut active = ActiveOfferEntry::new(2, lane_state(FrontierKind::Route, 0)).unwrap();
-    let before = active;
+fn active_offer_entry_foreign_scope_is_exact_rejection() {
+    let active = ActiveOfferEntry::new(2, lane_state(FrontierKind::Route, 0)).unwrap();
     let mut foreign = lane_state(FrontierKind::Parallel, kani::any());
-    foreign.entry = StateIndex::new(8);
+    foreign.scope = ScopeId::new(ScopeKind::Route, 4);
 
-    assert!(!active.observe_lane(foreign));
-    assert_eq!(active, before);
+    assert!(!active.accepts_lane(foreign));
+    assert_ne!(active.representative().key(), foreign.key());
 }

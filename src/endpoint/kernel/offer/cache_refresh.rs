@@ -15,11 +15,8 @@ where
             let slot = crate::invariant_some(active_entries.slot_at(slot_idx));
             let (active, observed, _) = self.scan_active_offer_entry_non_consuming(slot);
             let entry_idx = active.entry().as_usize();
-            let (observed_slot, _) = crate::invariant_some(composed.insert_entry(entry_idx));
-            composed.record_observation(
-                observed_slot,
+            composed.push_exact_observation(
                 observed,
-                active.summary().frontier_mask,
                 if self
                     .cursor
                     .route_scope_present_for_entry(entry_idx, Some(active.scope()))

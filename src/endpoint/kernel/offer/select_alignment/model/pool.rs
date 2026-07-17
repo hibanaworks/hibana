@@ -1,7 +1,6 @@
 use super::super::super::ObservedEntrySet;
-use super::entry::OfferAlignmentCandidateInput;
-use super::selection::{CurrentOfferObservation, OfferAlignmentOutcome, OfferAlignmentSelection};
-use crate::endpoint::kernel::frontier::FrontierObservationSlot;
+use super::entry::{CandidateAuthority, OfferAlignmentCandidateInput};
+use super::selection::{ClassifiedCandidates, CurrentOfferObservation, OfferAlignmentSelection};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CurrentControllerFrontier {
@@ -13,66 +12,6 @@ enum CurrentControllerFrontier {
 pub(in crate::endpoint::kernel::offer::select_alignment) struct OfferAlignmentCandidatePool {
     observed_entries: ObservedEntrySet,
     input: OfferAlignmentCandidateInput,
-}
-
-#[derive(Clone, Copy)]
-struct ClassifiedCandidates {
-    candidate_count: usize,
-    first_candidate: Option<usize>,
-    controller_count: usize,
-    first_controller: Option<usize>,
-    dynamic_controller_count: usize,
-    first_dynamic_controller: Option<usize>,
-}
-
-impl ClassifiedCandidates {
-    const EMPTY: Self = Self {
-        candidate_count: 0,
-        first_candidate: None,
-        controller_count: 0,
-        first_controller: None,
-        dynamic_controller_count: 0,
-        first_dynamic_controller: None,
-    };
-
-    fn record(&mut self, entry_idx: usize, slot: FrontierObservationSlot) {
-        if self.first_candidate.is_none() {
-            self.first_candidate = Some(entry_idx);
-        }
-        self.candidate_count += 1;
-        if slot.is_controller() {
-            if self.first_controller.is_none() {
-                self.first_controller = Some(entry_idx);
-            }
-            self.controller_count += 1;
-            if slot.is_dynamic() {
-                if self.first_dynamic_controller.is_none() {
-                    self.first_dynamic_controller = Some(entry_idx);
-                }
-                self.dynamic_controller_count += 1;
-            }
-        }
-    }
-
-    fn outcome(self) -> OfferAlignmentOutcome {
-        if self.dynamic_controller_count == 1 {
-            return OfferAlignmentOutcome::UniqueDynamicController(crate::invariant_some(
-                self.first_dynamic_controller,
-            ));
-        }
-        if self.controller_count == 1 {
-            return OfferAlignmentOutcome::UniqueController(crate::invariant_some(
-                self.first_controller,
-            ));
-        }
-        match self.candidate_count {
-            0 => OfferAlignmentOutcome::CandidateAbsent,
-            1 => {
-                OfferAlignmentOutcome::UniqueCandidate(crate::invariant_some(self.first_candidate))
-            }
-            _ => OfferAlignmentOutcome::CandidateSetAmbiguous,
-        }
-    }
 }
 
 impl OfferAlignmentCandidatePool {
@@ -114,9 +53,16 @@ impl OfferAlignmentCandidatePool {
 
     fn current_controller_frontier(self) -> CurrentControllerFrontier {
         let current_has_no_authority_evidence = self.current_slot().is_some_and(|slot_idx| {
-            self.observed_entries
-                .slot(slot_idx)
-                .is_some_and(|slot| !slot.has_ready_arm() && !slot.has_progress())
+            let end = crate::invariant_some(self.observed_entries.entry_group_end(slot_idx));
+            let mut current = slot_idx;
+            while current < end {
+                let slot = crate::invariant_some(self.observed_entries.slot(current));
+                if slot.has_ready_arm() || slot.has_progress() {
+                    return false;
+                }
+                current += 1;
+            }
+            true
         });
         if self.input.current_authority.is_controller()
             && self.current_matches_route()
@@ -160,21 +106,25 @@ impl OfferAlignmentCandidatePool {
     pub(in crate::endpoint::kernel::offer::select_alignment) fn current_observation(
         self,
     ) -> CurrentOfferObservation {
-        let Some(current_slot) = self.current_slot() else {
+        let Some(current_start) = self.current_slot() else {
             return CurrentOfferObservation::empty();
         };
-        let Some(slot) = self.observed_entries.slot(current_slot) else {
-            crate::invariant();
-        };
+        let current_end =
+            crate::invariant_some(self.observed_entries.entry_group_end(current_start));
         let mut observation = CurrentOfferObservation::empty().with_present();
-        if slot.is_selectable() && slot.is_ready() {
-            observation = observation.with_ready();
-        }
-        if self.slot_has_progress(current_slot) {
-            observation = observation.with_progress_evidence();
-        }
-        if slot.has_progress() {
-            observation = observation.with_observed_progress_evidence();
+        let mut current = current_start;
+        while current < current_end {
+            let slot = crate::invariant_some(self.observed_entries.slot(current));
+            if slot.is_selectable() && slot.is_ready() {
+                observation = observation.with_ready();
+            }
+            if self.slot_has_progress(current) {
+                observation = observation.with_progress_evidence();
+            }
+            if slot.has_progress() {
+                observation = observation.with_observed_progress_evidence();
+            }
+            current += 1;
         }
 
         let mut slot_idx = 0usize;
@@ -198,40 +148,55 @@ impl OfferAlignmentCandidatePool {
     ) -> OfferAlignmentSelection {
         let current_controller = self.current_controller_frontier();
         let mut ready_count = 0usize;
-        let mut ready_slot = None;
+        let mut ready_entry_filter = None;
         let mut slot_idx = 0usize;
         while slot_idx < self.observed_entries.len() {
-            let Some(slot) = self.observed_entries.slot(slot_idx) else {
-                crate::invariant();
-            };
-            if self.is_candidate(slot_idx, current_controller) && slot.has_ready_arm() {
+            let entry_idx = crate::invariant_some(self.observed_entries.entry_idx(slot_idx));
+            let group_end = crate::invariant_some(self.observed_entries.entry_group_end(slot_idx));
+            let mut current = slot_idx;
+            let mut has_ready_candidate = false;
+            while current < group_end {
+                let slot = crate::invariant_some(self.observed_entries.slot(current));
+                if self.is_candidate(current, current_controller) && slot.has_ready_arm() {
+                    has_ready_candidate = true;
+                }
+                current += 1;
+            }
+            if has_ready_candidate {
                 ready_count += 1;
-                if ready_slot.is_none() {
-                    ready_slot = Some(slot_idx);
+                if ready_entry_filter.is_none() {
+                    ready_entry_filter = Some(entry_idx);
                 }
             }
-            slot_idx += 1;
+            slot_idx = group_end;
         }
 
-        let ready_slot = if ready_count == 1 { ready_slot } else { None };
-        let ready_entry_filter = ready_slot.and_then(|slot| self.observed_entries.entry_idx(slot));
+        if ready_count != 1 {
+            ready_entry_filter = None;
+        }
         let mut classified = ClassifiedCandidates::EMPTY;
         slot_idx = 0;
         while slot_idx < self.observed_entries.len() {
-            let selected = match ready_slot {
-                Some(ready) => slot_idx == ready,
-                None => self.is_candidate(slot_idx, current_controller),
-            };
-            if selected {
-                let Some(slot) = self.observed_entries.slot(slot_idx) else {
-                    crate::invariant();
-                };
-                let Some(entry_idx) = self.observed_entries.entry_idx(slot_idx) else {
-                    crate::invariant();
-                };
-                classified.record(entry_idx, slot);
+            let entry_idx = crate::invariant_some(self.observed_entries.entry_idx(slot_idx));
+            let group_end = crate::invariant_some(self.observed_entries.entry_group_end(slot_idx));
+            let mut current = slot_idx;
+            let mut has_candidate = false;
+            let mut authority = CandidateAuthority::Passive;
+            while current < group_end {
+                let slot = crate::invariant_some(self.observed_entries.slot(current));
+                if self.is_candidate(current, current_controller) {
+                    has_candidate = true;
+                    authority = authority.merge(CandidateAuthority::from_observation(
+                        slot.is_controller(),
+                        slot.is_dynamic(),
+                    ));
+                }
+                current += 1;
             }
-            slot_idx += 1;
+            if has_candidate && ready_entry_filter.is_none_or(|ready| ready == entry_idx) {
+                classified.record(entry_idx, authority);
+            }
+            slot_idx = group_end;
         }
 
         OfferAlignmentSelection {
@@ -240,3 +205,6 @@ impl OfferAlignmentCandidatePool {
         }
     }
 }
+
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
+mod tests;

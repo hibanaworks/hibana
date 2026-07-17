@@ -1,3 +1,44 @@
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[repr(u8)]
+pub(in crate::endpoint::kernel::offer::select_alignment) enum ProgressEvidence {
+    Absent,
+    Present,
+}
+
+impl ProgressEvidence {
+    #[inline]
+    pub(in crate::endpoint::kernel::offer::select_alignment) const fn is_absent(self) -> bool {
+        matches!(self, Self::Absent)
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum CandidateAuthority {
+    Passive,
+    Controller,
+    DynamicController,
+}
+
+impl CandidateAuthority {
+    pub(super) const fn from_observation(controller: bool, dynamic: bool) -> Self {
+        if !controller {
+            Self::Passive
+        } else if dynamic {
+            Self::DynamicController
+        } else {
+            Self::Controller
+        }
+    }
+
+    pub(super) const fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::DynamicController, _) | (_, Self::DynamicController) => Self::DynamicController,
+            (Self::Controller, _) | (_, Self::Controller) => Self::Controller,
+            _ => Self::Passive,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::endpoint::kernel::offer::select_alignment) enum CurrentOfferEntry {
     RouteWithOfferLanes,

@@ -516,15 +516,22 @@ dependencies introduced by the checked Core/Std proofs, and the gate requires
 every exported theorem in the package to appear in that audit.
 
 Frontier scratch capacity is derived from the projected active-lane count. Lean
-proves that every active offer entry has an owning active lane and that the
-complete 256-lane wire domain bounds the resulting allocation; the production
-selection kernel streams those entries instead of representing them in a fixed
-candidate bit mask. The representative lookup is proved total exactly when an
-owning lane exists, and every returned representative is an exact owner; no
-frontier kind is fabricated for a missing representative. Visit tracking uses
-exact local-entry identity rather than route-scope identity, and Lean proves
-that the same allocation covers every visited entry. Capacity exhaustion is an
-invariant failure, never silent truncation.
+proves that every exact `(route scope, local entry)` offer key has an owning
+active lane and that the complete 256-lane wire domain bounds the resulting
+allocation; the production selection kernel streams those keys instead of
+representing them in a fixed candidate bit mask. The representative lookup is
+proved total exactly when an owning lane exists, preserves the exact scope, and
+cannot collapse two scopes that share a local entry. Scope-specific authority
+and evidence remain separate exact witness rows while observations with the
+same cursor target are grouped for selection; Lean proves every erased row has
+one exact source and every post-erasure row predicate retains that source, so
+admission, readiness, and authority from different scopes cannot be combined.
+The proof-side stable insertion preserves every row, increases the buffer by
+exactly one row, and keeps equal cursor targets in one ordered group.
+Visit tracking intentionally uses local-entry identity because it
+tracks cursor movement, not offer ownership, and Lean proves that the same
+allocation covers every visited entry. Capacity exhaustion is an invariant
+failure, never silent truncation.
 
 All other lane-indexed endpoint storage follows the exact projected lane span.
 Lean and Kani prove that this span covers every active lane and remains inside

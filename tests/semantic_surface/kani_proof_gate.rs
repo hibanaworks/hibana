@@ -11,6 +11,9 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
     let decision_state_harnesses = read("src/endpoint/kernel/decision_state/kani.rs");
     let active_offer_harnesses = read("src/endpoint/kernel/frontier/active_offer_entry/kani.rs");
+    let frontier_entry_harnesses = read("src/endpoint/kernel/frontier/entry_sets/kani.rs");
+    let alignment_harnesses =
+        read("src/endpoint/kernel/offer/select_alignment/model/pool/tests.rs");
     let frontier_state_harnesses = read("src/endpoint/kernel/frontier_state/kani.rs");
     let public_operation_harnesses = read("src/endpoint/kernel/core/public_types/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
@@ -90,14 +93,33 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(decision_state_harnesses.contains("finish_for_lane(mismatched_lane)"));
     assert!(decision_state_harnesses.contains("assert!(rejected.is_err())"));
     for harness in [
-        "active_offer_entry_aggregation_is_exact_and_owner_stable",
-        "active_offer_entry_foreign_entry_is_atomic_rejection",
+        "active_offer_entry_accepts_only_exact_scope_entry_metadata",
+        "active_offer_entry_foreign_scope_is_exact_rejection",
     ] {
         assert!(active_offer_harnesses.contains(&format!("fn {harness}()")));
     }
     assert!(!active_offer_harnesses.contains("kani::assume"));
     for harness in [
+        "frontier_entry_identity_distinguishes_scope_at_same_entry",
+        "active_frontier_entry_rejects_absent_exact_key",
+        "offer_entry_key_rejects_non_route_scopes",
+        "frontier_observation_rows_preserve_exact_witnesses_for_one_cursor_target",
+        "exact_observation_buffer_retains_same_entry_witness_rows",
+        "exact_observation_buffer_groups_all_cursor_target_order_classes",
+        "selectable_ready_query_never_admits_an_excluded_exact_witness",
+        "exact_observation_capacity_exhaustion_is_fail_closed",
+        "frontier_observation_rejects_absent_exact_key",
+        "frontier_observation_rejects_flags_outside_the_exact_domain",
+    ] {
+        assert!(frontier_entry_harnesses.contains(&format!("fn {harness}()")));
+    }
+    assert!(
+        alignment_harnesses
+            .contains("fn exact_scope_rows_never_synthesize_controller_progress_authority()")
+    );
+    for harness in [
         "root_frontier_owner_slots_preserve_symbolic_lane_order",
+        "root_frontier_owner_slots_distinguish_scope_at_same_entry",
         "root_frontier_owner_slot_survives_first_entry_removal",
         "root_frontier_owner_slot_survives_last_entry_removal",
         "root_frontier_owner_slot_survives_row_compaction",

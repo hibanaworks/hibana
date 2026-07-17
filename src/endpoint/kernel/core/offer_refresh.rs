@@ -1,6 +1,6 @@
 use super::{
-    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, ReentryScopeLiveness, ScopeId,
-    StateIndex, Transport, state_index_to_usize,
+    ActiveEntrySet, CursorEndpoint, CursorRefresh, LaneOfferState, OfferEntryKey,
+    ReentryScopeLiveness, ScopeId, StateIndex, Transport, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -51,22 +51,22 @@ where
     #[inline]
     pub(in crate::endpoint::kernel) fn attach_offer_entry_to_root_frontier(
         &mut self,
-        entry_idx: usize,
+        key: OfferEntryKey,
         root: ScopeId,
         lane_idx: u8,
     ) {
         self.frontier_state
-            .attach_offer_entry_to_root_frontier(entry_idx, root, lane_idx);
+            .attach_offer_entry_to_root_frontier(key, root, lane_idx);
     }
 
     #[inline]
     pub(in crate::endpoint::kernel) fn detach_offer_entry_from_root_frontier(
         &mut self,
-        entry_idx: usize,
+        key: OfferEntryKey,
         root: ScopeId,
     ) {
         self.frontier_state
-            .detach_offer_entry_from_root_frontier(entry_idx, root);
+            .detach_offer_entry_from_root_frontier(key, root);
     }
 
     #[inline]

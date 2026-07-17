@@ -73,6 +73,17 @@ src/endpoint/kernel	src/endpoint/kernel/offer
 src/endpoint/kernel	src/endpoint/kernel/offer.rs
 src/endpoint/kernel	src/endpoint/kernel/decision_state
 src/endpoint/kernel	src/endpoint/kernel/decision_state.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/active_offer_entry
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/active_offer_entry.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/entry_sets
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/entry_sets.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/kind.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/observation.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/offer_entries.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/scratch.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/select.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta_apply.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta_route_only.rs

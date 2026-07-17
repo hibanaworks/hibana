@@ -1,7 +1,4 @@
-use super::{
-    FrontierCandidate, FrontierKind, OfferEntryObservedState, OfferEntrySummary, ScopeId,
-    checked_state_index,
-};
+use super::{FrontierCandidate, LaneOfferState, OfferEntryObservedState};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OfferSelectPriority {
     CurrentOfferEntry,
@@ -69,17 +66,16 @@ pub(crate) fn candidate_has_progress_evidence(evidence: OfferEntryEvidence) -> b
 
 #[inline]
 pub(crate) fn offer_entry_observed_state(
-    scope_id: ScopeId,
-    summary: OfferEntrySummary,
+    info: LaneOfferState,
     evidence: OfferEntryEvidence,
 ) -> OfferEntryObservedState {
     let has_progress_evidence = candidate_has_progress_evidence(evidence);
-    let ready = has_progress_evidence || summary.intrinsic_ready();
+    let ready = has_progress_evidence || info.intrinsic_ready();
     let mut flags = 0u8;
-    if summary.is_controller() {
+    if info.is_controller() {
         flags |= OfferEntryObservedState::FLAG_CONTROLLER;
     }
-    if summary.is_dynamic() {
+    if info.is_dynamic() {
         flags |= OfferEntryObservedState::FLAG_DYNAMIC;
     }
     if has_progress_evidence {
@@ -88,33 +84,29 @@ pub(crate) fn offer_entry_observed_state(
     if evidence.has_ready_arm() {
         flags |= OfferEntryObservedState::FLAG_READY_ARM;
     }
-    if evidence.ingress_ready() {
-        flags |= OfferEntryObservedState::FLAG_BINDING_READY;
-    }
     if ready {
         flags |= OfferEntryObservedState::FLAG_READY;
     }
     OfferEntryObservedState {
-        scope_id,
-        frontier_mask: summary.frontier_mask,
+        key: crate::invariant_some(info.key()),
+        frontier_mask: info.frontier.bit(),
         flags,
     }
 }
 
 #[inline]
 pub(crate) fn offer_entry_frontier_candidate(
-    scope_id: ScopeId,
-    entry_idx: usize,
-    parallel_root: ScopeId,
-    frontier: FrontierKind,
+    info: LaneOfferState,
     observed: OfferEntryObservedState,
 ) -> FrontierCandidate {
-    let entry = crate::invariant_some(checked_state_index(entry_idx));
+    if Some(observed.key) != info.key() {
+        crate::invariant();
+    }
     FrontierCandidate {
-        scope_id,
-        entry,
-        parallel_root,
-        frontier,
+        scope_id: info.scope,
+        entry: observed.key.entry(),
+        parallel_root: info.parallel_root,
+        frontier: info.frontier,
         flags: FrontierCandidate::flags_from_observed(observed),
     }
 }
