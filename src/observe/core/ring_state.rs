@@ -71,10 +71,18 @@ mod kani {
 
     #[kani::proof]
     fn ring_state_step_preserves_the_exact_slot_domain() {
-        let write_index: u8 = kani::any();
-        let resident_len: u8 = kani::any();
-        kani::assume((write_index as usize) < TAP_EVENTS);
-        kani::assume(resident_len as usize <= TAP_EVENTS);
+        let write_candidate: u8 = kani::any();
+        let resident_candidate: u8 = kani::any();
+        let write_index = if (write_candidate as usize) < TAP_EVENTS {
+            write_candidate
+        } else {
+            0
+        };
+        let resident_len = if resident_candidate as usize <= TAP_EVENTS {
+            resident_candidate
+        } else {
+            TAP_EVENTS as u8
+        };
         let head_era = if kani::any() {
             HeadEra::Initial
         } else {

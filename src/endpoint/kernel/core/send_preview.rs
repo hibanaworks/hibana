@@ -43,7 +43,13 @@ where
                 PublicActiveOp::RouteBranch => {
                     return self.preview_branch_send_meta(target_label, target_schema);
                 }
-                _ => return Err(SendError::PhaseInvariant),
+                PublicActiveOp::Poisoned
+                | PublicActiveOp::Send
+                | PublicActiveOp::Recv
+                | PublicActiveOp::Offer
+                | PublicActiveOp::RestoredRouteBranch
+                | PublicActiveOp::BranchRecv
+                | PublicActiveOp::BranchSend => return Err(SendError::PhaseInvariant),
             }
             let preview_error = Cell::new(None::<SendError>);
             let preview_result = {

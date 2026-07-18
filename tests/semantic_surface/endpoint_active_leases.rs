@@ -10,6 +10,10 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     let public_types = read("src/endpoint/kernel/core/public_types.rs");
     let public_state = format!("{public_operation}\n{public_types}");
     let public_ops = read("src/endpoint/kernel/public_ops.rs");
+    assert!(
+        !public_ops.contains("_ =>"),
+        "public operation phase matches must enumerate every phase so enum growth fails closed at compile time"
+    );
     let public_poll = read("src/endpoint/kernel/public_poll.rs");
     let public_runtime = format!("{public_ops}\n{public_poll}");
     let endpoint_ops = read("src/endpoint/ops.rs");
@@ -199,7 +203,9 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
     assert!(
         route_preview.contains("PublicActiveOp::Idle")
             && route_preview.contains("self.preview_branch_send_meta(target_label, target_schema)")
-            && route_preview.contains("_ => return Err(SendError::PhaseInvariant),")
+            && !route_preview.contains("_ =>")
+            && route_preview.contains("PublicActiveOp::RestoredRouteBranch")
+            && route_preview.contains("PublicActiveOp::BranchSend =>")
             && !branch_send_preview.contains("poison_for_send_error")
             && !branch_send_preview.contains("public_op_busy_fault"),
         "send preview must preserve selected-arm authority while one outer boundary owns every terminal failure"

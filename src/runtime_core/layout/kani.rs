@@ -15,8 +15,12 @@ fn u32_word_count_is_exact_over_the_complete_usize_domain() {
 #[kani::proof]
 fn checked_alignment_is_exact_over_the_complete_usize_domain() {
     let value: usize = kani::any();
-    let shift: u8 = kani::any();
-    kani::assume(u32::from(shift) < usize::BITS);
+    let candidate: u8 = kani::any();
+    let shift = if u32::from(candidate) < usize::BITS {
+        candidate
+    } else {
+        0
+    };
     let align = 1usize << shift;
     let mask = align - 1;
 
@@ -33,8 +37,12 @@ fn checked_alignment_is_exact_over_the_complete_usize_domain() {
 fn checked_absolute_offset_alignment_is_exact_and_never_wraps() {
     let base: usize = kani::any();
     let offset: usize = kani::any();
-    let shift: u8 = kani::any();
-    kani::assume(u32::from(shift) < usize::BITS);
+    let candidate: u8 = kani::any();
+    let shift = if u32::from(candidate) < usize::BITS {
+        candidate
+    } else {
+        0
+    };
     let align = 1usize << shift;
 
     let aligned = checked_align_offset(base, offset, align);

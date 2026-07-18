@@ -55,8 +55,8 @@ fn deterministic_inbound_key_rejects_each_single_axis_mismatch() {
 
 #[kani::proof]
 fn state_index_preserves_the_exact_present_identity_domain() {
-    let raw: u16 = kani::any();
-    kani::assume(raw != u16::MAX);
+    let candidate: u16 = kani::any();
+    let raw = if candidate == u16::MAX { 0 } else { candidate };
 
     let state = StateIndex::new(raw);
 

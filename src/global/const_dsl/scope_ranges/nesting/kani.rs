@@ -3,10 +3,13 @@ use crate::global::const_dsl::ScopeId;
 
 #[kani::proof]
 fn equal_projected_scope_ranges_follow_source_preorder() {
-    let outer_ordinal: u16 = kani::any();
-    let inner_ordinal: u16 = kani::any();
-    kani::assume(outer_ordinal < inner_ordinal);
-    kani::assume(inner_ordinal <= ScopeId::MAX_LOCAL_ORDINAL);
+    let candidate = (kani::any::<u16>(), kani::any::<u16>());
+    let (outer_ordinal, inner_ordinal) =
+        if candidate.0 < candidate.1 && candidate.1 <= ScopeId::MAX_LOCAL_ORDINAL {
+            candidate
+        } else {
+            (0, 1)
+        };
 
     let outer = StructuredScopeRange::new(ScopeId::roll_scope(outer_ordinal), 9, 13);
     let inner = StructuredScopeRange::new(ScopeId::roll_scope(inner_ordinal), 9, 13);
@@ -25,14 +28,21 @@ fn equal_projected_scope_ranges_follow_source_preorder() {
 
 #[kani::proof]
 fn strict_scope_containment_is_authoritative() {
-    let outer_start: u16 = kani::any();
-    let inner_start: u16 = kani::any();
-    let inner_end: u16 = kani::any();
-    let outer_end: u16 = kani::any();
-    kani::assume(outer_start <= inner_start);
-    kani::assume(inner_start < inner_end);
-    kani::assume(inner_end <= outer_end);
-    kani::assume(outer_start < inner_start || inner_end < outer_end);
+    let candidate = (
+        kani::any::<u16>(),
+        kani::any::<u16>(),
+        kani::any::<u16>(),
+        kani::any::<u16>(),
+    );
+    let (outer_start, inner_start, inner_end, outer_end) = if candidate.0 <= candidate.1
+        && candidate.1 < candidate.2
+        && candidate.2 <= candidate.3
+        && (candidate.0 < candidate.1 || candidate.2 < candidate.3)
+    {
+        candidate
+    } else {
+        (0, 0, 1, 2)
+    };
 
     let outer = StructuredScopeRange::new(
         ScopeId::roll_scope(1),

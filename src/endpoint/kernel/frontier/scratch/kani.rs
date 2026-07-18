@@ -6,8 +6,12 @@ use crate::global::role_program::LANE_DOMAIN_SIZE;
 
 #[kani::proof]
 fn frontier_scratch_capacity_is_derived_once_from_its_layout() {
-    let capacity: u16 = kani::any();
-    kani::assume(capacity as usize <= LANE_DOMAIN_SIZE);
+    let candidate: u16 = kani::any();
+    let capacity = if candidate as usize <= LANE_DOMAIN_SIZE {
+        candidate
+    } else {
+        LANE_DOMAIN_SIZE as u16
+    };
     let layout = FrontierScratchLayout::new(capacity as usize);
 
     assert_eq!(

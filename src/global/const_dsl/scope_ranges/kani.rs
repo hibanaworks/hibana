@@ -19,9 +19,12 @@ const fn route_marker(offset: usize, split: usize, end: usize, scope: ScopeId) -
 #[kani::proof]
 #[kani::unwind(4)]
 fn normalized_route_primary_preserves_all_valid_compact_bounds() {
-    let split: u16 = kani::any();
-    let end: u16 = kani::any();
-    kani::assume(split != 0 && split < end);
+    let candidate = (kani::any::<u16>(), kani::any::<u16>());
+    let (split, end) = if candidate.0 != 0 && candidate.0 < candidate.1 {
+        candidate
+    } else {
+        (1, 2)
+    };
 
     let scope = ScopeId::route(0);
     let rows = [route_marker(0, split as usize, end as usize, scope)];

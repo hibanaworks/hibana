@@ -5,11 +5,19 @@ use super::{
 
 #[kani::proof]
 fn logical_lane_capacity_is_the_exact_descriptor_lane_span() {
-    let active_lane_count: u16 = kani::any();
-    let endpoint_lane_slot_count: u16 = kani::any();
-    kani::assume(endpoint_lane_slot_count != 0);
-    kani::assume(endpoint_lane_slot_count as usize <= LANE_DOMAIN_SIZE);
-    kani::assume(active_lane_count <= endpoint_lane_slot_count);
+    let candidate_active_lane_count: u16 = kani::any();
+    let candidate_endpoint_lane_slot_count: u16 = kani::any();
+    let (active_lane_count, endpoint_lane_slot_count) = if candidate_endpoint_lane_slot_count != 0
+        && candidate_endpoint_lane_slot_count as usize <= LANE_DOMAIN_SIZE
+        && candidate_active_lane_count <= candidate_endpoint_lane_slot_count
+    {
+        (
+            candidate_active_lane_count,
+            candidate_endpoint_lane_slot_count,
+        )
+    } else {
+        (0, 1)
+    };
 
     assert_eq!(
         logical_lane_count_for_role(
@@ -43,11 +51,19 @@ fn lane_set_mutation_is_exact_over_the_complete_lane_domain() {
 #[kani::unwind(10)]
 fn lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain() {
     let words: [LaneWord; LANE_SET_VIEW_WORDS] = kani::any();
-    let start: u16 = kani::any();
-    let lane_limit: u16 = kani::any();
+    let candidate_start: u16 = kani::any();
+    let candidate_lane_limit: u16 = kani::any();
     let probe: u16 = kani::any();
-    kani::assume(start as usize <= LANE_DOMAIN_SIZE);
-    kani::assume(lane_limit as usize <= LANE_DOMAIN_SIZE);
+    let start = if candidate_start as usize <= LANE_DOMAIN_SIZE {
+        candidate_start
+    } else {
+        LANE_DOMAIN_SIZE as u16
+    };
+    let lane_limit = if candidate_lane_limit as usize <= LANE_DOMAIN_SIZE {
+        candidate_lane_limit
+    } else {
+        LANE_DOMAIN_SIZE as u16
+    };
 
     /* SAFETY: the symbolic word array remains live and immutable for the
     complete proof. */
@@ -74,11 +90,19 @@ fn lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain() {
 #[kani::unwind(34)]
 fn descriptor_lane_byte_iteration_returns_the_first_set_lane_in_the_exact_domain() {
     let bytes: [u8; 32] = kani::any();
-    let start: u16 = kani::any();
-    let lane_limit: u16 = kani::any();
+    let candidate_start: u16 = kani::any();
+    let candidate_lane_limit: u16 = kani::any();
     let probe: u16 = kani::any();
-    kani::assume(start as usize <= LANE_DOMAIN_SIZE);
-    kani::assume(lane_limit as usize <= LANE_DOMAIN_SIZE);
+    let start = if candidate_start as usize <= LANE_DOMAIN_SIZE {
+        candidate_start
+    } else {
+        LANE_DOMAIN_SIZE as u16
+    };
+    let lane_limit = if candidate_lane_limit as usize <= LANE_DOMAIN_SIZE {
+        candidate_lane_limit
+    } else {
+        LANE_DOMAIN_SIZE as u16
+    };
 
     /* SAFETY: the symbolic byte array remains live and immutable for the
     complete proof and spans the full descriptor lane domain. */

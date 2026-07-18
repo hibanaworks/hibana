@@ -8,10 +8,6 @@ use crate::{
     global::const_dsl::EffList,
 };
 
-fn symbolic_role() -> u8 {
-    kani::any()
-}
-
 fn event(from: u8, to: u8, lane: u8) -> EffAtom {
     EffAtom {
         from,
@@ -24,16 +20,24 @@ fn event(from: u8, to: u8, lane: u8) -> EffAtom {
 }
 
 fn distinct_role_permutation() -> (u8, u8, u8) {
-    let permutation = kani::any::<u8>();
-    kani::assume(permutation < 6);
-    match permutation {
+    match kani::any::<u8>() % 6 {
         0 => (0, 1, 2),
         1 => (0, 2, 1),
         2 => (1, 0, 2),
         3 => (1, 2, 0),
         4 => (2, 0, 1),
-        5 => (2, 1, 0),
-        _ => unreachable!(),
+        _ => (2, 1, 0),
+    }
+}
+
+fn distinct_roles() -> (u8, u8, u8) {
+    let earlier_source = kani::any::<u8>();
+    let receiver = kani::any::<u8>();
+    let later_source = kani::any::<u8>();
+    if earlier_source != receiver && earlier_source != later_source && receiver != later_source {
+        (earlier_source, receiver, later_source)
+    } else {
+        (0, 1, 2)
     }
 }
 
@@ -42,10 +46,18 @@ fn causal_witness_table_is_first_write_wins_and_role_exact() {
     let first_role = kani::any::<u8>();
     let second_role = kani::any::<u8>();
     let query_role = kani::any::<u8>();
-    let first_idx = kani::any::<u32>();
-    let second_idx = kani::any::<u32>();
-    kani::assume(first_idx != u32::MAX);
-    kani::assume(second_idx != u32::MAX);
+    let first_candidate = kani::any::<u32>();
+    let second_candidate = kani::any::<u32>();
+    let first_idx = if first_candidate == u32::MAX {
+        0
+    } else {
+        first_candidate
+    };
+    let second_idx = if second_candidate == u32::MAX {
+        0
+    } else {
+        second_candidate
+    };
 
     let mut witnesses = FirstCausalWitnesses::new(first_role, first_idx as usize);
     witnesses.record_first(first_role, second_idx as usize);
@@ -76,13 +88,8 @@ fn three_event_linear_scan_matches_pairwise_checker() {
 
 #[kani::proof]
 fn three_event_causal_handoff_accepts_every_valid_role_assignment() {
-    let earlier_source = symbolic_role();
-    let receiver = symbolic_role();
-    let later_source = symbolic_role();
+    let (earlier_source, receiver, later_source) = distinct_roles();
     let lane = kani::any();
-    kani::assume(earlier_source != receiver);
-    kani::assume(later_source != receiver);
-    kani::assume(earlier_source != later_source);
 
     let events = EffList::<4>::new()
         .push(event(earlier_source, receiver, lane))
@@ -94,13 +101,8 @@ fn three_event_causal_handoff_accepts_every_valid_role_assignment() {
 
 #[kani::proof]
 fn sender_change_without_causal_handoff_is_rejected() {
-    let earlier_source = symbolic_role();
-    let receiver = symbolic_role();
-    let later_source = symbolic_role();
+    let (earlier_source, receiver, later_source) = distinct_roles();
     let lane = kani::any();
-    kani::assume(earlier_source != receiver);
-    kani::assume(later_source != receiver);
-    kani::assume(earlier_source != later_source);
 
     let events = EffList::<4>::new()
         .push(event(earlier_source, receiver, lane))

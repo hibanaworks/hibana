@@ -11,8 +11,12 @@ fn existing_route_reselection_preserves_exact_reference_count() {
     let selected_arm = kani::any::<bool>() as u8;
     let current_arm = 1 - selected_arm;
     let shared = kani::any::<bool>();
-    let symbolic_refs = kani::any::<u16>();
-    kani::assume(symbolic_refs != 0);
+    let candidate_refs = kani::any::<u16>();
+    let symbolic_refs = if candidate_refs == 0 {
+        1
+    } else {
+        candidate_refs
+    };
     let mut slot = if shared {
         RouteScopeSelectedArmSlot {
             arm: selected_arm,
@@ -35,8 +39,12 @@ fn existing_route_reselection_preserves_exact_reference_count() {
 #[kani::proof]
 fn selected_arm_release_is_exact_and_never_underflows() {
     let arm = kani::any::<bool>() as u8;
-    let refs = kani::any::<u16>();
-    kani::assume(refs != 0);
+    let candidate_refs = kani::any::<u16>();
+    let refs = if candidate_refs == 0 {
+        1
+    } else {
+        candidate_refs
+    };
     let next = RouteScopeSelectedArmSlot { arm, refs }.prepared_release();
 
     if refs == 1 {
@@ -50,11 +58,13 @@ fn selected_arm_release_is_exact_and_never_underflows() {
 
 #[kani::proof]
 fn selected_route_commit_rows_preserve_full_descriptor_range() {
-    let start = kani::any::<u16>();
-    let len = kani::any::<u16>();
+    let candidate = (kani::any::<u16>(), kani::any::<u16>());
+    let (start, len) = if candidate.1 != 0 && (candidate.0 != u16::MAX || candidate.1 != u16::MAX) {
+        candidate
+    } else {
+        (0, 1)
+    };
     let lane = kani::any::<u8>();
-    kani::assume(len != 0);
-    kani::assume(start != u16::MAX || len != u16::MAX);
 
     let range = PackedLaneRange::new(start as usize, len as usize);
     let rows = SelectedRouteCommitRowsRef::from_resident_range_for_lane(range, lane);

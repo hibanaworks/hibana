@@ -12,6 +12,11 @@ if [[ "${ACTUAL_VERSION}" != "cargo-kani ${EXPECTED_VERSION}" ]]; then
   exit 1
 fi
 
+if rg -n 'kani::assume' "${ROOT_DIR}/src" --glob '*.rs'; then
+  echo "Kani harnesses must construct complete symbolic domains without assumptions" >&2
+  exit 1
+fi
+
 python3 - "${ROOT_DIR}/src" <<'PY'
 import pathlib
 import re

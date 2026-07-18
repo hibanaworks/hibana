@@ -4,9 +4,13 @@ use super::LocalLaneAccumulator;
 fn local_lane_accumulator_preserves_exact_lane_relations_and_last_steps() {
     let lane: u8 = kani::any();
     let other: u8 = kani::any();
-    let first_step: u16 = kani::any();
-    let last_step: u16 = kani::any();
-    kani::assume(first_step <= last_step);
+    let left_step: u16 = kani::any();
+    let right_step: u16 = kani::any();
+    let (first_step, last_step) = if left_step <= right_step {
+        (left_step, right_step)
+    } else {
+        (right_step, left_step)
+    };
 
     let mut facts = LocalLaneAccumulator::new();
     facts.record(lane, first_step as usize);

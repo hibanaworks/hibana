@@ -39,7 +39,9 @@ impl ScopeMarkerView<'_> {
         }
         match self.rows[self.start + index] {
             SourceRow::Scope(marker) => marker,
-            _ => crate::invariant(),
+            SourceRow::Empty | SourceRow::Event { .. } | SourceRow::Resolver(_) => {
+                crate::invariant()
+            }
         }
     }
 

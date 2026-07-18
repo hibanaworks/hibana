@@ -6,9 +6,15 @@ use crate::global::typestate::MAX_STATES;
 
 #[kani::proof]
 fn visited_entry_identity_is_exact_and_never_silent() {
-    let first = kani::any::<u8>() as usize;
-    let second = kani::any::<u8>() as usize;
-    kani::assume(first != second);
+    let first_candidate = kani::any::<u8>();
+    let second_candidate = kani::any::<u8>();
+    let second_candidate = if first_candidate == second_candidate {
+        first_candidate.wrapping_add(1)
+    } else {
+        second_candidate
+    };
+    let first = first_candidate as usize;
+    let second = second_candidate as usize;
     let mut storage = [StateIndex::ABSENT; 2];
     /* SAFETY: `storage` is initialized, live, and exclusively borrowed for the
     complete symbolic visit-set execution. */

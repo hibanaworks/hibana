@@ -1,4 +1,5 @@
 #![no_std]
+#![deny(clippy::wildcard_enum_match_arm)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(private_bounds)]
 #![deny(private_interfaces)]

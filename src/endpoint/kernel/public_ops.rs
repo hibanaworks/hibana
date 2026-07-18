@@ -120,7 +120,12 @@ where
                 super::core::PublicOpLease::Rejected
             }
             PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
-            _ => {
+            PublicActiveOp::Send
+            | PublicActiveOp::Recv
+            | PublicActiveOp::Offer
+            | PublicActiveOp::RouteBranch
+            | PublicActiveOp::BranchRecv
+            | PublicActiveOp::BranchSend => {
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
             }
@@ -156,7 +161,12 @@ where
                 super::core::PublicOpLease::Rejected
             }
             PublicActiveOp::Poisoned => super::core::PublicOpLease::Faulted,
-            _ => {
+            PublicActiveOp::Send
+            | PublicActiveOp::Recv
+            | PublicActiveOp::Offer
+            | PublicActiveOp::RestoredRouteBranch
+            | PublicActiveOp::BranchRecv
+            | PublicActiveOp::BranchSend => {
                 self.public_op_busy_fault();
                 super::core::PublicOpLease::Rejected
             }
@@ -188,7 +198,12 @@ where
                 self.park_public_route_branch(PublicOpEdge::ParkBranchSend);
             }
             PublicActiveOp::Poisoned => {}
-            _ => self.public_op_busy_fault(),
+            PublicActiveOp::Idle
+            | PublicActiveOp::Recv
+            | PublicActiveOp::Offer
+            | PublicActiveOp::RouteBranch
+            | PublicActiveOp::RestoredRouteBranch
+            | PublicActiveOp::BranchRecv => self.public_op_busy_fault(),
         }
         let state = core::mem::replace(&mut self.public_send_state, SendState::Done);
         self.cancel_detached_send_state(state);

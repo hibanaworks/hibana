@@ -52,7 +52,7 @@ impl<const E: usize> EffList<E> {
         }
         match self.rows[offset] {
             SourceRow::Event { atom, .. } => atom,
-            _ => crate::invariant(),
+            SourceRow::Empty | SourceRow::Scope(_) | SourceRow::Resolver(_) => crate::invariant(),
         }
     }
 
@@ -62,7 +62,7 @@ impl<const E: usize> EffList<E> {
         }
         let frame_label = match self.rows[offset] {
             SourceRow::Event { frame_label, .. } => frame_label,
-            _ => crate::invariant(),
+            SourceRow::Empty | SourceRow::Scope(_) | SourceRow::Resolver(_) => crate::invariant(),
         };
         self.rows[offset] = SourceRow::Event { atom, frame_label };
     }
@@ -73,7 +73,7 @@ impl<const E: usize> EffList<E> {
         }
         match self.rows[offset] {
             SourceRow::Event { frame_label, .. } => frame_label,
-            _ => crate::invariant(),
+            SourceRow::Empty | SourceRow::Scope(_) | SourceRow::Resolver(_) => crate::invariant(),
         }
     }
 
@@ -295,7 +295,7 @@ impl<const E: usize> EffList<E> {
         }
         match self.rows[self.resolver_start + index] {
             SourceRow::Resolver(marker) => marker,
-            _ => crate::invariant(),
+            SourceRow::Empty | SourceRow::Event { .. } | SourceRow::Scope(_) => crate::invariant(),
         }
     }
 

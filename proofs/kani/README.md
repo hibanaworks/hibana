@@ -117,7 +117,12 @@ JSON inventory. The gate compares that output with the reviewed inventory and
 then verifies every listed harness without passing a filter. The complete CBMC
 summary must report exactly the same total, so a deleted, added, skipped,
 partial, failed, or empty harness set is rejected without a hand-written second
-execution list. Transport
+execution list. Harnesses contain no `kani::assume`: finite subdomains use
+total surjective generators, while constrained product domains preserve every
+valid symbolic candidate and map only invalid candidates to a canonical valid
+representative. The gate rejects any future assumption in production source,
+so a retained harness name cannot silently hide a narrowed proof domain.
+Transport
 FIFO, exactly-once/no-replay delivery, peer-close observation, and one-shot
 receive receipt resolution are modeled and proved in Lean, mirrored by the Rust
 conformance tests, and checked under Miri.

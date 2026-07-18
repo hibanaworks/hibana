@@ -144,15 +144,21 @@ mod verification {
 
     #[kani::proof]
     fn erased_candidate_can_only_request_distinct_realign() {
-        let current = kani::any::<u8>() as usize;
-        let target = kani::any::<u8>() as usize;
-        kani::assume(current != target);
-        let class = kani::any::<u8>();
-        kani::assume(class < 3);
+        let current_candidate = kani::any::<u8>();
+        let target_candidate = kani::any::<u8>();
+        let target_candidate = if current_candidate == target_candidate {
+            current_candidate.wrapping_add(1)
+        } else {
+            target_candidate
+        };
+        let current = current_candidate as usize;
+        let target = target_candidate as usize;
+        let class = kani::any::<u8>() % 3;
         let outcome = match class {
             0 => OfferAlignmentOutcome::UniqueCandidate(target),
             1 => OfferAlignmentOutcome::UniqueController(target),
-            _ => OfferAlignmentOutcome::UniqueDynamicController(target),
+            2 => OfferAlignmentOutcome::UniqueDynamicController(target),
+            3..=u8::MAX => crate::invariant(),
         };
         let selection = OfferAlignmentSelection {
             ready_entry_filter: None,

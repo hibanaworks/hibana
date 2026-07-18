@@ -11,6 +11,24 @@ use crate::rendezvous::core::{
 use crate::session::cluster::core::ResolverBucket;
 use crate::session::types::SessionId;
 
+fn symbolic_power_of_two() -> usize {
+    let candidate: usize = kani::any();
+    if candidate.is_power_of_two() {
+        candidate
+    } else {
+        1
+    }
+}
+
+fn symbolic_nonempty_range() -> (usize, usize) {
+    let candidate = (kani::any::<usize>(), kani::any::<usize>());
+    if candidate.0 < candidate.1 {
+        candidate
+    } else {
+        (0, 1)
+    }
+}
+
 #[kani::proof]
 fn endpoint_generation_advances_or_exhausts() {
     let current: u32 = kani::any();
@@ -45,8 +63,12 @@ fn endpoint_lease_slot_count_matches_last_index_domain() {
 
 #[kani::proof]
 fn endpoint_membership_seal_is_published_and_idempotent() {
-    let raw: u8 = kani::any();
-    kani::assume(raw <= EndpointLeaseState::MembershipSealed as u8);
+    let candidate: u8 = kani::any();
+    let raw = if candidate <= EndpointLeaseState::MembershipSealed as u8 {
+        candidate
+    } else {
+        0
+    };
     let state = match raw {
         0 => EndpointLeaseState::Vacant,
         1 => EndpointLeaseState::Reserved,
@@ -68,8 +90,12 @@ fn endpoint_membership_seal_is_published_and_idempotent() {
 
 #[kani::proof]
 fn endpoint_operation_and_nested_scratch_transitions_are_exact() {
-    let raw: u8 = kani::any();
-    kani::assume(raw <= RendezvousAccessState::EndpointScratchLease as u8);
+    let candidate: u8 = kani::any();
+    let raw = if candidate <= RendezvousAccessState::EndpointScratchLease as u8 {
+        candidate
+    } else {
+        0
+    };
     let state = match raw {
         0 => RendezvousAccessState::Available,
         1 => RendezvousAccessState::RegistryLease,
@@ -109,8 +135,7 @@ fn endpoint_gap_placement_is_aligned_and_bounded() {
     let gap_start: usize = kani::any();
     let gap_end: usize = kani::any();
     let bytes: usize = kani::any();
-    let align: usize = kani::any();
-    kani::assume(align.is_power_of_two());
+    let align = symbolic_power_of_two();
 
     let placement = endpoint_offset_in_gap(base, gap_start, gap_end, bytes, align);
     kani::cover!(placement.is_some());
@@ -175,8 +200,7 @@ fn packed_sidecar_range_is_aligned_and_monotonic() {
     let base: usize = kani::any();
     let frontier: usize = kani::any();
     let bytes: usize = kani::any();
-    let align: usize = kani::any();
-    kani::assume(align.is_power_of_two());
+    let align = symbolic_power_of_two();
 
     let packed = packed_sidecar_range(base, frontier, bytes, align);
     kani::cover!(packed.is_some());
@@ -197,10 +221,8 @@ fn packed_sidecar_pair_is_aligned_and_disjoint() {
     let frontier: usize = kani::any();
     let first_bytes: usize = kani::any();
     let second_bytes: usize = kani::any();
-    let first_align: usize = kani::any();
-    let second_align: usize = kani::any();
-    kani::assume(first_align.is_power_of_two());
-    kani::assume(second_align.is_power_of_two());
+    let first_align = symbolic_power_of_two();
+    let second_align = symbolic_power_of_two();
 
     let pair = packed_sidecar_range(base, frontier, first_bytes, first_align).and_then(
         |(first_start, first_end)| {
@@ -285,12 +307,8 @@ fn three_resident_sidecars_compact_before_all_source_ranges() {
 
 #[kani::proof]
 fn sidecar_overlap_is_symmetric_and_exact() {
-    let left_start: usize = kani::any();
-    let left_end: usize = kani::any();
-    let right_start: usize = kani::any();
-    let right_end: usize = kani::any();
-    kani::assume(left_start < left_end);
-    kani::assume(right_start < right_end);
+    let (left_start, left_end) = symbolic_nonempty_range();
+    let (right_start, right_end) = symbolic_nonempty_range();
 
     let overlap = sidecar_ranges_overlap(left_start, left_end, right_start, right_end);
     kani::cover!(overlap);

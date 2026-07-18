@@ -416,7 +416,8 @@ mod tests {
         let selected = match kani::any::<u8>() % 3 {
             0 => None,
             1 => Some(Arm::LEFT),
-            _ => Some(Arm::RIGHT),
+            2 => Some(Arm::RIGHT),
+            3..=u8::MAX => crate::invariant(),
         };
         let first_kind = if kani::any::<bool>() {
             ReadyArmEvidence::Poll

@@ -1,4 +1,4 @@
-use super::common::read;
+use super::common::{read, read_all_rs_tree};
 
 #[test]
 fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
@@ -8,6 +8,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let inventory = read("proofs/kani/harness-inventory.json");
     let script = read(".github/scripts/check_kani.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
+    let production_rust = read_all_rs_tree("src");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
     let decision_state_harnesses = read("src/endpoint/kernel/decision_state/kani.rs");
@@ -174,6 +175,13 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         2
     );
     assert!(script.contains("cargo kani --version"));
+    assert!(script.contains("rg -n 'kani::assume' \"${ROOT_DIR}/src\" --glob '*.rs'"));
+    assert!(
+        script.contains(
+            "Kani harnesses must construct complete symbolic domains without assumptions"
+        )
+    );
+    assert!(!production_rust.contains("kani::assume"));
     assert!(script.contains("list --format json"));
     assert!(script.contains("proofs/kani/harness-inventory.json"));
     assert!(script.contains("cmp -s \"${EXPECTED_INVENTORY}\" \"${ACTUAL_INVENTORY}\""));
@@ -285,7 +293,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(frontier_state_harnesses.contains("table.remove_root_row(0)"));
     assert!(!frontier_state_harnesses.contains("kani::assume"));
-    assert!(harnesses.contains("kani::assume(left_start < left_end)"));
+    assert!(harnesses.contains("fn symbolic_nonempty_range() -> (usize, usize)"));
+    assert!(harnesses.contains("if candidate.0 < candidate.1"));
     assert!(
         harnesses
             .contains("assert!(overlap == !(left_end <= right_start || right_end <= left_start));")

@@ -51,8 +51,12 @@ use crate::global::{
 #[kani::proof]
 fn frontier_entry_capacity_preserves_the_full_lane_domain() {
     let mut storage = [ActiveEntrySlot::EMPTY; 256];
-    let active_lane_count: u16 = kani::any();
-    kani::assume(active_lane_count as usize <= storage.len());
+    let candidate: u16 = kani::any();
+    let active_lane_count = if candidate as usize <= storage.len() {
+        candidate
+    } else {
+        storage.len() as u16
+    };
     let footprint = RuntimeRoleFootprint {
         max_route_commit_count: 0,
         route_arm_state_capacity: 0,
@@ -85,8 +89,7 @@ fn frontier_entry_capacity_preserves_the_full_lane_domain() {
 #[kani::proof]
 fn frontier_observation_packing_is_exact() {
     let raw_flags = kani::any::<u8>() & OfferEntryObservedState::ALL_FLAGS;
-    let raw_frontier = kani::any::<u8>();
-    kani::assume(raw_frontier & !FrontierKind::ALL_BITS == 0);
+    let raw_frontier = kani::any::<u8>() & FrontierKind::ALL_BITS;
     let selectable = kani::any::<bool>();
     let admission = if selectable {
         OfferEntryAdmission::Selectable
@@ -299,8 +302,13 @@ fn frontier_observation_rejects_absent_exact_key() {
 #[kani::proof]
 #[kani::should_panic]
 fn frontier_observation_rejects_bits_outside_the_exact_kind_domain() {
-    let raw_frontier = kani::any::<u8>();
-    kani::assume(raw_frontier & !FrontierKind::ALL_BITS != 0);
+    let candidate = kani::any::<u8>();
+    let invalid_bits = !FrontierKind::ALL_BITS;
+    let raw_frontier = if candidate & invalid_bits == 0 {
+        candidate | (invalid_bits & invalid_bits.wrapping_neg())
+    } else {
+        candidate
+    };
     let observed = OfferEntryObservedState {
         key: offer_key(0, 1),
         frontier_mask: raw_frontier,
@@ -313,8 +321,13 @@ fn frontier_observation_rejects_bits_outside_the_exact_kind_domain() {
 #[kani::proof]
 #[kani::should_panic]
 fn frontier_observation_rejects_flags_outside_the_exact_domain() {
-    let raw_flags = kani::any::<u8>();
-    kani::assume(raw_flags & !OfferEntryObservedState::ALL_FLAGS != 0);
+    let candidate = kani::any::<u8>();
+    let invalid_bits = !OfferEntryObservedState::ALL_FLAGS;
+    let raw_flags = if candidate & invalid_bits == 0 {
+        candidate | (invalid_bits & invalid_bits.wrapping_neg())
+    } else {
+        candidate
+    };
     let observed = OfferEntryObservedState {
         key: offer_key(0, 1),
         frontier_mask: FrontierKind::Route.bit(),

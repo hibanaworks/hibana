@@ -2,10 +2,8 @@ use super::{CodecError, Payload, WireEncode, WirePayload, fixed_array_schema_id}
 
 #[kani::proof]
 fn fixed_array_schema_identity_is_injective_over_the_complete_admitted_domain() {
-    let left: u32 = kani::any();
-    let right: u32 = kani::any();
-    kani::assume(left <= 0x00ff_ffff);
-    kani::assume(right <= 0x00ff_ffff);
+    let left = kani::any::<u32>() & 0x00ff_ffff;
+    let right = kani::any::<u32>() & 0x00ff_ffff;
 
     let left_schema = fixed_array_schema_id(left as usize);
     let right_schema = fixed_array_schema_id(right as usize);

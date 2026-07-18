@@ -22,8 +22,12 @@ fn preferred_lane_scan_first_step_is_exact_over_the_full_lane_domain() {
 fn remaining_lane_scan_step_is_exact_over_the_full_lane_domain() {
     let words: [LaneWord; LANE_SET_VIEW_WORDS] = kani::any();
     let preferred = kani::any::<u8>() as usize;
-    let start = kani::any::<u16>() as usize;
-    kani::assume(start <= 256);
+    let candidate = kani::any::<u16>();
+    let start = if candidate <= 256 {
+        candidate as usize
+    } else {
+        256
+    };
     /* SAFETY: `words` remains live and immutable for the complete proof. */
     let lanes = unsafe { LaneSetView::from_parts(words.as_ptr(), words.len()) };
     let first = lanes.next_set_from(start, 256);
