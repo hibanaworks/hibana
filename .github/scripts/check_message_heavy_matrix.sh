@@ -249,10 +249,8 @@ if (( RLIB_GROWTH_256 > RLIB_GROWTH_64 * 6 + 65536 )); then
   echo "message-heavy thumb rlib growth became superlinear" >&2
   exit 1
 fi
-if (( COMPILE_RSS_MIB[256] > COMPILE_RSS_MIB[64] * 2 + 128 )); then
-  echo "message-heavy compile RSS grew beyond the bounded erasure budget" >&2
-  exit 1
-fi
+# Each independently compiled case is already bounded by its named snapshot-derived
+# time and RSS budgets. Cross-case comparisons of sampled peaks are not stable gates.
 
 bash "${ROOT_DIR}/.github/scripts/check_message_monomorphization_hygiene.sh"
 

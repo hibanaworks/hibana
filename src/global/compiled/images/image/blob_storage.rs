@@ -13,7 +13,8 @@ use crate::{
     },
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub(super) enum DescriptorScopeEvent {
     Enter,
     Split,

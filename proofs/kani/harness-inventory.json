@@ -41,8 +41,8 @@
       "endpoint::kernel::frontier::entry_sets::kani::frontier_entry_identity_distinguishes_scope_at_same_entry",
       "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_packing_is_exact",
       "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_absent_exact_key",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_bits_outside_the_exact_kind_domain",
-      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_flags_outside_the_exact_domain",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_first_bit_outside_exact_kind_domain",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_first_flag_outside_exact_domain",
       "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rows_preserve_exact_witnesses_for_one_cursor_target",
       "endpoint::kernel::frontier::entry_sets::kani::offer_entry_key_rejects_non_route_scopes",
       "endpoint::kernel::frontier::entry_sets::kani::selectable_ready_query_never_admits_an_excluded_exact_witness"
@@ -92,7 +92,7 @@
       "global::compiled::images::image::program_ref::kani::packed_column_range_construction_is_exact_for_resident_stride_domain",
       "global::compiled::images::image::program_ref::kani::program_atom_row_decoding_accepts_exact_domain",
       "global::compiled::images::image::program_ref::kani::program_image_columns_are_canonical_for_exact_count_domain",
-      "global::compiled::images::image::program_ref::kani::program_image_columns_reject_total_byte_overflow",
+      "global::compiled::images::image::program_ref::kani::program_image_columns_reject_first_total_byte_overflow",
       "global::compiled::images::image::program_ref::kani::program_image_constructor_rejects_undersized_storage",
       "global::compiled::images::image::program_ref::kani::program_image_fit_probe_rejects_undersized_storage",
       "global::compiled::images::image::program_ref::kani::proof_only_scope_entry_metadata_is_erased_from_descriptor_tags",
@@ -161,8 +161,8 @@
       "global::role_program::image_impl::kani::lane_column_coherence_is_exact_for_one_binary_route",
       "global::role_program::image_impl::kani::optional_event_fact_row_reserves_only_the_absent_u16_value",
       "global::role_program::image_impl::kani::packed_lane_optional_range_canonicality_is_exact",
-      "global::role_program::image_impl::kani::packed_lane_range_encoding_avoids_reserved_sentinel",
-      "global::role_program::image_impl::kani::packed_lane_range_reserved_sentinel_is_rejected",
+      "global::role_program::image_impl::kani::packed_lane_range_checked_constructor_domain_is_exact",
+      "global::role_program::image_impl::kani::packed_lane_range_infallible_constructor_rejects_first_end_overflow",
       "global::role_program::image_impl::kani::packed_route_arm_row_round_trips_full_compact_domains",
       "global::role_program::image_impl::kani::resident_event_header_decoding_accepts_exact_domain",
       "global::role_program::image_impl::kani::resident_local_step_lane_decoding_accepts_exact_domain",
@@ -211,7 +211,8 @@
       "observe::core::ring_state::kani::ring_state_step_preserves_the_exact_slot_domain"
     ],
     "../../src/rendezvous/association/fault/kani.rs": [
-      "rendezvous::association::fault::kani_proofs::invalid_session_fault_encoding_is_fail_fast",
+      "rendezvous::association::fault::kani_proofs::session_fault_checked_decoding_domain_is_exact",
+      "rendezvous::association::fault::kani_proofs::session_fault_decoder_rejects_first_invalid_code",
       "rendezvous::association::fault::kani_proofs::session_fault_encoding_is_injective",
       "rendezvous::association::fault::kani_proofs::session_fault_encoding_roundtrip_is_exact"
     ],
@@ -279,7 +280,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 191,
+    "standard-harnesses": 192,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

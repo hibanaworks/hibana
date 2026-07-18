@@ -120,11 +120,17 @@ partial, failed, or empty harness set is rejected without a hand-written second
 execution list. Harnesses contain no `kani::assume`: finite subdomains use
 total surjective generators, while constrained product domains preserve every
 valid symbolic candidate and map only invalid candidates to a canonical valid
-representative. Closed runtime enums used as symbolic state inputs derive
+representative. Closed enums used as symbolic proof inputs derive
 `kani::Arbitrary` from the enum declaration, so enum growth enters CBMC without
 a second hand-written list. The gate rejects any future assumption in
-production source, so a retained harness name cannot silently hide a narrowed
-proof domain.
+production source. The reviewed harness inventory pins names and ownership; it
+does not treat an unchanged harness name as proof that its body was not
+intentionally changed. Because Kani's `should_panic` attribute establishes only
+that one or more panic checks are reachable, Hibana uses it only for fixed
+rejection-path witnesses. The gate rejects direct symbolic inputs and direct
+panics before the production call in those harnesses. Universal rejection
+domains use pure acceptance predicates or checked constructors and ordinary
+assertions over symbolic inputs.
 Transport
 FIFO, exactly-once/no-replay delivery, peer-close observation, and one-shot
 receive receipt resolution are modeled and proved in Lean, mirrored by the Rust

@@ -59,7 +59,8 @@ fn selected_arm_release_is_exact_and_never_underflows() {
 #[kani::proof]
 fn selected_route_commit_rows_preserve_full_descriptor_range() {
     let candidate = (kani::any::<u16>(), kani::any::<u16>());
-    let (start, len) = if candidate.1 != 0 && (candidate.0 != u16::MAX || candidate.1 != u16::MAX) {
+    let candidate_end = u32::from(candidate.0) + u32::from(candidate.1);
+    let (start, len) = if candidate.1 != 0 && candidate_end <= u32::from(u16::MAX) {
         candidate
     } else {
         (0, 1)
@@ -73,6 +74,7 @@ fn selected_route_commit_rows_preserve_full_descriptor_range() {
     assert_eq!(rows.range().raw(), range.raw());
     assert_eq!(rows.len(), len as usize);
     assert_eq!(rows.selected_lane(), Some(lane));
+    kani::cover!(start == u16::MAX - 1 && len == 1);
 }
 
 #[kani::proof]

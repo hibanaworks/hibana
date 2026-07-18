@@ -8,6 +8,11 @@ fn unsafe_contract_gate_covers_receive_frame_receipt_owner() {
 
     assert!(
         gate.contains("cat src/rendezvous/recv_frame_receipt.rs")
+            && gate.contains(r#"matches="$(rg -o 'unsafe\s*\{'"#)
+            && gate.contains("assert_unsafe_count \"reviewed source\" 304 src")
+            && gate.contains("assert_unsafe_count \"frontier scratch owner\" 5")
+            && !gate.contains("assert_unsafe_limit")
+            && gate.contains("-g '!src/test_support/**'")
             && gate.contains("RecvFrameReceiptPhase::Outstanding")
             && receipt.contains("enum RecvFrameReceiptPhase")
             && receipt.contains("owner: Option<RecvFrameReceiptOwner>")

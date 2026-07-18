@@ -586,9 +586,21 @@ fn resident_route_arm_index_decoder_accepts_exact_binary_domain() {
 }
 
 #[test]
-#[should_panic(expected = "lane range descriptor uses reserved sentinel")]
+#[should_panic(expected = "lane range descriptor outside compact domain")]
 fn lane_range_constructor_rejects_reserved_empty_encoding() {
     let _ = PackedLaneRange::new(u16::MAX as usize, u16::MAX as usize);
+}
+
+#[test]
+#[should_panic(expected = "lane range descriptor outside compact domain")]
+fn lane_range_constructor_rejects_end_outside_compact_domain() {
+    let _ = PackedLaneRange::new(u16::MAX as usize, 1);
+}
+
+#[test]
+#[should_panic(expected = "lane range descriptor outside compact domain")]
+fn lane_range_constructor_rejects_limb_outside_compact_domain() {
+    let _ = PackedLaneRange::new(u16::MAX as usize + 1, 0);
 }
 
 #[test]

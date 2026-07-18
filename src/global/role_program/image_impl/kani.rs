@@ -95,19 +95,23 @@ fn role_image_fit_probe_rejects_plan_mismatch() {
 }
 
 #[kani::proof]
-fn packed_lane_range_encoding_avoids_reserved_sentinel() {
-    let start: u16 = kani::any();
-    let len: u16 = kani::any();
+fn packed_lane_range_checked_constructor_domain_is_exact() {
+    let start: usize = kani::any();
+    let len: usize = kani::any();
 
-    let encodable = start != u16::MAX || len != u16::MAX;
+    let encodable = start <= u16::MAX as usize && len <= u16::MAX as usize - start;
+    let checked = PackedLaneRange::try_new(start, len);
+    assert_eq!(checked.is_some(), encodable);
     kani::cover!(encodable);
     kani::cover!(!encodable);
-    if encodable {
-        let range = PackedLaneRange::new(start as usize, len as usize);
+    kani::cover!(start == u16::MAX as usize - 1 && len == 1);
+    kani::cover!(start == u16::MAX as usize && len == 1);
+    kani::cover!(start == u16::MAX as usize + 1 && len == 0);
+    if let Some(range) = checked {
         assert!(!range.is_empty());
         assert!(range.raw() == ((start as u32) << 16) | len as u32);
-        assert!(range.start() == start as usize);
-        assert!(range.len() == len as usize);
+        assert!(range.start() == start);
+        assert!(range.len() == len);
     }
 }
 
@@ -354,8 +358,8 @@ fn two_roll_scope_rows_are_accepted_exactly_when_unique_and_laminar() {
 
 #[kani::proof]
 #[kani::should_panic]
-fn packed_lane_range_reserved_sentinel_is_rejected() {
-    let _ = PackedLaneRange::new(u16::MAX as usize, u16::MAX as usize);
+fn packed_lane_range_infallible_constructor_rejects_first_end_overflow() {
+    let _ = PackedLaneRange::new(u16::MAX as usize, 1);
 }
 
 #[kani::proof]
@@ -457,35 +461,20 @@ fn resident_route_commit_decision_match_is_exact() {
     let right_scope: u16 = kani::any();
     let left_arm: u8 = kani::any();
     let right_arm: u8 = kani::any();
-    let left_mark_raw: u8 = kani::any();
-    let right_mark_raw: u8 = kani::any();
+    let left_mark: ReentryMark = kani::any();
+    let right_mark: ReentryMark = kani::any();
 
     let valid = left_scope < ScopeId::LOCAL_CAPACITY
         && right_scope < ScopeId::LOCAL_CAPACITY
         && left_arm <= 1
-        && right_arm <= 1
-        && left_mark_raw <= 1
-        && right_mark_raw <= 1;
+        && right_arm <= 1;
     kani::cover!(valid && left_scope == right_scope && left_arm == right_arm);
     kani::cover!(valid && left_scope != right_scope);
     kani::cover!(valid && left_scope == right_scope && left_arm != right_arm);
     kani::cover!(
-        valid
-            && left_scope == right_scope
-            && left_arm == right_arm
-            && left_mark_raw != right_mark_raw
+        valid && left_scope == right_scope && left_arm == right_arm && left_mark != right_mark
     );
     if valid {
-        let left_mark = if left_mark_raw == 0 {
-            ReentryMark::SinglePass
-        } else {
-            ReentryMark::Reentrant
-        };
-        let right_mark = if right_mark_raw == 0 {
-            ReentryMark::SinglePass
-        } else {
-            ReentryMark::Reentrant
-        };
         let left = PackedEventConflict::route_arm(ScopeId::route(left_scope), left_arm)
             .with_route_reentry(left_mark);
         let right = PackedEventConflict::route_arm(ScopeId::route(right_scope), right_arm)
@@ -568,6 +557,8 @@ fn packed_route_arm_row_round_trips_full_compact_domains() {
 
     let representable = event_raw != u32::MAX
         && (event_len != 0 || event_start == 0)
+        && u32::from(event_start) + u32::from(event_len) <= u32::from(u16::MAX)
+        && u32::from(lane_step_start) + u32::from(lane_step_len) <= u32::from(u16::MAX)
         && lane_step_len as usize <= super::super::LANE_DOMAIN_SIZE
         && (event_len == 0) == (lane_step_len == 0);
     kani::cover!(representable);

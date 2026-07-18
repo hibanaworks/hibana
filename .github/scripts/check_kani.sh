@@ -53,6 +53,12 @@ for path in sorted(root.rglob("*.rs")):
                 file=sys.stderr,
             )
             sys.exit(1)
+        if re.search(r"\bkani\s*::\s*any\b", body):
+            print(
+                f"Kani should-panic harness may not draw direct symbolic input; use a checked constructor for the rejection domain: {path}:{match.group(1)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 PY
 
 inventory_dir="$(mktemp -d "${TMPDIR:-/tmp}/hibana-kani-inventory.XXXXXX")"

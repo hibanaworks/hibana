@@ -1035,6 +1035,38 @@ Hibana.cursor_target_observations_are_entry_exact : ∀ (entry : Nat)
       (@Membership.mem.{0, 0} Hibana.ActiveOfferObservation (List.{0} Hibana.ActiveOfferObservation)
         (@List.instMembership.{0} Hibana.ActiveOfferObservation) observations observation)
       (@Eq.{1} Nat observation.key.entry entry))
+Hibana.decode_packed_lane_range_acceptance_implies_bounds : ∀ (raw capacity : Nat),
+  @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) (Hibana.decodePackedLaneRange? raw capacity)
+      (@some.{0} (Prod.{0, 0} Nat Nat)
+        (@Prod.mk.{0, 0} Nat Nat
+          (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) raw
+            (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
+          (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) raw
+            (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))))) →
+    And (@Ne.{1} Nat raw Hibana.packedU32Absent)
+      (@LE.le.{0} Nat instLENat
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+          (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) raw
+            (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
+          (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) raw
+            (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))))
+        capacity)
+Hibana.decode_packed_lane_range_accepts_bounded : ∀ (raw capacity : Nat),
+  @Ne.{1} Nat raw Hibana.packedU32Absent →
+    @LE.le.{0} Nat instLENat
+        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+          (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) raw
+            (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
+          (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) raw
+            (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536)))))
+        capacity →
+      @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) (Hibana.decodePackedLaneRange? raw capacity)
+        (@some.{0} (Prod.{0, 0} Nat Nat)
+          (@Prod.mk.{0, 0} Nat Nat
+            (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) raw
+              (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
+            (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) raw
+              (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))))
 @Hibana.decoded_event_action_binds_exact_lane : ∀ {image : Hibana.RustDescriptorImage} {eventId : Nat}
   {action : Hibana.LocalAction},
   @Eq.{1} (Option.{0} Hibana.LocalAction) (image.eventAction? eventId) (@some.{0} Hibana.LocalAction action) →
@@ -2592,6 +2624,15 @@ Hibana.optional_route_arm_decode_encode_round_trip : ∀ (arm : Hibana.RouteArm)
         @Eq.{1} (Option.{0} carrier.State) (carrier.resolve offered Hibana.ReceiptResolution.requeue)
             (@some.{0} carrier.State restored) →
           @Eq.{1} Hibana.TransportBoundaryState (abstraction restored) (abstraction current)
+Hibana.packed_lane_range_rejects_end_outside_compact_domain : @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat))
+  (Hibana.decodePackedLaneRange?
+    (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+      (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat)
+        (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535)))
+        (@OfNat.ofNat.{0} Nat (nat_lit 65536) (instOfNatNat (nat_lit 65536))))
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535))))
+  (@none.{0} (Prod.{0, 0} Nat Nat))
 Hibana.packed_route_arm_crosses_former_twelve_bit_boundary : @Eq.{1} (Option.{0} Hibana.DecodedPackedRouteArm)
   (Hibana.decodePackedRouteArm?
     (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)

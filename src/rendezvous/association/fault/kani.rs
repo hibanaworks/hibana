@@ -23,8 +23,25 @@ fn session_fault_encoding_is_injective() {
 }
 
 #[kani::proof]
+fn session_fault_checked_decoding_domain_is_exact() {
+    let raw: u8 = kani::any();
+    let checked = SessionFaultKind::try_decode(raw);
+
+    assert_eq!(checked.is_some(), raw <= 5);
+    match (raw, checked) {
+        (0, Some(None)) => {}
+        (1, Some(Some(SessionFaultKind::TransportClosed))) => {}
+        (2, Some(Some(SessionFaultKind::DecodeFailed))) => {}
+        (3, Some(Some(SessionFaultKind::ProtocolViolation))) => {}
+        (4, Some(Some(SessionFaultKind::EndpointDropped))) => {}
+        (5, Some(Some(SessionFaultKind::ProgressInvariantViolated))) => {}
+        (6..=u8::MAX, None) => {}
+        _ => assert!(false),
+    }
+}
+
+#[kani::proof]
 #[kani::should_panic]
-fn invalid_session_fault_encoding_is_fail_fast() {
-    let raw = (6u16 + u16::from(kani::any::<u8>()) % 250) as u8;
-    let _ = SessionFaultKind::decode(raw);
+fn session_fault_decoder_rejects_first_invalid_code() {
+    let _ = SessionFaultKind::decode(6);
 }

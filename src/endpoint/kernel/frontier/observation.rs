@@ -23,14 +23,18 @@ impl FrontierObservationSlot {
         flags: 0,
     };
 
+    #[inline(always)]
+    pub(crate) const fn accepts_exact_observation(observed: OfferEntryObservedState) -> bool {
+        !observed.key.is_absent()
+            && observed.frontier_mask & !FrontierKind::ALL_BITS == 0
+            && observed.flags & !OfferEntryObservedState::ALL_FLAGS == 0
+    }
+
     pub(crate) fn from_exact_observation(
         observed: OfferEntryObservedState,
         admission: OfferEntryAdmission,
     ) -> Self {
-        if observed.key.is_absent()
-            || observed.frontier_mask & !FrontierKind::ALL_BITS != 0
-            || observed.flags & !OfferEntryObservedState::ALL_FLAGS != 0
-        {
+        if !Self::accepts_exact_observation(observed) {
             crate::invariant();
         }
         let mut flags = 0u8;

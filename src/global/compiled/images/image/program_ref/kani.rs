@@ -3,6 +3,7 @@ use crate::global::compiled::images::image::blob_storage::{
     DescriptorScopeEvent, ProgramImageBytes, erase_scope_event, scope_marker_identity_tag,
 };
 use crate::global::compiled::images::image::columns::{
+    COMPACT_DESCRIPTOR_BYTE_CAPACITY, PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY,
     PROGRAM_IMAGE_ATOM_STRIDE, PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE,
     PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE, PROGRAM_IMAGE_SCOPE_MARKER_STRIDE, ProgramColumnRange,
     ProgramImageColumns, ProgramImageFacts,
@@ -57,101 +58,77 @@ const fn atom_rows(eff_indices: [u16; 3]) -> [u8; 33] {
 
 #[kani::proof]
 fn program_image_columns_are_canonical_for_exact_count_domain() {
-    let atom_len: u16 = kani::any();
-    let route_resolver_len: u16 = kani::any();
-    let route_participant_len: u16 = kani::any();
-    let scope_marker_len: u16 = kani::any();
-    let atom_bytes = usize::from(atom_len) * PROGRAM_IMAGE_ATOM_STRIDE;
-    let route_resolver_bytes =
-        usize::from(route_resolver_len) * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE;
-    let route_participant_bytes =
-        usize::from(route_participant_len) * PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE;
-    let scope_marker_bytes = usize::from(scope_marker_len) * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
-    let route_resolver_offset = atom_bytes;
-    let route_participant_offset = route_resolver_offset + route_resolver_bytes;
-    let scope_marker_offset = route_participant_offset + route_participant_bytes;
-    let blob_len = scope_marker_offset + scope_marker_bytes;
-    let valid = blob_len <= usize::from(u16::MAX);
-    let source_resolver_len: u16 = kani::any();
+    let atom_len: usize = kani::any();
+    let route_resolver_len: usize = kani::any();
+    let route_participant_len: usize = kani::any();
+    let scope_marker_len: usize = kani::any();
+    let counts_fit = atom_len <= PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY
+        && route_resolver_len <= COMPACT_DESCRIPTOR_BYTE_CAPACITY
+        && route_participant_len <= COMPACT_DESCRIPTOR_BYTE_CAPACITY
+        && scope_marker_len <= COMPACT_DESCRIPTOR_BYTE_CAPACITY;
+    let valid = counts_fit
+        && atom_len * PROGRAM_IMAGE_ATOM_STRIDE
+            + route_resolver_len * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE
+            + route_participant_len * PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE
+            + scope_marker_len * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE
+            <= COMPACT_DESCRIPTOR_BYTE_CAPACITY;
+    let source_resolver_len: usize = kani::any();
+    let checked = ProgramImageColumns::try_new(
+        atom_len,
+        route_resolver_len,
+        route_participant_len,
+        scope_marker_len,
+    );
 
+    assert_eq!(checked.is_some(), valid);
     kani::cover!(valid);
-    kani::cover!(!valid);
-    if valid {
-        let columns = ProgramImageColumns::new(
-            usize::from(atom_len),
-            usize::from(route_resolver_len),
-            usize::from(route_participant_len),
-            usize::from(scope_marker_len),
-        );
+    kani::cover!(!valid && counts_fit);
+    kani::cover!(!valid && atom_len > PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY);
+    kani::cover!(!valid && route_resolver_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY);
+    kani::cover!(!valid && route_participant_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY);
+    kani::cover!(!valid && scope_marker_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY);
+    if let Some(columns) = checked {
+        let atom_bytes = atom_len * PROGRAM_IMAGE_ATOM_STRIDE;
+        let route_resolver_bytes = route_resolver_len * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE;
+        let route_participant_bytes =
+            route_participant_len * PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE;
+        let scope_marker_bytes = scope_marker_len * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
+        let route_resolver_offset = atom_bytes;
+        let route_participant_offset = route_resolver_offset + route_resolver_bytes;
+        let scope_marker_offset = route_participant_offset + route_participant_bytes;
+        let blob_len = scope_marker_offset + scope_marker_bytes;
+
         assert!(columns.atoms().offset == 0);
-        assert!(columns.atoms().len == atom_len);
+        assert!(usize::from(columns.atoms().len) == atom_len);
         assert!(columns.route_resolvers().offset as usize == route_resolver_offset);
-        assert!(columns.route_resolvers().len == route_resolver_len);
+        assert!(usize::from(columns.route_resolvers().len) == route_resolver_len);
         assert!(columns.route_participants().offset as usize == route_participant_offset);
-        assert!(columns.route_participants().len == route_participant_len);
+        assert!(usize::from(columns.route_participants().len) == route_participant_len);
         assert!(columns.scope_markers().offset as usize == scope_marker_offset);
-        assert!(columns.scope_markers().len == scope_marker_len);
+        assert!(usize::from(columns.scope_markers().len) == scope_marker_len);
         assert!(columns.blob_len() == blob_len);
 
         kani::cover!(source_resolver_len <= route_resolver_len);
         kani::cover!(source_resolver_len > route_resolver_len);
         assert_eq!(
-            columns.covers_source_counts(
-                usize::from(atom_len),
-                usize::from(scope_marker_len),
-                usize::from(source_resolver_len),
-            ),
+            columns.covers_source_counts(atom_len, scope_marker_len, source_resolver_len,),
             source_resolver_len <= route_resolver_len,
         );
-        assert!(!columns.covers_source_counts(
-            usize::from(atom_len) + 1,
-            usize::from(scope_marker_len),
-            usize::from(source_resolver_len),
-        ));
-        assert!(!columns.covers_source_counts(
-            usize::from(atom_len),
-            usize::from(scope_marker_len) + 1,
-            usize::from(source_resolver_len),
-        ));
-        assert!(!columns.covers_source_counts(
-            usize::from(atom_len),
-            usize::from(scope_marker_len),
-            usize::from(route_resolver_len) + 1,
-        ));
+        assert!(
+            !columns.covers_source_counts(atom_len + 1, scope_marker_len, source_resolver_len,)
+        );
+        assert!(
+            !columns.covers_source_counts(atom_len, scope_marker_len + 1, source_resolver_len,)
+        );
+        assert!(!columns.covers_source_counts(atom_len, scope_marker_len, route_resolver_len + 1,));
     }
 }
 
 #[kani::proof]
 #[kani::should_panic]
-fn program_image_columns_reject_total_byte_overflow() {
-    let atom_len: u16 = kani::any();
-    let route_resolver_len: u16 = kani::any();
-    let route_participant_len: u16 = kani::any();
-    let scope_marker_len: u16 = kani::any();
-    let blob_len = usize::from(atom_len) * PROGRAM_IMAGE_ATOM_STRIDE
-        + usize::from(route_resolver_len) * PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE
-        + usize::from(route_participant_len) * PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE
-        + usize::from(scope_marker_len) * PROGRAM_IMAGE_SCOPE_MARKER_STRIDE;
-    let overflow = blob_len > usize::from(u16::MAX);
-
-    kani::cover!(overflow);
-    kani::cover!(!overflow);
-    let (atom_len, route_resolver_len, route_participant_len, scope_marker_len) = if overflow {
-        (
-            atom_len,
-            route_resolver_len,
-            route_participant_len,
-            scope_marker_len,
-        )
-    } else {
-        (u16::MAX, u16::MAX, u16::MAX, u16::MAX)
-    };
-    let _ = ProgramImageColumns::new(
-        usize::from(atom_len),
-        usize::from(route_resolver_len),
-        usize::from(route_participant_len),
-        usize::from(scope_marker_len),
-    );
+fn program_image_columns_reject_first_total_byte_overflow() {
+    let route_resolver_len = usize::from(u16::MAX) / PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE + 1;
+    let _ = ProgramImageColumns::new(0, route_resolver_len, 0, 0);
 }
 
 #[kani::proof]
@@ -171,40 +148,22 @@ fn program_image_constructor_rejects_undersized_storage() {
 
 #[kani::proof]
 fn descriptor_scope_marker_tag_is_exact_and_injective() {
-    let left_event_raw = kani::any::<u8>() % 3;
-    let right_event_raw = kani::any::<u8>() % 3;
-    let left_reentry_raw = kani::any::<u8>() % 2;
-    let right_reentry_raw = kani::any::<u8>() % 2;
-    let event = |raw| match raw {
-        0 => DescriptorScopeEvent::Enter,
-        1 => DescriptorScopeEvent::Split,
-        2 => DescriptorScopeEvent::Exit,
-        _ => crate::invariant(),
-    };
-    let reentry = |raw| match raw {
-        0 => ReentryMark::SinglePass,
-        1 => ReentryMark::Reentrant,
-        _ => crate::invariant(),
-    };
-    let left = scope_marker_identity_tag(event(left_event_raw), reentry(left_reentry_raw));
-    let right = scope_marker_identity_tag(event(right_event_raw), reentry(right_reentry_raw));
+    let left_event: DescriptorScopeEvent = kani::any();
+    let right_event: DescriptorScopeEvent = kani::any();
+    let left_reentry: ReentryMark = kani::any();
+    let right_reentry: ReentryMark = kani::any();
+    let left = scope_marker_identity_tag(left_event, left_reentry);
+    let right = scope_marker_identity_tag(right_event, right_reentry);
 
-    kani::cover!(left_event_raw == right_event_raw && left_reentry_raw == right_reentry_raw);
-    kani::cover!(left_event_raw != right_event_raw);
-    kani::cover!(left_event_raw == right_event_raw && left_reentry_raw != right_reentry_raw);
-    assert!(
-        (left == right)
-            == (left_event_raw == right_event_raw && left_reentry_raw == right_reentry_raw)
-    );
+    kani::cover!(left_event == right_event && left_reentry == right_reentry);
+    kani::cover!(left_event != right_event);
+    kani::cover!(left_event == right_event && left_reentry != right_reentry);
+    assert!((left == right) == (left_event == right_event && left_reentry == right_reentry));
 }
 
 #[kani::proof]
 fn proof_only_scope_entry_metadata_is_erased_from_descriptor_tags() {
-    let reentry = if kani::any::<bool>() {
-        ReentryMark::SinglePass
-    } else {
-        ReentryMark::Reentrant
-    };
+    let reentry: ReentryMark = kani::any();
     let expected = scope_marker_identity_tag(erase_scope_event(ScopeEvent::roll_enter()), reentry);
 
     assert!(

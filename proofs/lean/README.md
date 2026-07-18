@@ -548,7 +548,7 @@ Core/Std proofs. The gate discovers those declarations directly from the Lean
 source and checks their elaborated types and axiom closures in the same Lean
 run; there is no second hand-maintained theorem list. Fifteen externally
 relevant claim types remain the compact review surface, while the elaborated
-types of all 677 exported theorems are pinned in a separate checked snapshot.
+types of all 680 exported theorems are pinned in a separate checked snapshot.
 Retaining any theorem name while changing its elaborated conclusion or
 assumptions therefore fails the gate.
 

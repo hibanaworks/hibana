@@ -88,8 +88,13 @@ fn frontier_entry_capacity_preserves_the_full_lane_domain() {
 
 #[kani::proof]
 fn frontier_observation_packing_is_exact() {
-    let raw_flags = kani::any::<u8>() & OfferEntryObservedState::ALL_FLAGS;
-    let raw_frontier = kani::any::<u8>() & FrontierKind::ALL_BITS;
+    let raw_flags = kani::any::<u8>();
+    let raw_frontier = kani::any::<u8>();
+    let key = if kani::any::<bool>() {
+        offer_key(0, 1)
+    } else {
+        OfferEntryKey::EMPTY
+    };
     let selectable = kani::any::<bool>();
     let admission = if selectable {
         OfferEntryAdmission::Selectable
@@ -97,10 +102,24 @@ fn frontier_observation_packing_is_exact() {
         OfferEntryAdmission::Excluded
     };
     let observed = OfferEntryObservedState {
-        key: offer_key(0, 1),
+        key,
         frontier_mask: raw_frontier,
         flags: raw_flags,
     };
+    let valid = !key.is_absent()
+        && raw_frontier & !FrontierKind::ALL_BITS == 0
+        && raw_flags & !OfferEntryObservedState::ALL_FLAGS == 0;
+    assert_eq!(
+        FrontierObservationSlot::accepts_exact_observation(observed),
+        valid
+    );
+    kani::cover!(valid);
+    kani::cover!(!valid && key.is_absent());
+    kani::cover!(!valid && raw_frontier & !FrontierKind::ALL_BITS != 0);
+    kani::cover!(!valid && raw_flags & !OfferEntryObservedState::ALL_FLAGS != 0);
+    if !valid {
+        return;
+    }
     let slot = FrontierObservationSlot::from_exact_observation(observed, admission);
 
     assert_eq!(slot.is_controller(), observed.is_controller());
@@ -281,7 +300,7 @@ fn frontier_observation_rejects_absent_exact_key() {
     let observed = OfferEntryObservedState {
         key: OfferEntryKey::EMPTY,
         frontier_mask: FrontierKind::Route.bit(),
-        flags: kani::any(),
+        flags: 0,
     };
 
     let _ =
@@ -290,17 +309,10 @@ fn frontier_observation_rejects_absent_exact_key() {
 
 #[kani::proof]
 #[kani::should_panic]
-fn frontier_observation_rejects_bits_outside_the_exact_kind_domain() {
-    let candidate = kani::any::<u8>();
-    let invalid_bits = !FrontierKind::ALL_BITS;
-    let raw_frontier = if candidate & invalid_bits == 0 {
-        candidate | (invalid_bits & invalid_bits.wrapping_neg())
-    } else {
-        candidate
-    };
+fn frontier_observation_rejects_first_bit_outside_exact_kind_domain() {
     let observed = OfferEntryObservedState {
         key: offer_key(0, 1),
-        frontier_mask: raw_frontier,
+        frontier_mask: FrontierKind::ALL_BITS + 1,
         flags: 0,
     };
     let _ =
@@ -309,18 +321,11 @@ fn frontier_observation_rejects_bits_outside_the_exact_kind_domain() {
 
 #[kani::proof]
 #[kani::should_panic]
-fn frontier_observation_rejects_flags_outside_the_exact_domain() {
-    let candidate = kani::any::<u8>();
-    let invalid_bits = !OfferEntryObservedState::ALL_FLAGS;
-    let raw_flags = if candidate & invalid_bits == 0 {
-        candidate | (invalid_bits & invalid_bits.wrapping_neg())
-    } else {
-        candidate
-    };
+fn frontier_observation_rejects_first_flag_outside_exact_domain() {
     let observed = OfferEntryObservedState {
         key: offer_key(0, 1),
         frontier_mask: FrontierKind::Route.bit(),
-        flags: raw_flags,
+        flags: OfferEntryObservedState::ALL_FLAGS + 1,
     };
     let _ =
         FrontierObservationSlot::from_exact_observation(observed, OfferEntryAdmission::Excluded);

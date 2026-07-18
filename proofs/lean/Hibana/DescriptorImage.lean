@@ -2048,6 +2048,36 @@ def decodePackedLaneRange?
 def eventRange (start length : Nat) : List Nat :=
   (List.range length).map (start + ·)
 
+theorem decode_packed_lane_range_accepts_bounded
+    (raw capacity : Nat)
+    (present : raw ≠ packedU32Absent)
+    (bounded : raw / 65536 + raw % 65536 ≤ capacity) :
+    decodePackedLaneRange? raw capacity =
+      some (raw / 65536, raw % 65536) := by
+  unfold decodePackedLaneRange?
+  rw [if_neg present, if_pos bounded]
+
+theorem decode_packed_lane_range_acceptance_implies_bounds
+    (raw capacity : Nat)
+    (accepted : decodePackedLaneRange? raw capacity =
+      some (raw / 65536, raw % 65536)) :
+    raw ≠ packedU32Absent ∧ raw / 65536 + raw % 65536 ≤ capacity := by
+  have present : raw ≠ packedU32Absent := by
+    intro absent
+    unfold decodePackedLaneRange? at accepted
+    rw [if_pos absent] at accepted
+    cases accepted
+  refine ⟨present, ?_⟩
+  by_cases bounded : raw / 65536 + raw % 65536 ≤ capacity
+  · exact bounded
+  · unfold decodePackedLaneRange? at accepted
+    rw [if_neg present, if_neg bounded] at accepted
+    cases accepted
+
+theorem packed_lane_range_rejects_end_outside_compact_domain :
+    decodePackedLaneRange? (65535 * 65536 + 1) 65535 = none := by
+  decide
+
 structure DecodedPackedRouteArm where
   eventStart : Nat
   eventLength : Nat

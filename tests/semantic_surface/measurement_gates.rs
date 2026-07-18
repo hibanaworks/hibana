@@ -203,8 +203,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && route_arm_pressure_gate
                 .contains("HIBANA_COMPILE_PRESSURE_LABEL=\"route_arm_heavy_${count}\"")
             && route_arm_pressure_gate
-                .contains("route-arm projection compile time became superlinear")
-            && route_arm_pressure_gate
                 .contains("route-arm projection pressure passed target=${TARGET} arm-events=256")
             && compile_pressure_budget.contains("route_arm_heavy_256\t"),
         "route-arm projection must retain a Pico-target compile-pressure regression gate"
@@ -221,10 +219,6 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && causal_handoff_pressure_gate.contains(".roll()")
             && causal_handoff_pressure_gate
                 .contains("pressure_label=\"causal_handoff_${count}\"")
-            && causal_handoff_pressure_gate
-                .contains("causal-handoff compile time became superlinear")
-            && causal_handoff_pressure_gate
-                .contains("causal-handoff ${shape} compile time became superlinear")
             && causal_handoff_pressure_gate.contains(
                 "causal-handoff pressure passed target=${TARGET} linear-events=256 route-arm-events=64 roll-events=64"
             )
@@ -233,6 +227,26 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && compile_pressure_budget.contains("causal_handoff_route_64\t")
             && compile_pressure_budget.contains("causal_handoff_roll_64\t"),
         "causal handoff must retain Pico-target linear, route, and roll compile-pressure gates"
+    );
+    let independently_sampled_compile_gates =
+        format!("{message_heavy_gate}\n{route_arm_pressure_gate}\n{causal_handoff_pressure_gate}");
+    for forbidden in [
+        "if (( COMPILE_SECONDS[",
+        "if (( COMPILE_RSS_MIB[",
+        "compile time became superlinear",
+        "compile RSS",
+    ] {
+        assert!(
+            !independently_sampled_compile_gates.contains(forbidden),
+            "independently sampled compile runs must use named absolute budgets, not cross-run comparisons: {forbidden}"
+        );
+    }
+    assert_eq!(
+        independently_sampled_compile_gates
+            .matches("Cross-case comparisons of sampled peaks are not stable gates.")
+            .count(),
+        3,
+        "every compile matrix must document the named-budget authority"
     );
     assert!(
         !huge_choreography.contains("recursion_limit")

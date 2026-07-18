@@ -70,27 +70,75 @@ pub(crate) struct ProgramImageColumns {
 }
 
 impl ProgramImageColumns {
+    pub(crate) const fn try_new(
+        atom_len: usize,
+        route_resolver_len: usize,
+        route_participant_len: usize,
+        scope_marker_len: usize,
+    ) -> Option<Self> {
+        if atom_len > PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY
+            || route_resolver_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY
+            || route_participant_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY
+            || scope_marker_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY
+        {
+            return None;
+        }
+        let atom_bytes = match atom_len.checked_mul(PROGRAM_IMAGE_ATOM_STRIDE) {
+            Some(bytes) => bytes,
+            None => return None,
+        };
+        let resolver_bytes =
+            match route_resolver_len.checked_mul(PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE) {
+                Some(bytes) => bytes,
+                None => return None,
+            };
+        let participant_bytes =
+            match route_participant_len.checked_mul(PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE) {
+                Some(bytes) => bytes,
+                None => return None,
+            };
+        let marker_bytes = match scope_marker_len.checked_mul(PROGRAM_IMAGE_SCOPE_MARKER_STRIDE) {
+            Some(bytes) => bytes,
+            None => return None,
+        };
+        let blob_len = match atom_bytes.checked_add(resolver_bytes) {
+            Some(len) => len,
+            None => return None,
+        };
+        let blob_len = match blob_len.checked_add(participant_bytes) {
+            Some(len) => len,
+            None => return None,
+        };
+        let blob_len = match blob_len.checked_add(marker_bytes) {
+            Some(len) => len,
+            None => return None,
+        };
+        if blob_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY {
+            return None;
+        }
+        Some(Self {
+            atom_len: atom_len as u16,
+            route_resolver_len: route_resolver_len as u16,
+            route_participant_len: route_participant_len as u16,
+            scope_marker_len: scope_marker_len as u16,
+        })
+    }
+
     pub(crate) const fn new(
         atom_len: usize,
         route_resolver_len: usize,
         route_participant_len: usize,
         scope_marker_len: usize,
     ) -> Self {
-        if atom_len > PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY
-            || route_resolver_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY
-            || route_participant_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY
-            || scope_marker_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY
-        {
-            crate::invariant();
+        match Self::try_new(
+            atom_len,
+            route_resolver_len,
+            route_participant_len,
+            scope_marker_len,
+        ) {
+            Some(columns) => columns,
+            None => crate::invariant(),
         }
-        let columns = Self {
-            atom_len: atom_len as u16,
-            route_resolver_len: route_resolver_len as u16,
-            route_participant_len: route_participant_len as u16,
-            scope_marker_len: scope_marker_len as u16,
-        };
-        let _ = columns.scope_markers();
-        columns
     }
 
     #[inline(always)]

@@ -18,6 +18,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let decision_state_harnesses = read("src/endpoint/kernel/decision_state/kani.rs");
     let active_offer_harnesses = read("src/endpoint/kernel/frontier/active_offer_entry/kani.rs");
     let frontier_entry_harnesses = read("src/endpoint/kernel/frontier/entry_sets/kani.rs");
+    let frontier_observation = read("src/endpoint/kernel/frontier/observation.rs");
     let frontier_scratch = read("src/endpoint/kernel/frontier/scratch.rs");
     let frontier_scratch_harnesses = read("src/endpoint/kernel/frontier/scratch/kani.rs");
     let frontier_entry_buffer = read("src/endpoint/kernel/frontier/entry_sets/buffer.rs");
@@ -62,6 +63,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let fault_harnesses = read("src/rendezvous/association/fault/kani.rs");
     let association_harnesses = read("src/rendezvous/association/kani.rs");
     let program_blob_storage = read("src/global/compiled/images/image/blob_storage.rs");
+    let route_facts = read("src/global/const_dsl/route.rs");
     let program_columns = read("src/global/compiled/images/image/columns.rs");
     let role_image_types = read("src/global/role_program/image_types.rs");
     let resolver_registration_harnesses =
@@ -78,6 +80,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(verification_readme.contains("without passing a filter"));
     assert!(verification_readme.contains("without a hand-written second"));
     assert!(verification_readme.contains("derive\n`kani::Arbitrary` from the enum declaration"));
+    assert!(
+        verification_readme
+            .contains("does not treat an unchanged harness name as proof that its body was not")
+    );
     assert!(!verification_readme.contains("intrinsic resolver sentinel"));
     assert!(!verification_readme.contains("inventory contains 81"));
     assert!(root_manifest.contains("'cfg(kani)'"));
@@ -206,18 +212,22 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(inventory.contains("\"kani-version\": \"0.67.0\""));
-    assert!(inventory.contains("\"standard-harnesses\": 191"));
+    assert!(inventory.contains("\"standard-harnesses\": 192"));
     assert!(inventory.contains("\"contract-harnesses\": 0"));
     for (owner, enum_name) in [
         (&frontier_kind, "FrontierKind"),
         (&session_fault, "SessionFaultKind"),
         (&endpoint_lease_state, "EndpointLeaseState"),
         (&rendezvous_access_state, "RendezvousAccessState"),
+        (&route_facts, "ReentryMark"),
     ] {
         assert!(owner.contains(&format!(
             "#[cfg_attr(kani, derive(kani::Arbitrary))]\npub(crate) enum {enum_name}"
         )));
     }
+    assert!(program_blob_storage.contains(
+        "#[cfg_attr(kani, derive(kani::Arbitrary))]\npub(super) enum DescriptorScopeEvent"
+    ));
     assert!(session_fault.contains("#[path = \"fault/kani.rs\"]\nmod kani_proofs;"));
     assert!(!session_fault.contains("mod kani;"));
     assert!(active_offer_harnesses.contains("let first_frontier: FrontierKind = kani::any();"));
@@ -236,6 +246,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(fault_harnesses.contains("let left: SessionFaultKind = kani::any();"));
     assert!(fault_harnesses.contains("let right: SessionFaultKind = kani::any();"));
     assert!(!fault_harnesses.contains("SYMBOLIC_FAULTS"));
+    assert!(program_ref_harnesses.contains("let left_event: DescriptorScopeEvent = kani::any();"));
+    assert!(program_ref_harnesses.contains("let left_reentry: ReentryMark = kani::any();"));
+    assert!(!program_ref_harnesses.contains("left_event_raw"));
+    assert!(!program_ref_harnesses.contains("left_reentry_raw"));
+    assert!(image_harnesses.contains("let left_mark: ReentryMark = kani::any();"));
+    assert!(image_harnesses.contains("let right_mark: ReentryMark = kani::any();"));
+    assert!(!image_harnesses.contains("left_mark_raw"));
+    assert!(!image_harnesses.contains("right_mark_raw"));
     assert!(harnesses.contains("let state: EndpointLeaseState = kani::any();"));
     assert!(harnesses.contains("let state: RendezvousAccessState = kani::any();"));
     assert!(!harnesses.contains("MembershipSealed as u8"));
@@ -270,6 +288,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         cursor_harnesses.contains("assert_eq!(located.is_some(), step_idx < local_step_count)")
     );
     assert!(script.contains("Kani should-panic harness may panic before its production call"));
+    assert!(script.contains(
+        "Kani should-panic harness may not draw direct symbolic input; use a checked constructor"
+    ));
+    assert!(script.contains(r#"re.search(r"\bkani\s*::\s*any\b", body)"#));
     assert!(
         decision_state_harnesses
             .contains("fn selected_route_commit_rows_finish_is_lane_exact_and_fail_closed()")
@@ -278,6 +300,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(decision_state_harnesses.contains("assert!(empty.is_empty())"));
     assert!(decision_state_harnesses.contains("finish_for_lane(mismatched_lane)"));
     assert!(decision_state_harnesses.contains("assert!(rejected.is_err())"));
+    assert!(decision_state_harnesses.contains("candidate_end <= u32::from(u16::MAX)"));
+    assert!(decision_state_harnesses.contains("kani::cover!(start == u16::MAX - 1 && len == 1)"));
     for harness in [
         "active_offer_entry_accepts_only_exact_scope_entry_metadata",
         "active_offer_entry_foreign_scope_is_exact_rejection",
@@ -295,10 +319,22 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "selectable_ready_query_never_admits_an_excluded_exact_witness",
         "exact_observation_capacity_exhaustion_is_fail_closed",
         "frontier_observation_rejects_absent_exact_key",
-        "frontier_observation_rejects_flags_outside_the_exact_domain",
+        "frontier_observation_rejects_first_bit_outside_exact_kind_domain",
+        "frontier_observation_rejects_first_flag_outside_exact_domain",
     ] {
         assert!(frontier_entry_harnesses.contains(&format!("fn {harness}()")));
     }
+    assert!(frontier_observation.contains("pub(crate) const fn accepts_exact_observation("));
+    assert!(frontier_observation.contains("if !Self::accepts_exact_observation(observed)"));
+    assert!(
+        frontier_entry_harnesses
+            .contains("FrontierObservationSlot::accepts_exact_observation(observed)")
+    );
+    assert!(frontier_entry_harnesses.contains("!valid && key.is_absent()"));
+    assert!(frontier_entry_harnesses.contains("raw_frontier & !FrontierKind::ALL_BITS != 0"));
+    assert!(
+        frontier_entry_harnesses.contains("raw_flags & !OfferEntryObservedState::ALL_FLAGS != 0")
+    );
     for harness in [
         "exact_scope_rows_never_synthesize_controller_progress_authority",
         "same_entry_erased_flags_cannot_change_exact_current_observation",
@@ -447,7 +483,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!fault_harnesses.contains("fn symbolic_fault("));
     assert!(fault_harnesses.contains("SessionFaultKind::decode(encoded) == Some(fault)"));
     assert!(fault_harnesses.contains("fn session_fault_encoding_is_injective()"));
-    assert!(fault_harnesses.contains("fn invalid_session_fault_encoding_is_fail_fast()"));
+    assert!(fault_harnesses.contains("fn session_fault_checked_decoding_domain_is_exact()"));
+    assert!(fault_harnesses.contains("assert_eq!(checked.is_some(), raw <= 5)"));
+    assert!(fault_harnesses.contains("fn session_fault_decoder_rejects_first_invalid_code()"));
+    assert!(session_fault.contains("pub(super) const fn try_decode(raw: u8)"));
+    assert!(session_fault.contains("match Self::try_decode(raw)"));
     assert!(fault_harnesses.contains("#[kani::should_panic]"));
     assert!(fault_harnesses.contains("left.encode() == right.encode()"));
     assert!(!fault_harnesses.contains("kani::assume"));
@@ -491,14 +531,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(!unique_match_harnesses.contains("kani::assume"));
     for harness in [
-        "packed_lane_range_encoding_avoids_reserved_sentinel",
+        "packed_lane_range_checked_constructor_domain_is_exact",
         "packed_lane_optional_range_canonicality_is_exact",
         "active_lane_metadata_is_exact_for_every_first_byte_bitmap",
         "inactive_lane_metadata_has_one_empty_representation",
         "active_lane_metadata_preserves_the_high_lane_boundary",
         "lane_column_coherence_is_exact_for_one_binary_route",
         "route_commit_partition_requires_the_exact_builder_maximum",
-        "packed_lane_range_reserved_sentinel_is_rejected",
+        "packed_lane_range_infallible_constructor_rejects_first_end_overflow",
         "resident_route_arm_index_decoding_accepts_exact_binary_domain",
         "resident_route_scope_decoding_accepts_exact_domain",
         "resident_roll_scope_decoding_accepts_exact_domain",
@@ -515,11 +555,16 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(!image_harnesses.contains("kani::assume"));
     assert!(image_harnesses.contains("#[kani::should_panic]"));
+    assert!(role_image_types.contains("pub(crate) const fn try_new(start: usize, len: usize)"));
+    assert!(role_image_types.contains("match Self::try_new(start, len)"));
+    assert!(image_harnesses.contains("let start: usize = kani::any()"));
+    assert!(image_harnesses.contains("let len: usize = kani::any()"));
+    assert!(image_harnesses.contains("assert_eq!(checked.is_some(), encodable)"));
     assert!(
         image_harnesses
             .contains("kani::cover!(valid && left_scope == right_scope && left_arm != right_arm);")
     );
-    assert!(image_harnesses.contains("&& left_mark_raw != right_mark_raw"));
+    assert!(image_harnesses.contains("&& left_mark != right_mark"));
     assert!(image_harnesses.contains("plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>"));
     assert!(image_harnesses.contains("plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>"));
 
@@ -622,7 +667,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
 
     for harness in [
         "program_image_columns_are_canonical_for_exact_count_domain",
-        "program_image_columns_reject_total_byte_overflow",
+        "program_image_columns_reject_first_total_byte_overflow",
         "program_image_fit_probe_rejects_undersized_storage",
         "program_image_constructor_rejects_undersized_storage",
         "descriptor_scope_marker_tag_is_exact_and_injective",
@@ -639,6 +684,16 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     ] {
         assert!(program_ref_harnesses.contains(&format!("fn {harness}()")));
     }
+    assert!(program_columns.contains("pub(crate) const fn try_new("));
+    assert!(program_columns.contains("match Self::try_new("));
+    assert!(program_ref_harnesses.contains("let atom_len: usize = kani::any()"));
+    assert!(program_ref_harnesses.contains("let scope_marker_len: usize = kani::any()"));
+    assert!(program_ref_harnesses.contains("let counts_fit = atom_len"));
+    assert!(program_ref_harnesses.contains("assert_eq!(checked.is_some(), valid)"));
+    assert!(program_ref_harnesses.contains("kani::cover!(!valid && counts_fit);"));
+    assert!(
+        program_ref_harnesses.contains("route_resolver_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY")
+    );
     assert!(program_ref_harnesses.contains("assert!(decoded.is_some() == expected)"));
     assert!(program_ref_harnesses.contains("row.atom.payload_schema == payload_schema"));
     assert!(program_ref_harnesses.contains("row.payload_schema == payload_schema"));
@@ -666,7 +721,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_columns.contains("route_participant_len: u16"));
     assert!(program_columns.contains("route_participant_len,"));
     assert!(program_columns.contains("pub(crate) const fn covers_source_counts("));
-    assert!(program_ref_harnesses.contains("let source_resolver_len: u16 = kani::any();"));
+    assert!(program_ref_harnesses.contains("let source_resolver_len: usize = kani::any();"));
     assert!(
         program_ref_harnesses.contains("kani::cover!(source_resolver_len <= route_resolver_len);")
     );
@@ -720,8 +775,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     ));
     assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 0, 27, 0)"));
     assert!(program_ref_harnesses.contains("ProgramImageColumns::new(2, 0, 5, 0)"));
-    assert!(program_ref_harnesses.contains("let overflow = blob_len > usize::from(u16::MAX);"));
-    assert!(program_ref_harnesses.contains("(u16::MAX, u16::MAX, u16::MAX, u16::MAX)"));
+    assert!(
+        program_ref_harnesses
+            .contains("usize::from(u16::MAX) / PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE + 1")
+    );
     assert!(program_ref_harnesses.contains("ProgramImageBytes::<10>::from_image_if_fits"));
     assert!(program_ref_harnesses.contains(".is_none()"));
     assert!(!program_ref_harnesses.contains("kani::assume"));

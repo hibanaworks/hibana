@@ -24,10 +24,11 @@ count_unsafe_blocks() {
   local roots=("$@")
   local matches
   set +e
-  matches="$(rg -n 'unsafe\s*\{' "${roots[@]}" \
+  matches="$(rg -o 'unsafe\s*\{' "${roots[@]}" \
     -g '*.rs' \
     -g '!src/**/tests.rs' \
     -g '!src/**/*_tests.rs' \
+    -g '!src/test_support/**' \
     -g '!src/endpoint/kernel/test_support/**')"
   local status=$?
   set -e
@@ -42,26 +43,26 @@ count_unsafe_blocks() {
   fi
 }
 
-assert_unsafe_limit() {
+assert_unsafe_count() {
   local label="$1"
-  local limit="$2"
+  local expected="$2"
   shift 2
   local count
   count="$(count_unsafe_blocks "$@")"
-  if (( count > limit )); then
-    echo "unsafe block count increased for ${label}: ${count} > ${limit}" >&2
+  if (( count != expected )); then
+    echo "unsafe block inventory changed for ${label}: expected ${expected}, found ${count}" >&2
     exit 1
   fi
 }
 
-assert_unsafe_limit "production" 377 src
-assert_unsafe_limit "frontier scratch owner" 6 src/endpoint/kernel/frontier/scratch.rs
-assert_unsafe_limit "endpoint lease owner" 4 \
+assert_unsafe_count "reviewed source" 304 src
+assert_unsafe_count "frontier scratch owner" 5 src/endpoint/kernel/frontier/scratch.rs
+assert_unsafe_count "endpoint lease owner" 4 \
   src/rendezvous/core/endpoint_leases.rs \
   src/rendezvous/core/storage_layout.rs \
   src/rendezvous/core/storage_layout/capacity/endpoint_lease.rs
-assert_unsafe_limit "resolver erased storage owner" 5 src/session/cluster/core/dynamic_resolvers.rs
-assert_unsafe_limit "SessionKit init owner" 4 src/runtime/session_kit.rs
+assert_unsafe_count "resolver erased storage owner" 5 src/session/cluster/core/dynamic_resolvers.rs
+assert_unsafe_count "SessionKit init owner" 4 src/runtime/session_kit.rs
 
 for unsafe_owner in \
   src/session/cluster/core.rs \

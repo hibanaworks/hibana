@@ -676,7 +676,7 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | Modeled runtime SRAM envelope | 5,506 B | 8,954 B |
 | Minimal linked protocol artifact | 352 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,824 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 99,911 B | 169,965 B |
+| Complete no-default `libhibana.rlib` sections | 100,381 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release
@@ -722,13 +722,14 @@ sixteen named concrete witnesses are audited as an explicit trusted boundary
 rather than presented as kernel-only proofs.
 
 The repository also gates the proof inventory itself: new public operations,
-compact transition effects, ownership classes, Lean theorems, Miri scenarios,
-and Kani harnesses cannot silently bypass their checked inventories. Static
+compact transition effects, ownership classes, Lean theorems, registered Miri
+scenarios, and discovered Kani harnesses cannot silently disappear from their
+checked inventories. Static
 Lean declarations are discovered from source rather than repeated in a
 hand-maintained audit file; one Lean run checks both the elaborated type and the
 axiom closure of every discovered theorem. The gate also presents fifteen
 principal Lean claim types as a compact public surface and pins the elaborated
-types of all 677 static theorems. A theorem cannot retain its name while its
+types of all 680 static theorems. A theorem cannot retain its name while its
 elaborated statement silently acquires assumptions or drops a conclusion. The
 same gate assigns audit-only names to all 36 anonymous regression examples and
 pins their elaborated statements, so changing only an example statement cannot
@@ -739,7 +740,9 @@ protocol/production contracts and 458 generated trace, rejection, refinement,
 and progress obligations are named and type-pinned. The sixteen
 runtime-layout/lifecycle theorems and two public-operation table theorems are
 pinned independently as well. Generated evidence cannot disappear or keep its
-name while changing its elaborated checked statement.
+name while changing its elaborated checked statement. Adding a new Miri owner
+still requires an explicit reviewed entry in the Miri gate; test-count pinning
+cannot account for source paths absent from that registry.
 
 ## Build And Release
 

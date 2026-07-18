@@ -20,15 +20,22 @@ impl PackedLaneRange {
     pub(crate) const EMPTY: Self = Self(PACKED_LANE_RANGE_EMPTY);
 
     #[inline(always)]
-    pub(crate) const fn new(start: usize, len: usize) -> Self {
+    pub(crate) const fn try_new(start: usize, len: usize) -> Option<Self> {
         if start > u16::MAX as usize || len > u16::MAX as usize {
-            panic!("lane range descriptor overflow");
+            return None;
         }
-        let raw = ((start as u32) << 16) | len as u32;
-        if raw == PACKED_LANE_RANGE_EMPTY {
-            panic!("lane range descriptor uses reserved sentinel");
+        if len > u16::MAX as usize - start {
+            return None;
         }
-        Self(raw)
+        Some(Self(((start as u32) << 16) | len as u32))
+    }
+
+    #[inline(always)]
+    pub(crate) const fn new(start: usize, len: usize) -> Self {
+        match Self::try_new(start, len) {
+            Some(range) => range,
+            None => panic!("lane range descriptor outside compact domain"),
+        }
     }
 
     #[inline(always)]
