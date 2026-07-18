@@ -170,7 +170,7 @@ theorem production_route_traversal_bound_covers_every_acyclic_parent_chain
   simp only [productionRouteTraversalBound]
   omega
 
-theorem production_route_traversal_has_no_former_256_step_limit :
+theorem production_route_traversal_covers_full_compact_step_domain :
     productionRouteTraversalBound 257 = 258 := by
   decide
 
@@ -315,7 +315,7 @@ theorem production_frontier_capacity_is_bounded_by_the_lane_domain
     productionFrontierCapacity activeLaneCount ≤ productionLaneCapacity := by
   exact laneBound
 
-theorem production_frontier_capacity_has_no_former_eight_entry_limit :
+theorem production_frontier_capacity_reaches_full_lane_domain :
     productionFrontierCapacity 9 = 9 ∧
       productionFrontierCapacity 256 = productionLaneCapacity := by
   decide
@@ -334,91 +334,178 @@ def FrontierProgressSelectionModel.retainFirst
   | none => next
 
 def FrontierProgressSelectionModel.consider
+    (admissible : α → Bool)
     (matchesFrontier : α → Bool)
     (selection : FrontierProgressSelectionModel α)
     (candidate : α) : FrontierProgressSelectionModel α :=
-  { preferred := FrontierProgressSelectionModel.retainFirst selection.preferred
-      (if matchesFrontier candidate then some candidate else none)
-    firstAdmissible := FrontierProgressSelectionModel.retainFirst
-      selection.firstAdmissible (some candidate) }
+  if admissible candidate then
+    { preferred := FrontierProgressSelectionModel.retainFirst selection.preferred
+        (if matchesFrontier candidate then some candidate else none)
+      firstAdmissible := FrontierProgressSelectionModel.retainFirst
+        selection.firstAdmissible (some candidate) }
+  else
+    selection
 
 def scanFrontierProgress
+    (admissible : α → Bool)
     (matchesFrontier : α → Bool)
     (selection : FrontierProgressSelectionModel α)
     (candidates : List α) : FrontierProgressSelectionModel α :=
   match candidates with
   | [] => selection
   | candidate :: rest =>
-      scanFrontierProgress matchesFrontier
-        (selection.consider matchesFrontier candidate) rest
+      scanFrontierProgress admissible matchesFrontier
+        (selection.consider admissible matchesFrontier candidate) rest
 
-def firstFrontierMatch (matchesFrontier : α → Bool) : List α → Option α
+def firstAdmissible (admissible : α → Bool) : List α → Option α
   | [] => none
   | candidate :: rest =>
-      if matchesFrontier candidate then some candidate
-      else firstFrontierMatch matchesFrontier rest
+      if admissible candidate then some candidate
+      else firstAdmissible admissible rest
+
+def firstAdmissibleFrontierMatch
+    (admissible matchesFrontier : α → Bool) : List α → Option α
+  | [] => none
+  | candidate :: rest =>
+      if admissible candidate && matchesFrontier candidate then some candidate
+      else firstAdmissibleFrontierMatch admissible matchesFrontier rest
 
 def referenceFrontierProgressSelection
+    (admissible : α → Bool)
     (matchesFrontier : α → Bool)
     (candidates : List α) : Option α :=
   FrontierProgressSelectionModel.retainFirst
-    (firstFrontierMatch matchesFrontier candidates) candidates.head?
+    (firstAdmissibleFrontierMatch admissible matchesFrontier candidates)
+    (firstAdmissible admissible candidates)
 
 def streamingFrontierProgressSelection
+    (admissible : α → Bool)
     (matchesFrontier : α → Bool)
     (candidates : List α) : Option α :=
-  let selection := scanFrontierProgress matchesFrontier
+  let selection := scanFrontierProgress admissible matchesFrontier
     { preferred := none, firstAdmissible := none } candidates
   FrontierProgressSelectionModel.retainFirst
     selection.preferred selection.firstAdmissible
 
 theorem scan_frontier_progress_retains_first_admissible
-    (matchesFrontier : α → Bool)
+    (admissible matchesFrontier : α → Bool)
     (selection : FrontierProgressSelectionModel α)
     (candidates : List α) :
-    (scanFrontierProgress matchesFrontier selection candidates).firstAdmissible =
+    (scanFrontierProgress admissible matchesFrontier selection candidates).firstAdmissible =
       FrontierProgressSelectionModel.retainFirst
-        selection.firstAdmissible candidates.head? := by
+        selection.firstAdmissible (firstAdmissible admissible candidates) := by
   induction candidates generalizing selection with
   | nil =>
       cases selected : selection.firstAdmissible <;>
-        simp [scanFrontierProgress, FrontierProgressSelectionModel.retainFirst, selected]
+        simp [scanFrontierProgress, firstAdmissible,
+          FrontierProgressSelectionModel.retainFirst, selected]
   | cons candidate rest ih =>
       rw [scanFrontierProgress, ih]
       cases selected : selection.firstAdmissible <;>
-        simp [FrontierProgressSelectionModel.consider,
-          FrontierProgressSelectionModel.retainFirst, selected]
+        cases accepted : admissible candidate <;>
+          simp [FrontierProgressSelectionModel.consider, firstAdmissible,
+            FrontierProgressSelectionModel.retainFirst, selected, accepted]
 
 theorem scan_frontier_progress_retains_first_match
-    (matchesFrontier : α → Bool)
+    (admissible matchesFrontier : α → Bool)
     (selection : FrontierProgressSelectionModel α)
     (candidates : List α) :
-    (scanFrontierProgress matchesFrontier selection candidates).preferred =
+    (scanFrontierProgress admissible matchesFrontier selection candidates).preferred =
       FrontierProgressSelectionModel.retainFirst selection.preferred
-        (firstFrontierMatch matchesFrontier candidates) := by
+        (firstAdmissibleFrontierMatch admissible matchesFrontier candidates) := by
   induction candidates generalizing selection with
   | nil =>
       cases selected : selection.preferred <;>
-        simp [scanFrontierProgress, firstFrontierMatch,
+        simp [scanFrontierProgress, firstAdmissibleFrontierMatch,
           FrontierProgressSelectionModel.retainFirst, selected]
   | cons candidate rest ih =>
       rw [scanFrontierProgress, ih]
       cases selected : selection.preferred <;>
-        cases isMatch : matchesFrontier candidate <;>
-          simp [FrontierProgressSelectionModel.consider, firstFrontierMatch,
-            FrontierProgressSelectionModel.retainFirst, selected, isMatch]
+        cases accepted : admissible candidate <;>
+          cases isMatch : matchesFrontier candidate <;>
+            simp [FrontierProgressSelectionModel.consider,
+              firstAdmissibleFrontierMatch,
+              FrontierProgressSelectionModel.retainFirst,
+              selected, accepted, isMatch]
 
-/-- For every finite active frontier, the constant-state production walk has
-the same priority as the materialize-then-select reference semantics. -/
+/-- For every finite active frontier, the constant-state production walk
+applies the same admission filter and priority as the reference semantics. -/
 theorem streaming_frontier_progress_selection_is_reference_exact
+    (admissible : α → Bool)
     (matchesFrontier : α → Bool)
     (candidates : List α) :
-    streamingFrontierProgressSelection matchesFrontier candidates =
-      referenceFrontierProgressSelection matchesFrontier candidates := by
+    streamingFrontierProgressSelection admissible matchesFrontier candidates =
+      referenceFrontierProgressSelection admissible matchesFrontier candidates := by
   simp only [streamingFrontierProgressSelection, referenceFrontierProgressSelection]
   rw [scan_frontier_progress_retains_first_match,
     scan_frontier_progress_retains_first_admissible]
   simp [FrontierProgressSelectionModel.retainFirst]
+
+/-- Exact fields used by the production frontier admission and priority scan. -/
+structure FrontierProgressCandidateIdentity where
+  scope : Nat
+  entry : Nat
+  parallelRoot : Option Nat
+  frontier : Nat
+deriving DecidableEq
+
+def productionFrontierProgressAdmissible
+    (currentScope currentEntry : Nat)
+    (currentParallelRoot : Option Nat)
+    (visitedEntries : List Nat)
+    (candidate : FrontierProgressCandidateIdentity) : Bool :=
+  decide ((candidate.scope ≠ currentScope ∨ candidate.entry ≠ currentEntry) ∧
+    (currentParallelRoot = none ∨ candidate.parallelRoot = currentParallelRoot) ∧
+    candidate.entry ∉ visitedEntries)
+
+theorem current_offer_owner_is_not_frontier_progress_admissible
+    (currentScope currentEntry frontier : Nat)
+    (currentParallelRoot : Option Nat)
+    (visitedEntries : List Nat) :
+    productionFrontierProgressAdmissible
+      currentScope currentEntry currentParallelRoot visitedEntries
+      { scope := currentScope
+        entry := currentEntry
+        parallelRoot := currentParallelRoot
+        frontier } = false := by
+  simp [productionFrontierProgressAdmissible]
+
+theorem visited_entry_is_not_frontier_progress_admissible
+    (currentScope currentEntry : Nat)
+    (currentParallelRoot : Option Nat)
+    (visitedEntries : List Nat)
+    (candidate : FrontierProgressCandidateIdentity)
+    (visited : candidate.entry ∈ visitedEntries) :
+    productionFrontierProgressAdmissible
+      currentScope currentEntry currentParallelRoot visitedEntries candidate = false := by
+  simp [productionFrontierProgressAdmissible, visited]
+
+theorem foreign_parallel_root_is_not_frontier_progress_admissible
+    (currentScope currentEntry currentParallelRoot : Nat)
+    (visitedEntries : List Nat)
+    (candidate : FrontierProgressCandidateIdentity)
+    (foreign : candidate.parallelRoot ≠ some currentParallelRoot) :
+    productionFrontierProgressAdmissible
+      currentScope currentEntry (some currentParallelRoot) visitedEntries candidate = false := by
+  simp [productionFrontierProgressAdmissible, foreign]
+
+/-- The production owner/current/root/visited filter and frontier preference are
+checked in one streaming pass and are extensionally equal to filtered reference
+selection for every finite candidate list. -/
+theorem production_frontier_progress_selection_is_filtered_reference_exact
+    (currentScope currentEntry currentFrontier : Nat)
+    (currentParallelRoot : Option Nat)
+    (visitedEntries : List Nat)
+    (candidates : List FrontierProgressCandidateIdentity) :
+    streamingFrontierProgressSelection
+      (productionFrontierProgressAdmissible
+        currentScope currentEntry currentParallelRoot visitedEntries)
+      (fun candidate => decide (candidate.frontier = currentFrontier)) candidates =
+    referenceFrontierProgressSelection
+      (productionFrontierProgressAdmissible
+        currentScope currentEntry currentParallelRoot visitedEntries)
+      (fun candidate => decide (candidate.frontier = currentFrontier)) candidates := by
+  exact streaming_frontier_progress_selection_is_reference_exact _ _ _
 
 /-- Exact identity used by production offer ownership before cursor-target
 observations erase scope while retaining one row per witness. -/
@@ -2205,7 +2292,7 @@ def decodePackedRouteArm?
   else
     none
 
-theorem packed_route_arm_crosses_former_twelve_bit_boundary :
+theorem packed_route_arm_accepts_4096_event_start :
     decodePackedRouteArm?
       (4096 * 65536 + 1) 3 4097 =
       some {

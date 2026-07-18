@@ -1025,6 +1025,12 @@ Hibana.cross_rendezvous_session_attach_rejected : ∀ (binding : Hibana.SessionB
       @Membership.mem.{0, 0} Hibana.ProductionKernelOwner (List.{0} Hibana.ProductionKernelOwner)
           (@List.instMembership.{0} Hibana.ProductionKernelOwner) Hibana.requiredProductionKernelOwners owner →
         OwnerVerified owner kernel
+Hibana.current_offer_owner_is_not_frontier_progress_admissible : ∀ (currentScope currentEntry frontier : Nat)
+  (currentParallelRoot : Option.{0} Nat) (visitedEntries : List.{0} Nat),
+  @Eq.{1} Bool
+    (Hibana.productionFrontierProgressAdmissible currentScope currentEntry currentParallelRoot visitedEntries
+      { scope := currentScope, entry := currentEntry, parallelRoot := currentParallelRoot, frontier := frontier })
+    false
 Hibana.cursor_target_observations_are_entry_exact : ∀ (entry : Nat)
   (observations : List.{0} Hibana.ActiveOfferObservation) (observation : Hibana.ActiveOfferObservation),
   Iff
@@ -2125,6 +2131,14 @@ Hibana.fixed_width_verified_codec_schema : ∀ (schema width : Nat),
       Hibana.CausalWitnessesSound occurrences earlier later roleCount
         (@List.foldl.{0, 0} Hibana.CausalWitnesses Hibana.StaticGlobalOccurrence
           (Hibana.propagateCausalWitness earlier later roleCount) witnesses candidates)
+Hibana.foreign_parallel_root_is_not_frontier_progress_admissible : ∀
+  (currentScope currentEntry currentParallelRoot : Nat) (visitedEntries : List.{0} Nat)
+  (candidate : Hibana.FrontierProgressCandidateIdentity),
+  @Ne.{1} (Option.{0} Nat) candidate.parallelRoot (@some.{0} Nat currentParallelRoot) →
+    @Eq.{1} Bool
+      (Hibana.productionFrontierProgressAdmissible currentScope currentEntry (@some.{0} Nat currentParallelRoot)
+        visitedEntries candidate)
+      false
 @Hibana.frame_label_allocation_complete : ∀ {used : List.{0} Nat} {count : Nat},
   @LE.le.{0} Nat instLENat
       (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) (@List.length.{0} Nat used) count)
@@ -2633,7 +2647,7 @@ Hibana.packed_lane_range_rejects_end_outside_compact_domain : @Eq.{1} (Option.{0
       (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
     (@OfNat.ofNat.{0} Nat (nat_lit 65535) (instOfNatNat (nat_lit 65535))))
   (@none.{0} (Prod.{0, 0} Nat Nat))
-Hibana.packed_route_arm_crosses_former_twelve_bit_boundary : @Eq.{1} (Option.{0} Hibana.DecodedPackedRouteArm)
+Hibana.packed_route_arm_accepts_4096_event_start : @Eq.{1} (Option.{0} Hibana.DecodedPackedRouteArm)
   (Hibana.decodePackedRouteArm?
     (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
       (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat)
@@ -2840,16 +2854,32 @@ Hibana.production_frontier_capacity_covers_all_visited_entries : ∀ (witness : 
 Hibana.production_frontier_capacity_covers_every_active_offer_key_witness : ∀ (lanes : List.{0} Hibana.ActiveOfferLane),
   @LE.le.{0} Nat instLENat (@List.length.{0} Hibana.ActiveOfferKey (Hibana.activeOfferKeys lanes))
     (Hibana.productionFrontierCapacity (@List.length.{0} Hibana.ActiveOfferLane lanes))
-Hibana.production_frontier_capacity_has_no_former_eight_entry_limit : And
-  (@Eq.{1} Nat (Hibana.productionFrontierCapacity (@OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9))))
-    (@OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9))))
-  (@Eq.{1} Nat (Hibana.productionFrontierCapacity (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
-    Hibana.productionLaneCapacity)
 Hibana.production_frontier_capacity_is_bounded_by_the_lane_domain : ∀ (activeLaneCount : Nat),
   @LE.le.{0} Nat instLENat activeLaneCount Hibana.productionLaneCapacity →
     @LE.le.{0} Nat instLENat (Hibana.productionFrontierCapacity activeLaneCount) Hibana.productionLaneCapacity
 Hibana.production_frontier_capacity_is_exact_active_lane_count : ∀ (activeLaneCount : Nat),
   @Eq.{1} Nat (Hibana.productionFrontierCapacity activeLaneCount) activeLaneCount
+Hibana.production_frontier_capacity_reaches_full_lane_domain : And
+  (@Eq.{1} Nat (Hibana.productionFrontierCapacity (@OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9))))
+  (@Eq.{1} Nat (Hibana.productionFrontierCapacity (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+    Hibana.productionLaneCapacity)
+Hibana.production_frontier_progress_selection_is_filtered_reference_exact : ∀
+  (currentScope currentEntry currentFrontier : Nat) (currentParallelRoot : Option.{0} Nat)
+  (visitedEntries : List.{0} Nat) (candidates : List.{0} Hibana.FrontierProgressCandidateIdentity),
+  @Eq.{1} (Option.{0} Hibana.FrontierProgressCandidateIdentity)
+    (@Hibana.streamingFrontierProgressSelection Hibana.FrontierProgressCandidateIdentity
+      (Hibana.productionFrontierProgressAdmissible currentScope currentEntry currentParallelRoot visitedEntries)
+      (fun candidate =>
+        @decide (@Eq.{1} Nat candidate.frontier currentFrontier)
+          (instDecidableEqNat candidate.frontier currentFrontier))
+      candidates)
+    (@Hibana.referenceFrontierProgressSelection.{0} Hibana.FrontierProgressCandidateIdentity
+      (Hibana.productionFrontierProgressAdmissible currentScope currentEntry currentParallelRoot visitedEntries)
+      (fun candidate =>
+        @decide (@Eq.{1} Nat candidate.frontier currentFrontier)
+          (instDecidableEqNat candidate.frontier currentFrontier))
+      candidates)
 @Hibana.production_kernel_artifact_covers_every_protocol_class : ∀ {artifact : Hibana.ProductionKernelArtifact}
   {session roleCount : Nat} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (artifact.check session roleCount choreo) true →
@@ -2931,7 +2961,7 @@ Hibana.production_route_history_capacity_fits_the_compact_descriptor_domain : �
 Hibana.production_route_traversal_bound_covers_every_acyclic_parent_chain : ∀ (routeScopeCount chainLength : Nat),
   @LE.le.{0} Nat instLENat chainLength routeScopeCount →
     @LT.lt.{0} Nat instLTNat chainLength (Hibana.productionRouteTraversalBound routeScopeCount)
-Hibana.production_route_traversal_has_no_former_256_step_limit : @Eq.{1} Nat
+Hibana.production_route_traversal_covers_full_compact_step_domain : @Eq.{1} Nat
   (Hibana.productionRouteTraversalBound (@OfNat.ofNat.{0} Nat (nat_lit 257) (instOfNatNat (nat_lit 257))))
   (@OfNat.ofNat.{0} Nat (nat_lit 258) (instOfNatNat (nat_lit 258)))
 @Hibana.production_transition_relation_refines_prepared_kernel : ∀
@@ -3950,21 +3980,22 @@ Hibana.same_entry_foreign_scope_is_not_alternative_cursor_candidate : ∀ (curre
         (Hibana.alternativeCursorObservations current
           (@List.cons.{0} Hibana.ActiveOfferObservation foreign observations))
         foreign)
-@Hibana.scan_frontier_progress_retains_first_admissible : ∀ {α : Type} (matchesFrontier : α → Bool)
+@Hibana.scan_frontier_progress_retains_first_admissible : ∀ {α : Type} (admissible matchesFrontier : α → Bool)
   (selection : Hibana.FrontierProgressSelectionModel α) (candidates : List.{0} α),
   @Eq.{1} (Option.{0} α)
     (@Hibana.FrontierProgressSelectionModel.firstAdmissible α
-      (@Hibana.scanFrontierProgress α matchesFrontier selection candidates))
+      (@Hibana.scanFrontierProgress α admissible matchesFrontier selection candidates))
     (@Hibana.FrontierProgressSelectionModel.retainFirst.{0} α
-      (@Hibana.FrontierProgressSelectionModel.firstAdmissible α selection) (@List.head?.{0} α candidates))
-@Hibana.scan_frontier_progress_retains_first_match : ∀ {α : Type} (matchesFrontier : α → Bool)
+      (@Hibana.FrontierProgressSelectionModel.firstAdmissible α selection)
+      (@Hibana.firstAdmissible.{0} α admissible candidates))
+@Hibana.scan_frontier_progress_retains_first_match : ∀ {α : Type} (admissible matchesFrontier : α → Bool)
   (selection : Hibana.FrontierProgressSelectionModel α) (candidates : List.{0} α),
   @Eq.{1} (Option.{0} α)
     (@Hibana.FrontierProgressSelectionModel.preferred α
-      (@Hibana.scanFrontierProgress α matchesFrontier selection candidates))
+      (@Hibana.scanFrontierProgress α admissible matchesFrontier selection candidates))
     (@Hibana.FrontierProgressSelectionModel.retainFirst.{0} α
       (@Hibana.FrontierProgressSelectionModel.preferred α selection)
-      (@Hibana.firstFrontierMatch.{0} α matchesFrontier candidates))
+      (@Hibana.firstAdmissibleFrontierMatch.{0} α admissible matchesFrontier candidates))
 Hibana.scope_erased_realign_never_authorizes_operation : ∀ (entry : Nat),
   @Eq.{1} Bool (Hibana.CursorAlignmentDecision.realign entry).authorizesOperation false
 Hibana.scope_topology_difference_has_distinct_registration_keys : ∀ (left right : Hibana.DynamicResolverSiteIdentity),
@@ -4167,10 +4198,10 @@ Hibana.sparse_route_slot_filter_preserves_later_route : ∀ (before after : List
 @Hibana.static_projectability_checker_sound : ∀ {roleCount : Nat} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (Hibana.checkStaticProjectability roleCount choreo) true →
     Hibana.Choreo.StaticProjectable roleCount choreo
-@Hibana.streaming_frontier_progress_selection_is_reference_exact : ∀ {α : Type} (matchesFrontier : α → Bool)
+@Hibana.streaming_frontier_progress_selection_is_reference_exact : ∀ {α : Type} (admissible matchesFrontier : α → Bool)
   (candidates : List.{0} α),
-  @Eq.{1} (Option.{0} α) (@Hibana.streamingFrontierProgressSelection α matchesFrontier candidates)
-    (@Hibana.referenceFrontierProgressSelection.{0} α matchesFrontier candidates)
+  @Eq.{1} (Option.{0} α) (@Hibana.streamingFrontierProgressSelection α admissible matchesFrontier candidates)
+    (@Hibana.referenceFrontierProgressSelection.{0} α admissible matchesFrontier candidates)
 @Hibana.successful_lease_allocation_commits_exact_plan : ∀ {state : Hibana.LeaseAllocatorState}
   {requiredTableSlots payloadBytes : Nat} {plannedImageFrontier payloadOffset : Option.{0} Nat} {publishReady : Bool}
   {plan : Hibana.LeaseAllocationPlan},
@@ -4640,6 +4671,14 @@ Hibana.verified_protocol_family_member_has_execution_guarantees : ∀ (member : 
                 (@some.{0} (Prod.{0, 0} Nat Hibana.GlobalEvent)
                   (@Prod.mk.{0, 0} Nat Hibana.GlobalEvent rightId rightEvent)) →
               And (@Eq.{1} Nat leftId rightId) (@Eq.{1} Hibana.GlobalEvent leftEvent rightEvent)
+Hibana.visited_entry_is_not_frontier_progress_admissible : ∀ (currentScope currentEntry : Nat)
+  (currentParallelRoot : Option.{0} Nat) (visitedEntries : List.{0} Nat)
+  (candidate : Hibana.FrontierProgressCandidateIdentity),
+  @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) visitedEntries candidate.entry →
+    @Eq.{1} Bool
+      (Hibana.productionFrontierProgressAdmissible currentScope currentEntry currentParallelRoot visitedEntries
+        candidate)
+      false
 @Hibana.well_formed_transport_has_no_replay : ∀ {state next : Hibana.TransportState} {frame : Hibana.TransportFrame},
   state.WellFormed →
     @Eq.{1} Hibana.TransportPoll state.pollReceive (Hibana.TransportPoll.delivered frame next) →

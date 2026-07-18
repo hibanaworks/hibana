@@ -71,7 +71,7 @@ fn route_commit_builder_preserves_exact_zero_route_capacity() {
 }
 
 #[test]
-fn prepared_route_commit_rows_cross_the_former_256_boundary() {
+fn prepared_route_commit_rows_accept_257_entries() {
     let mut builder = MaybeUninit::<RouteCommitRowSetBuilder>::uninit();
     unsafe {
         RouteCommitRowSetBuilder::init(builder.as_mut_ptr(), 257);
@@ -113,7 +113,7 @@ fn selected_route_commit_rows_reject_lane_mismatch_without_erasing_rows() {
 }
 
 #[test]
-fn route_arm_history_crosses_the_former_256_boundary() {
+fn route_arm_history_accepts_257_descriptor_relations() {
     const CAPACITY: usize = 257;
     let mut states = std::vec![RouteArmState::EMPTY; CAPACITY];
     let mut lengths = [0u16; 1];

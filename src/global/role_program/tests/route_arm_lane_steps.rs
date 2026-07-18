@@ -92,7 +92,7 @@ fn route_arm_row_keeps_exact_ranges_in_compact_scalar_limbs() {
 }
 
 #[test]
-fn route_arm_row_crosses_the_former_twelve_bit_boundary() {
+fn route_arm_row_accepts_full_u16_event_starts() {
     for (start, len) in [(4094, 1), (4095, 1), (4096, 1), (u16::MAX as usize - 1, 1)] {
         let event_row = PackedLaneRange::new(start, len);
         let lane_step_row = PackedLaneRange::new(7, 1);
@@ -118,7 +118,7 @@ fn route_arm_row_encodes_the_full_lane_domain_without_growing() {
 }
 
 #[test]
-fn route_arm_child_slot_crosses_the_former_u8_delta_boundary() {
+fn route_arm_child_slot_accepts_full_u16_domain() {
     for child_slot in [256usize, 4096, u16::MAX as usize - 1] {
         let packed = PackedRouteArmRow::new(
             PackedLaneRange::new(0, 1),

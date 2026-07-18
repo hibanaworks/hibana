@@ -48,6 +48,7 @@
       "endpoint::kernel::frontier::entry_sets::kani::selectable_ready_query_never_admits_an_excluded_exact_witness"
     ],
     "../../src/endpoint/kernel/frontier/progress_selection/kani.rs": [
+      "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_matches_the_exact_filtered_reference",
       "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_preserves_first_matching_frontier_priority",
       "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_retains_first_admissible_in_constant_state"
     ],
@@ -287,7 +288,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 195,
+    "standard-harnesses": 196,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

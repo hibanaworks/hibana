@@ -146,8 +146,8 @@ The kernel-checked boundary covers:
   disjointness for production-generated layouts;
 - finite-state projectability certificates covering every role-local projection
   and the all-role asynchronous `GlobalConfig`. Every covered reachable state
-  is complete, has a real global successor, or is cancelling/retired; this
-  removes the former hand-written `GlobalExecutionCoherent` premise for accepted
+  is complete, has a real global successor, or is cancelling/retired; the
+  checked closure directly derives `GlobalExecutionCoherent` for accepted
   artifacts. An independent static checker rejects parallel endpoint-selector
   races, route-controller/observer knowledge failures, and ambiguous roll
   reentry using the same message-erased selector rules as production lowering.
@@ -548,7 +548,7 @@ Core/Std proofs. The gate discovers those declarations directly from the Lean
 source and checks their elaborated types and axiom closures in the same Lean
 run; there is no second hand-maintained theorem list. Fifteen externally
 relevant claim types remain the compact review surface, while the elaborated
-types of all 683 exported theorems are pinned in a separate checked snapshot.
+types of all 687 exported theorems are pinned in a separate checked snapshot.
 Retaining any theorem name while changing its elaborated conclusion or
 assumptions therefore fails the gate.
 
@@ -610,6 +610,11 @@ Visit tracking intentionally uses local-entry identity because it
 tracks cursor movement, not offer ownership, and Lean proves that the same
 allocation covers every visited entry. Capacity exhaustion is an invariant
 failure, never silent truncation.
+The constant-state frontier walk applies owner, parallel-root, and visited-entry
+admission before retaining the first current-frontier match or, when absent,
+the first admissible candidate. Lean proves this filtered streaming scan equal
+to its finite-list reference semantics; Kani checks the production Rust
+predicate and priority over symbolic candidates.
 
 All other lane-indexed endpoint storage follows the exact projected lane span.
 Lean and Kani prove that this span covers every active lane and remains inside

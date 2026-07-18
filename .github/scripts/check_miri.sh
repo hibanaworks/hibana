@@ -34,7 +34,7 @@ fi
 
 miri_passed_total=0
 miri_ignored_total=0
-readonly EXPECTED_MIRI_PASSED_TOTAL=215
+readonly EXPECTED_MIRI_PASSED_TOTAL=216
 readonly EXPECTED_MIRI_IGNORED_TOTAL=2
 
 run_miri_test() {
@@ -117,7 +117,7 @@ run_miri_test \
   0 \
   -p hibana \
   --lib \
-  endpoint::kernel::decision_state::tests::route_arm_history_crosses_the_former_256_boundary
+  endpoint::kernel::decision_state::tests::route_arm_history_accepts_257_descriptor_relations
 
 run_miri_test \
   descriptor-domain-offer-frontier-owner \
@@ -126,7 +126,7 @@ run_miri_test \
   0 \
   -p hibana \
   --lib \
-  endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_beyond_the_former_eight_slot_mask
+  endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_the_full_lane_domain
 
 run_miri_test \
   exact-frontier-visit-identity-owner \
@@ -139,8 +139,8 @@ run_miri_test \
 
 run_miri_test \
   constant-state-frontier-selection-owner \
-  3 \
-  3 \
+  4 \
+  4 \
   0 \
   -p hibana \
   --lib \

@@ -38,15 +38,23 @@ impl FrontierProgressSelection {
     }
 
     #[inline]
+    fn candidate_is_admissible(
+        &self,
+        candidate: FrontierProgressCandidate,
+        visited: &FrontierVisitSet,
+    ) -> bool {
+        (candidate.scope_id != self.current_scope || candidate.entry != self.current_entry)
+            && self.matches_parallel_root(candidate)
+            && !visited.contains(candidate.entry.as_usize())
+    }
+
+    #[inline]
     pub(crate) fn consider(
         &mut self,
         candidate: FrontierProgressCandidate,
         visited: &FrontierVisitSet,
     ) {
-        if (candidate.scope_id == self.current_scope && candidate.entry == self.current_entry)
-            || !self.matches_parallel_root(candidate)
-            || visited.contains(candidate.entry.as_usize())
-        {
+        if !self.candidate_is_admissible(candidate, visited) {
             return;
         }
         if self.first_admissible.is_none() {
@@ -67,79 +75,7 @@ impl FrontierProgressSelection {
 }
 
 #[cfg(all(test, hibana_repo_tests))]
-mod tests {
-    use super::*;
-
-    fn candidate(entry: u16, frontier: FrontierKind) -> FrontierProgressCandidate {
-        FrontierProgressCandidate {
-            scope_id: ScopeId::route(1),
-            entry: StateIndex::new(entry),
-            parallel_root: ScopeId::none(),
-            frontier,
-        }
-    }
-
-    #[test]
-    fn progress_selection_distinguishes_entries_that_share_a_scope() {
-        let mut selection = FrontierProgressSelection::new(
-            ScopeId::none(),
-            0,
-            ScopeId::none(),
-            FrontierKind::Route,
-        );
-        let mut visited_storage = [StateIndex::ABSENT; 2];
-        /* SAFETY: `visited_storage` is initialized, live, and exclusively
-        borrowed for the complete visit-set use. */
-        let mut visited = unsafe {
-            FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), visited_storage.len())
-        };
-        visited.record(1);
-        selection.consider(candidate(1, FrontierKind::Route), &visited);
-        selection.consider(candidate(2, FrontierKind::Route), &visited);
-
-        assert_eq!(
-            selection.selected().map(|candidate| candidate.entry.raw()),
-            Some(2)
-        );
-    }
-
-    #[test]
-    fn progress_selection_prefers_matching_frontier_without_candidate_storage() {
-        let mut selection = FrontierProgressSelection::new(
-            ScopeId::none(),
-            0,
-            ScopeId::none(),
-            FrontierKind::Route,
-        );
-        let visited = FrontierVisitSet::EMPTY;
-        selection.consider(candidate(1, FrontierKind::Reentry), &visited);
-        selection.consider(candidate(2, FrontierKind::Route), &visited);
-        selection.consider(candidate(3, FrontierKind::Route), &visited);
-
-        assert_eq!(
-            selection.selected().map(|candidate| candidate.entry.raw()),
-            Some(2)
-        );
-    }
-
-    #[test]
-    fn progress_selection_retains_first_admissible_without_matching_frontier() {
-        let mut selection = FrontierProgressSelection::new(
-            ScopeId::none(),
-            0,
-            ScopeId::none(),
-            FrontierKind::Route,
-        );
-        let visited = FrontierVisitSet::EMPTY;
-        selection.consider(candidate(1, FrontierKind::Reentry), &visited);
-        selection.consider(candidate(2, FrontierKind::PassiveObserver), &visited);
-
-        assert_eq!(
-            selection.selected().map(|candidate| candidate.entry.raw()),
-            Some(1)
-        );
-    }
-}
+mod tests;
 
 #[cfg(kani)]
 mod kani;

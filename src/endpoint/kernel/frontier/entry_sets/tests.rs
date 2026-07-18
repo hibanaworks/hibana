@@ -68,7 +68,7 @@ fn offer_entry_key_accepts_only_route_scopes() {
 }
 
 #[test]
-fn observed_entry_set_streams_beyond_the_former_eight_slot_mask() {
+fn observed_entry_set_streams_the_full_lane_domain() {
     let mut storage = [FrontierObservationSlot::EMPTY; 256];
     let mut observed = ObservedEntrySetBuilder::from_slice(&mut storage);
     observed.clear();

@@ -184,6 +184,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     );
     assert!(!frontier_progress_selection.contains("[FrontierProgressCandidate]"));
     for harness in [
+        "streaming_progress_selection_matches_the_exact_filtered_reference",
         "streaming_progress_selection_preserves_first_matching_frontier_priority",
         "streaming_progress_selection_retains_first_admissible_in_constant_state",
     ] {
@@ -229,7 +230,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(inventory.contains("\"kani-version\": \"0.67.0\""));
-    assert!(inventory.contains("\"standard-harnesses\": 195"));
+    assert!(inventory.contains("\"standard-harnesses\": 196"));
     assert!(inventory.contains("\"contract-harnesses\": 0"));
     for (owner, enum_name) in [
         (&frontier_kind, "FrontierKind"),

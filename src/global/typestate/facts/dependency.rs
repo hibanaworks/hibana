@@ -294,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_dependency_crosses_the_former_twelve_bit_boundary() {
+    fn packed_dependency_accepts_full_u16_step_ranges() {
         for (start, end) in [(4094, 4095), (4095, 4096), (u16::MAX - 1, u16::MAX)] {
             let dependency = LocalDependency::with_conflict_range(
                 ScopeId::parallel(0),

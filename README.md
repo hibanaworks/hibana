@@ -729,12 +729,12 @@ Lean declarations are discovered from source rather than repeated in a
 hand-maintained audit file; one Lean run checks both the elaborated type and the
 axiom closure of every discovered theorem. The gate also presents fifteen
 principal Lean claim types as a compact public surface and pins the elaborated
-types of all 683 static theorems. A theorem cannot retain its name while its
+types of all 687 static theorems. A theorem cannot retain its name while its
 elaborated statement silently acquires assumptions or drops a conclusion. The
 same gate assigns audit-only names to all 36 anonymous regression examples and
 pins their elaborated statements, so changing only an example statement cannot
 hide behind an unchanged count. The Miri gate similarly pins every reviewed
-owner and its final total of 215 executed cases plus two explicit ignored
+owner and its final total of 216 executed cases plus two explicit ignored
 cases. All 48 named
 protocol/production contracts and 458 generated trace, rejection, refinement,
 and progress obligations are named and type-pinned. The sixteen

@@ -148,6 +148,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "active_offer_key_count_is_bounded_by_active_lane_count",
         "active_offer_key_mem_iff_owned",
         "production_frontier_capacity_covers_every_active_offer_key_witness",
+        "current_offer_owner_is_not_frontier_progress_admissible",
+        "visited_entry_is_not_frontier_progress_admissible",
+        "foreign_parallel_root_is_not_frontier_progress_admissible",
+        "production_frontier_progress_selection_is_filtered_reference_exact",
         "first_owning_lane_is_exact_owner",
         "active_offer_entry_has_representative_iff_owned",
         "first_owning_lane_preserves_scope",
@@ -173,6 +177,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     ] {
         assert!(descriptor_image.contains(&format!("theorem {theorem}")));
     }
+    assert!(descriptor_image.contains("def productionFrontierProgressAdmissible"));
     for theorem in [
         "role_runtime_columns_check_binds_route_arm_columns",
         "checked_descriptor_binds_route_arm_columns",

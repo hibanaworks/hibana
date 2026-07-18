@@ -458,8 +458,8 @@ theorem global_progress_certificate_covers_reachable
   | step prior successor inductionHypothesis =>
       exact (closed.2.2.2.2.2 _ inductionHypothesis).2.2 _ successor
 
-/-- An accepted finite closure removes the former hand-written
-`GlobalExecutionCoherent` premise for every model-reachable multiparty state. -/
+/-- An accepted finite closure derives `GlobalExecutionCoherent` directly for
+every model-reachable multiparty state. -/
 theorem projectable_reachable_state_has_global_logical_progress
     {certificate : GlobalProgressCertificate}
     {session roleCount : Nat}
