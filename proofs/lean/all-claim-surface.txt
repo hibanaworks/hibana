@@ -3950,6 +3950,21 @@ Hibana.same_entry_foreign_scope_is_not_alternative_cursor_candidate : ∀ (curre
         (Hibana.alternativeCursorObservations current
           (@List.cons.{0} Hibana.ActiveOfferObservation foreign observations))
         foreign)
+@Hibana.scan_frontier_progress_retains_first_admissible : ∀ {α : Type} (matchesFrontier : α → Bool)
+  (selection : Hibana.FrontierProgressSelectionModel α) (candidates : List.{0} α),
+  @Eq.{1} (Option.{0} α)
+    (@Hibana.FrontierProgressSelectionModel.firstAdmissible α
+      (@Hibana.scanFrontierProgress α matchesFrontier selection candidates))
+    (@Hibana.FrontierProgressSelectionModel.retainFirst.{0} α
+      (@Hibana.FrontierProgressSelectionModel.firstAdmissible α selection) (@List.head?.{0} α candidates))
+@Hibana.scan_frontier_progress_retains_first_match : ∀ {α : Type} (matchesFrontier : α → Bool)
+  (selection : Hibana.FrontierProgressSelectionModel α) (candidates : List.{0} α),
+  @Eq.{1} (Option.{0} α)
+    (@Hibana.FrontierProgressSelectionModel.preferred α
+      (@Hibana.scanFrontierProgress α matchesFrontier selection candidates))
+    (@Hibana.FrontierProgressSelectionModel.retainFirst.{0} α
+      (@Hibana.FrontierProgressSelectionModel.preferred α selection)
+      (@Hibana.firstFrontierMatch.{0} α matchesFrontier candidates))
 Hibana.scope_erased_realign_never_authorizes_operation : ∀ (entry : Nat),
   @Eq.{1} Bool (Hibana.CursorAlignmentDecision.realign entry).authorizesOperation false
 Hibana.scope_topology_difference_has_distinct_registration_keys : ∀ (left right : Hibana.DynamicResolverSiteIdentity),
@@ -4152,6 +4167,10 @@ Hibana.sparse_route_slot_filter_preserves_later_route : ∀ (before after : List
 @Hibana.static_projectability_checker_sound : ∀ {roleCount : Nat} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (Hibana.checkStaticProjectability roleCount choreo) true →
     Hibana.Choreo.StaticProjectable roleCount choreo
+@Hibana.streaming_frontier_progress_selection_is_reference_exact : ∀ {α : Type} (matchesFrontier : α → Bool)
+  (candidates : List.{0} α),
+  @Eq.{1} (Option.{0} α) (@Hibana.streamingFrontierProgressSelection α matchesFrontier candidates)
+    (@Hibana.referenceFrontierProgressSelection.{0} α matchesFrontier candidates)
 @Hibana.successful_lease_allocation_commits_exact_plan : ∀ {state : Hibana.LeaseAllocatorState}
   {requiredTableSlots payloadBytes : Nat} {plannedImageFrontier payloadOffset : Option.{0} Nat} {publishReady : Bool}
   {plan : Hibana.LeaseAllocationPlan},

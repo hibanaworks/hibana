@@ -152,9 +152,8 @@ pub(in crate::endpoint::kernel) struct CurrentFrontierSelectionState {
 
 impl CurrentFrontierSelectionState {
     pub(in crate::endpoint::kernel) const FLAG_CONTROLLER: u8 = 1;
-    pub(in crate::endpoint::kernel) const FLAG_DYNAMIC: u8 = 1 << 1;
-    pub(in crate::endpoint::kernel) const FLAG_READY: u8 = 1 << 2;
-    pub(in crate::endpoint::kernel) const FLAG_PROGRESS_EVIDENCE: u8 = 1 << 3;
+    pub(in crate::endpoint::kernel) const FLAG_READY: u8 = 1 << 1;
+    pub(in crate::endpoint::kernel) const FLAG_PROGRESS_EVIDENCE: u8 = 1 << 2;
 
     #[inline]
     pub(in crate::endpoint::kernel) fn is_controller(self) -> bool {

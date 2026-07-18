@@ -1,4 +1,4 @@
-use super::{FrontierCandidate, LaneOfferState, OfferEntryObservedState};
+use super::{FrontierProgressCandidate, LaneOfferState, OfferEntryObservedState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OfferEntryEvidence {
@@ -75,18 +75,26 @@ pub(crate) fn offer_entry_observed_state(
 }
 
 #[inline]
-pub(crate) fn offer_entry_frontier_candidate(
+pub(crate) fn offer_entry_frontier_progress_candidate(
     info: LaneOfferState,
     observed: OfferEntryObservedState,
-) -> FrontierCandidate {
+) -> Option<FrontierProgressCandidate> {
     if Some(observed.key) != info.key() {
         crate::invariant();
     }
-    FrontierCandidate {
+    if !observed.has_progress_evidence() {
+        return None;
+    }
+    if !observed.is_ready() {
+        crate::invariant();
+    }
+    Some(FrontierProgressCandidate {
         scope_id: info.scope,
         entry: observed.key.entry(),
         parallel_root: info.parallel_root,
         frontier: info.frontier,
-        flags: FrontierCandidate::flags_from_observed(observed),
-    }
+    })
 }
+
+#[cfg(kani)]
+mod kani;

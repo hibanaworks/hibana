@@ -548,7 +548,8 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
     let lane_set = read("src/global/role_program/lane_set.rs");
     let entry_sets = read("src/endpoint/kernel/frontier/entry_sets.rs");
     let entry_buffer = read("src/endpoint/kernel/frontier/entry_sets/buffer.rs");
-    let snapshot = read("src/endpoint/kernel/frontier/snapshot.rs");
+    let progress_selection = read("src/endpoint/kernel/frontier/progress_selection.rs");
+    let visit_set = read("src/endpoint/kernel/frontier/visit_set.rs");
     let layout = read("src/endpoint/kernel/layout.rs");
     let cache_refresh = read("src/endpoint/kernel/offer/cache_refresh.rs");
     let exact_observation_push = entry_sets
@@ -595,11 +596,11 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
             && !entry_buffer.contains("#[derive(Clone, Copy)]\npub(super) struct EntryBuffer")
             && entry_buffer.contains("const fn into_view(self) -> EntryView<'a, T>")
             && !entry_buffer.contains("const fn view(&self) -> EntryView<'a, T>")
-            && snapshot.contains("slots: *mut StateIndex")
-            && snapshot.contains("visited.contains(candidate.entry.as_usize())")
-            && snapshot.contains("if self.len >= self.capacity")
-            && snapshot.contains("crate::invariant();")
-            && !snapshot.contains(
+            && visit_set.contains("slots: *mut StateIndex")
+            && progress_selection.contains("visited.contains(candidate.entry.as_usize())")
+            && visit_set.contains("if self.len >= self.capacity")
+            && visit_set.contains("crate::invariant();")
+            && !visit_set.contains(
                 "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct FrontierVisitSet"
             )
             && !lane_set.contains("#[derive(Clone, Copy, Debug)]\npub(crate) struct LaneSet {")
@@ -609,7 +610,7 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
             && !evidence_store
                 .contains("#[derive(Clone, Copy)]\npub(super) struct ScopeEvidenceTable")
             && !assoc_storage.contains("#[derive(Clone, Copy)]\nstruct AssocStorageParts")
-            && !snapshot.contains("visited.contains(candidate.scope_id)")
+            && !progress_selection.contains("visited.contains(candidate.scope_id)")
             && layout.contains("frontier_visited_entries: EndpointArenaSection")
             && layout.contains("footprint.frontier_visit_count()")
             && !repo_file_exists("src/endpoint/kernel/offer/select_alignment/model/set.rs")

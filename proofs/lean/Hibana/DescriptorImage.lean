@@ -320,6 +320,106 @@ theorem production_frontier_capacity_has_no_former_eight_entry_limit :
       productionFrontierCapacity 256 = productionLaneCapacity := by
   decide
 
+/-- The production frontier walk retains only the first admissible candidate
+and the first candidate matching the current frontier as transient selection
+state. The state disappears after the walk; no candidate array is required. -/
+structure FrontierProgressSelectionModel (α : Type) where
+  preferred : Option α
+  firstAdmissible : Option α
+
+def FrontierProgressSelectionModel.retainFirst
+    (current next : Option α) : Option α :=
+  match current with
+  | some value => some value
+  | none => next
+
+def FrontierProgressSelectionModel.consider
+    (matchesFrontier : α → Bool)
+    (selection : FrontierProgressSelectionModel α)
+    (candidate : α) : FrontierProgressSelectionModel α :=
+  { preferred := FrontierProgressSelectionModel.retainFirst selection.preferred
+      (if matchesFrontier candidate then some candidate else none)
+    firstAdmissible := FrontierProgressSelectionModel.retainFirst
+      selection.firstAdmissible (some candidate) }
+
+def scanFrontierProgress
+    (matchesFrontier : α → Bool)
+    (selection : FrontierProgressSelectionModel α)
+    (candidates : List α) : FrontierProgressSelectionModel α :=
+  match candidates with
+  | [] => selection
+  | candidate :: rest =>
+      scanFrontierProgress matchesFrontier
+        (selection.consider matchesFrontier candidate) rest
+
+def firstFrontierMatch (matchesFrontier : α → Bool) : List α → Option α
+  | [] => none
+  | candidate :: rest =>
+      if matchesFrontier candidate then some candidate
+      else firstFrontierMatch matchesFrontier rest
+
+def referenceFrontierProgressSelection
+    (matchesFrontier : α → Bool)
+    (candidates : List α) : Option α :=
+  FrontierProgressSelectionModel.retainFirst
+    (firstFrontierMatch matchesFrontier candidates) candidates.head?
+
+def streamingFrontierProgressSelection
+    (matchesFrontier : α → Bool)
+    (candidates : List α) : Option α :=
+  let selection := scanFrontierProgress matchesFrontier
+    { preferred := none, firstAdmissible := none } candidates
+  FrontierProgressSelectionModel.retainFirst
+    selection.preferred selection.firstAdmissible
+
+theorem scan_frontier_progress_retains_first_admissible
+    (matchesFrontier : α → Bool)
+    (selection : FrontierProgressSelectionModel α)
+    (candidates : List α) :
+    (scanFrontierProgress matchesFrontier selection candidates).firstAdmissible =
+      FrontierProgressSelectionModel.retainFirst
+        selection.firstAdmissible candidates.head? := by
+  induction candidates generalizing selection with
+  | nil =>
+      cases selected : selection.firstAdmissible <;>
+        simp [scanFrontierProgress, FrontierProgressSelectionModel.retainFirst, selected]
+  | cons candidate rest ih =>
+      rw [scanFrontierProgress, ih]
+      cases selected : selection.firstAdmissible <;>
+        simp [FrontierProgressSelectionModel.consider,
+          FrontierProgressSelectionModel.retainFirst, selected]
+
+theorem scan_frontier_progress_retains_first_match
+    (matchesFrontier : α → Bool)
+    (selection : FrontierProgressSelectionModel α)
+    (candidates : List α) :
+    (scanFrontierProgress matchesFrontier selection candidates).preferred =
+      FrontierProgressSelectionModel.retainFirst selection.preferred
+        (firstFrontierMatch matchesFrontier candidates) := by
+  induction candidates generalizing selection with
+  | nil =>
+      cases selected : selection.preferred <;>
+        simp [scanFrontierProgress, firstFrontierMatch,
+          FrontierProgressSelectionModel.retainFirst, selected]
+  | cons candidate rest ih =>
+      rw [scanFrontierProgress, ih]
+      cases selected : selection.preferred <;>
+        cases isMatch : matchesFrontier candidate <;>
+          simp [FrontierProgressSelectionModel.consider, firstFrontierMatch,
+            FrontierProgressSelectionModel.retainFirst, selected, isMatch]
+
+/-- For every finite active frontier, the constant-state production walk has
+the same priority as the materialize-then-select reference semantics. -/
+theorem streaming_frontier_progress_selection_is_reference_exact
+    (matchesFrontier : α → Bool)
+    (candidates : List α) :
+    streamingFrontierProgressSelection matchesFrontier candidates =
+      referenceFrontierProgressSelection matchesFrontier candidates := by
+  simp only [streamingFrontierProgressSelection, referenceFrontierProgressSelection]
+  rw [scan_frontier_progress_retains_first_match,
+    scan_frontier_progress_retains_first_admissible]
+  simp [FrontierProgressSelectionModel.retainFirst]
+
 /-- Exact identity used by production offer ownership before cursor-target
 observations erase scope while retaining one row per witness. -/
 structure ActiveOfferKey where

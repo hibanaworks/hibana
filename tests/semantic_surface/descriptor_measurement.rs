@@ -38,11 +38,7 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
     let endpoint_public_ops = read("src/endpoint/kernel/public_ops.rs");
     let endpoint_core = endpoint_kernel_core_source();
     let offer_frontier = offer_frontier_source();
-    let frontier_runtime = {
-        let mut source = read("src/endpoint/kernel/frontier.rs");
-        source.push_str(&read_production_rs_tree("src/endpoint/kernel/frontier"));
-        source
-    };
+    let offer_progress = read("src/endpoint/kernel/offer/progress.rs");
     let public_allowlists = [
         read(".github/allowlists/lib-public-api.txt"),
         read(".github/allowlists/g-public-api.txt"),
@@ -195,9 +191,9 @@ fn failure_cancellation_surface_has_only_domain_evidence() {
             && !offer_frontier.contains("retry_hint")
             && !offer_frontier.contains("force_poll")
             && !offer_frontier.contains("ResolverReject {\n                    resolver_id:")
-            && frontier_runtime.contains("enum OfferEvidenceOutcome")
-            && frontier_runtime.contains("enum FrontierDeferOutcome")
-            && frontier_runtime.contains("Pending,"),
+            && offer_progress.contains("enum OfferEvidenceOutcome")
+            && offer_progress.contains("enum FrontierDeferOutcome")
+            && offer_progress.contains("Pending,"),
         "runtime resources and offer progress must derive runtime shape and expose only Evidence/Pending/Fault, not offer-time guesses"
     );
     assert!(

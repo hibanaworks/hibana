@@ -47,19 +47,26 @@
       "endpoint::kernel::frontier::entry_sets::kani::offer_entry_key_rejects_non_route_scopes",
       "endpoint::kernel::frontier::entry_sets::kani::selectable_ready_query_never_admits_an_excluded_exact_witness"
     ],
+    "../../src/endpoint/kernel/frontier/progress_selection/kani.rs": [
+      "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_preserves_first_matching_frontier_priority",
+      "endpoint::kernel::frontier::progress_selection::kani::streaming_progress_selection_retains_first_admissible_in_constant_state"
+    ],
     "../../src/endpoint/kernel/frontier/scratch/kani.rs": [
       "endpoint::kernel::frontier::scratch::kani::arbitrary_scratch_bytes_are_canonicalized_before_typed_publication",
       "endpoint::kernel::frontier::scratch::kani::frontier_scratch_capacity_is_derived_once_from_its_layout",
       "endpoint::kernel::frontier::scratch::kani::frontier_scratch_rejects_capacity_beyond_lane_domain",
       "endpoint::kernel::frontier::scratch::kani::lane_domain_frontier_workspace_fits_compact_resident_budget",
       "endpoint::kernel::frontier::scratch::kani::zero_capacity_frontier_scratch_rejects_misaligned_storage_before_slice_publication",
-      "endpoint::kernel::frontier::scratch::kani::zero_capacity_frontier_scratch_yields_an_empty_candidate_slice"
+      "endpoint::kernel::frontier::scratch::kani::zero_capacity_frontier_scratch_yields_empty_typed_views"
     ],
-    "../../src/endpoint/kernel/frontier/snapshot/kani.rs": [
-      "endpoint::kernel::frontier::snapshot::kani::absent_state_identity_is_rejected",
-      "endpoint::kernel::frontier::snapshot::kani::repeated_alignment_source_remains_detectable_without_capacity_growth",
-      "endpoint::kernel::frontier::snapshot::kani::two_cell_frontier_snapshot_never_publishes_a_third_candidate",
-      "endpoint::kernel::frontier::snapshot::kani::visited_entry_identity_is_exact_and_never_silent"
+    "../../src/endpoint/kernel/frontier/select/kani.rs": [
+      "endpoint::kernel::frontier::select::kani::progress_candidate_exists_exactly_for_production_progress_evidence",
+      "endpoint::kernel::frontier::select::kani::progress_candidate_rejects_evidence_without_readiness"
+    ],
+    "../../src/endpoint/kernel/frontier/visit_set/kani.rs": [
+      "endpoint::kernel::frontier::visit_set::kani::absent_state_identity_is_rejected",
+      "endpoint::kernel::frontier::visit_set::kani::repeated_alignment_source_remains_detectable_without_capacity_growth",
+      "endpoint::kernel::frontier::visit_set::kani::visited_entry_identity_is_exact_and_never_silent"
     ],
     "../../src/endpoint/kernel/frontier_state/kani.rs": [
       "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_first_entry_removal",
@@ -280,7 +287,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 192,
+    "standard-harnesses": 195,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

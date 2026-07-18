@@ -439,7 +439,11 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         ),
         (
             "exact-frontier-visit-identity-owner",
-            "frontier::snapshot::tests",
+            "frontier::visit_set::tests",
+        ),
+        (
+            "constant-state-frontier-selection-owner",
+            "frontier::progress_selection::tests",
         ),
         ("root-frontier-packed-pool-owner", "frontier_state::tests"),
         (
@@ -581,7 +585,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 (passed + owner_passed, ignored + owner_ignored)
             },
         );
-    assert_eq!(miri_passed, 213, "Miri passed inventory changed");
+    assert_eq!(miri_passed, 215, "Miri passed inventory changed");
     assert_eq!(miri_ignored, 2, "Miri ignored inventory changed");
     assert!(
         manifest_test_gate.contains("import tomllib")
@@ -609,7 +613,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             )
             && miri_gate.contains("miri_passed_total=$((miri_passed_total + expected_passed))")
             && miri_gate.contains("miri_ignored_total=$((miri_ignored_total + expected_ignored))")
-            && miri_gate.contains("readonly EXPECTED_MIRI_PASSED_TOTAL=213")
+            && miri_gate.contains("readonly EXPECTED_MIRI_PASSED_TOTAL=215")
             && miri_gate.contains("readonly EXPECTED_MIRI_IGNORED_TOTAL=2")
             && miri_gate.contains(
                 "miri gate inventory mismatch: passed=${miri_passed_total} ignored=${miri_ignored_total}",

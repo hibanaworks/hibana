@@ -14,7 +14,7 @@ EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof pass
 EXPECTED_GENERATED_AXIOM_MARKER="Generated Lean axiom audit passed theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506"
 EXPECTED_RUNTIME_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=RuntimeGenerated theorems=16 claims=16"
 EXPECTED_PUBLIC_OPERATION_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=PublicOperationGenerated theorems=2 claims=2"
-EXPECTED_STATIC_AUDIT_MARKER="Lean static theorem audit passed theorems=680 both=346 propext=239 free=95"
+EXPECTED_STATIC_AUDIT_MARKER="Lean static theorem audit passed theorems=683 both=346 propext=242 free=95"
 GENERATED_CLAIM_SNAPSHOT="${PROOF_DIR}/generated-claim-surface.txt"
 RUNTIME_CLAIM_SNAPSHOT="${PROOF_DIR}/runtime-generated-claim-surface.txt"
 PUBLIC_OPERATION_CLAIM_SNAPSHOT="${PROOF_DIR}/public-operation-generated-claim-surface.txt"
@@ -51,7 +51,7 @@ python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" --self-test
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(python3 \
   "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 680 346 239 95)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 683 346 242 95)"
 printf '%s\n' "${static_audit_output}"
 if [[ "${static_audit_output}" != *"${EXPECTED_STATIC_AUDIT_MARKER}"* ]]; then
   echo "Lean proof gate static theorem boundary mismatch" >&2
@@ -131,4 +131,4 @@ if [[ "${public_operation_lean_output}" != *"${EXPECTED_PUBLIC_OPERATION_AUDIT_M
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=680 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=683 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"

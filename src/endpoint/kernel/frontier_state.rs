@@ -391,7 +391,7 @@ impl FrontierState {
     #[inline]
     pub(super) fn empty_frontier_visit_set(&mut self) -> FrontierVisitSet {
         /* SAFETY: `visited_entries` is the endpoint-owned arena section sized
-        for the current entry plus every active-frontier candidate. One public
+        for the current entry plus every active-frontier entry. One public
         offer operation owns the returned initialized prefix until completion. */
         unsafe {
             FrontierVisitSet::from_parts(

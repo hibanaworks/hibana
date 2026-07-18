@@ -1,7 +1,4 @@
-use super::{
-    FrontierCandidate, FrontierKind, FrontierSnapshot, FrontierVisitSet, ScopeId, StateIndex,
-    checked_state_index,
-};
+use super::{FrontierVisitSet, StateIndex, checked_state_index};
 use crate::global::typestate::MAX_STATES;
 
 #[kani::proof]
@@ -48,30 +45,4 @@ fn repeated_alignment_source_remains_detectable_without_capacity_growth() {
 
     assert_eq!(visited.len(), 1);
     assert!(visited.contains(source));
-}
-
-fn candidate() -> FrontierCandidate {
-    FrontierCandidate {
-        scope_id: ScopeId::route(1),
-        entry: StateIndex::new(1),
-        parallel_root: ScopeId::none(),
-        frontier: FrontierKind::Route,
-        flags: FrontierCandidate::FLAG_HAS_EVIDENCE | FrontierCandidate::FLAG_READY,
-    }
-}
-
-#[kani::proof]
-fn two_cell_frontier_snapshot_never_publishes_a_third_candidate() {
-    let mut storage = [FrontierCandidate::EMPTY; 2];
-    let mut snapshot = FrontierSnapshot::new(
-        ScopeId::none(),
-        StateIndex::new(0),
-        ScopeId::none(),
-        FrontierKind::Route,
-        &mut storage,
-    );
-    assert!(snapshot.push_candidate(candidate()));
-    assert!(snapshot.push_candidate(candidate()));
-    assert!(!snapshot.push_candidate(candidate()));
-    assert_eq!(snapshot.candidate_len, 2);
 }

@@ -80,11 +80,14 @@ src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/entry_sets.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/kind.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/observation.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/offer_entries.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/progress_selection
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/progress_selection.rs
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/scratch
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/scratch.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/select
 src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/select.rs
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot
-src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/snapshot.rs
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/visit_set
+src/endpoint/kernel/frontier	src/endpoint/kernel/frontier/visit_set.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta_apply.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/commit_delta_route_only.rs
@@ -122,6 +125,7 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/materialization.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/passive.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/profile
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/profile.rs
+src/endpoint/kernel/offer	src/endpoint/kernel/offer/progress.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_materialization.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_types.rs

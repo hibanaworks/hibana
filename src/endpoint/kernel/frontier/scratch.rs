@@ -1,9 +1,14 @@
 use super::{
-    ActiveEntrySetBuilder, ActiveEntrySlot, FrontierCandidate, FrontierObservationSlot,
-    ObservedEntrySetBuilder, max_usize, mem, slice,
+    ActiveEntrySetBuilder, ActiveEntrySlot, FrontierObservationSlot, ObservedEntrySetBuilder, mem,
+    slice,
 };
 use crate::global::role_program::LANE_DOMAIN_SIZE;
 use crate::runtime_core::layout::{add, align_up, mul};
+
+#[inline(always)]
+const fn max_usize(lhs: usize, rhs: usize) -> usize {
+    if lhs > rhs { lhs } else { rhs }
+}
 use core::marker::PhantomData;
 // # Unsafe Owner Contract
 //
@@ -41,7 +46,6 @@ impl FrontierScratchSection {
 pub(crate) struct FrontierScratchLayout {
     global_active_entry_slots: FrontierScratchSection,
     observed_entry_slots: FrontierScratchSection,
-    candidates: FrontierScratchSection,
     total_bytes: usize,
     total_align: usize,
 }
@@ -67,14 +71,9 @@ impl FrontierScratchLayout {
         offset = add(observed_entry_slots.offset, observed_entry_slots.bytes);
         total_align = max_usize(total_align, observed_entry_slots.align);
 
-        let candidates = Self::section_array::<FrontierCandidate>(offset, max_frontier_entries);
-        offset = add(candidates.offset, candidates.bytes);
-        total_align = max_usize(total_align, candidates.align);
-
         Self {
             global_active_entry_slots,
             observed_entry_slots,
-            candidates,
             total_bytes: offset,
             total_align,
         }
@@ -101,11 +100,6 @@ impl FrontierScratchLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn candidates(self) -> FrontierScratchSection {
-        self.candidates
-    }
-
-    #[inline(always)]
     const fn section_array<T>(offset: usize, count: usize) -> FrontierScratchSection {
         let align = mem::align_of::<T>();
         let bytes = mul(mem::size_of::<T>(), count);
@@ -129,8 +123,6 @@ pub(crate) struct FrontierScratchWorkspace<'lease> {
         FrontierScratchSectionLease<'lease, ActiveEntrySlot>,
     pub(in crate::endpoint::kernel) observed_entries:
         FrontierScratchSectionLease<'lease, FrontierObservationSlot>,
-    pub(in crate::endpoint::kernel) candidates:
-        FrontierScratchSectionLease<'lease, FrontierCandidate>,
 }
 
 #[inline]
@@ -224,19 +216,14 @@ impl<'lease> FrontierScratchWorkspace<'lease> {
     pub(crate) fn from_storage(scratch: &'lease mut [u8], layout: FrontierScratchLayout) -> Self {
         let active = layout.global_active_entry_slots();
         let observed = layout.observed_entry_slots();
-        let candidates = layout.candidates();
-        if active.end() > observed.offset()
-            || observed.end() > candidates.offset()
-            || candidates.end() > layout.total_bytes()
-        {
+        if active.end() > observed.offset() || observed.end() > layout.total_bytes() {
             crate::invariant();
         }
         let storage = frontier_scratch_storage_ptr(scratch, layout);
-        /* SAFETY: the ordered section checks above prove that all three typed
-        spans are mutually disjoint inside the live scratch arena. The
-        workspace is the sole owner of every issued section lease. Each raw
-        byte span is initialized with a valid value before a typed slice can be
-        borrowed. */
+        /* SAFETY: the ordered section checks above prove that both typed spans
+        are disjoint inside the live scratch arena. The workspace is the sole
+        owner of both section leases. Each raw byte span is initialized with a
+        valid value before a typed slice can be borrowed. */
         unsafe {
             Self {
                 global_active_entries: FrontierScratchSectionLease::from_storage(
@@ -249,21 +236,9 @@ impl<'lease> FrontierScratchWorkspace<'lease> {
                     observed,
                     FrontierObservationSlot::EMPTY,
                 ),
-                candidates: FrontierScratchSectionLease::from_storage(
-                    storage,
-                    candidates,
-                    FrontierCandidate::EMPTY,
-                ),
             }
         }
     }
-}
-
-#[inline]
-pub(crate) fn frontier_candidates_mut<'a>(
-    section: &'a mut FrontierScratchSectionLease<'_, FrontierCandidate>,
-) -> &'a mut [FrontierCandidate] {
-    section.as_mut_slice()
 }
 
 #[cfg(kani)]

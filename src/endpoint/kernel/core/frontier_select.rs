@@ -1,8 +1,8 @@
 use super::{
     ActiveEntrySlot, ActiveOfferEntry, ControlFlow, CurrentScopeSelectionMeta, CursorEndpoint,
-    FrontierCandidate, LaneOfferState, OfferEntryEvidence, OfferEntryKey, OfferEntryObservedState,
-    ScopeArmMaterializationMeta, ScopeId, Transport, offer_entry_frontier_candidate,
-    offer_entry_observed_state,
+    FrontierProgressCandidate, LaneOfferState, OfferEntryEvidence, OfferEntryKey,
+    OfferEntryObservedState, ScopeArmMaterializationMeta, ScopeId, Transport,
+    offer_entry_frontier_progress_candidate, offer_entry_observed_state,
 };
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
@@ -171,39 +171,42 @@ where
     }
 
     #[inline]
-    pub(in crate::endpoint::kernel) fn offer_entry_candidate_from_observation(
+    pub(in crate::endpoint::kernel) fn observe_active_offer_entry(
         &self,
         active: ActiveOfferEntry,
         evidence: OfferEntryEvidence,
-    ) -> (OfferEntryObservedState, FrontierCandidate) {
+    ) -> OfferEntryObservedState {
         let info = active.representative();
-        let observed = offer_entry_observed_state(info, evidence);
-        let candidate = offer_entry_frontier_candidate(info, observed);
-        (observed, candidate)
+        offer_entry_observed_state(info, evidence)
     }
 
     pub(in crate::endpoint::kernel) fn scan_active_offer_entry_non_consuming(
         &self,
         slot: ActiveEntrySlot,
-    ) -> (ActiveOfferEntry, OfferEntryObservedState, FrontierCandidate) {
+    ) -> (ActiveOfferEntry, OfferEntryObservedState) {
         let active = self.active_offer_entry_from_slot(slot);
         let evidence = self.preview_offer_entry_evidence_non_consuming(active.scope());
-        let (observed, candidate) = self.offer_entry_candidate_from_observation(active, evidence);
-        (active, observed, candidate)
+        let observed = self.observe_active_offer_entry(active, evidence);
+        (active, observed)
     }
 
-    pub(in crate::endpoint::kernel) fn for_each_active_offer_candidate<R>(
+    pub(in crate::endpoint::kernel) fn for_each_active_offer_progress_candidate<R>(
         &self,
         current_parallel: Option<ScopeId>,
         scratch: &mut super::FrontierScratchSectionLease<'_, ActiveEntrySlot>,
-        mut visitor: impl FnMut(FrontierCandidate) -> ControlFlow<R>,
+        mut visitor: impl FnMut(FrontierProgressCandidate) -> ControlFlow<R>,
     ) -> Option<R> {
         let active_entries = self.active_frontier_entries(current_parallel, scratch);
         let mut next_slot = 0usize;
         while next_slot < active_entries.len() {
             let slot = crate::invariant_some(active_entries.slot_at(next_slot));
             next_slot += 1;
-            let (_, _, candidate) = self.scan_active_offer_entry_non_consuming(slot);
+            let (active, observed) = self.scan_active_offer_entry_non_consuming(slot);
+            let Some(candidate) =
+                offer_entry_frontier_progress_candidate(active.representative(), observed)
+            else {
+                continue;
+            };
             if let ControlFlow::Break(result) = visitor(candidate) {
                 return Some(result);
             }

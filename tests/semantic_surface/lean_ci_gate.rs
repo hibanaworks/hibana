@@ -134,16 +134,16 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
                         && line.contains(" : ")
                 })
                 .count()
-                == 680
+                == 683
             && all_claim_snapshot.contains(
                 "@Hibana.assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement :"
             )
             && proof_gate.contains("all-claim-surface.txt")
             && proof_gate.contains(
-                "--static \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 680 346 239 95",
+                "--static \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 683 346 242 95",
             )
             && proof_gate.contains("EXPECTED_STATIC_AUDIT_MARKER")
-            && proof_gate.contains("theorems=680 both=346 propext=239 free=95")
+            && proof_gate.contains("theorems=683 both=346 propext=242 free=95")
             && proof_gate.contains("example-claim-surface.txt")
             && proof_gate.contains(
                 "--example-types \"${PROOF_DIR}\" \"${EXAMPLE_CLAIM_SNAPSHOT}\" 36",
@@ -173,7 +173,7 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && proof_gate
                 .contains("theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506")
             && proof_gate.contains("generated-theorems=506 generated-obligations=458")
-            && proof_gate.contains("static-theorems=680 anonymous-regressions=36")
+            && proof_gate.contains("static-theorems=683 anonymous-regressions=36")
             && proof_gate.contains(
                 "production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6"
             )

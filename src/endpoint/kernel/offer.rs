@@ -11,6 +11,7 @@ mod ingress_types;
 mod materialization;
 mod passive;
 mod profile;
+mod progress;
 #[cfg(all(test, hibana_repo_tests))]
 #[path = "offer/requeue_callback_tests.rs"]
 mod requeue_callback_tests;
@@ -31,9 +32,8 @@ use super::authority::RouteResolveStep;
 pub(in crate::endpoint::kernel) use super::authority::{Arm, RouteArmToken};
 use super::core::CursorEndpoint;
 use super::frontier::{
-    ActiveEntrySet, FrontierDeferOutcome, FrontierScratchWorkspace, FrontierVisitSet,
-    LaneOfferState, ObservedEntrySet, OfferEntryKey, OfferEvidenceOutcome, OfferProgressState,
-    frontier_snapshot_from_scratch,
+    ActiveEntrySet, FrontierProgressSelection, FrontierScratchWorkspace, FrontierVisitSet,
+    LaneOfferState, ObservedEntrySet, OfferEntryKey,
 };
 use super::lane_port;
 use crate::endpoint::{RecvError, RecvResult};
@@ -54,6 +54,9 @@ pub(in crate::endpoint::kernel) use self::ingress_types::{
 };
 use self::profile::OfferAuthorityPath;
 pub(in crate::endpoint::kernel) use self::profile::{OfferEntryPosition, OfferScopeProfile};
+pub(in crate::endpoint::kernel) use self::progress::{
+    EvidenceFingerprint, FrontierDeferOutcome, OfferEvidenceOutcome, OfferProgressState,
+};
 use self::resolve_types::ResolvePendingState;
 pub(in crate::endpoint::kernel) use self::resolve_types::{
     ResolveTokenOutcome, ResolvedRouteArm, RouteArmCommitEvidence,

@@ -1,10 +1,10 @@
 use super::super::evidence_store::ReadyArmEvidence;
 use super::{
     Arm, ControlFlow, CurrentFrontierSelectionState, CurrentScopeSelectionMeta, CursorEndpoint,
-    FrontierDeferOutcome, FrontierScratchWorkspace, FrontierVisitSet, IngressEvidenceState,
-    OfferEntryKey, OfferEvidenceOutcome, OfferProgressState, OfferScopeSelection,
-    OfferStagedIngress, Poll, RecvError, RecvResult, ScopeId, Transport,
-    frontier_snapshot_from_scratch, lane_port, state_index_to_usize,
+    FrontierDeferOutcome, FrontierProgressSelection, FrontierScratchWorkspace, FrontierVisitSet,
+    IngressEvidenceState, OfferEntryKey, OfferEvidenceOutcome, OfferProgressState,
+    OfferScopeSelection, OfferStagedIngress, Poll, RecvError, RecvResult, ScopeId, Transport,
+    lane_port, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 
@@ -192,8 +192,7 @@ where
         let current_entry_idx = self.cursor.index();
         visited.record(current_entry_idx);
         let current_is_controller = self.cursor.is_route_controller(scope_id);
-        let mut snapshot = frontier_snapshot_from_scratch(
-            &mut scratch.candidates,
+        let mut selection = FrontierProgressSelection::new(
             scope_id,
             current_entry_idx,
             match current_parallel {
@@ -206,18 +205,16 @@ where
                 current_is_controller,
             ),
         );
-        self.for_each_active_offer_candidate(
+        self.for_each_active_offer_progress_candidate(
             current_parallel,
             &mut scratch.global_active_entries,
             |candidate| {
-                if !snapshot.push_candidate(candidate) {
-                    crate::invariant();
-                }
+                selection.consider(candidate, visited);
                 ControlFlow::<()>::Continue(())
             },
         );
         if is_pending {
-            let Some(candidate) = snapshot.select_yield_candidate(visited) else {
+            let Some(candidate) = selection.selected() else {
                 return FrontierDeferOutcome::Pending;
             };
             let candidate_entry = candidate.entry.as_usize();
@@ -229,7 +226,7 @@ where
             }
             return FrontierDeferOutcome::Yielded;
         }
-        let Some(candidate) = snapshot.select_yield_candidate(visited) else {
+        let Some(candidate) = selection.selected() else {
             return FrontierDeferOutcome::Continue;
         };
         let candidate_entry = candidate.entry.as_usize();
@@ -285,9 +282,6 @@ where
             if info.is_controller() {
                 flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
             }
-            if info.is_dynamic() {
-                flags |= CurrentFrontierSelectionState::FLAG_DYNAMIC;
-            }
             if info.intrinsic_ready() {
                 flags |= CurrentFrontierSelectionState::FLAG_READY;
             }
@@ -313,9 +307,6 @@ where
         let mut flags = 0u8;
         if current_is_controller {
             flags |= CurrentFrontierSelectionState::FLAG_CONTROLLER;
-        }
-        if current_is_dynamic {
-            flags |= CurrentFrontierSelectionState::FLAG_DYNAMIC;
         }
         if frontier_facts.ready() {
             flags |= CurrentFrontierSelectionState::FLAG_READY;

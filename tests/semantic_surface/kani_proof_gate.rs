@@ -24,8 +24,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let frontier_entry_buffer = read("src/endpoint/kernel/frontier/entry_sets/buffer.rs");
     let endpoint_core = read("src/endpoint/kernel/core.rs");
     let rendezvous_port = read("src/rendezvous/port.rs");
-    let frontier_snapshot = read("src/endpoint/kernel/frontier/snapshot.rs");
-    let frontier_snapshot_harnesses = read("src/endpoint/kernel/frontier/snapshot/kani.rs");
+    let frontier_progress_selection = read("src/endpoint/kernel/frontier/progress_selection.rs");
+    let frontier_progress_selection_harnesses =
+        read("src/endpoint/kernel/frontier/progress_selection/kani.rs");
+    let frontier_visit_set_harnesses = read("src/endpoint/kernel/frontier/visit_set/kani.rs");
     let frontier_observation_harnesses = read("src/endpoint/kernel/core/frontier_observation.rs");
     let scope_evidence_harnesses = read("src/endpoint/kernel/evidence_store.rs");
     let alignment_harnesses =
@@ -124,7 +126,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "lane_domain_frontier_workspace_fits_compact_resident_budget",
         "frontier_scratch_rejects_capacity_beyond_lane_domain",
         "zero_capacity_frontier_scratch_rejects_misaligned_storage_before_slice_publication",
-        "zero_capacity_frontier_scratch_yields_an_empty_candidate_slice",
+        "zero_capacity_frontier_scratch_yields_empty_typed_views",
         "arbitrary_scratch_bytes_are_canonicalized_before_typed_publication",
     ] {
         assert!(frontier_scratch_harnesses.contains(&format!("fn {harness}()")));
@@ -140,11 +142,14 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     );
     assert!(
         frontier_scratch.contains("active.end() > observed.offset()")
-            && frontier_scratch.contains("observed.end() > candidates.offset()")
-            && frontier_scratch.contains("candidates.end() > layout.total_bytes()")
+            && frontier_scratch.contains("observed.end() > layout.total_bytes()")
             && frontier_scratch_harnesses.contains(
                 "layout.global_active_entry_slots().end() <= layout.observed_entry_slots().offset()"
             )
+    );
+    assert!(
+        !frontier_scratch.contains("FrontierCandidate")
+            && !frontier_scratch.contains("candidates: FrontierScratchSection")
     );
     assert!(
         frontier_entry_buffer.contains("pub(super) struct EntryView<'a, T>")
@@ -172,13 +177,25 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
             "frontier scratch must not retain lifetime-free raw view authority: {forbidden}"
         );
     }
-    assert!(frontier_snapshot.contains("pub(crate) struct FrontierSnapshot<'a>"));
-    assert!(frontier_snapshot.contains("candidates: &'a mut [FrontierCandidate]"));
-    assert!(!frontier_snapshot.contains("candidates: *mut FrontierCandidate"));
+    assert!(frontier_progress_selection.contains("struct FrontierProgressSelection"));
+    assert!(frontier_progress_selection.contains("preferred: Option<FrontierProgressCandidate>"));
     assert!(
-        frontier_snapshot_harnesses
-            .contains("fn two_cell_frontier_snapshot_never_publishes_a_third_candidate()")
+        frontier_progress_selection.contains("first_admissible: Option<FrontierProgressCandidate>")
     );
+    assert!(!frontier_progress_selection.contains("[FrontierProgressCandidate]"));
+    for harness in [
+        "streaming_progress_selection_preserves_first_matching_frontier_priority",
+        "streaming_progress_selection_retains_first_admissible_in_constant_state",
+    ] {
+        assert!(frontier_progress_selection_harnesses.contains(&format!("fn {harness}()")));
+    }
+    for harness in [
+        "visited_entry_identity_is_exact_and_never_silent",
+        "absent_state_identity_is_rejected",
+        "repeated_alignment_source_remains_detectable_without_capacity_growth",
+    ] {
+        assert!(frontier_visit_set_harnesses.contains(&format!("fn {harness}()")));
+    }
     assert_eq!(
         offer_ingress_harnesses
             .matches("#[kani::unwind(10)]")
@@ -212,7 +229,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(inventory.contains("\"kani-version\": \"0.67.0\""));
-    assert!(inventory.contains("\"standard-harnesses\": 192"));
+    assert!(inventory.contains("\"standard-harnesses\": 195"));
     assert!(inventory.contains("\"contract-harnesses\": 0"));
     for (owner, enum_name) in [
         (&frontier_kind, "FrontierKind"),
