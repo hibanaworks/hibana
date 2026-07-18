@@ -9,8 +9,8 @@
     "../../src/endpoint/kernel/core/frontier_observation.rs": [
       "endpoint::kernel::core::frontier_observation::tests::excluded_scope_never_supplies_progress_sibling_authority"
     ],
-    "../../src/endpoint/kernel/core/public_types/kani.rs": [
-      "endpoint::kernel::core::public_types::kani::public_operation_transition_classifier_is_exact"
+    "../../src/endpoint/kernel/core/public_operation/kani.rs": [
+      "endpoint::kernel::core::public_operation::kani::public_operation_transition_classifier_is_exact"
     ],
     "../../src/endpoint/kernel/decision_state/kani.rs": [
       "endpoint::kernel::decision_state::kani::existing_route_reselection_preserves_exact_reference_count",

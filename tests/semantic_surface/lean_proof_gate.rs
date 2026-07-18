@@ -944,6 +944,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 .matches("def resolveUniqueDescriptorOperation?")
                 .count()
                 == 1
+            && descriptor_image.contains("structure ProgramSourceCapacityWitness")
+            && descriptor_image.contains("resolverMarkersCovered")
+            && descriptor_image.contains("theorem program_descriptor_bytes_dominate_source_rows")
+            && descriptor_image
+                .contains("theorem descriptor_byte_ceiling_covers_source_lowering_rows")
             && !descriptor_image.contains("atoms.find?")
             && !event_graph.contains("graph.routes.find?")
             && descriptor_refinement.contains("def descriptorInboundStep")

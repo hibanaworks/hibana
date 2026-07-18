@@ -1,49 +1,10 @@
+use super::public_operation::PublicActiveOp;
 use super::{
     BranchMeta, EndpointLeaseId, EventCursor, FrontierState, LaneGuard, LaneSlotArray, LeasedState,
     OfferState, Owner, Port, RendezvousId, RouteCommitRowSetBuilder, RouteState, SendMeta,
     SendRouteAuthority, SendState, SessionCtx, SessionId, StateIndex, Transport, lane_port,
 };
 use crate::endpoint::kernel::{branch_recv, recv};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::endpoint) enum PublicActiveOp {
-    Idle,
-    Poisoned,
-    Send,
-    Recv,
-    Offer,
-    RouteBranch,
-    RestoredRouteBranch,
-    BranchRecv,
-    BranchSend,
-}
-
-impl PublicActiveOp {
-    #[inline(always)]
-    pub(in crate::endpoint::kernel) fn transition_lease(self, expected: Self) -> PublicOpLease {
-        if self == Self::Poisoned {
-            PublicOpLease::Faulted
-        } else if self == expected {
-            PublicOpLease::Held
-        } else {
-            PublicOpLease::Rejected
-        }
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PublicOpLease {
-    Rejected = 0,
-    Held = 1,
-    Faulted = 2,
-}
-
-#[cfg(kani)]
-mod kani;
-
-#[cfg(all(test, hibana_repo_tests))]
-mod tests;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -29,7 +29,7 @@
           { before := kernel.abstractState state, effect := kernel.effect prepared,
             after := kernel.abstractState (kernel.commit state prepared) };
         certificate.Refines session roleCount choreo
-@Hibana.public_operation_table_certificate_sound : ∀ {table : List.{0} Hibana.PublicOperationLease},
+@Hibana.public_operation_table_certificate_sound : ∀ {table : List.{0} Hibana.PublicOperationTransition},
   @Eq.{1} Bool (Hibana.checkPublicOperationTable table) true → Hibana.PublicOperationTableExact table
 @Hibana.production_kernel_artifact_sound : ∀ {artifact : Hibana.ProductionKernelArtifact} {session roleCount : Nat}
   {choreo : Hibana.Choreo},

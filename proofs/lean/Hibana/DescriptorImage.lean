@@ -47,6 +47,48 @@ theorem descriptor_byte_ceiling_dominates_event_identity_domain :
     productionAtomOnlyEventCapacity < productionEventIdentityCapacity := by
   decide
 
+/-- Exact host-side source and final program-image counts. Dynamic resolver
+markers are a subset of route-resolver rows because intrinsic routes still own
+descriptor rows. This witness is erased after projection. -/
+structure ProgramSourceCapacityWitness where
+  eventCount : Nat
+  scopeMarkerCount : Nat
+  resolverMarkerCount : Nat
+  routeResolverCount : Nat
+  routeParticipantCount : Nat
+  programByteLength : Nat
+  resolverMarkersCovered : resolverMarkerCount ≤ routeResolverCount
+  programBytesExact : programByteLength =
+    eventCount * productionProgramAtomStride +
+    routeResolverCount * productionProgramRouteResolverStride +
+    routeParticipantCount * productionProgramRouteParticipantStride +
+    scopeMarkerCount * productionProgramScopeMarkerStride
+  descriptorFits : programByteLength ≤ productionDescriptorByteCapacity
+
+def ProgramSourceCapacityWitness.sourceRowCount
+    (witness : ProgramSourceCapacityWitness) : Nat :=
+  witness.eventCount + witness.scopeMarkerCount + witness.resolverMarkerCount
+
+/-- Every source row consumes at least one byte in the exact final program
+image. The stable-Rust source arena therefore has no independent capacity
+limit below the descriptor representation it produces. -/
+theorem program_descriptor_bytes_dominate_source_rows
+    (witness : ProgramSourceCapacityWitness) :
+    witness.sourceRowCount ≤ witness.programByteLength := by
+  unfold ProgramSourceCapacityWitness.sourceRowCount
+  have resolverCovered := witness.resolverMarkersCovered
+  have bytesExact := witness.programBytesExact
+  simp only [productionProgramAtomStride, productionProgramRouteResolverStride,
+    productionProgramRouteParticipantStride, productionProgramScopeMarkerStride,
+    Nat.mul_one] at bytesExact
+  omega
+
+theorem descriptor_byte_ceiling_covers_source_lowering_rows
+    (witness : ProgramSourceCapacityWitness) :
+    witness.sourceRowCount ≤ productionDescriptorByteCapacity :=
+  Nat.le_trans (program_descriptor_bytes_dominate_source_rows witness)
+    witness.descriptorFits
+
 def productionScopeCapacity : Nat := 8192
 
 def productionPackedU16Capacity : Nat := 65536

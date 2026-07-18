@@ -5,13 +5,23 @@ import re
 import subprocess
 import sys
 
+sys.dont_write_bytecode = True
+
 
 CLAIM_SURFACE_BEGIN = "HIBANA_STATIC_CLAIM_SURFACE_BEGIN"
 CLAIM_SURFACE_END = "HIBANA_STATIC_CLAIM_SURFACE_END"
 CLAIM_HEADER = re.compile(r"^@?Hibana\.([^\s:]+) :")
 EXAMPLE_DECLARATION = re.compile(r"\bexample\b")
+FORBIDDEN_PROOF_TOKEN = re.compile(
+    r"\b(?:sorry|admit|axiom|constant|opaque|unsafe)\b"
+)
+FORBIDDEN_PROOF_GENERATOR_TOKEN = re.compile(
+    r"\b(?:macro|macro_rules|syntax|elab|run_cmd|run_tac)\b"
+)
+NATIVE_DECISION_TOKEN = re.compile(r"\bnative_decide\b")
+ENV_THEOREM_HEADER = re.compile(r"^HIBANA_ENV_THEOREM=(Hibana\.[^\n]+)$", re.MULTILINE)
 AXIOM_BLOCK = re.compile(
-    r"^'([^']+)' (does not depend on any axioms|depends on axioms: \[(.*?)\])"
+    r"^'([^\n]+)' (does not depend on any axioms|depends on axioms: \[(.*?)\])"
     r"(?=\n'|\s*\Z)",
     re.MULTILINE | re.DOTALL,
 )
@@ -21,6 +31,7 @@ NATIVE_EXAMPLE_MODULES = {
     pathlib.Path("DistributedSemanticsExamples.lean"),
     pathlib.Path("StaticProjectabilityExamples.lean"),
 }
+EXPECTED_NATIVE_EXAMPLE_COUNT = 32
 
 
 def erase_non_code(source: str) -> str:
@@ -110,9 +121,42 @@ def declared_theorems(root: pathlib.Path) -> set[str]:
     return names
 
 
-def audited_theorems(root: pathlib.Path) -> set[str]:
-    source = erase_non_code((root / "Hibana" / "AxiomAudit.lean").read_text())
-    return set(re.findall(r"^#print axioms Hibana\.(\S+)\s*$", source, re.MULTILINE))
+def validate_static_source(root: pathlib.Path) -> None:
+    source_root = root / "Hibana"
+    native_decisions = 0
+    for path in sorted(source_root.rglob("*.lean")):
+        relative_path = path.relative_to(source_root)
+        source = path.read_text()
+        code = erase_non_code(source)
+        forbidden = FORBIDDEN_PROOF_TOKEN.search(code)
+        if forbidden is not None:
+            raise ValueError(
+                f"{relative_path}: forbidden proof token {forbidden.group(0)!r}"
+            )
+        generator = FORBIDDEN_PROOF_GENERATOR_TOKEN.search(code)
+        if generator is not None:
+            raise ValueError(
+                f"{relative_path}: proof-generating command {generator.group(0)!r} "
+                "would bypass source theorem discovery"
+            )
+        decisions = len(NATIVE_DECISION_TOKEN.findall(code))
+        if relative_path not in NATIVE_EXAMPLE_MODULES and decisions != 0:
+            raise ValueError(
+                f"{relative_path}: native_decide is outside a native regression module"
+            )
+        if relative_path in NATIVE_EXAMPLE_MODULES:
+            named = theorem_names(source)
+            if named:
+                raise ValueError(
+                    f"{relative_path}: native regression modules cannot export named claims: "
+                    f"{sorted(named)!r}"
+                )
+            native_decisions += decisions
+    if native_decisions != EXPECTED_NATIVE_EXAMPLE_COUNT:
+        raise ValueError(
+            "native regression inventory changed: "
+            f"expected {EXPECTED_NATIVE_EXAMPLE_COUNT}, found {native_decisions}"
+        )
 
 
 def extract_claim_surface(output: str) -> str:
@@ -134,14 +178,26 @@ def claim_names(surface: str) -> set[str]:
     return set(names)
 
 
-def elaborated_claim_surface(root: pathlib.Path, theorems: set[str]) -> str:
+def elaborated_static_audit(
+    root: pathlib.Path, theorems: set[str]
+) -> subprocess.CompletedProcess[str]:
+    ordered = sorted(theorems)
     source = (
         "import Hibana.MainTheorems\n\n"
+        "import Lean.Elab.Command\n\n"
+        "open Lean Elab Command\n\n"
         "set_option pp.universes true\n"
         "set_option pp.explicit true\n\n"
         f'#eval IO.println "{CLAIM_SURFACE_BEGIN}"\n'
-        + "\n".join(f"#check @Hibana.{name}" for name in sorted(theorems))
+        + "\n".join(f"#check @Hibana.{name}" for name in ordered)
         + f'\n#eval IO.println "{CLAIM_SURFACE_END}"\n'
+        + "run_cmd\n"
+        + "  let env ← getEnv\n"
+        + "  for (name, info) in env.constants.toList do\n"
+        + "    if name.getPrefix == `Hibana && info.isTheorem then\n"
+        + '      logInfo m!"HIBANA_ENV_THEOREM={name}"\n'
+        + "\n".join(f"#print axioms Hibana.{name}" for name in ordered)
+        + "\n"
     )
     completed = subprocess.run(
         ["lake", "env", "lean", "--stdin"],
@@ -154,22 +210,85 @@ def elaborated_claim_surface(root: pathlib.Path, theorems: set[str]) -> str:
     if completed.returncode != 0:
         sys.stdout.write(completed.stdout)
         sys.stderr.write(completed.stderr)
-        raise ValueError("Lean failed to elaborate the complete static claim surface")
-    return extract_claim_surface(completed.stdout)
+        raise ValueError("Lean failed to elaborate the complete static theorem audit")
+    return completed
 
 
-def check_claim_types(
-    root: pathlib.Path, snapshot: pathlib.Path, expected_count: int
+def validate_environment_theorem_inventory(output: str, theorems: set[str]) -> None:
+    expected = {f"Hibana.{name}" for name in theorems if "." not in name}
+    actual = set(ENV_THEOREM_HEADER.findall(output))
+    if actual != expected:
+        raise ValueError(
+            "Lean environment theorem inventory changed: "
+            f"missing={sorted(expected - actual)!r} "
+            f"unexpected={sorted(actual - expected)!r}"
+        )
+
+
+def validate_static_axioms(
+    output: str,
+    theorems: set[str],
+    expected_both: int,
+    expected_propext: int,
+    expected_free: int,
 ) -> None:
+    qualified = {f"Hibana.{name}" for name in theorems}
+    parsed = parse_axioms(output)
+    if set(parsed) != qualified:
+        raise ValueError(
+            "static theorem axiom inventory changed: "
+            f"missing={sorted(qualified - set(parsed))!r} "
+            f"unexpected={sorted(set(parsed) - qualified)!r}"
+        )
+    categories = {"both": 0, "propext": 0, "free": 0}
+    for theorem, axioms in parsed.items():
+        normalized = set()
+        for axiom in axioms:
+            if ALLOWED_AXIOM.fullmatch(axiom) is None:
+                raise ValueError(
+                    f"static theorem {theorem} gained a forbidden axiom: {axiom}"
+                )
+            normalized.add(axiom.split(".{", 1)[0])
+        if normalized == {"propext", "Quot.sound"}:
+            categories["both"] += 1
+        elif normalized == {"propext"}:
+            categories["propext"] += 1
+        elif not normalized:
+            categories["free"] += 1
+        else:
+            raise ValueError(
+                f"static theorem {theorem} has an unexpected allowed axiom set: "
+                f"{sorted(normalized)!r}"
+            )
+    expected = {
+        "both": expected_both,
+        "propext": expected_propext,
+        "free": expected_free,
+    }
+    if categories != expected:
+        raise ValueError(
+            f"static theorem axiom closure counts changed: "
+            f"expected={expected!r} actual={categories!r}"
+        )
+
+
+def check_static_theorems(
+    root: pathlib.Path,
+    snapshot: pathlib.Path,
+    expected_count: int,
+    expected_both: int,
+    expected_propext: int,
+    expected_free: int,
+    write_snapshot: bool = False,
+) -> None:
+    validate_static_source(root)
     declared = declared_theorems(root)
-    audited = audited_theorems(root)
-    if declared != audited:
-        raise ValueError("static claim type audit requires an exact theorem/axiom inventory")
     if len(declared) != expected_count:
         raise ValueError(
             f"expected {expected_count} static theorem types, found {len(declared)}"
         )
-    actual = elaborated_claim_surface(root, declared)
+    completed = elaborated_static_audit(root, declared)
+    actual = extract_claim_surface(completed.stdout)
     actual_names = claim_names(actual)
     if actual_names != declared:
         raise ValueError(
@@ -177,6 +296,16 @@ def check_claim_types(
             f"missing={sorted(declared - actual_names)!r} "
             f"unexpected={sorted(actual_names - declared)!r}"
         )
+    validate_static_axioms(
+        completed.stdout,
+        declared,
+        expected_both,
+        expected_propext,
+        expected_free,
+    )
+    validate_environment_theorem_inventory(completed.stdout, declared)
+    if write_snapshot:
+        snapshot.write_text(actual)
     expected = snapshot.read_text()
     if claim_names(expected) != declared:
         raise ValueError("static claim snapshot does not cover the exact theorem inventory")
@@ -309,6 +438,7 @@ def elaborated_example_surface(root: pathlib.Path) -> tuple[str, set[str]]:
 def check_example_types(
     root: pathlib.Path, snapshot: pathlib.Path, expected_count: int
 ) -> None:
+    validate_static_source(root)
     actual, names = elaborated_example_surface(root)
     if len(names) != expected_count:
         raise ValueError(
@@ -352,23 +482,43 @@ end Hibana
     actual = theorem_names(declarations)
     if actual != expected:
         raise AssertionError(f"declaration scanner mismatch: {actual!r}")
+    if FORBIDDEN_PROOF_TOKEN.search(erase_non_code("private axiom hidden : False")) is None:
+        raise AssertionError("static source audit accepted a prefixed custom axiom")
+    if FORBIDDEN_PROOF_TOKEN.search(erase_non_code('-- axiom hidden : False\n')) is not None:
+        raise AssertionError("static source audit treated a comment as a declaration")
+    if FORBIDDEN_PROOF_GENERATOR_TOKEN.search("macro generated : command") is None:
+        raise AssertionError("static source audit accepted proof-generating syntax")
 
-    audit = r'''
-#print axioms Hibana.plain
-#print axioms Hibana.unicode_一意?
-#print axioms Hibana.punctuation!'
-#print axioms Hibana.equivalent_name
--- #print axioms Hibana.line_comment
-/- #print axioms Hibana.block_comment -/
-def quoted : String := "#print axioms Hibana.string_literal"
-'''
-    actual_audit = set(
-        re.findall(
-            r"^#print axioms Hibana\.(\S+)\s*$", erase_non_code(audit), re.MULTILINE
-        )
+    validate_environment_theorem_inventory(
+        "HIBANA_ENV_THEOREM=Hibana.plain\n"
+        "HIBANA_ENV_THEOREM=Hibana.unicode_一意?\n"
+        "HIBANA_ENV_THEOREM=Hibana.punctuation!'\n"
+        "HIBANA_ENV_THEOREM=Hibana.equivalent_name\n",
+        expected,
     )
-    if actual_audit != expected:
-        raise AssertionError(f"audit scanner mismatch: {actual_audit!r}")
+
+    validate_static_axioms(
+        "'Hibana.plain' depends on axioms: [propext, Quot.sound.{u}]\n"
+        "'Hibana.unicode_一意?' depends on axioms: [propext]\n"
+        "'Hibana.punctuation!\'' does not depend on any axioms\n"
+        "'Hibana.equivalent_name' does not depend on any axioms\n",
+        expected,
+        expected_both=1,
+        expected_propext=1,
+        expected_free=2,
+    )
+    try:
+        validate_static_axioms(
+            "'Hibana.plain' depends on axioms: [Classical.choice]\n",
+            {"plain"},
+            expected_both=0,
+            expected_propext=0,
+            expected_free=1,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("static theorem audit accepted a forbidden axiom")
 
     claim_output = (
         f"noise\n{CLAIM_SURFACE_BEGIN}\nHibana.plain : True\n"
@@ -427,24 +577,33 @@ def main() -> int:
             return 1
         print("Lean theorem inventory self-test passed")
         return 0
-    if sys.argv[1:2] == ["--claim-types"]:
-        if len(sys.argv) != 5:
+    if sys.argv[1:2] in (["--static"], ["--write-static"]):
+        if len(sys.argv) != 8:
             print(
-                "usage: check_lean_theorem_inventory.py --claim-types "
-                "PROOF_DIR SNAPSHOT EXPECTED_COUNT",
+                "usage: check_lean_theorem_inventory.py --static|--write-static "
+                "PROOF_DIR SNAPSHOT EXPECTED_COUNT EXPECTED_BOTH "
+                "EXPECTED_PROPEXT EXPECTED_FREE",
                 file=sys.stderr,
             )
             return 2
         try:
-            check_claim_types(
+            check_static_theorems(
                 pathlib.Path(sys.argv[2]),
                 pathlib.Path(sys.argv[3]),
                 int(sys.argv[4]),
+                int(sys.argv[5]),
+                int(sys.argv[6]),
+                int(sys.argv[7]),
+                write_snapshot=sys.argv[1] == "--write-static",
             )
         except (OSError, ValueError) as error:
-            print(f"Lean static claim type audit failed: {error}", file=sys.stderr)
+            print(f"Lean static theorem audit failed: {error}", file=sys.stderr)
             return 1
-        print(f"Lean static claim type audit passed theorems={sys.argv[4]}")
+        print(
+            "Lean static theorem audit passed "
+            f"theorems={sys.argv[4]} both={sys.argv[5]} "
+            f"propext={sys.argv[6]} free={sys.argv[7]}"
+        )
         return 0
     if sys.argv[1:2] in (["--example-types"], ["--write-example-types"]):
         if len(sys.argv) != 5:
@@ -471,37 +630,20 @@ def main() -> int:
         except (OSError, ValueError) as error:
             print(f"Lean anonymous example type audit failed: {error}", file=sys.stderr)
             return 1
-        print(f"Lean anonymous example type audit passed examples={expected_count}")
-        return 0
-    if len(sys.argv) != 2:
         print(
-            "usage: check_lean_theorem_inventory.py --self-test | PROOF_DIR",
-            file=sys.stderr,
+            "Lean anonymous example type audit passed "
+            f"examples={expected_count} native={EXPECTED_NATIVE_EXAMPLE_COUNT} "
+            f"kernel={expected_count - EXPECTED_NATIVE_EXAMPLE_COUNT}"
         )
-        return 2
-    root = pathlib.Path(sys.argv[1])
-    try:
-        declared = declared_theorems(root)
-        audited = audited_theorems(root)
-    except (OSError, ValueError) as error:
-        print(f"Lean theorem inventory failed: {error}", file=sys.stderr)
-        return 1
-    if not declared or not audited:
-        print("Lean theorem inventory must be nonempty", file=sys.stderr)
-        return 1
-    if declared == audited:
-        print(f"Lean theorem inventory passed theorems={len(declared)}")
         return 0
-    diff = difflib.unified_diff(
-        sorted(declared),
-        sorted(audited),
-        fromfile="declared-theorems",
-        tofile="axiom-audit",
-        lineterm="",
+    print(
+        "usage: check_lean_theorem_inventory.py --self-test | "
+        "--static|--write-static PROOF_DIR SNAPSHOT EXPECTED_COUNT EXPECTED_BOTH "
+        "EXPECTED_PROPEXT EXPECTED_FREE | "
+        "--example-types PROOF_DIR SNAPSHOT EXPECTED_COUNT",
+        file=sys.stderr,
     )
-    print("\n".join(diff), file=sys.stderr)
-    print("Lean proof gate requires an axiom audit for every exported theorem", file=sys.stderr)
-    return 1
+    return 2
 
 
 if __name__ == "__main__":

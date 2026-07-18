@@ -965,6 +965,10 @@ Hibana.completed_event_word_count_covers_events : ∀ (eventCount : Nat),
         @Exists.{1} Hibana.GlobalConfig fun next =>
           @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.step? (Hibana.GlobalOperation.roll rollId))
             (@some.{0} Hibana.GlobalConfig next)
+Hibana.conditional_public_operation_clear_is_exact : ∀ (current expected : Hibana.PublicOperationPhase),
+  @Eq.{1} Hibana.PublicOperationPhase (Hibana.clearPublicOperationIfCurrent current expected)
+    (@ite.{1} Hibana.PublicOperationPhase (@Eq.{1} Hibana.PublicOperationPhase current expected)
+      (Hibana.instDecidableEqPublicOperationPhase current expected) Hibana.PublicOperationPhase.idle current)
 Hibana.conflicted_ready_evidence_consumption_is_sticky : ∀ (arm : Hibana.RouteArm),
   @Eq.{1} Hibana.ScopeReadyEvidence (Hibana.consumeScopeReadyArm Hibana.ScopeReadyEvidence.conflicted arm)
     Hibana.ScopeReadyEvidence.conflicted
@@ -1079,6 +1083,8 @@ Hibana.cursor_target_observations_are_entry_exact : ∀ (entry : Nat)
     @Eq.{1} (Option.{0} (List.{0} Hibana.LocalAction)) image.decodeActions?
       (@some.{0} (List.{0} Hibana.LocalAction)
         (@List.map.{0, 0} Hibana.ProjectionEvent Hibana.LocalAction Hibana.ProjectionEvent.action shape.events))
+Hibana.descriptor_byte_ceiling_covers_source_lowering_rows : ∀ (witness : Hibana.ProgramSourceCapacityWitness),
+  @LE.le.{0} Nat instLENat witness.sourceRowCount Hibana.productionDescriptorByteCapacity
 Hibana.descriptor_byte_ceiling_dominates_event_identity_domain : @LT.lt.{0} Nat instLTNat
   Hibana.productionAtomOnlyEventCapacity Hibana.productionEventIdentityCapacity
 Hibana.descriptor_byte_ceiling_dominates_scope_and_route_commit_counts : ∀ (witness : Hibana.ProgramCapacityWitness),
@@ -1878,6 +1884,11 @@ Hibana.exact_current_retention_ignores_same_entry_foreign_scope : ∀ (target : 
         (Hibana.exactCurrentRetentionAllowed target observations)
 @Hibana.exact_descriptor_certificate_sound : ∀ {certificate : Hibana.ExactDescriptorCertificate},
   @Eq.{1} Bool certificate.check true → certificate.Refines
+Hibana.exact_public_operation_table_covers_every_transition : ∀ (current : Hibana.PublicOperationPhase)
+  (edge : Hibana.PublicOperationEdge),
+  @Membership.mem.{0, 0} Hibana.PublicOperationTransition (List.{0} Hibana.PublicOperationTransition)
+    (@List.instMembership.{0} Hibana.PublicOperationTransition) Hibana.exactPublicOperationTable
+    (Hibana.transitionPublicOperation current edge)
 @Hibana.exact_role_image : ∀ {certificate : Hibana.VerifiedProtocolCertificate}
   {roleImages : List.{0} Hibana.RustDescriptorImage},
   Hibana.RoleImagesExact certificate roleImages →
@@ -2422,9 +2433,9 @@ Hibana.local_action_unit_self_send_projects_local : ∀ (role label : Nat),
     @Eq.{1} Hibana.GlobalProtocolIdentity next.protocolIdentity config.protocolIdentity
 @Hibana.logical_progress_checker_sound : ∀ {graph : Hibana.EventGraph} {state : Hibana.CompactCommitState},
   @Eq.{1} Bool (Hibana.checkLogicalProgress graph state) true → Hibana.LogicalProgress graph state
-@Hibana.matching_live_public_operation_is_held : ∀ {phase : Hibana.PublicOperationPhase},
-  @Ne.{1} Hibana.PublicOperationPhase phase Hibana.PublicOperationPhase.poisoned →
-    @Eq.{1} Hibana.PublicOperationLease (Hibana.classifyPublicOperation phase phase) Hibana.PublicOperationLease.held
+Hibana.matching_live_public_operation_transitions_exactly : ∀ (edge : Hibana.PublicOperationEdge),
+  @Eq.{1} Hibana.PublicOperationTransition (Hibana.transitionPublicOperation edge.expected edge)
+    { lease := Hibana.PublicOperationLease.held, phase := edge.next }
 Hibana.matching_live_selection_and_ready_evidence_is_coherent : ∀ (arm : Hibana.RouteArm),
   @Eq.{1} Bool (Hibana.scopeReadySelectionCoherent arm (Hibana.ScopeReadyEvidence.selected arm)) true
 Hibana.matching_live_selection_records_exact_ready_arm : ∀ (arm : Hibana.RouteArm),
@@ -2473,11 +2484,12 @@ Hibana.merge_route_occurrence_actions : ∀ (role : Nat) (left right : Hibana.Co
       (@instHAppendOfAppend.{0} (List.{0} Hibana.LocalAction) (@List.instAppend.{0} Hibana.LocalAction))
       (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role) left.occurrences)
       (@List.filterMap.{0, 0} Hibana.CompiledOccurrence Hibana.LocalAction (fun x => x.action? role) right.occurrences))
-@Hibana.mismatched_live_public_operation_is_rejected : ∀ {current expected : Hibana.PublicOperationPhase},
+@Hibana.mismatched_live_public_operation_fails_closed : ∀ {current : Hibana.PublicOperationPhase},
   @Ne.{1} Hibana.PublicOperationPhase current Hibana.PublicOperationPhase.poisoned →
-    @Ne.{1} Hibana.PublicOperationPhase current expected →
-      @Eq.{1} Hibana.PublicOperationLease (Hibana.classifyPublicOperation current expected)
-        Hibana.PublicOperationLease.rejected
+    ∀ (edge : Hibana.PublicOperationEdge),
+      @Ne.{1} Hibana.PublicOperationPhase current edge.expected →
+        @Eq.{1} Hibana.PublicOperationTransition (Hibana.transitionPublicOperation current edge)
+          { lease := Hibana.PublicOperationLease.rejected, phase := Hibana.PublicOperationPhase.poisoned }
 Hibana.mixed_program_session_attach_rejected : ∀ (binding : Hibana.SessionBinding)
   (program : Hibana.ProgramImageIdentity),
   @Ne.{1} Hibana.ProgramImageIdentity binding.program program →
@@ -2709,9 +2721,9 @@ Hibana.poisoned_generation_publish_rejected : ∀ (cause : Hibana.SessionFault),
   Hibana.SessionGenerationTrace (Hibana.SessionGenerationState.poisoned cause) actions final →
     Or (@Eq.{1} Hibana.SessionGenerationState final (Hibana.SessionGenerationState.poisoned cause))
       (@Eq.{1} Hibana.SessionGenerationState final Hibana.SessionGenerationState.retired)
-Hibana.poisoned_public_operation_is_faulted : ∀ (expected : Hibana.PublicOperationPhase),
-  @Eq.{1} Hibana.PublicOperationLease (Hibana.classifyPublicOperation Hibana.PublicOperationPhase.poisoned expected)
-    Hibana.PublicOperationLease.faulted
+Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOperationEdge),
+  @Eq.{1} Hibana.PublicOperationTransition (Hibana.transitionPublicOperation Hibana.PublicOperationPhase.poisoned edge)
+    { lease := Hibana.PublicOperationLease.faulted, phase := Hibana.PublicOperationPhase.poisoned }
 @Hibana.polled_receipt_requeue_restores_exact_state : ∀ {current offered restored : Hibana.TransportBoundaryState}
   {frame : Hibana.TransportFrame},
   @Eq.{1} (Hibana.CarrierPoll Hibana.TransportBoundaryState) current.pollReceive
@@ -2888,6 +2900,8 @@ Hibana.production_route_traversal_has_no_former_256_step_limit : @Eq.{1} Nat
           (@List.instMembership.{0} Hibana.RuntimeTransitionCertificate) transitions transition →
         @Eq.{1} Bool (transition.check session roleCount choreo) true) →
     Hibana.PreparedKernelRefinement (Hibana.productionTransitionKernel transitions) session roleCount choreo
+Hibana.program_descriptor_bytes_dominate_source_rows : ∀ (witness : Hibana.ProgramSourceCapacityWitness),
+  @LE.le.{0} Nat instLENat witness.sourceRowCount witness.programByteLength
 Hibana.program_trace_checker_sound : ∀ (choreo : Hibana.Choreo) (role : Nat) (trace : List.{0} Hibana.TraceFrame),
   @Eq.{1} Bool (Hibana.checkProgramTrace choreo role trace) true →
     And (Hibana.projectGraph role choreo).WellFormed
@@ -3035,7 +3049,23 @@ Hibana.projected_route_arm_lanes_exclude_out_of_domain : ∀ (lanes : List.{0} N
     @Eq.{1} (Option.{0} Hibana.SessionPool) (pool.protocolStep? sessionId operation)
         (@some.{0} Hibana.SessionPool next) →
       next.WellFormed
-@Hibana.public_operation_table_certificate_sound : ∀ {table : List.{0} Hibana.PublicOperationLease},
+Hibana.public_operation_edge_expected_is_live : ∀ (edge : Hibana.PublicOperationEdge),
+  @Ne.{1} Hibana.PublicOperationPhase edge.expected Hibana.PublicOperationPhase.poisoned
+Hibana.public_operation_edge_inventory_exact : And
+  (@List.Nodup.{0} Hibana.PublicOperationEdge Hibana.publicOperationEdges)
+  (∀ (edge : Hibana.PublicOperationEdge),
+    @Membership.mem.{0, 0} Hibana.PublicOperationEdge (List.{0} Hibana.PublicOperationEdge)
+      (@List.instMembership.{0} Hibana.PublicOperationEdge) Hibana.publicOperationEdges edge)
+Hibana.public_operation_edge_success_is_live : ∀ (edge : Hibana.PublicOperationEdge),
+  @Ne.{1} Hibana.PublicOperationPhase edge.next Hibana.PublicOperationPhase.poisoned
+Hibana.public_operation_fault_is_exact : ∀ (current : Hibana.PublicOperationPhase),
+  @Eq.{1} Hibana.PublicOperationPhase (Hibana.faultPublicOperation current) Hibana.PublicOperationPhase.poisoned
+Hibana.public_operation_phase_inventory_exact : And
+  (@List.Nodup.{0} Hibana.PublicOperationPhase Hibana.publicOperationPhases)
+  (∀ (phase : Hibana.PublicOperationPhase),
+    @Membership.mem.{0, 0} Hibana.PublicOperationPhase (List.{0} Hibana.PublicOperationPhase)
+      (@List.instMembership.{0} Hibana.PublicOperationPhase) Hibana.publicOperationPhases phase)
+@Hibana.public_operation_table_certificate_sound : ∀ {table : List.{0} Hibana.PublicOperationTransition},
   @Eq.{1} Bool (Hibana.checkPublicOperationTable table) true → Hibana.PublicOperationTableExact table
 @Hibana.publication_permitted_implies_live : ∀ {state : Hibana.SessionGenerationState},
   @Eq.{1} Bool state.publicationPermitted true →
@@ -4096,6 +4126,8 @@ Hibana.sparse_route_slot_filter_preserves_later_route : ∀ (before after : List
         (Hibana.runLeaseAllocation state requiredTableSlots payloadBytes plannedImageFrontier payloadOffset
           publishReady))
       (Hibana.commitLeaseAllocation state plan)
+Hibana.terminal_public_operation_clear_is_exact : ∀ (current : Hibana.PublicOperationPhase),
+  @Eq.{1} Hibana.PublicOperationPhase (Hibana.clearPublicOperationTerminal current) Hibana.PublicOperationPhase.idle
 @Hibana.top_level_roll_step_establishes_session_fidelity : ∀ {config next : Hibana.GlobalConfig},
   Hibana.SessionFidelity config →
     @Eq.{1} (Option.{0} Hibana.GlobalConfig) config.topLevelRollStep? (@some.{0} Hibana.GlobalConfig next) →

@@ -72,6 +72,7 @@ fn program_image_columns_are_canonical_for_exact_count_domain() {
     let scope_marker_offset = route_participant_offset + route_participant_bytes;
     let blob_len = scope_marker_offset + scope_marker_bytes;
     let valid = blob_len <= usize::from(u16::MAX);
+    let source_resolver_len: u16 = kani::any();
 
     kani::cover!(valid);
     kani::cover!(!valid);
@@ -91,6 +92,32 @@ fn program_image_columns_are_canonical_for_exact_count_domain() {
         assert!(columns.scope_markers().offset as usize == scope_marker_offset);
         assert!(columns.scope_markers().len == scope_marker_len);
         assert!(columns.blob_len() == blob_len);
+
+        kani::cover!(source_resolver_len <= route_resolver_len);
+        kani::cover!(source_resolver_len > route_resolver_len);
+        assert_eq!(
+            columns.covers_source_counts(
+                usize::from(atom_len),
+                usize::from(scope_marker_len),
+                usize::from(source_resolver_len),
+            ),
+            source_resolver_len <= route_resolver_len,
+        );
+        assert!(!columns.covers_source_counts(
+            usize::from(atom_len) + 1,
+            usize::from(scope_marker_len),
+            usize::from(source_resolver_len),
+        ));
+        assert!(!columns.covers_source_counts(
+            usize::from(atom_len),
+            usize::from(scope_marker_len) + 1,
+            usize::from(source_resolver_len),
+        ));
+        assert!(!columns.covers_source_counts(
+            usize::from(atom_len),
+            usize::from(scope_marker_len),
+            usize::from(route_resolver_len) + 1,
+        ));
     }
 }
 

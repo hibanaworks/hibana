@@ -92,8 +92,9 @@ src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_observation.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/frontier_select.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/offer_refresh.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/public_operation.rs
+src/endpoint/kernel/core	src/endpoint/kernel/core/public_operation
 src/endpoint/kernel/core	src/endpoint/kernel/core/public_types.rs
-src/endpoint/kernel/core	src/endpoint/kernel/core/public_types
 src/endpoint/kernel/core	src/endpoint/kernel/core/route_commit_helpers.rs
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver
 src/endpoint/kernel/core	src/endpoint/kernel/core/decision_resolver.rs
@@ -149,6 +150,10 @@ src/global	src/global/typestate.rs
 src/global/compiled	src/global/compiled/images
 src/global/compiled	src/global/compiled/lowering
 src/global/compiled	src/global/compiled/mod.rs
+src/global/compiled/images	src/global/compiled/images/image.rs
+src/global/compiled/images	src/global/compiled/images/image
+src/global/compiled/images	src/global/compiled/images/mod.rs
+src/global/compiled/images	src/global/compiled/images/program.rs
 src/global/const_dsl	src/global/const_dsl/allocation
 src/global/const_dsl	src/global/const_dsl/allocation.rs
 src/global/const_dsl	src/global/const_dsl/eff_list.rs

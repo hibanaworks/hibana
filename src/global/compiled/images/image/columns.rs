@@ -147,6 +147,29 @@ impl ProgramImageColumns {
         self.route_participant_len as usize
     }
 
+    /// Confirm that source-arena counts fit the exact final columns and byte
+    /// length. Descriptor translation validation separately owns row content.
+    /// Dynamic resolver markers are a subset of route-resolver rows because
+    /// intrinsic routes own a row without a marker.
+    #[inline(always)]
+    pub(crate) const fn covers_source_counts(
+        self,
+        event_count: usize,
+        scope_marker_count: usize,
+        resolver_marker_count: usize,
+    ) -> bool {
+        let Some(source_rows) = event_count.checked_add(scope_marker_count) else {
+            return false;
+        };
+        let Some(source_rows) = source_rows.checked_add(resolver_marker_count) else {
+            return false;
+        };
+        event_count == self.atom_count()
+            && scope_marker_count == self.scope_marker_count()
+            && resolver_marker_count <= self.route_resolver_count()
+            && source_rows <= self.blob_len()
+    }
+
     #[inline(always)]
     pub(crate) const fn blob_len(self) -> usize {
         self.scope_markers()

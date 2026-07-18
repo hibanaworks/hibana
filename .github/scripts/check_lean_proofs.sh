@@ -10,17 +10,16 @@ EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
 EXPECTED_MARKER="hibana Lean generated certificate check passed traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
 EXPECTED_PRODUCTION_MARKER="hibana Lean production artifact passed transitions=7 operations=6 owners=8 kernel-refinement=external-premise owner-evidence=external-premise codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
 EXPECTED_RUNTIME_MARKER="hibana Lean runtime proof passed regions=4 poison=1 generation=1 atomic-failures=4"
-EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof passed states=9 transitions=81"
+EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof passed states=9 edges=16 transitions=144"
 EXPECTED_GENERATED_AXIOM_MARKER="Generated Lean axiom audit passed theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506"
 EXPECTED_RUNTIME_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=RuntimeGenerated theorems=16 claims=16"
 EXPECTED_PUBLIC_OPERATION_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=PublicOperationGenerated theorems=2 claims=2"
+EXPECTED_STATIC_AUDIT_MARKER="Lean static theorem audit passed theorems=677 both=346 propext=239 free=92"
 GENERATED_CLAIM_SNAPSHOT="${PROOF_DIR}/generated-claim-surface.txt"
 RUNTIME_CLAIM_SNAPSHOT="${PROOF_DIR}/runtime-generated-claim-surface.txt"
 PUBLIC_OPERATION_CLAIM_SNAPSHOT="${PROOF_DIR}/public-operation-generated-claim-surface.txt"
 STATIC_CLAIM_SNAPSHOT="${PROOF_DIR}/all-claim-surface.txt"
 EXAMPLE_CLAIM_SNAPSHOT="${PROOF_DIR}/example-claim-surface.txt"
-STATIC_PROJECTABILITY_EXAMPLES="${PROOF_DIR}/Hibana/StaticProjectabilityExamples.lean"
-DISTRIBUTED_SEMANTICS_EXAMPLES="${PROOF_DIR}/Hibana/DistributedSemanticsExamples.lean"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
 
 if [[ ! -f "${PROOF_DIR}/lean-toolchain" ]] \
@@ -36,56 +35,13 @@ if [[ "$(cd "${PROOF_DIR}" && lake env lean --version)" != *"version 4.30.0"* ]]
   echo "Lean proof gate toolchain mismatch" >&2
   exit 1
 fi
-if rg -n --glob '*.lean' \
-  '\b(sorry|admit)\b|^[[:space:]]*(axiom|constant|opaque|unsafe)\b' \
-  "${PROOF_DIR}"; then
-  echo "Lean proof gate forbids sorry, admit, and custom axioms" >&2
-  exit 1
-fi
 if rg -n 'Mathlib|^[[:space:]]*\[\[require\]\]|^[[:space:]]*git[[:space:]]*=' \
   "${PROOF_DIR}/lakefile.toml" "${PROOF_DIR}/lake-manifest.json"; then
   echo "Lean proof gate must remain Core/Std-only" >&2
   exit 1
 fi
-set +e
-native_core_output="$(rg -n '\bnative_decide\b' \
-  --glob '*.lean' \
-  --glob '!StaticProjectabilityExamples.lean' \
-  --glob '!DistributedSemanticsExamples.lean' \
-  "${PROOF_DIR}/Hibana")"
-native_core_status="$?"
-set -e
-if [[ "${native_core_status}" -gt 1 ]]; then
-  echo "Lean proof gate failed to scan the static native-decision boundary" >&2
-  exit "${native_core_status}"
-fi
-if [[ "${native_core_status}" -eq 0 ]]; then
-  printf '%s\n' "${native_core_output}" >&2
-  echo "Lean proof gate confines native regression execution to example modules" >&2
-  exit 1
-fi
-if rg -n '^import Hibana\..*Examples$' "${PROOF_DIR}/Hibana/MainTheorems.lean"; then
-  echo "Lean theorem aggregate must not import native regression examples" >&2
-  exit 1
-fi
-if rg -n '^[[:space:]]*(theorem|lemma)\b' \
-  "${STATIC_PROJECTABILITY_EXAMPLES}" "${DISTRIBUTED_SEMANTICS_EXAMPLES}"; then
-  echo "Native regression modules may contain anonymous examples, not named claims" >&2
-  exit 1
-fi
-readonly EXPECTED_NATIVE_REGRESSION_COUNT=32
-native_regression_count="$(rg -o '\bnative_decide\b' \
-  "${STATIC_PROJECTABILITY_EXAMPLES}" "${DISTRIBUTED_SEMANTICS_EXAMPLES}" \
-  | wc -l | tr -d '[:space:]')"
-if [[ "${native_regression_count}" != "${EXPECTED_NATIVE_REGRESSION_COUNT}" ]]; then
-  echo \
-    "Lean native regression inventory changed: expected ${EXPECTED_NATIVE_REGRESSION_COUNT}, found ${native_regression_count}" \
-    >&2
-  exit 1
-fi
 
 python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" --self-test
-python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" "${PROOF_DIR}"
 python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" --self-test
 
 (
@@ -93,31 +49,16 @@ python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" --self-test
   lake build
 )
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
-python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
-  --claim-types "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 667
-python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
-  --example-types "${PROOF_DIR}" "${EXAMPLE_CLAIM_SNAPSHOT}" 36
-
-axiom_output="$(cd "${PROOF_DIR}" && lake env lean Hibana/AxiomAudit.lean)"
-printf '%s\n' "${axiom_output}"
-axiom_both_count="$(awk '
-  /depends on axioms: \[propext, Quot\.sound\]/ { count += 1 }
-  /depends on axioms: \[propext,$/ { count += 1 }
-  END { print count + 0 }
-' <<<"${axiom_output}")"
-readonly EXPECTED_AXIOM_BOTH_COUNT=343
-readonly EXPECTED_AXIOM_PROPEXT_COUNT=237
-readonly EXPECTED_AXIOM_FREE_COUNT=87
-readonly EXPECTED_EXPORTED_THEOREM_COUNT=667
-if [[ "${axiom_both_count}" != "${EXPECTED_AXIOM_BOTH_COUNT}" ]] \
-  || [[ "$(grep -Fc "Classical.choice" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "native_decide.ax" <<<"${axiom_output}")" != "0" ]] \
-  || [[ "$(grep -Fc "depends on axioms: [propext]" <<<"${axiom_output}")" != "${EXPECTED_AXIOM_PROPEXT_COUNT}" ]] \
-  || [[ "$(grep -Fc "does not depend on any axioms" <<<"${axiom_output}")" != "${EXPECTED_AXIOM_FREE_COUNT}" ]] \
-  || [[ "$(grep -Ec "^'Hibana\\." <<<"${axiom_output}")" != "${EXPECTED_EXPORTED_THEOREM_COUNT}" ]]; then
-  echo "Lean proof gate axiom set changed" >&2
+static_audit_output="$(python3 \
+  "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 677 346 239 92)"
+printf '%s\n' "${static_audit_output}"
+if [[ "${static_audit_output}" != *"${EXPECTED_STATIC_AUDIT_MARKER}"* ]]; then
+  echo "Lean proof gate static theorem boundary mismatch" >&2
   exit 1
 fi
+python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
+  --example-types "${PROOF_DIR}" "${EXAMPLE_CLAIM_SNAPSHOT}" 36
 
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
@@ -144,7 +85,7 @@ fi
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
   cargo +"${TOOLCHAIN}" test -p hibana --lib \
-    endpoint::kernel::core::public_types::tests::export_public_operation_kernel_for_lean \
+    endpoint::kernel::core::public_operation::tests::export_public_operation_kernel_for_lean \
     -- --ignored --exact
 if [[ ! -s "${PUBLIC_OPERATION_GENERATED}" ]]; then
   echo "Lean proof gate public-operation exporter did not create a nonempty artifact" >&2
@@ -190,4 +131,4 @@ if [[ "${public_operation_lean_output}" != *"${EXPECTED_PUBLIC_OPERATION_AUDIT_M
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=667 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-transitions=81 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=677 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"

@@ -95,6 +95,15 @@ check_required 'if required > E' \
 check_required 'source_end: usize' \
   "source arena must retain one exact terminal partition boundary" \
   src/global/const_dsl/source_arena.rs
+for required in \
+  'pub(crate) const fn covers_source_counts(' \
+  'const SOURCE_COUNTS_COVERED: ()' \
+  'let () = Self::SOURCE_COUNTS_COVERED;'
+do
+  check_required "${required}" \
+    "final program bytes must cover every exact source row: ${required}" \
+    src/global/compiled/images/image/columns.rs src/g/role_projection.rs
+done
 check_absent '#\[derive\([^]]*(Clone|Copy)[^]]*\)\][[:space:]]*pub\(crate\) struct EffList|struct SegmentSummary|segment_summaries:|segment_summary\(|segment_count\(|segment_len\(' \
   "source metadata must not be copied or retain segmented summary residue" \
   src/global/const_dsl.rs src/global/const_dsl/source_arena.rs src/global/const_dsl/eff_list.rs

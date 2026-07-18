@@ -29,6 +29,15 @@ where
     const PROGRAM_COLUMNS: crate::global::compiled::images::ProgramImageColumns =
         Self::PROGRAM_PLAN.columns();
     const PROGRAM_BLOB_LEN: usize = Self::PROGRAM_PLAN.blob_len();
+    const SOURCE_COUNTS_COVERED: () = {
+        if !Self::PROGRAM_COLUMNS.covers_source_counts(
+            Steps::EVENT_COUNT,
+            Steps::SCOPE_MARKER_COUNT,
+            Steps::RESOLVER_MARKER_COUNT,
+        ) {
+            crate::invariant();
+        }
+    };
 
     const fn program_ref<const N: usize>() -> crate::global::compiled::images::CompiledProgramRef {
         let bytes = match &ProgramProjectionBlob::<Steps, CAPACITY, N>::BYTES {
@@ -39,6 +48,7 @@ where
     }
 
     const PROGRAM_REF: crate::global::compiled::images::CompiledProgramRef = {
+        let () = Self::SOURCE_COUNTS_COVERED;
         let () = Self::VALIDATION;
         if Self::PROGRAM_BLOB_LEN <= 32 {
             Self::program_ref::<32>()

@@ -28,7 +28,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let lane_set = read("src/global/role_program/lane_set.rs");
     let lane_set_harnesses = read("src/global/role_program/lane_set/kani.rs");
     let frontier_state_harnesses = read("src/endpoint/kernel/frontier_state/kani.rs");
-    let public_operation_harnesses = read("src/endpoint/kernel/core/public_types/kani.rs");
+    let public_operation_harnesses = read("src/endpoint/kernel/core/public_operation/kani.rs");
     let descriptor_harnesses = read("src/global/typestate/facts/kani.rs");
     let cursor_harnesses = read("src/global/typestate/cursor/kani.rs");
     let image_harnesses = read("src/global/role_program/image_impl/kani.rs");
@@ -339,7 +339,28 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let harness = "public_operation_transition_classifier_is_exact";
     assert!(public_operation_harnesses.contains(&format!("fn {harness}()")));
     assert!(public_operation_harnesses.contains("current == PublicActiveOp::Poisoned"));
-    assert!(public_operation_harnesses.contains("current == expected"));
+    assert!(public_operation_harnesses.contains("fn symbolic_edge(raw: u8) -> PublicOpEdge"));
+    assert!(
+        public_operation_harnesses
+            .contains("PublicActiveOp::ALL[usize::from(raw) % PublicActiveOp::ALL.len()]",)
+    );
+    assert!(
+        public_operation_harnesses
+            .contains("PublicOpEdge::ALL[usize::from(raw) % PublicOpEdge::ALL.len()]")
+    );
+    assert!(!public_operation_harnesses.contains("match raw %"));
+    assert!(public_operation_harnesses.contains("current == edge.expected()"));
+    assert!(public_operation_harnesses.contains("let edge = symbolic_edge(kani::any())"));
+    assert!(public_operation_harnesses.contains("transition.phase(), edge.next()"));
+    assert!(public_operation_harnesses.contains("current.clear_if_current(expected)"));
+    assert!(public_operation_harnesses.contains("current.clear_terminal()"));
+    assert!(public_operation_harnesses.contains("current.fault()"));
+    assert!(
+        public_operation_harnesses
+            .matches("transition.phase(), PublicActiveOp::Poisoned")
+            .count()
+            == 2
+    );
     assert!(!public_operation_harnesses.contains("kani::assume"));
     assert!(
         cursor_harnesses.contains("fn compact_cursor_position_covers_the_full_u16_value_domain()")
@@ -598,6 +619,21 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_columns.contains("scope_marker_len: u16"));
     assert!(program_columns.contains("route_participant_len: u16"));
     assert!(program_columns.contains("route_participant_len,"));
+    assert!(program_columns.contains("pub(crate) const fn covers_source_counts("));
+    assert!(program_ref_harnesses.contains("let source_resolver_len: u16 = kani::any();"));
+    assert!(
+        program_ref_harnesses.contains("kani::cover!(source_resolver_len <= route_resolver_len);")
+    );
+    assert!(
+        program_ref_harnesses.contains("kani::cover!(source_resolver_len > route_resolver_len);")
+    );
+    assert!(program_ref_harnesses.contains("source_resolver_len <= route_resolver_len,"));
+    assert!(
+        program_ref_harnesses
+            .matches("columns.covers_source_counts(")
+            .count()
+            == 4
+    );
     assert!(program_blob_storage.contains("fn write_scope_marker("));
     assert!(
         program_blob_storage

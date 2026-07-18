@@ -2,7 +2,13 @@ use super::common::*;
 
 #[test]
 fn public_endpoint_operations_are_drop_independent_active_leases() {
+    let public_operation = format!(
+        "{}\n{}",
+        read("src/endpoint/kernel/core/public_operation.rs"),
+        read("src/endpoint/kernel/core/public_operation/definition.rs")
+    );
     let public_types = read("src/endpoint/kernel/core/public_types.rs");
+    let public_state = format!("{public_operation}\n{public_types}");
     let public_ops = read("src/endpoint/kernel/public_ops.rs");
     let public_poll = read("src/endpoint/kernel/public_poll.rs");
     let public_runtime = format!("{public_ops}\n{public_poll}");
@@ -85,60 +91,98 @@ fn public_endpoint_operations_are_drop_independent_active_leases() {
         "public_active_op: PublicActiveOp",
     ] {
         assert!(
-            public_types.contains(required),
+            public_state.contains(required),
             "endpoint kernel active-operation lease evidence missing: {required}"
         );
     }
+    for (edge, exact_runtime_uses) in [
+        ("BeginOffer", 1),
+        ("ResumeOffer", 1),
+        ("PublishRouteBranch", 1),
+        ("FinishOffer", 2),
+        ("ParkOffer", 1),
+        ("ParkRouteBranch", 1),
+        ("BeginSend", 1),
+        ("BeginBranchSend", 1),
+        ("FinishSend", 2),
+        ("FinishBranchSend", 1),
+        ("ParkBranchSend", 1),
+        ("BeginRecv", 1),
+        ("BeginBranchRecv", 1),
+        ("FinishRecv", 2),
+        ("FinishBranchRecv", 2),
+        ("ParkBranchRecv", 1),
+    ] {
+        assert_eq!(
+            public_runtime
+                .matches(&format!("PublicOpEdge::{edge}"))
+                .count(),
+            exact_runtime_uses,
+            "the production lifecycle edge inventory changed: {edge}"
+        );
+    }
     assert!(
-        public_types.contains("pub(crate) enum PublicOpLease")
-            && public_types.contains("Rejected = 0")
-            && public_types.contains("Held = 1")
-            && public_types.contains("Faulted = 2")
-            && public_types.contains("fn transition_lease(self, expected: Self)")
-            && public_types.contains("if self == Self::Poisoned")
-            && public_types.contains("else if self == expected")
-            && public_runtime.contains("self.public_active_op.transition_lease(from)")
+        public_operation.contains("pub(crate) enum PublicOpLease")
+            && public_operation.contains("Rejected = 0")
+            && public_operation.contains("Held = 1")
+            && public_operation.contains("Faulted = 2")
+            && public_operation.contains("enum PublicOpEdge")
+            && public_operation.contains("macro_rules! define_public_operation_kernel")
+            && public_operation.matches("macro_rules!").count() == 1
+            && public_operation.contains("&[$(Self::$phase),+]")
+            && public_operation.contains("&[$(Self::$edge),+]")
+            && public_operation.matches("const ALL: &'static [Self]").count() == 2
+            && public_operation.contains("const fn expected(self) -> PublicActiveOp")
+            && public_operation.contains("const fn next(self) -> PublicActiveOp")
+            && public_operation.contains("struct PublicOpTransition")
+            && public_operation.contains("fn transition(self, edge: PublicOpEdge)")
+            && public_operation.contains("if self == Self::Poisoned")
+            && public_operation.contains("else if self == edge.expected()")
+            && public_operation.contains("PublicOpTransition::new(PublicOpLease::Rejected, Self::Poisoned)")
+            && public_operation.contains("fn clear_if_current(self, expected: Self) -> Self")
+            && public_operation.contains("const fn clear_terminal(self) -> Self")
+            && public_operation.contains("const fn fault(self) -> Self")
+            && public_runtime.contains("self.public_active_op.transition(edge)")
+            && public_runtime.contains("self.public_active_op = transition.phase();")
+            && public_runtime.contains("if self.public_active_op != transition.phase()")
             && !public_runtime.contains("fn start_public_op")
-            && public_runtime.contains("self.public_active_op = PublicActiveOp::Poisoned;")
+            && public_runtime.contains("self.public_active_op = self.public_active_op.fault();")
             && public_runtime.contains("SessionFaultKind::ProgressInvariantViolated")
             && !public_runtime.contains("fn enter_public_op(&mut self, op: PublicActiveOp) -> bool")
-            && public_runtime.contains("fn transition_public_op(\n        &mut self,\n        from: PublicActiveOp,\n        to: PublicActiveOp,\n    ) -> super::core::PublicOpLease")
-            && public_runtime.contains("fn finish_public_op(&mut self, op: PublicActiveOp)")
-            && public_runtime.contains("if self.public_active_op == op")
-            && public_runtime.contains("self.public_active_op != PublicActiveOp::Poisoned")
+            && public_runtime.contains("fn transition_public_op(\n        &mut self,\n        edge: PublicOpEdge,\n    ) -> super::core::PublicOpLease")
+            && !public_runtime.contains("fn finish_public_op")
             && public_runtime.contains("fn clear_public_op_if_current(&mut self, op: PublicActiveOp)")
+            && public_runtime.contains("self.public_active_op.clear_if_current(op)")
+            && public_runtime.contains("self.public_active_op.clear_terminal()")
             && public_runtime.contains("fn init_public_send_state(\n        &mut self,\n        init: &SendInit,\n    ) -> super::core::PublicOpLease")
             && public_runtime.contains(
-                "self.transition_public_op(PublicActiveOp::Idle, PublicActiveOp::Send)"
+                "self.transition_public_op(PublicOpEdge::BeginSend)"
             )
             && public_runtime.contains("PublicActiveOp::RouteBranch =>")
             && public_runtime.contains(
-                "self.transition_public_op(PublicActiveOp::RouteBranch, PublicActiveOp::BranchSend)"
+                "self.transition_public_op(PublicOpEdge::BeginBranchSend)"
             )
-            && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
+            && public_runtime.contains("fn publish_public_route_branch(&mut self, label: u8) -> RecvResult<u8>")
+            && public_runtime.contains("transition_public_op(PublicOpEdge::PublishRouteBranch)")
             && public_runtime.contains("fn init_public_recv_state(&mut self) -> super::core::PublicOpLease")
             && public_runtime.contains(
-                "let lease = self.transition_public_op(PublicActiveOp::Idle, PublicActiveOp::Recv);"
+                "let lease = self.transition_public_op(PublicOpEdge::BeginRecv);"
             )
             && public_runtime.contains("fn init_public_offer_state(&mut self) -> super::core::PublicOpLease")
             && public_runtime.contains("PublicActiveOp::RestoredRouteBranch if self.public_route_branch.is_some()")
-            && public_runtime.contains("transition_public_op(PublicActiveOp::RestoredRouteBranch, PublicActiveOp::Offer)")
+            && public_runtime.contains("transition_public_op(PublicOpEdge::ResumeOffer)")
             && !public_runtime.contains("restore_materialized_route_branch")
             && public_runtime.contains(
                 "super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted"
             )
             && public_runtime.contains("if self.public_active_op != PublicActiveOp::Offer")
-            && public_runtime.contains("self.public_active_op = PublicActiveOp::RouteBranch;")
+            && public_runtime.matches("self.publish_public_route_branch(label)").count() == 2
             && public_runtime.contains("fn begin_public_branch_recv_state(\n        &mut self,\n    ) -> super::core::PublicOpLease")
             && public_runtime.contains("PublicActiveOp::BranchRecv")
             && public_runtime.contains("PublicActiveOp::BranchSend")
-            && public_runtime.contains("self.finish_public_op(PublicActiveOp::Send)")
-            && public_runtime.contains("self.finish_public_op(PublicActiveOp::Recv)")
-            && public_runtime.contains("self.finish_public_op(PublicActiveOp::Offer)")
-            && public_runtime.contains("self.park_public_route_branch(PublicActiveOp::BranchRecv)")
-            && public_runtime.contains("self.finish_public_op(PublicActiveOp::BranchSend)")
-            && public_runtime.contains("self.park_public_route_branch(PublicActiveOp::RouteBranch)")
-            && public_runtime.contains("self.park_public_route_branch(PublicActiveOp::BranchSend)")
+            && public_runtime.contains("self.park_public_route_branch(PublicOpEdge::ParkBranchRecv)")
+            && public_runtime.contains("self.park_public_route_branch(PublicOpEdge::ParkRouteBranch)")
+            && public_runtime.contains("self.park_public_route_branch(PublicOpEdge::ParkBranchSend)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Send)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Recv)")
             && public_runtime.contains("self.clear_public_op_if_current(PublicActiveOp::Offer)")

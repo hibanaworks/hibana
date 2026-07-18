@@ -439,11 +439,17 @@ strict-provenance Miri exporter case remain explicit members of the cross-tool
 trusted boundary; no source-level Rust theorem is inferred from their exit
 status.
 `PublicOperationKernel.lean` independently specifies the nine public endpoint
-operation phases and their lease classifier. The host-only Rust exporter emits
-all 81 production outcomes; the Lean gate accepts them only when the generated
-table is byte-for-byte equal to the independently computed table. Kani also
-checks the same finite product symbolically, while Miri owns the executable and
-ignored-exporter boundary.
+operation phases, the complete sixteen-edge lifecycle, fail-closed transition,
+conditional cleanup, terminal cleanup, and fault transition. The edge type has
+no arbitrary `(expected, next)` constructor. Each Rust phase and edge is listed
+once; those declarations generate the enum, complete exporter inventory, and
+Kani domain together, so a newly added variant cannot remain outside the
+cross-tool table. Lean proves that its independent declared inventory is
+duplicate-free and exhaustive. The host-only Rust exporter emits
+all 144 `(current, edge)` outcomes; the Lean gate accepts them only when the
+generated table is exactly equal to the independently computed table. Kani
+checks the same finite transition product plus every cleanup and fault state
+symbolically, while Miri owns the executable and ignored-exporter boundary.
 `ElasticErasure.lean` does not use length agreement as a surrogate for trace
 agreement: its transport relation requires well-formed histories and equality
 between every carrier label and the descriptor-label image of the erased
@@ -538,10 +544,13 @@ uncommittable until its resolver transition succeeds. Aeneas, Verus, Mathlib,
 custom axioms, `Classical.choice`, `sorry`, and `admit` are not part of this
 boundary. Every exported theorem in the static package is audited and permits
 only the `propext` and `Quot.sound` dependencies introduced by the checked
-Core/Std proofs. Fifteen externally relevant claim types remain the compact
-review surface, while the elaborated types of all 667 exported theorems are
-pinned in a separate checked snapshot. Retaining any theorem name while changing
-its elaborated conclusion or assumptions therefore fails the gate.
+Core/Std proofs. The gate discovers those declarations directly from the Lean
+source and checks their elaborated types and axiom closures in the same Lean
+run; there is no second hand-maintained theorem list. Fifteen externally
+relevant claim types remain the compact review surface, while the elaborated
+types of all 677 exported theorems are pinned in a separate checked snapshot.
+Retaining any theorem name while changing its elaborated conclusion or
+assumptions therefore fails the gate.
 
 Thirty-two anonymous finite regression checks use `native_decide`. They are
 confined to `StaticProjectabilityExamples.lean` and
@@ -615,6 +624,17 @@ count, and the emitted relation count covers every live row. Production lowering
 computes the bitmap, local row, and last step in one event pass; Kani verifies
 the full-domain accumulator transition. The endpoint therefore does not
 allocate the Cartesian product of active lanes and maximum route depth.
+
+Source lowering has the same descriptor-first bound. Production const
+validation requires exact event and scope-marker counts, requires dynamic
+resolver markers to be covered by route-resolver rows, and rejects a source-row
+count not covered by the final program bytes. Kani checks this relation over the
+packed count domain. `ProgramSourceCapacityWitness` and
+`descriptor_byte_ceiling_covers_source_lowering_rows` prove generally that an
+accepted exact program image has no smaller independent source-arena ceiling.
+This is a capacity theorem; exact row contents remain owned by descriptor
+translation validation. The source witness and arena are erased after
+projection.
 
 Canonical program atom rows are strictly ordered by compact event identity.
 Lean proves this for every normalized choreography, the compact Rust image

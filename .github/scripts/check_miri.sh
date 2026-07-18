@@ -34,6 +34,8 @@ fi
 
 miri_passed_total=0
 miri_ignored_total=0
+readonly EXPECTED_MIRI_PASSED_TOTAL=213
+readonly EXPECTED_MIRI_IGNORED_TOTAL=2
 
 run_miri_test() {
   local label="$1"
@@ -97,7 +99,7 @@ run_miri_test \
   1 \
   -p hibana \
   --lib \
-  endpoint::kernel::core::public_types::tests
+  endpoint::kernel::core::public_operation::tests
 
 run_miri_test \
   tap-ring-owner \
@@ -463,11 +465,19 @@ run_miri_test \
 
 run_miri_test \
   program-image-storage-validation \
-  2 \
-  2 \
+  3 \
+  3 \
   0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::program_image_
+
+if [[ "${miri_passed_total}" != "${EXPECTED_MIRI_PASSED_TOTAL}" ]] \
+  || [[ "${miri_ignored_total}" != "${EXPECTED_MIRI_IGNORED_TOTAL}" ]]; then
+  echo \
+    "miri gate inventory mismatch: passed=${miri_passed_total} ignored=${miri_ignored_total}" \
+    >&2
+  exit 1
+fi
 
 echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"

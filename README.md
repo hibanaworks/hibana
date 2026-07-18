@@ -195,9 +195,14 @@ The temporary source is still a Rust type tree, but lowering stores events,
 normalized closed scope markers, and resolver markers in one exact-count tagged
 arena. Scope publication is atomic, and primary markers carry the proof-only arm
 boundaries needed by later passes; that metadata is erased from the descriptor.
-Its lane
-matching scratch is bounded by the 256-value wire lane domain rather than by
-event count. A const fixture constructs and emits the full 5,957-event
+Production const capacity validation ties source counts to the exact final
+column counts and byte length, Kani checks the packed count domain, and Lean
+proves generally that the exact descriptor bytes dominate the source-row count.
+Row contents remain the separate responsibility of translation validation. The
+temporary arena therefore has no smaller independent acceptance ceiling. Its
+lane matching scratch is bounded by the 256-value wire lane domain rather than
+by event count.
+A const fixture constructs and emits the full 5,957-event
 atom-only image. Public typed fixtures separately track 289 messages and 258
 parallel events under rustc's default recursion limit. A Pico-target compile
 gate projects 256 linear cyclic sender handoffs, 64 handoffs per route arm, and
@@ -718,13 +723,18 @@ rather than presented as kernel-only proofs.
 
 The repository also gates the proof inventory itself: new public operations,
 compact transition effects, ownership classes, Lean theorems, Miri scenarios,
-and Kani harnesses cannot silently bypass their checked inventories. The gate
-also presents fifteen principal Lean claim types as a compact public surface
-and pins the elaborated types of all 667 static theorems. A theorem cannot
-retain its name while its elaborated statement silently acquires assumptions or
-drops a conclusion. The same gate assigns audit-only names to all 36 anonymous
-regression examples and pins their elaborated statements, so changing only an
-example statement cannot hide behind an unchanged count. All 48 named
+and Kani harnesses cannot silently bypass their checked inventories. Static
+Lean declarations are discovered from source rather than repeated in a
+hand-maintained audit file; one Lean run checks both the elaborated type and the
+axiom closure of every discovered theorem. The gate also presents fifteen
+principal Lean claim types as a compact public surface and pins the elaborated
+types of all 677 static theorems. A theorem cannot retain its name while its
+elaborated statement silently acquires assumptions or drops a conclusion. The
+same gate assigns audit-only names to all 36 anonymous regression examples and
+pins their elaborated statements, so changing only an example statement cannot
+hide behind an unchanged count. The Miri gate similarly pins every reviewed
+owner and its final total of 213 executed cases plus two explicit ignored
+cases. All 48 named
 protocol/production contracts and 458 generated trace, rejection, refinement,
 and progress obligations are named and type-pinned. The sixteen
 runtime-layout/lifecycle theorems and two public-operation table theorems are

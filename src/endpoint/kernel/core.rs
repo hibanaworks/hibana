@@ -301,6 +301,7 @@ mod commit_delta_route_only;
 mod frontier_observation;
 mod frontier_select;
 mod offer_refresh;
+mod public_operation;
 mod scope_evidence_logic;
 
 mod decision_resolver;
@@ -318,6 +319,7 @@ pub(crate) use super::decision_state::{
 };
 pub(in crate::endpoint::kernel) use commit_delta::CommitDeltaApplyPermit;
 pub(crate) use commit_delta::{CommittedCommitDelta, PreparedCommitDelta};
+pub(crate) use public_operation::*;
 pub(crate) use public_types::*;
 pub(in crate::endpoint::kernel) use route_preview::IngressEvidenceState;
 pub(crate) use runtime_types::*;

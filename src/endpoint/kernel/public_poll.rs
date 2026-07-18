@@ -4,8 +4,8 @@ use core::task::Poll;
 
 use super::{
     core::{
-        CursorEndpoint, PublicActiveOp, SendCommitOutcome, SendState, kernel_branch_recv,
-        kernel_recv, kernel_send,
+        CursorEndpoint, PublicActiveOp, PublicOpEdge, SendCommitOutcome, SendState,
+        kernel_branch_recv, kernel_recv, kernel_send,
     },
     lane_port,
     offer::OfferState,
@@ -22,6 +22,16 @@ impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
+    #[inline]
+    fn publish_public_route_branch(&mut self, label: u8) -> RecvResult<u8> {
+        match self.transition_public_op(PublicOpEdge::PublishRouteBranch) {
+            super::core::PublicOpLease::Held => Ok(label),
+            super::core::PublicOpLease::Rejected | super::core::PublicOpLease::Faulted => Err(
+                RecvError::SessionFault(crate::invariant_some(self.session_fault())),
+            ),
+        }
+    }
+
     #[inline]
     pub(in crate::endpoint) fn poll_public_offer(
         &mut self,
@@ -44,8 +54,7 @@ where
             let label = branch.branch_meta.label;
             self.clear_endpoint_waiter(waiters);
             self.public_offer_state = OfferState::new();
-            self.public_active_op = PublicActiveOp::RouteBranch;
-            return Poll::Ready(Ok(label));
+            return Poll::Ready(self.publish_public_route_branch(label));
         }
         let mut offer_state = core::mem::replace(&mut self.public_offer_state, OfferState::new());
         let poll = {
@@ -69,13 +78,12 @@ where
                 if self.public_route_branch.is_none() {
                     crate::invariant();
                 }
-                self.public_active_op = PublicActiveOp::RouteBranch;
-                Poll::Ready(Ok(label))
+                Poll::Ready(self.publish_public_route_branch(label))
             }
             Poll::Ready(Err(err)) => {
                 offer_state.discard_terminal();
                 self.clear_endpoint_waiter(waiters);
-                self.finish_public_op(PublicActiveOp::Offer);
+                let _ = self.transition_public_op(PublicOpEdge::FinishOffer);
                 self.public_offer_state = OfferState::new();
                 self.poison_for_recv_error(&err);
                 Poll::Ready(Err(err))
@@ -120,7 +128,7 @@ where
             }
             Poll::Ready(result) => {
                 self.clear_endpoint_waiter(waiters);
-                self.finish_public_op(PublicActiveOp::Recv);
+                let _ = self.transition_public_op(PublicOpEdge::FinishRecv);
                 self.public_recv_state = super::recv::RecvState::new();
                 match result {
                     Ok(payload) => Poll::Ready(Ok(payload)),
@@ -180,7 +188,7 @@ where
             Poll::Ready(result) => match result {
                 Ok(payload) => {
                     self.clear_endpoint_waiter(waiters);
-                    self.finish_public_op(PublicActiveOp::BranchRecv);
+                    let _ = self.transition_public_op(PublicOpEdge::FinishBranchRecv);
                     self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                     let branch = crate::invariant_some(self.public_route_branch.take());
                     if branch.offered_frame.is_some() {
@@ -193,7 +201,7 @@ where
                         branch.discard_terminal();
                     }
                     self.clear_endpoint_waiter(waiters);
-                    self.finish_public_op(PublicActiveOp::BranchRecv);
+                    let _ = self.transition_public_op(PublicOpEdge::FinishBranchRecv);
                     self.public_branch_recv_state = super::branch_recv::BranchRecvState::empty();
                     self.poison_for_recv_error(&err);
                     Poll::Ready(Err(err))
@@ -237,9 +245,9 @@ where
             Poll::Ready(result) => {
                 self.clear_endpoint_waiter(waiters);
                 if branch_send {
-                    self.finish_public_op(PublicActiveOp::BranchSend);
+                    let _ = self.transition_public_op(PublicOpEdge::FinishBranchSend);
                 } else {
-                    self.finish_public_op(PublicActiveOp::Send);
+                    let _ = self.transition_public_op(PublicOpEdge::FinishSend);
                 }
                 self.public_send_state = SendState::Done;
                 match result {

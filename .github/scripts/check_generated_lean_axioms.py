@@ -82,15 +82,15 @@ STATIC_DEPLOYMENT_REJECTION_THEOREMS = {
 }
 
 AXIOM_BLOCK = re.compile(
-    r"^'([^']+)' (does not depend on any axioms|depends on axioms: \[(.*?)\])"
+    r"^'([^\n]+)' (does not depend on any axioms|depends on axioms: \[(.*?)\])"
     r"(?=\n'|\s*\Z)",
     re.MULTILINE | re.DOTALL,
 )
 NATIVE_AXIOM = re.compile(r"^.+\._native\.native_decide\.ax_[0-9_]+$")
 NATIVE_AXIOM_OWNER = re.compile(r"^(.+)\._native\.native_decide\.ax_[0-9_]+$")
 FORBIDDEN_DECLARATION = re.compile(
-    r"\b(sorry|admit)\b|^[ \t]*(axiom|constant|opaque|unsafe|example)\b",
-    re.MULTILINE,
+    r"\b(?:sorry|admit|axiom|constant|opaque|unsafe|example|macro|macro_rules|"
+    r"syntax|elab|run_cmd|run_tac)\b"
 )
 CLAIM_HEADER = re.compile(r"^@?([A-Za-z_][A-Za-z0-9_']*) :")
 
@@ -358,6 +358,10 @@ def self_test() -> None:
         raise AssertionError("generated claim audit accepted a weakened theorem type")
     if FORBIDDEN_DECLARATION.search("example : True := by trivial") is None:
         raise AssertionError("generated source audit accepted an anonymous proof obligation")
+    if FORBIDDEN_DECLARATION.search("private axiom hidden : False") is None:
+        raise AssertionError("generated source audit accepted a prefixed custom axiom")
+    if FORBIDDEN_DECLARATION.search("run_cmd synthesizeClaim") is None:
+        raise AssertionError("generated source audit accepted proof-generating syntax")
 
 
 def checked_source(generated: pathlib.Path, expected_native_decisions: int) -> str:

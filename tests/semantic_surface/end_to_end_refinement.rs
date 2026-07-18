@@ -22,8 +22,12 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
     let production_exporter =
         read("src/test_support/lean_proof_export/production_kernel_artifact.rs");
     let wire_kani = read("src/transport/wire/kani.rs");
-    let public_types = read("src/endpoint/kernel/core/public_types.rs");
-    let public_type_tests = read("src/endpoint/kernel/core/public_types/tests.rs");
+    let public_types = format!(
+        "{}\n{}",
+        read("src/endpoint/kernel/core/public_operation.rs"),
+        read("src/endpoint/kernel/core/public_operation/definition.rs")
+    );
+    let public_type_tests = read("src/endpoint/kernel/core/public_operation/tests.rs");
     let public_ops = read("src/endpoint/kernel/public_ops.rs");
     let frame = read("src/transport.rs");
 
@@ -217,12 +221,28 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
     );
     assert!(production_end_to_end.contains("production_refinement_prepared_commit_is_exact"));
 
-    assert!(public_operation.contains("def classifyPublicOperation"));
+    assert!(public_operation.contains("def transitionPublicOperation"));
+    assert!(public_operation.contains("structure PublicOperationTransition"));
+    assert!(public_operation.contains("inductive PublicOperationEdge"));
+    assert!(public_operation.contains("def PublicOperationEdge.expected"));
+    assert!(public_operation.contains("def PublicOperationEdge.next"));
+    assert!(public_operation.contains("def publicOperationEdges"));
+    assert!(public_operation.contains("public_operation_phase_inventory_exact"));
+    assert!(public_operation.contains("public_operation_edge_inventory_exact"));
+    assert!(public_operation.contains("public_operation_edge_expected_is_live"));
+    assert!(public_operation.contains("public_operation_edge_success_is_live"));
     assert!(public_operation.contains("def exactPublicOperationTable"));
+    assert!(public_operation.contains("exact_public_operation_table_covers_every_transition"));
     assert!(public_operation.contains("public_operation_table_certificate_sound"));
-    assert!(public_operation.contains("poisoned_public_operation_is_faulted"));
-    assert!(public_operation.contains("matching_live_public_operation_is_held"));
-    assert!(public_operation.contains("mismatched_live_public_operation_is_rejected"));
+    assert!(public_operation.contains("poisoned_public_operation_remains_faulted"));
+    assert!(public_operation.contains("matching_live_public_operation_transitions_exactly"));
+    assert!(public_operation.contains("mismatched_live_public_operation_fails_closed"));
+    assert!(public_operation.contains("def clearPublicOperationIfCurrent"));
+    assert!(public_operation.contains("def clearPublicOperationTerminal"));
+    assert!(public_operation.contains("def faultPublicOperation"));
+    assert!(public_operation.contains("conditional_public_operation_clear_is_exact"));
+    assert!(public_operation.contains("terminal_public_operation_clear_is_exact"));
+    assert!(public_operation.contains("public_operation_fault_is_exact"));
     assert!(main_theorems.contains("import Hibana.PublicOperationKernel"));
     assert!(main_theorems.contains("import Hibana.ProductionKernelArtifact"));
     assert!(main_theorems.contains("import Hibana.ProtocolCapability"));
@@ -297,14 +317,40 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
         assert!(wire_kani.contains(harness));
     }
 
-    assert!(public_types.contains("fn transition_lease(self, expected: Self)"));
+    assert!(public_types.contains("struct PublicOpTransition"));
+    assert!(public_types.contains("enum PublicOpEdge"));
+    assert!(public_types.contains("macro_rules! define_public_operation_kernel"));
+    assert_eq!(public_types.matches("macro_rules!").count(), 1);
+    assert!(public_types.contains("$($phase),+"));
+    assert!(public_types.contains("&[$(Self::$phase),+]"));
+    assert!(public_types.contains("$($edge),+"));
+    assert!(public_types.contains("&[$(Self::$edge),+]"));
+    assert!(public_types.contains("$(Self::$edge => PublicActiveOp::$expected),+"));
+    assert!(public_types.contains("$(Self::$edge => PublicActiveOp::$next),+"));
+    assert_eq!(
+        public_types.matches("const ALL: &'static [Self]").count(),
+        2,
+        "public phases and edges must each own one generated complete inventory"
+    );
+    assert!(public_types.contains("edge: PublicOpEdge"));
+    assert!(public_types.contains("edge.expected()"));
+    assert!(public_types.contains("edge.next()"));
     assert!(
         public_type_tests
             .contains("public_operation_transition_classifier_covers_exact_state_product")
     );
     assert!(public_type_tests.contains("export_public_operation_kernel_for_lean"));
     assert!(public_type_tests.contains("PublicOperationGenerated.lean"));
-    assert!(public_ops.contains("self.public_active_op.transition_lease(from)"));
+    assert!(public_type_tests.contains("for &current in PublicActiveOp::ALL"));
+    assert!(public_type_tests.contains("for &edge in PublicOpEdge::ALL"));
+    assert!(!public_type_tests.contains("const STATES:"));
+    assert!(!public_type_tests.contains("const EDGES:"));
+    assert!(public_type_tests.contains("set_option maxRecDepth 4096 in"));
+    assert!(public_ops.contains("self.public_active_op.transition(edge)"));
+    assert!(public_ops.contains("self.public_active_op = transition.phase();"));
+    assert!(public_ops.contains("self.public_active_op.clear_if_current(op)"));
+    assert!(public_ops.contains("self.public_active_op.clear_terminal()"));
+    assert!(public_ops.contains("self.public_active_op.fault()"));
     assert!(!public_ops.contains("fn start_public_op"));
     assert!(!frame.contains("iteration_epoch"));
     assert!(!frame.contains("protocol_image_digest"));
@@ -341,8 +387,12 @@ fn end_to_end_refinement_stays_proof_indexed_and_runtime_erased() {
 #[test]
 fn every_public_endpoint_operation_is_owned_by_the_checked_phase_inventory() {
     let allowlist = read(".github/allowlists/endpoint-public-api.txt");
-    let public_types = read("src/endpoint/kernel/core/public_types.rs");
-    let public_type_tests = read("src/endpoint/kernel/core/public_types/tests.rs");
+    let public_types = format!(
+        "{}\n{}",
+        read("src/endpoint/kernel/core/public_operation.rs"),
+        read("src/endpoint/kernel/core/public_operation/definition.rs")
+    );
+    let public_type_tests = read("src/endpoint/kernel/core/public_operation/tests.rs");
     let public_operation = read("proofs/lean/Hibana/PublicOperationKernel.lean");
     let final_gate = read(".github/scripts/run_final_form_gates.sh");
     let public_surface_gate = read(".github/scripts/check_public_surface_budget.sh");

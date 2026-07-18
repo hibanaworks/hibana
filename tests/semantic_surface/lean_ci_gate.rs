@@ -1,4 +1,4 @@
-use super::common::read;
+use super::common::{read, repo_file_exists};
 
 #[test]
 fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
@@ -18,26 +18,39 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
     let workflow = read(".github/workflows/quality-gates.yml");
 
     assert!(
-        proof_gate.contains("forbids sorry, admit, and custom axioms")
-            && proof_gate.contains("must remain Core/Std-only")
+        proof_gate.contains("must remain Core/Std-only")
             && proof_gate.contains("check_lean_theorem_inventory.py")
             && proof_gate.contains("check_lean_theorem_inventory.py\" --self-test")
             && proof_gate.contains("check_generated_lean_axioms.py")
             && proof_gate.contains("check_generated_lean_axioms.py\" --self-test")
             && proof_gate.contains("check_lean_claim_surface.sh")
-            && proof_gate.contains("AxiomAudit.lean")
-            && proof_gate.contains("EXPECTED_NATIVE_REGRESSION_COUNT=32")
-            && proof_gate.contains("confines native regression execution to example modules")
-            && proof_gate.contains("must not import native regression examples")
-            && proof_gate.contains(
-                "Native regression modules may contain anonymous examples, not named claims"
-            )
+            && !proof_gate.contains("AxiomAudit.lean")
+            && !repo_file_exists("proofs/lean/Hibana/AxiomAudit.lean")
             && proof_gate.contains("native-regressions=32")
             && theorem_inventory.contains("def erase_non_code(source: str)")
+            && theorem_inventory.contains("sys.dont_write_bytecode = True")
             && theorem_inventory.contains("def theorem_names(source: str)")
-            && theorem_inventory.contains("def elaborated_claim_surface(")
-            && theorem_inventory.contains("def check_claim_types(")
+            && theorem_inventory.contains("def validate_static_source(root: pathlib.Path)")
+            && theorem_inventory.contains("FORBIDDEN_PROOF_TOKEN")
+            && theorem_inventory.contains("FORBIDDEN_PROOF_GENERATOR_TOKEN")
+            && theorem_inventory.contains("NATIVE_DECISION_TOKEN")
+            && theorem_inventory.contains("ENV_THEOREM_HEADER")
+            && theorem_inventory.contains("EXPECTED_NATIVE_EXAMPLE_COUNT = 32")
+            && theorem_inventory.contains("forbidden proof token")
+            && theorem_inventory.contains(
+                "native_decide is outside a native regression module",
+            )
+            && theorem_inventory.contains(
+                "native regression modules cannot export named claims",
+            )
+            && theorem_inventory.contains("def elaborated_static_audit(")
+            && theorem_inventory.contains("def validate_environment_theorem_inventory(")
+            && theorem_inventory.contains("name.getPrefix == `Hibana && info.isTheorem")
+            && theorem_inventory.contains("def check_static_theorems(")
+            && theorem_inventory.contains("def validate_static_axioms(")
             && theorem_inventory.contains("static Lean theorem type surface changed")
+            && theorem_inventory.contains("gained a forbidden axiom")
+            && theorem_inventory.contains("static theorem axiom closure counts changed")
             && theorem_inventory.contains("def name_anonymous_examples(")
             && theorem_inventory.contains("def elaborated_example_surface(")
             && theorem_inventory.contains("def check_example_types(")
@@ -63,6 +76,8 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && generated_axiom_audit.contains("NATIVE_AXIOM_OWNER")
             && generated_axiom_audit.contains("kernel-checked generated theorem")
             && generated_axiom_audit.contains("opaque|unsafe|example")
+            && generated_axiom_audit.contains("macro_rules|")
+            && generated_axiom_audit.contains("run_cmd|run_tac")
             && generated_axiom_audit.contains("gained forbidden axioms")
             && generated_axiom_audit.contains("has the wrong closure dependencies")
             && generated_axiom_audit.contains("EXACT_CERTIFICATE_THEOREMS")
@@ -119,12 +134,16 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
                         && line.contains(" : ")
                 })
                 .count()
-                == 667
+                == 677
             && all_claim_snapshot.contains(
                 "@Hibana.assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement :"
             )
             && proof_gate.contains("all-claim-surface.txt")
-            && proof_gate.contains("--claim-types \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 667")
+            && proof_gate.contains(
+                "--static \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 677 346 239 92",
+            )
+            && proof_gate.contains("EXPECTED_STATIC_AUDIT_MARKER")
+            && proof_gate.contains("theorems=677 both=346 propext=239 free=92")
             && proof_gate.contains("example-claim-surface.txt")
             && proof_gate.contains(
                 "--example-types \"${PROOF_DIR}\" \"${EXAMPLE_CLAIM_SNAPSHOT}\" 36",
@@ -137,20 +156,8 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
                 })
                 .count()
                 == 36
-            && proof_gate.contains("Lean proof gate axiom set changed")
-            && proof_gate.contains("axiom_both_count=\"$(awk")
-            && proof_gate.contains("count += 1")
-            && proof_gate.contains("END { print count + 0 }")
-            && proof_gate.contains("Classical.choice")
-            && proof_gate.contains("native_decide.ax")
-            && proof_gate.contains("readonly EXPECTED_AXIOM_BOTH_COUNT=")
-            && proof_gate.contains("readonly EXPECTED_AXIOM_PROPEXT_COUNT=")
-            && proof_gate.contains("readonly EXPECTED_AXIOM_FREE_COUNT=")
-            && proof_gate.contains("readonly EXPECTED_EXPORTED_THEOREM_COUNT=")
-            && proof_gate.contains("!= \"${EXPECTED_AXIOM_BOTH_COUNT}\"")
-            && proof_gate.contains("!= \"${EXPECTED_AXIOM_PROPEXT_COUNT}\"")
-            && proof_gate.contains("!= \"${EXPECTED_AXIOM_FREE_COUNT}\"")
-            && proof_gate.contains("!= \"${EXPECTED_EXPORTED_THEOREM_COUNT}\"")
+            && !proof_gate.contains("axiom_both_count=\"$(awk")
+            && !theorem_inventory.contains("def audited_theorems(")
             && proof_gate.contains(
                 "traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
             )
@@ -166,12 +173,14 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && proof_gate
                 .contains("theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506")
             && proof_gate.contains("generated-theorems=506 generated-obligations=458")
-            && proof_gate.contains("static-theorems=667 anonymous-regressions=36")
+            && proof_gate.contains("static-theorems=677 anonymous-regressions=36")
             && proof_gate.contains(
                 "production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6"
             )
             && proof_gate.contains("regions=4 poison=1 generation=1 atomic-failures=4")
-            && proof_gate.contains("public-operation kernel proof passed states=9 transitions=81")
+            && proof_gate.contains(
+                "public-operation kernel proof passed states=9 edges=16 transitions=144",
+            )
             && proof_gate.contains("export_production_trace_for_lean")
             && proof_gate.contains("export_runtime_certificates_for_lean")
             && proof_gate.contains("export_public_operation_kernel_for_lean")

@@ -610,10 +610,21 @@ fn resident_descriptor_metadata_stays_columnar() {
 #[test]
 fn compact_bucket_overflow_paths_stay_fail_closed() {
     let program_blob = read("src/global/compiled/images/image/blob_storage.rs");
+    let program_columns = read("src/global/compiled/images/image/columns.rs");
     let program_ref = read("src/global/compiled/images/image/program_ref.rs");
+    let program_ref_tests = read("src/global/compiled/images/image/program_ref/tests.rs");
     let role_blob = read("src/global/role_program/image_impl/blob_image.rs");
     let role_ref_access = read("src/global/role_program/image_impl/ref_access.rs");
     let projection = read("src/g/role_projection.rs");
+    assert!(
+        program_columns.contains("pub(crate) const fn covers_source_counts(")
+            && program_columns.contains("resolver_marker_count <= self.route_resolver_count()")
+            && program_columns.contains("source_rows <= self.blob_len()")
+            && projection.contains("const SOURCE_COUNTS_COVERED: ()")
+            && projection.contains("let () = Self::SOURCE_COUNTS_COVERED;")
+            && program_ref_tests.contains("program_image_columns_cover_exact_source_counts_only"),
+        "source lowering counts must be covered by the exact final program image rather than an independent capacity premise"
+    );
     assert!(
         program_blob.contains("pub(crate) const fn from_image_if_fits")
             && program_blob.contains("if columns.blob_len() > N {\n            None")

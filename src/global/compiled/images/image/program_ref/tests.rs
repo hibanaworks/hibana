@@ -114,6 +114,17 @@ fn atom_only_source_and_image_reach_the_compact_byte_ceiling() {
 }
 
 #[test]
+fn program_image_columns_cover_exact_source_counts_only() {
+    let columns = ProgramImageColumns::new(2, 1, 2, 4);
+
+    assert!(columns.covers_source_counts(2, 4, 0));
+    assert!(columns.covers_source_counts(2, 4, 1));
+    assert!(!columns.covers_source_counts(3, 4, 1));
+    assert!(!columns.covers_source_counts(2, 5, 1));
+    assert!(!columns.covers_source_counts(2, 4, 2));
+}
+
+#[test]
 fn program_image_fit_probe_rejects_undersized_storage() {
     let source = EffList::<1>::new();
     let columns = ProgramImageColumns::new(1, 0, 0, 0);

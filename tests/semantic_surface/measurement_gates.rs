@@ -28,7 +28,7 @@ fn miri_numeric_argument(line: Option<&str>, label: &str) -> usize {
         .unwrap_or_else(|_| panic!("invalid Miri count for owner: {label}"))
 }
 
-fn assert_miri_owner(gate: &str, label: &str, target: &str) {
+fn assert_miri_owner(gate: &str, label: &str, target: &str) -> (usize, usize) {
     let stanza = miri_owner_stanza(gate, label);
     let mut lines = stanza.lines();
     assert_eq!(lines.next(), Some("run_miri_test \\"));
@@ -46,6 +46,7 @@ fn assert_miri_owner(gate: &str, label: &str, target: &str) {
     assert!(listed > 0, "empty Miri owner: {label}");
     assert_eq!(listed, passed + ignored, "invalid Miri counts: {label}");
     assert!(stanza.contains(target), "wrong Miri target: {label}");
+    (passed, ignored)
 }
 
 #[test]
@@ -411,7 +412,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         ),
         (
             "public-operation-kernel",
-            "endpoint::kernel::core::public_types::tests",
+            "endpoint::kernel::core::public_operation::tests",
         ),
         ("tap-ring-owner", "observe::core::tests"),
         (
@@ -557,9 +558,17 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         miri_owners.len(),
         "every Miri execution must have one reviewed owner"
     );
-    for (label, target) in miri_owners {
-        assert_miri_owner(&miri_gate, label, target);
-    }
+    let (miri_passed, miri_ignored) = miri_owners
+        .into_iter()
+        .map(|(label, target)| assert_miri_owner(&miri_gate, label, target))
+        .fold(
+            (0, 0),
+            |(passed, ignored), (owner_passed, owner_ignored)| {
+                (passed + owner_passed, ignored + owner_ignored)
+            },
+        );
+    assert_eq!(miri_passed, 213, "Miri passed inventory changed");
+    assert_eq!(miri_ignored, 2, "Miri ignored inventory changed");
     assert!(
         manifest_test_gate.contains("import tomllib")
             && manifest_test_gate.contains("get(\"workspace\", {}).get(\"members\")")
@@ -586,6 +595,17 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             )
             && miri_gate.contains("miri_passed_total=$((miri_passed_total + expected_passed))")
             && miri_gate.contains("miri_ignored_total=$((miri_ignored_total + expected_ignored))")
+            && miri_gate.contains("readonly EXPECTED_MIRI_PASSED_TOTAL=213")
+            && miri_gate.contains("readonly EXPECTED_MIRI_IGNORED_TOTAL=2")
+            && miri_gate.contains(
+                "miri gate inventory mismatch: passed=${miri_passed_total} ignored=${miri_ignored_total}",
+            )
+            && miri_gate.contains(
+                "[[ \"${miri_passed_total}\" != \"${EXPECTED_MIRI_PASSED_TOTAL}\" ]]",
+            )
+            && miri_gate.contains(
+                "[[ \"${miri_ignored_total}\" != \"${EXPECTED_MIRI_IGNORED_TOTAL}\" ]]",
+            )
             && miri_gate.contains(
                 "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"
             )

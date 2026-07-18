@@ -209,6 +209,7 @@ capture_rg LOWERING_MACRO_HITS \
 while IFS= read -r hit; do
   [[ -z "${hit}" ]] && continue
   case "${hit}" in
+    *"src/endpoint/kernel/core/public_operation/definition.rs:"*"macro_rules! define_public_operation_kernel"*) ;;
     *"src/session/cluster/core.rs:"*"macro_rules! mask_for"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! impl_wire_for_int"*) ;;
     *"src/transport/wire.rs:"*"macro_rules! push"*) ;;
