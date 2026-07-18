@@ -9,6 +9,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let script = read(".github/scripts/check_kani.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
     let production_rust = read_all_rs_tree("src");
+    let frontier_kind = read("src/endpoint/kernel/frontier/kind.rs");
+    let session_fault = read("src/rendezvous/association/fault.rs");
+    let endpoint_lease_state = read("src/rendezvous/core.rs");
+    let rendezvous_access_state = read("src/rendezvous/core/access_state.rs");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
     let authority_harnesses = read("src/endpoint/kernel/authority/kani.rs");
     let decision_state_harnesses = read("src/endpoint/kernel/decision_state/kani.rs");
@@ -73,6 +77,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(verification_readme.contains("structured\nJSON inventory"));
     assert!(verification_readme.contains("without passing a filter"));
     assert!(verification_readme.contains("without a hand-written second"));
+    assert!(verification_readme.contains("derive\n`kani::Arbitrary` from the enum declaration"));
     assert!(!verification_readme.contains("intrinsic resolver sentinel"));
     assert!(!verification_readme.contains("inventory contains 81"));
     assert!(root_manifest.contains("'cfg(kani)'"));
@@ -203,6 +208,38 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(inventory.contains("\"kani-version\": \"0.67.0\""));
     assert!(inventory.contains("\"standard-harnesses\": 191"));
     assert!(inventory.contains("\"contract-harnesses\": 0"));
+    for (owner, enum_name) in [
+        (&frontier_kind, "FrontierKind"),
+        (&session_fault, "SessionFaultKind"),
+        (&endpoint_lease_state, "EndpointLeaseState"),
+        (&rendezvous_access_state, "RendezvousAccessState"),
+    ] {
+        assert!(owner.contains(&format!(
+            "#[cfg_attr(kani, derive(kani::Arbitrary))]\npub(crate) enum {enum_name}"
+        )));
+    }
+    assert!(session_fault.contains("#[path = \"fault/kani.rs\"]\nmod kani_proofs;"));
+    assert!(!session_fault.contains("mod kani;"));
+    assert!(active_offer_harnesses.contains("let first_frontier: FrontierKind = kani::any();"));
+    assert!(!active_offer_harnesses.contains("frontier_from_raw"));
+    assert!(
+        frontier_entry_harnesses
+            .matches("let frontier: FrontierKind = kani::any();")
+            .count()
+            == 2
+    );
+    assert!(
+        frontier_entry_harnesses
+            .contains("assert_eq!(frontier.bit() & !FrontierKind::ALL_BITS, 0)")
+    );
+    assert!(fault_harnesses.contains("let fault: SessionFaultKind = kani::any();"));
+    assert!(fault_harnesses.contains("let left: SessionFaultKind = kani::any();"));
+    assert!(fault_harnesses.contains("let right: SessionFaultKind = kani::any();"));
+    assert!(!fault_harnesses.contains("SYMBOLIC_FAULTS"));
+    assert!(harnesses.contains("let state: EndpointLeaseState = kani::any();"));
+    assert!(harnesses.contains("let state: RendezvousAccessState = kani::any();"));
+    assert!(!harnesses.contains("MembershipSealed as u8"));
+    assert!(!harnesses.contains("EndpointScratchLease as u8"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
     assert!(workflow.contains("cargo kani setup"));
     assert!(workflow.contains("bash ./.github/scripts/check_kani.sh"));
@@ -407,7 +444,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     }
     assert!(wire_harnesses.contains("left_schema != right_schema || left == right"));
     assert!(fault_harnesses.contains("fn session_fault_encoding_roundtrip_is_exact()"));
-    assert!(fault_harnesses.contains("fn symbolic_fault(raw: u8) -> SessionFaultKind"));
+    assert!(!fault_harnesses.contains("fn symbolic_fault("));
     assert!(fault_harnesses.contains("SessionFaultKind::decode(encoded) == Some(fault)"));
     assert!(fault_harnesses.contains("fn session_fault_encoding_is_injective()"));
     assert!(fault_harnesses.contains("fn invalid_session_fault_encoding_is_fail_fast()"));

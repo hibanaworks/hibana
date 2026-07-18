@@ -1,21 +1,8 @@
 use super::SessionFaultKind;
 
-const SYMBOLIC_FAULTS: [SessionFaultKind; 5] = [
-    SessionFaultKind::TransportClosed,
-    SessionFaultKind::DecodeFailed,
-    SessionFaultKind::ProtocolViolation,
-    SessionFaultKind::EndpointDropped,
-    SessionFaultKind::ProgressInvariantViolated,
-];
-
-fn symbolic_fault(raw: u8) -> SessionFaultKind {
-    SYMBOLIC_FAULTS[usize::from(raw) % SYMBOLIC_FAULTS.len()]
-}
-
 #[kani::proof]
 fn session_fault_encoding_roundtrip_is_exact() {
-    let raw: u8 = kani::any();
-    let fault = symbolic_fault(raw);
+    let fault: SessionFaultKind = kani::any();
     let encoded = fault.encode();
 
     assert!(encoded != SessionFaultKind::ABSENT_CODE);
@@ -29,8 +16,8 @@ fn session_fault_encoding_roundtrip_is_exact() {
 
 #[kani::proof]
 fn session_fault_encoding_is_injective() {
-    let left = symbolic_fault(kani::any());
-    let right = symbolic_fault(kani::any());
+    let left: SessionFaultKind = kani::any();
+    let right: SessionFaultKind = kani::any();
 
     assert!((left.encode() == right.encode()) == (left == right));
 }

@@ -2,6 +2,7 @@ use core::cell::Cell;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub(crate) enum RendezvousAccessState {
     Available = 0,
     RegistryLease = 1,

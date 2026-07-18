@@ -109,17 +109,12 @@ fn frontier_observation_packing_is_exact() {
     assert_eq!(slot.has_ready_arm(), observed.has_ready_arm_evidence());
     assert_eq!(slot.is_ready(), observed.is_ready());
     assert_eq!(slot.is_selectable(), selectable);
-    for frontier in [
-        FrontierKind::Route,
-        FrontierKind::Parallel,
-        FrontierKind::Reentry,
-        FrontierKind::PassiveObserver,
-    ] {
-        assert_eq!(
-            slot.is_in_frontier(frontier),
-            (raw_frontier & frontier.bit()) != 0
-        );
-    }
+    let frontier: FrontierKind = kani::any();
+    assert_eq!(
+        slot.is_in_frontier(frontier),
+        (raw_frontier & frontier.bit()) != 0
+    );
+    assert_eq!(frontier.bit() & !FrontierKind::ALL_BITS, 0);
 }
 
 #[kani::proof]
@@ -153,21 +148,15 @@ fn frontier_observation_rows_preserve_exact_witnesses_for_one_cursor_target() {
     assert_eq!(second_slot.has_progress(), second.has_progress_evidence());
     assert_eq!(second_slot.is_ready(), second.is_ready());
     assert!(second_slot.is_selectable());
-    for frontier in [
-        FrontierKind::Route,
-        FrontierKind::Parallel,
-        FrontierKind::Reentry,
-        FrontierKind::PassiveObserver,
-    ] {
-        assert_eq!(
-            first_slot.is_in_frontier(frontier),
-            (first_frontier & frontier.bit()) != 0
-        );
-        assert_eq!(
-            second_slot.is_in_frontier(frontier),
-            (second_frontier & frontier.bit()) != 0
-        );
-    }
+    let frontier: FrontierKind = kani::any();
+    assert_eq!(
+        first_slot.is_in_frontier(frontier),
+        (first_frontier & frontier.bit()) != 0
+    );
+    assert_eq!(
+        second_slot.is_in_frontier(frontier),
+        (second_frontier & frontier.bit()) != 0
+    );
 }
 
 #[kani::proof]

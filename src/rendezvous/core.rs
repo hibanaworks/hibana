@@ -236,6 +236,7 @@ impl EndpointLeaseRecord {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub(crate) enum EndpointLeaseState {
     Vacant = 0,
     Reserved = 1,

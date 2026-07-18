@@ -211,9 +211,9 @@
       "observe::core::ring_state::kani::ring_state_step_preserves_the_exact_slot_domain"
     ],
     "../../src/rendezvous/association/fault/kani.rs": [
-      "rendezvous::association::fault::kani::invalid_session_fault_encoding_is_fail_fast",
-      "rendezvous::association::fault::kani::session_fault_encoding_is_injective",
-      "rendezvous::association::fault::kani::session_fault_encoding_roundtrip_is_exact"
+      "rendezvous::association::fault::kani_proofs::invalid_session_fault_encoding_is_fail_fast",
+      "rendezvous::association::fault::kani_proofs::session_fault_encoding_is_injective",
+      "rendezvous::association::fault::kani_proofs::session_fault_encoding_roundtrip_is_exact"
     ],
     "../../src/rendezvous/association/kani.rs": [
       "rendezvous::association::kani::attachment_count_accepts_exact_full_role_domain",

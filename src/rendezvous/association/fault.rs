@@ -1,4 +1,5 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub(crate) enum SessionFaultKind {
     TransportClosed,
     DecodeFailed,
@@ -34,4 +35,5 @@ impl SessionFaultKind {
 }
 
 #[cfg(kani)]
-mod kani;
+#[path = "fault/kani.rs"]
+mod kani_proofs;

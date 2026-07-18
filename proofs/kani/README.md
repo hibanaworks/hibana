@@ -120,8 +120,11 @@ partial, failed, or empty harness set is rejected without a hand-written second
 execution list. Harnesses contain no `kani::assume`: finite subdomains use
 total surjective generators, while constrained product domains preserve every
 valid symbolic candidate and map only invalid candidates to a canonical valid
-representative. The gate rejects any future assumption in production source,
-so a retained harness name cannot silently hide a narrowed proof domain.
+representative. Closed runtime enums used as symbolic state inputs derive
+`kani::Arbitrary` from the enum declaration, so enum growth enters CBMC without
+a second hand-written list. The gate rejects any future assumption in
+production source, so a retained harness name cannot silently hide a narrowed
+proof domain.
 Transport
 FIFO, exactly-once/no-replay delivery, peer-close observation, and one-shot
 receive receipt resolution are modeled and proved in Lean, mirrored by the Rust

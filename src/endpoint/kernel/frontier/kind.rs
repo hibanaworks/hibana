@@ -1,6 +1,8 @@
 use super::{MAX_STATES, ScopeId, StateIndex};
 use crate::global::const_dsl::ScopeKind;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 pub(crate) enum FrontierKind {
     Route,
     Reentry,

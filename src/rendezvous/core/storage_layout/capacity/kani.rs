@@ -63,19 +63,7 @@ fn endpoint_lease_slot_count_matches_last_index_domain() {
 
 #[kani::proof]
 fn endpoint_membership_seal_is_published_and_idempotent() {
-    let candidate: u8 = kani::any();
-    let raw = if candidate <= EndpointLeaseState::MembershipSealed as u8 {
-        candidate
-    } else {
-        0
-    };
-    let state = match raw {
-        0 => EndpointLeaseState::Vacant,
-        1 => EndpointLeaseState::Reserved,
-        2 => EndpointLeaseState::Published,
-        3 => EndpointLeaseState::MembershipSealed,
-        _ => crate::invariant(),
-    };
+    let state: EndpointLeaseState = kani::any();
     match state.seal_membership() {
         Some(sealed) => {
             assert!(state.is_published());
@@ -90,20 +78,7 @@ fn endpoint_membership_seal_is_published_and_idempotent() {
 
 #[kani::proof]
 fn endpoint_operation_and_nested_scratch_transitions_are_exact() {
-    let candidate: u8 = kani::any();
-    let raw = if candidate <= RendezvousAccessState::EndpointScratchLease as u8 {
-        candidate
-    } else {
-        0
-    };
-    let state = match raw {
-        0 => RendezvousAccessState::Available,
-        1 => RendezvousAccessState::RegistryLease,
-        2 => RendezvousAccessState::ScratchLease,
-        3 => RendezvousAccessState::EndpointOperation,
-        4 => RendezvousAccessState::EndpointScratchLease,
-        _ => crate::invariant(),
-    };
+    let state: RendezvousAccessState = kani::any();
 
     let operation = state.begin_endpoint_operation();
     assert!(operation.is_some() == (state == RendezvousAccessState::Available));
