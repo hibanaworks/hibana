@@ -5,6 +5,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let root_manifest = read("Cargo.toml");
     let verification_manifest = read("proofs/kani/Cargo.toml");
     let verification_readme = read("proofs/kani/README.md");
+    let inventory = read("proofs/kani/harness-inventory.json");
     let script = read(".github/scripts/check_kani.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
     let harnesses = read("src/rendezvous/core/storage_layout/capacity/kani.rs");
@@ -67,8 +68,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!verification_manifest.contains("[dependencies]"));
     assert!(!verification_manifest.contains("rust-version"));
     assert!(verification_readme.contains("complete `u16` resolver-id domain"));
-    assert!(verification_readme.contains("Kani itself discovers and verifies every production"));
-    assert!(verification_readme.contains("does not pass a harness filter"));
+    assert!(verification_readme.contains("Kani itself discovers every production"));
+    assert!(verification_readme.contains("structured\nJSON inventory"));
+    assert!(verification_readme.contains("without passing a filter"));
+    assert!(verification_readme.contains("without a hand-written second"));
     assert!(!verification_readme.contains("intrinsic resolver sentinel"));
     assert!(!verification_readme.contains("inventory contains 81"));
     assert!(root_manifest.contains("'cfg(kani)'"));
@@ -171,6 +174,11 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         2
     );
     assert!(script.contains("cargo kani --version"));
+    assert!(script.contains("list --format json"));
+    assert!(script.contains("proofs/kani/harness-inventory.json"));
+    assert!(script.contains("cmp -s \"${EXPECTED_INVENTORY}\" \"${ACTUAL_INVENTORY}\""));
+    assert!(script.contains("expected_harness_total="));
+    assert!(script.contains("!= \"${expected_harness_total}\""));
     assert!(script.contains("cargo kani \\"));
     assert!(script.contains("--run-sanity-checks"));
     assert!(!script.contains("--harness"));
@@ -178,12 +186,15 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(script.contains("exactly one successful complete-harness summary"));
     assert!(script.contains("successfully verified harnesses, 0 failures"));
     assert!(script.contains("reported_harness_total="));
-    assert!(script.contains("requires a nonempty complete-harness total"));
+    assert!(script.contains("requires the complete ${expected_harness_total}-harness inventory"));
     assert!(script.contains(
         "Kani gate passed version=${EXPECTED_VERSION} harnesses=${kani_harness_total} backend=CBMC"
     ));
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
+    assert!(inventory.contains("\"kani-version\": \"0.67.0\""));
+    assert!(inventory.contains("\"standard-harnesses\": 191"));
+    assert!(inventory.contains("\"contract-harnesses\": 0"));
     assert!(workflow.contains("cargo install --locked kani-verifier"));
     assert!(workflow.contains("cargo kani setup"));
     assert!(workflow.contains("bash ./.github/scripts/check_kani.sh"));

@@ -7,6 +7,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from difflib import unified_diff
 
 sys.dont_write_bytecode = True
 
@@ -17,6 +18,10 @@ EXACT_CERTIFICATE_COUNT = 22
 PROJECTABILITY_CERTIFICATE_COUNT = 8
 VERIFIED_PROTOCOL_CERTIFICATE_COUNT = 8
 NATIVE_DECISION_COUNT = 16
+GENERATED_THEOREM_COUNT = 506
+CONTRACT_THEOREM_COUNT = 48
+CLAIM_SURFACE_BEGIN = "HIBANA_GENERATED_CLAIM_SURFACE_BEGIN"
+CLAIM_SURFACE_END = "HIBANA_GENERATED_CLAIM_SURFACE_END"
 
 EXACT_CERTIFICATE_THEOREMS = {
     *(f"generatedProjectionRole{role}ExactAccepted" for role in range(4)),
@@ -70,6 +75,12 @@ NATIVE_PRODUCTION_THEOREMS = {
     "generatedProductionRoleImagesAccepted",
 }
 
+STATIC_DEPLOYMENT_REJECTION_THEOREMS = {
+    "generatedMissingStaticDeploymentCertificateRejected",
+    "generatedExtraStaticDeploymentCertificateRejected",
+    "generatedCorruptStaticDeploymentCertificateRejected",
+}
+
 AXIOM_BLOCK = re.compile(
     r"^'([^']+)' (does not depend on any axioms|depends on axioms: \[(.*?)\])"
     r"(?=\n'|\s*\Z)",
@@ -78,8 +89,10 @@ AXIOM_BLOCK = re.compile(
 NATIVE_AXIOM = re.compile(r"^.+\._native\.native_decide\.ax_[0-9_]+$")
 NATIVE_AXIOM_OWNER = re.compile(r"^(.+)\._native\.native_decide\.ax_[0-9_]+$")
 FORBIDDEN_DECLARATION = re.compile(
-    r"\b(sorry|admit)\b|^[ \t]*(axiom|constant|opaque|unsafe)\b", re.MULTILINE
+    r"\b(sorry|admit)\b|^[ \t]*(axiom|constant|opaque|unsafe|example)\b",
+    re.MULTILINE,
 )
+CLAIM_HEADER = re.compile(r"^@?([A-Za-z_][A-Za-z0-9_']*) :")
 
 
 def classify(theorems: set[str]) -> tuple[set[str], set[str]]:
@@ -122,14 +135,26 @@ def classify(theorems: set[str]) -> tuple[set[str], set[str]]:
             )
     kernel = exact | KERNEL_PRODUCTION_THEOREMS
     native = projectability | verified_protocol | NATIVE_PRODUCTION_THEOREMS
-    expected = kernel | native
-    if theorems != expected:
-        missing = sorted(expected - theorems)
-        unexpected = sorted(theorems - expected)
+    contract = kernel | native
+    if len(contract) != CONTRACT_THEOREM_COUNT:
         raise ValueError(
-            f"generated theorem inventory changed: missing={missing!r} unexpected={unexpected!r}"
+            f"expected {CONTRACT_THEOREM_COUNT} generated contract theorems, "
+            f"found {len(contract)}"
         )
-    return kernel, native
+    if not contract <= theorems:
+        missing = sorted(contract - theorems)
+        raise ValueError(
+            f"generated contract theorem inventory changed: missing={missing!r}"
+        )
+    auxiliary = theorems - contract
+    native_auxiliary = {
+        name
+        for name in auxiliary
+        if name.endswith("ProjectabilityEnsuresGlobalProgress")
+        or name.endswith("VerifiedProtocolAllRolesRefine")
+        or name in STATIC_DEPLOYMENT_REJECTION_THEOREMS
+    }
+    return kernel | (auxiliary - native_auxiliary), native | native_auxiliary
 
 
 def expected_native_owners(theorem: str) -> set[str]:
@@ -138,6 +163,12 @@ def expected_native_owners(theorem: str) -> set[str]:
     if theorem == "generatedProductionRoleImagesAccepted":
         return {"generatedVerifiedProtocolAccepted"}
     if theorem in NATIVE_PRODUCTION_THEOREMS:
+        return VERIFIED_PROTOCOL_CERTIFICATE_THEOREMS
+    if theorem.endswith("ProjectabilityEnsuresGlobalProgress"):
+        return {theorem.removesuffix("EnsuresGlobalProgress") + "Accepted"}
+    if theorem.endswith("VerifiedProtocolAllRolesRefine"):
+        return {theorem.removesuffix("AllRolesRefine") + "Accepted"}
+    if theorem in STATIC_DEPLOYMENT_REJECTION_THEOREMS:
         return VERIFIED_PROTOCOL_CERTIFICATE_THEOREMS
     raise ValueError(f"generated theorem is not classified as native: {theorem}")
 
@@ -198,6 +229,45 @@ def validate_axioms(
                 )
 
 
+def extract_claim_surface(output: str) -> str:
+    begin = f"{CLAIM_SURFACE_BEGIN}\n"
+    end = f"\n{CLAIM_SURFACE_END}"
+    if output.count(begin) != 1 or output.count(end) != 1:
+        raise ValueError("generated claim surface markers are missing or duplicated")
+    return output.split(begin, 1)[1].split(end, 1)[0] + "\n"
+
+
+def claim_names(surface: str) -> set[str]:
+    names = [
+        match.group(1)
+        for line in surface.splitlines()
+        if (match := CLAIM_HEADER.match(line)) is not None
+    ]
+    if len(names) != len(set(names)):
+        raise ValueError("generated claim surface contains duplicate theorem headers")
+    return set(names)
+
+
+def validate_claim_surface(actual: str, expected: str, theorems: set[str]) -> None:
+    actual_names = claim_names(actual)
+    if actual_names != theorems:
+        raise ValueError(
+            "generated claim surface inventory changed: "
+            f"missing={sorted(theorems - actual_names)!r} "
+            f"unexpected={sorted(actual_names - theorems)!r}"
+        )
+    if actual != expected:
+        difference = "".join(
+            unified_diff(
+                expected.splitlines(keepends=True),
+                actual.splitlines(keepends=True),
+                fromfile="generated-claim-surface.txt",
+                tofile="actual-generated-claim-surface.txt",
+            )
+        )
+        raise ValueError(f"generated theorem type surface changed:\n{difference}")
+
+
 def assert_axioms_rejected(
     parsed: dict[str, set[str]], kernel: set[str], native: set[str], message: str
 ) -> None:
@@ -215,6 +285,11 @@ def self_test() -> None:
         | VERIFIED_PROTOCOL_CERTIFICATE_THEOREMS
         | KERNEL_PRODUCTION_THEOREMS
         | NATIVE_PRODUCTION_THEOREMS
+        | {
+            "generatedProjectabilityEnsuresGlobalProgress",
+            "generatedVerifiedProtocolAllRolesRefine",
+        }
+        | STATIC_DEPLOYMENT_REJECTION_THEOREMS
     )
     kernel, native = classify(theorems)
     lines = [f"'{name}' does not depend on any axioms" for name in sorted(kernel)]
@@ -261,24 +336,57 @@ def self_test() -> None:
         "generated axiom audit accepted a missing native boundary",
     )
 
+    claim_output = (
+        f"noise\n{CLAIM_SURFACE_BEGIN}\nalpha : True\n@beta : False\n"
+        f"{CLAIM_SURFACE_END}\nnoise"
+    )
+    claim_surface = extract_claim_surface(claim_output)
+    validate_claim_surface(
+        claim_surface,
+        "alpha : True\n@beta : False\n",
+        {"alpha", "beta"},
+    )
+    try:
+        validate_claim_surface(
+            claim_surface,
+            "alpha : False\n@beta : False\n",
+            {"alpha", "beta"},
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("generated claim audit accepted a weakened theorem type")
+    if FORBIDDEN_DECLARATION.search("example : True := by trivial") is None:
+        raise AssertionError("generated source audit accepted an anonymous proof obligation")
 
-def audit(generated: pathlib.Path, proof_dir: pathlib.Path) -> int:
+
+def checked_source(generated: pathlib.Path, expected_native_decisions: int) -> str:
     source = generated.read_text()
     code = erase_non_code(source)
     forbidden = FORBIDDEN_DECLARATION.search(code)
     if forbidden is not None:
         raise ValueError(
-            f"generated Lean contains forbidden declaration or proof escape: {forbidden.group(0)!r}"
+            "generated Lean contains a forbidden declaration, anonymous proof, "
+            f"or proof escape: {forbidden.group(0)!r}"
         )
-    if code.count("native_decide") != NATIVE_DECISION_COUNT:
+    if code.count("native_decide") != expected_native_decisions:
         raise ValueError(
-            f"expected {NATIVE_DECISION_COUNT} explicit native decisions, "
+            f"expected {expected_native_decisions} explicit native decisions, "
             f"found {code.count('native_decide')}"
         )
-    theorems = theorem_names(source)
-    kernel, native = classify(theorems)
-    audit_source = source + "\n" + "\n".join(
-        f"#print axioms {name}" for name in sorted(theorems)
+    return source
+
+
+def compile_audit_source(
+    source: str, theorems: set[str], proof_dir: pathlib.Path
+) -> subprocess.CompletedProcess[str]:
+    sorted_theorems = sorted(theorems)
+    audit_source = (
+        source
+        + f'\n#eval IO.println "{CLAIM_SURFACE_BEGIN}"\n'
+        + "\n".join(f"#check @{name}" for name in sorted_theorems)
+        + f'\n#eval IO.println "{CLAIM_SURFACE_END}"\n'
+        + "\n".join(f"#print axioms {name}" for name in sorted_theorems)
     )
     completed = subprocess.run(
         ["lake", "env", "lean", "--stdin"],
@@ -290,14 +398,76 @@ def audit(generated: pathlib.Path, proof_dir: pathlib.Path) -> int:
     )
     sys.stdout.write(completed.stdout)
     sys.stderr.write(completed.stderr)
+    return completed
+
+
+def audit(
+    generated: pathlib.Path, proof_dir: pathlib.Path, claim_snapshot: pathlib.Path
+) -> int:
+    source = checked_source(generated, NATIVE_DECISION_COUNT)
+    theorems = theorem_names(source)
+    expected_surface = claim_snapshot.read_text()
+    expected_theorems = claim_names(expected_surface)
+    if len(expected_theorems) != GENERATED_THEOREM_COUNT:
+        raise ValueError(
+            f"generated claim snapshot must name exactly {GENERATED_THEOREM_COUNT} "
+            f"theorems, found {len(expected_theorems)}"
+        )
+    if theorems != expected_theorems:
+        raise ValueError(
+            "generated theorem inventory changed: "
+            f"missing={sorted(expected_theorems - theorems)!r} "
+            f"unexpected={sorted(theorems - expected_theorems)!r}"
+        )
+    kernel, native = classify(theorems)
+    completed = compile_audit_source(source, theorems, proof_dir)
     if completed.returncode != 0:
         return completed.returncode
+    claim_surface = extract_claim_surface(completed.stdout)
+    validate_claim_surface(claim_surface, expected_surface, theorems)
     parsed = parse_axioms(completed.stdout)
     validate_axioms(parsed, kernel, native)
     print(
         "Generated Lean axiom audit passed "
         f"theorems={len(theorems)} kernel={len(kernel)} native={len(native)} "
-        f"native-decisions={NATIVE_DECISION_COUNT}"
+        f"contracts={CONTRACT_THEOREM_COUNT} obligations="
+        f"{len(theorems) - CONTRACT_THEOREM_COUNT} "
+        f"native-decisions={NATIVE_DECISION_COUNT} claims={len(theorems)}"
+    )
+    return 0
+
+
+def audit_kernel_artifact(
+    generated: pathlib.Path,
+    proof_dir: pathlib.Path,
+    claim_snapshot: pathlib.Path,
+    expected_theorem_count: int,
+) -> int:
+    source = checked_source(generated, 0)
+    expected_surface = claim_snapshot.read_text()
+    expected_theorems = claim_names(expected_surface)
+    if len(expected_theorems) != expected_theorem_count:
+        raise ValueError(
+            f"kernel artifact claim snapshot must name exactly {expected_theorem_count} "
+            f"theorems, found {len(expected_theorems)}"
+        )
+    actual_theorems = theorem_names(source)
+    if actual_theorems != expected_theorems:
+        raise ValueError(
+            "kernel artifact theorem inventory changed: "
+            f"missing={sorted(expected_theorems - actual_theorems)!r} "
+            f"unexpected={sorted(actual_theorems - expected_theorems)!r}"
+        )
+    completed = compile_audit_source(source, actual_theorems, proof_dir)
+    if completed.returncode != 0:
+        return completed.returncode
+    claim_surface = extract_claim_surface(completed.stdout)
+    validate_claim_surface(claim_surface, expected_surface, actual_theorems)
+    validate_axioms(parse_axioms(completed.stdout), actual_theorems, set())
+    print(
+        "Generated Lean kernel artifact audit passed "
+        f"artifact={generated.stem} theorems={len(actual_theorems)} "
+        f"claims={len(actual_theorems)}"
     )
     return 0
 
@@ -307,14 +477,37 @@ def main() -> int:
         self_test()
         print("Generated Lean axiom audit self-test passed")
         return 0
-    if len(sys.argv) != 3:
+    if sys.argv[1:2] == ["--kernel"]:
+        if len(sys.argv) != 6:
+            print(
+                "usage: check_generated_lean_axioms.py --kernel "
+                "GENERATED PROOF_DIR CLAIM_SNAPSHOT EXPECTED_THEOREMS",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            return audit_kernel_artifact(
+                pathlib.Path(sys.argv[2]),
+                pathlib.Path(sys.argv[3]),
+                pathlib.Path(sys.argv[4]),
+                int(sys.argv[5]),
+            )
+        except (OSError, ValueError) as error:
+            print(f"Generated Lean kernel artifact audit failed: {error}", file=sys.stderr)
+            return 1
+    if len(sys.argv) != 4:
         print(
-            "usage: check_generated_lean_axioms.py --self-test | GENERATED PROOF_DIR",
+            "usage: check_generated_lean_axioms.py --self-test | "
+            "GENERATED PROOF_DIR CLAIM_SNAPSHOT",
             file=sys.stderr,
         )
         return 2
     try:
-        return audit(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]))
+        return audit(
+            pathlib.Path(sys.argv[1]),
+            pathlib.Path(sys.argv[2]),
+            pathlib.Path(sys.argv[3]),
+        )
     except (OSError, ValueError) as error:
         print(f"Generated Lean axiom audit failed: {error}", file=sys.stderr)
         return 1

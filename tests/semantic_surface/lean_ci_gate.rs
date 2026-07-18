@@ -5,9 +5,15 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
     let proof_gate = read(".github/scripts/check_lean_proofs.sh");
     let theorem_inventory = read(".github/scripts/check_lean_theorem_inventory.py");
     let generated_axiom_audit = read(".github/scripts/check_generated_lean_axioms.py");
+    let generated_claim_snapshot = read("proofs/lean/generated-claim-surface.txt");
+    let runtime_claim_snapshot = read("proofs/lean/runtime-generated-claim-surface.txt");
+    let public_operation_claim_snapshot =
+        read("proofs/lean/public-operation-generated-claim-surface.txt");
     let claim_gate = read(".github/scripts/check_lean_claim_surface.sh");
     let claim_source = read("proofs/lean/ClaimSurface.lean");
     let claim_snapshot = read("proofs/lean/claim-surface.txt");
+    let all_claim_snapshot = read("proofs/lean/all-claim-surface.txt");
+    let example_claim_snapshot = read("proofs/lean/example-claim-surface.txt");
     let final_gate = read(".github/scripts/run_final_form_gates.sh");
     let workflow = read(".github/workflows/quality-gates.yml");
 
@@ -29,13 +35,26 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && proof_gate.contains("native-regressions=32")
             && theorem_inventory.contains("def erase_non_code(source: str)")
             && theorem_inventory.contains("def theorem_names(source: str)")
+            && theorem_inventory.contains("def elaborated_claim_surface(")
+            && theorem_inventory.contains("def check_claim_types(")
+            && theorem_inventory.contains("static Lean theorem type surface changed")
+            && theorem_inventory.contains("def name_anonymous_examples(")
+            && theorem_inventory.contains("def elaborated_example_surface(")
+            && theorem_inventory.contains("def check_example_types(")
+            && theorem_inventory.contains("def validate_example_axioms(")
+            && theorem_inventory.contains("must own one native decision")
+            && theorem_inventory.contains("has a foreign decision owner")
+            && theorem_inventory.contains("Lean anonymous example type surface changed")
             && theorem_inventory.contains("if previous is not None")
             && theorem_inventory.contains("previous.group(1) == \"private\"")
             && theorem_inventory.contains("escaped theorem names are not inventory-safe")
             && theorem_inventory.contains("def self_test()")
             && theorem_inventory.contains("unicode_一意?")
             && theorem_inventory.contains("punctuation!'")
+            && theorem_inventory.contains("lemma equivalent_name")
             && generated_axiom_audit.contains("NATIVE_DECISION_COUNT = 16")
+            && generated_axiom_audit.contains("GENERATED_THEOREM_COUNT = 506")
+            && generated_axiom_audit.contains("CONTRACT_THEOREM_COUNT = 48")
             && generated_axiom_audit.contains("sys.dont_write_bytecode = True")
             && generated_axiom_audit.contains("EXACT_CERTIFICATE_COUNT = 22")
             && generated_axiom_audit.contains("PROJECTABILITY_CERTIFICATE_COUNT = 8")
@@ -43,11 +62,48 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && generated_axiom_audit.contains("def validate_axioms(")
             && generated_axiom_audit.contains("NATIVE_AXIOM_OWNER")
             && generated_axiom_audit.contains("kernel-checked generated theorem")
+            && generated_axiom_audit.contains("opaque|unsafe|example")
             && generated_axiom_audit.contains("gained forbidden axioms")
             && generated_axiom_audit.contains("has the wrong closure dependencies")
             && generated_axiom_audit.contains("EXACT_CERTIFICATE_THEOREMS")
             && generated_axiom_audit.contains("PROJECTABILITY_CERTIFICATE_THEOREMS")
             && generated_axiom_audit.contains("VERIFIED_PROTOCOL_CERTIFICATE_THEOREMS")
+            && generated_axiom_audit.contains("CLAIM_SURFACE_BEGIN")
+            && generated_axiom_audit.contains("def extract_claim_surface(")
+            && generated_axiom_audit.contains("def validate_claim_surface(")
+            && generated_axiom_audit.contains("generated theorem type surface changed")
+            && generated_axiom_audit.contains("def audit_kernel_artifact(")
+            && generated_axiom_audit.contains("kernel artifact theorem inventory changed")
+            && generated_claim_snapshot
+                .lines()
+                .filter(|line| {
+                    line.trim_start_matches('@').starts_with("generated")
+                        && line.contains(" : ")
+                })
+                .count()
+                == 506
+            && generated_claim_snapshot.contains(
+                "generatedProductionKernelArtifactAccepted : generatedProductionKernelArtifact.check"
+            )
+            && generated_claim_snapshot.contains(
+                "generated_static_deployment_certificate_refines_exact_family : generatedStaticDeploymentCertificate.Refines"
+            )
+            && runtime_claim_snapshot
+                .lines()
+                .filter(|line| line.starts_with("generated") && line.contains(" : "))
+                .count()
+                == 16
+            && runtime_claim_snapshot.contains(
+                "generatedCompactingAbortPreservesAuthorityAndCapacity : generatedCompactingAbort.PreservesAuthorityAndCapacity"
+            )
+            && public_operation_claim_snapshot
+                .lines()
+                .filter(|line| line.starts_with("generated") && line.contains(" : "))
+                .count()
+                == 2
+            && public_operation_claim_snapshot.contains(
+                "generatedPublicOperationTableExact : Hibana.PublicOperationTableExact"
+            )
             && claim_gate.contains("EXPECTED_CLAIMS=15")
             && claim_gate.contains("diff -u \"${SNAPSHOT}\" \"${actual}\"")
             && claim_source.matches("#check @Hibana.").count() == 15
@@ -56,6 +112,31 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             )
             && claim_snapshot
                 .contains("@Hibana.assumption_indexed_static_cross_tool_production_refinement")
+            && all_claim_snapshot
+                .lines()
+                .filter(|line| {
+                    line.trim_start_matches('@').starts_with("Hibana.")
+                        && line.contains(" : ")
+                })
+                .count()
+                == 667
+            && all_claim_snapshot.contains(
+                "@Hibana.assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement :"
+            )
+            && proof_gate.contains("all-claim-surface.txt")
+            && proof_gate.contains("--claim-types \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 667")
+            && proof_gate.contains("example-claim-surface.txt")
+            && proof_gate.contains(
+                "--example-types \"${PROOF_DIR}\" \"${EXAMPLE_CLAIM_SNAPSHOT}\" 36",
+            )
+            && example_claim_snapshot
+                .lines()
+                .filter(|line| {
+                    line.trim_start_matches('@').starts_with("Hibana.anonymousRegression_")
+                        && line.contains(" : ")
+                })
+                .count()
+                == 36
             && proof_gate.contains("Lean proof gate axiom set changed")
             && proof_gate.contains("axiom_both_count=\"$(awk")
             && proof_gate.contains("count += 1")
@@ -78,7 +159,14 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             )
             && proof_gate.contains("EXPECTED_PRODUCTION_MARKER")
             && proof_gate.contains("EXPECTED_GENERATED_AXIOM_MARKER")
-            && proof_gate.contains("theorems=48 kernel=27 native=21 native-decisions=16")
+            && proof_gate.contains("EXPECTED_RUNTIME_AUDIT_MARKER")
+            && proof_gate.contains("EXPECTED_PUBLIC_OPERATION_AUDIT_MARKER")
+            && proof_gate.contains("--kernel \"${RUNTIME_GENERATED}\"")
+            && proof_gate.contains("--kernel \"${PUBLIC_OPERATION_GENERATED}\"")
+            && proof_gate
+                .contains("theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506")
+            && proof_gate.contains("generated-theorems=506 generated-obligations=458")
+            && proof_gate.contains("static-theorems=667 anonymous-regressions=36")
             && proof_gate.contains(
                 "production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6"
             )

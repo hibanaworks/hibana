@@ -1,0 +1,286 @@
+{
+  "kani-version": "0.67.0",
+  "file-version": "0.1",
+  "standard-harnesses": {
+    "../../src/endpoint/kernel/authority/kani.rs": [
+      "endpoint::kernel::authority::kani::route_arm_decoding_accepts_exact_binary_domain",
+      "endpoint::kernel::authority::kani::single_ready_mask_decoding_is_exact"
+    ],
+    "../../src/endpoint/kernel/core/frontier_observation.rs": [
+      "endpoint::kernel::core::frontier_observation::tests::excluded_scope_never_supplies_progress_sibling_authority"
+    ],
+    "../../src/endpoint/kernel/core/public_types/kani.rs": [
+      "endpoint::kernel::core::public_types::kani::public_operation_transition_classifier_is_exact"
+    ],
+    "../../src/endpoint/kernel/decision_state/kani.rs": [
+      "endpoint::kernel::decision_state::kani::existing_route_reselection_preserves_exact_reference_count",
+      "endpoint::kernel::decision_state::kani::selected_arm_release_is_exact_and_never_underflows",
+      "endpoint::kernel::decision_state::kani::selected_route_commit_rows_accept_257_entries",
+      "endpoint::kernel::decision_state::kani::selected_route_commit_rows_finish_is_lane_exact_and_fail_closed",
+      "endpoint::kernel::decision_state::kani::selected_route_commit_rows_preserve_full_descriptor_range",
+      "endpoint::kernel::decision_state::kani::sparse_route_history_accepts_257_descriptor_relations",
+      "endpoint::kernel::decision_state::kani::sparse_route_history_preserves_lane_partition"
+    ],
+    "../../src/endpoint/kernel/evidence_store.rs": [
+      "endpoint::kernel::evidence_store::tests::distinct_ready_arms_are_sticky_conflict_in_either_order",
+      "endpoint::kernel::evidence_store::tests::matching_ready_arm_evidence_remains_exact",
+      "endpoint::kernel::evidence_store::tests::poll_and_materialization_consumption_are_exact",
+      "endpoint::kernel::evidence_store::tests::ready_arm_conflicting_with_live_selection_is_sticky",
+      "endpoint::kernel::evidence_store::tests::ready_evidence_transitions_preserve_canonical_masks"
+    ],
+    "../../src/endpoint/kernel/frontier/active_offer_entry/kani.rs": [
+      "endpoint::kernel::frontier::active_offer_entry::kani::active_offer_entry_accepts_only_exact_scope_entry_metadata",
+      "endpoint::kernel::frontier::active_offer_entry::kani::active_offer_entry_foreign_scope_is_exact_rejection"
+    ],
+    "../../src/endpoint/kernel/frontier/entry_sets/kani.rs": [
+      "endpoint::kernel::frontier::entry_sets::kani::active_frontier_entry_rejects_absent_exact_key",
+      "endpoint::kernel::frontier::entry_sets::kani::exact_observation_buffer_groups_all_cursor_target_order_classes",
+      "endpoint::kernel::frontier::entry_sets::kani::exact_observation_buffer_retains_same_entry_witness_rows",
+      "endpoint::kernel::frontier::entry_sets::kani::exact_observation_capacity_exhaustion_is_fail_closed",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_entry_capacity_preserves_the_full_lane_domain",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_entry_identity_distinguishes_scope_at_same_entry",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_packing_is_exact",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_absent_exact_key",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_bits_outside_the_exact_kind_domain",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rejects_flags_outside_the_exact_domain",
+      "endpoint::kernel::frontier::entry_sets::kani::frontier_observation_rows_preserve_exact_witnesses_for_one_cursor_target",
+      "endpoint::kernel::frontier::entry_sets::kani::offer_entry_key_rejects_non_route_scopes",
+      "endpoint::kernel::frontier::entry_sets::kani::selectable_ready_query_never_admits_an_excluded_exact_witness"
+    ],
+    "../../src/endpoint/kernel/frontier/scratch/kani.rs": [
+      "endpoint::kernel::frontier::scratch::kani::arbitrary_scratch_bytes_are_canonicalized_before_typed_publication",
+      "endpoint::kernel::frontier::scratch::kani::frontier_scratch_capacity_is_derived_once_from_its_layout",
+      "endpoint::kernel::frontier::scratch::kani::frontier_scratch_rejects_capacity_beyond_lane_domain",
+      "endpoint::kernel::frontier::scratch::kani::lane_domain_frontier_workspace_fits_compact_resident_budget",
+      "endpoint::kernel::frontier::scratch::kani::zero_capacity_frontier_scratch_rejects_misaligned_storage_before_slice_publication",
+      "endpoint::kernel::frontier::scratch::kani::zero_capacity_frontier_scratch_yields_an_empty_candidate_slice"
+    ],
+    "../../src/endpoint/kernel/frontier/snapshot/kani.rs": [
+      "endpoint::kernel::frontier::snapshot::kani::absent_state_identity_is_rejected",
+      "endpoint::kernel::frontier::snapshot::kani::repeated_alignment_source_remains_detectable_without_capacity_growth",
+      "endpoint::kernel::frontier::snapshot::kani::two_cell_frontier_snapshot_never_publishes_a_third_candidate",
+      "endpoint::kernel::frontier::snapshot::kani::visited_entry_identity_is_exact_and_never_silent"
+    ],
+    "../../src/endpoint/kernel/frontier_state/kani.rs": [
+      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_first_entry_removal",
+      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_last_entry_removal",
+      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_row_compaction",
+      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slots_distinguish_scope_at_same_entry",
+      "endpoint::kernel::frontier_state::kani::root_frontier_owner_slots_preserve_symbolic_lane_order"
+    ],
+    "../../src/endpoint/kernel/offer/ingress/kani.rs": [
+      "endpoint::kernel::offer::ingress::kani::preferred_lane_scan_first_step_is_exact_over_the_full_lane_domain",
+      "endpoint::kernel::offer::ingress::kani::remaining_lane_scan_step_is_exact_over_the_full_lane_domain"
+    ],
+    "../../src/endpoint/kernel/offer/select_alignment/model/pool/tests.rs": [
+      "endpoint::kernel::offer::select_alignment::model::pool::tests::exact_scope_rows_never_synthesize_controller_progress_authority",
+      "endpoint::kernel::offer::select_alignment::model::pool::tests::excluded_exact_current_never_permits_retention",
+      "endpoint::kernel::offer::select_alignment::model::pool::tests::same_entry_erased_flags_cannot_change_exact_current_observation"
+    ],
+    "../../src/endpoint/kernel/offer/select_alignment/model/selection.rs": [
+      "endpoint::kernel::offer::select_alignment::model::selection::verification::erased_candidate_can_only_request_distinct_realign",
+      "endpoint::kernel::offer::select_alignment::model::selection::verification::exact_current_selection_never_becomes_realign"
+    ],
+    "../../src/global/compiled/images/image/program_ref/kani.rs": [
+      "global::compiled::images::image::program_ref::kani::compiled_program_atom_binary_search_is_exact_for_sorted_rows",
+      "global::compiled::images::image::program_ref::kani::compiled_program_atom_blob_decoding_preserves_every_schema_bit",
+      "global::compiled::images::image::program_ref::kani::compiled_program_atom_order_rejects_noncanonical_rows",
+      "global::compiled::images::image::program_ref::kani::compiled_program_blob_comparison_matches_array_equality",
+      "global::compiled::images::image::program_ref::kani::compiled_program_column_range_rejects_stride_multiplication_overflow",
+      "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
+      "global::compiled::images::image::program_ref::kani::descriptor_scope_marker_tag_is_exact_and_injective",
+      "global::compiled::images::image::program_ref::kani::packed_column_range_construction_is_exact_for_resident_stride_domain",
+      "global::compiled::images::image::program_ref::kani::program_atom_row_decoding_accepts_exact_domain",
+      "global::compiled::images::image::program_ref::kani::program_image_columns_are_canonical_for_exact_count_domain",
+      "global::compiled::images::image::program_ref::kani::program_image_columns_reject_total_byte_overflow",
+      "global::compiled::images::image::program_ref::kani::program_image_constructor_rejects_undersized_storage",
+      "global::compiled::images::image::program_ref::kani::program_image_fit_probe_rejects_undersized_storage",
+      "global::compiled::images::image::program_ref::kani::proof_only_scope_entry_metadata_is_erased_from_descriptor_tags",
+      "global::compiled::images::image::program_ref::kani::role_image_column_range_rejects_stride_multiplication_overflow"
+    ],
+    "../../src/global/compiled/images/image/route_resolvers/kani.rs": [
+      "global::compiled::images::image::route_resolvers::kani::canonical_route_participant_identity_accepts_full_u8_role_domain",
+      "global::compiled::images::image::route_resolvers::kani::dynamic_route_resolver_identity_is_scope_and_id",
+      "global::compiled::images::image::route_resolvers::kani::packed_route_authority_roundtrip_is_exact",
+      "global::compiled::images::image::route_resolvers::kani::route_resolver_row_decoding_accepts_exact_range_domain"
+    ],
+    "../../src/global/compiled/lowering/seal/kani.rs": [
+      "global::compiled::lowering::seal::kani::route_controller_or_in_band_evidence_is_exact_acceptance_domain"
+    ],
+    "../../src/global/const_dsl/allocation/kani.rs": [
+      "global::const_dsl::allocation::kani::lane_endpoint_index_aggregates_exact_symbolic_membership",
+      "global::const_dsl::allocation::kani::two_arm_route_frame_coloring_is_exact",
+      "global::const_dsl::allocation::kani::two_by_two_parallel_lane_matching_has_minimum_span"
+    ],
+    "../../src/global/const_dsl/allocation/kani/maximum_certificate.rs": [
+      "global::const_dsl::allocation::kani::maximum_certificate::three_by_three_parallel_lane_matching_certificate_is_maximum"
+    ],
+    "../../src/global/const_dsl/allocation/kani/production_coloring.rs": [
+      "global::const_dsl::allocation::kani::production_coloring::lane_reuse_conflict_matches_endpoint_equality",
+      "global::const_dsl::allocation::kani::production_coloring::parallel_lane_coloring_reuses_disjoint_class",
+      "global::const_dsl::allocation::kani::production_coloring::parallel_lane_coloring_separates_conflicting_class"
+    ],
+    "../../src/global/const_dsl/allocation/kani/roll_coloring.rs": [
+      "global::const_dsl::allocation::kani::roll_coloring::local_effect_frame_labels_are_erased_from_the_wire_coloring_domain",
+      "global::const_dsl::allocation::kani::roll_coloring::nested_roll_frame_coloring_uses_the_complete_inbound_key",
+      "global::const_dsl::allocation::kani::roll_coloring::route_scope_publication_is_closed_and_atomic"
+    ],
+    "../../src/global/const_dsl/endpoint_controller/kani.rs": [
+      "global::const_dsl::endpoint_controller::kani::controller_merge_accepts_exact_single_role_domain"
+    ],
+    "../../src/global/const_dsl/endpoint_selectors/kani.rs": [
+      "global::const_dsl::endpoint_selectors::kani::inbound_selector_identity_is_exact_compact_event_identity",
+      "global::const_dsl::endpoint_selectors::kani::observer_path_decision_has_exact_merge_domain",
+      "global::const_dsl::endpoint_selectors::kani::outbound_selector_identity_is_exact_public_send_contract"
+    ],
+    "../../src/global/const_dsl/receive_lane_causality/kani.rs": [
+      "global::const_dsl::receive_lane_causality::kani::causal_witness_table_is_first_write_wins_and_role_exact",
+      "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_accepts_closed_cycle",
+      "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_rejects_open_cycle",
+      "global::const_dsl::receive_lane_causality::kani::sender_change_without_causal_handoff_is_rejected",
+      "global::const_dsl::receive_lane_causality::kani::three_event_causal_handoff_accepts_every_valid_role_assignment",
+      "global::const_dsl::receive_lane_causality::kani::three_event_linear_scan_matches_pairwise_checker"
+    ],
+    "../../src/global/const_dsl/scope/kani.rs": [
+      "global::const_dsl::scope::kani::scope_id_decoding_accepts_exact_compact_domain"
+    ],
+    "../../src/global/const_dsl/scope_ranges/kani.rs": [
+      "global::const_dsl::scope_ranges::kani::nested_route_topology_authorities_are_exact_and_coherent",
+      "global::const_dsl::scope_ranges::kani::normalized_route_primary_preserves_all_valid_compact_bounds",
+      "global::const_dsl::scope_ranges::kani::normalized_route_primary_rejects_an_empty_arm"
+    ],
+    "../../src/global/const_dsl/scope_ranges/nesting/kani.rs": [
+      "global::const_dsl::scope_ranges::nesting::kani::crossing_scope_ranges_are_rejected",
+      "global::const_dsl::scope_ranges::nesting::kani::equal_projected_scope_ranges_follow_source_preorder",
+      "global::const_dsl::scope_ranges::nesting::kani::strict_scope_containment_is_authoritative"
+    ],
+    "../../src/global/role_program/image_impl/kani.rs": [
+      "global::role_program::image_impl::kani::active_lane_metadata_is_exact_for_every_first_byte_bitmap",
+      "global::role_program::image_impl::kani::active_lane_metadata_preserves_the_high_lane_boundary",
+      "global::role_program::image_impl::kani::inactive_lane_metadata_has_one_empty_representation",
+      "global::role_program::image_impl::kani::lane_column_coherence_is_exact_for_one_binary_route",
+      "global::role_program::image_impl::kani::optional_event_fact_row_reserves_only_the_absent_u16_value",
+      "global::role_program::image_impl::kani::packed_lane_optional_range_canonicality_is_exact",
+      "global::role_program::image_impl::kani::packed_lane_range_encoding_avoids_reserved_sentinel",
+      "global::role_program::image_impl::kani::packed_lane_range_reserved_sentinel_is_rejected",
+      "global::role_program::image_impl::kani::packed_route_arm_row_round_trips_full_compact_domains",
+      "global::role_program::image_impl::kani::resident_event_header_decoding_accepts_exact_domain",
+      "global::role_program::image_impl::kani::resident_local_step_lane_decoding_accepts_exact_domain",
+      "global::role_program::image_impl::kani::resident_passive_child_parent_binding_is_exact",
+      "global::role_program::image_impl::kani::resident_role_local_direction_is_exact_over_the_full_role_domain",
+      "global::role_program::image_impl::kani::resident_roll_scope_decoding_accepts_exact_domain",
+      "global::role_program::image_impl::kani::resident_route_arm_index_decoding_accepts_exact_binary_domain",
+      "global::role_program::image_impl::kani::resident_route_arm_lane_step_decoding_accepts_exact_domain",
+      "global::role_program::image_impl::kani::resident_route_commit_decision_match_is_exact",
+      "global::role_program::image_impl::kani::resident_route_scope_decoding_accepts_exact_domain",
+      "global::role_program::image_impl::kani::role_image_fit_probe_rejects_plan_mismatch",
+      "global::role_program::image_impl::kani::role_image_fit_probe_rejects_undersized_storage",
+      "global::role_program::image_impl::kani::route_commit_partition_requires_the_exact_builder_maximum",
+      "global::role_program::image_impl::kani::two_roll_scope_rows_are_accepted_exactly_when_unique_and_laminar"
+    ],
+    "../../src/global/role_program/image_impl/projection/lanes/kani.rs": [
+      "global::role_program::image_impl::projection::lanes::kani::local_lane_accumulator_preserves_exact_lane_relations_and_last_steps"
+    ],
+    "../../src/global/role_program/lane_set/kani.rs": [
+      "global::role_program::lane_set::kani::descriptor_lane_byte_iteration_returns_the_first_set_lane_in_the_exact_domain",
+      "global::role_program::lane_set::kani::descriptor_lane_byte_view_rejects_lengths_beyond_the_lane_domain",
+      "global::role_program::lane_set::kani::lane_set_iteration_returns_the_first_set_lane_in_the_exact_domain",
+      "global::role_program::lane_set::kani::lane_set_mutation_is_exact_over_the_complete_lane_domain",
+      "global::role_program::lane_set::kani::logical_lane_capacity_is_the_exact_descriptor_lane_span",
+      "global::role_program::lane_set::kani::nonempty_lane_set_owner_rejects_null_storage",
+      "global::role_program::lane_set::kani::nonempty_lane_set_view_rejects_null_storage"
+    ],
+    "../../src/global/typestate/cursor/kani.rs": [
+      "global::typestate::cursor::kani::compact_cursor_position_covers_the_full_u16_value_domain",
+      "global::typestate::cursor::kani::local_event_bit_exists_exactly_inside_the_local_step_domain"
+    ],
+    "../../src/global/typestate/facts/kani.rs": [
+      "global::typestate::facts::kani::checked_state_index_acceptance_is_the_exact_present_identity_domain",
+      "global::typestate::facts::kani::deterministic_inbound_key_matching_is_exact_on_every_available_axis",
+      "global::typestate::facts::kani::deterministic_inbound_key_rejects_each_single_axis_mismatch",
+      "global::typestate::facts::kani::inbound_frame_key_matching_is_exact_on_every_wire_axis",
+      "global::typestate::facts::kani::inbound_frame_key_rejects_each_single_axis_mismatch",
+      "global::typestate::facts::kani::optional_route_arm_decoding_accepts_exact_domain",
+      "global::typestate::facts::kani::packed_event_conflict_decoding_accepts_exact_domain",
+      "global::typestate::facts::kani::packed_local_dependency_decoding_accepts_exact_domain",
+      "global::typestate::facts::kani::packed_local_dependency_event_bounds_are_exact",
+      "global::typestate::facts::kani::state_index_preserves_the_exact_present_identity_domain",
+      "global::typestate::facts::kani::state_index_rejects_the_reserved_absent_identity"
+    ],
+    "../../src/observe/core/ring_state.rs": [
+      "observe::core::ring_state::kani::ring_state_step_preserves_the_exact_slot_domain"
+    ],
+    "../../src/rendezvous/association/fault/kani.rs": [
+      "rendezvous::association::fault::kani::invalid_session_fault_encoding_is_fail_fast",
+      "rendezvous::association::fault::kani::session_fault_encoding_is_injective",
+      "rendezvous::association::fault::kani::session_fault_encoding_roundtrip_is_exact"
+    ],
+    "../../src/rendezvous/association/kani.rs": [
+      "rendezvous::association::kani::attachment_count_accepts_exact_full_role_domain",
+      "rendezvous::association::kani::attachment_count_allows_256_and_rejects_257",
+      "rendezvous::association::kani::attachment_increment_preserves_packed_fault_code",
+      "rendezvous::association::kani::packed_state_preserves_full_count_and_fault_code"
+    ],
+    "../../src/rendezvous/core/storage_layout/capacity/kani.rs": [
+      "rendezvous::core::storage_layout::capacity::kani::association_storage_layout_is_bounded_and_exact",
+      "rendezvous::core::storage_layout::capacity::kani::endpoint_gap_placement_is_aligned_and_bounded",
+      "rendezvous::core::storage_layout::capacity::kani::endpoint_generation_advances_or_exhausts",
+      "rendezvous::core::storage_layout::capacity::kani::endpoint_lease_slot_count_matches_last_index_domain",
+      "rendezvous::core::storage_layout::capacity::kani::endpoint_lease_storage_layout_is_bounded_and_exact",
+      "rendezvous::core::storage_layout::capacity::kani::endpoint_membership_seal_is_published_and_idempotent",
+      "rendezvous::core::storage_layout::capacity::kani::endpoint_operation_and_nested_scratch_transitions_are_exact",
+      "rendezvous::core::storage_layout::capacity::kani::packed_sidecar_pair_is_aligned_and_disjoint",
+      "rendezvous::core::storage_layout::capacity::kani::packed_sidecar_range_is_aligned_and_monotonic",
+      "rendezvous::core::storage_layout::capacity::kani::resolver_storage_layout_is_bounded_and_exact",
+      "rendezvous::core::storage_layout::capacity::kani::sidecar_overlap_is_symmetric_and_exact",
+      "rendezvous::core::storage_layout::capacity::kani::three_resident_sidecars_compact_before_all_source_ranges"
+    ],
+    "../../src/rendezvous/recv_frame_receipt/kani.rs": [
+      "rendezvous::recv_frame_receipt::kani::receive_frame_receipt_rejects_duplicate_issue",
+      "rendezvous::recv_frame_receipt::kani::receive_frame_receipt_rejects_duplicate_resolution",
+      "rendezvous::recv_frame_receipt::kani::receive_frame_receipt_rejects_foreign_port",
+      "rendezvous::recv_frame_receipt::kani::receive_frame_receipt_rejects_foreign_state",
+      "rendezvous::recv_frame_receipt::kani::receive_frame_receipt_resolution_is_affine"
+    ],
+    "../../src/runtime_core/layout/kani.rs": [
+      "runtime_core::layout::kani::checked_absolute_offset_alignment_is_exact_and_never_wraps",
+      "runtime_core::layout::kani::checked_alignment_is_exact_over_the_complete_usize_domain",
+      "runtime_core::layout::kani::u32_word_count_is_exact_over_the_complete_usize_domain"
+    ],
+    "../../src/runtime_core/unique_match/kani.rs": [
+      "runtime_core::unique_match::kani::unique_match_ambiguity_is_absorbing",
+      "runtime_core::unique_match::kani::unique_match_zero_one_and_distinct_many_are_exact"
+    ],
+    "../../src/session/cluster/core/dynamic_resolvers/kani.rs": [
+      "session::cluster::core::dynamic_resolvers::kani::resolver_initial_storage_is_initialized_and_dispatchable",
+      "session::cluster::core::dynamic_resolvers::kani::resolver_registration_key_accepts_full_u16_id_domain",
+      "session::cluster::core::dynamic_resolvers::kani::resolver_registration_key_is_program_and_id",
+      "session::cluster::core::dynamic_resolvers::kani::resolver_replacement_compacts_entries_and_preserves_dispatch"
+    ],
+    "../../src/transport/kani.rs": [
+      "transport::kani::frame_header_identity_is_exact_and_injective",
+      "transport::kani::frame_header_roundtrip_preserves_every_field"
+    ],
+    "../../src/transport/wire/kani.rs": [
+      "transport::wire::kani::builtin_bool_codec_accepts_exact_canonical_bytes",
+      "transport::wire::kani::builtin_borrowed_bytes_roundtrip_is_exact",
+      "transport::wire::kani::builtin_borrowed_bytes_truncation_is_exact",
+      "transport::wire::kani::builtin_fixed_array_schema_and_bytes_are_exact",
+      "transport::wire::kani::builtin_u128_i128_codecs_are_exact",
+      "transport::wire::kani::builtin_u16_i16_codecs_are_exact",
+      "transport::wire::kani::builtin_u32_i32_codecs_are_exact",
+      "transport::wire::kani::builtin_u64_i64_codecs_are_exact",
+      "transport::wire::kani::builtin_u8_i8_codecs_are_exact",
+      "transport::wire::kani::builtin_unit_codec_is_exact",
+      "transport::wire::kani::fixed_array_schema_identity_is_injective_over_the_complete_admitted_domain",
+      "transport::wire::kani::fixed_array_schema_identity_rejects_the_first_colliding_width"
+    ]
+  },
+  "contract-harnesses": {},
+  "contracts": [],
+  "totals": {
+    "standard-harnesses": 191,
+    "contract-harnesses": 0,
+    "functions-under-contract": 0
+  }
+}

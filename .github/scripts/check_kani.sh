@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="${ROOT_DIR}/proofs/kani/Cargo.toml"
+EXPECTED_INVENTORY="${ROOT_DIR}/proofs/kani/harness-inventory.json"
 EXPECTED_VERSION="$(< "${ROOT_DIR}/.github/kani-version")"
 ACTUAL_VERSION="$(cargo kani --version)"
 
@@ -49,8 +50,57 @@ for path in sorted(root.rglob("*.rs")):
             sys.exit(1)
 PY
 
+inventory_dir="$(mktemp -d "${TMPDIR:-/tmp}/hibana-kani-inventory.XXXXXX")"
 verification_log="$(mktemp "${TMPDIR:-/tmp}/hibana-kani-verification.XXXXXX")"
-trap 'rm -f "${verification_log}"' EXIT
+cleanup() {
+  rm -rf "${inventory_dir}"
+  rm -f "${verification_log}"
+}
+trap cleanup EXIT
+
+(
+  cd "${inventory_dir}"
+  RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
+    --manifest-path "${MANIFEST}" \
+    --target-dir "${ROOT_DIR}/target/kani" \
+    list --format json
+)
+ACTUAL_INVENTORY="${inventory_dir}/kani-list.json"
+if [[ ! -s "${ACTUAL_INVENTORY}" ]]; then
+  echo "Kani gate did not produce a nonempty structured harness inventory" >&2
+  exit 1
+fi
+if ! cmp -s "${EXPECTED_INVENTORY}" "${ACTUAL_INVENTORY}"; then
+  set +e
+  diff -u "${EXPECTED_INVENTORY}" "${ACTUAL_INVENTORY}" >&2
+  inventory_diff_status="$?"
+  set -e
+  if [[ "${inventory_diff_status}" -gt 1 ]]; then
+    echo "Kani harness inventory diff failed" >&2
+    exit "${inventory_diff_status}"
+  fi
+  echo "Kani harness inventory changed" >&2
+  exit 1
+fi
+expected_harness_total="$(python3 - "${EXPECTED_INVENTORY}" "${EXPECTED_VERSION}" <<'PY'
+import json
+import pathlib
+import sys
+
+inventory = json.loads(pathlib.Path(sys.argv[1]).read_text())
+expected_version = sys.argv[2]
+if inventory.get("kani-version") != expected_version:
+    raise SystemExit("Kani inventory version does not match .github/kani-version")
+totals = inventory.get("totals")
+if not isinstance(totals, dict):
+    raise SystemExit("Kani inventory is missing totals")
+standard = totals.get("standard-harnesses")
+contract = totals.get("contract-harnesses")
+if not isinstance(standard, int) or standard <= 0 or contract != 0:
+    raise SystemExit("Kani inventory must contain nonempty standard harnesses only")
+print(standard)
+PY
+)"
 
 RUSTFLAGS="-D warnings" CARGO_BUILD_JOBS=1 cargo kani \
   --manifest-path "${MANIFEST}" \
@@ -68,8 +118,11 @@ kani_harness_total="$(sed -nE 's/^Complete - ([0-9]+) successfully verified harn
 reported_harness_total="$(sed -nE 's/^Complete - [0-9]+ successfully verified harnesses, 0 failures, ([0-9]+) total\.$/\1/p' "${verification_log}")"
 if [[ -z "${kani_harness_total}" \
   || "${kani_harness_total}" == "0" \
+  || "${kani_harness_total}" != "${expected_harness_total}" \
   || "${kani_harness_total}" != "${reported_harness_total}" ]]; then
-  echo "Kani gate requires a nonempty complete-harness total" >&2
+  echo \
+    "Kani gate requires the complete ${expected_harness_total}-harness inventory" \
+    >&2
   exit 1
 fi
 

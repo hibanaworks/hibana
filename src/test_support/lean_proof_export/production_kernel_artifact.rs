@@ -154,11 +154,8 @@ theorem generatedProductionKernelArtifactAccepted :
       generatedProductionSession 4 generatedChoreo = true := by
   decide
 
-example : generatedProductionKernelArtifact.check
-    generatedProductionSession 4 generatedChoreo = true :=
-  generatedProductionKernelArtifactAccepted
-
-example : Hibana.PreparedKernelRefinement generatedProductionKernelArtifact.kernel
+theorem generatedProductionKernelArtifactRefinesKernel :
+    Hibana.PreparedKernelRefinement generatedProductionKernelArtifact.kernel
     generatedProductionSession 4 generatedChoreo :=
   Hibana.accepted_production_kernel_artifact_refines_artifact_kernel
     generatedProductionKernelArtifactAccepted
@@ -281,10 +278,6 @@ theorem generatedStaticDeploymentCertificateAccepted :
       generatedVerifiedProtocolFamily = true := by
   decide
 
-example : generatedStaticDeploymentCertificate.check
-    generatedVerifiedProtocolFamily = true :=
-  generatedStaticDeploymentCertificateAccepted
-
 theorem generated_static_deployment_certificate_refines_exact_family :
     generatedStaticDeploymentCertificate.Refines generatedVerifiedProtocolFamily :=
   Hibana.static_deployment_certificate_sound
@@ -295,7 +288,8 @@ def generatedMissingStaticDeploymentCertificate :
   entries := generatedStaticDeploymentCertificate.entries.drop 1
 }
 
-example : generatedMissingStaticDeploymentCertificate.check
+theorem generatedMissingStaticDeploymentCertificateRejected :
+    generatedMissingStaticDeploymentCertificate.check
     generatedVerifiedProtocolFamily = false := by
   decide
 
@@ -305,7 +299,8 @@ def generatedExtraStaticDeploymentCertificate :
     [generatedPrimaryStaticDeploymentEntry]
 }
 
-example : generatedExtraStaticDeploymentCertificate.check
+theorem generatedExtraStaticDeploymentCertificateRejected :
+    generatedExtraStaticDeploymentCertificate.check
     generatedVerifiedProtocolFamily = false := by
   decide
 
@@ -316,7 +311,8 @@ def generatedCorruptStaticDeploymentCertificate :
       generatedStaticDeploymentCertificate.entries.drop 1
 }
 
-example : generatedCorruptStaticDeploymentCertificate.check
+theorem generatedCorruptStaticDeploymentCertificateRejected :
+    generatedCorruptStaticDeploymentCertificate.check
     generatedVerifiedProtocolFamily = false := by
   decide
 

@@ -538,9 +538,10 @@ uncommittable until its resolver transition succeeds. Aeneas, Verus, Mathlib,
 custom axioms, `Classical.choice`, `sorry`, and `admit` are not part of this
 boundary. Every exported theorem in the static package is audited and permits
 only the `propext` and `Quot.sound` dependencies introduced by the checked
-Core/Std proofs. Its fifteen externally relevant claim types are also pinned
-verbatim, so retaining a theorem name while weakening its conclusion or adding
-an assumption fails the gate.
+Core/Std proofs. Fifteen externally relevant claim types remain the compact
+review surface, while the elaborated types of all 667 exported theorems are
+pinned in a separate checked snapshot. Retaining any theorem name while changing
+its elaborated conclusion or assumptions therefore fails the gate.
 
 Thirty-two anonymous finite regression checks use `native_decide`. They are
 confined to `StaticProjectabilityExamples.lean` and
@@ -548,7 +549,12 @@ confined to `StaticProjectabilityExamples.lean` and
 and cannot contain named theorems or lemmas. The gate rejects `native_decide`
 anywhere else in the static source tree. These executable examples test the
 decision procedures; no exported theorem depends on their native-evaluator
-axioms.
+axioms. Four additional anonymous examples exercise descriptor-participant
+boundaries with kernel `decide`. The gate assigns deterministic audit-only names
+to all 36 examples, pins their normalized types, and verifies that each native
+example owns exactly one theorem-local evaluator axiom while each kernel example
+owns none. Deleting an anonymous regression or changing its elaborated statement
+changes a checked snapshot.
 
 Concrete generated artifacts have a separate, explicit boundary. The twenty-two
 exact descriptor certificates plus the production kernel and codec checks use
@@ -561,7 +567,19 @@ discovers all 48 named generated theorems, rejects `sorry`, custom axioms,
 theorem additions or deletions, requires the kernel/native classification
 exactly, and rejects any
 axiom other than `propext`, `Quot.sound`, and the sixteen declared theorem-local
+native decisions. It also compares Lean's normalized types for all 48 generated
+principal contracts and all 458 generated trace, exact-byte rejection,
+refinement, and progress obligations against a checked-in surface. Anonymous
+generated examples are forbidden. The resulting 506-theorem inventory prevents
+an obligation from disappearing and prevents a stable theorem name and axiom
+set from hiding a changed elaborated generated statement. Of those theorems,
+466 are kernel-checked and 40 have an audited closure over the sixteen declared
 native decisions. This boundary is not described as Lean-kernel verification.
+
+The runtime and public-operation exporters follow the same rule. Their sixteen
+layout, generation, and allocation theorems and two public-operation table
+theorems are named, kernel-checked, axiom-audited, and type-pinned. A success
+marker without those exact proof obligations is rejected.
 
 Frontier scratch capacity is derived from the projected active-lane count. Lean
 proves that every exact `(route scope, local entry)` offer key has an owning

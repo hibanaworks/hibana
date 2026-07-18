@@ -373,8 +373,8 @@ fn trace_proof_source(
         .join(",\n");
     format!(
         "def {name} : List Hibana.TraceFrame := [\n{frame_source}\n]\n\n\
-         example : Hibana.checkProgramTrace {choreo} {role} {name} = true := by\n  decide\n\n\
-         example :\n    (Hibana.projectGraph {role} {choreo}).WellFormed /\\\n      Hibana.ValidTrace (Hibana.projectGraph {role} {choreo}) .initial {name} :=\n  Hibana.program_trace_checker_sound {choreo} {role} {name} (by decide)\n"
+         theorem {name}Accepted : Hibana.checkProgramTrace {choreo} {role} {name} = true := by\n  decide\n\n\
+         theorem {name}Valid :\n    (Hibana.projectGraph {role} {choreo}).WellFormed /\\\n      Hibana.ValidTrace (Hibana.projectGraph {role} {choreo}) .initial {name} :=\n  Hibana.program_trace_checker_sound {choreo} {role} {name} {name}Accepted\n"
     )
 }
 

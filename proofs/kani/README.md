@@ -112,9 +112,12 @@ The pinned gate exhausts the production arithmetic for:
 - exact resolver-sidecar sizing and 32-bit bounds across the full `u16`
   capacity domain.
 
-Kani itself discovers and verifies every production `#[kani::proof]`; the gate
-does not pass a harness filter or maintain a second execution inventory. It
-rejects a missing, partial, failed, or empty complete-harness summary. Transport
+Kani itself discovers every production `#[kani::proof]` into its structured
+JSON inventory. The gate compares that output with the reviewed inventory and
+then verifies every listed harness without passing a filter. The complete CBMC
+summary must report exactly the same total, so a deleted, added, skipped,
+partial, failed, or empty harness set is rejected without a hand-written second
+execution list. Transport
 FIFO, exactly-once/no-replay delivery, peer-close observation, and one-shot
 receive receipt resolution are modeled and proved in Lean, mirrored by the Rust
 conformance tests, and checked under Miri.

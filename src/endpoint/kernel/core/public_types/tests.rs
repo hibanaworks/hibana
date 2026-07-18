@@ -70,9 +70,12 @@ fn export_public_operation_kernel_for_lean() {
     let generated = format!(
         "import Hibana.MainTheorems\n\n\
          def generatedPublicOperationTable : List Hibana.PublicOperationLease := [\n{}\n]\n\n\
-         example : Hibana.checkPublicOperationTable generatedPublicOperationTable = true := by\n  decide\n\n\
-         example : Hibana.PublicOperationTableExact generatedPublicOperationTable :=\n  \
-         Hibana.public_operation_table_certificate_sound (by decide)\n\n\
+         theorem generatedPublicOperationTableAccepted :\n  \
+         Hibana.checkPublicOperationTable generatedPublicOperationTable = true := by\n  decide\n\n\
+         theorem generatedPublicOperationTableExact :\n  \
+         Hibana.PublicOperationTableExact generatedPublicOperationTable :=\n  \
+         Hibana.public_operation_table_certificate_sound\n    \
+         generatedPublicOperationTableAccepted\n\n\
          #eval IO.println \"hibana Lean public-operation kernel proof passed states=9 transitions=81\"\n",
         rows.join(",\n"),
     );

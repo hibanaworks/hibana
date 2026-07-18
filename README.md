@@ -719,8 +719,17 @@ rather than presented as kernel-only proofs.
 The repository also gates the proof inventory itself: new public operations,
 compact transition effects, ownership classes, Lean theorems, Miri scenarios,
 and Kani harnesses cannot silently bypass their checked inventories. The gate
-also pins fifteen principal Lean claim types, so a theorem cannot retain its
-name while silently acquiring assumptions or losing guarantees.
+also presents fifteen principal Lean claim types as a compact public surface
+and pins the elaborated types of all 667 static theorems. A theorem cannot
+retain its name while its elaborated statement silently acquires assumptions or
+drops a conclusion. The same gate assigns audit-only names to all 36 anonymous
+regression examples and pins their elaborated statements, so changing only an
+example statement cannot hide behind an unchanged count. All 48 named
+protocol/production contracts and 458 generated trace, rejection, refinement,
+and progress obligations are named and type-pinned. The sixteen
+runtime-layout/lifecycle theorems and two public-operation table theorems are
+pinned independently as well. Generated evidence cannot disappear or keep its
+name while changing its elaborated checked statement.
 
 ## Build And Release
 

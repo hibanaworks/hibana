@@ -1,0 +1,2 @@
+generatedPublicOperationTableAccepted : Hibana.checkPublicOperationTable generatedPublicOperationTable = true
+generatedPublicOperationTableExact : Hibana.PublicOperationTableExact generatedPublicOperationTable

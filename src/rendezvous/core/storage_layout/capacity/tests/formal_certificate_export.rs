@@ -195,18 +195,30 @@ fn allocation_failure_certificate_source() -> String {
     };
     format!(
         "{initial}\n{growth}\n{abort}\n{compacting_abort}\n\
-         example : generatedInitialAllocationFailure.check = true := by decide\n\n\
-         example : generatedInitialAllocationFailure.PreservesState :=\n  \
-         Hibana.lease_allocation_failure_certificate_sound (by decide)\n\n\
-         example : generatedGrowthAllocationFailure.check = true := by decide\n\n\
-         example : generatedGrowthAllocationFailure.PreservesState :=\n  \
-         Hibana.lease_allocation_failure_certificate_sound (by decide)\n\n\
-         example : generatedAbortedAllocation.check = true := by decide\n\n\
-         example : generatedAbortedAllocation.PreservesState :=\n  \
-         Hibana.lease_allocation_failure_certificate_sound (by decide)\n\n\
-         example : generatedCompactingAbort.check = true := by decide\n\n\
-         example : generatedCompactingAbort.PreservesAuthorityAndCapacity :=\n  \
-         Hibana.lease_allocation_abort_certificate_sound (by decide)\n"
+         theorem generatedInitialAllocationFailureAccepted :\n  \
+         generatedInitialAllocationFailure.check = true := by decide\n\n\
+         theorem generatedInitialAllocationFailurePreservesState :\n  \
+         generatedInitialAllocationFailure.PreservesState :=\n  \
+         Hibana.lease_allocation_failure_certificate_sound\n    \
+         generatedInitialAllocationFailureAccepted\n\n\
+         theorem generatedGrowthAllocationFailureAccepted :\n  \
+         generatedGrowthAllocationFailure.check = true := by decide\n\n\
+         theorem generatedGrowthAllocationFailurePreservesState :\n  \
+         generatedGrowthAllocationFailure.PreservesState :=\n  \
+         Hibana.lease_allocation_failure_certificate_sound\n    \
+         generatedGrowthAllocationFailureAccepted\n\n\
+         theorem generatedAbortedAllocationAccepted :\n  \
+         generatedAbortedAllocation.check = true := by decide\n\n\
+         theorem generatedAbortedAllocationPreservesState :\n  \
+         generatedAbortedAllocation.PreservesState :=\n  \
+         Hibana.lease_allocation_failure_certificate_sound\n    \
+         generatedAbortedAllocationAccepted\n\n\
+         theorem generatedCompactingAbortAccepted :\n  \
+         generatedCompactingAbort.check = true := by decide\n\n\
+         theorem generatedCompactingAbortPreservesAuthorityAndCapacity :\n  \
+         generatedCompactingAbort.PreservesAuthorityAndCapacity :=\n  \
+         Hibana.lease_allocation_abort_certificate_sound\n    \
+         generatedCompactingAbortAccepted\n"
     )
 }
 
@@ -242,9 +254,10 @@ fn layout_certificate_source(rv: &Rendezvous<'_, '_, FailingTransport>) -> (Stri
         "def generatedSlabLayout : Hibana.SlabLayoutCertificate := {{\n  \
          base := {},\n  capacity := {slab_len},\n  imageFrontier := {},\n  \
          workspaceBytes := {},\n  endpointFloor := {},\n  regions := [\n{}\n  ]\n}}\n\n\
-         example : generatedSlabLayout.check = true := by\n  decide\n\n\
-         example : generatedSlabLayout.WellFormed :=\n  \
-         Hibana.slab_layout_certificate_sound (by decide)\n",
+         theorem generatedSlabLayoutAccepted : generatedSlabLayout.check = true := by\n  \
+         decide\n\n\
+         theorem generatedSlabLayoutWellFormed : generatedSlabLayout.WellFormed :=\n  \
+         Hibana.slab_layout_certificate_sound generatedSlabLayoutAccepted\n",
         slab_ptr.addr(),
         rv.image_frontier.get(),
         rv.frontier_workspace_bytes.get(),
@@ -303,29 +316,31 @@ def generatedPoisonTail : List Hibana.SessionGenerationAction := [
   .releaseLast
 ]
 
-example :
+theorem generatedPoisonTailAccepted :
     Hibana.checkSessionGenerationTrace (.poisoned .transportClosed)
       generatedPoisonTail = true := by
   decide
 
-example :
+theorem generatedPoisonTailRetires :
     Hibana.runSessionGenerationTrace (.poisoned .transportClosed)
       generatedPoisonTail = some .retired := by
   decide
 
-example :
+theorem generatedPoisonTailTrace :
     Hibana.SessionGenerationTrace (.poisoned .transportClosed)
       generatedPoisonTail .retired :=
-  Hibana.session_generation_run_sound (by decide)
+  Hibana.session_generation_run_sound generatedPoisonTailRetires
 
-example :
+theorem generatedPoisonedAttachRejected :
     Hibana.applySessionGenerationAction (.poisoned .transportClosed) .attach = none :=
   Hibana.poisoned_generation_attach_rejected .transportClosed
 
-example : Hibana.nextLeaseGeneration? 4294967294 = some 4294967295 := by
+theorem generatedNextLeaseGenerationMaximumAccepted :
+    Hibana.nextLeaseGeneration? 4294967294 = some 4294967295 := by
   decide
 
-example : Hibana.nextLeaseGeneration? 4294967295 = none :=
+theorem generatedMaximumLeaseGenerationExhausted :
+    Hibana.nextLeaseGeneration? 4294967295 = none :=
   Hibana.max_lease_generation_is_exhausted
 "#;
 
