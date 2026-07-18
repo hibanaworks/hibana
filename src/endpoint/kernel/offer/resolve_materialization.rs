@@ -5,7 +5,8 @@ use core::task::Poll;
 use super::resolve::{MaterializationReadyOutcome, RouteAuthorityResolution};
 use super::{
     CursorEndpoint, FrontierDeferOutcome, FrontierDeferRequest, FrontierScratchWorkspace,
-    FrontierVisitSet, OfferResolveState, RecvResult, ResolvedRouteArm, RouteArmToken, Transport,
+    FrontierVisitSet, OfferResolveState, RecvError, RecvResult, ResolvedRouteArm, RouteArmToken,
+    Transport,
 };
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -29,8 +30,15 @@ where
 
         let selected_arm = loop {
             let selected_arm = route_token.arm().as_u8();
-            if !self.selected_arm_missing_materialization_evidence(state, selected_arm, route_token)
-            {
+            let missing = match self.selected_arm_missing_materialization_evidence(
+                state,
+                selected_arm,
+                route_token,
+            ) {
+                Ok(missing) => missing,
+                Err(err) => return Poll::Ready(Err(err)),
+            };
+            if !missing {
                 break selected_arm;
             }
             if let Some(authority) = self.poll_unready_resolver_authority(state, route_token) {
@@ -111,16 +119,17 @@ where
         state: &OfferResolveState<'r>,
         selected_arm: u8,
         token: RouteArmToken,
-    ) -> bool {
+    ) -> RecvResult<bool> {
         let requires = self.selection_arm_requires_materialization_ready_evidence(
             state.selection(),
             state.facts.profile.is_controller(),
             selected_arm,
         );
         if !requires || self.scope_has_ready_arm(state.selection().scope_id, selected_arm) {
-            return false;
+            return Ok(false);
         }
-        !self.staged_transport_can_materialize_selected_arm(state, selected_arm, token)
+        self.staged_transport_can_materialize_selected_arm(state, selected_arm, token)
+            .map(|materializes| !materializes)
     }
 
     #[inline(never)]
@@ -129,17 +138,18 @@ where
         state: &OfferResolveState<'r>,
         selected_arm: u8,
         token: RouteArmToken,
-    ) -> bool {
+    ) -> RecvResult<bool> {
         if !state.facts.profile.transport_marks_ready_from_source(token) {
-            return false;
+            return Ok(false);
         }
         let selection = state.selection();
         let Some(key) = state.ingress.transport_frame_key() else {
-            return false;
+            return Ok(false);
         };
         self.cursor
             .passive_descendant_dispatch_arm_for_key(selection.scope_id, key)
-            == Some(selected_arm)
+            .map(|arm| arm == Some(selected_arm))
+            .map_err(|_| RecvError::PhaseInvariant)
     }
 
     #[inline(never)]
@@ -184,7 +194,7 @@ where
                 MaterializationReadyOutcome::RestartFrontier,
             );
         }
-        match self.on_frontier_defer(
+        match core::task::ready!(self.on_frontier_defer(
             &mut state.progress,
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
@@ -193,7 +203,7 @@ where
             },
             frontier_visited,
             scratch,
-        ) {
+        ))? {
             FrontierDeferOutcome::Continue => {
                 if state.facts.profile.intrinsic_passive_progress_after_defer() {
                     state
@@ -218,7 +228,6 @@ where
                     MaterializationReadyOutcome::RestartFrontier,
                 )
             }
-            FrontierDeferOutcome::Pending => Poll::Pending,
         }
     }
 }

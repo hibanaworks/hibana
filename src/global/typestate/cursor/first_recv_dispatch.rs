@@ -1,5 +1,6 @@
 use super::{
-    EventCursorMachine, InboundFrameKey, LocalAction, ScopeId, StateIndex, state_index_to_usize,
+    CursorInvariantError, EventCursorMachine, InboundFrameKey, LocalAction, ScopeId, StateIndex,
+    state_index_to_usize,
 };
 use crate::runtime_core::UniqueMatch;
 
@@ -55,9 +56,9 @@ impl EventCursorMachine {
         &self,
         scope_id: ScopeId,
         key: InboundFrameKey,
-    ) -> Option<(u8, StateIndex)> {
+    ) -> Result<Option<(u8, StateIndex)>, CursorInvariantError> {
         let mut matched = UniqueMatch::NONE;
-        self.visit_first_recv_dispatch(scope_id, |arm, target| {
+        let visited = self.visit_first_recv_dispatch(scope_id, |arm, target| {
             let arm = validated_dispatch_arm(arm, target);
             let node = self.node(state_index_to_usize(target));
             let LocalAction::Recv {
@@ -75,8 +76,13 @@ impl EventCursorMachine {
             {
                 matched = matched.add((arm, target));
             }
-        })?;
-        matched.into_option()
+        });
+        let Some(()) = visited else {
+            return Err(CursorInvariantError::INVARIANT);
+        };
+        matched
+            .finish_optional()
+            .map_err(|_| CursorInvariantError::INVARIANT)
     }
 
     #[inline(always)]

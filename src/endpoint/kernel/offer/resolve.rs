@@ -174,13 +174,14 @@ where
             let Some(selected) = self
                 .cursor
                 .passive_descendant_dispatch_arm_for_key(scope_id, key)
+                .map_err(|_| RecvError::PhaseInvariant)?
             else {
                 return Ok(None);
             };
             (Arm::from_raw(selected), true)
         };
         if marks_descendant {
-            self.mark_intrinsic_passive_descendant_path_ready(scope_id, key);
+            self.mark_intrinsic_passive_descendant_path_ready(scope_id, key)?;
         }
         self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
         Ok(Some(RouteArmToken::from_poll(arm)))
@@ -408,7 +409,7 @@ where
         scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<RouteResolveOutcome>> {
         let selection = state.selection();
-        match self.on_frontier_defer(
+        match core::task::ready!(self.on_frontier_defer(
             &mut state.progress,
             FrontierDeferRequest {
                 scope_id: selection.scope_id,
@@ -417,7 +418,7 @@ where
             },
             frontier_visited,
             scratch,
-        ) {
+        ))? {
             FrontierDeferOutcome::Continue | FrontierDeferOutcome::Yielded => {
                 state.pending.arm_yield_restart();
                 self.poll_resolve_pending_as(
@@ -427,7 +428,6 @@ where
                     RouteResolveOutcome::RestartFrontier,
                 )
             }
-            FrontierDeferOutcome::Pending => Poll::Pending,
         }
     }
 

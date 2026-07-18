@@ -657,7 +657,11 @@ fn receive_hot_path_uses_descriptor_queries_and_complete_keys_without_mask_scrat
         hot_path.contains("InboundFrameKey")
             && hot_path.contains("first_recv_descendant_target_for_key")
             && hot_path.contains("matches_recv")
-            && hot_path.contains("UniqueMatch"),
+            && hot_path.contains("UniqueMatch")
+            && hot_path.contains("finish_optional()")
+            && hot_path.contains("map_err(|_| CursorInvariantError::INVARIANT)")
+            && !hot_path.contains("into_option")
+            && !hot_path.contains("finish().ok()"),
         "receive dispatch must compare one complete key and use one fail-closed uniqueness kernel"
     );
 }

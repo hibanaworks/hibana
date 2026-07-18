@@ -157,7 +157,7 @@ where
                 }
             }
 
-            match self.on_frontier_defer(
+            match core::task::ready!(self.on_frontier_defer(
                 state.progress,
                 FrontierDeferRequest {
                     scope_id,
@@ -166,12 +166,11 @@ where
                 },
                 state.frontier_visited,
                 scratch,
-            ) {
+            ))? {
                 FrontierDeferOutcome::Continue => break,
                 FrontierDeferOutcome::Yielded => {
                     return Poll::Ready(Ok(PassiveRouteEvidenceOutcome::RestartFrontier));
                 }
-                FrontierDeferOutcome::Pending => return Poll::Pending,
             }
         }
         Poll::Ready(Ok(PassiveRouteEvidenceOutcome::EvidenceOnly {
@@ -189,7 +188,7 @@ where
             let Some(key) = state.transport_frame_key() else {
                 return Ok(FrameEvidenceResolution::unresolved());
             };
-            if self.mark_scope_ready_arm_from_frame_key(scope_id, key) {
+            if self.mark_scope_ready_arm_from_frame_key(scope_id, key)? {
                 return Ok(FrameEvidenceResolution::resolved());
             }
             return Ok(FrameEvidenceResolution::unresolved());
@@ -230,6 +229,7 @@ where
         if self
             .cursor
             .passive_descendant_dispatch_arm_for_key(selection.scope_id, key)
+            .map_err(|_| RecvError::PhaseInvariant)?
             .is_some()
         {
             state.stage_transport(frame);

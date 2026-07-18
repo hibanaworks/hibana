@@ -121,17 +121,18 @@ where
         &mut self,
         scope_id: ScopeId,
         key: InboundFrameKey,
-    ) -> bool {
+    ) -> RecvResult<bool> {
         let Some(arm) = self
             .cursor
             .passive_descendant_dispatch_arm_for_key(scope_id, key)
+            .map_err(|_| RecvError::PhaseInvariant)?
             .map(Arm::from_raw)
         else {
-            return false;
+            return Ok(false);
         };
         self.mark_scope_ready_arm_from_exact_passive_arm(scope_id, arm);
-        self.mark_intrinsic_passive_descendant_path_ready(scope_id, key);
-        true
+        self.mark_intrinsic_passive_descendant_path_ready(scope_id, key)?;
+        Ok(true)
     }
 
     #[inline]
@@ -152,7 +153,7 @@ where
         &mut self,
         scope_id: ScopeId,
         key: InboundFrameKey,
-    ) {
+    ) -> RecvResult<()> {
         let mut current_scope = scope_id;
         let mut depth = 0usize;
         let depth_bound = self.cursor.route_chain_bound();
@@ -160,6 +161,7 @@ where
             let Some(arm) = self
                 .cursor
                 .passive_descendant_dispatch_arm_for_key(current_scope, key)
+                .map_err(|_| RecvError::PhaseInvariant)?
             else {
                 break;
             };
@@ -172,6 +174,7 @@ where
             current_scope = child_scope;
             depth += 1;
         }
+        Ok(())
     }
 
     pub(super) fn on_frontier_defer(
@@ -180,15 +183,17 @@ where
         request: FrontierDeferRequest,
         visited: &mut FrontierVisitSet,
         scratch: &mut FrontierScratchWorkspace<'_>,
-    ) -> FrontierDeferOutcome {
+    ) -> Poll<RecvResult<FrontierDeferOutcome>> {
         let FrontierDeferRequest {
             scope_id,
             current_parallel,
             ingress,
         } = request;
         let fingerprint = self.evidence_fingerprint(scope_id, ingress);
-        let evidence = progress.on_defer(fingerprint);
-        let is_pending = matches!(evidence, OfferEvidenceOutcome::Pending);
+        let no_candidate = match progress.on_defer(fingerprint) {
+            OfferEvidenceOutcome::NewEvidence => Poll::Ready(Ok(FrontierDeferOutcome::Continue)),
+            OfferEvidenceOutcome::Pending => Poll::Pending,
+        };
         let current_entry_idx = self.cursor.index();
         visited.record(current_entry_idx);
         let current_is_controller = self.cursor.is_route_controller(scope_id);
@@ -213,30 +218,16 @@ where
                 ControlFlow::<()>::Continue(())
             },
         );
-        if is_pending {
-            let Some(candidate) = selection.selected() else {
-                return FrontierDeferOutcome::Pending;
-            };
-            let candidate_entry = candidate.entry.as_usize();
-            visited.record(candidate_entry);
-            if candidate_entry != self.cursor.index()
-                && self.commit_cursor_realign_index(candidate_entry).is_err()
-            {
-                return FrontierDeferOutcome::Pending;
-            }
-            return FrontierDeferOutcome::Yielded;
-        }
         let Some(candidate) = selection.selected() else {
-            return FrontierDeferOutcome::Continue;
+            return no_candidate;
         };
         let candidate_entry = candidate.entry.as_usize();
         visited.record(candidate_entry);
-        if candidate_entry != self.cursor.index()
-            && self.commit_cursor_realign_index(candidate_entry).is_err()
-        {
-            return FrontierDeferOutcome::Continue;
+        if candidate_entry != self.cursor.index() {
+            self.commit_cursor_realign_index(candidate_entry)
+                .map_err(|_| RecvError::PhaseInvariant)?;
         }
-        FrontierDeferOutcome::Yielded
+        Poll::Ready(Ok(FrontierDeferOutcome::Yielded))
     }
     pub(super) fn current_scope_selection_meta(
         &self,

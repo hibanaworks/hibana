@@ -66,15 +66,20 @@ where
                     .route_scope_for_offer_node(node_scope, target_idx)
                     .ok_or(RecvError::PhaseInvariant)?;
                 (scope_id, target_idx, true)
-            } else if let Some(scope_id) = match self.active_reentry_scope_for_observed_frame(key) {
+            } else if let Some(scope_id) = match self
+                .active_reentry_scope_for_observed_frame(key)
+                .map_err(|_| RecvError::PhaseInvariant)?
+            {
                 Some(active_reentry) => Some(active_reentry),
                 None => self
                     .cursor
-                    .enclosing_passive_route_scope_for_key(current_idx, key),
+                    .enclosing_passive_route_scope_for_key(current_idx, key)
+                    .map_err(|_| RecvError::PhaseInvariant)?,
             } {
                 let target_idx = self
                     .cursor
                     .passive_descendant_target_index_for_key(scope_id, key)
+                    .map_err(|_| RecvError::PhaseInvariant)?
                     .ok_or(RecvError::PhaseInvariant)?;
                 (scope_id, target_idx, false)
             } else {
@@ -85,6 +90,7 @@ where
         } else {
             self.cursor
                 .passive_descendant_dispatch_arm_for_key(scope_id, key)
+                .map_err(|_| RecvError::PhaseInvariant)?
         };
         let selected_arm_for_observed = {
             let preview_conflict = self.cursor.event_conflict_for_index(target_idx);

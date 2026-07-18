@@ -1,7 +1,7 @@
 use super::{
-    ActiveEntrySet, ActiveEntrySlot, CursorEndpoint, CursorRefresh, FrontierScratchSectionLease,
-    LaneOfferState, OfferEntryKey, ReentryScopeLiveness, ScopeId, StateIndex, Transport,
-    frontier_global_active_entries_view, state_index_to_usize,
+    ActiveEntrySet, ActiveEntrySlot, CursorEndpoint, CursorInvariantError, CursorRefresh,
+    FrontierScratchSectionLease, LaneOfferState, OfferEntryKey, ReentryScopeLiveness, ScopeId,
+    StateIndex, Transport, frontier_global_active_entries_view, state_index_to_usize,
 };
 use crate::global::typestate::InboundFrameKey;
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
@@ -155,50 +155,55 @@ where
         if lane_idx >= self.cursor.logical_lane_count() {
             return None;
         }
-        let scope = self
+        let scope = match self
             .decision_state
             .active_reentry_scope_for_lane(lane_idx, |scope| {
                 if !self.is_reentry_route(scope) {
-                    return ReentryScopeLiveness::NotReentry;
+                    return Ok(ReentryScopeLiveness::NotReentry);
                 }
                 let Some(arm) = self.selected_arm_for_scope(scope) else {
-                    return ReentryScopeLiveness::Incomplete;
+                    return Ok(ReentryScopeLiveness::Incomplete);
                 };
-                if self.reentrant_selected_arm_complete(scope, arm) {
+                Ok(if self.reentrant_selected_arm_complete(scope, arm) {
                     ReentryScopeLiveness::Complete
                 } else {
                     ReentryScopeLiveness::Incomplete
-                }
-            })?;
+                })
+            }) {
+            Ok(scope) => scope?,
+            Err(CursorInvariantError::INVARIANT) => crate::invariant(),
+        };
         self.cursor.active_reentry_offer_entry(scope)
     }
 
     pub(in crate::endpoint::kernel) fn active_reentry_scope_for_observed_frame(
         &self,
         key: InboundFrameKey,
-    ) -> Option<ScopeId> {
+    ) -> Result<Option<ScopeId>, CursorInvariantError> {
         let lane_idx = key.lane as usize;
         if lane_idx >= self.cursor.logical_lane_count() {
-            return None;
+            return Ok(None);
         }
         self.decision_state
             .active_reentry_scope_for_lane(lane_idx, |scope| {
-                if !self.is_reentry_route(scope)
-                    || self
-                        .cursor
-                        .passive_descendant_target_index_for_key(scope, key)
-                        .is_none()
+                if !self.is_reentry_route(scope) {
+                    return Ok(ReentryScopeLiveness::NotReentry);
+                }
+                if self
+                    .cursor
+                    .passive_descendant_target_index_for_key(scope, key)?
+                    .is_none()
                 {
-                    return ReentryScopeLiveness::NotReentry;
+                    return Ok(ReentryScopeLiveness::NotReentry);
                 }
                 let Some(arm) = self.selected_arm_for_scope(scope) else {
-                    return ReentryScopeLiveness::Incomplete;
+                    return Ok(ReentryScopeLiveness::Incomplete);
                 };
-                if self.reentrant_selected_arm_complete(scope, arm) {
+                Ok(if self.reentrant_selected_arm_complete(scope, arm) {
                     ReentryScopeLiveness::Complete
                 } else {
                     ReentryScopeLiveness::Incomplete
-                }
+                })
             })
     }
 }

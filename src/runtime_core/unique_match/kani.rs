@@ -7,8 +7,10 @@ fn unique_match_zero_one_and_distinct_many_are_exact() {
     let empty = UniqueMatch::NONE;
 
     assert_eq!(empty.finish(), Err(UniqueMatchFailure::None));
+    assert_eq!(empty.finish_optional(), Ok(None));
     let one = empty.add(first);
     assert_eq!(one.finish(), Ok(first));
+    assert_eq!(one.finish_optional(), Ok(Some(first)));
     assert_eq!(one.add(first).finish(), Ok(first));
     assert_eq!(
         one.add(distinct).finish(),
@@ -24,5 +26,8 @@ fn unique_match_ambiguity_is_absorbing() {
 
     assert!(ambiguous.is_ambiguous());
     assert_eq!(ambiguous.add(later), UniqueMatch::Ambiguous);
-    assert_eq!(ambiguous.into_option(), None);
+    assert_eq!(
+        ambiguous.finish_optional(),
+        Err(UniqueMatchFailure::Ambiguous)
+    );
 }

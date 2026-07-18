@@ -126,6 +126,7 @@ src/endpoint/kernel/offer	src/endpoint/kernel/offer/passive.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/profile
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/profile.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/progress.rs
+src/endpoint/kernel/offer	src/endpoint/kernel/offer/progress/kani.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_materialization.rs
 src/endpoint/kernel/offer	src/endpoint/kernel/offer/resolve_types.rs

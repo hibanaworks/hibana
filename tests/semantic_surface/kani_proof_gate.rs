@@ -33,6 +33,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     let alignment_harnesses =
         read("src/endpoint/kernel/offer/select_alignment/model/pool/tests.rs");
     let offer_ingress_harnesses = read("src/endpoint/kernel/offer/ingress/kani.rs");
+    let offer_progress_harnesses = read("src/endpoint/kernel/offer/progress/kani.rs");
     let lane_set = read("src/global/role_program/lane_set.rs");
     let lane_set_harnesses = read("src/global/role_program/lane_set/kani.rs");
     let frontier_state_harnesses = read("src/endpoint/kernel/frontier_state/kani.rs");
@@ -203,6 +204,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
             .count(),
         2
     );
+    assert!(
+        offer_progress_harnesses
+            .contains("fn offer_progress_classifies_every_evidence_transition_exactly()")
+    );
     assert!(script.contains("cargo kani --version"));
     assert!(script.contains("rg -n 'kani::assume' \"${ROOT_DIR}/src\" --glob '*.rs'"));
     assert!(
@@ -230,7 +235,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(inventory.contains("\"kani-version\": \"0.67.0\""));
-    assert!(inventory.contains("\"standard-harnesses\": 196"));
+    assert!(inventory.contains("\"standard-harnesses\": 197"));
     assert!(inventory.contains("\"contract-harnesses\": 0"));
     for (owner, enum_name) in [
         (&frontier_kind, "FrontierKind"),

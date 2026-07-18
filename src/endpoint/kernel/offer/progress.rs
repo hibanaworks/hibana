@@ -4,7 +4,6 @@ use crate::endpoint::kernel::frontier::OfferEntryEvidence;
 pub(in crate::endpoint::kernel) enum FrontierDeferOutcome {
     Continue,
     Yielded,
-    Pending,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,3 +58,9 @@ impl OfferProgressState {
         }
     }
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;
+
+#[cfg(kani)]
+mod kani;

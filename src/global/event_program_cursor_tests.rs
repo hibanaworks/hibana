@@ -12,8 +12,9 @@ use crate::global::{
     event_program::LocalEventProgram,
     program::Projectable,
     typestate::{
-        EventCursor, EventCursorState, LocalAction, LocalConflict, PackedEventConflict,
-        RelocatableResidentLaneStep, SendMeta, SendPreviewError, StateIndex, state_index_to_usize,
+        CursorInvariantError, EventCursor, EventCursorState, LocalAction, LocalConflict,
+        PackedEventConflict, RelocatableResidentLaneStep, SendMeta, SendPreviewError, StateIndex,
+        state_index_to_usize,
     },
 };
 use std::{boxed::Box, mem::MaybeUninit, string::String, vec, vec::Vec};
@@ -288,7 +289,7 @@ fn production_cursor_resolves_deep_left_spine_first_recv_dispatch_from_root() {
         trace
             .cursor()
             .passive_descendant_dispatch_arm_for_key(root_scope, key_h),
-        Some(1)
+        Ok(Some(1))
     );
 }
 
@@ -369,7 +370,7 @@ fn empty_role_route_slot_does_not_hide_a_later_route_scope() {
     let key = trace.frame_key_for_label(SECOND_LEFT);
     assert_eq!(
         trace.cursor().enclosing_passive_route_scope_for_key(0, key),
-        Some(later.scope())
+        Ok(Some(later.scope()))
     );
 }
 
@@ -617,20 +618,20 @@ fn passive_arm_child_facts_are_strict_projected_descendants() {
         trace
             .cursor()
             .passive_descendant_dispatch_arm_for_key(outer, key_b),
-        Some(0)
+        Ok(Some(0))
     );
     assert_eq!(
         trace
             .cursor()
             .passive_descendant_dispatch_arm_for_key(outer, key_r),
-        Some(1)
+        Ok(Some(1))
     );
     assert_eq!(
         trace.cursor().passive_descendant_dispatch_arm_for_key(
             outer,
             crate::global::typestate::InboundFrameKey::new(key_a.source_role, key_a.lane, 99,),
         ),
-        None
+        Ok(None)
     );
     assert_eq!(
         trace.cursor().passive_descendant_dispatch_arm_for_key(
@@ -641,7 +642,14 @@ fn passive_arm_child_facts_are_strict_projected_descendants() {
                 key_a.frame_label,
             ),
         ),
-        None
+        Ok(None)
+    );
+    assert_eq!(
+        trace
+            .cursor()
+            .passive_descendant_dispatch_arm_for_key(ScopeId::none(), key_a),
+        Err(CursorInvariantError::INVARIANT),
+        "an absent route scope must not collapse into a valid no-match result",
     );
 }
 
@@ -670,25 +678,25 @@ fn passive_arm_child_facts_cover_right_arm_descendants() {
         trace
             .cursor()
             .passive_descendant_dispatch_arm_for_key(outer, key_a),
-        Some(1)
+        Ok(Some(1))
     );
     assert_eq!(
         trace
             .cursor()
             .passive_descendant_dispatch_arm_for_key(outer, key_l),
-        Some(0)
+        Ok(Some(0))
     );
     assert_eq!(
         trace
             .cursor()
             .passive_descendant_dispatch_arm_for_key(outer, key_b),
-        Some(1)
+        Ok(Some(1))
     );
     assert_eq!(
         trace
             .cursor()
             .passive_descendant_dispatch_arm_for_key(inner, key_b),
-        Some(1)
+        Ok(Some(1))
     );
 }
 

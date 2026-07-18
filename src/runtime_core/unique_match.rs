@@ -41,8 +41,12 @@ where
     }
 
     #[inline(always)]
-    pub(crate) fn into_option(self) -> Option<T> {
-        self.finish().ok()
+    pub(crate) fn finish_optional(self) -> Result<Option<T>, UniqueMatchFailure> {
+        match self {
+            Self::None => Ok(None),
+            Self::One(candidate) => Ok(Some(candidate)),
+            Self::Ambiguous => Err(UniqueMatchFailure::Ambiguous),
+        }
     }
 }
 

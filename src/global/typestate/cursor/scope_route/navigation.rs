@@ -1,6 +1,6 @@
 use super::super::{
-    ARM_SHARED, EventCursor, InboundFrameKey, LocalAction, PackedEventConflict, RouteScopeRows,
-    ScopeId, StateIndex, state_index_to_usize,
+    ARM_SHARED, CursorInvariantError, EventCursor, InboundFrameKey, LocalAction,
+    PackedEventConflict, RouteScopeRows, ScopeId, StateIndex, state_index_to_usize,
 };
 use crate::global::{const_dsl::ScopeKind, typestate::LocalConflict};
 
@@ -195,19 +195,25 @@ impl EventCursor {
         &self,
         scope_id: ScopeId,
         key: InboundFrameKey,
-    ) -> Option<u8> {
+    ) -> Result<Option<u8>, CursorInvariantError> {
         self.first_recv_descendant_target_for_key(scope_id, key)
-            .and_then(|(dispatch_arm, _)| (dispatch_arm != ARM_SHARED).then_some(dispatch_arm))
+            .map(|target| {
+                target.and_then(|(dispatch_arm, _)| {
+                    (dispatch_arm != ARM_SHARED).then_some(dispatch_arm)
+                })
+            })
     }
 
     pub(crate) fn passive_descendant_target_index_for_key(
         &self,
         scope_id: ScopeId,
         key: InboundFrameKey,
-    ) -> Option<usize> {
+    ) -> Result<Option<usize>, CursorInvariantError> {
         self.first_recv_descendant_target_for_key(scope_id, key)
-            .and_then(|(dispatch_arm, target)| {
-                (dispatch_arm != ARM_SHARED).then_some(state_index_to_usize(target))
+            .map(|target| {
+                target.and_then(|(dispatch_arm, target)| {
+                    (dispatch_arm != ARM_SHARED).then_some(state_index_to_usize(target))
+                })
             })
     }
 
@@ -215,7 +221,7 @@ impl EventCursor {
         &self,
         idx: usize,
         key: InboundFrameKey,
-    ) -> Option<ScopeId> {
+    ) -> Result<Option<ScopeId>, CursorInvariantError> {
         let mut selected = None;
         let mut slot = 0usize;
         while slot < self.machine().route_scope_slot_count() {
@@ -225,7 +231,7 @@ impl EventCursor {
             {
                 let scope = region.scope();
                 if self
-                    .first_recv_descendant_target_for_key(scope, key)
+                    .first_recv_descendant_target_for_key(scope, key)?
                     .is_some_and(|(dispatch_arm, _)| dispatch_arm != ARM_SHARED)
                 {
                     selected = Some(match selected {
@@ -236,14 +242,14 @@ impl EventCursor {
             }
             slot += 1;
         }
-        selected
+        Ok(selected)
     }
 
     fn first_recv_descendant_target_for_key(
         &self,
         scope_id: ScopeId,
         key: InboundFrameKey,
-    ) -> Option<(u8, StateIndex)> {
+    ) -> Result<Option<(u8, StateIndex)>, CursorInvariantError> {
         self.machine()
             .first_recv_descendant_target_for_key(scope_id, key)
     }

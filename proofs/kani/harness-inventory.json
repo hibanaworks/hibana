@@ -80,6 +80,9 @@
       "endpoint::kernel::offer::ingress::kani::preferred_lane_scan_first_step_is_exact_over_the_full_lane_domain",
       "endpoint::kernel::offer::ingress::kani::remaining_lane_scan_step_is_exact_over_the_full_lane_domain"
     ],
+    "../../src/endpoint/kernel/offer/progress/kani.rs": [
+      "endpoint::kernel::offer::progress::kani::offer_progress_classifies_every_evidence_transition_exactly"
+    ],
     "../../src/endpoint/kernel/offer/select_alignment/model/pool/tests.rs": [
       "endpoint::kernel::offer::select_alignment::model::pool::tests::exact_scope_rows_never_synthesize_controller_progress_authority",
       "endpoint::kernel::offer::select_alignment::model::pool::tests::excluded_exact_current_never_permits_retention",
@@ -288,7 +291,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 196,
+    "standard-harnesses": 197,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

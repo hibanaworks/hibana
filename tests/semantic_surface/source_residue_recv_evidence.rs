@@ -137,7 +137,8 @@ fn offer_admission_prioritizes_the_unconsumed_current_frontier() {
         "a consumed current occurrence must not shadow a legal rolled reentry frame"
     );
     assert!(
-        observed.contains("match self.active_reentry_scope_for_observed_frame(key)")
+        observed.contains(".active_reentry_scope_for_observed_frame(key)")
+            && observed.contains(".map_err(|_| RecvError::PhaseInvariant)?")
             && observed.contains("Some(active_reentry) => Some(active_reentry)")
             && !observed.contains(".or_else(")
             && !observed.contains("return self.select_carried_ingress_scope(")

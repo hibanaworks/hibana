@@ -344,7 +344,8 @@ where
             let meta = self.preview_selected_arm_meta(selection, selected_arm)?;
             let exact_target = self
                 .cursor
-                .passive_descendant_target_index_for_key(scope_id, key);
+                .passive_descendant_target_index_for_key(scope_id, key)
+                .map_err(|_| RecvError::PhaseInvariant)?;
             if !meta.is_empty()
                 && meta.peer == key.source_role
                 && meta.lane == key.lane

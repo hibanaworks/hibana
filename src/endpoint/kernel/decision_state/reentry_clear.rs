@@ -1,5 +1,5 @@
 use super::{CommitDeltaApplyPermit, RouteScopeSelectedArmSlot, RouteState};
-use crate::global::const_dsl::ScopeId;
+use crate::global::{const_dsl::ScopeId, typestate::CursorInvariantError};
 
 pub(in crate::endpoint::kernel) enum ReentryScopeLiveness {
     NotReentry,
@@ -50,9 +50,9 @@ impl RouteState {
         &self,
         lane_idx: usize,
         mut classify_reentry_scope: F,
-    ) -> Option<ScopeId>
+    ) -> Result<Option<ScopeId>, CursorInvariantError>
     where
-        F: FnMut(ScopeId) -> ReentryScopeLiveness,
+        F: FnMut(ScopeId) -> Result<ReentryScopeLiveness, CursorInvariantError>,
     {
         let mut completed_reentry = None;
         let len = self.lane_route_arm_len(lane_idx);
@@ -64,18 +64,18 @@ impl RouteState {
             if scope.is_none() {
                 continue;
             }
-            match classify_reentry_scope(scope) {
+            match classify_reentry_scope(scope)? {
                 ReentryScopeLiveness::NotReentry => {}
                 ReentryScopeLiveness::Incomplete => {
-                    return match completed_reentry {
+                    return Ok(match completed_reentry {
                         Some(completed) => Some(completed),
                         None => Some(scope),
-                    };
+                    });
                 }
                 ReentryScopeLiveness::Complete => completed_reentry = Some(scope),
             }
         }
-        completed_reentry
+        Ok(completed_reentry)
     }
 
     pub(in crate::endpoint::kernel) fn clear_lane_route_selections_in_scope<F, G, H>(

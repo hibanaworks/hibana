@@ -397,6 +397,13 @@ fn send_recv_branch_recv_publish_paths_apply_prepared_deltas_only() {
             && !select_alignment.contains("self.set_cursor_index("),
         "offer cursor reentry must use CommitDelta cursor realignment, not direct endpoint cursor mutation"
     );
+    assert!(
+        offer_select.contains("-> Poll<RecvResult<FrontierDeferOutcome>>")
+            && offer_select.contains(".map_err(|_| RecvError::PhaseInvariant)?;")
+            && !offer_select.contains("commit_cursor_realign_index(candidate_entry).is_err()")
+            && !offer_select.contains("FrontierDeferOutcome::Pending"),
+        "frontier realignment rejection must fail closed instead of becoming pending or continuing"
+    );
 
     for (name, body, required) in [
         (

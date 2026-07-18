@@ -20,6 +20,9 @@ The pinned gate exhausts the production arithmetic for:
   bitset domain, using the same fixed 32-bit lane words on the Kani host and
   Pico targets, with a monotonic remaining cursor that cannot repeat the
   preferred lane;
+- exact offer-progress edge classification over all ready-arm and ingress
+  evidence transitions: the first observation and every changed observation
+  are new evidence, while only an identical repeat may remain pending;
 - exact active-offer aggregation: the first concrete owning lane remains the
   representative, all matching entry facts are combined across lane-local
   scope/root identities, and a foreign entry is rejected without partial
