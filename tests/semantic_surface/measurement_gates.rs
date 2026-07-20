@@ -1,4 +1,51 @@
 use super::common::*;
+use std::{path::PathBuf, process::Command};
+
+#[test]
+fn compile_pressure_process_table_bypasses_exec_environment_limits() {
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
+    let guard = root.join(".github/scripts/lib/compile_pressure_guard.sh");
+    let script = r#"
+set -euo pipefail
+source "$1"
+ps() {
+  case "$*" in
+    '-axo pid=,ppid=,rss=,command=')
+      printf '%d 0 1 bash\n' "$$"
+      printf '999999 %d 1024 rustc --crate-name hibana ' "$$"
+      head -c 300000 /dev/zero | tr '\0' x
+      printf '\n'
+      ;;
+    '-axo pid=,ppid=')
+      printf '%d 0\n999999 %d\n' "$$" "$$"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+set +e
+scan="$(compile_pressure_guard_offender "$$" 1048576)"
+status="$?"
+set -e
+[[ "${status}" -eq 1 ]]
+[[ "${scan}" == "ok total_rss_mib=1 matched=1" ]]
+[[ "$(compile_pressure_guard_descendants "$$")" == "999999" ]]
+"#;
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .arg("compile-pressure-process-table-test")
+        .arg(guard)
+        .output()
+        .expect("run compile pressure process-table regression");
+    assert!(
+        output.status.success(),
+        "compile pressure process-table regression failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 fn miri_owner_stanza<'a>(gate: &'a str, label: &str) -> &'a str {
     let marker = format!("  {label} \\\n");
@@ -133,6 +180,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "HIBANA_COMPILE_PRESSURE_BUDGETS:-$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/../..\" && pwd)/measurement_snapshots/hibana-compile-pressure-budget.tsv",
         "budget_label=\"${HIBANA_COMPILE_PRESSURE_LABEL:-}\"",
         "local crate_name=\"${HIBANA_COMPILE_PRESSURE_CRATE_NAME:-}\"",
+        "3<<<\"${process_rows}\"",
+        "with os.fdopen(3, encoding=\"utf-8\") as process_rows:",
         "compile_pressure_budget.py",
         "limit \"${budget_path}\" \"${budget_label}\" rss_mib",
         "compile_pressure_guard_limit_seconds",
@@ -170,6 +219,11 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             "compile pressure guard must enforce a snapshot-derived aggregate rust-tool emergency stop: {required}"
         );
     }
+
+    assert!(
+        !compile_pressure_guard.contains("PROCESS_ROWS="),
+        "process-table snapshots must stream through a file descriptor instead of entering execve's bounded environment"
+    );
 
     for forbidden in ["5242880", "10485760", "5120", "10240"] {
         assert!(

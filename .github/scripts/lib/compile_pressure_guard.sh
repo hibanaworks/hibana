@@ -53,7 +53,7 @@ compile_pressure_guard_offender() {
   local scan
   local status
   set +e
-  scan="$(PROCESS_ROWS="${process_rows}" python3 - "${root_pid}" "${max_kib}" "${crate_name}" <<'PY'
+  scan="$(python3 - "${root_pid}" "${max_kib}" "${crate_name}" 3<<<"${process_rows}" <<'PY'
 import collections
 import os
 import sys
@@ -64,15 +64,16 @@ try:
     crate_name = sys.argv[3]
     children: dict[int, list[int]] = collections.defaultdict(list)
     rows: dict[int, tuple[int, str]] = {}
-    for line in os.environ["PROCESS_ROWS"].splitlines():
-        parts = line.split(None, 3)
-        if len(parts) != 4:
-            continue
-        pid, ppid, rss, command = parts
-        pid_i = int(pid)
-        ppid_i = int(ppid)
-        children[ppid_i].append(pid_i)
-        rows[pid_i] = (int(rss), command.strip())
+    with os.fdopen(3, encoding="utf-8") as process_rows:
+        for line in process_rows:
+            parts = line.split(None, 3)
+            if len(parts) != 4:
+                continue
+            pid, ppid, rss, command = parts
+            pid_i = int(pid)
+            ppid_i = int(ppid)
+            children[ppid_i].append(pid_i)
+            rows[pid_i] = (int(rss), command.strip())
 
     stack = [root]
     descendants = {root}
@@ -164,19 +165,20 @@ compile_pressure_guard_descendants() {
     echo "compile pressure guard violation: failed to read process tree" >&2
     return 2
   fi
-  PROCESS_ROWS="${process_rows}" python3 - "${root_pid}" <<'PY'
+  python3 - "${root_pid}" 3<<<"${process_rows}" <<'PY'
 import collections
 import os
 import sys
 
 root = int(sys.argv[1])
 children: dict[int, list[int]] = collections.defaultdict(list)
-for line in os.environ["PROCESS_ROWS"].splitlines():
-    parts = line.split()
-    if len(parts) != 2:
-        continue
-    pid, ppid = (int(parts[0]), int(parts[1]))
-    children[ppid].append(pid)
+with os.fdopen(3, encoding="utf-8") as process_rows:
+    for line in process_rows:
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        pid, ppid = (int(parts[0]), int(parts[1]))
+        children[ppid].append(pid)
 
 stack = [root]
 descendants = []
