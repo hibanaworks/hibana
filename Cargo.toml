@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name          = "hibana"
-version       = "0.9.4"
+version       = "0.9.5"
 edition       = "2024"
 rust-version  = "1.95"
 autotests     = false
