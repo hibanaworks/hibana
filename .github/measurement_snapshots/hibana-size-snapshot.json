@@ -2,7 +2,6 @@
   "schema": 1,
   "description": "Measured stack, modeled runtime SRAM, and thumbv6m flash values must satisfy the local fixed-snapshot gate: each runtime shape metric, including localside-only stack and resident prefix/tap storage, must be <= budget, aggregate max_stack/SRAM/flash must not grow, at least one aggregate must decrease, and the modeled runtime SRAM envelope must keep at least 64 bytes of headroom.",
   "toolchain": "1.95.0",
-  "host": "aarch64-apple-darwin",
   "flash_measurement": {
     "target": "thumbv6m-none-eabi",
     "profile": "release",
@@ -11,6 +10,7 @@
     "flash_total_formula": ".text + .rodata + .data"
   },
   "runtime_measurement": {
+    "publication_host": "aarch64-unknown-linux-gnu",
     "profile": "release",
     "features": "default-empty",
     "test_filter": "large_choreography_runtime_peak_metrics",

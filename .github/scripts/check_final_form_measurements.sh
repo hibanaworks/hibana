@@ -831,10 +831,13 @@ else
 fi
 
 README_PATH="${ROOT_DIR}/README.md" \
+MEASUREMENT_HOST="${HOST}" \
+SNAPSHOT_FILE="${SNAPSHOT_FILE}" \
 THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" \
 PROTOCOL_ARTIFACT_OUTPUT="${PROTOCOL_ARTIFACT_OUTPUT}" \
 STACK_HIGH_WATER_OUTPUT="${STACK_HIGH_WATER_OUTPUT}" \
 python3 - <<'PY'
+import json
 import os
 import re
 import sys
@@ -878,7 +881,7 @@ for row in runtime:
 
 tap_bytes = max(row["tap_ring_bytes"] for row in runtime)
 flash_total = thumb.get(".text", 0) + thumb.get(".rodata", 0) + thumb.get(".data", 0)
-expected = {
+host_expected = {
     "`SessionKitStorage`": max(row["session_kit_storage_bytes"] for row in runtime),
     f"Fixed per-rendezvous storage, including the {tap_bytes:,} B tap records": max(
         row["resident_prefix_bytes"] for row in runtime
@@ -888,6 +891,8 @@ expected = {
     ),
     "Runtime operation stack high-water": max(row["peak_stack_bytes"] for row in runtime),
     "Modeled runtime SRAM envelope": max(row["modeled_runtime_sram_bytes"] for row in runtime),
+}
+target_expected = {
     "Minimal linked protocol artifact": min(row["flash_total"] for row in artifacts),
     "Largest linked artifact in the tracked protocol matrix": max(
         row["flash_total"] for row in artifacts
@@ -897,6 +902,28 @@ expected = {
 }
 
 readme = Path(os.environ["README_PATH"]).read_text(encoding="utf-8")
+with open(os.environ["SNAPSHOT_FILE"], "r", encoding="utf-8") as f:
+    publication_host = json.load(f)["runtime_measurement"]["publication_host"]
+measurement_host = os.environ["MEASUREMENT_HOST"]
+host_marker = f"`{publication_host}` measurement host"
+if host_marker not in readme:
+    print(
+        "README measurement host stale or missing: "
+        f"expected {host_marker}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+expected = dict(target_expected)
+if measurement_host == publication_host:
+    expected.update(host_expected)
+else:
+    print(
+        "README host measurement boundary: "
+        f"live={measurement_host} publication={publication_host}; "
+        "host-sensitive current values remain publication-host measurements"
+    )
+
 for label, value in expected.items():
     row_prefix = f"| {label} | {value:,} B |"
     if row_prefix not in readme:

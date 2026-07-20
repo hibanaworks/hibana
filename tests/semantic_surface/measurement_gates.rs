@@ -165,6 +165,12 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
         "README_PATH=\"${ROOT_DIR}/README.md\"",
+        "MEASUREMENT_HOST=\"${HOST}\"",
+        "SNAPSHOT_FILE=\"${SNAPSHOT_FILE}\"",
+        "publication_host = json.load(f)[\"runtime_measurement\"][\"publication_host\"]",
+        "if measurement_host == publication_host:",
+        "README host measurement boundary:",
+        "host-sensitive current values remain publication-host measurements",
         "README measurement row stale or missing",
         "README measurement sync passed",
         "Complete no-default `libhibana.rlib` sections",
@@ -757,6 +763,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
 
     for required in [
         "\"description\": \"Measured stack, modeled runtime SRAM, and thumbv6m flash values must satisfy",
+        "\"publication_host\": \"aarch64-unknown-linux-gnu\"",
         "\"localside_peak_stack_bytes\"",
         "\"resident_prefix_bytes\"",
         "\"tap_ring_bytes\"",

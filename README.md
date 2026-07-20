@@ -673,7 +673,7 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | Fixed per-rendezvous storage, including the 252 B tap records | 412 B | 952 B |
 | Peak live runtime slab across tracked heavy shapes | 2,279 B | 4,323 B |
 | Runtime operation stack high-water | 2,863 B | 3,663 B |
-| Modeled runtime SRAM envelope | 5,498 B | 8,954 B |
+| Modeled runtime SRAM envelope | 5,514 B | 8,954 B |
 | Minimal linked protocol artifact | 352 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,824 B | 16,384 B |
 | Complete no-default `libhibana.rlib` sections | 99,073 B | 169,965 B |
@@ -682,7 +682,7 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 The linked-artifact and library rows are `thumbv6m-none-eabi` release
 measurements. The complete rlib is not the flash cost paid by one linked
 protocol. Stack high-water is measured around runtime operations on the pinned
-`aarch64-apple-darwin` measurement host.
+`aarch64-unknown-linux-gnu` measurement host used by the release gate.
 
 The modeled SRAM envelope combines the target's Hibana `.data/.bss`, storage
 owners, one measured live slab shape, and runtime operation stack. Component
