@@ -81,7 +81,16 @@ if [[ ! -s "${ACTUAL_INVENTORY}" ]]; then
   echo "Kani gate did not produce a nonempty structured harness inventory" >&2
   exit 1
 fi
-if ! cmp -s "${EXPECTED_INVENTORY}" "${ACTUAL_INVENTORY}"; then
+if ! python3 - "${EXPECTED_INVENTORY}" "${ACTUAL_INVENTORY}" <<'PY'
+import json
+import pathlib
+import sys
+
+expected = json.loads(pathlib.Path(sys.argv[1]).read_text())
+actual = json.loads(pathlib.Path(sys.argv[2]).read_text())
+raise SystemExit(0 if expected == actual else 1)
+PY
+then
   set +e
   diff -u "${EXPECTED_INVENTORY}" "${ACTUAL_INVENTORY}" >&2
   inventory_diff_status="$?"

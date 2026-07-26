@@ -192,9 +192,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         assert!(frontier_progress_selection_harnesses.contains(&format!("fn {harness}()")));
     }
     for harness in [
-        "visited_entry_identity_is_exact_and_never_silent",
-        "absent_state_identity_is_rejected",
+        "route_frontier_visit_capacity_is_exact_cursor_position_domain",
+        "rolled_reentry_can_visit_more_cursor_positions_than_active_lanes",
+        "visited_cursor_position_identity_is_exact_and_never_silent",
         "repeated_alignment_source_remains_detectable_without_capacity_growth",
+        "terminal_cursor_position_is_not_an_absent_event_identity",
+        "local_step_count_rejects_values_beyond_the_packed_descriptor_domain",
     ] {
         assert!(frontier_visit_set_harnesses.contains(&format!("fn {harness}()")));
     }
@@ -218,7 +221,10 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!production_rust.contains("kani::assume"));
     assert!(script.contains("list --format json"));
     assert!(script.contains("proofs/kani/harness-inventory.json"));
-    assert!(script.contains("cmp -s \"${EXPECTED_INVENTORY}\" \"${ACTUAL_INVENTORY}\""));
+    assert!(script.contains("json.loads(pathlib.Path(sys.argv[1]).read_text())"));
+    assert!(script.contains("json.loads(pathlib.Path(sys.argv[2]).read_text())"));
+    assert!(script.contains("expected == actual"));
+    assert!(!script.contains("cmp -s \"${EXPECTED_INVENTORY}\" \"${ACTUAL_INVENTORY}\""));
     assert!(script.contains("expected_harness_total="));
     assert!(script.contains("!= \"${expected_harness_total}\""));
     assert!(script.contains("cargo kani \\"));
@@ -235,7 +241,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!script.contains("command -v cargo-kani"));
     assert!(!script.contains("exit 0"));
     assert!(inventory.contains("\"kani-version\": \"0.67.0\""));
-    assert!(inventory.contains("\"standard-harnesses\": 197"));
+    assert!(inventory.contains("\"standard-harnesses\": 200"));
     assert!(inventory.contains("\"contract-harnesses\": 0"));
     for (owner, enum_name) in [
         (&frontier_kind, "FrontierKind"),

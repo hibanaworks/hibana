@@ -550,9 +550,11 @@ fn route_history_publishes_shared_refs_after_sparse_commit() {
 }
 
 #[test]
-fn offer_frontier_capacity_is_derived_from_active_lanes() {
+fn offer_frontier_capacities_follow_their_distinct_descriptor_domains() {
     let role_image = read("src/global/role_program/image_types.rs");
     let lane_set = read("src/global/role_program/lane_set.rs");
+    let frontier_state = read("src/endpoint/kernel/frontier_state.rs");
+    let endpoint_init = read("src/endpoint/kernel/endpoint_init.rs");
     let entry_sets = read("src/endpoint/kernel/frontier/entry_sets.rs");
     let entry_buffer = read("src/endpoint/kernel/frontier/entry_sets/buffer.rs");
     let progress_selection = read("src/endpoint/kernel/frontier/progress_selection.rs");
@@ -574,11 +576,21 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
     assert!(
         role_image.contains("pub(crate) const fn frontier_entry_count(self) -> usize")
             && role_image.contains("self.active_lane_count")
-            && role_image.contains("pub(crate) const fn frontier_visit_count(self) -> usize")
-            && role_image.contains("pub(crate) const fn frontier_visit_capacity(")
-            && role_image.contains("count.checked_add(1)")
-            && role_image.contains("frontier_visit_capacity(self.frontier_entry_count())")
-            && !role_image.contains("if self.active_lane_count == 0")
+            && role_image
+                .contains("pub(crate) const fn frontier_visit_position_count(self) -> usize")
+            && role_image.contains("pub(crate) const fn frontier_visit_byte_count(self) -> usize")
+            && role_image.contains("if self.route_scope_count == 0")
+            && role_image.contains("self.local_step_count")
+            && !role_image.contains("frontier_visit_capacity(")
+            && !role_image.contains("self.frontier_entry_count().checked_add(1)")
+            && frontier_state.contains("visited_position_bits: *mut u8")
+            && frontier_state.contains("visited_position_count: usize")
+            && frontier_state.contains("capacity.visited_position_count > u16::MAX as usize + 1")
+            && frontier_state.contains("self.visited_position_bits")
+            && frontier_state.contains("self.visited_position_count")
+            && !frontier_state.contains("visited_state")
+            && !frontier_state.contains("fn visit_capacity(&self)")
+            && endpoint_init.contains(".frontier_visit_position_count()")
             && lane_set.contains("endpoint_lane_slot_count")
             && lane_set.contains("active_lane_count > endpoint_lane_slot_count")
             && !lane_set.contains("MIN_ENDPOINT_LANE_SLOTS")
@@ -603,9 +615,16 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
             && !entry_buffer.contains("#[derive(Clone, Copy)]\npub(super) struct EntryBuffer")
             && entry_buffer.contains("const fn into_view(self) -> EntryView<'a, T>")
             && !entry_buffer.contains("const fn view(&self) -> EntryView<'a, T>")
-            && visit_set.contains("slots: *mut StateIndex")
+            && visit_set.contains("position_bits: *mut u8")
+            && visit_set.contains("position_count: usize")
+            && visit_set.contains("frontier_visit_byte_count(position_count)")
+            && visit_set.contains("position_idx >= self.position_count")
+            && !visit_set.contains("state_count")
+            && !visit_set.contains("*mut StateIndex")
             && progress_selection.contains("visited.contains(candidate.entry.as_usize())")
-            && visit_set.contains("if self.len >= self.capacity")
+            && visit_set.contains("if self.position_bits.is_null()")
+            && !visit_set.contains("len: u16")
+            && !visit_set.contains("capacity: u16")
             && visit_set.contains("crate::invariant();")
             && !visit_set.contains(
                 "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub(crate) struct FrontierVisitSet"
@@ -618,8 +637,8 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
                 .contains("#[derive(Clone, Copy)]\npub(super) struct ScopeEvidenceTable")
             && !assoc_storage.contains("#[derive(Clone, Copy)]\nstruct AssocStorageParts")
             && !progress_selection.contains("visited.contains(candidate.scope_id)")
-            && layout.contains("frontier_visited_entries: EndpointArenaSection")
-            && layout.contains("footprint.frontier_visit_count()")
+            && layout.contains("frontier_visited_position_bits: EndpointArenaSection")
+            && layout.contains("footprint.frontier_visit_byte_count()")
             && !repo_file_exists("src/endpoint/kernel/offer/select_alignment/model/set.rs")
             && selection_pool.contains("while slot_idx < self.observed_entries.len()")
             && selection_pool.contains("entry_group_end(slot_idx)")
@@ -637,7 +656,7 @@ fn offer_frontier_capacity_is_derived_from_active_lanes() {
             && !cache_refresh.contains("composed.insert_entry(")
             && !cache_refresh.contains("record_observation(")
             && cache_refresh.contains("composed.seal()"),
-        "offer arbitration must preserve exact scope witnesses until cursor-target selection without a fixed mask or silent truncation"
+        "offer arbitration must separate active-key ownership from the complete cursor-position visit domain without fixed masks or silent truncation"
     );
 }
 
@@ -690,7 +709,7 @@ fn compact_state_and_route_reference_identities_fail_closed() {
 
     assert!(
         facts.contains("if raw == u16::MAX")
-            && facts.contains("if idx < MAX_STATES")
+            && facts.contains("if idx < PRESENT_STATE_INDEX_CAPACITY")
             && facts.contains("Self::checked_from_usize(idx)")
             && reselection.contains("if self.refs != 1")
             && reselection.contains("self.arm = selected_arm")
@@ -718,7 +737,12 @@ fn lean_role_metadata_matches_production_capacity_semantics() {
         topology.contains("let logicalLaneCount := endpointLaneSlotCount")
             && topology.contains("canonical_logical_lane_count_is_exact_endpoint_span")
             && descriptor.contains("maxRouteCommitCount : Nat")
-            && descriptor.contains("production_frontier_capacity_is_exact_active_lane_count")
+            && descriptor.contains("production_frontier_entry_capacity_is_exact_active_lane_count")
+            && descriptor
+                .contains("production_frontier_visit_capacity_covers_all_visited_positions")
+            && descriptor.contains("production_frontier_visit_bytes_cover_every_cursor_position")
+            && descriptor.contains("production_frontier_visit_capacity_fits_compact_cursor_domain")
+            && descriptor.contains("active_lane_visit_bound_is_insufficient_for_rolled_reentry")
             && !descriptor.contains("if activeLaneCount = 0 then 1")
             && refinement.contains("certificate.image.maxRouteCommitCount")
             && exporter.contains("maxRouteCommitCount := {}")

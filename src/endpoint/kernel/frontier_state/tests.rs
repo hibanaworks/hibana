@@ -41,6 +41,47 @@ fn active_slot(table: &RootFrontierTable, idx: usize) -> ActiveEntrySlot {
 }
 
 #[test]
+fn frontier_position_visit_bitmap_is_independent_of_active_entry_pool_capacity() {
+    let mut rows = [RootFrontierState::EMPTY; 1];
+    let mut active = [ActiveEntrySlot::EMPTY; 1];
+    let mut visited_position_bits = [0u8; 6];
+    let mut state = MaybeUninit::<FrontierState>::uninit();
+    /* SAFETY: every supplied column is initialized, live, disjoint, and sized
+    for the exact capacity passed to the unpublished frontier owner. */
+    unsafe {
+        FrontierState::init_empty(
+            state.as_mut_ptr(),
+            FrontierStateStorage {
+                root: RootFrontierStorage {
+                    rows: rows.as_mut_ptr(),
+                    active_entries: active.as_mut_ptr(),
+                },
+                visited_position_bits: visited_position_bits.as_mut_ptr(),
+            },
+            FrontierStateCapacity {
+                root: RootFrontierCapacity {
+                    row_count: rows.len(),
+                    pool_capacity: active.len(),
+                },
+                visited_position_count: 47,
+            },
+        );
+    }
+    /* SAFETY: `FrontierState::init_empty` initialized the complete value. */
+    let mut state = unsafe { state.assume_init() };
+    let mut visited = state.empty_frontier_visit_set();
+
+    visited.record(46);
+    visited.record(20);
+    visited.record(2);
+
+    assert_eq!(visited.len(), 3);
+    assert!(visited.contains(46));
+    assert!(visited.contains(20));
+    assert!(visited.contains(2));
+}
+
+#[test]
 fn root_frontier_table_accepts_full_u8_lane_domain_rows() {
     const ROWS: usize = 256;
     let mut rows = std::vec::Vec::with_capacity(ROWS);
@@ -223,7 +264,8 @@ fn missing_root_frontier_cannot_silently_detach_a_lane() {
     let table = init_table(&mut rows, &mut active, 1);
     let mut state = FrontierState {
         root_frontier_state: table,
-        visited_entries: core::ptr::null_mut(),
+        visited_position_bits: core::ptr::null_mut(),
+        visited_position_count: 0,
     };
     let mut info = LaneOfferState::EMPTY;
     info.parallel_root = test_scope(1);

@@ -34,7 +34,7 @@ fi
 
 miri_passed_total=0
 miri_ignored_total=0
-readonly EXPECTED_MIRI_PASSED_TOTAL=216
+readonly EXPECTED_MIRI_PASSED_TOTAL=218
 readonly EXPECTED_MIRI_IGNORED_TOTAL=2
 
 run_miri_test() {
@@ -129,9 +129,9 @@ run_miri_test \
   endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_the_full_lane_domain
 
 run_miri_test \
-  exact-frontier-visit-identity-owner \
-  3 \
-  3 \
+  exact-frontier-cursor-position-owner \
+  4 \
+  4 \
   0 \
   -p hibana \
   --lib \
@@ -148,8 +148,8 @@ run_miri_test \
 
 run_miri_test \
   root-frontier-packed-pool-owner \
-  8 \
-  8 \
+  9 \
+  9 \
   0 \
   -p hibana \
   --lib \

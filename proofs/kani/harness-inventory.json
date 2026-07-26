@@ -65,9 +65,12 @@
       "endpoint::kernel::frontier::select::kani::progress_candidate_rejects_evidence_without_readiness"
     ],
     "../../src/endpoint/kernel/frontier/visit_set/kani.rs": [
-      "endpoint::kernel::frontier::visit_set::kani::absent_state_identity_is_rejected",
+      "endpoint::kernel::frontier::visit_set::kani::local_step_count_rejects_values_beyond_the_packed_descriptor_domain",
       "endpoint::kernel::frontier::visit_set::kani::repeated_alignment_source_remains_detectable_without_capacity_growth",
-      "endpoint::kernel::frontier::visit_set::kani::visited_entry_identity_is_exact_and_never_silent"
+      "endpoint::kernel::frontier::visit_set::kani::rolled_reentry_can_visit_more_cursor_positions_than_active_lanes",
+      "endpoint::kernel::frontier::visit_set::kani::route_frontier_visit_capacity_is_exact_cursor_position_domain",
+      "endpoint::kernel::frontier::visit_set::kani::terminal_cursor_position_is_not_an_absent_event_identity",
+      "endpoint::kernel::frontier::visit_set::kani::visited_cursor_position_identity_is_exact_and_never_silent"
     ],
     "../../src/endpoint/kernel/frontier_state/kani.rs": [
       "endpoint::kernel::frontier_state::kani::root_frontier_owner_slot_survives_first_entry_removal",
@@ -291,7 +294,7 @@
   "contract-harnesses": {},
   "contracts": [],
   "totals": {
-    "standard-harnesses": 197,
+    "standard-harnesses": 200,
     "contract-harnesses": 0,
     "functions-under-contract": 0
   }

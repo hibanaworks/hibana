@@ -12,9 +12,7 @@ use super::frontier::{
     ActiveEntrySet, ActiveEntrySlot, FrontierVisitSet, LaneOfferState, OfferEntryKey,
     RootFrontierState,
 };
-use crate::global::{
-    const_dsl::ScopeId, role_program::frontier_visit_capacity, typestate::StateIndex,
-};
+use crate::global::const_dsl::ScopeId;
 
 pub(super) struct RootFrontierTable {
     ptr: *mut RootFrontierState,
@@ -35,11 +33,12 @@ pub(super) struct RootFrontierCapacity {
 
 pub(super) struct FrontierStateStorage {
     pub(super) root: RootFrontierStorage,
-    pub(super) visited_entries: *mut StateIndex,
+    pub(super) visited_position_bits: *mut u8,
 }
 
 pub(super) struct FrontierStateCapacity {
     pub(super) root: RootFrontierCapacity,
+    pub(super) visited_position_count: usize,
 }
 
 impl RootFrontierTable {
@@ -95,11 +94,6 @@ impl RootFrontierTable {
     #[inline]
     fn pool_capacity(&self) -> usize {
         self.pool_capacity as usize
-    }
-
-    #[inline]
-    fn visit_capacity(&self) -> usize {
-        frontier_visit_capacity(self.pool_capacity())
     }
 
     #[inline]
@@ -362,7 +356,8 @@ impl IndexMut<usize> for RootFrontierTable {
 
 pub(super) struct FrontierState {
     pub(super) root_frontier_state: RootFrontierTable,
-    visited_entries: *mut StateIndex,
+    visited_position_bits: *mut u8,
+    visited_position_count: usize,
 }
 
 impl FrontierState {
@@ -371,7 +366,9 @@ impl FrontierState {
         storage: FrontierStateStorage,
         capacity: FrontierStateCapacity,
     ) {
-        if capacity.root.pool_capacity != 0 && storage.visited_entries.is_null() {
+        if capacity.visited_position_count > u16::MAX as usize + 1
+            || (capacity.visited_position_count != 0 && storage.visited_position_bits.is_null())
+        {
             crate::invariant();
         }
         unsafe {
@@ -384,20 +381,21 @@ impl FrontierState {
                 storage.root,
                 capacity.root,
             );
-            core::ptr::addr_of_mut!((*dst).visited_entries).write(storage.visited_entries);
+            core::ptr::addr_of_mut!((*dst).visited_position_bits)
+                .write(storage.visited_position_bits);
+            core::ptr::addr_of_mut!((*dst).visited_position_count)
+                .write(capacity.visited_position_count);
         }
     }
 
     #[inline]
     pub(super) fn empty_frontier_visit_set(&mut self) -> FrontierVisitSet {
-        /* SAFETY: `visited_entries` is the endpoint-owned arena section sized
-        for the current entry plus every active-frontier entry. One public
-        offer operation owns the returned initialized prefix until completion. */
+        /* SAFETY: `visited_position_bits` is the endpoint-owned arena section with
+        one bit for every cursor position that one route-bearing endpoint can
+        visit. One public offer operation owns the returned bitmap until
+        completion. */
         unsafe {
-            FrontierVisitSet::from_parts(
-                self.visited_entries,
-                self.root_frontier_state.visit_capacity(),
-            )
+            FrontierVisitSet::from_parts(self.visited_position_bits, self.visited_position_count)
         }
     }
 

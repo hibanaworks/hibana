@@ -9,7 +9,9 @@ use crate::{
             validate_parallel_endpoint_selectors, validate_receive_lane_causality,
             validate_roll_reentry_endpoint_selectors,
         },
-        role_program::{LaneWord, lane_word_count, logical_lane_count_for_role},
+        role_program::{
+            LaneWord, compact_local_step_count, lane_word_count, logical_lane_count_for_role,
+        },
     },
 };
 
@@ -85,7 +87,7 @@ pub(super) const fn exact_role_facts<const E: usize>(
         logical_lane_count_for_role(active_lane_count, endpoint_lane_slot_count);
 
     ExactRoleFacts {
-        local_step_count: encode_u16_count(local_len),
+        local_step_count: compact_local_step_count(local_len),
         active_lane_count: encode_u16_count(active_lane_count),
         endpoint_lane_slot_count: encode_u16_count(endpoint_lane_slot_count),
         logical_lane_count: encode_u16_count(logical_lane_count),

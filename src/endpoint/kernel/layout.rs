@@ -85,7 +85,7 @@ pub(crate) struct RouteFrontierArenaLayout {
     frontier_state: EndpointArenaSection,
     frontier_root_rows: EndpointArenaSection,
     frontier_root_active_slots: EndpointArenaSection,
-    frontier_visited_entries: EndpointArenaSection,
+    frontier_visited_position_bits: EndpointArenaSection,
     scope_evidence_slots: EndpointArenaSection,
 }
 
@@ -198,12 +198,10 @@ impl EndpointArenaLayout {
         offset = frontier_root_active_slots.end_offset();
         total_align = max_usize(total_align, frontier_root_active_slots.align());
 
-        let frontier_visited_entries = Self::section_array::<crate::global::typestate::StateIndex>(
-            offset,
-            footprint.frontier_visit_count(),
-        );
-        offset = frontier_visited_entries.end_offset();
-        total_align = max_usize(total_align, frontier_visited_entries.align());
+        let frontier_visited_position_bits =
+            Self::section_array::<u8>(offset, footprint.frontier_visit_byte_count());
+        offset = frontier_visited_position_bits.end_offset();
+        total_align = max_usize(total_align, frontier_visited_position_bits.align());
 
         let scope_evidence_slots =
             Self::section_array::<ScopeEvidenceSlot>(offset, footprint.scope_evidence_count());
@@ -230,7 +228,7 @@ impl EndpointArenaLayout {
                 frontier_state,
                 frontier_root_rows,
                 frontier_root_active_slots,
-                frontier_visited_entries,
+                frontier_visited_position_bits,
                 scope_evidence_slots,
             },
             total_bytes: offset,
@@ -328,8 +326,8 @@ impl EndpointArenaLayout {
     }
 
     #[inline(always)]
-    pub(crate) const fn frontier_visited_entries(&self) -> EndpointArenaSection {
-        self.frontier.frontier_visited_entries
+    pub(crate) const fn frontier_visited_position_bits(&self) -> EndpointArenaSection {
+        self.frontier.frontier_visited_position_bits
     }
 
     #[inline(always)]
@@ -411,6 +409,7 @@ mod tests {
     use crate::global::role_program::RuntimeRoleFootprint;
 
     const fn test_footprint(
+        local_step_count: usize,
         active_lane_count: usize,
         endpoint_lane_slot_count: usize,
         logical_lane_count: usize,
@@ -420,7 +419,7 @@ mod tests {
         RuntimeRoleFootprint {
             max_route_commit_count: route_scope_count,
             route_arm_state_capacity,
-            local_step_count: 0,
+            local_step_count,
             route_scope_count,
             active_lane_count,
             endpoint_lane_slot_count,
@@ -438,8 +437,8 @@ mod tests {
     }
 
     #[test]
-    fn frontier_storage_distinguishes_candidates_from_the_current_visit() {
-        let footprint = test_footprint(3, 65, 65, 3, 4);
+    fn frontier_storage_separates_active_keys_from_visited_cursor_positions() {
+        let footprint = test_footprint(8, 3, 65, 65, 3, 4);
         let layout = EndpointArenaLayout::from_footprint(footprint);
         assert_eq!(layout.frontier_root_rows().count(), 3);
         assert_eq!(
@@ -447,15 +446,16 @@ mod tests {
             footprint.frontier_entry_count()
         );
         assert_eq!(
-            layout.frontier_visited_entries().count(),
-            footprint.frontier_visit_count()
+            layout.frontier_visited_position_bits().count(),
+            footprint.frontier_visit_byte_count()
         );
-        assert_eq!(layout.frontier_visited_entries().count(), 4);
+        assert_eq!(footprint.frontier_visit_position_count(), 9);
+        assert_eq!(layout.frontier_visited_position_bits().count(), 2);
     }
 
     #[test]
     fn route_commit_row_set_builder_no_longer_allocates_row_storage() {
-        let mut footprint = test_footprint(1, 1, 1, 1, 70);
+        let mut footprint = test_footprint(2, 1, 1, 1, 1, 70);
         footprint.route_scope_count = 70;
         let layout = EndpointArenaLayout::from_footprint(footprint);
 
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn route_history_tracks_descriptor_relations_not_lane_depth_product() {
-        let footprint = test_footprint(200, 256, 256, 17, 300);
+        let footprint = test_footprint(400, 200, 256, 256, 17, 300);
         let layout = EndpointArenaLayout::from_footprint(footprint);
 
         assert_eq!(layout.route_arm_history().count(), 17);
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn endpoint_arena_does_not_contain_route_scope_lane_cache() {
-        let mut base = test_footprint(4, 65, 65, 2, 16);
+        let mut base = test_footprint(8, 4, 65, 65, 2, 16);
         base.route_scope_count = 0;
         let base_layout = EndpointArenaLayout::from_footprint(base);
 

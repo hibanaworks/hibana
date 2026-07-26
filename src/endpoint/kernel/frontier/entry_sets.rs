@@ -1,6 +1,6 @@
 use super::{
-    FrontierObservationSlot, MAX_STATES, OfferEntryAdmission, OfferEntryKey,
-    OfferEntryObservedState, cached_frontier_observation_slots_len, state_index_to_usize,
+    FrontierObservationSlot, OfferEntryAdmission, OfferEntryKey, OfferEntryObservedState,
+    PRESENT_STATE_INDEX_CAPACITY, cached_frontier_observation_slots_len, state_index_to_usize,
 };
 
 mod buffer;
@@ -190,7 +190,7 @@ impl ObservedEntrySet<'_> {
             return None;
         }
         let entry_idx = state_index_to_usize(slot.entry);
-        (entry_idx < MAX_STATES).then_some(entry_idx)
+        (entry_idx < PRESENT_STATE_INDEX_CAPACITY).then_some(entry_idx)
     }
 
     pub(crate) fn first_selectable_ready_entry_except(

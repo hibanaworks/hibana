@@ -10,7 +10,7 @@
 use core::{mem, slice};
 
 use crate::global::const_dsl::ScopeId;
-use crate::global::typestate::{MAX_STATES, StateIndex, state_index_to_usize};
+use crate::global::typestate::{PRESENT_STATE_INDEX_CAPACITY, StateIndex, state_index_to_usize};
 
 mod active_offer_entry;
 mod entry_sets;

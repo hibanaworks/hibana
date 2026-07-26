@@ -252,7 +252,7 @@ impl StateIndex {
 
     #[inline(always)]
     pub(crate) const fn checked_from_usize(idx: usize) -> Option<Self> {
-        if idx < MAX_STATES {
+        if idx < PRESENT_STATE_INDEX_CAPACITY {
             Some(Self(idx as u16))
         } else {
             None
@@ -283,9 +283,11 @@ impl StateIndex {
     }
 }
 
-/// Maximum number of local states tracked per role (one extra slot for the
-/// terminal state).
-pub(crate) const MAX_STATES: usize = crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY;
+/// Number of present event-state identities. `u16::MAX` remains the absent
+/// sentinel; cursor positions use a separate domain that includes the terminal
+/// position after the final event.
+pub(crate) const PRESENT_STATE_INDEX_CAPACITY: usize =
+    crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY;
 
 /// Local action associated with a typestate node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

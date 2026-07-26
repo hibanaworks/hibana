@@ -102,12 +102,10 @@ fn streaming_progress_selection_matches_the_exact_filtered_reference() {
     );
     let visit_first: bool = kani::any();
     let visit_second: bool = kani::any();
-    let mut visited_storage = [StateIndex::ABSENT; 2];
+    let mut visited_storage = [0u8; 1];
     /* SAFETY: `visited_storage` is initialized, live, and exclusively borrowed
     for the complete symbolic visit-set use. */
-    let mut visited = unsafe {
-        FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), visited_storage.len())
-    };
+    let mut visited = unsafe { FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), 4) };
     if visit_first {
         visited.record(first.entry.as_usize());
     }

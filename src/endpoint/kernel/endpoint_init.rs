@@ -291,6 +291,7 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
     dst: *mut CursorEndpoint<'r, ROLE, T>,
     arena_storage: *mut u8,
     arena_layout: &crate::endpoint::kernel::layout::EndpointArenaLayout,
+    role_descriptor: RoleDescriptorRef,
 ) where
     T: Transport + 'r,
 {
@@ -317,9 +318,9 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
                         arena_layout.frontier_root_active_slots(),
                     ),
                 },
-                visited_entries: section_ptr::<crate::global::typestate::StateIndex>(
+                visited_position_bits: section_ptr::<u8>(
                     arena_storage,
-                    arena_layout.frontier_visited_entries(),
+                    arena_layout.frontier_visited_position_bits(),
                 ),
             },
             FrontierStateCapacity {
@@ -327,6 +328,10 @@ unsafe fn init_endpoint_frontier<'r, const ROLE: u8, T>(
                     row_count: arena_layout.frontier_root_rows().count(),
                     pool_capacity: arena_layout.frontier_root_active_slots().count(),
                 },
+                visited_position_count: role_descriptor
+                    .local_event_rows()
+                    .footprint()
+                    .frontier_visit_position_count(),
             },
         );
     }
@@ -392,7 +397,7 @@ pub(crate) unsafe fn init_empty_from_compiled<'r, const ROLE: u8, T>(
         });
         init_endpoint_cursor(dst, arena_storage, &arena_layout, role_descriptor);
         init_endpoint_route(dst, arena_storage, &arena_layout, role_descriptor);
-        init_endpoint_frontier(dst, arena_storage, &arena_layout);
+        init_endpoint_frontier(dst, arena_storage, &arena_layout, role_descriptor);
     }
 }
 

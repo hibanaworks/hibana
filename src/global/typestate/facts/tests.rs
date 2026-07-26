@@ -1,25 +1,27 @@
-use super::{InboundFrameKey, LocalNode, MAX_STATES, PackedEventConflict, StateIndex};
+use super::{
+    InboundFrameKey, LocalNode, PRESENT_STATE_INDEX_CAPACITY, PackedEventConflict, StateIndex,
+};
 
 #[test]
 fn state_index_uses_the_exact_present_identity_domain() {
     assert_eq!(
-        StateIndex::from_usize(MAX_STATES - 1).as_usize(),
-        MAX_STATES - 1
+        StateIndex::from_usize(PRESENT_STATE_INDEX_CAPACITY - 1).as_usize(),
+        PRESENT_STATE_INDEX_CAPACITY - 1
     );
-    assert!(!StateIndex::from_usize(MAX_STATES - 1).is_absent());
+    assert!(!StateIndex::from_usize(PRESENT_STATE_INDEX_CAPACITY - 1).is_absent());
     assert_eq!(
-        StateIndex::checked_from_usize(MAX_STATES - 1)
+        StateIndex::checked_from_usize(PRESENT_STATE_INDEX_CAPACITY - 1)
             .expect("last present state")
             .as_usize(),
-        MAX_STATES - 1
+        PRESENT_STATE_INDEX_CAPACITY - 1
     );
-    assert!(StateIndex::checked_from_usize(MAX_STATES).is_none());
+    assert!(StateIndex::checked_from_usize(PRESENT_STATE_INDEX_CAPACITY).is_none());
 }
 
 #[test]
 #[should_panic]
 fn state_index_rejects_the_reserved_absent_identity() {
-    let _ = StateIndex::from_usize(MAX_STATES);
+    let _ = StateIndex::from_usize(PRESENT_STATE_INDEX_CAPACITY);
 }
 
 #[test]

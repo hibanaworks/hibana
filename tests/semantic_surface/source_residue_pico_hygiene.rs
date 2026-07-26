@@ -175,12 +175,14 @@ fn rendezvous_scratch_borrows_are_scoped_and_offer_progress_is_endpoint_resident
         "pending sends must retain the source payload, never a shared-scratch borrow"
     );
     assert!(
-        layout.contains("frontier_visited_entries: EndpointArenaSection")
-            && frontier_state.contains("visited_entries: *mut StateIndex")
+        layout.contains("frontier_visited_position_bits: EndpointArenaSection")
+            && frontier_state.contains("visited_position_bits: *mut u8")
+            && frontier_state.contains("visited_position_count: usize")
+            && !frontier_state.contains("visited_state")
             && !frontier_state.contains("visited_scopes")
             && !production.contains("OfferEntryTable")
             && !production.contains("global_frontier_scratch_state"),
-        "poll-spanning offer state must be endpoint resident and derived from active lanes"
+        "poll-spanning offer state must be endpoint resident and bit-packed over the exact cursor-position domain"
     );
 }
 

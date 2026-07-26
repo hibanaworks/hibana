@@ -22,12 +22,10 @@ fn candidate(entry: u16, frontier: FrontierKind) -> FrontierProgressCandidate {
 fn progress_selection_distinguishes_entries_that_share_a_scope() {
     let mut selection =
         FrontierProgressSelection::new(ScopeId::none(), 0, ScopeId::none(), FrontierKind::Route);
-    let mut visited_storage = [StateIndex::ABSENT; 2];
+    let mut visited_storage = [0u8; 1];
     /* SAFETY: `visited_storage` is initialized, live, and exclusively
     borrowed for the complete visit-set use. */
-    let mut visited = unsafe {
-        FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), visited_storage.len())
-    };
+    let mut visited = unsafe { FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), 3) };
     visited.record(1);
     selection.consider(candidate(1, FrontierKind::Route), &visited);
     selection.consider(candidate(2, FrontierKind::Route), &visited);
@@ -73,12 +71,10 @@ fn progress_selection_filters_every_admission_condition_before_priority() {
     let current_root = ScopeId::parallel(2);
     let mut selection =
         FrontierProgressSelection::new(current_scope, 1, current_root, FrontierKind::Route);
-    let mut visited_storage = [StateIndex::ABSENT; 1];
+    let mut visited_storage = [0u8; 1];
     /* SAFETY: `visited_storage` is initialized, live, and exclusively
     borrowed for the complete visit-set use. */
-    let mut visited = unsafe {
-        FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), visited_storage.len())
-    };
+    let mut visited = unsafe { FrontierVisitSet::from_parts(visited_storage.as_mut_ptr(), 6) };
     visited.record(4);
 
     selection.consider(

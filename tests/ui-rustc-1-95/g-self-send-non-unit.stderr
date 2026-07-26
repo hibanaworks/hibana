@@ -1,7 +1,8 @@
 error[E0080]: evaluation panicked: self-role actions require the unit payload
  --> $RUST/core/src/panic.rs
   |
-  = note: evaluation of `hibana::g::send::<0, 0, hibana::g::Msg<1, u8>>::{constant#0}` failed here
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::send::<0, 0, hibana::g::Msg<1, u8>>::{constant#0}` failed here
   |
  ::: src/g.rs
   |

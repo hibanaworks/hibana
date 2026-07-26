@@ -263,6 +263,22 @@ Hibana.active_endpoint_access_blocks_reentrant_attach : ∀ (phase : Hibana.Runt
   Or (@Eq.{1} Hibana.RuntimeAccessPhase phase Hibana.RuntimeAccessPhase.endpointOperation)
       (@Eq.{1} Hibana.RuntimeAccessPhase phase Hibana.RuntimeAccessPhase.endpointScratch) →
     @Eq.{1} Bool (Hibana.attachMayReadEndpointImage phase) false
+Hibana.active_lane_visit_bound_is_insufficient_for_rolled_reentry : And
+  (@Eq.{1} Nat
+    (Hibana.productionFrontierVisitCapacity (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4))))
+  (And
+    (@Eq.{1} Nat
+      (Hibana.productionFrontierVisitByteCount (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+      (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+    (@GT.gt.{0} Nat instLTNat
+      (Hibana.productionFrontierVisitCapacity (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+      (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+        (Hibana.productionFrontierEntryCapacity (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))))
 Hibana.active_offer_entry_has_representative_iff_owned : ∀ (target : Hibana.ActiveOfferKey)
   (lanes : List.{0} Hibana.ActiveOfferLane),
   Iff
@@ -608,6 +624,10 @@ Hibana.async_begin_cancellation_preserves_transport_buffers : ∀ (config : Hiba
   @Eq.{1} Hibana.GlobalSessionStatus config.status Hibana.GlobalSessionStatus.live →
     @Exists.{1} Hibana.GlobalConfig fun retired =>
       And (Hibana.CancellationReachable (config.beginCancellation reporter cause) retired) retired.resourcesRetired
+Hibana.bit_packed_byte_count_covers_cursor_position_domain : ∀ (positionCount : Nat),
+  @LE.le.{0} Nat instLENat positionCount
+    (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat) (Hibana.bitPackedByteCount positionCount)
+      (@OfNat.ofNat.{0} Nat (nat_lit 8) (instOfNatNat (nat_lit 8))))
 @Hibana.boundary_poll_issues_exact_receipt : ∀ {current next : Hibana.TransportBoundaryState}
   {frame : Hibana.TransportFrame},
   @Eq.{1} (Hibana.CarrierPoll Hibana.TransportBoundaryState) current.pollReceive
@@ -2847,22 +2867,22 @@ Hibana.production_atom_only_event_capacity_exact : @Eq.{1} Nat Hibana.production
   (@OfNat.ofNat.{0} Nat (nat_lit 5957) (instOfNatNat (nat_lit 5957)))
 Hibana.production_cursor_accepts_terminal_event_count : Hibana.productionCursorPositionRepresentable
   Hibana.productionEventIdentityCapacity
-Hibana.production_frontier_capacity_covers_all_active_entries : ∀ (witness : Hibana.FrontierCapacityWitness),
-  @LE.le.{0} Nat instLENat witness.activeEntryCount (Hibana.productionFrontierCapacity witness.activeLaneCount)
-Hibana.production_frontier_capacity_covers_all_visited_entries : ∀ (witness : Hibana.FrontierCapacityWitness),
-  @LE.le.{0} Nat instLENat witness.visitedEntryCount (Hibana.productionFrontierCapacity witness.activeLaneCount)
-Hibana.production_frontier_capacity_covers_every_active_offer_key_witness : ∀ (lanes : List.{0} Hibana.ActiveOfferLane),
+Hibana.production_frontier_entry_capacity_covers_all_active_entries : ∀ (witness : Hibana.FrontierEntryCapacityWitness),
+  @LE.le.{0} Nat instLENat witness.activeEntryCount (Hibana.productionFrontierEntryCapacity witness.activeLaneCount)
+Hibana.production_frontier_entry_capacity_covers_every_active_offer_key_witness : ∀
+  (lanes : List.{0} Hibana.ActiveOfferLane),
   @LE.le.{0} Nat instLENat (@List.length.{0} Hibana.ActiveOfferKey (Hibana.activeOfferKeys lanes))
-    (Hibana.productionFrontierCapacity (@List.length.{0} Hibana.ActiveOfferLane lanes))
-Hibana.production_frontier_capacity_is_bounded_by_the_lane_domain : ∀ (activeLaneCount : Nat),
+    (Hibana.productionFrontierEntryCapacity (@List.length.{0} Hibana.ActiveOfferLane lanes))
+Hibana.production_frontier_entry_capacity_is_bounded_by_the_lane_domain : ∀ (activeLaneCount : Nat),
   @LE.le.{0} Nat instLENat activeLaneCount Hibana.productionLaneCapacity →
-    @LE.le.{0} Nat instLENat (Hibana.productionFrontierCapacity activeLaneCount) Hibana.productionLaneCapacity
-Hibana.production_frontier_capacity_is_exact_active_lane_count : ∀ (activeLaneCount : Nat),
-  @Eq.{1} Nat (Hibana.productionFrontierCapacity activeLaneCount) activeLaneCount
-Hibana.production_frontier_capacity_reaches_full_lane_domain : And
-  (@Eq.{1} Nat (Hibana.productionFrontierCapacity (@OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9))))
+    @LE.le.{0} Nat instLENat (Hibana.productionFrontierEntryCapacity activeLaneCount) Hibana.productionLaneCapacity
+Hibana.production_frontier_entry_capacity_is_exact_active_lane_count : ∀ (activeLaneCount : Nat),
+  @Eq.{1} Nat (Hibana.productionFrontierEntryCapacity activeLaneCount) activeLaneCount
+Hibana.production_frontier_entry_capacity_reaches_full_lane_domain : And
+  (@Eq.{1} Nat (Hibana.productionFrontierEntryCapacity (@OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9))))
     (@OfNat.ofNat.{0} Nat (nat_lit 9) (instOfNatNat (nat_lit 9))))
-  (@Eq.{1} Nat (Hibana.productionFrontierCapacity (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
+  (@Eq.{1} Nat
+    (Hibana.productionFrontierEntryCapacity (@OfNat.ofNat.{0} Nat (nat_lit 256) (instOfNatNat (nat_lit 256))))
     Hibana.productionLaneCapacity)
 Hibana.production_frontier_progress_selection_is_filtered_reference_exact : ∀
   (currentScope currentEntry currentFrontier : Nat) (currentParallelRoot : Option.{0} Nat)
@@ -2880,6 +2900,29 @@ Hibana.production_frontier_progress_selection_is_filtered_reference_exact : ∀
         @decide (@Eq.{1} Nat candidate.frontier currentFrontier)
           (instDecidableEqNat candidate.frontier currentFrontier))
       candidates)
+Hibana.production_frontier_visit_bytes_cover_every_cursor_position : ∀ (localStepCount routeScopeCount : Nat),
+  @LE.le.{0} Nat instLENat (Hibana.productionFrontierVisitCapacity localStepCount routeScopeCount)
+    (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat)
+      (Hibana.productionFrontierVisitByteCount localStepCount routeScopeCount)
+      (@OfNat.ofNat.{0} Nat (nat_lit 8) (instOfNatNat (nat_lit 8))))
+Hibana.production_frontier_visit_capacity_covers_all_visited_positions : ∀
+  (witness : Hibana.FrontierVisitCapacityWitness),
+  @LE.le.{0} Nat instLENat witness.visitedPositionCount
+    (Hibana.productionFrontierVisitCapacity witness.localStepCount witness.routeScopeCount)
+Hibana.production_frontier_visit_capacity_fits_compact_cursor_domain : ∀ (localStepCount routeScopeCount : Nat),
+  @LE.le.{0} Nat instLENat localStepCount Hibana.productionEventIdentityCapacity →
+    @LE.le.{0} Nat instLENat (Hibana.productionFrontierVisitCapacity localStepCount routeScopeCount)
+      Hibana.productionPackedU16Capacity
+Hibana.production_frontier_visit_capacity_is_exact_cursor_position_domain : ∀ (localStepCount routeScopeCount : Nat),
+  @LT.lt.{0} Nat instLTNat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) routeScopeCount →
+    @Eq.{1} Nat (Hibana.productionFrontierVisitCapacity localStepCount routeScopeCount)
+      (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat) localStepCount
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+Hibana.production_frontier_visit_capacity_is_zero_without_routes : ∀ (localStepCount : Nat),
+  @Eq.{1} Nat
+    (Hibana.productionFrontierVisitCapacity localStepCount
+      (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+    (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
 @Hibana.production_kernel_artifact_covers_every_protocol_class : ∀ {artifact : Hibana.ProductionKernelArtifact}
   {session roleCount : Nat} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (artifact.check session roleCount choreo) true →

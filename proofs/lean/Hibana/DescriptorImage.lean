@@ -277,47 +277,117 @@ theorem production_logical_lane_count_has_no_reserved_lane_overhead
 /-- Runtime offer entries have one exact `(scope, local entry)` key and retain
 the active lane that owns each key. Several exact keys may target the same
 cursor entry, but no key can exist without an owning active lane. -/
-structure FrontierCapacityWitness where
+structure FrontierEntryCapacityWitness where
   activeLaneCount : Nat
   activeEntryCount : Nat
-  visitedEntryCount : Nat
   entriesOwnedByActiveLanes : activeEntryCount ≤ activeLaneCount
-  visitedEntriesOwnedByActiveEntries : visitedEntryCount ≤ activeEntryCount
-  activeLanesFitWireDomain : activeLaneCount ≤ productionLaneCapacity
 
 /-- Frontier storage is exactly the number of active lanes. Empty projections
 need no frontier cell; their session lane remains represented independently. -/
-def productionFrontierCapacity (activeLaneCount : Nat) : Nat :=
+def productionFrontierEntryCapacity (activeLaneCount : Nat) : Nat :=
   activeLaneCount
 
-theorem production_frontier_capacity_is_exact_active_lane_count
+theorem production_frontier_entry_capacity_is_exact_active_lane_count
     (activeLaneCount : Nat) :
-    productionFrontierCapacity activeLaneCount = activeLaneCount := by
+    productionFrontierEntryCapacity activeLaneCount = activeLaneCount := by
   rfl
 
-theorem production_frontier_capacity_covers_all_active_entries
-    (witness : FrontierCapacityWitness) :
-    witness.activeEntryCount ≤ productionFrontierCapacity witness.activeLaneCount := by
+theorem production_frontier_entry_capacity_covers_all_active_entries
+    (witness : FrontierEntryCapacityWitness) :
+    witness.activeEntryCount ≤
+      productionFrontierEntryCapacity witness.activeLaneCount := by
   exact witness.entriesOwnedByActiveLanes
 
-/-- Visit tracking uses exact local-entry identity, not route scope identity.
-Every visited entry therefore belongs to the same active-entry domain and the
-active-lane-derived allocation never needs truncation. -/
-theorem production_frontier_capacity_covers_all_visited_entries
-    (witness : FrontierCapacityWitness) :
-    witness.visitedEntryCount ≤ productionFrontierCapacity witness.activeLaneCount := by
-  exact Nat.le_trans witness.visitedEntriesOwnedByActiveEntries
-    (production_frontier_capacity_covers_all_active_entries witness)
-
-theorem production_frontier_capacity_is_bounded_by_the_lane_domain
+theorem production_frontier_entry_capacity_is_bounded_by_the_lane_domain
     (activeLaneCount : Nat)
     (laneBound : activeLaneCount ≤ productionLaneCapacity) :
-    productionFrontierCapacity activeLaneCount ≤ productionLaneCapacity := by
+    productionFrontierEntryCapacity activeLaneCount ≤ productionLaneCapacity := by
   exact laneBound
 
-theorem production_frontier_capacity_reaches_full_lane_domain :
-    productionFrontierCapacity 9 = 9 ∧
-      productionFrontierCapacity 256 = productionLaneCapacity := by
+theorem production_frontier_entry_capacity_reaches_full_lane_domain :
+    productionFrontierEntryCapacity 9 = 9 ∧
+      productionFrontierEntryCapacity 256 = productionLaneCapacity := by
+  decide
+
+/-- One public offer can restart its frontier after route materialization and
+therefore visit more cursor positions than there are simultaneously active
+entries. The domain includes the position after the final local step. -/
+structure FrontierVisitCapacityWitness where
+  localStepCount : Nat
+  routeScopeCount : Nat
+  visitedPositionCount : Nat
+  visitedPositionsFitCursorDomain : visitedPositionCount ≤ localStepCount + 1
+  noRoutesNoVisits : routeScopeCount = 0 → visitedPositionCount = 0
+
+/-- Roles without routes never allocate an offer visit set. A route-bearing
+role allocates exactly one identity bit per cursor position, including the
+terminal position after the final local step. -/
+def productionFrontierVisitCapacity
+    (localStepCount routeScopeCount : Nat) : Nat :=
+  if routeScopeCount = 0 then 0 else localStepCount + 1
+
+/-- Production packs the finite visit domain into one bit per cursor position. -/
+def bitPackedByteCount (positionCount : Nat) : Nat :=
+  (positionCount + 7) / 8
+
+def productionFrontierVisitByteCount
+    (localStepCount routeScopeCount : Nat) : Nat :=
+  bitPackedByteCount
+    (productionFrontierVisitCapacity localStepCount routeScopeCount)
+
+theorem bit_packed_byte_count_covers_cursor_position_domain
+    (positionCount : Nat) :
+    positionCount ≤ bitPackedByteCount positionCount * 8 := by
+  unfold bitPackedByteCount
+  have division := Nat.div_add_mod (positionCount + 7) 8
+  have remainder : (positionCount + 7) % 8 < 8 := Nat.mod_lt _ (by decide)
+  omega
+
+theorem production_frontier_visit_bytes_cover_every_cursor_position
+    (localStepCount routeScopeCount : Nat) :
+    productionFrontierVisitCapacity localStepCount routeScopeCount ≤
+      productionFrontierVisitByteCount localStepCount routeScopeCount * 8 := by
+  exact bit_packed_byte_count_covers_cursor_position_domain _
+
+theorem production_frontier_visit_capacity_covers_all_visited_positions
+    (witness : FrontierVisitCapacityWitness) :
+    witness.visitedPositionCount ≤
+      productionFrontierVisitCapacity witness.localStepCount
+        witness.routeScopeCount := by
+  by_cases noRoutes : witness.routeScopeCount = 0
+  · have noVisits := witness.noRoutesNoVisits noRoutes
+    simp [productionFrontierVisitCapacity, noRoutes, noVisits]
+  · simpa [productionFrontierVisitCapacity, noRoutes] using
+      witness.visitedPositionsFitCursorDomain
+
+theorem production_frontier_visit_capacity_is_exact_cursor_position_domain
+    (localStepCount routeScopeCount : Nat)
+    (hasRoutes : 0 < routeScopeCount) :
+    productionFrontierVisitCapacity localStepCount routeScopeCount =
+      localStepCount + 1 := by
+  simp [productionFrontierVisitCapacity, Nat.ne_of_gt hasRoutes]
+
+theorem production_frontier_visit_capacity_fits_compact_cursor_domain
+    (localStepCount routeScopeCount : Nat)
+    (localStepsFit : localStepCount ≤ productionEventIdentityCapacity) :
+    productionFrontierVisitCapacity localStepCount routeScopeCount ≤
+      productionPackedU16Capacity := by
+  by_cases noRoutes : routeScopeCount = 0
+  · simp [productionFrontierVisitCapacity, noRoutes]
+  · simp only [productionFrontierVisitCapacity, noRoutes, ↓reduceIte]
+    dsimp [productionEventIdentityCapacity, productionPackedU16Capacity] at *
+    omega
+
+theorem production_frontier_visit_capacity_is_zero_without_routes
+    (localStepCount : Nat) :
+    productionFrontierVisitCapacity localStepCount 0 = 0 := by
+  simp [productionFrontierVisitCapacity]
+
+theorem active_lane_visit_bound_is_insufficient_for_rolled_reentry :
+    productionFrontierVisitCapacity 3 1 = 4 ∧
+      productionFrontierVisitByteCount 3 1 = 1 ∧
+      productionFrontierVisitCapacity 3 1 >
+        productionFrontierEntryCapacity 1 + 1 := by
   decide
 
 /-- The production frontier walk retains only the first admissible candidate
@@ -577,10 +647,11 @@ theorem active_offer_key_mem_iff_owned
           · exact List.mem_cons.mpr (Or.inl exactKey.symm)
           · exact List.mem_cons.mpr (Or.inr (ih.mpr ⟨owner, inRest, exactKey⟩))
 
-theorem production_frontier_capacity_covers_every_active_offer_key_witness
+theorem production_frontier_entry_capacity_covers_every_active_offer_key_witness
     (lanes : List ActiveOfferLane) :
-    (activeOfferKeys lanes).length ≤ productionFrontierCapacity lanes.length := by
-  simpa [productionFrontierCapacity] using
+    (activeOfferKeys lanes).length ≤
+      productionFrontierEntryCapacity lanes.length := by
+  simpa [productionFrontierEntryCapacity] using
     active_offer_key_count_is_bounded_by_active_lane_count lanes
 
 def firstOwningLane

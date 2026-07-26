@@ -1,7 +1,7 @@
 use super::super::{
     BlobPtr, LaneSetView, LaneStepLayout, LaneSteps, PackedLaneRange, PackedRollScopeRow,
     RoleCompiledCounts, RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts,
-    RuntimeRoleFootprint, lane_byte_count,
+    RuntimeRoleFootprint, compact_local_step_count, lane_byte_count,
 };
 use super::lane_image::invalid_resident_descriptor;
 use super::metadata::{
@@ -31,7 +31,7 @@ impl RuntimeRoleFacts {
         Self {
             words: [
                 compact_count(counts.max_route_commit_count),
-                compact_count(counts.local_step_count),
+                compact_local_step_count(counts.local_step_count),
                 compact_count(counts.route_scope_count),
                 compact_count(counts.active_lane_count),
                 compact_count(counts.endpoint_lane_slot_count),

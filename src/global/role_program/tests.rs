@@ -148,7 +148,54 @@ fn inactive_role_keeps_only_its_session_lane_and_no_frontier_reserve() {
     assert_eq!(image.active_lane_row.len(), 0);
     assert_eq!(footprint.frontier_entry_count(), 0);
     assert_eq!(layout.frontier_root_active_slots().count(), 0);
-    assert_eq!(layout.frontier_visited_entries().count(), 0);
+    assert_eq!(layout.frontier_visited_position_bits().count(), 0);
+}
+
+#[test]
+fn route_frontier_visit_capacity_covers_the_exact_cursor_position_domain() {
+    let program = g::route(
+        g::seq(
+            g::send::<0, 1, Msg<60, u8>>(),
+            g::send::<1, 0, Msg<61, u8>>(),
+        ),
+        g::seq(
+            g::send::<0, 1, Msg<62, u8>>(),
+            g::send::<1, 0, Msg<63, u8>>(),
+        ),
+    )
+    .roll();
+    let role1: RoleProgram<1> = project(&program);
+    let image = role1.role_image_ref();
+    let footprint = image.footprint();
+    let layout = RoleDescriptorRef::from_resident(image).endpoint_arena_layout();
+
+    assert!(footprint.route_scope_count > 0);
+    assert!(footprint.local_step_count > footprint.frontier_entry_count() + 1);
+    assert_eq!(
+        footprint.frontier_visit_position_count(),
+        footprint.local_step_count + 1
+    );
+    assert_eq!(
+        layout.frontier_visited_position_bits().count(),
+        footprint.frontier_visit_byte_count()
+    );
+    assert!(footprint.frontier_visit_byte_count() < footprint.local_step_count);
+}
+
+#[test]
+fn local_cursor_position_domain_includes_initial_and_terminal_positions() {
+    assert_eq!(local_cursor_position_count(0), 1);
+    assert_eq!(local_cursor_position_count(46), 47);
+    assert_eq!(
+        local_cursor_position_count(u16::MAX as usize),
+        u16::MAX as usize + 1
+    );
+}
+
+#[test]
+#[should_panic]
+fn local_cursor_position_domain_rejects_an_unpacked_local_step_count() {
+    let _ = local_cursor_position_count(u16::MAX as usize + 1);
 }
 
 #[test]

@@ -45,7 +45,7 @@ fn endpoint_largest_section(layout: crate::endpoint::kernel::EndpointArenaLayout
     largest = largest.max(layout.frontier_state().bytes());
     largest = largest.max(layout.frontier_root_rows().bytes());
     largest = largest.max(layout.frontier_root_active_slots().bytes());
-    largest = largest.max(layout.frontier_visited_entries().bytes());
+    largest = largest.max(layout.frontier_visited_position_bits().bytes());
     largest = largest.max(layout.scope_evidence_slots().bytes());
     largest
 }

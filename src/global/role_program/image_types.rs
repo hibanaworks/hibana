@@ -519,14 +519,21 @@ pub(crate) struct RuntimeRoleFootprint {
 }
 
 #[inline(always)]
-pub(crate) const fn frontier_visit_capacity(frontier_entry_count: usize) -> usize {
-    match frontier_entry_count {
-        0 => 0,
-        count => match count.checked_add(1) {
-            Some(count) => count,
-            None => crate::invariant(),
-        },
+pub(crate) const fn frontier_visit_byte_count(position_count: usize) -> usize {
+    position_count.div_ceil(u8::BITS as usize)
+}
+
+#[inline(always)]
+pub(crate) const fn compact_local_step_count(local_step_count: usize) -> u16 {
+    if local_step_count > u16::MAX as usize {
+        crate::invariant();
     }
+    local_step_count as u16
+}
+
+#[inline(always)]
+pub(crate) const fn local_cursor_position_count(local_step_count: usize) -> usize {
+    compact_local_step_count(local_step_count) as usize + 1
 }
 
 impl RuntimeRoleFootprint {
@@ -546,7 +553,16 @@ impl RuntimeRoleFootprint {
     }
 
     #[inline(always)]
-    pub(crate) const fn frontier_visit_count(self) -> usize {
-        frontier_visit_capacity(self.frontier_entry_count())
+    pub(crate) const fn frontier_visit_position_count(self) -> usize {
+        if self.route_scope_count == 0 {
+            0
+        } else {
+            local_cursor_position_count(self.local_step_count)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn frontier_visit_byte_count(self) -> usize {
+        frontier_visit_byte_count(self.frontier_visit_position_count())
     }
 }

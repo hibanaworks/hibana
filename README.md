@@ -170,7 +170,7 @@ The compact descriptor domains impose these explicit limits:
 | Route commit chain | Image-derived | A `u16` descriptor range; no separate `u8` chain ceiling |
 | Resolver identities | 65,536 | The complete `u16` domain; intrinsic/dynamic authority is tagged separately in the route row |
 | Physical lanes | 256 | Storage follows the exact projected lane span; lanes are reused when endpoint-role sets do not conflict and no hidden binding lanes are reserved |
-| Offer frontier | Active-lane-derived | At most one active entry per active lane; streamed candidates and exact visited-entry identities have no fixed eight-entry mask |
+| Offer frontier | Descriptor-derived | Active-key storage follows active lanes; restart-spanning visited identities follow the finite local-step domain |
 | Inbound frame colors | 256 | Maximum simultaneously competing receive candidates for one source/receiver/lane key |
 
 Frame colors are not cumulative message numbers. More than 256 ordered
@@ -676,7 +676,7 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | Modeled runtime SRAM envelope | 5,514 B | 8,954 B |
 | Minimal linked protocol artifact | 352 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,824 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 99,073 B | 169,965 B |
+| Complete no-default `libhibana.rlib` sections | 98,936 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release

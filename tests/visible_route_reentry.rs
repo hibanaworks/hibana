@@ -799,6 +799,46 @@ async fn drive_left_mixed_route_prefix(
     offer_request_response::<MIX_DEEP_B_REQ, MIX_DEEP_B_ACK>(controller, worker, 50).await;
 }
 
+async fn drive_long_rolled_route_commit_flow(
+    controller: &mut hibana::Endpoint<'static, 0>,
+    worker: &mut hibana::Endpoint<'static, 1>,
+) {
+    offer_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(controller, worker, 10)
+        .await;
+    direct_request_response::<WASI_FD_PRESTAT_DIR_REQ, WASI_FD_PRESTAT_DIR_ACK>(
+        controller, worker, 20,
+    )
+    .await;
+    direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(controller, worker, 30)
+        .await;
+    direct_request_response::<WASI_PATH_FILESTAT_REQ, WASI_PATH_FILESTAT_ACK>(
+        controller, worker, 40,
+    )
+    .await;
+    direct_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(controller, worker, 50).await;
+    direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(controller, worker, 60).await;
+    direct_request_response::<WASI_FD_FILESTAT_REQ, WASI_FD_FILESTAT_ACK>(controller, worker, 70)
+        .await;
+    direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 80).await;
+    direct_request_response::<WASI_FD_READ_REQ, WASI_FD_READ_ACK>(controller, worker, 90).await;
+    direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(controller, worker, 100).await;
+
+    direct_request_response::<WASI_FD_FDSTAT_REQ, WASI_FD_FDSTAT_ACK>(controller, worker, 110)
+        .await;
+    direct_request_response::<WASI_PATH_OPEN_REQ, WASI_PATH_OPEN_ACK>(controller, worker, 120)
+        .await;
+    direct_request_response::<WASI_FD_WRITE_REFINED_REQ, WASI_FD_WRITE_REFINED_ACK>(
+        controller, worker, 130,
+    )
+    .await;
+    direct_request_response::<WASI_FD_WRITE_REFINED_REQ, WASI_FD_WRITE_REFINED_ACK>(
+        controller, worker, 140,
+    )
+    .await;
+    direct_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(controller, worker, 150).await;
+    direct_request_response::<WASI_FD_CLOSE_REQ, WASI_FD_CLOSE_ACK>(controller, worker, 160).await;
+}
+
 #[test]
 fn rolled_seq_reenters_by_repeated_head_without_loop_control() {
     with_visible_reentry_workspace(
@@ -1774,6 +1814,24 @@ fn wasi_shape_rolled_route_seq_arm_survives_prompt_read_after_open_selector() {
                 .await;
                 direct_request_response::<WASI_FD_PRESTAT_REQ, WASI_FD_PRESTAT_ACK>(
                     controller, worker, 30,
+                )
+                .await;
+            });
+        },
+    );
+}
+
+#[test]
+fn completed_long_route_arm_reenters_without_visit_capacity_abort() {
+    with_visible_reentry_workspace(
+        986,
+        wasi_shape_rolled_route_seq_arm_program::<0>(),
+        wasi_shape_rolled_route_seq_arm_program::<1>(),
+        |controller, worker| {
+            futures::executor::block_on(async {
+                drive_long_rolled_route_commit_flow(controller, worker).await;
+                offer_request_response::<WASI_FD_WRITE_REQ, WASI_FD_WRITE_ACK>(
+                    controller, worker, 200,
                 )
                 .await;
             });

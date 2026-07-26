@@ -1,4 +1,4 @@
-use super::{MAX_STATES, ScopeId, StateIndex};
+use super::{PRESENT_STATE_INDEX_CAPACITY, ScopeId, StateIndex};
 use crate::global::const_dsl::ScopeKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl FrontierKind {
 
 #[inline]
 pub(crate) fn checked_state_index(idx: usize) -> Option<StateIndex> {
-    if idx < MAX_STATES {
+    if idx < PRESENT_STATE_INDEX_CAPACITY {
         Some(StateIndex::new(idx as u16))
     } else {
         None
