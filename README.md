@@ -707,42 +707,21 @@ checker:
 | Miri | Strict provenance, borrowing, drop, cancellation, waiter, and callback re-entry behavior |
 | Rust tests and release gates | Executable examples, compile-time rejection, carrier conformance, package contents, and resource regressions |
 
-The [Lean proof boundary](https://github.com/hibanaworks/hibana/blob/main/proofs/lean/README.md)
-lists the exact theorems, assumptions, and generated artifacts. Each tool is
-evidence only for the part it checks. Kani and Miri strengthen the Rust
-implementation evidence; neither is presented as a Lean proof of arbitrary
-Rust source.
+The [Lean verification guide](https://github.com/hibanaworks/hibana/blob/main/proofs/lean/README.md)
+summarizes the checked boundary, assumptions, generated artifacts, and
+machine-checked claim inventories. Each tool is evidence only for the part it
+checks. Kani and Miri strengthen the Rust implementation evidence; neither is
+presented as a Lean proof of arbitrary Rust source.
 
 The static Lean theorem package and exact descriptor/kernel certificates are
-kernel-checked. Thirty-two anonymous finite regression examples run separately
-through the pinned Lean native evaluator; they are isolated from the theorem
-aggregate and are not proof dependencies. Building the eight projectability
-and eight verified-protocol finite closures also uses that evaluator; those
-sixteen named concrete witnesses are audited as an explicit trusted boundary
-rather than presented as kernel-only proofs.
+kernel-checked. Finite executable regressions and concrete finite-closure
+witnesses that use the pinned native evaluator are isolated and audited rather
+than presented as kernel-only proofs.
 
-The repository also gates the proof inventory itself: new public operations,
-compact transition effects, ownership classes, Lean theorems, registered Miri
-scenarios, and discovered Kani harnesses cannot silently disappear from their
-checked inventories. Static
-Lean declarations are discovered from source rather than repeated in a
-hand-maintained audit file; one Lean run checks both the elaborated type and the
-axiom closure of every discovered theorem. The gate also presents fifteen
-principal Lean claim types as a compact public surface and pins the elaborated
-types of all 687 static theorems. A theorem cannot retain its name while its
-elaborated statement silently acquires assumptions or drops a conclusion. The
-same gate assigns audit-only names to all 36 anonymous regression examples and
-pins their elaborated statements, so changing only an example statement cannot
-hide behind an unchanged count. The Miri gate similarly pins every reviewed
-owner and its final total of 216 executed cases plus two explicit ignored
-cases. All 48 named
-protocol/production contracts and 458 generated trace, rejection, refinement,
-and progress obligations are named and type-pinned. The sixteen
-runtime-layout/lifecycle theorems and two public-operation table theorems are
-pinned independently as well. Generated evidence cannot disappear or keep its
-name while changing its elaborated checked statement. Adding a new Miri owner
-still requires an explicit reviewed entry in the Miri gate; test-count pinning
-cannot account for source paths absent from that registry.
+Release gates discover the Lean, Kani, and Miri inventories from their canonical
+sources, pin Lean claim types and axiom closures, and reject missing or changed
+obligations. Current inventory counts are emitted by the gates instead of being
+duplicated in documentation.
 
 ## Build And Release
 

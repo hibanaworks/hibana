@@ -1,654 +1,126 @@
-# Hibana Lean proofs
+# Lean verification
 
-This host-only package checks a normalized Hibana choreography model with Lean
-Core and Std. It is outside the Cargo workspace and does not enter Pico builds,
-runtime memory, or flash artifacts.
+This host-only package verifies Hibana's normalized choreography, descriptor,
+and execution models with Lean Core and Std. It is outside the Cargo workspace
+and contributes no code, metadata, memory use, or flash cost to Pico builds.
 
-The checked object is Hibana's choreography-derived runtime enforcement kernel:
-projection produces compact role descriptors, and `OperationAdmission` permits
-only the exact enabled descriptor event to commit.
+The model specifies Hibana's finite-role, non-delegating protocol kernel. It is
+not a source-level verification of arbitrary Rust code or a specification of a
+concrete transport.
 
-The model is normative for Hibana rather than a transcription of one paper
-calculus. Paper results motivate the obligations; Hibana's production selector,
-descriptor, affine ownership, and transport rules determine the checked
-semantics when the designs differ.
+## Checked boundary
 
-The modeled language is the finite-role, non-delegating Hibana core. It does not
-claim higher-order channel/session passing. Progress is per session under the
-stated fairness and live-carrier premises; session-pool results prove isolation,
-not deadlock freedom for arbitrary host code that interleaves multiple sessions.
-The descriptor is a finite template; dynamic interaction instances and
-coordination rounds are runtime `SessionId` values rather than new continuation
-types.
+For an accepted choreography and its exact role descriptors, the Lean
+development establishes:
 
-The kernel-checked boundary covers:
+- projection and projectability for `send`, `seq`, `par`, `route`, and `roll`;
+- exact preservation of event identity, direction, peer, logical label,
+  canonical wire schema, lane, route membership, and frame label;
+- rejection of malformed descriptors, ambiguous inbound observations,
+  mismatched operations, unresolved choices, duplicate resolution, and invalid
+  compact values without committing protocol state;
+- subject reduction, session fidelity, route agreement, and unique message
+  consumption for the global asynchronous model;
+- correspondence between distributed role-local execution and global
+  transitions for accepted finite-state protocol artifacts;
+- protocol progress for covered reachable states, subject to the scheduling and
+  carrier premises below;
+- affine cancellation, first-fault preservation, queue quarantine, waiter
+  release, and finite retirement for covered finite transport states;
+- guarded repeated-region reset, FIFO or causal re-entry freshness, and erasure
+  of proof-only occurrence history from descriptors, frames, endpoint types,
+  and runtime state;
+- isolation, removal, and fresh re-attachment of independent sessions;
+- soundness of compact layout, allocation, public-operation transition, codec,
+  deployment, and production-kernel artifacts;
+- composition of verified protocol artifacts with explicit deployment,
+  carrier, codec, and production-kernel evidence.
 
-- role projection for `send`, `seq`, `par`, `route`, and `roll`;
-- send/receive duality, unit-only self-send locality, payload self-send
-  rejection, uninvolved-role erasure, and exact
-  `(label, payload schema)` preservation for the normalized send projection;
-- structural validity of projected events, roll scopes, and route scopes;
-- rejection of trace commits whose exact `(event ID, direction, peer, label,
-  payload schema)` operation is absent from the enabled frontier;
-- operation-admission soundness for runtime-erased endpoints: accepted operations
-  name the exact descriptor event ID and match its direction, peer, label, and
-  payload schema before the exact commit; stale IDs and action mismatches are
-  rejected without changing the commit state;
-- one all-role `GlobalConfig` with event-indexed descriptor-admitted queues,
-  exact session/epoch/event/peer/lane/label/schema facts, route-arm agreement,
-  and a `SessionFidelity` invariant. These semantic facts are reconstructed
-  after carrier evidence matches the resident descriptor; they are not
-  misrepresented as raw wire fields. Send, receive, unit-local, and resolver
-  steps preserve choreography identity, queue fidelity, and subject reduction;
-- one exact rendezvous owner and structural program image per session
-  generation; mixed-image and cross-rendezvous role attachment have no
-  successor binding;
-- exact dynamic `resolve` authority by route site and resolver id, including
-  explicit left/right selection and terminal rejection;
-- injective descriptor resolver-site identity over `(program image, scope,
-  resolver id)`, where the image explicitly contains role facts, packed column
-  counts for atoms, resolver rows, and every scope marker, plus exact blob bytes;
-  callback registration is keyed exactly by `(program image, resolver id)` so
-  topology-distinct programs cannot overwrite each other and same-id sites share
-  one typed callback only inside one exact image; differing scope-marker counts
-  or exact marker bytes directly imply distinct registration keys;
-- visibility of unresolved dynamic-route candidates without commit authority;
-- single-use resolver authority until an enclosing `roll` reset;
-- fail-closed rejection of direct unresolved commits, wrong resolver ids,
-  resolver reuse without reset, and any continuation after resolver rejection;
-- unique route-arm authority in every commit state;
-- exact refinement of compact route-arm values into left/right authority,
-  including rejection without a publication successor for every value above
-  the binary domain, plus separation of valid non-unique ready masks from
-  invalid masks carrying out-of-domain bits;
-- exact optional descriptor-arm decoding with byte `255` as the sole absence
-  representation and every other non-binary value rejected;
-- exact commit and resolver successor deltas from one prepared base state;
-- exact route-authority packing: the spare route-scope bit distinguishes
-  intrinsic from dynamic authority, intrinsic rows require a canonical zero
-  resolver field, and dynamic rows retain the complete `u16` resolver domain;
-- atomic roll and route-arm reentry resets, including inside-clear and
-  outside-preservation properties.
-- production descriptor topology refinement for every sealed choreography
-  constructor: local actions, route authority, route-arm membership, roll
-  membership, uninvolved-route erasure, and reentry mode. Exact certificates
-  accept only the canonical program bytes, every role event/dependency/conflict,
-  route arm, resident boundary, lane bitmap/range/step, commit-chain, and roll
-  row, plus the blob-external role/lane/depth metadata. They match the complete
-  global message preorder, its canonical physical lane assignment, and every
-  route authority decoded from the shared program blob even when the projected
-  role is uninvolved, and take no independently supplied topology input;
-- unified asynchronous cancellation states separating protocol-admitted queues
-  from transport-accepted FIFO frames. Faults clear protocol queues, while
-  accepted frames can only drain into quarantine; peer close and drain commute,
-  no post-fault step can re-enable protocol progress, and a constructive
-  decreasing scheduler reaches finite transport and participant retirement
-  without `Classical.choice`. Every accepted FIFO is keyed by the exact
-  `(session, generation, lane, sender, receiver)` channel, channel ownership is
-  unique, and every queued raw frame carries only that channel, its affine
-  sequence, and a byte-bounded frame label. A fail-closed descriptor admission
-  checker first fixes session and target at the endpoint preamble, then filters
-  the current enabled descriptor frontier by `(source, lane, frame-label)` and
-  accepts exactly one candidate. The selected resident operation retains its
-  exact event ID, direction, peer, logical label, schema, lane, and frame label.
-  Headerless deterministic ingress is modeled separately: its lane-bound receive
-  handle and requested logical label/schema must identify exactly one enabled
-  resident receive. It does not manufacture observed peer or frame-label facts;
-  missing and ambiguous interpretations fail closed through the same singleton
-  resolver as framed ingress.
-  Ordered occurrences on one route path may reuse a frame label. Distinct paths
-  sharing an elastic roll, route alternatives, and parallel frontiers are proved
-  to have different evidence before admission reconstructs logical label,
-  schema, epoch, and global event ID;
-- history-independent observation admission: carrier-private generation,
-  sequence, and arrival history cannot change the descriptor occurrence selected
-  by one fixed header observation. This exact local admission theorem has no FIFO
-  premise;
-- one choreography-derived route-membership row per global event. Global route
-  selection is synchronized into every declared role state, non-selected arm
-  events retire only with an empty queue, and resolver rejection is an explicit
-  protocol-fault transition into distributed cancellation;
-- a strong affine-delivery reference profile with authenticated peer/direction
-  binding, append-only live sequence identity, carrier-instance generation,
-  affine receive cursors, no unsolicited
-  replay, consecutive exactly-once delivery, post-drain graceful close, immediate
-  abort retirement, and rejection of sends after close. A generation identifies
-  a carrier instance, not an application-visible identifier; logical address
-  migration and identifier rotation preserve it;
-- a receipt-aware carrier boundary with explicit idle and outstanding states.
-  Polling issues one receipt; commit and discard advance the affine cursor,
-  requeue restores the exact pre-poll state, every resolution consumes the
-  receipt, a second poll while borrowed is unavailable, close and requeue
-  commute, and abort prevents receipt revival. A generic `CarrierSemantics`
-  refines this model only when send, poll, close, abort, and all three receipt
-  resolutions commute with one explicit abstraction;
-- guarded nested or top-level roll reset through one global transition, with
-  atomic owned-queue, local-cursor, and route-authority reset. The logical epoch
-  remains unchanged. An end-to-end composition theorem joins roll queue clearing
-  to a drained transport cursor: the next accepted frame has the next sequence,
-  every prior-iteration frame has a smaller sequence, and a reused `SessionId`
-  cannot alias an old frame when the carrier allocates a new carrier
-  generation. A finite
-  scheduler scans every send, receive, local action, resolver selection,
-  resolver rejection, and roll operation; one exhaustive strong-fairness
-  premise ranges over recurrently enabled operations of that type instead of
-  imposing an impossible obligation on a losing one-shot route alternative;
-- elastic rolled FIFO and proof-only route-choice history for legal output
-  pipelining before remote
-  receive. A proof-only mixed admission history derives each static
-  occurrence's generation from its prior descriptor-admitted subsequence,
-  preserves unrelated-event interleaving, and keeps route choices isolated by
-  `(conflict, publication ordinal)`. Accepted descriptor cursor sends append the
-  exact next occurrence while carrier send and history length/cursors remain
-  aligned; no generation field enters the wire, resident endpoint, or Rust API;
-- slab certificates proving absolute-address alignment, capacity bounds,
-  resident/workspace/endpoint separation, and pairwise owner-region
-  disjointness for production-generated layouts;
-- finite-state projectability certificates covering every role-local projection
-  and the all-role asynchronous `GlobalConfig`. Every covered reachable state
-  is complete, has a real global successor, or is cancelling/retired; the
-  checked closure directly derives `GlobalExecutionCoherent` for accepted
-  artifacts. An independent static checker rejects parallel endpoint-selector
-  races, route-controller/observer knowledge failures, and ambiguous roll
-  reentry using the same message-erased selector rules as production lowering.
-  Empty-versus-visible observer paths are rejected because absence is not
-  asynchronous branch evidence, and roll reentry never substitutes for route
-  authority.
-  Canonical `(source, target, lane, frame-label)` evidence is complete and
-  byte-bounded. The compiler colors exact route paths independently for each
-  complete inbound key inside elastic rolls; ordered events on one path retain
-  color reuse. The current-frontier checker rejects zero or multiple matches
-  before an inbound global occurrence ID may be used as its abstract name.
-  Every verified role descriptor carries the same canonical frame-label column.
-  Per-role state learns intrinsic route selection only from an exact queued
-  frame carrying that role's event identity and conflict membership; there is
-  no arbitrary shared route-choice operation. Each operation is checked
-  against its unique role owner, and each role-local queue entry must carry the
-  canonical global occurrence lane recovered from the exact descriptor image.
-  A wrong-lane frame invalidates the local state rather than being reinterpreted.
-  Each visible distributed operation simulates exactly one global transition.
-  Separate finite global and distributed closures establish semantic
-  unstuckness for every accepted reachable live model state;
-- session-family lifecycle proofs: fresh attach cannot overwrite either the
-  finite authority domain or its backing lookup, removal requires a retired
-  global status, removal preserves every other session, and re-attach creates a
-  fresh initial configuration. All protocol, first-fault, and cancellation-
-  observation operations on distinct `SessionId` values commute, so
-  multiplexing does not require protocol-specific Rust types;
-- verified protocol certificates binding the projectability closure and every
-  role's exact descriptor bytes to one choreography, plus runtime transition
-  certificates classifying protocol success as one transition,
-  preview/drop/requeue as zero transitions, and mismatch/fault as cancellation.
-  Compact states decode only after every finite column and local snapshot is
-  canonical and the choreography passes the role/self-send well-formedness
-  checker; malformed or partial states reject every effect, including preview
-  and fault, instead of acquiring executable semantic state. Starting from the
-  full global invariant, accepted protocol, fault, ambiguous-receive, and
-  cancellation-observation transitions preserve it, while preview/drop/requeue
-  are proved stutters;
-- one `ProtocolExecutionGuarantees` protocol-local proposition. An
-  accepted verified protocol artifact simultaneously supplies exact all-role
-  descriptor refinement including route participant lists, reachable-state subject
-  reduction and session fidelity, separate global and distributed semantic
-  unstuckness certificates, deterministic current-frontier transport
-  admission, FIFO-or-causal `.roll` reentry, exact intersection of selected and
-  locally attached participants, a unique dynamic-route controller, descriptor-
-  admitted inbound choice knowledge for every other branch-sensitive role,
-  sealed runtime-local membership before dynamic resolution, callback attach
-  exclusion while endpoint storage is
-  borrowed, and finite asynchronous cancellation retirement from a live fault
-  and a covered well-formed transport snapshot. It does not claim that a
-  concrete carrier or remote installation
-  conforms;
-- one `MediatedCarrierContract` proposition that assumes no ordering, delivery,
-  replay, or authentication property. It proves only exclusive receipt
-  ownership, exact requeue, affine resolution, and abort invalidation. A checked
-  dropping-carrier witness satisfies this contract while admitting no closing
-  affine refinement;
-- one Lean-only `CarrierProfile` chain, `Mediated -> Authentic -> Ordered ->
-  Closing -> Fair`. Each successor adds a contract, every stronger profile
-  proves every weaker one, and `Fair` exposes rather than hides its deployment
-  fairness premise. Instantiating it with one run's
-  `GlobalFairnessAssumptions` now gives the recurrently-enabled scheduling
-  result directly at the end-to-end boundary.
-  `carrier_profile_hierarchy_is_strict` uses proof-only channel-erasing,
-  dropping, close-ignoring, and false-fairness witnesses to refute every
-  adjacent reverse implication. The profile index never enters a Rust type,
-  endpoint image, or wire header;
-- one `AssumptionIndexedDeploymentContract` that combines the selected profile,
-  exact all-role images, and the message-erased endpoint runtime. Exact image evidence
-  may be supplied by a static certificate, authenticated manifest, or separate
-  verified bootstrap session; no mandatory handshake is added to the carrier;
-- one checked `StaticDeploymentCertificate` whose entry identities cover the
-  complete production protocol family in exact order and whose role images are
-  byte-exact. The generated eight-entry artifact is mandatory in the Lean gate;
-  proof metadata remains host-only and actual device flashing remains an
-  external premise;
-- `VerifiedCodec` evidence separating canonical wire schema identity from
-  nominal Rust type identity. Equal IDs must resolve to one canonical byte
-  language across the deployment registry. A full payload claim requires
-  round-trip, canonical-byte, and implementation-refinement laws for every
-  choreography schema; schema-ID matching alone does not acquire those laws;
-- `PreparedKernelSemantics` and `PreparedKernelRefinement`, which state the pure
-  prepare/commit, zero-or-one-transition production obligation explicitly.
-  Kani and Miri discharge concrete Rust-side obligations; Lean does not recast
-  their result as a source-level Lean proof. The same layer models route commit
-  rows as either canonical empty or a nonempty lane-bound chain: matching lanes
-  preserve the exact rows and a mismatched lane is rejected rather than erased;
-- one checked `ProductionKernelArtifact` covering the seven normalized effect
-  classes, all six protocol operation constructors, and the eight production
-  ownership boundaries exactly once. The generated artifact constructs the
-  canonical `PreparedKernelRefinement` for the artifact's normalized effect
-  relation and for each independent operation case.
-  `CrossToolProductionRefinement` keeps that finite model separate from the
-  production kernel: it requires both an explicit refinement of the external
-  kernel and `ProductionOwnerEvidence` tied to that same kernel. Lean cannot
-  construct either premise from owner names or a successful artifact check.
-  This is the finite exported-kernel witness, not a proof of arbitrary Rust
-  source;
-- one eight-member accepted `VerifiedProtocolMember` family whose checked
-  capability coverage contains communication, sequencing, parallel
-  composition, intrinsic choice, resolved choice, and recursion. The witness
-  is protocol-neutral, and every member carries canonical codec coverage for
-  all event schemas. It does not import algorithm-specific correctness into the
-  core;
-- `ElasticErasureRefinement`, proving append, receive, transport send/receive,
-  and proof-only route-choice history commute with erasure of iteration ordinals; and the
-  composition theorem
-  `assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement`, which
-  joins exact translation validation, deployment agreement, verified codecs,
-  Rust-kernel refinement, profile-indexed guarantees, and erased traces. These
-  are machine-checkable conditional boundaries, not claims of historical
-  priority;
-- `AssumptionIndexedProductionRefinement`, which composes the accepted primary
-  member, complete static family, canonical codecs, cross-tool kernel evidence,
-  and selected carrier profile into one production witness;
-- fail-closed endpoint lease generation exhaustion, strict successful
-  generation increase, first-fault authority, poisoned-attach rejection, and
-  absence of poison-to-live revival before generation retirement. Publication
-  after transport or resolver callbacks is permitted only if the same
-  generation remains live.
-- two-phase endpoint lease allocation, including general failure-state identity,
-  exact successful commit, nonshrinking table capacity, the exact 65,536-slot
-  count/last-`u16`-index boundary, preservation of that boundary by every
-  successful plan from a well-formed allocator state, and production-exported
-  initial/growth planning failures, exact post-plan aborts, and compaction-aware
-  aborts that preserve endpoint and observed lane authority plus every resident
-  owner capacity while allowing frontier shrink. The production snapshot binds
-  active-association cardinality and explicit session/lane witnesses as well as
-  allocator fields. A generation poisoned by external callback re-entry after
-  planning is proved unable to publish and leaves allocator state unchanged.
-  Physical root relocation is normalized out of failure-state equality and
-  checked separately by slab certificates, Kani packing proofs, and Miri.
+The principal externally relevant claim types are listed in
+[`ClaimSurface.lean`](ClaimSurface.lean). The complete elaborated theorem
+inventories are machine-checked snapshots, not prose maintained in this file.
 
-The gate exports real production-cursor frontiers, payload schemas, canonical
-resident column counts, exact program/role bytes, and an independent diagnostic
-topology witness from Rust. The exact certificate derives its topology from the
-bytes rather than trusting that witness. General Lean theorems cover every
-accepted production-layout byte image, equate its action column with
-`projectGraph`, and join byte decoding, exact operation keys, and commit in one
-cursor-refinement result. Semantic requests use `(event ID, LocalAction)`;
-resident descriptor operations extend that identity with lane and frame label;
-inbound wire observations use `(source, lane, frame-label)` only after session
-and target validation, while headerless direct ingress uses only its lane-bound
-receive handle plus requested logical label and schema. Both resolve solely
-over the enabled frontier and have explicit singleton-to-exact-commit
-composition theorems. Route-offer evidence learning remains a separate
-distributed transition before branch-local admission. This
-separation permits sequential label reuse without conflating peers, directions,
-lanes, or route occurrences. The endpoint runtime additionally decides its mediated domain
-exactly: a request is accepted iff that descriptor operation can commit, and
-every other request is rejected. This is not completeness for arbitrary
-black-box processes. The generated
-corpus contains 14 traces with 66 frames, twenty-two exact-byte role projection
-certificates, four focused local progress closures, eight all-role
-projectability closures, eight distributed progress closures, and eight
-verified protocol artifacts. It exercises
-all roles of every generated choreography, both
-intrinsic route arms, nonzero `u32`/`i32` schema separation, send/receive
-projections, an augmenting-path lane reassignment that first-fit rejects,
-nested and repeated roll
-restart, resolved left/right arms, nested resolver sites, alternating resolved
-roll reentry, resolver rejection, and a three-role cyclic sender handoff across
-alternating roll arms. A separate production runtime export checks a four-region
-live slab, poison retirement, lease-generation exhaustion, and four
-allocation-failure atomicity certificates.
+## Required evidence
 
-The static projectability boundary also matches production's single receive
-FIFO per `(role, lane)`. A sender change is accepted only when the sender is
-unchanged, the occurrences belong to opposite arms of one route, or a finite
-send/receive causal closure proves that the earlier receiver precedes the later
-send. Parallel-arm lanes are recolored only where endpoint-role sets conflict;
-disjoint endpoint sets may reuse one physical lane. Arm membership prevents list
-order across concurrent arms from masquerading as local order. Route-local
-traffic can contribute to a causal closure only when
-one endpoint fixes that arm, so an unrelated branch cannot silently authorize a
-later sender. The production const checker and the Lean checker use the same
-three cases and the same role-indexed, first-write-wins causal witness map.
-Production scratch is fixed by the exact 256-role wire domain rather than by
-source event capacity, and is erased after descriptor construction. For a
-scope-free sequence, endpoint-independent propagation and exact fold-prefix
-reuse justify one forward closure per earlier receive instead of recomputing
-every prefix. Every roll
-body is additionally checked through one explicit
-unfolding with fresh per-iteration route and parallel identities. A sender
-change from the body tail to the next head therefore requires a causal handoff;
-route exclusion from the previous iteration cannot be reused as evidence. This
-adds no runtime queues, endpoint types, descriptor rows, or wire fields.
+The strongest end-to-end conclusions require all of the following:
 
-This is not a source-to-source proof of arbitrary downstream Rust. The general
-byte-decoder and transition theorems are quantified over accepted descriptor
-images; the twenty-two generated role images are production witnesses used by the
-gate and are grouped into eight complete protocol artifacts.
-Every generated exact image also carries rejecting mutations for its first
-global message contract, local action lane, resident metadata and lane bitmap,
-plus dependency, route resolver, route child/lane-step/commit, local route, and
-roll rows whenever those columns exist. The normalized projection shape still
-omits physical packing as protocol semantics, but the exact descriptor
-certificate separately reconstructs and compares that packing byte for byte.
-Pointer provenance and typed storage operations remain checked by production
-tests, Kani, and Miri rather than modeled as source-level Lean memory. Production
-frontier traces check concrete packed behavior; projectability closures exhaust
-the normalized Lean model for the generated protocols. The slab theorem does
-not claim pointer provenance or typed initialization; Rust unsafe contracts,
-Miri, and layout tests retain that responsibility. Global logical progress uses
-a constructive finite scan of the descriptor-derived operation universe.
-`GlobalExecutionCoherent` remains a low-level proposition, while accepted
-projectability certificates establish its needed progress conclusion for every
-certificate-reachable state. Every compact successor is proved to be a real
-`GlobalConfig.step?` transition. A second finite certificate explores per-role
-route-knowledge lag. It rejects repeated intrinsic frame evidence, admits a
-dynamic resolver outcome at most once per role, rejects non-controller
-resolution, and proves a local action or evidence transition exists in every
-reachable unfinished live distributed model state. Distributed
-liveness additionally requires the stated operation-scheduling fairness
-assumption, and no theorem claims termination of an infinitely rolled
-choreography.
-Global and distributed closure exploration fuel is derived from choreography event, queue,
-route, and all-role local-state dimensions; acceptance still requires checking
-the complete successor closure, so an insufficient search cannot pass.
-The message-contract proofs treat equal `SCHEMA_ID` values as equal canonical
-wire schemas, never as proof of Rust nominal type equality. Schema zero denotes
-the canonical zero-byte unit contract used by `()`; local runtime actions reject
-a nonempty encoding that claims this identity. Incompatible downstream
-encodings or validators require distinct nonzero ids. Lean and Kani preserve
-every schema bit and compare the descriptor identity; they cannot derive
-uniqueness across arbitrary downstream trait implementations. Exact
-program-image binding closes this boundary for roles attached to one local
-session generation. A verified protocol artifact proves that every exported
-role descriptor refines the same choreography; it does not prove that remote
-machines exchanged that artifact. Initial all-role agreement is a deployment or
-application-bootstrap premise, not a `Transport` handshake. Replayable early
-traffic must be rejected, delayed, or admitted under an application-profile
-replay policy before becoming Hibana protocol evidence.
-Lean proves exact admission for every observation and the receipt-aware
-reference carrier. It does not prove arbitrary Rust `Transport`
-implementations. A deployment selects the weakest `CarrierProfile` supporting
-its claim: mediation for exclusive receipts, authenticity for exact peer/frame
-binding, ordering for FIFO/no replay, closing for close/abort observation, and
-fair only with an explicit liveness premise. An unauthenticated, unordered, or
-repeating carrier retains local protocol safety only at the mediated profile;
-stronger conclusions require their corresponding evidence.
-The standalone `proofs/unix-carrier` crate supplies one concrete connected Unix
-datagram witness outside the Hibana package. Its official gate runs two
-independent runtimes and checks FIFO delivery, fail-closed peer/header parsing,
-affine consumption and requeue, normal logical-close wakeup, and fresh socket
-generation isolation. The OS ordered-datagram contract is an explicit premise;
-process crash detection, external authentication, and fairness are not inferred
-from those tests.
-Exact frame identity is part of that refinement: rewriting one valid branch
-label into another is indistinguishable from an authentic alternate-branch
-frame to a message-erased endpoint runtime unless additional wire identity is introduced.
+1. Every role uses the exact accepted descriptor image for the same
+   choreography.
+2. Peers agree on each canonical wire schema and use conforming codecs.
+3. The deployment supplies the carrier properties required by its selected
+   profile: mediation, peer authenticity, FIFO and replay exclusion, observable
+   close or abort, and fairness where liveness is claimed.
+4. The executor eventually polls operations that remain enabled.
+5. Production Rust supplies the prepare/commit refinement and ownership
+   evidence required by `ProductionEndToEnd.lean`.
 
-This separation is what permits session families without contaminating the
-core. A lossy or reordering carrier can expose raw message observations while
-keeping authentication, sequence identity, retry, recovery, and ordering in
-algorithm-owned state; authenticated ordered subchannels may use the strong
-profile. A stateful distributed algorithm can repeat one finite interaction
-template while keeping persistent state, membership, scheduling, and recovery
-policy outside Hibana's protocol runtime. Session isolation is proved; algorithm-specific
-safety and liveness invariants require their own proofs.
+These are explicit premises. Lean does not infer remote installation agreement,
+transport authentication, delivery, failure detection, or scheduler fairness
+from the `Transport` trait.
 
-Dynamic route choice is controller-local and affine. Its participant list is
-descriptor-derived, and runtime-local membership is sealed before external
-resolver code, so a late attach cannot obtain a second evaluation of the same
-occurrence. Resolved and intrinsic routes both require one first-visible
-controller; the static checker rejects competing branch initiators rather than
-treating a resolver as a distributed agreement oracle. Every non-controller
-role must receive distinct descriptor-admitted branch evidence before its first
-branch-sensitive operation. Each endpoint records its selected arm locally and
-commits at most once; no shared route-decision sidecar is a second authority.
-Rolled routes may choose differently after reentry without adding an iteration
-field to the wire header, descriptor row, or resident endpoint.
+Schema equality means equality of the canonical wire contract identified by
+`SCHEMA_ID`; it does not prove cross-binary Rust nominal type equality.
 
-The remaining trust boundaries are explicit. `RuntimeRefinement.lean`
-classifies normalized runtime effects, while `PreparedKernelRefinement.lean`
-states the pure prepare/commit simulation that production Kani/Miri evidence
-must discharge; Lean does not extract or verify arbitrary Rust source.
-`ProductionKernelArtifact.lean` checks all seven effect classes, all six
-protocol operation constructors, and all eight production owners, proves every
-accepted row, and constructs a canonical `PreparedKernelRefinement` only for
-the artifact relation and each artifact operation relation. It does not identify
-that synthetic kernel with production Rust or manufacture a source-level
-simulation.
-`ProductionEndToEnd.lean` joins the exact artifact to the static deployment
-family and assumption-indexed end-to-end theorem only when both an external
-production-kernel refinement and explicit owner evidence are supplied. The
-Rust exporter, Kani owner harnesses, and
-strict-provenance Miri exporter case remain explicit members of the cross-tool
-trusted boundary; no source-level Rust theorem is inferred from their exit
-status.
-`PublicOperationKernel.lean` independently specifies the nine public endpoint
-operation phases, the complete sixteen-edge lifecycle, fail-closed transition,
-conditional cleanup, terminal cleanup, and fault transition. The edge type has
-no arbitrary `(expected, next)` constructor. Each Rust phase and edge is listed
-once; those declarations generate the enum, complete exporter inventory, and
-Kani domain together, so a newly added variant cannot remain outside the
-cross-tool table. Lean proves that its independent declared inventory is
-duplicate-free and exhaustive. The host-only Rust exporter emits
-all 144 `(current, edge)` outcomes; the Lean gate accepts them only when the
-generated table is exactly equal to the independently computed table. Kani
-checks the same finite transition product plus every cleanup and fault state
-symbolically, while Miri owns the executable and ignored-exporter boundary.
-`ElasticErasure.lean` does not use length agreement as a surrogate for trace
-agreement: its transport relation requires well-formed histories and equality
-between every carrier label and the descriptor-label image of the erased
-occurrence trace. Send preservation therefore requires the exact descriptor
-label for the appended global occurrence.
-`DistributedRollRefinement.lean` now proves that independent endpoint reset
-after one drained global `.roll` linearization is affine, order-independent,
-strictly decreasing, and an abstract stutter. `ElasticIterationQueue.lean`,
-`ElasticRouteHistory.lean`, and `ElasticAdmissionHistory.lean`
-model the independent pre-receive case instead of forcing a false global
-barrier. One mixed descriptor-admitted FIFO history per authenticated carrier
-direction derives the next event-local ordinal across arbitrary nested rolls,
-permits unrelated occurrences to interleave,
-and composes every accepted descriptor cursor send with one exact append.
-`global_atomic_roll_cannot_model_pipelined_single_send_reentry` remains as a
-checked separation theorem: it prevents the atomic one-iteration view from
-silently replacing the elastic normative view. The paired two-send production
-cursor test is an official Miri case. `ElasticErasure.lean` then proves that
-iteration ordinals disappear while static descriptor identity and affine
-carrier cursors are preserved. Carrier FIFO,
-anti-replay, peer binding, close/abort wakeup,
-and link-loss notification are proved only for the reference model and must be
-established by each concrete carrier. Any higher-level distributed algorithm
-can be implemented above the protocol-neutral primitives, but its own safety,
-recovery, timing, and fairness invariants are not Hibana theorems.
+## Deliberate non-claims
 
-The literature boundary is deliberate. [Multiparty Asynchronous Session
-Types](https://www.doc.ic.ac.uk/~yoshida/multiparty/multiparty.pdf) motivates
-global types, projection, FIFO queues, fidelity, and progress; [Stay Safe Under
-Panic](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2022.4)
-motivates at-most-once ownership and cancellation; the [mechanised 2025
-correction](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2025.31)
-motivates Hibana's stricter explicit causality and projectability checker.
-[Asynchronous distributed
-monitoring](https://mrg.cs.ox.ac.uk/publications/asynchronous-distributed-monitoring-for-multiparty-session-enforcement/TGC_2011.pdf)
-motivates local enforcement and global fidelity, but Hibana uses trusted
-endpoint kernels rather than wrappers around arbitrary untrusted
-processes.
-[Session-type monitorability](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2021.20)
-separates monitor soundness from completeness over monitored processes.
-Hibana proves exact acceptance and rejection only for operations mediated by
-its endpoint kernel; it does not claim completeness for a process or carrier
-that bypasses that kernel.
-[Crash-stop
-MPST](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.CONCUR.2022.35)
-and [timed affine
-MPST](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2024.19)
-make reliability and timeout assumptions part of their protocol theories;
-Hibana instead keeps deadline, retry, membership, and failure-detector policy in
-algorithm-owned state and maps terminal observations into one protocol-neutral
-cancellation boundary.
-[Communicating-session-automata bounded
-compatibility](https://mrg.cs.ox.ac.uk/publications/verifying-asynchronous-interactions-via-communicating-session-automata/cav19.pdf)
-and [decidable sender-driven
-implementability](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2023.32),
-[precise asynchronous
-subtyping](https://arxiv.org/abs/2010.13925), and [denotational asynchronous
-reasoning](https://arxiv.org/abs/2604.10646) are useful adjacent models. Hibana
-does not claim their unbounded automata, substitution, or message-reordering
-optimization theorems. [Asynchronous mixed
-choice](https://arxiv.org/abs/2602.23927) permits transiently inconsistent
-distributed choices that Hibana deliberately rejects, while [network-enforced
-session types](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2026.17)
-move loss/reordering-aware monitors into a programmable data plane. Hibana
-claims neither mixed choice nor network enforcement. Its normative claim is
-exactly the checked finite-role endpoint execution and deployment criteria
-above.
+The proof package does not claim:
 
-"Choreography-derived runtime enforcement kernel" names this checked
-implementation boundary; it is not presented as a new session-type calculus or
-as an independent novelty claim for projection or runtime enforcement.
+- verification of arbitrary Rust source or arbitrary `Transport`
+  implementations;
+- correctness of cryptography, authentication mechanisms, failure detectors,
+  retries, deadlines, or application scheduling;
+- safety or liveness of a distributed algorithm implemented above Hibana;
+- termination of an intentionally infinite `roll`;
+- channel delegation, unbounded role creation, or completeness for code that
+  bypasses the endpoint kernel.
 
-A defensible research-novelty candidate is the combination, not any component
-in isolation: byte-exact proof-carrying role descriptors, exhaustive global and
-distributed finite closures, a strict assumption-indexed carrier hierarchy,
-affine receive receipts, in-band knowledge for both intrinsic and dynamic
-choices, order-independent affine `.roll` materialization, epoch-erased elastic
-roll pipelining, explicit cross-tool prepare/commit refinement, and one
-message-erased resource-bounded `no_std` runtime representation. The targeted
-related-work review
-above did not identify that exact combination, but this repository does not
-claim "first" or "world-first". Establishing priority requires a systematic
-literature review, comparison artifacts, and external peer review. Recent work
-on [mechanised synchronous
-liveness](https://arxiv.org/abs/2605.23633) and [denotational asynchronous
-reasoning](https://arxiv.org/abs/2604.10646) also prevents a novelty claim based
-merely on using a proof assistant or proving model-level progress.
+Kani, Miri, Rust tests, and carrier conformance tests provide complementary
+implementation evidence. Their success is not represented as a Lean theorem
+about arbitrary Rust source.
 
-The normalized model separates the production cursor's candidate frontier from
-commit authority, so a dynamic route can expose candidate labels while remaining
-uncommittable until its resolver transition succeeds. Aeneas, Verus, Mathlib,
-custom axioms, `Classical.choice`, `sorry`, and `admit` are not part of this
-boundary. Every exported theorem in the static package is audited and permits
-only the `propext` and `Quot.sound` dependencies introduced by the checked
-Core/Std proofs. The gate discovers those declarations directly from the Lean
-source and checks their elaborated types and axiom closures in the same Lean
-run; there is no second hand-maintained theorem list. Fifteen externally
-relevant claim types remain the compact review surface, while the elaborated
-types of all 687 exported theorems are pinned in a separate checked snapshot.
-Retaining any theorem name while changing its elaborated conclusion or
-assumptions therefore fails the gate.
+## Proof structure
 
-Thirty-two anonymous finite regression checks use `native_decide`. They are
-confined to `StaticProjectabilityExamples.lean` and
-`DistributedSemanticsExamples.lean`, are not imported by `MainTheorems.lean`,
-and cannot contain named theorems or lemmas. The gate rejects `native_decide`
-anywhere else in the static source tree. These executable examples test the
-decision procedures; no exported theorem depends on their native-evaluator
-axioms. Four additional anonymous examples exercise descriptor-participant
-boundaries with kernel `decide`. The gate assigns deterministic audit-only names
-to all 36 examples, pins their normalized types, and verifies that each native
-example owns exactly one theorem-local evaluator axiom while each kernel example
-owns none. Deleting an anonymous regression or changing its elaborated statement
-changes a checked snapshot.
+| Area | Primary modules |
+| --- | --- |
+| Syntax and projection | `GlobalSyntax.lean`, `DescriptorTopology.lean`, `DescriptorRefinement.lean`, `StaticProjectability.lean` |
+| Admission and commit | `OperationAdmission.lean`, `Commit.lean`, `PublicOperationKernel.lean`, `PreparedKernelRefinement.lean` |
+| Global and distributed semantics | `GlobalSemantics.lean`, `GlobalFidelity.lean`, `GlobalProgress.lean`, `DistributedSemantics.lean`, `DistributedProgress.lean` |
+| Cancellation and carriers | `TransportContract.lean`, `CarrierRefinement.lean`, `CarrierProfile.lean`, `AsyncCancellationTermination.lean` |
+| Repeated regions | `DistributedRollRefinement.lean`, `ElasticIterationQueue.lean`, `ElasticRouteHistory.lean`, `ElasticAdmissionHistory.lean`, `ElasticErasure.lean` |
+| Sessions and deployment | `SessionComposition.lean`, `SessionLifecycle.lean`, `ProtocolArtifact.lean`, `Deployment.lean`, `EndToEndRefinement.lean`, `ProductionEndToEnd.lean` |
+| Aggregate | `MainTheorems.lean`, `ClaimSurface.lean` |
 
-Concrete generated artifacts have a separate, explicit boundary. The twenty-two
-exact descriptor certificates plus the production kernel and codec checks use
-kernel-reduced `decide`. Constructing the complete finite closure remains much
-more expensive: exactly eight projectability and eight verified-protocol
-acceptance theorems use `native_decide`, making the pinned Lean native evaluator
-and compiler part of the explicit trusted boundary for those sixteen concrete
-witnesses, but not for their general soundness theorems. An independent gate
-discovers all 48 named generated theorems, rejects `sorry`, custom axioms,
-theorem additions or deletions, requires the kernel/native classification
-exactly, and rejects any
-axiom other than `propext`, `Quot.sound`, and the sixteen declared theorem-local
-native decisions. It also compares Lean's normalized types for all 48 generated
-principal contracts and all 458 generated trace, exact-byte rejection,
-refinement, and progress obligations against a checked-in surface. Anonymous
-generated examples are forbidden. The resulting 506-theorem inventory prevents
-an obligation from disappearing and prevents a stable theorem name and axiom
-set from hiding a changed elaborated generated statement. Of those theorems,
-466 are kernel-checked and 40 have an audited closure over the sixteen declared
-native decisions. This boundary is not described as Lean-kernel verification.
+The checked claim snapshots are:
 
-The runtime and public-operation exporters follow the same rule. Their sixteen
-layout, generation, and allocation theorems and two public-operation table
-theorems are named, kernel-checked, axiom-audited, and type-pinned. A success
-marker without those exact proof obligations is rejected.
+- `all-claim-surface.txt` for static theorem types;
+- `example-claim-surface.txt` for finite executable regressions;
+- `generated-claim-surface.txt` for generated descriptor and protocol
+  certificates;
+- `runtime-generated-claim-surface.txt` for runtime layout and lifecycle
+  certificates;
+- `public-operation-generated-claim-surface.txt` for the public-operation
+  transition table.
 
-Frontier scratch capacity is derived from the projected active-lane count. Lean
-proves that every exact `(route scope, local entry)` offer key has an owning
-active lane and that the complete 256-lane wire domain bounds the resulting
-allocation; the production selection kernel streams those keys instead of
-representing them in a fixed candidate bit mask. The representative lookup is
-proved total exactly when an owning lane exists, preserves the exact scope, and
-cannot collapse two scopes that share a local entry. The current offer's
-admission, readiness, progress, and authority are selected by its exact
-`(scope, entry)` key before erasure. Rows with the same entry but another scope
-cannot change that exact observation and are not alternative cursor targets.
-Only observations for a different entry enter scope-erased cursor scheduling;
-Lean also proves every erased row has one exact source and every post-erasure
-row predicate retains that source, so evidence from separate rows cannot be
-combined.
-The proof-side stable insertion preserves every row, increases the buffer by
-exactly one row, and keeps equal cursor targets in one ordered group.
-Visit tracking intentionally uses local-entry identity because it
-tracks cursor movement, not offer ownership, and Lean proves that the same
-allocation covers every visited entry. Capacity exhaustion is an invariant
-failure, never silent truncation.
-The constant-state frontier walk applies owner, parallel-root, and visited-entry
-admission before retaining the first current-frontier match or, when absent,
-the first admissible candidate. Lean proves this filtered streaming scan equal
-to its finite-list reference semantics; Kani checks the production Rust
-predicate and priority over symbolic candidates.
+The gate discovers declarations from Lean source, compares their elaborated
+types with these snapshots, and audits their axiom closures. Generated Rust
+artifacts are accepted only when their complete theorem inventory and exact
+claim types match.
 
-All other lane-indexed endpoint storage follows the exact projected lane span.
-Lean and Kani prove that this span covers every active lane and remains inside
-the 256-lane wire domain; the removed two-lane binding reserve had no descriptor
-or runtime authority.
+Static proofs use the pinned Lean Core and Std environment. The gate rejects
+custom axioms, `sorry`, and `admit`. Finite executable regressions and concrete
+finite-closure artifacts that use the pinned native evaluator remain isolated
+and explicitly audited; general soundness theorems do not depend on those
+evaluator decisions.
 
-Selected route history uses the same descriptor-first rule. One sparse runtime
-row is admitted only for an emitted `(lane, route)` relation, and Lean proves
-that relation membership is exactly the set of lanes used by the arm, duplicate
-events do not allocate another relation, the 256-lane domain bounds the relation
-count, and the emitted relation count covers every live row. Production lowering
-computes the bitmap, local row, and last step in one event pass; Kani verifies
-the full-domain accumulator transition. The endpoint therefore does not
-allocate the Cartesian product of active lanes and maximum route depth.
+## Run
 
-Source lowering has the same descriptor-first bound. Production const
-validation requires exact event and scope-marker counts, requires dynamic
-resolver markers to be covered by route-resolver rows, and rejects a source-row
-count not covered by the final program bytes. Kani checks this relation over the
-packed count domain. `ProgramSourceCapacityWitness` and
-`descriptor_byte_ceiling_covers_source_lowering_rows` prove generally that an
-accepted exact program image has no smaller independent source-arena ceiling.
-This is a capacity theorem; exact row contents remain owned by descriptor
-translation validation. The source witness and arena are erased after
-projection.
-
-Canonical program atom rows are strictly ordered by compact event identity.
-Lean proves this for every normalized choreography, the compact Rust image
-rejects a noncanonical order at construction, and Kani checks every order class
-used by the production binary search. Runtime event lookup is therefore
-logarithmic without adding an event-index column to the descriptor or endpoint.
-
-Run the same fail-closed gate used by CI:
+From the repository root:
 
 ```sh
 bash .github/scripts/check_lean_proofs.sh
 ```
+
+The gate pins the Lean toolchain, builds the static package, exports the
+production descriptor and kernel artifacts from Rust, checks every claim
+surface, and audits the permitted proof dependencies. Its final status line is
+the authoritative current inventory.

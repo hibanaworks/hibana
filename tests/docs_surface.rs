@@ -118,7 +118,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "cargo +1.95.0 check --manifest-path examples/pico/Cargo.toml",
         "Successful projection alone is not a distributed deadlock-freedom guarantee.",
         "eventually delivers each accepted frame or reports terminal closure",
-        "The [Lean proof boundary](https://github.com/hibanaworks/hibana/blob/main/proofs/lean/README.md)",
+        "The [Lean verification guide](https://github.com/hibanaworks/hibana/blob/main/proofs/lean/README.md)",
         "Cross-binary agreement is defined over canonical wire schemas",
     ] {
         assert!(
@@ -522,6 +522,49 @@ fn canonical_docs_are_readme_and_crate_docs_only() {
         !readme.contains("type BorrowedBytes = &'static [u8];"),
         "README borrowed payload example must not imply a static frame borrow"
     );
+}
+
+#[test]
+fn lean_verification_guide_stays_public_and_repository_scoped() {
+    let guide = read("proofs/lean/README.md");
+
+    for required in [
+        "## Checked boundary",
+        "## Required evidence",
+        "## Deliberate non-claims",
+        "## Proof structure",
+        "## Run",
+        "[`ClaimSurface.lean`](ClaimSurface.lean)",
+        "bash .github/scripts/check_lean_proofs.sh",
+        "machine-checked snapshots, not prose maintained in this file",
+    ] {
+        assert!(
+            guide.contains(required),
+            "Lean verification guide must retain its public proof boundary: {required}"
+        );
+    }
+
+    for forbidden in [
+        "The literature boundary",
+        "Multiparty Asynchronous Session Types",
+        "Stay Safe Under Panic",
+        "related-work",
+        "research-novelty",
+        "world-first",
+        "ECOOP",
+        "arxiv.org",
+        "dagstuhl",
+        "Aeneas",
+        "Verus",
+        "TODO",
+        "FIXME",
+    ] {
+        assert_absent(
+            &guide,
+            forbidden,
+            "Lean verification guide must not become a research or development memo",
+        );
+    }
 }
 
 #[test]
