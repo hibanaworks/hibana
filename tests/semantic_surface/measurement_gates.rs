@@ -446,7 +446,9 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && !workflow.contains("actions/checkout@v4")
             && workflow.contains("fetch-depth: 0")
             && workflow
-                .contains("rustup toolchain install 1.95.0 --profile minimal --component clippy")
+                .contains(
+                    "rustup toolchain install 1.95.0 --profile minimal --component clippy --component rust-src"
+                )
             && workflow.contains("run: bash ./.github/scripts/run_final_form_gates.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_unsafe_contract_hygiene.sh")
             && run_final_gate.contains("bash ./.github/scripts/check_manifest_tests.sh")
@@ -460,6 +462,8 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             && ui_gate.contains("trap hibana_restore_ui_diagnostic_width EXIT")
             && !run_final_gate.contains("configure_ui_diagnostics.sh")
             && !rust_1_95_gate.contains("configure_ui_diagnostics.sh")
+            && rust_1_95_gate
+                .contains("Rust 1.95 stable gate requires rust-src for reproducible UI diagnostics")
             && !warning_free_gate.contains("configure_ui_diagnostics.sh")
             && run_final_gate
                 .contains("bash ./.github/scripts/check_surface_test_alias_hygiene.sh")

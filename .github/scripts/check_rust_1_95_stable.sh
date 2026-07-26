@@ -14,6 +14,12 @@ fi
 
 TOOLCHAIN=1.95.0 ./.github/scripts/ensure_rust_toolchain.sh thumbv6m-none-eabi
 
+if ! rustup component list --toolchain 1.95.0 --installed \
+  | grep -Fxq 'rust-src'; then
+  echo "Rust 1.95 stable gate requires rust-src for reproducible UI diagnostics" >&2
+  exit 1
+fi
+
 cargo +1.95.0 check --no-default-features --lib -p hibana
 cargo +1.95.0 check --target thumbv6m-none-eabi --no-default-features --lib -p hibana
 cargo +1.95.0 test -p hibana --lib
