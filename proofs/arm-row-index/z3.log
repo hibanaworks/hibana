@@ -1,0 +1,26 @@
+PASS raw packed-row certificate and guarded equivalence: 0 rows
+PASS raw packed-row certificate and guarded equivalence: 1 rows
+PASS raw packed-row certificate and guarded equivalence: 2 rows
+PASS raw packed-row certificate and guarded equivalence: 3 rows
+PASS raw packed-row certificate and guarded equivalence: 4 rows
+PASS raw packed-row certificate and guarded equivalence: 8 rows
+PASS raw packed-row certificate and guarded equivalence: 16 rows
+PASS raw packed-row certificate and guarded equivalence: 34 rows
+PASS raw packed-row certificate and guarded equivalence: 50 rows
+PASS raw packed-row certificate and guarded equivalence: 68 rows
+PASS raw packed-row certificate and guarded equivalence: 100 rows
+PASS prefix arithmetic bound: 65535 * 256 < 2^32
+PASS witness: empty image absent query
+PASS witness: positive nonempty exact row
+PASS witness: positive canonical zero row
+PASS witness: gapped event ranges remain valid
+PASS witness: out of range on certified image
+PASS witness: later malformed row preserves earlier success
+PASS witness: later prefix overflow preserves earlier success
+PASS witness: invalid predecessor must not be skipped
+PASS witness: unreadable predecessor must not be skipped
+PASS witness: zero row with encoded step must reject
+PASS witness: selected event bound must reject
+PASS witness: selected cumulative prefix must reject
+PASS witness: selected reserved byte rejected by both
+ALL ARM ROW INDEX Z3 CHECKS PASSED

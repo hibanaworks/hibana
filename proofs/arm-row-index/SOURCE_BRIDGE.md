@@ -1,0 +1,24 @@
+# Stage 3: certified immutable arm-row reads
+
+## Exact base and proposed change
+
+Base commit 3aef31ba015c75ea824b8b41f5603b03f5dd336b, followed by qualified stage 1 patch SHA256 83693843e29ad7d1dad93d692a051affdd44a3ab69d0e590945d85bad324480d and stage 2 patch SHA256 643399287acf95a98ef015060b894188c390d341d02b50db52436d58d3c19058. `preimplementation-source.sha256` records unchanged Rust before the formal gate.
+
+Stage 3 reuses the private `RoleImageRef::has_passive_parent_index` certificate when two accessors need only a route-arm's event range or passive child. Their selected packed row can be decoded directly instead of rebuilding the lane-step prefix for all earlier rows. A false certificate follows the original `route_arm_row` decoder. No format, field, index table, dynamic cursor state, event order, route authority, frame identity, roll progress, or liveness logic changes. The stage 2 certificate is stronger than needed; no new constructor acceptance is introduced.
+
+## Exact decoder bridge
+
+1. `RoleImageRef::new` first checks `columns.validate_blob_bound` and constructs `BlobPtr::from_array(bytes, columns.blob_len())`. This guarantees complete column allocations lie in the same immutable static byte array certified by the checker. The checker alone, applied to arbitrary columns without these constructor bounds, is insufficient.
+2. The existing certificate requires sorted valid route IDs, exact equality of footprint route count and route-scope row count, exactly two arm rows per scope, and all `passive_parent_rows_are_coherent` checks. The boolean cannot be externally supplied through a public API. Production checked-read arguments must come only from this private certificate on the same `RoleImageRef`; test calls may explicitly choose the original decoder for comparison.
+3. `metadata/route_arm.rs::decode_route_arm_lane_metadata` has the same packed-row conditions as `PackedRouteArmRow::from_packed_parts` and `lane_step_len`: event range is not UINT32_MAX; a zero event length has zero start; the top reserved metadata byte is zero; a zero event range has encoded lane length zero; otherwise decoded lane length is the encoded byte plus one (1..256). Low 16 metadata bits are the same unchanged child slot. The selected packed-row decoder still runs in the fast path.
+4. `metadata/passive_parent.rs` checks each event end against `columns.events.len`, event/step emptiness equivalence, and every cumulative lane-step prefix against `columns.route_arm_lane_step_rows.len`. Runtime `route_arm_row` computes the same prefix through the queried row and applies the same final bounds. Consequently any successfully certified selected row is exactly the row returned by the original decoder.
+5. Every row is immutable for the image lifetime. Neither copying `RoleImageRef` nor obtaining a `RoleLaneImage` changes the bytes or column metadata. Certification is not a claim about mutable cursor state.
+6. Checked arm conversion and checked `slot * 2 + arm` stay in their original order. Selected-row directory/bounds/packed decoding still rejects out-of-range row access. With certificate false the original prefix traversal and invariant behavior remain in effect, including successful queries before later malformed rows. With certificate true every skipped original read is known total; no skipped failure is observable.
+7. The passive-child accessor retains exact original parent/child scope, forward slot, recorded parent/arm, and conflict checks. This stage does not substitute owner metadata for an edge, reorder any dispatch visits, or short-circuit any dynamic authority check.
+8. Arithmetic uses natural numbers in Lean/Z3. The source bridge is bounded: a column count is u16, every decoded step count is at most 256, so any prefix is at most 65,535 * 256 = 16,776,960, below both 32-bit and 64-bit usize limits. Event start and length are u16, their sum is at most 131,070. Column directory bounds and checked row-index construction address offset/query overflow separately.
+
+## Formal claims and limits
+
+The Lean proof establishes arbitrary-finite-row cumulative-check soundness and guarded direct-row equivalence, including malformed and out-of-range fallback outcomes. Z3 independently models the raw 32-bit event and metadata fields, absent/unreadable rows, bounds and exact returned words for up to 100 arm rows (50 production routes). Positive/negative witnesses prevent vacuity; examples demonstrate why skipping a malformed predecessor, zero-row length check, event bound, or cumulative bound without the certificate is unsound.
+
+These are proofs of the stated model plus an explicitly reviewed source bridge, not mechanical extraction/verification of Rust, raw pointer validity, the compiler, or all Hibana semantics. They do not establish new roll/liveness correctness. All existing dynamic checks remain subject to their existing regression/proof gates.

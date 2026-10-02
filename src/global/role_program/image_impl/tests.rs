@@ -19,6 +19,7 @@ use crate::{
     },
 };
 
+mod arm_row_index;
 mod passive_parent;
 mod route_index;
 

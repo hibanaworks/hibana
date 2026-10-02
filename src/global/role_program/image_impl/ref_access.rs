@@ -278,7 +278,13 @@ impl RoleImageRef {
         slot: usize,
         arm: u8,
     ) -> Option<u16> {
-        self.lanes().passive_arm_child_ordinal_by_slot(slot, arm)
+        if self.has_passive_parent_index() {
+            // The immutable certificate covers every skipped prefix and bound.
+            self.lanes()
+                .passive_arm_child_ordinal_with_certificate(slot, arm, true)
+        } else {
+            self.lanes().passive_arm_child_ordinal_by_slot(slot, arm)
+        }
     }
 
     #[inline(always)]
@@ -287,7 +293,11 @@ impl RoleImageRef {
         slot: usize,
         arm: u8,
     ) -> PackedLaneRange {
-        self.lanes().route_arm_event_row_by_slot(slot, arm)
+        if self.has_passive_parent_index() {
+            self.lanes().certified_route_arm_event_row_by_slot(slot, arm)
+        } else {
+            self.lanes().route_arm_event_row_by_slot(slot, arm)
+        }
     }
 
     #[inline(always)]
