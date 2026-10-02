@@ -11,6 +11,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install pinned Kani and CBMC
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
           KANI_VERSION="$(< .github/kani-version)"
           cargo install --locked kani-verifier --version "${KANI_VERSION}"
           cargo kani setup

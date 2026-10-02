@@ -96,9 +96,9 @@
       "endpoint::kernel::offer::select_alignment::model::selection::verification::exact_current_selection_never_becomes_realign"
     ],
     "../../src/global/compiled/images/image/program_ref/kani.rs": [
-      "global::compiled::images::image::program_ref::kani::compiled_program_atom_lookup_is_exact_for_dense_rows",
       "global::compiled::images::image::program_ref::kani::compiled_program_atom_blob_decoding_preserves_every_schema_bit",
       "global::compiled::images::image::program_ref::kani::compiled_program_atom_constructor_rejects_invalid_roles",
+      "global::compiled::images::image::program_ref::kani::compiled_program_atom_lookup_is_exact_for_dense_rows",
       "global::compiled::images::image::program_ref::kani::compiled_program_blob_comparison_matches_array_equality",
       "global::compiled::images::image::program_ref::kani::compiled_program_column_range_rejects_stride_multiplication_overflow",
       "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_is_exact_over_facts_columns_and_blob",

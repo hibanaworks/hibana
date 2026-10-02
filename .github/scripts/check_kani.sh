@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+command -v rg >/dev/null || {
+  echo "Kani gate requires ripgrep for the production assumption audit" >&2
+  exit 1
+}
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="${ROOT_DIR}/proofs/kani/Cargo.toml"
 EXPECTED_INVENTORY="${ROOT_DIR}/proofs/kani/harness-inventory.json"
@@ -15,6 +20,12 @@ fi
 if rg -n 'kani::assume' "${ROOT_DIR}/src" --glob '*.rs'; then
   echo "Kani harnesses must construct complete symbolic domains without assumptions" >&2
   exit 1
+else
+  assumption_audit_status="$?"
+  if [[ "${assumption_audit_status}" != "1" ]]; then
+    echo "Kani production assumption audit failed" >&2
+    exit "${assumption_audit_status}"
+  fi
 fi
 
 python3 - "${ROOT_DIR}/src" <<'PY'
