@@ -50,7 +50,7 @@ impl PackedEventConflict {
     }
 
     #[inline(always)]
-    const fn decode_raw(raw: u16) -> Option<Self> {
+    pub(in crate::global) const fn decode_raw(raw: u16) -> Option<Self> {
         if raw == Self::ABSENT_RAW || raw == Self::REENTRY_WITHOUT_CONFLICT_RAW {
             return Some(Self(raw));
         }

@@ -1,0 +1,31 @@
+arbitrary raw relation with 0 routes: unsat
+arbitrary raw relation with 1 routes: unsat
+arbitrary raw relation with 2 routes: unsat
+arbitrary raw relation with 3 routes: unsat
+arbitrary raw relation with 4 routes: unsat
+arbitrary raw relation with 5 routes: unsat
+arbitrary raw relation with 6 routes: unsat
+arbitrary raw relation with 7 routes: unsat
+arbitrary raw relation with 8 routes: unsat
+arbitrary raw relation with 16 routes: unsat
+arbitrary raw relation with 34 routes: unsat
+arbitrary raw relation with 50 routes: unsat
+positive gapped scopes: sat
+missing edge despite owner: sat
+missing query: sat
+wrong owner fallback: sat
+wrong arm fallback: sat
+duplicate child after first match: sat
+self edge fallback: sat
+backward edge fallback: sat
+passive cycle preserves early hit: sat
+passive cycle rejects backward edge: sat
+unused cyclic owners grant no edge: sat
+malformed row after first hit: sat
+malformed row before hit: sat
+unused invalid owner keeps harmless miss: sat
+empty relation: sat
+owner-only mutant falsely creates edge: sat
+unguarded-index mutant skips malformed predecessor: sat
+unguarded owner-read mutant changes harmless miss: sat
+PASS: certified reverse lookup, malformed fallback, topology, and nonvacuity

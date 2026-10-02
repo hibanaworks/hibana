@@ -6,7 +6,7 @@ use super::super::{
 use super::lane_image::invalid_resident_descriptor;
 use super::metadata::{
     derive_active_lane_metadata, lane_columns_are_coherent, roll_scope_columns_are_coherent,
-    route_commit_capacity_is_exact, route_scopes_are_sorted,
+    passive_parent_rows_are_coherent, route_commit_capacity_is_exact, route_scopes_are_sorted,
 };
 use crate::global::typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict};
 
@@ -54,6 +54,9 @@ impl RuntimeRoleFacts {
     }
 }
 
+const SORTED_ROUTE_INDEX: u8 = 1;
+const PASSIVE_PARENT_INDEX: u8 = 2;
+
 impl RoleImageRef {
     pub(crate) const fn new<const N: usize>(
         program: &'static crate::global::compiled::images::CompiledProgramRef,
@@ -75,6 +78,15 @@ impl RoleImageRef {
             Some(metadata) => metadata,
             None => invalid_resident_descriptor(),
         };
+        let mut route_lookup_index = 0;
+        if route_scopes_are_sorted(bytes, columns.route_scopes) {
+            route_lookup_index |= SORTED_ROUTE_INDEX;
+            if columns.route_scopes.len as usize == footprint.route_scope_count
+                && passive_parent_rows_are_coherent(bytes, columns)
+            {
+                route_lookup_index |= PASSIVE_PARENT_INDEX;
+            }
+        }
         let image = Self {
             program,
             role,
@@ -83,7 +95,7 @@ impl RoleImageRef {
             blob,
             active_lane_row,
             first_active_lane: metadata.first_active_lane,
-            route_scopes_sorted: route_scopes_are_sorted(bytes, columns.route_scopes),
+            route_lookup_index,
         };
         if metadata.active_lane_count != footprint.active_lane_count
             || metadata.logical_lane_count != footprint.logical_lane_count
@@ -107,6 +119,16 @@ impl RoleImageRef {
             invalid_resident_descriptor();
         }
         image
+    }
+
+    #[inline(always)]
+    pub(crate) const fn has_sorted_route_index(&self) -> bool {
+        self.route_lookup_index & SORTED_ROUTE_INDEX != 0
+    }
+
+    #[inline(always)]
+    pub(crate) const fn has_passive_parent_index(&self) -> bool {
+        self.route_lookup_index & PASSIVE_PARENT_INDEX != 0
     }
 
     #[inline(always)]
@@ -220,7 +242,7 @@ impl RoleImageRef {
         if self.columns.route_scopes.len as usize != self.footprint().route_scope_count {
             invalid_resident_descriptor();
         }
-        if self.route_scopes_sorted {
+        if self.has_sorted_route_index() {
             // The constructor certified valid, strictly increasing raw IDs.
             // Compare full IDs so another kind cannot alias a route ordinal.
             let query = scope.raw();

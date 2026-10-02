@@ -47,7 +47,7 @@ fn projected_route_index_matches_scan_for_every_decodable_scope_id() {
     );
     let program: RoleProgram<0> = project(&global);
     let rows = program.role_image_ref();
-    assert!(rows.route_scopes_sorted);
+    assert!(rows.has_sorted_route_index());
     assert_eq!(rows.columns.route_scopes.len, 3);
     for raw in 0..=u16::MAX {
         if let Some(scope) = ScopeId::decode_raw(raw) {
@@ -67,7 +67,7 @@ fn constructor_keeps_malformed_route_tables_on_checked_fallback() {
     );
     let program: RoleProgram<0> = project(&global);
     let original = program.role_image_ref();
-    assert!(original.route_scopes_sorted);
+    assert!(original.has_sorted_route_index());
     assert!(original.columns.blob_len() <= 256);
     let mut bytes = [0u8; 256];
     for (offset, byte) in bytes
@@ -89,7 +89,7 @@ fn constructor_keeps_malformed_route_tables_on_checked_fallback() {
             original.columns,
             immutable,
         );
-        assert!(!rows.route_scopes_sorted);
+        assert!(!rows.has_sorted_route_index());
         assert_invariant(|| {
             let _ = rows.route_scope_slot(ScopeId::route(0));
         });
