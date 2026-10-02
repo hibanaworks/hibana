@@ -34,7 +34,7 @@ fi
 
 miri_passed_total=0
 miri_ignored_total=0
-readonly EXPECTED_MIRI_PASSED_TOTAL=218
+readonly EXPECTED_MIRI_PASSED_TOTAL=223
 readonly EXPECTED_MIRI_IGNORED_TOTAL=2
 
 run_miri_test() {
@@ -447,12 +447,21 @@ run_miri_test \
 
 run_miri_test \
   compiled-program-atom-validation \
-  7 \
-  7 \
+  6 \
+  6 \
   0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_
+
+run_miri_test \
+  compiled-program-atom-decoder-boundaries \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_decoder_rejects_exact_invalid_boundaries
 
 run_miri_test \
   compiled-program-atom-lookup \
@@ -461,16 +470,25 @@ run_miri_test \
   0 \
   -p hibana \
   --lib \
-  global::compiled::images::image::program_ref::tests::compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_lookup_is_exact_for_dense_rows
 
 run_miri_test \
-  compiled-program-atom-order-rejection \
+  compiled-program-image-identity \
   1 \
   1 \
   0 \
   -p hibana \
   --lib \
-  global::compiled::images::image::program_ref::tests::compiled_program_descriptor_rejects_noncanonical_atom_order
+  global::compiled::images::image::program_ref::tests::compiled_program_image_identity_is_exact_over_facts_columns_and_blob
+
+MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
+  rolled-route-visit-ownership \
+  5 \
+  5 \
+  0 \
+  -p hibana \
+  --test security_report_regressions \
+  rolled_routes::
 
 run_miri_test \
   program-image-storage-validation \

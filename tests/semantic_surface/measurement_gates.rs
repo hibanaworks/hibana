@@ -623,12 +623,20 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             "program_ref::tests::compiled_program_atom_descriptor_",
         ),
         (
-            "compiled-program-atom-lookup",
-            "compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows",
+            "compiled-program-atom-decoder-boundaries",
+            "compiled_program_atom_decoder_rejects_exact_invalid_boundaries",
         ),
         (
-            "compiled-program-atom-order-rejection",
-            "compiled_program_descriptor_rejects_noncanonical_atom_order",
+            "compiled-program-atom-lookup",
+            "compiled_program_atom_lookup_is_exact_for_dense_rows",
+        ),
+        (
+            "compiled-program-image-identity",
+            "compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
+        ),
+        (
+            "rolled-route-visit-ownership",
+            "--test security_report_regressions",
         ),
         (
             "program-image-storage-validation",
@@ -649,7 +657,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
                 (passed + owner_passed, ignored + owner_ignored)
             },
         );
-    assert_eq!(miri_passed, 218, "Miri passed inventory changed");
+    assert_eq!(miri_passed, 223, "Miri passed inventory changed");
     assert_eq!(miri_ignored, 2, "Miri ignored inventory changed");
     assert!(
         manifest_test_gate.contains("import tomllib")
@@ -677,7 +685,7 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             )
             && miri_gate.contains("miri_passed_total=$((miri_passed_total + expected_passed))")
             && miri_gate.contains("miri_ignored_total=$((miri_ignored_total + expected_ignored))")
-            && miri_gate.contains("readonly EXPECTED_MIRI_PASSED_TOTAL=218")
+            && miri_gate.contains("readonly EXPECTED_MIRI_PASSED_TOTAL=223")
             && miri_gate.contains("readonly EXPECTED_MIRI_IGNORED_TOTAL=2")
             && miri_gate.contains(
                 "miri gate inventory mismatch: passed=${miri_passed_total} ignored=${miri_ignored_total}",

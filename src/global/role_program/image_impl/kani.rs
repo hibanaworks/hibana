@@ -36,7 +36,8 @@ fn empty_role_facts() -> RuntimeRoleFacts {
 }
 
 fn one_event_role_image_plan() -> RoleImagePlan {
-    let empty = ColumnRange::new(0, 0, 1);
+    // Empty trailing columns retain the preceding event column's end offset.
+    let empty = ColumnRange::new(ROLE_IMAGE_EVENT_STRIDE, 0, 1);
     RoleImagePlan {
         columns: RoleImageColumns {
             events: ColumnRange::new(0, 1, ROLE_IMAGE_EVENT_STRIDE),

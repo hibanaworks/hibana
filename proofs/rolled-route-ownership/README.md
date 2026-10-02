@@ -97,6 +97,7 @@ again before publication; this repair extends the handoff's development base.
 | Runtime operation-count and compile-pressure gate | Passed with one build job and debug information disabled |
 | Core and projection example, no default features | Passed for `thumbv6m-none-eabi` and `thumbv8m.main-none-eabi` |
 | Stackchan radio firmware ABI check, Clippy and link | Passed using the local core path and pinned binary SDK |
+| Targeted strict-provenance Miri checks | Five rolled-route regressions and nine descriptor/decoder/image-identity cases passed |
 
 The existing fixed-snapshot size gate passed: measured sample peak stack was
 2,655 bytes, modeled sample runtime SRAM 5,322 bytes, and aggregate core rlib
@@ -107,5 +108,19 @@ flash measurement. No endpoint storage field or wire-header byte was added.
 
 Local evidence is retained under `/tmp/hibana-core-handoff.4GYP1K/`; the firmware
 build evidence is `/tmp/dots-radio-evidence.bJyR7D/`. Rust verification products
-were removed. Miri, Kani and the complete final-form measurement suite were not
-rerun locally; the normal quality-gates workflow remains responsible for them.
+were removed. Targeted Miri evidence is
+`/tmp/hibana-miri-repair-evidence.BBiRQD/`; the five regressions also record a
+successful command exit under the existing 480-second deep-route limit.
+The complete Miri/Kani and final-form suites remain CI responsibilities.
+
+CI exposed stale verification fixtures inherited from the development base:
+Kani's reviewed inventory had the same 200 harnesses in a different order, its
+runner omitted ripgrep, one role-image proof placed empty trailing columns at
+offset zero, and Miri still selected the former sparse atom representation.
+The runner now rejects missing/failed assumption audits, the inventory and
+proof fixture follow the canonical layout, and Miri checks the current dense
+lookup, decoder boundaries and image identity. The five regressions join the
+Miri gate, bringing its reviewed total to 223 passed and two intentionally
+ignored tests. No harness is removed and no assumption is added. The first
+complete CBMC attempt verified 199 of 200; the failing proof-fixture assertion
+is repaired and awaits a new complete CI result.
