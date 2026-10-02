@@ -8,7 +8,7 @@ use crate::eff::{EffIndex, EventOrigin};
 use crate::global::{
     compiled::images::CompiledProgramRef,
     const_dsl::{ReentryMark, ScopeId, ScopeKind},
-    role_program::{LaneSetView, LaneSteps, PackedLaneRange, RoleImageRef},
+    role_program::{LaneSetView, PackedLaneRange, RoleImageRef},
     typestate::{
         LocalAction, LocalDependency, LocalNode, PackedEventConflict, PassiveArmChildFact,
         RouteScopeRows, StateIndex,
@@ -49,49 +49,8 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
-    fn logical_lane_count(&self) -> usize {
-        self.rows().footprint().logical_lane_count
-    }
-
-    #[inline(always)]
     pub(crate) fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
         self.rows().resident_row_min_start(idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_row_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        if lane_idx >= self.logical_lane_count() {
-            return None;
-        }
-        self.rows().resident_row_lane_steps(idx, lane_idx)
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_row_lane_step_at(
-        &self,
-        idx: usize,
-        lane_idx: usize,
-        ordinal: usize,
-    ) -> Option<u16> {
-        if lane_idx >= self.logical_lane_count() {
-            return None;
-        }
-        self.rows()
-            .resident_row_lane_step_at(idx, lane_idx, ordinal)
-    }
-
-    #[inline(always)]
-    pub(crate) fn resident_row_lane_step_ordinal(
-        &self,
-        idx: usize,
-        lane_idx: usize,
-        step_idx: usize,
-    ) -> Option<u16> {
-        if lane_idx >= self.logical_lane_count() {
-            return None;
-        }
-        self.rows()
-            .resident_row_lane_step_ordinal(idx, lane_idx, step_idx)
     }
 
     #[inline(always)]

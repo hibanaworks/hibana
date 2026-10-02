@@ -86,3 +86,16 @@ fn projection_derives_one_row_for_one_route() {
         1
     );
 }
+
+#[test]
+fn scope_first_route_validation_does_not_skip_later_observers() {
+    use crate::g::{Msg, ProgramSourceData, Route, Send, Seq};
+    type MissingRightObserver =
+        Route<Seq<Send<0, 1, Msg<1, ()>>, Send<1, 2, Msg<2, ()>>>, Send<0, 1, Msg<3, ()>>>;
+    let source = ProgramSourceData::<16>::lower::<MissingRightObserver>();
+    let summary = CompiledProgramImage::scan_const(source.eff_list());
+    assert!(matches!(
+        projection_error_all_roles(&summary, source.eff_list()),
+        Some(ProgramSourceError::ProjectionRouteUnprojectable)
+    ));
+}

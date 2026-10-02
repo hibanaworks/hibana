@@ -1,65 +1,61 @@
-use super::{binary_route_arm_index, dependency_conflict_for_scope};
+use super::{ScopeFacts, binary_route_arm_index};
 use crate::global::{
-    const_dsl::{ScopeId, ScopeMarkerView},
+    const_dsl::ScopeId,
     typestate::{LocalConflict, PackedEventConflict},
 };
 
-pub(super) const fn route_scope_conflict_for_commit(
-    markers: ScopeMarkerView<'_>,
-    view_len: usize,
-    scope: ScopeId,
-) -> PackedEventConflict {
-    let conflict =
-        PackedEventConflict::from_conflict(dependency_conflict_for_scope(markers, view_len, scope));
-    match conflict.to_conflict() {
-        Some(LocalConflict::RouteArm { scope: parent, .. }) if parent.same(scope) => {
-            PackedEventConflict::none()
+/// Walk one route's commit ancestors once. The emitted rows are written from
+/// the end toward the start, retaining outer-to-inner descriptor order without
+/// rescanning each prefix or allocating a chain buffer.
+pub(in crate::global::role_program::image_impl) struct RouteCommitCursor<'a> {
+    scopes: &'a ScopeFacts,
+    conflict: PackedEventConflict,
+    remaining: usize,
+}
+
+impl<'a> RouteCommitCursor<'a> {
+    #[inline(always)]
+    pub(in crate::global::role_program::image_impl) const fn new(
+        scopes: &'a ScopeFacts,
+        scope: ScopeId,
+        arm: u8,
+    ) -> Self {
+        let arm = binary_route_arm_index(arm) as u8;
+        Self {
+            scopes,
+            conflict: PackedEventConflict::route_arm(scope, arm),
+            remaining: scopes.route_count() + 1,
         }
-        Some(_) | None => conflict,
+    }
+
+    #[inline(always)]
+    pub(in crate::global::role_program::image_impl) const fn next(
+        &mut self,
+    ) -> Option<PackedEventConflict> {
+        let Some(LocalConflict::RouteArm { scope, .. }) = self.conflict.to_conflict() else {
+            return None;
+        };
+        if scope.is_none() || self.remaining == 0 {
+            panic!("route commit ancestor chain invalid");
+        }
+        let row = self.conflict;
+        self.remaining -= 1;
+        self.conflict = PackedEventConflict::from_conflict(self.scopes.conflict(scope));
+        Some(row)
     }
 }
 
+#[inline(always)]
 pub(in crate::global::role_program::image_impl) const fn route_commit_row_count(
-    markers: ScopeMarkerView<'_>,
-    view_len: usize,
+    scopes: &ScopeFacts,
     scope: ScopeId,
-    arm: u8,
 ) -> usize {
-    let arm = binary_route_arm_index(arm) as u8;
-    let mut len = 0usize;
-    let mut conflict = PackedEventConflict::route_arm(scope, arm);
-    while len <= markers.len() {
-        let Some(LocalConflict::RouteArm { scope, .. }) = conflict.to_conflict() else {
-            return len;
-        };
-        if scope.is_none() {
-            panic!("route commit scope missing");
-        }
-        len += 1;
-        conflict = route_scope_conflict_for_commit(markers, view_len, scope);
+    // Both arms have this scope's same ancestor chain; only their first row's
+    // arm differs. Count once for the scope, not once for each arm.
+    let mut rows = RouteCommitCursor::new(scopes, scope, 0);
+    let mut count = 0usize;
+    while rows.next().is_some() {
+        count += 1;
     }
-    panic!("route commit rows overflow");
-}
-
-pub(in crate::global::role_program::image_impl) const fn route_commit_conflict_at(
-    markers: ScopeMarkerView<'_>,
-    view_len: usize,
-    scope: ScopeId,
-    arm: u8,
-    target: usize,
-) -> PackedEventConflict {
-    let arm = binary_route_arm_index(arm) as u8;
-    let mut depth = 0usize;
-    let mut conflict = PackedEventConflict::route_arm(scope, arm);
-    while depth <= target && depth <= markers.len() {
-        let Some(LocalConflict::RouteArm { scope, .. }) = conflict.to_conflict() else {
-            panic!("route commit row missing");
-        };
-        if depth == target {
-            return conflict;
-        }
-        conflict = route_scope_conflict_for_commit(markers, view_len, scope);
-        depth += 1;
-    }
-    panic!("route commit row overflow");
+    count
 }

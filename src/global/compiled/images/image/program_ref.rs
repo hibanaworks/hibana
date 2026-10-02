@@ -7,46 +7,25 @@ use crate::{
     global::role_program::BlobPtr,
 };
 
-#[derive(Clone, Copy)]
-struct ProgramAtomRow {
-    eff_idx: u16,
-    atom: EffAtom,
-}
-
-#[derive(Clone, Copy)]
-struct PackedProgramAtomFields {
-    from: u8,
-    to: u8,
-    label: u8,
-    payload_schema: u32,
-    origin: u8,
-    lane: u8,
-}
-
-impl ProgramAtomRow {
-    const fn decode(eff_idx: u16, fields: PackedProgramAtomFields, max_role: u8) -> Option<Self> {
-        if eff_idx as usize >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
-            || fields.from > max_role
-            || fields.to > max_role
-        {
-            return None;
-        }
-        let origin = match EventOrigin::decode_packed_bits(fields.origin) {
-            Some(origin) => origin,
-            None => return None,
-        };
-        Some(Self {
-            eff_idx,
-            atom: EffAtom {
-                from: fields.from,
-                to: fields.to,
-                label: fields.label,
-                payload_schema: fields.payload_schema,
-                origin,
-                lane: fields.lane,
-            },
-        })
+const fn decode_program_atom(
+    bytes: [u8; PROGRAM_IMAGE_ATOM_STRIDE],
+    max_role: u8,
+) -> Option<EffAtom> {
+    if bytes[0] > max_role || bytes[1] > max_role {
+        return None;
     }
+    let origin = match EventOrigin::decode_packed_bits(bytes[7]) {
+        Some(origin) => origin,
+        None => return None,
+    };
+    Some(EffAtom {
+        from: bytes[0],
+        to: bytes[1],
+        label: bytes[2],
+        payload_schema: u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]),
+        origin,
+        lane: bytes[8],
+    })
 }
 
 /// Sealed runtime owner for immutable program-wide compiled facts.
@@ -78,7 +57,7 @@ impl CompiledProgramRef {
             columns,
             blob,
         };
-        image.validate_atom_order();
+        image.validate_atom_rows();
         image
     }
 
@@ -130,88 +109,37 @@ impl CompiledProgramRef {
         self.byte_at(offset) as u16 | ((self.byte_at(offset + 1) as u16) << 8)
     }
 
+    // Row position is the dense global event identity. The image builder emits
+    // every event in source order, so a duplicate key column and search are absent.
     #[inline(always)]
-    const fn read_payload_schema_at(&self, offset: usize) -> u32 {
-        self.read_u16_at(offset) as u32 | ((self.read_u16_at(offset + 2) as u32) << 16)
-    }
-
-    #[inline]
-    const fn atom_row_at(&self, row: usize) -> Option<ProgramAtomRow> {
-        let offset = match self.column_offset(self.columns.atoms(), row, PROGRAM_IMAGE_ATOM_STRIDE)
-        {
-            Some(offset) => offset,
-            None => return None,
-        };
-        match ProgramAtomRow::decode(
-            self.read_u16_at(offset),
-            PackedProgramAtomFields {
-                from: self.byte_at(offset + 2),
-                to: self.byte_at(offset + 3),
-                label: self.byte_at(offset + 4),
-                payload_schema: self.read_payload_schema_at(offset + 5),
-                origin: self.byte_at(offset + 9),
-                lane: self.byte_at(offset + 10),
-            },
-            self.facts.max_role,
-        ) {
-            Some(row) => Some(row),
-            None => crate::invariant(),
-        }
-    }
-
-    const fn validate_atom_order(&self) {
-        let mut row = 1usize;
-        while row < self.columns.atom_count() {
-            let previous_offset = match self.column_offset(
-                self.columns.atoms(),
-                row - 1,
-                PROGRAM_IMAGE_ATOM_STRIDE,
-            ) {
-                Some(offset) => offset,
-                None => crate::invariant(),
-            };
-            let offset =
-                match self.column_offset(self.columns.atoms(), row, PROGRAM_IMAGE_ATOM_STRIDE) {
-                    Some(offset) => offset,
-                    None => crate::invariant(),
-                };
-            if self.read_u16_at(previous_offset) >= self.read_u16_at(offset) {
-                crate::invariant();
-            }
-            row += 1;
-        }
-    }
-
-    #[inline]
     pub(crate) const fn atom_at(&self, eff_idx: usize) -> Option<EffAtom> {
         if eff_idx >= crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY {
             crate::invariant();
         }
-        let mut start = 0usize;
-        let mut end = self.columns.atom_count();
-        while start < end {
-            let row = start + (end - start) / 2;
-            let decoded = match self.atom_row_at(row) {
-                Some(decoded) => decoded,
-                None => crate::invariant(),
+        let offset =
+            match self.column_offset(self.columns.atoms(), eff_idx, PROGRAM_IMAGE_ATOM_STRIDE) {
+                Some(offset) => offset,
+                None => return None,
             };
-            if (decoded.eff_idx as usize) < eff_idx {
-                start = row + 1;
-            } else {
-                end = row;
-            }
+        let mut bytes = [0u8; PROGRAM_IMAGE_ATOM_STRIDE];
+        let mut byte = 0;
+        while byte < bytes.len() {
+            bytes[byte] = self.byte_at(offset + byte);
+            byte += 1;
         }
-        if start >= self.columns.atom_count() {
-            return None;
-        }
-        let decoded = match self.atom_row_at(start) {
-            Some(decoded) => decoded,
+        match decode_program_atom(bytes, self.facts.max_role) {
+            Some(atom) => Some(atom),
             None => crate::invariant(),
-        };
-        if decoded.eff_idx as usize == eff_idx {
-            Some(decoded.atom)
-        } else {
-            None
+        }
+    }
+
+    const fn validate_atom_rows(&self) {
+        let mut row = 0;
+        while row < self.columns.atom_count() {
+            if self.atom_at(row).is_none() {
+                crate::invariant();
+            }
+            row += 1;
         }
     }
 

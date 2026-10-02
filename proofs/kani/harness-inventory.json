@@ -96,9 +96,9 @@
       "endpoint::kernel::offer::select_alignment::model::selection::verification::exact_current_selection_never_becomes_realign"
     ],
     "../../src/global/compiled/images/image/program_ref/kani.rs": [
-      "global::compiled::images::image::program_ref::kani::compiled_program_atom_binary_search_is_exact_for_sorted_rows",
+      "global::compiled::images::image::program_ref::kani::compiled_program_atom_lookup_is_exact_for_dense_rows",
       "global::compiled::images::image::program_ref::kani::compiled_program_atom_blob_decoding_preserves_every_schema_bit",
-      "global::compiled::images::image::program_ref::kani::compiled_program_atom_order_rejects_noncanonical_rows",
+      "global::compiled::images::image::program_ref::kani::compiled_program_atom_constructor_rejects_invalid_roles",
       "global::compiled::images::image::program_ref::kani::compiled_program_blob_comparison_matches_array_equality",
       "global::compiled::images::image::program_ref::kani::compiled_program_column_range_rejects_stride_multiplication_overflow",
       "global::compiled::images::image::program_ref::kani::compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
@@ -148,7 +148,7 @@
       "global::const_dsl::endpoint_selectors::kani::outbound_selector_identity_is_exact_public_send_contract"
     ],
     "../../src/global/const_dsl/receive_lane_causality/kani.rs": [
-      "global::const_dsl::receive_lane_causality::kani::causal_witness_table_is_first_write_wins_and_role_exact",
+      "global::const_dsl::receive_lane_causality::kani::causal_role_facts_and_joins_are_role_exact",
       "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_accepts_closed_cycle",
       "global::const_dsl::receive_lane_causality::kani::roll_reentry_causal_closure_rejects_open_cycle",
       "global::const_dsl::receive_lane_causality::kani::sender_change_without_causal_handoff_is_rejected",

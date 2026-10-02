@@ -18,6 +18,8 @@ Hibana.abort_invalidates_outstanding_receipt : ∀ (before after : Hibana.Transp
 Hibana.abort_peer_is_immediately_observable : ∀ (state : Hibana.TransportState),
   @Eq.{1} Hibana.TransportPoll state.abortPeer.pollReceive Hibana.TransportPoll.peerClosed
 Hibana.abort_peer_is_well_formed : ∀ (state : Hibana.TransportState), state.abortPeer.WellFormed
+@Hibana.accepted_causal_flow_has_must_handoff : ∀ {flow : Hibana.CausalFlowExpr} {sender : Nat},
+  @Eq.{1} Bool (flow.eval (fun x => false) sender) true → Hibana.MustCausalHandoff flow sender
 @Hibana.accepted_channel_authority_checker_sound : ∀ {config : Hibana.AsyncCancellationConfig},
   @Eq.{1} Bool config.checkAcceptedChannelAuthority true → config.AcceptedChannelAuthority
 @Hibana.accepted_channel_authority_frames_match : ∀ {config : Hibana.AsyncCancellationConfig},
@@ -301,23 +303,6 @@ Hibana.active_offer_key_mem_iff_owned : ∀ (target : Hibana.ActiveOfferKey) (la
         (@Membership.mem.{0, 0} Hibana.ActiveOfferLane (List.{0} Hibana.ActiveOfferLane)
           (@List.instMembership.{0} Hibana.ActiveOfferLane) lanes owner)
         (@Eq.{1} Hibana.ActiveOfferKey owner.key target))
-@Hibana.add_causal_witness_first_write_wins : ∀ {witnesses : Hibana.CausalWitnesses} {role : Nat}
-  {witness : Hibana.StaticGlobalOccurrence},
-  @Eq.{1} (Option.{0} Hibana.StaticGlobalOccurrence) (Hibana.addCausalWitness witnesses role witness role)
-    (Hibana.addCausalWitness.match_1.{1} (fun x => Option.{0} Hibana.StaticGlobalOccurrence) (witnesses role)
-      (fun _ => @some.{0} Hibana.StaticGlobalOccurrence witness) fun present => present)
-@Hibana.add_causal_witness_preserves_other_role : ∀ {witnesses : Hibana.CausalWitnesses} {role query : Nat}
-  {witness : Hibana.StaticGlobalOccurrence},
-  @Ne.{1} Nat query role →
-    @Eq.{1} (Option.{0} Hibana.StaticGlobalOccurrence) (Hibana.addCausalWitness witnesses role witness query)
-      (witnesses query)
-@Hibana.add_causal_witness_preserves_soundness : ∀ {occurrences : List.{0} Hibana.StaticGlobalOccurrence}
-  {earlier later candidate : Hibana.StaticGlobalOccurrence} {roleCount role : Nat} {witnesses : Hibana.CausalWitnesses},
-  Hibana.CausalWitnessesSound occurrences earlier later roleCount witnesses →
-    @Eq.{1} Nat candidate.event.receiver role →
-      Hibana.CausalHandoffPath occurrences earlier later roleCount candidate →
-        Hibana.CausalWitnessesSound occurrences earlier later roleCount
-          (Hibana.addCausalWitness witnesses role candidate)
 @Hibana.admission_acceptance_iff_admissible : ∀ {graph : Hibana.EventGraph} {state : Hibana.CommitState}
   {request : Hibana.OperationRequest},
   Iff
@@ -732,6 +717,30 @@ Hibana.canonical_role_event_scope_for_triple_roll_is_innermost : @Eq.{1} (List.{
               (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).roll.roll.roll.canonicalRoleEventScopes
     (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
   (@List.cons.{0} Nat (@OfNat.ofNat.{0} Nat (nat_lit 8194) (instOfNatNat (nat_lit 8194))) (@List.nil.{0} Nat))
+Hibana.canonical_route_commit_stream_preserves_descriptor : ∀ (source : Hibana.CanonicalProgramSource)
+  (scope arm : Nat),
+  @Eq.{1} (List.{0} Nat)
+    (Hibana.streamCanonicalRouteCommitRows✝ source
+      (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+        (@List.length.{0} Hibana.DecodedRouteResolver source.resolvers)
+        (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+      (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+        (@HMul.hMul.{0, 0, 0} Nat Nat Nat (@instHMul.{0} Nat instMulNat) scope
+          (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2))))
+        arm)
+      (@List.nil.{0} Nat))
+    (Hibana.canonicalRouteCommitChain✝ source scope arm)
+Hibana.canonical_route_commit_stream_preserves_suffix : ∀ (source : Hibana.CanonicalProgramSource) (fuel current : Nat)
+  (suffix : List.{0} Nat),
+  @Eq.{1} (List.{0} Nat) (Hibana.streamCanonicalRouteCommitRows✝ source fuel current suffix)
+    (@HAppend.hAppend.{0, 0, 0} (List.{0} Nat) (List.{0} Nat) (List.{0} Nat)
+      (@instHAppendOfAppend.{0} (List.{0} Nat) (@List.instAppend.{0} Nat))
+      (@List.reverse.{0} Nat (Hibana.canonicalRouteCommitChainFrom✝ source fuel current)) suffix)
+Hibana.canonical_scope_facts_bind_source_parent : ∀ (source : Hibana.CanonicalProgramSource) (scope : Nat),
+  @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) (Hibana.canonicalScopeFactKeys✝ source)
+      scope →
+    @Eq.{1} (Option.{0} Nat) (Hibana.canonicalScopeFacts✝ source scope)
+      (@some.{0} Nat (Hibana.canonicalPackedDependencyConflict✝ source scope))
 Hibana.carrier_profile_hierarchy_is_strict : And
   (Hibana.CarrierProfile.mediated.StrictStep Hibana.CarrierProfile.authentic)
   (And (Hibana.CarrierProfile.authentic.StrictStep Hibana.CarrierProfile.ordered)
@@ -740,27 +749,14 @@ Hibana.carrier_profile_hierarchy_is_strict : And
 @Hibana.carrier_profile_supports_every_weaker_profile : ∀ {lower upper : Hibana.CarrierProfile}
   {carrier : Hibana.CarrierSemantics} {abstraction : carrier.State → Hibana.TransportBoundaryState} {Fairness : Prop},
   lower.atMost upper → upper.Holds carrier abstraction Fairness → lower.Holds carrier abstraction Fairness
-@Hibana.causal_handoff_path_orders_receive_before_send : ∀ {occurrences : List.{0} Hibana.StaticGlobalOccurrence}
-  {earlier later : Hibana.StaticGlobalOccurrence} {roleCount : Nat} (schedule : Hibana.CausalSchedule occurrences),
-  Hibana.CausalHandoffPath occurrences earlier later roleCount later →
-    @Ne.{1} Hibana.StaticGlobalOccurrence earlier later →
-      @LT.lt.{0} Nat instLTNat (@Hibana.CausalSchedule.receiveTime occurrences schedule earlier.globalId)
-        (@Hibana.CausalSchedule.sendTime occurrences schedule later.globalId)
-@Hibana.causal_witness_fold_reuses_prefix_exactly : ∀ {earlier later : Hibana.StaticGlobalOccurrence} {roleCount : Nat}
-  (witnesses : Hibana.CausalWitnesses) (before after : List.{0} Hibana.StaticGlobalOccurrence),
-  @Eq.{1} Hibana.CausalWitnesses
-    (@List.foldl.{0, 0} Hibana.CausalWitnesses Hibana.StaticGlobalOccurrence
-      (Hibana.propagateCausalWitness earlier later roleCount) witnesses
-      (@HAppend.hAppend.{0, 0, 0} (List.{0} Hibana.StaticGlobalOccurrence) (List.{0} Hibana.StaticGlobalOccurrence)
-        (List.{0} Hibana.StaticGlobalOccurrence)
-        (@instHAppendOfAppend.{0} (List.{0} Hibana.StaticGlobalOccurrence)
-          (@List.instAppend.{0} Hibana.StaticGlobalOccurrence))
-        before after))
-    (@List.foldl.{0, 0} Hibana.CausalWitnesses Hibana.StaticGlobalOccurrence
-      (Hibana.propagateCausalWitness earlier later roleCount)
-      (@List.foldl.{0, 0} Hibana.CausalWitnesses Hibana.StaticGlobalOccurrence
-        (Hibana.propagateCausalWitness earlier later roleCount) witnesses before)
-      after)
+@Hibana.causal_flow_is_must_analysis : ∀ {flow : Hibana.CausalFlowExpr} {before after : Hibana.CausalRoles},
+  Hibana.CausalFlowRun flow before after → (flow.eval before).Subset after
+Hibana.causal_flow_monotone : ∀ (flow : Hibana.CausalFlowExpr) {left right : Hibana.CausalRoles},
+  left.Subset right → (flow.eval left).Subset (flow.eval right)
+@Hibana.causal_flow_preserves_schedule_evidence : ∀ {origin : Nat} {flow : Hibana.CausalFlowExpr}
+  {before after : Hibana.CausalRoleTimes},
+  Hibana.TimedCausalFlowRun origin flow before after →
+    ∀ {facts : Hibana.CausalRoles}, facts.SoundAt origin before → (flow.eval facts).SoundAt origin after
 @Hibana.checked_descriptor_binds_active_lane_metadata : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.check true → @Eq.{1} Bool image.activeLaneMetadataCoherent true
 @Hibana.checked_descriptor_binds_event_lane_column : ∀ {image : Hibana.RustDescriptorImage},
@@ -2140,17 +2136,15 @@ Hibana.first_session_attach_binds_exactly : ∀ (rendezvous : Nat) (program : Hi
   @Eq.{1} Bool (Hibana.checkFixedWidthSchemaRegistry entries) true → Hibana.FixedWidthSchemaRegistryWellFormed entries
 Hibana.fixed_width_verified_codec_schema : ∀ (schema width : Nat),
   @Eq.{1} Nat (Hibana.fixedWidthVerifiedCodec schema width).schema schema
-@Hibana.fold_causal_witnesses_sound : ∀ {occurrences candidates : List.{0} Hibana.StaticGlobalOccurrence}
-  {earlier later : Hibana.StaticGlobalOccurrence} {roleCount : Nat} {witnesses : Hibana.CausalWitnesses},
-  (∀ (candidate : Hibana.StaticGlobalOccurrence),
-      @Membership.mem.{0, 0} Hibana.StaticGlobalOccurrence (List.{0} Hibana.StaticGlobalOccurrence)
-          (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) candidates candidate →
-        @Membership.mem.{0, 0} Hibana.StaticGlobalOccurrence (List.{0} Hibana.StaticGlobalOccurrence)
-          (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) occurrences candidate) →
-    Hibana.CausalWitnessesSound occurrences earlier later roleCount witnesses →
-      Hibana.CausalWitnessesSound occurrences earlier later roleCount
-        (@List.foldl.{0, 0} Hibana.CausalWitnesses Hibana.StaticGlobalOccurrence
-          (Hibana.propagateCausalWitness earlier later roleCount) witnesses candidates)
+Hibana.foreign_event_commit_preserves_lane_ingress_head : ∀ (events : List.{0} (Prod.{0, 0} Nat Nat))
+  (lane committedId : Nat) (before : Nat → Bool),
+  (∀ (event : Prod.{0, 0} Nat Nat),
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) events event →
+        @Eq.{1} Nat (@Prod.snd.{0, 0} Nat Nat event) lane → @Ne.{1} Nat (@Prod.fst.{0, 0} Nat Nat event) committedId) →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) (Hibana.laneIngressHead✝ events lane before)
+      (Hibana.laneIngressHead✝ events lane fun eventId =>
+        @ite.{1} Bool (@Eq.{1} Nat eventId committedId) (instDecidableEqNat eventId committedId) true (before eventId))
 Hibana.foreign_parallel_root_is_not_frontier_progress_admissible : ∀
   (currentScope currentEntry currentParallelRoot : Nat) (visitedEntries : List.{0} Nat)
   (candidate : Hibana.FrontierProgressCandidateIdentity),
@@ -2292,14 +2286,23 @@ Hibana.global_rolls_length : ∀ (choreo : Hibana.Choreo),
       And (@Eq.{1} Nat leftId rightId) (@Eq.{1} Hibana.GlobalEvent leftEvent rightEvent)
 @Hibana.guarded_rolls_checker_sound : ∀ {choreo : Hibana.Choreo},
   @Eq.{1} Bool (Hibana.checkGuardedRolls choreo) true → choreo.GuardedRolls
+@Hibana.immutable_scope_memo_exact : ∀ {α β : Type} [inst : DecidableEq.{1} α] (fact : α → β) (keys : List.{0} α)
+  (query : α),
+  @Eq.{1} (Option.{0} β) (@Hibana.immutableScopeMemo✝ α β inst fact keys query)
+    (@ite.{1} (Option.{0} β) (@Membership.mem.{0, 0} α (List.{0} α) (@List.instMembership.{0} α) keys query)
+      (@List.instDecidableMemOfLawfulBEq.{0} α (@instBEqOfDecidableEq.{0} α inst) ⋯ query keys)
+      (@some.{0} β (fact query)) (@none.{0} β))
 @Hibana.inbound_occurrence_coloring_checker_sound : ∀ {choreo : Hibana.Choreo},
   @Eq.{1} Bool choreo.checkInboundOccurrenceColoring true → choreo.InboundOccurrenceColoring
-@Hibana.initial_causal_witnesses_sound : ∀ {occurrences : List.{0} Hibana.StaticGlobalOccurrence}
-  {earlier later : Hibana.StaticGlobalOccurrence} {roleCount : Nat},
-  Hibana.CausalWitnessesSound occurrences earlier later roleCount fun role =>
-    @ite.{1} (Option.{0} Hibana.StaticGlobalOccurrence) (@Eq.{1} Nat role earlier.event.receiver)
-      (instDecidableEqNat role earlier.event.receiver) (@some.{0} Hibana.StaticGlobalOccurrence earlier)
-      (@none.{0} Hibana.StaticGlobalOccurrence)
+Hibana.independent_parallel_sibling_has_no_join_dependency : ∀ (regions : List.{0} Hibana.ParallelRegion✝)
+  (region : Hibana.ParallelRegion✝) (joinStart joinStop current : Nat),
+  @Membership.mem.{0, 0} Hibana.ParallelRegion✝ (List.{0} Hibana.ParallelRegion✝)
+      (@List.instMembership.{0} Hibana.ParallelRegion✝) regions region →
+    @LE.le.{0} Nat instLENat (Hibana.ParallelRegion.start✝ region) joinStart →
+      @LE.le.{0} Nat instLENat joinStop (Hibana.ParallelRegion.split✝ region) →
+        @LE.le.{0} Nat instLENat (Hibana.ParallelRegion.split✝ region) current →
+          @LT.lt.{0} Nat instLTNat current (Hibana.ParallelRegion.stop✝ region) →
+            @Eq.{1} Bool (Hibana.parallelJoinApplies✝ regions joinStart joinStop current false) false
 Hibana.initial_global_invariant : ∀ (session roleCount : Nat) (choreo : Hibana.Choreo),
   @LT.lt.{0} Nat instLTNat (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) roleCount →
     Hibana.GlobalProgramWellFormed roleCount choreo →
@@ -2375,6 +2378,15 @@ Hibana.insert_erased_cursor_observation_preserves_entry_order : ∀ (incoming : 
   @Eq.{1} Bool image.laneColumnsCoherent true → @Eq.{1} Bool image.eventLaneColumnCoherent true
 @Hibana.lane_columns_coherent_binds_exact_route_arm_lane_relations : ∀ {image : Hibana.RustDescriptorImage},
   @Eq.{1} Bool image.laneColumnsCoherent true → @Eq.{1} Bool image.routeArmLaneRelationsExact true
+Hibana.lane_ingress_head_preserved_by_other_lane_progress : ∀ (events : List.{0} (Prod.{0, 0} Nat Nat)) (lane : Nat)
+  (before after : Nat → Bool),
+  (∀ (event : Prod.{0, 0} Nat Nat),
+      @Membership.mem.{0, 0} (Prod.{0, 0} Nat Nat) (List.{0} (Prod.{0, 0} Nat Nat))
+          (@List.instMembership.{0} (Prod.{0, 0} Nat Nat)) events event →
+        @Eq.{1} Nat (@Prod.snd.{0, 0} Nat Nat event) lane →
+          @Eq.{1} Bool (before (@Prod.fst.{0, 0} Nat Nat event)) (after (@Prod.fst.{0, 0} Nat Nat event))) →
+    @Eq.{1} (Option.{0} (Prod.{0, 0} Nat Nat)) (Hibana.laneIngressHead✝ events lane before)
+      (Hibana.laneIngressHead✝ events lane after)
 @Hibana.lane_matching_cardinality_le_vertex_cover : ∀ {matching : List.{0} Hibana.LaneRemap}
   {coverLeft coverRight : List.{0} Nat},
   @List.Pairwise.{0} Hibana.LaneRemap
@@ -2562,6 +2574,11 @@ Hibana.mixed_program_session_attach_rejected : ∀ (binding : Hibana.SessionBind
     @Eq.{1} (Option.{0} Hibana.SessionBinding)
       (Hibana.bindSession? (@some.{0} Hibana.SessionBinding binding) binding.rendezvous program)
       (@none.{0} Hibana.SessionBinding)
+@Hibana.must_handoff_orders_receive_before_send : ∀ {flow : Hibana.CausalFlowExpr} {sender origin sent : Nat}
+  {before after : Hibana.CausalRoleTimes},
+  Hibana.MustCausalHandoff flow sender →
+    Hibana.TimedCausalFlowRun origin flow before after →
+      @LT.lt.{0} Nat instLTNat (after sender) sent → @LT.lt.{0} Nat instLTNat origin sent
 @Hibana.next_lease_generation_stays_in_domain : ∀ {current next : Nat},
   @Eq.{1} (Option.{0} Nat) (Hibana.nextLeaseGeneration? current) (@some.{0} Nat next) →
     @LE.le.{0} Nat instLENat next Hibana.maxLeaseGeneration
@@ -2730,6 +2747,25 @@ Hibana.packed_route_authority_intrinsic_is_canonical : ∀ (scope resolver : Nat
         (@some.{0} (Prod.{0, 0} Nat Hibana.RouteAuthority)
           (@Prod.mk.{0, 0} Nat Hibana.RouteAuthority scope Hibana.RouteAuthority.intrinsic)))
       (@Eq.{1} Nat resolver (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
+Hibana.parallel_arms_cannot_relay_facts : @Eq.{1} Bool
+  (((Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).seq
+        (((Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).par
+              (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))).seq
+          (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))).checkReceiveLaneCausality
+    (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4))))
+  false
 Hibana.parallel_global_event_id_ranges_are_disjoint : ∀ (left right : Hibana.Choreo) {leftId rightId : Nat},
   @LT.lt.{0} Nat instLTNat leftId (@List.length.{0} Hibana.GlobalEvent left.globalEvents) →
     @LT.lt.{0} Nat instLTNat rightId (@List.length.{0} Hibana.GlobalEvent right.globalEvents) →
@@ -2741,6 +2777,31 @@ Hibana.parallel_global_event_id_ranges_are_disjoint : ∀ (left right : Hibana.C
           (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
             (@List.length.{0} Hibana.GlobalEvent left.globalEvents) rightId)
           (@List.length.{0} Hibana.GlobalEvent (left.par right).globalEvents))
+Hibana.parallel_join_remains_required_after_ancestors : ∀ (regions : List.{0} Hibana.ParallelRegion✝)
+  (joinStart joinStop current : Nat),
+  (∀ (region : Hibana.ParallelRegion✝),
+      @Membership.mem.{0, 0} Hibana.ParallelRegion✝ (List.{0} Hibana.ParallelRegion✝)
+          (@List.instMembership.{0} Hibana.ParallelRegion✝) regions region →
+        @LE.le.{0} Nat instLENat (Hibana.ParallelRegion.stop✝ region) current) →
+    @Eq.{1} Bool (Hibana.parallelJoinApplies✝ regions joinStart joinStop current false) true
+@Hibana.parallel_split_restores_saved_input_after_any_join : ∀ {α : Type} (state : Hibana.ParallelDependencyInput✝ α)
+  (scope : Nat) (saved joined : α),
+  @Eq.{1} (Option.{0} α) (@Hibana.ParallelDependencyInput.inputs✝ α state scope) (@some.{0} α saved) →
+    @Eq.{1} (Option.{0} (Hibana.ParallelDependencyInput✝ α))
+      (@Hibana.restoreParallelInput✝ α
+        (@Hibana.ParallelDependencyInput.mk✝ α joined (@Hibana.ParallelDependencyInput.inputs✝ α state)) scope)
+      (@some.{0} (Hibana.ParallelDependencyInput✝ α)
+        (@Hibana.ParallelDependencyInput.mk✝ α saved (@Hibana.ParallelDependencyInput.inputs✝ α state)))
+@Hibana.parallel_split_then_enter_records_saved_input : ∀ {α : Type} (state : Hibana.ParallelDependencyInput✝ α)
+  (scope child : Nat) (saved joined : α),
+  @Eq.{1} (Option.{0} α) (@Hibana.ParallelDependencyInput.inputs✝ α state scope) (@some.{0} α saved) →
+    @Eq.{1} (Option.{0} (Option.{0} α))
+      (@Option.map.{0, 0} (Hibana.ParallelDependencyInput✝ α) (Option.{0} α)
+        (fun restored =>
+          @Hibana.ParallelDependencyInput.inputs✝ α (@Hibana.recordParallelInput✝ α restored child) child)
+        (@Hibana.restoreParallelInput✝ α
+          (@Hibana.ParallelDependencyInput.mk✝ α joined (@Hibana.ParallelDependencyInput.inputs✝ α state)) scope))
+      (@some.{0} (Option.{0} α) (@some.{0} α saved))
 @Hibana.peer_close_does_not_skip_buffered_frame : ∀ {state : Hibana.TransportState} {frame : Hibana.TransportFrame},
   @Eq.{1} (Option.{0} Hibana.TransportFrame)
       (@getElem?.{0, 0, 0} (List.{0} Hibana.TransportFrame) Nat Hibana.TransportFrame
@@ -2864,7 +2925,7 @@ Hibana.poisoned_public_operation_remains_faulted : ∀ (edge : Hibana.PublicOper
       (@Except.ok.{0, 0} Hibana.LeaseAllocationFailure Hibana.LeaseAllocationPlan plan) →
     Hibana.endpointLeaseSlotCountRepresentable requiredTableSlots
 Hibana.production_atom_only_event_capacity_exact : @Eq.{1} Nat Hibana.productionAtomOnlyEventCapacity
-  (@OfNat.ofNat.{0} Nat (nat_lit 5957) (instOfNatNat (nat_lit 5957)))
+  (@OfNat.ofNat.{0} Nat (nat_lit 7281) (instOfNatNat (nat_lit 7281)))
 Hibana.production_cursor_accepts_terminal_event_count : Hibana.productionCursorPositionRepresentable
   Hibana.productionEventIdentityCapacity
 Hibana.production_frontier_entry_capacity_covers_all_active_entries : ∀ (witness : Hibana.FrontierEntryCapacityWitness),
@@ -3137,18 +3198,6 @@ Hibana.projected_route_arm_lanes_exclude_out_of_domain : ∀ (lanes : List.{0} N
         lane)
 @Hibana.projection_certificate_sound : ∀ {certificate : Hibana.ProjectionCertificate},
   @Eq.{1} Bool certificate.check true → certificate.RefinesTopology
-@Hibana.propagate_causal_witness_preserves_soundness : ∀ {occurrences : List.{0} Hibana.StaticGlobalOccurrence}
-  {earlier later candidate : Hibana.StaticGlobalOccurrence} {roleCount : Nat} {witnesses : Hibana.CausalWitnesses},
-  @Membership.mem.{0, 0} Hibana.StaticGlobalOccurrence (List.{0} Hibana.StaticGlobalOccurrence)
-      (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) occurrences candidate →
-    Hibana.CausalWitnessesSound occurrences earlier later roleCount witnesses →
-      Hibana.CausalWitnessesSound occurrences earlier later roleCount
-        (Hibana.propagateCausalWitness earlier later roleCount witnesses candidate)
-@Hibana.propagate_causal_witness_without_route_conflicts_is_endpoint_independent : ∀
-  {earlier left right candidate : Hibana.StaticGlobalOccurrence} {roleCount : Nat} {witnesses : Hibana.CausalWitnesses},
-  @Eq.{1} (List.{0} Hibana.ConflictArm) candidate.conflicts (@List.nil.{0} Hibana.ConflictArm) →
-    @Eq.{1} Hibana.CausalWitnesses (Hibana.propagateCausalWitness earlier left roleCount witnesses candidate)
-      (Hibana.propagateCausalWitness earlier right roleCount witnesses candidate)
 @Hibana.protocol_identity_preserves_well_formed : ∀ {config next : Hibana.GlobalConfig},
   @Eq.{1} Hibana.GlobalProtocolIdentity next.protocolIdentity config.protocolIdentity →
     config.WellFormed → next.WellFormed
@@ -3229,22 +3278,20 @@ Hibana.receipt_resolution_is_exact : ∀ (before after : Hibana.TransportState) 
 @Hibana.receive_lane_causality_checker_sound : ∀ {choreo : Hibana.Choreo} {roleCount : Nat},
   @Eq.{1} Bool (choreo.checkReceiveLaneCausality roleCount) true → choreo.ReceiveLaneCausalSafety roleCount
 @Hibana.receive_lane_sender_change_requires_exclusion_or_causal_handoff : ∀
-  {occurrences : List.{0} Hibana.StaticGlobalOccurrence} {roleCount : Nat} {left right : Hibana.StaticGlobalOccurrence},
-  Hibana.ReceiveLanePairCausallySafe occurrences roleCount left right →
+  {program : Nat → Nat → Hibana.CausalFlowExpr} {roleCount : Nat} {left right : Hibana.StaticGlobalOccurrence},
+  Hibana.ReceiveLanePairCausallySafe program roleCount left right →
     @Ne.{1} Nat left.event.sender left.event.receiver →
       @Ne.{1} Nat right.event.sender right.event.receiver →
         @Eq.{1} Nat left.event.receiver right.event.receiver →
           @Eq.{1} Nat left.event.lane right.event.lane →
             @Ne.{1} Nat left.event.sender right.event.sender →
               Or (Hibana.ConflictListsMutuallyExclusive left.conflicts right.conflicts)
-                (@Eq.{1} Bool (Hibana.receivePrecedesLaterSend occurrences roleCount left right) true)
-@Hibana.receive_precedes_later_send_has_causal_path : ∀ {occurrences : List.{0} Hibana.StaticGlobalOccurrence}
-  {roleCount : Nat} {earlier later : Hibana.StaticGlobalOccurrence},
-  @Eq.{1} Bool (Hibana.receivePrecedesLaterSend occurrences roleCount earlier later) true →
-    @Membership.mem.{0, 0} Hibana.StaticGlobalOccurrence (List.{0} Hibana.StaticGlobalOccurrence)
-        (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) occurrences later →
-      @LT.lt.{0} Nat instLTNat later.event.receiver roleCount →
-        Hibana.CausalHandoffPath occurrences earlier later roleCount later
+                (@Eq.{1} Bool
+                  (Hibana.receivePrecedesLaterSend (program left.globalId right.globalId) roleCount left right) true)
+@Hibana.receive_precedes_later_send_has_must_handoff : ∀ {flow : Hibana.CausalFlowExpr} {roleCount : Nat}
+  {earlier later : Hibana.StaticGlobalOccurrence},
+  @Eq.{1} Bool (Hibana.receivePrecedesLaterSend flow roleCount earlier later) true →
+    Hibana.MustCausalHandoff flow later.event.sender
 Hibana.recolor_roll_local_effect_head_is_unchanged : ∀ (conflictRows : List.{0} (List.{0} Hibana.ConflictArm))
   (classes : List.{0} Hibana.RollFrameLabelClass) (index : Nat) (occurrence : Hibana.CompiledOccurrence)
   (rest : List.{0} Hibana.CompiledOccurrence),
@@ -3662,11 +3709,19 @@ Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hib
         (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) body.staticGlobalOccurrences left →
       @Membership.mem.{0, 0} Hibana.StaticGlobalOccurrence (List.{0} Hibana.StaticGlobalOccurrence)
           (@List.instMembership.{0} Hibana.StaticGlobalOccurrence) body.staticGlobalOccurrences right →
-        Hibana.ReceiveLanePairCausallySafe body.rollUnfoldedOccurrences roleCount
+        Hibana.ReceiveLanePairCausallySafe (fun earlier later => body.rollCausalFlow earlier later roleCount) roleCount
           (Hibana.StaticGlobalOccurrence.inRollIteration (@List.length.{0} Hibana.GlobalEvent body.globalEvents)
             Hibana.StaticRollIteration.current left)
           (Hibana.StaticGlobalOccurrence.inRollIteration (@List.length.{0} Hibana.GlobalEvent body.globalEvents)
             Hibana.StaticRollIteration.next right)
+Hibana.roll_causal_flow_composes_fresh_visits : ∀ (body : Hibana.Choreo) (earlier later roleCount : Nat)
+  (facts : Hibana.CausalRoles),
+  @Eq.{1} Hibana.CausalRoles ((body.rollCausalFlow earlier later roleCount).eval facts)
+    ((Hibana.Choreo.causalFlowAt (@List.length.{0} Hibana.GlobalEvent body.globalEvents) earlier later roleCount
+          body).eval
+      ((Hibana.Choreo.causalFlowAt (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))) earlier later roleCount
+            body).eval
+        facts))
 @Hibana.roll_ready_of_consumed_or_excluded : ∀ {config : Hibana.GlobalConfig} {roll : Hibana.GlobalRoll},
   (∀ (globalId : Nat),
       @Membership.mem.{0, 0} Nat (List.{0} Nat) (@List.instMembership.{0} Nat) roll.events globalId →
@@ -3692,14 +3747,12 @@ Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hib
               @Eq.{1} Nat left.event.lane right.event.lane →
                 @LT.lt.{0} Nat instLTNat right.event.receiver roleCount →
                   Or (@Eq.{1} Nat left.event.sender right.event.sender)
-                    (Hibana.CausalHandoffPath body.rollUnfoldedOccurrences
-                      (Hibana.StaticGlobalOccurrence.inRollIteration
-                        (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.current left)
-                      (Hibana.StaticGlobalOccurrence.inRollIteration
-                        (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next right)
-                      roleCount
-                      (Hibana.StaticGlobalOccurrence.inRollIteration
-                        (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next right))
+                    (Hibana.MustCausalHandoff
+                      (body.rollCausalFlow left.globalId
+                        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+                          (@List.length.{0} Hibana.GlobalEvent body.globalEvents) right.globalId)
+                        roleCount)
+                      right.event.sender)
 @Hibana.roll_reentry_sender_change_requires_causal_handoff : ∀ {body : Hibana.Choreo} {roleCount : Nat}
   {left right : Hibana.StaticGlobalOccurrence},
   body.RollBodyReceiveLaneCausalSafety roleCount →
@@ -3713,7 +3766,12 @@ Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hib
               @Eq.{1} Nat left.event.lane right.event.lane →
                 @Ne.{1} Nat left.event.sender right.event.sender →
                   @Eq.{1} Bool
-                    (Hibana.receivePrecedesLaterSend body.rollUnfoldedOccurrences roleCount
+                    (Hibana.receivePrecedesLaterSend
+                      (body.rollCausalFlow left.globalId
+                        (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+                          (@List.length.{0} Hibana.GlobalEvent body.globalEvents) right.globalId)
+                        roleCount)
+                      roleCount
                       (Hibana.StaticGlobalOccurrence.inRollIteration
                         (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.current left)
                       (Hibana.StaticGlobalOccurrence.inRollIteration
@@ -3881,6 +3939,39 @@ Hibana.role_event_bytes_dominate_local_step_field : @LT.lt.{0} Nat instLTNat Hib
                                 @Membership.mem.{0, 0} Hibana.TransportFrame (List.{0} Hibana.TransportFrame)
                                     (@List.instMembership.{0} Hibana.TransportFrame) transport.frames old →
                                   @LT.lt.{0} Nat instLTNat old.sequence frame.sequence))))))
+Hibana.rolled_route_join_closed_cycle_accepted : @Eq.{1} Bool
+  ((Hibana.joinedRoute✝.seq
+          (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))).roll.checkRollReceiveLaneCausality
+    (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))))
+  true
+Hibana.rolled_route_one_sided_cycle_rejected : @Eq.{1} Bool
+  (((Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+              (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).seq
+          ((Hibana.Choreo.route
+                (Hibana.RouteAuthority.dynamic (@OfNat.ofNat.{0} Nat (nat_lit 7) (instOfNatNat (nat_lit 7))))
+                (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+                (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))).seq
+            ((Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+                  (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).seq
+              (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))))).roll.checkRollReceiveLaneCausality
+    (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5))))
+  false
 @Hibana.route_arm_decode_accepts_only_binary : ∀ {raw : Nat} {arm : Hibana.RouteArm},
   @Eq.{1} (Option.{0} Hibana.RouteArm) (Hibana.decodeRouteArm? raw) (@some.{0} Hibana.RouteArm arm) →
     Or (@Eq.{1} Nat raw (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0))))
@@ -3899,6 +3990,35 @@ Hibana.route_commit_count_257_fits_the_descriptor_derived_domain : And
     (@OfNat.ofNat.{0} Nat (nat_lit 257) (instOfNatNat (nat_lit 257))))
   (@LT.lt.{0} Nat instLTNat Hibana.routeCommit257CapacityWitness.programByteLength
     Hibana.productionDescriptorByteCapacity)
+Hibana.route_join_common_reply_accepted : @Eq.{1} Bool
+  (Hibana.checkStaticProjectability (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))) Hibana.joinedRoute✝)
+  true
+Hibana.route_join_common_reply_has_must_handoff : Hibana.MustCausalHandoff
+  (Hibana.joinedRoute✝.causalFlow (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+    (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+    (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3))))
+  (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+Hibana.route_join_one_sided_handoff_rejected : @Eq.{1} Bool
+  (((Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 0) (instOfNatNat (nat_lit 0)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))).seq
+        ((Hibana.Choreo.route
+              (Hibana.RouteAuthority.dynamic (@OfNat.ofNat.{0} Nat (nat_lit 7) (instOfNatNat (nat_lit 7))))
+              (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))
+              (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 3) (instOfNatNat (nat_lit 3)))
+                (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1))))).seq
+          (Hibana.Choreo.send (@OfNat.ofNat.{0} Nat (nat_lit 2) (instOfNatNat (nat_lit 2)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 4) (instOfNatNat (nat_lit 4)))
+            (@OfNat.ofNat.{0} Nat (nat_lit 1) (instOfNatNat (nat_lit 1)))))).checkReceiveLaneCausality
+    (@OfNat.ofNat.{0} Nat (nat_lit 5) (instOfNatNat (nat_lit 5))))
+  false
 @Hibana.route_selection_observation_has_exact_queued_evidence : ∀ {config next : Hibana.DistributedConfig}
   {role globalId : Nat},
   @Eq.{1} (Option.{0} Hibana.DistributedConfig) (config.observeQueuedRouteEvidence? role globalId)
@@ -4041,6 +4161,32 @@ Hibana.same_entry_foreign_scope_is_not_alternative_cursor_candidate : ∀ (curre
       (@Hibana.firstAdmissibleFrontierMatch.{0} α admissible matchesFrontier candidates))
 Hibana.scope_erased_realign_never_authorizes_operation : ∀ (entry : Nat),
   @Eq.{1} Bool (Hibana.CursorAlignmentDecision.realign entry).authorizesOperation false
+@Hibana.scope_first_route_validation_preserves_all_roles : ∀ {Role Scope : Type} (roles : List.{0} Role)
+  (scopes : List.{0} Scope),
+  (@Exists.{1} Role fun role =>
+      @Membership.mem.{0, 0} Role (List.{0} Role) (@List.instMembership.{0} Role) roles role) →
+    ∀ (globalFact : Scope → Prop) (localFact : Role → Scope → Prop),
+      Iff
+        (∀ (role : Role),
+          @Membership.mem.{0, 0} Role (List.{0} Role) (@List.instMembership.{0} Role) roles role →
+            ∀ (scope : Scope),
+              @Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) scopes scope →
+                And (globalFact scope) (localFact role scope))
+        (∀ (scope : Scope),
+          @Membership.mem.{0, 0} Scope (List.{0} Scope) (@List.instMembership.{0} Scope) scopes scope →
+            And (globalFact scope)
+              (∀ (role : Role),
+                @Membership.mem.{0, 0} Role (List.{0} Role) (@List.instMembership.{0} Role) roles role →
+                  localFact role scope))
+Hibana.scope_kind_ordinal_key_injective : ∀ (left right : Nat),
+  @Eq.{1} (Prod.{0, 0} Nat Nat)
+      (@Prod.mk.{0, 0} Nat Nat
+        (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) left Hibana.productionScopeCapacity)
+        (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) left Hibana.productionScopeCapacity))
+      (@Prod.mk.{0, 0} Nat Nat
+        (@HDiv.hDiv.{0, 0, 0} Nat Nat Nat (@instHDiv.{0} Nat Nat.instDiv) right Hibana.productionScopeCapacity)
+        (@HMod.hMod.{0, 0, 0} Nat Nat Nat (@instHMod.{0} Nat Nat.instMod) right Hibana.productionScopeCapacity)) →
+    @Eq.{1} Nat left right
 Hibana.scope_topology_difference_has_distinct_registration_keys : ∀ (left right : Hibana.DynamicResolverSiteIdentity),
   Or (@Ne.{1} Nat left.program.scopeMarkerCount right.program.scopeMarkerCount)
       (@Ne.{1} (List.{0} Nat) left.program.blob right.program.blob) →
@@ -4135,6 +4281,13 @@ Hibana.selected_route_is_not_resolvable : ∀ (graph : Hibana.EventGraph) (state
       @Eq.{1} Hibana.EventPhase (config.phase globalId) Hibana.EventPhase.ready →
         @Eq.{1} (Option.{0} Hibana.AdmittedMessage) (config.queue globalId) (@some.{0} Hibana.AdmittedMessage message) →
           @Eq.{1} (Option.{0} Hibana.GlobalConfig) (config.sendStep? globalId) (@none.{0} Hibana.GlobalConfig)
+Hibana.sequential_input_guards_both_parallel_arms : ∀ (entry split exit left right : Nat),
+  @LE.le.{0} Nat instLENat entry left →
+    @LT.lt.{0} Nat instLTNat left split →
+      @LE.le.{0} Nat instLENat split right →
+        @LT.lt.{0} Nat instLTNat right exit →
+          And (@Eq.{1} Bool (Hibana.parallelInputApplies✝ entry exit left) true)
+            (@Eq.{1} Bool (Hibana.parallelInputApplies✝ entry exit right) true)
 @Hibana.session_fidelity_consumed_slot_is_empty : ∀ {config : Hibana.GlobalConfig},
   Hibana.SessionFidelity config →
     ∀ {globalId epoch : Nat},
@@ -4690,17 +4843,12 @@ Hibana.verified_protocol_family_member_has_execution_guarantees : ∀ (member : 
                   @Eq.{1} Nat left.event.lane right.event.lane →
                     @LT.lt.{0} Nat instLTNat right.event.receiver roleCount →
                       Or (@Eq.{1} Nat left.event.sender right.event.sender)
-                        (Hibana.CausalHandoffPath body.rollUnfoldedOccurrences
-                          (Hibana.StaticGlobalOccurrence.inRollIteration
-                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.current
-                            left)
-                          (Hibana.StaticGlobalOccurrence.inRollIteration
-                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next
-                            right)
-                          roleCount
-                          (Hibana.StaticGlobalOccurrence.inRollIteration
-                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next
-                            right))
+                        (Hibana.MustCausalHandoff
+                          (body.rollCausalFlow left.globalId
+                            (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+                              (@List.length.{0} Hibana.GlobalEvent body.globalEvents) right.globalId)
+                            roleCount)
+                          right.event.sender)
 @Hibana.verified_protocol_transport_admission_is_unique : ∀ {certificate : Hibana.VerifiedProtocolCertificate}
   {session roleCount : Nat} {choreo : Hibana.Choreo},
   @Eq.{1} Bool (certificate.check session roleCount choreo) true →

@@ -74,6 +74,11 @@ The proof package does not claim:
 - channel delegation, unbounded role creation, or completeness for code that
   bypasses the endpoint kernel.
 
+In particular, route agreement assumes a conforming controller execution.
+Independently fabricated observations can select different arms at different
+passive roles; authenticating the fabricating controller alone does not restore
+this premise. There is no Byzantine agreement theorem for that setting.
+
 Kani, Miri, Rust tests, and carrier conformance tests provide complementary
 implementation evidence. Their success is not represented as a Lean theorem
 about arbitrary Rust source.
@@ -83,6 +88,7 @@ about arbitrary Rust source.
 | Area | Primary modules |
 | --- | --- |
 | Syntax and projection | `GlobalSyntax.lean`, `DescriptorTopology.lean`, `DescriptorRefinement.lean`, `StaticProjectability.lean` |
+| Causal must analysis | `CausalFlow.lean`, `StaticProjectability.lean`, `IterationErasure.lean` |
 | Admission and commit | `OperationAdmission.lean`, `Commit.lean`, `PublicOperationKernel.lean`, `PreparedKernelRefinement.lean` |
 | Global and distributed semantics | `GlobalSemantics.lean`, `GlobalFidelity.lean`, `GlobalProgress.lean`, `DistributedSemantics.lean`, `DistributedProgress.lean` |
 | Cancellation and carriers | `TransportContract.lean`, `CarrierRefinement.lean`, `CarrierProfile.lean`, `AsyncCancellationTermination.lean` |
@@ -99,7 +105,23 @@ The checked claim snapshots are:
 - `runtime-generated-claim-surface.txt` for runtime layout and lifecycle
   certificates;
 - `public-operation-generated-claim-surface.txt` for the public-operation
-  transition table.
+  transition table;
+- `causal-generated-claim-surface.txt` for finite Rust/Lean causal decisions;
+- `parallel-generated-claim-surface.txt` for ten exact parallel descriptors and
+  their corruption rejections, all checked with kernel evaluation.
+
+The compiler scope memo, fork-input restoration, independent-sibling exclusion,
+and retained sequential joins have general model lemmas. Ingress-head
+preservation is conditional on progress outside the observed lane. Their
+connection to Rust includes finite descriptor and decision correspondence;
+these artifacts do not establish refinement of every Rust execution.
+
+Sequential inputs to a fork are included in the canonical dependency columns,
+including the right arm's newly introduced lane. The additional fixtures cover
+`seq(send, par(send, send))` and nested sequential inputs in both role images.
+The interval lemma establishes coverage of both arms; the generated exact-byte
+checks compare the Rust dependency rows with this canonical model. They do not
+constitute a universal proof of the Rust dependency compiler.
 
 The gate discovers declarations from Lean source, compares their elaborated
 types with these snapshots, and audits their axiom closures. Generated Rust

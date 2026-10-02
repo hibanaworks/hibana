@@ -339,7 +339,7 @@ pub(crate) struct BlobPtr {
     base: *const u8,
 }
 
-// SAFETY: BlobPtr is only constructed from immutable static bucket storage and exposes no mutation.
+// SAFETY: immutable static storage, with bounds checked by the sealed directory.
 unsafe impl Sync for BlobPtr {}
 
 impl BlobPtr {
@@ -363,7 +363,7 @@ impl BlobPtr {
 
     #[inline(always)]
     pub(in crate::global) const fn byte_at(self, offset: usize) -> u8 {
-        // SAFETY: callers check offset against the column-derived blob length.
+        // SAFETY: callers check the sealed column-derived byte bound.
         unsafe { *self.base.add(offset) }
     }
 }
@@ -429,39 +429,41 @@ pub(crate) struct RoleImageColumns {
 
 impl RoleImageColumns {
     #[inline(always)]
-    const fn max_end(mut len: usize, column: ColumnRange, stride: usize) -> usize {
-        let end = column.end_offset(stride);
-        if end > len {
-            len = end;
-        }
-        len
+    pub(crate) const fn blob_len(&self) -> usize {
+        self.roll_scopes.end_offset(ROLE_IMAGE_ROLL_SCOPE_STRIDE)
     }
 
-    pub(crate) const fn blob_len(&self) -> usize {
-        let mut len = Self::max_end(0, self.events, ROLE_IMAGE_EVENT_STRIDE);
-        len = Self::max_end(len, self.lanes, ROLE_IMAGE_LANE_STRIDE);
-        len = Self::max_end(len, self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE);
-        len = Self::max_end(len, self.conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
-        len = Self::max_end(len, self.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE);
-        len = Self::max_end(len, self.route_scope_conflicts, ROLE_IMAGE_CONFLICT_STRIDE);
-        len = Self::max_end(len, self.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE);
-        len = Self::max_end(len, self.resident_boundaries, ROLE_IMAGE_U16_STRIDE);
-        len = Self::max_end(len, self.lane_bits, ROLE_IMAGE_LANE_STRIDE);
-        len = Self::max_end(len, self.route_arm_lane_rows, ROLE_IMAGE_LANE_RANGE_STRIDE);
-        len = Self::max_end(
-            len,
-            self.route_offer_lane_rows,
-            ROLE_IMAGE_LANE_RANGE_STRIDE,
-        );
-        len = Self::max_end(
-            len,
-            self.route_arm_lane_step_rows,
-            ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
-        );
-        len = Self::max_end(len, self.route_commit_ranges, ROLE_IMAGE_LANE_RANGE_STRIDE);
-        len = Self::max_end(len, self.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE);
-        len = Self::max_end(len, self.roll_scopes, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
-        len
+    // The terminal column already owns the packed image's complete extent.
+    // Validate all earlier spans once before publishing its immutable pointer.
+    pub(crate) const fn validate_blob_bound(&self) {
+        let columns = [
+            (self.events, ROLE_IMAGE_EVENT_STRIDE),
+            (self.lanes, ROLE_IMAGE_LANE_STRIDE),
+            (self.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE),
+            (self.conflicts, ROLE_IMAGE_CONFLICT_STRIDE),
+            (self.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE),
+            (self.route_scope_conflicts, ROLE_IMAGE_CONFLICT_STRIDE),
+            (self.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE),
+            (self.resident_boundaries, ROLE_IMAGE_U16_STRIDE),
+            (self.lane_bits, ROLE_IMAGE_LANE_STRIDE),
+            (self.route_arm_lane_rows, ROLE_IMAGE_LANE_RANGE_STRIDE),
+            (self.route_offer_lane_rows, ROLE_IMAGE_LANE_RANGE_STRIDE),
+            (
+                self.route_arm_lane_step_rows,
+                ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+            ),
+            (self.route_commit_ranges, ROLE_IMAGE_LANE_RANGE_STRIDE),
+            (self.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE),
+        ];
+        let bound = self.blob_len();
+        let mut index = 0;
+        while index < columns.len() {
+            let (column, stride) = columns[index];
+            if column.end_offset(stride) > bound {
+                panic!("role descriptor column exceeds terminal bound");
+            }
+            index += 1;
+        }
     }
 }
 

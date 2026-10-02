@@ -49,6 +49,26 @@ impl ScopeMarkerView<'_> {
         self.at(index).event.is_primary_enter()
     }
 
+    /// Source insertion orders markers by event offset. Seek to a boundary
+    /// without replaying earlier markers; preserve the caller's preorder floor
+    /// and the complete tie group for nested scopes at that boundary.
+    pub(crate) const fn offset_lower_bound(self, offset: usize, floor: usize) -> usize {
+        if floor > self.len {
+            crate::invariant();
+        }
+        let mut low = floor;
+        let mut high = self.len;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.at(middle).offset() < offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    }
+
     pub(crate) const fn first_enter_index(self, scope: ScopeId) -> Option<usize> {
         if scope.is_none() {
             return None;

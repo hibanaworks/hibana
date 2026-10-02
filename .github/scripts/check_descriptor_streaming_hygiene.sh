@@ -81,10 +81,10 @@ fi
 
 for required in \
   'src/global/role_program/image_impl/plan.rs:pub(super) const fn from_program<const E: usize>' \
-  'src/global/role_program/image_impl/plan.rs:projection::DependencyCursor::new(eff_list, role)' \
+  'src/global/role_program/image_impl/plan.rs:projection::DependencyCursor::new(eff_list, scopes, role)' \
   'src/global/role_program/image_impl/plan.rs:projection::ResidentRowCursor::new(eff_list, role)' \
   'src/global/role_program/image_impl/blob_image.rs:pub(crate) const fn emit<const E: usize>' \
-  'src/global/role_program/image_impl/blob_image.rs:projection::DependencyCursor::new(eff_list, role)' \
+  'src/global/role_program/image_impl/blob_image.rs:projection::DependencyCursor::new(eff_list, scopes, role)' \
   'src/global/role_program/image_impl/blob_image.rs:projection::ResidentRowCursor::new(eff_list, role)' \
   'src/global/role_program/image_impl/blob_image.rs:out.write_event(columns.events, local_step, event)' \
   'src/global/role_program/image_impl/projection/lanes.rs:lanes.record(atom.lane, local_step)'

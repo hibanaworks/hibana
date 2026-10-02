@@ -22,7 +22,7 @@ pub(crate) const fn route_enter_at(
     end: usize,
     marker_floor: usize,
 ) -> Option<usize> {
-    let mut idx = marker_floor;
+    let mut idx = markers.offset_lower_bound(start, marker_floor);
     while idx < markers.len() {
         let marker = markers.at(idx);
         if marker.offset() > start {
@@ -54,7 +54,7 @@ pub(crate) const fn parallel_enter_at(
     end: usize,
     marker_floor: usize,
 ) -> Option<usize> {
-    let mut idx = marker_floor;
+    let mut idx = markers.offset_lower_bound(start, marker_floor);
     while idx < markers.len() {
         let marker = markers.at(idx);
         if marker.offset() > start {

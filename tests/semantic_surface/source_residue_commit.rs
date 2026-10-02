@@ -1006,7 +1006,7 @@ fn offer_and_frontier_do_not_call_resident_settlement_primitives() {
             && !resident_lane_step.contains("ordinal")
             && cursor_lane_progress.contains("resident_lane_step_locator(")
             && cursor_lane_progress.contains("fn event_lane_step_matches(")
-            && token_factory.contains("event_lane_step_matches(step_idx, lane_idx)")
+            && token_factory.contains("event_lane_step_matches(idx, lane_idx)")
             && !token_factory.contains("resident_lane_step_locator(")
             && token_lookup.contains("event_lane_step_matches(target.step_idx as usize")
             && !token_lookup.contains("resident_lane_step_locator(")

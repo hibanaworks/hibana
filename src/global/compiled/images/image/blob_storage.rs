@@ -107,24 +107,14 @@ impl<const N: usize> ProgramImageBytes<N> {
     }
 
     #[inline(always)]
-    const fn write_atom(
-        &mut self,
-        column: ProgramColumnRange,
-        row: usize,
-        offset: usize,
-        atom: EffAtom,
-    ) {
-        if offset > u16::MAX as usize {
-            crate::invariant();
-        }
+    const fn write_atom(&mut self, column: ProgramColumnRange, row: usize, atom: EffAtom) {
         let out = Self::column_offset(column, row, PROGRAM_IMAGE_ATOM_STRIDE);
-        self.write_u16(out, offset as u16);
-        self.write_u8(out + 2, atom.from);
-        self.write_u8(out + 3, atom.to);
-        self.write_u8(out + 4, atom.label);
-        self.write_payload_schema(out + 5, atom.payload_schema);
-        self.write_u8(out + 9, atom.origin.packed_bits());
-        self.write_u8(out + 10, atom.lane);
+        self.write_u8(out, atom.from);
+        self.write_u8(out + 1, atom.to);
+        self.write_u8(out + 2, atom.label);
+        self.write_payload_schema(out + 3, atom.payload_schema);
+        self.write_u8(out + 7, atom.origin.packed_bits());
+        self.write_u8(out + 8, atom.lane);
     }
 
     const fn write_route_resolver(
@@ -261,7 +251,7 @@ impl<const N: usize> ProgramImageBytes<N> {
         let mut atom_row = 0usize;
         let mut idx = 0usize;
         while idx < eff_list.len() {
-            out.write_atom(columns.atoms(), atom_row, idx, eff_list.atom_at(idx));
+            out.write_atom(columns.atoms(), atom_row, eff_list.atom_at(idx));
             atom_row += 1;
             idx += 1;
         }

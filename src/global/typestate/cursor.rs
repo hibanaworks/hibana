@@ -15,7 +15,7 @@ use crate::{
         compiled::images::RoleDescriptorRef,
         const_dsl::{DynamicRouteResolver, ScopeId, ScopeKind},
         event_program::{LocalEventProgram, LocalEventRowSet},
-        role_program::{LaneSetView, LaneSteps, PackedLaneRange},
+        role_program::{LaneSetView, PackedLaneRange},
     },
 };
 
@@ -173,33 +173,6 @@ impl EventCursorMachine {
     #[inline(always)]
     fn resident_row_min_start(&self, idx: usize) -> Option<u16> {
         self.event_program().resident_row_min_start(idx)
-    }
-
-    #[inline(always)]
-    fn resident_row_lane_steps(&self, idx: usize, lane_idx: usize) -> Option<LaneSteps> {
-        self.event_program().resident_row_lane_steps(idx, lane_idx)
-    }
-
-    #[inline(always)]
-    fn resident_row_lane_step_at(
-        &self,
-        idx: usize,
-        lane_idx: usize,
-        ordinal: usize,
-    ) -> Option<u16> {
-        self.event_program()
-            .resident_row_lane_step_at(idx, lane_idx, ordinal)
-    }
-
-    #[inline(always)]
-    fn resident_row_lane_step_ordinal(
-        &self,
-        idx: usize,
-        lane_idx: usize,
-        step_idx: usize,
-    ) -> Option<u16> {
-        self.event_program()
-            .resident_row_lane_step_ordinal(idx, lane_idx, step_idx)
     }
 
     #[inline(always)]
@@ -421,7 +394,7 @@ pub(crate) struct EventCursorState {
     idx: u16,
     /// Cached resident-row locator for compact lane rows.
     resident_row_index: u16,
-    /// Per-lane cursor within the cached resident row.
+    /// Per-lane descriptor event index; the cached row's end means no head.
     /// Completion is tracked by `completed_event_words`, not by this locator.
     lane_cursors: *mut u16,
     /// Encoded current logical label for each lane's pending step.
@@ -725,25 +698,13 @@ impl EventCursor {
                 role_descriptor.logical_lane_count(),
                 u32_word_count(role_descriptor.local_len()),
             );
+            (&mut *dst).seed_resident_lane_heads();
             (&mut *dst).rebuild_current_step_label_codes();
         }
     }
 
     // =========================================================================
     // =========================================================================
-
-    #[inline(always)]
-    fn current_resident_row_lane_steps(&self, lane_idx: usize) -> Option<LaneSteps> {
-        self.machine()
-            .resident_row_lane_steps(self.resident_row_index_usize(), lane_idx)
-    }
-
-    #[inline(always)]
-    fn current_resident_row_lane_step_at(&self, lane_idx: usize, ordinal: usize) -> Option<usize> {
-        self.machine()
-            .resident_row_lane_step_at(self.resident_row_index_usize(), lane_idx, ordinal)
-            .map(usize::from)
-    }
 
     // =========================================================================
     // Lane Access

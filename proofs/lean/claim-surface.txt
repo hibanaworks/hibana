@@ -102,14 +102,9 @@ Hibana.carrier_profile_hierarchy_is_strict : And
                   @Eq.{1} Nat left.event.lane right.event.lane →
                     @LT.lt.{0} Nat instLTNat right.event.receiver roleCount →
                       Or (@Eq.{1} Nat left.event.sender right.event.sender)
-                        (Hibana.CausalHandoffPath body.rollUnfoldedOccurrences
-                          (Hibana.StaticGlobalOccurrence.inRollIteration
-                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.current
-                            left)
-                          (Hibana.StaticGlobalOccurrence.inRollIteration
-                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next
-                            right)
-                          roleCount
-                          (Hibana.StaticGlobalOccurrence.inRollIteration
-                            (@List.length.{0} Hibana.GlobalEvent body.globalEvents) Hibana.StaticRollIteration.next
-                            right))
+                        (Hibana.MustCausalHandoff
+                          (body.rollCausalFlow left.globalId
+                            (@HAdd.hAdd.{0, 0, 0} Nat Nat Nat (@instHAdd.{0} Nat instAddNat)
+                              (@List.length.{0} Hibana.GlobalEvent body.globalEvents) right.globalId)
+                            roleCount)
+                          right.event.sender)

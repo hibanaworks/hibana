@@ -339,7 +339,7 @@ fn descriptor_projection_has_no_resource_or_tap_count_axes() {
 
     assert!(
         read("src/global/compiled/images/image/columns.rs")
-            .contains("pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 11;"),
+            .contains("pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 9;"),
         "compiled program atom image stride must retain the compact schema-bearing layout"
     );
 
@@ -376,7 +376,7 @@ fn event_identity_and_descriptor_byte_capacities_have_separate_authorities() {
     assert!(columns.contains("COMPACT_DESCRIPTOR_BYTE_CAPACITY / PROGRAM_IMAGE_ATOM_STRIDE;"));
     assert!(readme.contains("| Event identities | 65,535 |"));
     assert!(readme.contains("| Program image | 65,535 B |"));
-    assert!(readme.contains("| Atom-only program | 5,957 events |"));
+    assert!(readme.contains("| Atom-only program | 7,281 events |"));
     assert!(readme.contains("| Role image | 65,535 B per role |"));
     assert!(!readme.contains("| Events | 65,535 |"));
 }
@@ -633,7 +633,7 @@ fn compact_bucket_overflow_paths_stay_fail_closed() {
         role_blob.contains("pub(crate) const fn build_if_fits<")
             && role_blob.contains("if self.blob_len() > N {\n            return None;")
             && role_blob.contains("Some(RoleImageBytes::<N>::emit(")
-            && role_blob.contains("self.columns,")
+            && role_blob.contains("role, self.columns)")
             && projection.contains("None => panic!(\"role bucket selection\")")
             && !role_blob.contains("return Self::empty();"),
         "RoleImageBytes overflow must be rejected by the plan probe and fail at exact bucket selection"
@@ -752,26 +752,26 @@ fn compiled_image_sources_stay_split_below_one_thousand_lines() {
 }
 
 #[test]
-fn program_atom_lookup_stays_logarithmic_and_proof_connected() {
+fn program_atom_lookup_uses_dense_identity_without_a_duplicate_key_column() {
     let program_ref = read("src/global/compiled/images/image/program_ref.rs");
     let program_ref_kani = read("src/global/compiled/images/image/program_ref/kani.rs");
     let descriptor_proof = read("proofs/lean/Hibana/DescriptorImage.lean");
     let kani_gate = read(".github/scripts/check_kani.sh");
 
     assert!(
-        program_ref.contains("image.validate_atom_order();")
-            && program_ref.contains("while start < end")
-            && program_ref.contains("let row = start + (end - start) / 2;")
-            && !program_ref
-                .contains("let mut row = 0usize;\n        while row < self.columns.atom_count()")
+        program_ref.contains("image.validate_atom_rows();")
+            && program_ref.contains("self.columns.atoms(), eff_idx, PROGRAM_IMAGE_ATOM_STRIDE")
+            && !program_ref.contains("while start < end")
+            && !program_ref.contains("struct ProgramAtomRow")
+            && descriptor_proof.contains("let effIndex := row")
             && descriptor_proof.contains("theorem canonical_program_atom_eff_indices_strict")
             && program_ref_kani
-                .contains("fn compiled_program_atom_binary_search_is_exact_for_sorted_rows()")
+                .contains("fn compiled_program_atom_lookup_is_exact_for_dense_rows()")
             && program_ref_kani
-                .contains("fn compiled_program_atom_order_rejects_noncanonical_rows()")
+                .contains("fn compiled_program_atom_constructor_rejects_invalid_roles()")
             && kani_gate.contains("cargo kani \\")
             && !kani_gate.contains("--harness")
             && kani_gate.contains("successfully verified harnesses, 0 failures"),
-        "canonical atom order must be sealed once and searched logarithmically without adding a resident index column"
+        "global event identity must be the dense row position, with checked decoding and no duplicate key column"
     );
 }

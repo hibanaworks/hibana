@@ -33,45 +33,12 @@ private def canonicalLocalEventRange
   | none => (0, 0)
   | some start => (start, positions.length)
 
-private def parallelExitScan : List DecodedScopeMarker -> Nat -> Option Nat
-  | [], _ => none
-  | marker :: rest, depth =>
-      if marker.tag % 4 = 0 then
-        parallelExitScan rest (depth + 1)
-      else if marker.tag % 4 = 2 then
-        if depth = 0 then some marker.offset
-        else parallelExitScan rest (depth - 1)
-      else
-        parallelExitScan rest depth
-
 private def parallelExitForEnter?
-    (markers : List DecodedScopeMarker) (enterIndex : Nat) : Option Nat :=
-  parallelExitScan (markers.drop (enterIndex + 1)) 0
-
-private def parentParallelEndScan
-    (markers : List DecodedScopeMarker) : List Nat -> Nat -> Option Nat
-  | [], _ => none
-  | index :: rest, depth =>
-      match markers[index]? with
-      | none => parentParallelEndScan markers rest depth
-      | some marker =>
-          if marker.tag % 4 = 2 then
-            parentParallelEndScan markers rest (depth + 1)
-          else if marker.tag % 4 = 0 then
-            if depth = 0 then
-              if marker.scope / 8192 = 2 then parallelExitForEnter? markers index
-              else parentParallelEndScan markers rest depth
-            else
-              parentParallelEndScan markers rest (depth - 1)
-          else
-            parentParallelEndScan markers rest depth
-
-private def nearestParentParallelEnd
-    (markers : List DecodedScopeMarker)
-    (enterIndex ownExit : Nat) : Nat :=
-  match parentParallelEndScan markers (List.range enterIndex).reverse 0 with
-  | some stop => stop
-  | none => ownExit
+    (markers : List DecodedScopeMarker) (enterIndex : Nat) : Option Nat := do
+  let enter ← markers[enterIndex]?
+  let exit ← (markers.drop (enterIndex + 1)).find? fun marker =>
+    marker.scope = enter.scope && marker.tag % 4 = 2
+  pure exit.offset
 
 private def canonicalScopeDependencyBounds?
     (source : CanonicalProgramSource) (scope : Nat) : Option (Nat × Nat) := do
@@ -102,9 +69,96 @@ private def localRangeContainsLane
     | some atom => atom.lane = lane
     | none => false
 
+private structure ParallelRegion where
+  start : Nat
+  split : Nat
+  stop : Nat
+
+private def parallelRegions (source : CanonicalProgramSource) : List ParallelRegion :=
+  (List.range source.markers.length).filterMap fun index => do
+    let marker ← source.markers[index]?
+    if marker.tag % 4 = 0 && marker.scope / 8192 = 2 then
+      let split ← source.markers.find? fun boundary =>
+        boundary.scope = marker.scope && boundary.tag % 4 = 1
+      let stop ← parallelExitForEnter? source.markers index
+      some { start := marker.offset, split := split.offset, stop }
+    else none
+
+private def parallelRegionSeparates
+    (region : ParallelRegion) (joinStart joinStop current : Nat) : Bool :=
+  decide (region.start ≤ joinStart ∧ joinStop ≤ region.split ∧
+    region.split ≤ current ∧ current < region.stop)
+
+private def parallelJoinApplies
+    (regions : List ParallelRegion) (joinStart joinStop current : Nat)
+    (sharesLane : Bool) : Bool :=
+  sharesLane || !(regions.any fun region =>
+    parallelRegionSeparates region joinStart joinStop current)
+
+/-- A left-arm join cannot become a dependency of a disjoint right-arm lane,
+    even when the nested join ends exactly at its parent's split. -/
+theorem independent_parallel_sibling_has_no_join_dependency
+    (regions : List ParallelRegion) (region : ParallelRegion)
+    (joinStart joinStop current : Nat) (member : region ∈ regions)
+    (startsInside : region.start ≤ joinStart) (endsInLeft : joinStop ≤ region.split)
+    (startsRight : region.split ≤ current) (insideParent : current < region.stop) :
+    parallelJoinApplies regions joinStart joinStop current false = false := by
+  have separated : parallelRegionSeparates region joinStart joinStop current = true := by
+    simp [parallelRegionSeparates, startsInside, endsInLeft, startsRight, insideParent]
+  have witness : (regions.any fun candidate =>
+      parallelRegionSeparates candidate joinStart joinStop current) = true :=
+    List.any_eq_true.mpr ⟨region, member, separated⟩
+  simp [parallelJoinApplies, witness]
+
+/-- After the enclosing parallel regions, the completed join remains required;
+    isolation of siblings never erases a subsequent sequential join. -/
+theorem parallel_join_remains_required_after_ancestors
+    (regions : List ParallelRegion) (joinStart joinStop current : Nat)
+    (pastAncestors : ∀ region ∈ regions, region.stop ≤ current) :
+    parallelJoinApplies regions joinStart joinStop current false = true := by
+  have noneSeparated : (regions.any fun region =>
+      parallelRegionSeparates region joinStart joinStop current) = false := by
+    apply List.any_eq_false.mpr
+    intro region member
+    have outside : ¬current < region.stop := Nat.not_lt.mpr (pastAncestors region member)
+    simp [parallelRegionSeparates, outside]
+  simp [parallelJoinApplies, noneSeparated]
+
+/-- Compiler-only fork input, retained independently of the current join. -/
+private structure ParallelDependencyInput (α : Type) where
+  barrier : α
+  inputs : Nat → Option α
+
+private def restoreParallelInput (state : ParallelDependencyInput α) (scope : Nat) :
+    Option (ParallelDependencyInput α) :=
+  (state.inputs scope).map fun input => { state with barrier := input }
+
+private def recordParallelInput (state : ParallelDependencyInput α) (scope : Nat) :
+    ParallelDependencyInput α :=
+  { state with inputs := fun candidate =>
+      if candidate = scope then some state.barrier else state.inputs candidate }
+
+/-- Finishing a nested left join cannot alter the input restored at its split. -/
+theorem parallel_split_restores_saved_input_after_any_join
+    (state : ParallelDependencyInput α) (scope : Nat) (saved joined : α)
+    (recorded : state.inputs scope = some saved) :
+    restoreParallelInput { state with barrier := joined } scope =
+      some { state with barrier := saved } := by
+  simp [restoreParallelInput, recorded]
+
+/-- At a shared boundary, restoring the split before recording the newly
+    entered child retains the parent's input, not the finished left join. -/
+theorem parallel_split_then_enter_records_saved_input
+    (state : ParallelDependencyInput α) (scope child : Nat) (saved joined : α)
+    (recorded : state.inputs scope = some saved) :
+    (restoreParallelInput { state with barrier := joined } scope).map
+      (fun restored => (recordParallelInput restored child).inputs child) =
+        some (some saved) := by
+  simp [restoreParallelInput, recordParallelInput, recorded]
+
 private def applyCanonicalDependency
-    (atoms : List DecodedProgramAtom)
-    (start stop parentParallelEnd : Nat)
+    (source : CanonicalProgramSource) (atoms : List DecodedProgramAtom)
+    (start stop : Nat) (sourceBounds : Nat × Nat)
     (dependency : DecodedDependencyRow)
     (dependencies : List (Option DecodedDependencyRow)) :
     List (Option DecodedDependencyRow) :=
@@ -113,13 +167,67 @@ private def applyCanonicalDependency
     match atoms[step]? with
     | none => current
     | some atom =>
-        let applies :=
-          localRangeContainsLane atoms start stop atom.lane ||
-            parentParallelEnd ≤ atom.effIndex
+        let applies := parallelJoinApplies (parallelRegions source)
+          sourceBounds.1 sourceBounds.2 atom.effIndex
+          (localRangeContainsLane atoms start stop atom.lane)
+        -- Source preorder puts an enclosing join before children. At an equal
+        -- local end, preserve that whole row instead of replacing it by a child.
         let replaces := match current[step]? with
-          | some (some prior) => prior.stop ≤ stop
+          | some (some prior) => prior.stop < stop
           | some none | none => true
         if applies && replaces then current.set step (some dependency) else current
+  ) dependencies
+
+private def parallelInputFloor
+    (source : CanonicalProgramSource) (enterIndex enterOffset exitOffset : Nat) : Nat :=
+  (List.range enterIndex).foldl (fun floor parentIndex =>
+    match source.markers[parentIndex]? with
+    | none => floor
+    | some parent =>
+      if parent.tag % 4 = 0 && parent.scope / 8192 = 2 then
+        match source.markers.find? (fun marker =>
+            marker.scope = parent.scope && marker.tag % 4 = 1),
+            parallelExitForEnter? source.markers parentIndex with
+        | some split, some stop =>
+            if parent.offset ≤ enterOffset && exitOffset ≤ split.offset then
+              max floor parent.offset
+            else if split.offset ≤ enterOffset && exitOffset ≤ stop then
+              max floor split.offset
+            else floor
+        | _, _ => floor
+      else floor
+  ) 0
+
+private def parallelInputApplies (entry exit current : Nat) : Bool :=
+  decide (entry ≤ current ∧ current < exit)
+
+/-- Both fork arms retain the shared sequential prefix, including the right
+arm's new lane. This imposes no dependency between the arms themselves. -/
+theorem sequential_input_guards_both_parallel_arms
+    (entry split exit left right : Nat)
+    (leftStarts : entry ≤ left) (leftEnds : left < split)
+    (rightStarts : split ≤ right) (rightEnds : right < exit) :
+    parallelInputApplies entry exit left = true ∧
+      parallelInputApplies entry exit right = true := by
+  have leftBeforeExit : left < exit := by omega
+  have entryBeforeRight : entry ≤ right := by omega
+  simp [parallelInputApplies, leftStarts, leftBeforeExit, entryBeforeRight, rightEnds]
+
+private def applyCanonicalInput
+    (atoms : List DecodedProgramAtom) (entry exit : Nat)
+    (dependency : DecodedDependencyRow)
+    (dependencies : List (Option DecodedDependencyRow)) :
+    List (Option DecodedDependencyRow) :=
+  (List.range atoms.length).foldl (fun current step =>
+    match atoms[step]? with
+    | none => current
+    | some atom =>
+        let replaces := match current[step]? with
+          | some (some prior) => prior.stop < dependency.stop
+          | some none | none => true
+        if parallelInputApplies entry exit atom.effIndex && replaces then
+          current.set step (some dependency)
+        else current
   ) dependencies
 
 private def Choreo.canonicalRoleDependenciesByEvent
@@ -134,21 +242,32 @@ private def Choreo.canonicalRoleDependenciesByEvent
           match parallelExitForEnter? source.markers markerIndex with
           | none => dependencies
           | some exitEff =>
+              let inputRange := canonicalLocalEventRange atoms
+                (parallelInputFloor source markerIndex marker.offset exitEff) marker.offset
+              let inputStart := inputRange.1
+              let inputStop := inputStart + inputRange.2
+              let withInput := if inputStart < inputStop then
+                applyCanonicalInput atoms marker.offset exitEff {
+                  start := inputStart
+                  stop := inputStop
+                  parallelScope := marker.scope % 8192
+                  conflict := canonicalPackedDependencyConflict source marker.scope
+                } dependencies
+              else dependencies
               let localRange := canonicalLocalEventRange atoms marker.offset exitEff
               let start := localRange.1
               let stop := start + localRange.2
               if start < stop then
-                let parentEnd := nearestParentParallelEnd
-                  source.markers markerIndex exitEff
                 let dependency := {
                   start
                   stop
                   parallelScope := marker.scope % 8192
                   conflict := canonicalPackedDependencyConflict source marker.scope
                 }
-                applyCanonicalDependency atoms start stop parentEnd dependency dependencies
+                applyCanonicalDependency source atoms start stop (marker.offset, exitEff)
+                  dependency withInput
               else
-                dependencies
+                withInput
         else
           dependencies
   ) (List.replicate atoms.length none)
@@ -536,6 +655,86 @@ private def canonicalRouteCommitChain
     (source : CanonicalProgramSource) (scope arm : Nat) : List Nat :=
   (canonicalRouteCommitChainFrom
     source (source.resolvers.length + 1) (scope * 2 + arm)).reverse
+
+/-- A table entry records the exact source fact. Missing keys remain absent;
+    absence is never interpreted as an unconditional parent. -/
+private def immutableScopeMemo {α β : Type} [DecidableEq α]
+    (fact : α -> β) : List α -> α -> Option β
+  | [], _ => none
+  | key :: rest, query =>
+      if query = key then some (fact key) else immutableScopeMemo fact rest query
+
+/-- Precomputing immutable scope facts preserves the complete source result,
+including unconditional, shared and arm-specific conflicts. -/
+theorem immutable_scope_memo_exact {α β : Type} [DecidableEq α]
+    (fact : α -> β) (keys : List α) (query : α) :
+    immutableScopeMemo fact keys query =
+      if query ∈ keys then some (fact query) else none := by
+  induction keys with
+  | nil => simp [immutableScopeMemo]
+  | cons key rest ih =>
+      by_cases equal : query = key
+      · simp [immutableScopeMemo, equal]
+      · simp [immutableScopeMemo, equal, ih]
+
+/-- Kind and ordinal identify the entire encoded scope domain, including sparse
+    ordinals. No bound on the number of events is involved. -/
+theorem scope_kind_ordinal_key_injective (left right : Nat)
+    (key : (left / productionScopeCapacity, left % productionScopeCapacity) =
+      (right / productionScopeCapacity, right % productionScopeCapacity)) :
+    left = right := by
+  have kinds := congrArg Prod.fst key
+  have ordinals := congrArg Prod.snd key
+  simp only [productionScopeCapacity] at kinds ordinals
+  omega
+
+private def canonicalScopeFactKeys (source : CanonicalProgramSource) : List Nat :=
+  (source.markers.filter fun marker => marker.tag % 4 = 0).map (·.scope)
+
+private def canonicalScopeFacts (source : CanonicalProgramSource) : Nat -> Option Nat :=
+  immutableScopeMemo (canonicalPackedDependencyConflict source)
+    (canonicalScopeFactKeys source)
+
+/-- The cached parent fact agrees with the canonical source definition for
+    every primary scope. This does not assume that a missing identity is root. -/
+theorem canonical_scope_facts_bind_source_parent
+    (source : CanonicalProgramSource) (scope : Nat)
+    (present : scope ∈ canonicalScopeFactKeys source) :
+    canonicalScopeFacts source scope =
+      some (canonicalPackedDependencyConflict source scope) := by
+  simp [canonicalScopeFacts, immutable_scope_memo_exact, present]
+
+/-- The optimized emitter visits inner-to-outer and prepends each row. Its
+    accumulator corresponds to writing into the allocated range backwards. -/
+private def streamCanonicalRouteCommitRows
+    (source : CanonicalProgramSource) : Nat -> Nat -> List Nat -> List Nat
+  | 0, _, suffix => suffix
+  | fuel + 1, current, suffix =>
+      match canonicalNextRouteCommitConflict? source current with
+      | none => current :: suffix
+      | some next => streamCanonicalRouteCommitRows source fuel next (current :: suffix)
+
+/-- A one-pass backward emitter has exactly the same rows and order as the
+    canonical ancestor chain; suffix rows outside the range remain unchanged. -/
+theorem canonical_route_commit_stream_preserves_suffix
+    (source : CanonicalProgramSource) (fuel current : Nat) (suffix : List Nat) :
+    streamCanonicalRouteCommitRows source fuel current suffix =
+      (canonicalRouteCommitChainFrom source fuel current).reverse ++ suffix := by
+  induction fuel generalizing current suffix with
+  | zero => rfl
+  | succ fuel ih =>
+      cases next : canonicalNextRouteCommitConflict? source current with
+      | none => simp [streamCanonicalRouteCommitRows, canonicalRouteCommitChainFrom, next]
+      | some parent =>
+          simp [streamCanonicalRouteCommitRows, canonicalRouteCommitChainFrom, next,
+            ih, List.reverse_cons, List.append_assoc]
+
+/-- The whole optimized route range equals the preexisting descriptor model. -/
+theorem canonical_route_commit_stream_preserves_descriptor
+    (source : CanonicalProgramSource) (scope arm : Nat) :
+    streamCanonicalRouteCommitRows source (source.resolvers.length + 1)
+      (scope * 2 + arm) [] = canonicalRouteCommitChain source scope arm := by
+  simp [canonical_route_commit_stream_preserves_suffix, canonicalRouteCommitChain]
 
 private structure CanonicalRouteCommitColumns where
   ranges : List (Nat × Nat)

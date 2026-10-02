@@ -1,11 +1,10 @@
 use super::{
-    dependency_conflict_for_scope, local_step_range_for_eff_range, nearest_parent_parallel_end,
-    parallel_exit_for_enter, scope_markers_contain_kind,
+    ScopeFacts, local_step_range_for_eff_range, parallel_exit_for_enter, scope_markers_contain_kind,
 };
 use crate::global::{
-    const_dsl::{EffList, ScopeEvent, ScopeKind, ScopeMarkerView},
+    const_dsl::{EffList, ScopeEvent, ScopeId, ScopeKind},
     role_program::LANE_DOMAIN_SIZE,
-    typestate::{LocalConflict, LocalDependency, PackedLocalDependency},
+    typestate::{LocalDependency, PackedLocalDependency},
 };
 
 #[cfg(all(test, hibana_repo_tests))]
@@ -14,21 +13,27 @@ mod tests;
 #[derive(Clone, Copy)]
 struct CandidateKey {
     marker_index: u16,
+    local_start: u16,
     local_end: u16,
 }
 
 impl CandidateKey {
     const NONE: Self = Self {
         marker_index: u16::MAX,
+        local_start: u16::MAX,
         local_end: u16::MAX,
     };
 
-    const fn new(marker_index: usize, local_end: usize) -> Self {
-        if marker_index >= u16::MAX as usize || local_end > u16::MAX as usize {
+    const fn new(marker_index: usize, local_start: usize, local_end: usize) -> Self {
+        if marker_index >= u16::MAX as usize
+            || local_start >= local_end
+            || local_end > u16::MAX as usize
+        {
             crate::invariant();
         }
         Self {
             marker_index: marker_index as u16,
+            local_start: local_start as u16,
             local_end: local_end as u16,
         }
     }
@@ -43,7 +48,7 @@ impl CandidateKey {
         }
         if self.is_none()
             || candidate.local_end > self.local_end
-            || (candidate.local_end == self.local_end && candidate.marker_index > self.marker_index)
+            || (candidate.local_end == self.local_end && candidate.marker_index < self.marker_index)
         {
             candidate
         } else {
@@ -52,53 +57,46 @@ impl CandidateKey {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ParallelInput {
+    barrier: CandidateKey,
+    outer_floor: usize,
+}
+
 pub(in crate::global::role_program::image_impl) struct DependencyCursor<'a, const E: usize> {
     eff_list: &'a EffList<E>,
+    scopes: &'a ScopeFacts,
     role: u8,
     marker_index: usize,
     next_local_step: usize,
     previous_eff: Option<usize>,
-    latest_completed: CandidateKey,
-    globally_enabled: CandidateKey,
+    branch_barrier: CandidateKey,
+    branch_floor: usize,
+    parallel_inputs: [Option<ParallelInput>; ScopeId::LOCAL_CAPACITY as usize],
     lane_candidates: [CandidateKey; LANE_DOMAIN_SIZE],
-    has_route: bool,
     has_parallel: bool,
 }
 
 impl<'a, const E: usize> DependencyCursor<'a, E> {
     pub(in crate::global::role_program::image_impl) const fn new(
         eff_list: &'a EffList<E>,
+        scopes: &'a ScopeFacts,
         role: u8,
     ) -> Self {
         let markers = eff_list.scope_markers();
         Self {
             eff_list,
+            scopes,
             role,
             marker_index: 0,
             next_local_step: 0,
             previous_eff: None,
-            latest_completed: CandidateKey::NONE,
-            globally_enabled: CandidateKey::NONE,
+            branch_barrier: CandidateKey::NONE,
+            branch_floor: 0,
+            parallel_inputs: [None; ScopeId::LOCAL_CAPACITY as usize],
             lane_candidates: [CandidateKey::NONE; LANE_DOMAIN_SIZE],
-            has_route: scope_markers_contain_kind(markers, ScopeKind::Route),
             has_parallel: scope_markers_contain_kind(markers, ScopeKind::Parallel),
         }
-    }
-
-    const fn parallel_enter_index(markers: ScopeMarkerView<'_>, exit_index: usize) -> usize {
-        let exit = markers.at(exit_index);
-        let mut index = 0usize;
-        while index < markers.len() {
-            let marker = markers.at(index);
-            if marker.event.is_primary_enter()
-                && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
-                && marker.scope_id.same(exit.scope_id)
-            {
-                return index;
-            }
-            index += 1;
-        }
-        crate::invariant()
     }
 
     const fn update_lane_candidates(
@@ -120,7 +118,9 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
 
     const fn process_parallel_exit(&mut self, exit_index: usize) {
         let markers = self.eff_list.scope_markers();
-        let enter_index = Self::parallel_enter_index(markers, exit_index);
+        let enter_index = markers
+            .first_enter_index(markers.at(exit_index).scope_id)
+            .expect("parallel scope without entry");
         let enter = markers.at(enter_index);
         let exit_eff = parallel_exit_for_enter(markers, enter_index);
         if markers.at(exit_index).offset() != exit_eff {
@@ -131,28 +131,78 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         if row.is_absent_or_zero_len() {
             return;
         }
-        let candidate = CandidateKey::new(enter_index, row.end());
-        self.latest_completed = self.latest_completed.later(candidate);
+        let candidate = CandidateKey::new(enter_index, row.start(), row.end());
         self.update_lane_candidates(enter.offset(), exit_eff, candidate);
 
-        if nearest_parent_parallel_end(markers, enter_index, exit_eff) == exit_eff {
-            self.globally_enabled = self.globally_enabled.later(self.latest_completed);
-        }
+        // A completed par contributes its whole local row, including both arms.
+        // A subsequent sibling starts from the saved input at its Split marker.
+        self.branch_barrier = candidate;
     }
 
-    const fn process_boundaries_through(&mut self, current_eff: usize) {
+    const fn process_boundaries_through(&mut self, current_eff: usize, local_step: usize) {
         let markers = self.eff_list.scope_markers();
         while self.marker_index < markers.len() {
-            let marker = markers.at(self.marker_index);
-            if marker.offset() > current_eff {
+            let offset = markers.at(self.marker_index).offset();
+            if offset > current_eff {
                 break;
             }
-            if matches!(marker.event, ScopeEvent::Exit)
-                && matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel))
+            let start = self.marker_index;
+            while self.marker_index < markers.len()
+                && markers.at(self.marker_index).offset() == offset
             {
-                self.process_parallel_exit(self.marker_index);
+                self.marker_index += 1;
             }
-            self.marker_index += 1;
+            // Lowering emits nested exits before their enclosing exit. At a
+            // shared position, finish those joins before restoring a sibling's
+            // input, then save that input for newly entered parallel scopes.
+            // Storage places enters before splits, so its tie order cannot be
+            // used as the execution order of these structural boundaries.
+            let mut pass = 0;
+            while pass < 3 {
+                let mut index = start;
+                while index < self.marker_index {
+                    let marker = markers.at(index);
+                    if matches!(marker.scope_id.kind(), Some(ScopeKind::Parallel)) {
+                        let slot = marker.scope_id.local_ordinal() as usize;
+                        match (pass, marker.event) {
+                            (0, ScopeEvent::Exit) => {
+                                let input = self.parallel_inputs[slot]
+                                    .take()
+                                    .expect("parallel exit without input");
+                                self.branch_floor = input.outer_floor;
+                                self.process_parallel_exit(index);
+                            }
+                            (1, ScopeEvent::Split) => {
+                                self.branch_barrier = self.parallel_inputs[slot]
+                                    .expect("parallel split without input")
+                                    .barrier;
+                                self.branch_floor = local_step;
+                            }
+                            (2, ScopeEvent::Enter(_)) => {
+                                if self.parallel_inputs[slot].is_some()
+                                    || self.branch_floor > local_step
+                                {
+                                    crate::invariant();
+                                }
+                                // Share only the sequential prefix, excluding enclosing siblings.
+                                if self.branch_floor < local_step {
+                                    self.branch_barrier = self.branch_barrier.later(
+                                        CandidateKey::new(index, self.branch_floor, local_step),
+                                    );
+                                }
+                                self.parallel_inputs[slot] = Some(ParallelInput {
+                                    barrier: self.branch_barrier,
+                                    outer_floor: self.branch_floor,
+                                });
+                                self.branch_floor = local_step;
+                            }
+                            _ => {}
+                        }
+                    }
+                    index += 1;
+                }
+                pass += 1;
+            }
         }
     }
 
@@ -163,22 +213,12 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         let markers = self.eff_list.scope_markers();
         let marker_index = candidate.marker_index as usize;
         let marker = markers.at(marker_index);
-        let exit_eff = parallel_exit_for_enter(markers, marker_index);
-        let row =
-            local_step_range_for_eff_range(self.eff_list, marker.offset(), exit_eff, self.role);
-        if row.is_absent_or_zero_len() || row.end() != candidate.local_end as usize {
-            crate::invariant();
-        }
-        let conflict = if self.has_route {
-            dependency_conflict_for_scope(markers, self.eff_list.len(), marker.scope_id)
-        } else {
-            LocalConflict::Unconditional
-        };
+        let conflict = self.scopes.conflict(marker.scope_id);
         PackedLocalDependency::from_dependency(LocalDependency::with_conflict_range(
             marker.scope_id,
             conflict,
-            row.start(),
-            row.end(),
+            candidate.local_start as usize,
+            candidate.local_end as usize,
         ))
     }
 
@@ -204,9 +244,9 @@ impl<'a, const E: usize> DependencyCursor<'a, E> {
         if !self.has_parallel {
             return PackedLocalDependency::none();
         }
-        self.process_boundaries_through(current_eff);
+        self.process_boundaries_through(current_eff, local_step);
         let candidate = self
-            .globally_enabled
+            .branch_barrier
             .later(self.lane_candidates[current_lane as usize]);
         if !candidate.is_none() && candidate.local_end as usize > local_step {
             crate::invariant();

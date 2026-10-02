@@ -5,11 +5,11 @@ use super::super::{
     ROLE_IMAGE_U16_STRIDE, RoleImageBytes, RoleImageColumns, RoleImagePlan, RoleImageRef,
     RoleLaneImage, RoleProgram, RuntimeRoleFacts, RuntimeRoleFootprint, project,
 };
-use super::decode_binary_route_arm_index;
 use super::metadata::{
     derive_active_lane_metadata, lane_columns_are_coherent, roll_scope_columns_are_coherent,
     route_commit_capacity_is_exact,
 };
+use super::{ScopeFacts, decode_binary_route_arm_index};
 use crate::{
     g::{self, Msg},
     global::{
@@ -475,6 +475,60 @@ fn assert_invariant(action: impl FnOnce()) {
 }
 
 #[test]
+fn terminal_blob_bound_rejects_every_nonterminal_column_before_publication() {
+    use super::super::ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE;
+    for column_index in 0..14 {
+        let mut columns = empty_columns();
+        let (column, stride) = match column_index {
+            0 => (&mut columns.events, ROLE_IMAGE_EVENT_STRIDE),
+            1 => (&mut columns.lanes, 1),
+            2 => (&mut columns.dependencies, ROLE_IMAGE_DEPENDENCY_STRIDE),
+            3 => (&mut columns.conflicts, ROLE_IMAGE_CONFLICT_STRIDE),
+            4 => (&mut columns.route_scopes, ROLE_IMAGE_ROUTE_SCOPE_STRIDE),
+            5 => (
+                &mut columns.route_scope_conflicts,
+                ROLE_IMAGE_CONFLICT_STRIDE,
+            ),
+            6 => (&mut columns.route_arms, ROLE_IMAGE_ROUTE_ARM_STRIDE),
+            7 => (&mut columns.resident_boundaries, ROLE_IMAGE_U16_STRIDE),
+            8 => (&mut columns.lane_bits, 1),
+            9 => (
+                &mut columns.route_arm_lane_rows,
+                ROLE_IMAGE_LANE_RANGE_STRIDE,
+            ),
+            10 => (
+                &mut columns.route_offer_lane_rows,
+                ROLE_IMAGE_LANE_RANGE_STRIDE,
+            ),
+            11 => (
+                &mut columns.route_arm_lane_step_rows,
+                ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE,
+            ),
+            12 => (
+                &mut columns.route_commit_ranges,
+                ROLE_IMAGE_LANE_RANGE_STRIDE,
+            ),
+            13 => (&mut columns.route_commit_rows, ROLE_IMAGE_CONFLICT_STRIDE),
+            _ => unreachable!(),
+        };
+        *column = ColumnRange::new(BLOB_LEN, 1, stride);
+        assert_invariant(|| columns.validate_blob_bound());
+    }
+    let mut columns = empty_columns();
+    columns.events = ColumnRange::new(
+        BLOB_LEN - ROLE_IMAGE_EVENT_STRIDE,
+        1,
+        ROLE_IMAGE_EVENT_STRIDE,
+    );
+    columns.validate_blob_bound();
+    assert_eq!(
+        columns.blob_len(),
+        BLOB_LEN,
+        "inclusive column end is valid"
+    );
+}
+
+#[test]
 fn role_image_column_range_rejects_stride_multiplication_overflow() {
     assert_invariant(|| {
         let _ = ColumnRange::new(0, 2, usize::MAX);
@@ -493,8 +547,12 @@ fn resident_role_image_fit_probe_rejects_undersized_storage() {
         logical_lane_count: 1,
     });
 
-    let plan = RoleImagePlan::from_program(&eff_list, facts, 0);
-    assert!(plan.build_if_fits::<0, 8>(&eff_list, facts, 0).is_none());
+    let scopes = ScopeFacts::new(&eff_list);
+    let plan = RoleImagePlan::from_program((&eff_list, &scopes), facts, 0);
+    assert!(
+        plan.build_if_fits::<0, 8>((&eff_list, &scopes), facts, 0)
+            .is_none()
+    );
 }
 
 #[test]
@@ -511,9 +569,10 @@ fn resident_parallel_role_image_plan_matches_lane_bit_storage() {
         endpoint_lane_slot_count: 2,
         logical_lane_count: 2,
     });
-    let plan = RoleImagePlan::from_program(eff_list, facts, 0);
+    let scopes = ScopeFacts::new(eff_list);
+    let plan = RoleImagePlan::from_program((eff_list, &scopes), facts, 0);
     let build = plan
-        .build_if_fits::<64, 8>(eff_list, facts, 0)
+        .build_if_fits::<64, 8>((eff_list, &scopes), facts, 0)
         .expect("planned parallel descriptor fits");
 
     assert_eq!(
@@ -534,11 +593,12 @@ fn resident_role_image_fit_probe_rejects_plan_drift() {
         endpoint_lane_slot_count: 1,
         logical_lane_count: 1,
     });
-    let mut plan = RoleImagePlan::from_program(&eff_list, facts, 0);
+    let scopes = ScopeFacts::new(&eff_list);
+    let mut plan = RoleImagePlan::from_program((&eff_list, &scopes), facts, 0);
     plan.columns.lane_bits.len += 1;
 
     assert_invariant(|| {
-        let _ = plan.build_if_fits::<64, 8>(&eff_list, facts, 0);
+        let _ = plan.build_if_fits::<64, 8>((&eff_list, &scopes), facts, 0);
     });
 }
 
@@ -554,8 +614,9 @@ fn resident_role_image_constructor_rejects_undersized_storage() {
         endpoint_lane_slot_count: 1,
         logical_lane_count: 1,
     });
-    let plan = RoleImagePlan::from_program(&eff_list, facts, 0);
-    let _ = RoleImageBytes::<0>::emit(&eff_list, facts, 0, plan.columns);
+    let scopes = ScopeFacts::new(&eff_list);
+    let plan = RoleImagePlan::from_program((&eff_list, &scopes), facts, 0);
+    let _ = RoleImageBytes::<0>::emit((&eff_list, &scopes), facts, 0, plan.columns);
 }
 
 fn assert_route_commit_fixture_decodes(image: &RoleLaneImage<'_>, expected_rows: &[(ScopeId, u8)]) {

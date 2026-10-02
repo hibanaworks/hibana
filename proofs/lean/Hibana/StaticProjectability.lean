@@ -1,4 +1,5 @@
 import Hibana.GlobalProgress
+import Hibana.CausalFlow
 import Hibana.DescriptorImage
 import Hibana.TransportContract
 
@@ -194,106 +195,23 @@ def Choreo.staticGlobalOccurrences (choreo : Choreo) : List StaticGlobalOccurren
   enumerateStaticGlobalOccurrences 0 choreo.globalEvents
     choreo.globalEventConflicts choreo.globalEventParallelArms
 
-def occurrenceOnEndpointRoutePath
-    (earlier later candidate : StaticGlobalOccurrence) : Bool :=
-  candidate.conflicts.all fun membership =>
-    earlier.conflicts.contains membership || later.conflicts.contains membership
-
 def occurrenceLocallyOrdered
     (earlier later : StaticGlobalOccurrence) : Bool :=
   earlier.globalId < later.globalId &&
     !decide (ConflictListsMutuallyExclusive earlier.conflicts later.conflicts) &&
     !decide (ParallelListsIndependent earlier.parallelArms later.parallelArms)
 
-abbrev CausalWitnesses := Nat → Option StaticGlobalOccurrence
-
-def addCausalWitness
-    (witnesses : CausalWitnesses) (role : Nat)
-    (witness : StaticGlobalOccurrence) : CausalWitnesses :=
-  fun candidate =>
-    if candidate = role then
-      match witnesses candidate with
-      | none => some witness
-      | present => present
-    else
-      witnesses candidate
-
-theorem add_causal_witness_first_write_wins
-    {witnesses : CausalWitnesses} {role : Nat}
-    {witness : StaticGlobalOccurrence} :
-    addCausalWitness witnesses role witness role =
-      match witnesses role with
-      | none => some witness
-      | present => present := by
-  simp [addCausalWitness]
-
-theorem add_causal_witness_preserves_other_role
-    {witnesses : CausalWitnesses} {role query : Nat}
-    {witness : StaticGlobalOccurrence}
-    (different : query ≠ role) :
-    addCausalWitness witnesses role witness query = witnesses query := by
-  simp [addCausalWitness, different]
-
-def propagateCausalWitness
-    (earlier later : StaticGlobalOccurrence)
-    (roleCount : Nat)
-    (witnesses : CausalWitnesses)
-    (candidate : StaticGlobalOccurrence) : CausalWitnesses :=
-  if candidate.event.sender < roleCount &&
-      candidate.event.receiver < roleCount &&
-      occurrenceOnEndpointRoutePath earlier later candidate then
-    match witnesses candidate.event.sender with
-    | none => witnesses
-    | some witness =>
-        if occurrenceLocallyOrdered witness candidate then
-          addCausalWitness witnesses candidate.event.receiver candidate
-        else
-          witnesses
-  else
-    witnesses
-
-theorem propagate_causal_witness_without_route_conflicts_is_endpoint_independent
-    {earlier left right candidate : StaticGlobalOccurrence}
-    {roleCount : Nat} {witnesses : CausalWitnesses}
-    (noConflicts : candidate.conflicts = []) :
-    propagateCausalWitness earlier left roleCount witnesses candidate =
-      propagateCausalWitness earlier right roleCount witnesses candidate := by
-  simp [propagateCausalWitness, occurrenceOnEndpointRoutePath, noConflicts]
-
-theorem causal_witness_fold_reuses_prefix_exactly
-    {earlier later : StaticGlobalOccurrence} {roleCount : Nat}
-    (witnesses : CausalWitnesses)
-    (before after : List StaticGlobalOccurrence) :
-    (before ++ after).foldl
-        (propagateCausalWitness earlier later roleCount) witnesses =
-      after.foldl (propagateCausalWitness earlier later roleCount)
-        (before.foldl
-          (propagateCausalWitness earlier later roleCount) witnesses) := by
-  simp
-
-/-- Executable causal closure from the earlier receive to the later send. It
-uses only local projected order and send-to-receive edges, excludes direct
-ordering across parallel arms, and ignores route-local traffic unless one
-endpoint fixes that route arm. -/
+/-- The executable structured must closure. The query expression has already
+selected endpoint-fixed arms and separated parallel prefixes. -/
 def receivePrecedesLaterSend
-    (occurrences : List StaticGlobalOccurrence)
-    (roleCount : Nat)
+    (flow : CausalFlowExpr) (roleCount : Nat)
     (earlier later : StaticGlobalOccurrence) : Bool :=
   if earlier.event.receiver < roleCount && later.event.sender < roleCount then
-    let initial : CausalWitnesses := fun role =>
-      if role = earlier.event.receiver then some earlier else none
-    let between := occurrences.filter fun candidate =>
-      earlier.globalId < candidate.globalId && candidate.globalId < later.globalId
-    let witnesses := between.foldl
-      (propagateCausalWitness earlier later roleCount) initial
-    match witnesses later.event.sender with
-    | none => false
-    | some witness => occurrenceLocallyOrdered witness later
-  else
-    false
+    flow.eval (fun _ => false) later.event.sender
+  else false
 
 def ReceiveLanePairCausallySafe
-    (occurrences : List StaticGlobalOccurrence)
+    (program : Nat → Nat → CausalFlowExpr)
     (roleCount : Nat)
     (left right : StaticGlobalOccurrence) : Prop :=
   left.event.sender = left.event.receiver ∨
@@ -302,25 +220,25 @@ def ReceiveLanePairCausallySafe
     left.event.lane ≠ right.event.lane ∨
     left.event.sender = right.event.sender ∨
     ConflictListsMutuallyExclusive left.conflicts right.conflicts ∨
-    receivePrecedesLaterSend occurrences roleCount left right = true
+    receivePrecedesLaterSend (program left.globalId right.globalId) roleCount left right = true
 
-instance (occurrences : List StaticGlobalOccurrence) (roleCount : Nat)
+instance (program : Nat → Nat → CausalFlowExpr) (roleCount : Nat)
     (left right : StaticGlobalOccurrence) :
-    Decidable (ReceiveLanePairCausallySafe occurrences roleCount left right) := by
+    Decidable (ReceiveLanePairCausallySafe program roleCount left right) := by
   unfold ReceiveLanePairCausallySafe
   infer_instance
 
 theorem receive_lane_sender_change_requires_exclusion_or_causal_handoff
-    {occurrences : List StaticGlobalOccurrence} {roleCount : Nat}
+    {program : Nat → Nat → CausalFlowExpr} {roleCount : Nat}
     {left right : StaticGlobalOccurrence}
-    (safe : ReceiveLanePairCausallySafe occurrences roleCount left right)
+    (safe : ReceiveLanePairCausallySafe program roleCount left right)
     (leftNonlocal : left.event.sender ≠ left.event.receiver)
     (rightNonlocal : right.event.sender ≠ right.event.receiver)
     (sameReceiver : left.event.receiver = right.event.receiver)
     (sameLane : left.event.lane = right.event.lane)
     (differentSender : left.event.sender ≠ right.event.sender) :
     ConflictListsMutuallyExclusive left.conflicts right.conflicts \/
-      receivePrecedesLaterSend occurrences roleCount left right = true := by
+      receivePrecedesLaterSend (program left.globalId right.globalId) roleCount left right = true := by
   rcases safe with localLeft | localRight | receiverMismatch |
       laneMismatch | sameSender | exclusive | causal
   · exact False.elim (leftNonlocal localLeft)
@@ -339,7 +257,7 @@ def Choreo.ReceiveLaneCausalSafety
     (choreo : Choreo) (roleCount : Nat) : Prop :=
   let occurrences := choreo.staticGlobalOccurrences
   occurrences.length = choreo.globalEvents.length /\
-    occurrences.Pairwise (ReceiveLanePairCausallySafe occurrences roleCount)
+    occurrences.Pairwise (ReceiveLanePairCausallySafe (fun earlier later => choreo.causalFlow earlier later roleCount) roleCount)
 
 instance (choreo : Choreo) (roleCount : Nat) :
     Decidable (choreo.ReceiveLaneCausalSafety roleCount) := by
@@ -404,7 +322,7 @@ def Choreo.RollBodyReceiveLaneCausalSafety
   let occurrences := body.staticGlobalOccurrences
   occurrences.length = body.globalEvents.length /\
     body.rollUnfoldedOccurrences.Pairwise
-      (ReceiveLanePairCausallySafe body.rollUnfoldedOccurrences roleCount)
+      (ReceiveLanePairCausallySafe (fun earlier later => body.rollCausalFlow earlier later roleCount) roleCount)
 
 instance (body : Choreo) (roleCount : Nat) :
     Decidable (body.RollBodyReceiveLaneCausalSafety roleCount) := by
@@ -460,7 +378,7 @@ theorem roll_body_occurrences_cross_iteration_safe
     (safe : body.RollBodyReceiveLaneCausalSafety roleCount)
     (leftMember : left ∈ body.staticGlobalOccurrences)
     (rightMember : right ∈ body.staticGlobalOccurrences) :
-    ReceiveLanePairCausallySafe body.rollUnfoldedOccurrences roleCount
+    ReceiveLanePairCausallySafe (fun earlier later => body.rollCausalFlow earlier later roleCount) roleCount
       (left.inRollIteration body.globalEvents.length .current)
       (right.inRollIteration body.globalEvents.length .next) := by
   apply safe.2.rel_of_mem_append
@@ -480,7 +398,9 @@ theorem roll_reentry_sender_change_requires_causal_handoff
     (sameReceiver : left.event.receiver = right.event.receiver)
     (sameLane : left.event.lane = right.event.lane)
     (differentSender : left.event.sender ≠ right.event.sender) :
-    receivePrecedesLaterSend body.rollUnfoldedOccurrences roleCount
+    receivePrecedesLaterSend
+      (body.rollCausalFlow left.globalId (body.globalEvents.length + right.globalId) roleCount)
+      roleCount
       (left.inRollIteration body.globalEvents.length .current)
       (right.inRollIteration body.globalEvents.length .next) = true := by
   have pairSafe := roll_body_occurrences_cross_iteration_safe safe
@@ -489,7 +409,7 @@ theorem roll_reentry_sender_change_requires_causal_handoff
     pairSafe leftNonlocal rightNonlocal sameReceiver sameLane differentSender
   rcases consequence with excluded | causal
   · exact False.elim (roll_iteration_conflicts_are_distinct left right excluded)
-  · exact causal
+  · simpa [StaticGlobalOccurrence.inRollIteration, StaticRollIteration.ordinal] using causal
 
 /-- The exact fields that production can observe in Hibana's fixed core
 header. Session is checked separately because it identifies the surrounding
@@ -989,5 +909,22 @@ theorem dynamic_route_inbound_observers_are_projectable :
         (.seq (.send 2 0 1 0) (.send 0 2 3 0))
         (.seq (.send 2 0 2 0) (.send 0 2 4 0))) = true := by
   decide
+
+/-- Global route facts may be checked once per scope before the local checks.
+    Reordering the loops retains every role's observer obligation. -/
+theorem scope_first_route_validation_preserves_all_roles
+    {Role Scope : Type} (roles : List Role) (scopes : List Scope)
+    (inhabited : ∃ role, role ∈ roles)
+    (globalFact : Scope -> Prop) (localFact : Role -> Scope -> Prop) :
+    (∀ role ∈ roles, ∀ scope ∈ scopes, globalFact scope ∧ localFact role scope) ↔
+      (∀ scope ∈ scopes, globalFact scope ∧ ∀ role ∈ roles, localFact role scope) := by
+  constructor
+  · intro accepted scope scopePresent
+    obtain ⟨witness, witnessPresent⟩ := inhabited
+    exact ⟨(accepted witness witnessPresent scope scopePresent).1,
+      fun role rolePresent => (accepted role rolePresent scope scopePresent).2⟩
+  · intro accepted role rolePresent scope scopePresent
+    exact ⟨(accepted scope scopePresent).1,
+      (accepted scope scopePresent).2 role rolePresent⟩
 
 end Hibana

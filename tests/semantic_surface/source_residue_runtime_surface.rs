@@ -677,7 +677,7 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "ProgramSourceError::ReentryAmbiguousEndpointSelector",
         "ProgramSourceError::ReceiveLaneCausalityConflict",
         "pub(crate) const fn validate_receive_lane_causality<",
-        "events_are_route_exclusive(",
+        "FlowGoal::ReceiveLane(earlier, end)",
         "const fn receive_precedes_later_send<",
         "const fn receive_precedes_after_roll_reentry<",
         "const fn validate_roll_body_receive_lane_causality<",
@@ -693,11 +693,11 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         ".unique()",
         "None => return Some(ProgramSourceError::RouteControllerMismatch)",
         "let observer_paths_mergeable = local_route_observer_paths_mergeable(",
-        "if route_role_has_branch_knowledge(role, controller, observer_paths_mergeable)",
+        "if !route_role_has_branch_knowledge(role as u8, controller, observer_paths_mergeable)",
         "role == controller || observer_paths_mergeable",
-        "validate_route_scope(role, eff_list, scope_markers, marker_idx)",
-        "while role < summary.compiled_program_role_count()",
-        "validate_compiled_layout(role as u8, eff_list)",
+        "summary.compiled_program_role_count(),",
+        "while role < role_count",
+        "validate_route_projection_guarantees(summary, eff_list)",
         "pub(crate) const fn parallel_arm_ranges_from_enter(",
         "pub(crate) const fn closed_route_arm_ranges_from_first_enter(",
         "route requires exactly 2 contiguous non-empty closed arms",
@@ -751,15 +751,16 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
     }
     for required in [
         "const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;",
-        "struct FirstCausalWitnesses",
-        "by_role: [u32; CAUSAL_ROLE_COUNT]",
-        "const fn propagate_causal_witness(",
+        "struct CausalRoles([u64; CAUSAL_ROLE_WORDS]);",
+        "const CAUSAL_ROLE_WORDS: usize = CAUSAL_ROLE_COUNT / u64::BITS as usize;",
+        "const fn advance(&self,",
         "const fn validate_linear_later_senders<",
         "const fn validate_linear_receive_lane_causality<",
         "const fn validate_structured_receive_lane_causality<",
         "validate_linear_receive_lane_causality(eff_list)",
         "validate_structured_receive_lane_causality(eff_list)",
-        "witnesses.record_first(candidate.to, unfolded_idx);",
+        "ScopeKind::Route => left.intersect(right)",
+        "ScopeKind::Parallel => left.union(right)",
     ] {
         assert!(
             receive_lane_causality.contains(required),
@@ -767,6 +768,8 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         );
     }
     for forbidden in [
+        "FirstCausalWitnesses",
+        "on_endpoint_route_path",
         "first_event_witness_for_role",
         "first_unfolded_witness_for_role",
         "unfolded_witness_parts",
@@ -804,6 +807,12 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "resolved routes must reject competing controllers before intrinsic-only overlap checks"
     );
 
+    assert!(
+        !combined
+            .replace(receive_lane_causality.as_str(), "")
+            .contains("1u64 <<"),
+        "projection selectors must not add stored bitmask summaries; only the exact compile-time role facts use a bitset"
+    );
     for forbidden in [
         "struct LabelMask(",
         "duplicate_label",
@@ -814,7 +823,6 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "label_words",
         "[u64; 4]",
         "route_scope_ordinals = [0u64",
-        "1u64 <<",
         ">> 6",
         "<< 6",
         "/ 64",
@@ -860,8 +868,13 @@ fn endpoint_selector_validation_stays_private_seal_scan_without_stored_summaries
         "#[derive(Clone, Copy)]\npub(crate) struct FrameLabelAssigner",
         "pub(crate) struct FrameLabelScratch",
     ] {
+        let surface = if matches!(forbidden, "/ 64" | "% 64" | "<< 6" | ">> 6") {
+            combined.replace(receive_lane_causality.as_str(), "")
+        } else {
+            combined.clone()
+        };
         assert!(
-            !combined.contains(forbidden),
+            !surface.contains(forbidden),
             "projection selector validation must not re-grow stored frontier summaries: {forbidden}"
         );
     }

@@ -173,6 +173,10 @@ name = "send_route_authority"
 path = "tests/send_route_authority.rs"
 
 [[test]]
+name = "security_report_regressions"
+path = "tests/security_report_regressions.rs"
+
+[[test]]
 name = "tap_resolver_audit"
 path = "tests/tap_resolver_audit.rs"
 

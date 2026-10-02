@@ -279,11 +279,9 @@ theorem verified_protocol_roll_reentry_has_fifo_or_causal_order
     (sameLane : left.event.lane = right.event.lane)
     (rightReceiverBound : right.event.receiver < roleCount) :
     left.event.sender = right.event.sender ∨
-      CausalHandoffPath body.rollUnfoldedOccurrences
-        (left.inRollIteration body.globalEvents.length .current)
-        (right.inRollIteration body.globalEvents.length .next)
-        roleCount
-        (right.inRollIteration body.globalEvents.length .next) := by
+      MustCausalHandoff
+        (body.rollCausalFlow left.globalId (body.globalEvents.length + right.globalId) roleCount)
+        right.event.sender := by
   have verified := verified_protocol_certificate_establishes_all_role_refinement accepted
   exact roll_reentry_has_fifo_or_causal_order
     (verified.1.2.2.2.rollReceiveLaneCausality body bodyMember)
@@ -380,11 +378,9 @@ structure ProtocolExecutionGuarantees
       left.event.lane = right.event.lane ->
       right.event.receiver < roleCount ->
       left.event.sender = right.event.sender ∨
-        CausalHandoffPath body.rollUnfoldedOccurrences
-          (left.inRollIteration body.globalEvents.length .current)
-          (right.inRollIteration body.globalEvents.length .next)
-          roleCount
-          (right.inRollIteration body.globalEvents.length .next)
+        MustCausalHandoff
+        (body.rollCausalFlow left.globalId (body.globalEvents.length + right.globalId) roleCount)
+        right.event.sender
   rollPostLinearizationMaterialization :
     ∀ {before after : DistributedConfig}
       {rollId : Nat}

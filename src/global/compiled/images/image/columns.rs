@@ -3,7 +3,7 @@ use crate::global::{
     const_dsl::{EffList, ScopeId, ScopeKind, route_arm_ranges_from_first_enter},
 };
 
-pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 11;
+pub(crate) const PROGRAM_IMAGE_ATOM_STRIDE: usize = 9;
 pub(crate) const PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE: usize = 8;
 pub(crate) const PROGRAM_IMAGE_ROUTE_PARTICIPANT_STRIDE: usize = 1;
 pub(crate) const PROGRAM_IMAGE_SCOPE_MARKER_STRIDE: usize = 5;

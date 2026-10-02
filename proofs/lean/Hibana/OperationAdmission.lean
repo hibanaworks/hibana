@@ -177,4 +177,41 @@ theorem admission_rejects_wrong_direction
   rw [expected]
   simp
 
+/-- The first incomplete local event in one compiled lane. Other lanes do not
+    supply an index for this lane's initial ingress dispatch. -/
+private def laneIngressHead (events : List (Nat × Nat)) (lane : Nat)
+    (completed : Nat → Bool) : Option (Nat × Nat) :=
+  events.find? fun event => decide (event.2 = lane) && !completed event.1
+
+/-- Progress outside the observed lane leaves its ingress head unchanged. The
+    premise binds the completion view for every event owned by that lane. -/
+theorem lane_ingress_head_preserved_by_other_lane_progress
+    (events : List (Nat × Nat)) (lane : Nat) (before after : Nat → Bool)
+    (sameLane : ∀ event ∈ events, event.2 = lane → before event.1 = after event.1) :
+    laneIngressHead events lane before = laneIngressHead events lane after := by
+  unfold laneIngressHead
+  induction events with
+  | nil => rfl
+  | cons event rest ih =>
+      have owned : event.2 = lane → before event.1 = after event.1 :=
+        sameLane event (List.mem_cons_self)
+      have tail : ∀ candidate ∈ rest, candidate.2 = lane →
+          before candidate.1 = after candidate.1 := by
+        intro candidate member
+        exact sameLane candidate (List.mem_cons_of_mem event member)
+      by_cases inLane : event.2 = lane
+      · simp [List.find?, inLane, owned inLane, ih tail]
+      · simp [List.find?, inLane, ih tail]
+
+/-- Updating a different, uniquely identified event cannot change this lane's
+    head, even if the shared cursor is moved to that event. -/
+theorem foreign_event_commit_preserves_lane_ingress_head
+    (events : List (Nat × Nat)) (lane committedId : Nat) (before : Nat → Bool)
+    (foreign : ∀ event ∈ events, event.2 = lane → event.1 ≠ committedId) :
+    laneIngressHead events lane before = laneIngressHead events lane
+      (fun eventId => if eventId = committedId then true else before eventId) := by
+  apply lane_ingress_head_preserved_by_other_lane_progress
+  intro event member owned
+  simp [foreign event member owned]
+
 end Hibana

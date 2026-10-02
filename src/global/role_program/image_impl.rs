@@ -6,6 +6,7 @@ mod lane_image;
 mod metadata;
 mod plan;
 mod projection;
+pub(crate) use projection::ScopeFacts;
 mod ref_access;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;

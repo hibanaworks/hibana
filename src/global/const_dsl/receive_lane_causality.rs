@@ -1,49 +1,274 @@
-use super::event_relations::{events_are_locally_ordered, events_are_route_exclusive};
 use super::scope_ranges::roll_body_range_from_enter;
-use super::{EffList, ScopeKind, ScopeMarkerView, route_arm_ranges_from_first_enter};
+use super::{
+    EffList, ScopeKind, parallel_arm_ranges_from_enter, route_arm_ranges_from_first_enter,
+};
 
 const CAUSAL_ROLE_COUNT: usize = u8::MAX as usize + 1;
-const NO_CAUSAL_WITNESS: u32 = u32::MAX;
-const _: () =
-    assert!(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY * 2 < NO_CAUSAL_WITNESS as usize);
+const CAUSAL_ROLE_WORDS: usize = CAUSAL_ROLE_COUNT / u64::BITS as usize;
 
-/// The causal closure retains only the first occurrence that transfers
-/// authority to each role. Its storage follows the exact wire role domain and
-/// is independent of choreography size.
-struct FirstCausalWitnesses {
-    by_role: [u32; CAUSAL_ROLE_COUNT],
+/// Compile-time must facts, indexed by the exact wire role domain. A fact
+/// means the earlier receive precedes this role's next local action. Branches
+/// share their incoming facts, never another parallel arm's outgoing facts.
+#[derive(Clone, Copy)]
+struct CausalRoles([u64; CAUSAL_ROLE_WORDS]);
+
+impl CausalRoles {
+    const fn empty() -> Self {
+        Self([0; CAUSAL_ROLE_WORDS])
+    }
+
+    const fn contains(self, role: u8) -> bool {
+        self.0[role as usize / 64] & (1u64 << (role as usize % 64)) != 0
+    }
+
+    const fn is_empty(self) -> bool {
+        let mut word = 0;
+        while word < CAUSAL_ROLE_WORDS {
+            if self.0[word] != 0 {
+                return false;
+            }
+            word += 1;
+        }
+        true
+    }
+
+    const fn insert(&mut self, role: u8) {
+        self.0[role as usize / 64] |= 1u64 << (role as usize % 64);
+    }
+
+    const fn intersect(self, other: Self) -> Self {
+        let mut result = Self::empty();
+        let mut word = 0;
+        while word < CAUSAL_ROLE_WORDS {
+            result.0[word] = self.0[word] & other.0[word];
+            word += 1;
+        }
+        result
+    }
+
+    const fn union(self, other: Self) -> Self {
+        let mut result = Self::empty();
+        let mut word = 0;
+        while word < CAUSAL_ROLE_WORDS {
+            result.0[word] = self.0[word] | other.0[word];
+            word += 1;
+        }
+        result
+    }
+
+    const fn handoff(&mut self, atom: crate::eff::EffAtom) {
+        if self.contains(atom.from) {
+            self.insert(atom.to);
+        }
+    }
 }
 
-impl FirstCausalWitnesses {
-    #[inline(always)]
-    const fn new(role: u8, occurrence_idx: usize) -> Self {
-        let mut witnesses = Self {
-            by_role: [NO_CAUSAL_WITNESS; CAUSAL_ROLE_COUNT],
-        };
-        witnesses.record_first(role, occurrence_idx);
-        witnesses
+/// A source range and its preorder marker floor identify one structured arm;
+/// nested scopes with identical event ranges still have distinct floors.
+#[derive(Clone, Copy)]
+struct FlowRange {
+    start: usize,
+    end: usize,
+    marker_floor: usize,
+}
+
+#[derive(Clone, Copy)]
+enum FlowGoal {
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
+    Target(usize),
+    ReceiveLane(crate::eff::EffAtom, usize),
+    Closure,
+}
+
+impl FlowGoal {
+    const fn stop(self) -> usize {
+        match self {
+            #[cfg(any(kani, all(test, hibana_repo_tests)))]
+            Self::Target(index) => index,
+            Self::ReceiveLane(_, end) => end,
+            Self::Closure => usize::MAX,
+        }
     }
 
-    #[inline(always)]
-    const fn first(&self, role: u8) -> Option<usize> {
-        let occurrence_idx = self.by_role[role as usize];
-        if occurrence_idx == NO_CAUSAL_WITNESS {
-            None
-        } else {
-            Some(occurrence_idx as usize)
+    // A bulk check has several targets. Its cutoff must never select only
+    // the arm containing the last one; every earlier obligation is checked.
+    const fn selected_target(self) -> usize {
+        match self {
+            #[cfg(any(kani, all(test, hibana_repo_tests)))]
+            Self::Target(index) => index,
+            Self::ReceiveLane(_, _) | Self::Closure => usize::MAX,
         }
     }
 
-    #[inline(always)]
-    const fn record_first(&mut self, role: u8, occurrence_idx: usize) {
-        let slot = &mut self.by_role[role as usize];
-        if *slot != NO_CAUSAL_WITNESS {
-            return;
+    const fn sender_change(self, candidate: crate::eff::EffAtom) -> bool {
+        match self {
+            Self::ReceiveLane(earlier, _) => {
+                candidate.from != candidate.to
+                    && earlier.to == candidate.to
+                    && earlier.lane == candidate.lane
+                    && earlier.from != candidate.from
+            }
+            #[cfg(any(kani, all(test, hibana_repo_tests)))]
+            Self::Target(_) => false,
+            Self::Closure => false,
         }
-        if occurrence_idx >= NO_CAUSAL_WITNESS as usize {
-            panic!("causality occurrence index exceeds the compact witness domain");
+    }
+}
+
+struct CausalFlow<'a, const E: usize> {
+    eff_list: &'a EffList<E>,
+    earlier: usize,
+    goal: FlowGoal,
+    body_start: usize,
+    iteration_start: usize,
+}
+
+impl<const E: usize> CausalFlow<'_, E> {
+    const fn occurrence(&self, eff_idx: usize) -> usize {
+        self.iteration_start + eff_idx - self.body_start
+    }
+
+    const fn contains(&self, range: FlowRange, occurrence: usize) -> bool {
+        self.occurrence(range.start) <= occurrence && occurrence < self.occurrence(range.end)
+    }
+
+    const fn scope_at(&self, range: &mut FlowRange) -> Option<usize> {
+        let markers = self.eff_list.scope_markers();
+        let mut idx = markers.offset_lower_bound(range.start, range.marker_floor);
+        while idx < markers.len() {
+            let marker = markers.at(idx);
+            if marker.offset() > range.start {
+                break;
+            }
+            if marker.offset() == range.start && marker.event.is_primary_enter() {
+                let end = match marker.scope_id.kind() {
+                    Some(ScopeKind::Route) => {
+                        let [_, (_, end)] = route_arm_ranges_from_first_enter(markers, idx);
+                        end
+                    }
+                    Some(ScopeKind::Parallel | ScopeKind::Roll) => marker.segment_end(),
+                    None => crate::invariant(),
+                };
+                if end <= range.end {
+                    range.marker_floor = idx;
+                    return Some(idx);
+                }
+            }
+            idx += 1;
         }
-        *slot = occurrence_idx as u32;
+        range.marker_floor = idx;
+        None
+    }
+
+    const fn advance(&self, mut range: FlowRange, mut facts: CausalRoles) -> Option<CausalRoles> {
+        if self.occurrence(range.end) <= self.earlier {
+            return Some(facts);
+        }
+        while range.start < range.end && self.occurrence(range.start) < self.goal.stop() {
+            // Relays cannot create evidence from an empty input. Before the
+            // seed, seek directly to it or to the next structural boundary;
+            // a containing route/par must still fork using its shared input.
+            if self.occurrence(range.start) < self.earlier && facts.is_empty() {
+                let seed = self.body_start + self.earlier - self.iteration_start;
+                let markers = self.eff_list.scope_markers();
+                let next = markers.offset_lower_bound(range.start, range.marker_floor);
+                let boundary = if next < markers.len() && markers.at(next).offset() < seed {
+                    markers.at(next).offset()
+                } else {
+                    seed
+                };
+                if boundary > range.start {
+                    range.start = boundary;
+                }
+            }
+            if let Some(idx) = self.scope_at(&mut range) {
+                let markers = self.eff_list.scope_markers();
+                let marker = markers.at(idx);
+                let (left_end, right_end) = match marker.scope_id.kind() {
+                    Some(ScopeKind::Route) => {
+                        let [(_, split), (_, end)] =
+                            route_arm_ranges_from_first_enter(markers, idx);
+                        (split, end)
+                    }
+                    Some(ScopeKind::Parallel) => {
+                        let Some((_, split, _, end)) = parallel_arm_ranges_from_enter(markers, idx)
+                        else {
+                            crate::invariant()
+                        };
+                        (split, end)
+                    }
+                    Some(ScopeKind::Roll) => (marker.segment_end(), marker.segment_end()),
+                    None => crate::invariant(),
+                };
+                let left = FlowRange {
+                    start: range.start,
+                    end: left_end,
+                    marker_floor: idx + 1,
+                };
+                let right = FlowRange {
+                    start: left_end,
+                    end: right_end,
+                    marker_floor: idx + 1,
+                };
+                let advanced = match marker.scope_id.kind() {
+                    Some(ScopeKind::Roll) => self.advance(left, facts),
+                    Some(kind @ (ScopeKind::Route | ScopeKind::Parallel)) => {
+                        let selected = if self.contains(left, self.goal.selected_target())
+                            || matches!(kind, ScopeKind::Route) && self.contains(left, self.earlier)
+                        {
+                            Some(left)
+                        } else if self.contains(right, self.goal.selected_target())
+                            || matches!(kind, ScopeKind::Route)
+                                && self.contains(right, self.earlier)
+                        {
+                            Some(right)
+                        } else {
+                            None
+                        };
+                        if let Some(arm) = selected {
+                            self.advance(arm, facts)
+                        } else {
+                            // Fork with a shared input; join only after each arm
+                            // completes. One recursive frame per source scope.
+                            let Some(left) = self.advance(left, facts) else {
+                                return None;
+                            };
+                            let Some(right) = self.advance(right, facts) else {
+                                return None;
+                            };
+                            Some(match kind {
+                                ScopeKind::Route => left.intersect(right),
+                                ScopeKind::Parallel => left.union(right),
+                                ScopeKind::Roll => crate::invariant(),
+                            })
+                        }
+                    }
+                    None => crate::invariant(),
+                };
+                let Some(joined) = advanced else { return None };
+                facts = joined;
+                // If the target was inside the scope, its prefix is complete.
+                if self.occurrence(right_end) > self.goal.stop() {
+                    return Some(facts);
+                }
+                range.start = right_end;
+            } else {
+                let atom = self.eff_list.atom_at(range.start);
+                if self.occurrence(range.start) == self.earlier {
+                    facts.insert(atom.to);
+                } else {
+                    if self.occurrence(range.start) > self.earlier
+                        && self.goal.sender_change(atom)
+                        && !facts.contains(atom.from)
+                    {
+                        return None;
+                    }
+                    facts.handoff(atom);
+                }
+                range.start += 1;
+            }
+        }
+        Some(facts)
     }
 }
 
@@ -62,6 +287,7 @@ impl RollBodyRange {
         self.end - self.start
     }
 
+    #[cfg(any(kani, all(test, hibana_repo_tests)))]
     const fn contains(self, eff_idx: usize) -> bool {
         self.start <= eff_idx && eff_idx < self.end
     }
@@ -69,167 +295,58 @@ impl RollBodyRange {
     const fn is_valid_for<const E: usize>(self, eff_list: &EffList<E>) -> bool {
         self.start < self.end && self.end <= eff_list.len()
     }
-
-    const fn unfolded_occurrence(self, unfolded_idx: usize) -> UnfoldedOccurrence {
-        let len = self.len();
-        UnfoldedOccurrence {
-            eff_idx: self.start + unfolded_idx % len,
-            iteration: if unfolded_idx < len {
-                RollIteration::Current
-            } else {
-                RollIteration::Next
-            },
-        }
-    }
 }
 
-#[derive(Clone, Copy)]
-enum RollIteration {
-    Current,
-    Next,
-}
-
-impl RollIteration {
-    const fn same(self, other: Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Current, Self::Current) | (Self::Next, Self::Next)
-        )
-    }
-}
-
-#[derive(Clone, Copy)]
-struct UnfoldedOccurrence {
-    eff_idx: usize,
-    iteration: RollIteration,
-}
-
-const fn route_arm_at(
-    markers: ScopeMarkerView<'_>,
-    route_enter_idx: usize,
-    eff_idx: usize,
-) -> Option<u8> {
-    let [(left_start, left_end), (right_start, right_end)] =
-        route_arm_ranges_from_first_enter(markers, route_enter_idx);
-    if left_start <= eff_idx && eff_idx < left_end {
-        Some(0)
-    } else if right_start <= eff_idx && eff_idx < right_end {
-        Some(1)
-    } else {
-        None
-    }
-}
-
-const fn on_endpoint_route_path(
-    markers: ScopeMarkerView<'_>,
-    candidate_eff_idx: usize,
-    earlier_eff_idx: usize,
-    later_eff_idx: usize,
-) -> bool {
-    let mut marker_idx = 0usize;
-    while marker_idx < markers.len() {
-        let marker = markers.at(marker_idx);
-        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-            && markers.is_first_enter(marker_idx)
-            && let Some(candidate_arm) = route_arm_at(markers, marker_idx, candidate_eff_idx)
-        {
-            let earlier_matches = match route_arm_at(markers, marker_idx, earlier_eff_idx) {
-                Some(arm) => arm == candidate_arm,
-                None => false,
-            };
-            let later_matches = match route_arm_at(markers, marker_idx, later_eff_idx) {
-                Some(arm) => arm == candidate_arm,
-                None => false,
-            };
-            if !earlier_matches && !later_matches {
-                return false;
-            }
-        }
-        marker_idx += 1;
-    }
-    true
-}
-
-const fn local_ordered(
-    markers: ScopeMarkerView<'_>,
-    earlier_eff_idx: usize,
-    later_eff_idx: usize,
-) -> bool {
-    events_are_locally_ordered(markers, earlier_eff_idx, later_eff_idx)
-}
-
-#[inline(always)]
-const fn propagate_causal_witness(
-    markers: ScopeMarkerView<'_>,
-    witnesses: &mut FirstCausalWitnesses,
-    eff_idx: usize,
-    atom: crate::eff::EffAtom,
-) -> bool {
-    let Some(witness) = witnesses.first(atom.from) else {
-        return false;
-    };
-    if !local_ordered(markers, witness, eff_idx) {
-        return false;
-    }
-    witnesses.record_first(atom.to, eff_idx);
-    true
-}
-
-/// Proves a causal handoff from the earlier receive to the later sender using
-/// only projected local order and intervening send-to-receive edges. Route-arm
-/// events may participate only when one endpoint fixes that arm; unrelated
-/// branch-local traffic cannot become accidental ordering evidence.
+/// Structured must analysis: sequence composes facts, route intersects them,
+/// and parallel forks share only their input. No concrete arm occurrence is
+/// fabricated as a witness for a fact established by every route arm.
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn receive_precedes_later_send<const E: usize>(
     eff_list: &EffList<E>,
     earlier_eff_idx: usize,
     later_eff_idx: usize,
 ) -> bool {
-    let markers = eff_list.scope_markers();
-    let earlier = eff_list.atom_at(earlier_eff_idx);
-    let mut witnesses = FirstCausalWitnesses::new(earlier.to, earlier_eff_idx);
-
-    let mut eff_idx = earlier_eff_idx + 1;
-    while eff_idx <= later_eff_idx {
-        if on_endpoint_route_path(markers, eff_idx, earlier_eff_idx, later_eff_idx) {
-            let atom = eff_list.atom_at(eff_idx);
-            if propagate_causal_witness(markers, &mut witnesses, eff_idx, atom)
-                && eff_idx == later_eff_idx
-            {
-                return true;
-            }
-        }
-        eff_idx += 1;
-    }
-    false
+    let flow = CausalFlow {
+        eff_list,
+        earlier: earlier_eff_idx,
+        goal: FlowGoal::Target(later_eff_idx),
+        body_start: 0,
+        iteration_start: 0,
+    };
+    let Some(facts) = flow.advance(
+        FlowRange {
+            start: 0,
+            end: eff_list.len(),
+            marker_floor: 0,
+        },
+        CausalRoles::empty(),
+    ) else {
+        crate::invariant()
+    };
+    facts.contains(eff_list.atom_at(later_eff_idx).from)
 }
 
-/// In a scope-free sequence the route-path predicate is constant for every
-/// later endpoint. One forward closure per earlier receive therefore checks the
-/// same pairs as repeated endpoint-specific closures without recomputing each
-/// prefix.
+/// A sequence has no fork contexts, so one forward closure checks all later
+/// senders for an earlier receive without recomputing their common prefixes.
 const fn validate_linear_later_senders<const E: usize>(
     eff_list: &EffList<E>,
     earlier_eff_idx: usize,
 ) -> bool {
     let earlier = eff_list.atom_at(earlier_eff_idx);
-    let markers = eff_list.scope_markers();
-    if markers.len() != 0 {
-        return false;
-    }
-    let mut witnesses = FirstCausalWitnesses::new(earlier.to, earlier_eff_idx);
+    let mut facts = CausalRoles::empty();
+    facts.insert(earlier.to);
     let mut eff_idx = earlier_eff_idx + 1;
     while eff_idx < eff_list.len() {
         let candidate = eff_list.atom_at(eff_idx);
-        let causally_preceded =
-            propagate_causal_witness(markers, &mut witnesses, eff_idx, candidate);
         if candidate.from != candidate.to
             && earlier.to == candidate.to
             && earlier.lane == candidate.lane
             && earlier.from != candidate.from
-            && !causally_preceded
+            && !facts.contains(candidate.from)
         {
             return false;
         }
+        facts.handoff(candidate);
         eff_idx += 1;
     }
     true
@@ -247,80 +364,10 @@ const fn validate_linear_receive_lane_causality<const E: usize>(eff_list: &EffLi
     true
 }
 
-const fn route_reexecutes_in_roll_body(
-    markers: ScopeMarkerView<'_>,
-    route_enter_idx: usize,
-    body: RollBodyRange,
-) -> bool {
-    let [(left_start, _), (_, right_end)] =
-        route_arm_ranges_from_first_enter(markers, route_enter_idx);
-    body.start <= left_start && right_end <= body.end
-}
-
-const fn unfolded_route_path_contains(
-    markers: ScopeMarkerView<'_>,
-    route_enter_idx: usize,
-    candidate: UnfoldedOccurrence,
-    endpoint: UnfoldedOccurrence,
-    body: RollBodyRange,
-) -> bool {
-    let Some(candidate_arm) = route_arm_at(markers, route_enter_idx, candidate.eff_idx) else {
-        return false;
-    };
-    if route_reexecutes_in_roll_body(markers, route_enter_idx, body)
-        && !candidate.iteration.same(endpoint.iteration)
-    {
-        return false;
-    }
-    matches!(
-        route_arm_at(markers, route_enter_idx, endpoint.eff_idx),
-        Some(endpoint_arm) if endpoint_arm == candidate_arm
-    )
-}
-
-const fn on_unfolded_endpoint_route_path(
-    markers: ScopeMarkerView<'_>,
-    candidate: UnfoldedOccurrence,
-    earlier: UnfoldedOccurrence,
-    later: UnfoldedOccurrence,
-    body: RollBodyRange,
-) -> bool {
-    let mut marker_idx = 0usize;
-    while marker_idx < markers.len() {
-        let marker = markers.at(marker_idx);
-        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
-            && markers.is_first_enter(marker_idx)
-            && route_arm_at(markers, marker_idx, candidate.eff_idx).is_some()
-            && !unfolded_route_path_contains(markers, marker_idx, candidate, earlier, body)
-            && !unfolded_route_path_contains(markers, marker_idx, candidate, later, body)
-        {
-            return false;
-        }
-        marker_idx += 1;
-    }
-    true
-}
-
-const fn unfolded_locally_ordered(
-    markers: ScopeMarkerView<'_>,
-    body: RollBodyRange,
-    earlier_unfolded_idx: usize,
-    later_unfolded_idx: usize,
-) -> bool {
-    if earlier_unfolded_idx >= later_unfolded_idx {
-        return false;
-    }
-    let earlier = body.unfolded_occurrence(earlier_unfolded_idx);
-    let later = body.unfolded_occurrence(later_unfolded_idx);
-    if !earlier.iteration.same(later.iteration) {
-        return true;
-    }
-    local_ordered(markers, earlier.eff_idx, later.eff_idx)
-}
-
-/// Checks a sender-authority transfer across one explicit unfolding of a roll
-/// body without copying its descriptor rows. Route identities inside the body
-/// are iteration-local; enclosing route authority remains stable.
+/// Two visits use the same descriptors and independent route choices. Only
+/// facts at the end of the current iteration enter the next iteration; source
+/// rows and runtime state are never copied or expanded.
+#[cfg(any(kani, all(test, hibana_repo_tests)))]
 const fn receive_precedes_after_roll_reentry<const E: usize>(
     eff_list: &EffList<E>,
     body: RollBodyRange,
@@ -333,41 +380,49 @@ const fn receive_precedes_after_roll_reentry<const E: usize>(
     {
         return false;
     }
-    let body_len = body.len();
-    let earlier_unfolded_idx = earlier_eff_idx - body.start;
-    let later_unfolded_idx = body_len + later_eff_idx - body.start;
+    let range = FlowRange {
+        start: body.start,
+        end: body.end,
+        marker_floor: 0,
+    };
+    let flow = CausalFlow {
+        eff_list,
+        earlier: earlier_eff_idx - body.start,
+        goal: FlowGoal::Target(body.len() + later_eff_idx - body.start),
+        body_start: body.start,
+        iteration_start: 0,
+    };
+    let Some(facts) = flow.advance(range, CausalRoles::empty()) else {
+        crate::invariant()
+    };
+    let next = CausalFlow {
+        iteration_start: body.len(),
+        ..flow
+    };
+    let Some(facts) = next.advance(range, facts) else {
+        crate::invariant()
+    };
+    facts.contains(eff_list.atom_at(later_eff_idx).from)
+}
 
-    let markers = eff_list.scope_markers();
-    let earlier = eff_list.atom_at(earlier_eff_idx);
-    let mut witnesses = FirstCausalWitnesses::new(earlier.to, earlier_unfolded_idx);
-
-    let mut unfolded_idx = earlier_unfolded_idx + 1;
-    while unfolded_idx <= later_unfolded_idx {
-        let candidate_occurrence = body.unfolded_occurrence(unfolded_idx);
-        let candidate = eff_list.atom_at(candidate_occurrence.eff_idx);
-        if on_unfolded_endpoint_route_path(
-            markers,
-            candidate_occurrence,
-            UnfoldedOccurrence {
-                eff_idx: earlier_eff_idx,
-                iteration: RollIteration::Current,
-            },
-            UnfoldedOccurrence {
-                eff_idx: later_eff_idx,
-                iteration: RollIteration::Next,
-            },
-            body,
-        ) && let Some(witness) = witnesses.first(candidate.from)
-            && unfolded_locally_ordered(markers, body, witness, unfolded_idx)
-        {
-            if unfolded_idx == later_unfolded_idx {
-                return true;
-            }
-            witnesses.record_first(candidate.to, unfolded_idx);
+/// The last sender change bounds all obligations for this receive. No later
+/// scope or event can affect an earlier handoff; do not evaluate that suffix.
+/// This also identifies sender-stable lanes without allocating lane tables.
+const fn sender_change_end<const E: usize>(
+    eff_list: &EffList<E>,
+    range: FlowRange,
+    earlier: crate::eff::EffAtom,
+) -> Option<usize> {
+    let goal = FlowGoal::ReceiveLane(earlier, range.end);
+    let mut end = None;
+    let mut index = range.start;
+    while index < range.end {
+        if goal.sender_change(eff_list.atom_at(index)) {
+            end = Some(index + 1);
         }
-        unfolded_idx += 1;
+        index += 1;
     }
-    false
+    end
 }
 
 const fn validate_roll_body_receive_lane_causality<const E: usize>(
@@ -377,25 +432,39 @@ const fn validate_roll_body_receive_lane_causality<const E: usize>(
     if !body.is_valid_for(eff_list) {
         return false;
     }
-    let mut left_idx = body.start;
-    while left_idx < body.end {
-        let left = eff_list.atom_at(left_idx);
-        if left.from != left.to {
-            let mut right_idx = body.start;
-            while right_idx < body.end {
-                let right = eff_list.atom_at(right_idx);
-                if right.from != right.to
-                    && left.to == right.to
-                    && left.lane == right.lane
-                    && left.from != right.from
-                    && !receive_precedes_after_roll_reentry(eff_list, body, left_idx, right_idx)
-                {
-                    return false;
-                }
-                right_idx += 1;
+    let range = FlowRange {
+        start: body.start,
+        end: body.end,
+        marker_floor: 0,
+    };
+    let mut earlier_idx = body.start;
+    while earlier_idx < body.end {
+        let earlier = eff_list.atom_at(earlier_idx);
+        if earlier.from != earlier.to {
+            let Some(end) = sender_change_end(eff_list, range, earlier) else {
+                earlier_idx += 1;
+                continue;
+            };
+            let flow = CausalFlow {
+                eff_list,
+                earlier: earlier_idx - body.start,
+                goal: FlowGoal::Closure,
+                body_start: body.start,
+                iteration_start: 0,
+            };
+            let Some(facts) = flow.advance(range, CausalRoles::empty()) else {
+                crate::invariant()
+            };
+            let next = CausalFlow {
+                goal: FlowGoal::ReceiveLane(earlier, body.len() + end - body.start),
+                iteration_start: body.len(),
+                ..flow
+            };
+            if next.advance(range, facts).is_none() {
+                return false;
             }
         }
-        left_idx += 1;
+        earlier_idx += 1;
     }
     true
 }
@@ -425,27 +494,38 @@ const fn validate_roll_receive_lane_causality<const E: usize>(eff_list: &EffList
 }
 
 const fn validate_structured_receive_lane_causality<const E: usize>(eff_list: &EffList<E>) -> bool {
-    let markers = eff_list.scope_markers();
-    let mut left_idx = 0usize;
-    while left_idx < eff_list.len() {
-        let left = eff_list.atom_at(left_idx);
-        if left.from != left.to {
-            let mut right_idx = left_idx + 1;
-            while right_idx < eff_list.len() {
-                let right = eff_list.atom_at(right_idx);
-                if right.from != right.to
-                    && left.to == right.to
-                    && left.lane == right.lane
-                    && left.from != right.from
-                    && !events_are_route_exclusive(markers, left_idx, right_idx)
-                    && !receive_precedes_later_send(eff_list, left_idx, right_idx)
-                {
-                    return false;
-                }
-                right_idx += 1;
+    let range = FlowRange {
+        start: 0,
+        end: eff_list.len(),
+        marker_floor: 0,
+    };
+    let mut earlier_idx = 0usize;
+    while earlier_idx < eff_list.len() {
+        let earlier = eff_list.atom_at(earlier_idx);
+        if earlier.from != earlier.to {
+            let Some(end) = sender_change_end(
+                eff_list,
+                FlowRange {
+                    start: earlier_idx + 1,
+                    ..range
+                },
+                earlier,
+            ) else {
+                earlier_idx += 1;
+                continue;
+            };
+            let flow = CausalFlow {
+                eff_list,
+                earlier: earlier_idx,
+                goal: FlowGoal::ReceiveLane(earlier, end),
+                body_start: 0,
+                iteration_start: 0,
+            };
+            if flow.advance(range, CausalRoles::empty()).is_none() {
+                return false;
             }
         }
-        left_idx += 1;
+        earlier_idx += 1;
     }
     true
 }
@@ -465,3 +545,6 @@ pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &E
 
 #[cfg(kani)]
 mod kani;
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;

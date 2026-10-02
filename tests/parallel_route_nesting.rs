@@ -730,3 +730,80 @@ fn nested_parallel_join_commits_post_after_sibling_first_completion() {
         });
     });
 }
+
+#[test]
+fn independent_rolled_admission_send_is_enabled_while_abi_input_is_quiet() {
+    let bootstrap = g::seq(
+        g::seq(g::send::<2, 0, Msg<1, ()>>(), g::send::<0, 2, Msg<2, ()>>()),
+        g::seq(g::send::<2, 1, Msg<3, ()>>(), g::send::<1, 2, Msg<4, ()>>()),
+    );
+    let abi = g::route(
+        g::seq(g::send::<1, 0, Msg<5, ()>>(), g::send::<0, 1, Msg<6, ()>>()),
+        g::seq(g::send::<1, 0, Msg<7, ()>>(), g::send::<0, 1, Msg<8, ()>>()),
+    )
+    .roll();
+    let admission = g::seq(
+        g::send::<0, 2, Msg<9, ()>>(),
+        g::route(
+            g::send::<2, 0, Msg<10, ()>>(),
+            g::send::<2, 0, Msg<11, ()>>(),
+        ),
+    )
+    .roll();
+    let body = g::seq(
+        bootstrap,
+        g::par(
+            g::par(
+                abi,
+                g::par(
+                    g::send::<0, 2, Msg<12, ()>>(),
+                    g::send::<0, 2, Msg<13, ()>>(),
+                ),
+            ),
+            admission,
+        ),
+    );
+    let app_program: RoleProgram<0> = project(&body);
+    let abi_program: RoleProgram<1> = project(&body);
+    let owner_program: RoleProgram<2> = project(&body);
+    let mut slab = [0u8; 16384];
+    let mut storage = SessionKitStorage::<TestTransport>::uninit();
+    let kit = storage.init();
+    let transport = TestTransport::new();
+    let rendezvous = kit.rendezvous(&mut slab, transport.clone()).unwrap();
+    let sid = SessionId::new(123);
+    let mut app = rendezvous.enter(sid, &app_program).unwrap();
+    let mut abi = rendezvous.enter(sid, &abi_program).unwrap();
+    let mut owner = rendezvous.enter(sid, &owner_program).unwrap();
+    futures::executor::block_on(async {
+        owner.send::<Msg<1, ()>>(&()).await.unwrap();
+        app.recv::<Msg<1, ()>>().await.unwrap();
+        app.send::<Msg<2, ()>>(&()).await.unwrap();
+        owner.recv::<Msg<2, ()>>().await.unwrap();
+        owner.send::<Msg<3, ()>>(&()).await.unwrap();
+        abi.recv::<Msg<3, ()>>().await.unwrap();
+        abi.send::<Msg<4, ()>>(&()).await.unwrap();
+        owner.recv::<Msg<4, ()>>().await.unwrap();
+        app.send::<Msg<9, ()>>(&()).await.unwrap();
+        owner.recv::<Msg<9, ()>>().await.unwrap();
+        owner.send::<Msg<10, ()>>(&()).await.unwrap();
+        app.offer()
+            .await
+            .unwrap()
+            .recv::<Msg<10, ()>>()
+            .await
+            .unwrap();
+        // Return to the untouched ABI lane after another rolled region moved
+        // the shared cursor. Its alternate request must still select a branch.
+        abi.send::<Msg<7, ()>>(&()).await.unwrap();
+        app.offer()
+            .await
+            .unwrap()
+            .recv::<Msg<7, ()>>()
+            .await
+            .unwrap();
+        app.send::<Msg<8, ()>>(&()).await.unwrap();
+        abi.recv::<Msg<8, ()>>().await.unwrap();
+    });
+    assert!(transport.queue_is_empty());
+}

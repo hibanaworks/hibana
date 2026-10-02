@@ -1,7 +1,7 @@
 use super::super::{
-    BlobPtr, LaneSetView, LaneStepLayout, LaneSteps, PackedLaneRange, PackedRollScopeRow,
-    RoleCompiledCounts, RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts,
-    RuntimeRoleFootprint, compact_local_step_count, lane_byte_count,
+    BlobPtr, LaneSetView, PackedLaneRange, PackedRollScopeRow, RoleCompiledCounts,
+    RoleImageColumns, RoleImageRef, RoleLaneImage, RuntimeRoleFacts, RuntimeRoleFootprint,
+    compact_local_step_count, lane_byte_count,
 };
 use super::lane_image::invalid_resident_descriptor;
 use super::metadata::{
@@ -62,6 +62,7 @@ impl RoleImageRef {
         columns: RoleImageColumns,
         bytes: &'static [u8; N],
     ) -> Self {
+        columns.validate_blob_bound();
         let blob = BlobPtr::from_array(bytes, columns.blob_len());
         let footprint = facts.footprint();
         let active_lane_row = if footprint.active_lane_count == 0 {
@@ -136,11 +137,12 @@ impl RoleImageRef {
         self.lanes().resident_row_min_start(idx)
     }
 
-    pub(crate) const fn resident_row_lane_steps(
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn reference_resident_lane_count(
         &self,
         idx: usize,
         lane_idx: usize,
-    ) -> Option<LaneSteps> {
+    ) -> Option<u16> {
         if lane_idx >= self.footprint().logical_lane_count {
             return None;
         }
@@ -154,31 +156,20 @@ impl RoleImageRef {
         }
         let mut pos = row.start();
         let end = row.end();
-        let mut first = None;
         let mut len = 0usize;
-        let mut layout = LaneStepLayout::Contiguous;
         while pos < end {
             if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
-                match first {
-                    Some(start) if pos != start + len => layout = LaneStepLayout::Sparse,
-                    Some(_) => {}
-                    None => first = Some(pos),
-                }
                 len += 1;
             }
             pos += 1;
         }
-        let Some(first) = first else {
+        if len == 0 {
             return None;
-        };
+        }
         if len > u16::MAX as usize {
             invalid_resident_descriptor();
         } else {
-            Some(LaneSteps {
-                start: first as u16,
-                len: len as u16,
-                layout,
-            })
+            Some(len as u16)
         }
     }
 
@@ -295,7 +286,8 @@ impl RoleImageRef {
         }
     }
 
-    pub(crate) const fn resident_row_lane_step_at(
+    #[cfg(all(test, hibana_repo_tests))]
+    pub(crate) const fn reference_resident_lane_step_at(
         &self,
         idx: usize,
         lane_idx: usize,
@@ -324,44 +316,6 @@ impl RoleImageRef {
                     return Some(pos as u16);
                 }
                 seen += 1;
-            }
-            pos += 1;
-        }
-        None
-    }
-
-    pub(crate) const fn resident_row_lane_step_ordinal(
-        &self,
-        idx: usize,
-        lane_idx: usize,
-        step_idx: usize,
-    ) -> Option<u16> {
-        if lane_idx >= self.footprint().logical_lane_count {
-            return None;
-        }
-        let lanes = self.lanes();
-        if idx >= lanes.resident_row_count() {
-            return None;
-        }
-        let row = lanes.resident_row_range(idx);
-        if row.end() > self.local_step_count() {
-            invalid_resident_descriptor();
-        }
-        if step_idx < row.start() || step_idx >= row.end() {
-            return None;
-        }
-        let mut pos = row.start();
-        let end = row.end();
-        let mut ordinal = 0usize;
-        while pos < end {
-            if matches!(self.local_step_lane(pos), Some(lane) if lane as usize == lane_idx) {
-                if pos == step_idx {
-                    if ordinal > u16::MAX as usize {
-                        invalid_resident_descriptor();
-                    }
-                    return Some(ordinal as u16);
-                }
-                ordinal += 1;
             }
             pos += 1;
         }

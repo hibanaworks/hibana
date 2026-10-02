@@ -67,7 +67,7 @@ impl EventCursor {
     }
 
     #[inline(always)]
-    fn event_lane_at(&self, idx: usize) -> Option<u8> {
+    pub(crate) fn event_lane_at(&self, idx: usize) -> Option<u8> {
         match self.machine().node(idx).action() {
             LocalAction::Send { lane, .. }
             | LocalAction::Recv { lane, .. }

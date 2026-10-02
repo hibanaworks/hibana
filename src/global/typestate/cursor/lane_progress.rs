@@ -58,26 +58,17 @@ impl EventCursor {
         if lane_idx >= self.logical_lane_count() {
             return None;
         }
-
-        let lane_steps = self.current_resident_row_lane_steps(lane_idx)?;
-        if !lane_steps.is_active() {
+        let (start, end) = self.resident_row_bounds(self.resident_row_index_usize())?;
+        let step_idx = self.lane_cursors()[lane_idx] as usize;
+        if step_idx == end {
             return None;
         }
-
-        let cursor_pos = self.lane_cursors()[lane_idx] as usize;
-        let len = lane_steps.len as usize;
-        if cursor_pos >= len {
-            return None;
+        if step_idx < start
+            || step_idx > end
+            || self.machine().event_program().local_step_lane(step_idx) != Some(lane_idx as u8)
+        {
+            crate::invariant();
         }
-        let step_idx = if lane_steps.is_contiguous() {
-            (lane_steps.start as usize).checked_add(cursor_pos)?
-        } else {
-            self.current_resident_row_lane_step_at(lane_idx, cursor_pos)?
-        };
-        if step_idx >= self.local_steps_len() {
-            return None;
-        }
-
         Some(step_idx)
     }
 
@@ -116,48 +107,32 @@ impl EventCursor {
     // =========================================================================
     // =========================================================================
 
-    fn resident_row_lane_ordinal(
-        &self,
-        row_idx: usize,
-        lane_idx: usize,
-        step_idx: usize,
-    ) -> Option<u16> {
-        if lane_idx >= self.logical_lane_count() {
-            return None;
+    fn resident_row_bounds(&self, row_idx: usize) -> Option<(usize, usize)> {
+        let start = usize::from(self.machine().resident_row_min_start(row_idx)?);
+        let end = match self.machine().resident_row_min_start(row_idx + 1) {
+            Some(next) => usize::from(next),
+            None => self.local_steps_len(),
+        };
+        if start >= end || end > self.local_steps_len() {
+            crate::invariant();
         }
-        if step_idx >= self.local_steps_len() {
-            return None;
-        }
-        let lane_steps = self.machine().resident_row_lane_steps(row_idx, lane_idx)?;
-        if !lane_steps.is_active() {
-            return None;
-        }
-        if lane_steps.is_contiguous() {
-            let start = lane_steps.start as usize;
-            let end = start.checked_add(lane_steps.len as usize)?;
-            if step_idx >= start && step_idx < end {
-                Some(crate::invariant_ok(u16::try_from(step_idx - start)))
-            } else {
-                None
-            }
-        } else {
-            self.machine()
-                .resident_row_lane_step_ordinal(row_idx, lane_idx, step_idx)
-        }
+        Some((start, end))
     }
 
     fn resident_lane_step_locator(
         &self,
         lane_idx: usize,
         step_idx: usize,
-    ) -> Result<(usize, u16), CursorInvariantError> {
-        if lane_idx >= self.logical_lane_count() || step_idx >= self.local_steps_len() {
+    ) -> Result<usize, CursorInvariantError> {
+        if lane_idx >= self.logical_lane_count()
+            || !self.event_lane_step_matches(step_idx, lane_idx)
+        {
             return Err(CursorInvariantError::INVARIANT);
         }
         let mut row_idx = 0usize;
-        while self.machine().resident_row_min_start(row_idx).is_some() {
-            if let Some(ordinal) = self.resident_row_lane_ordinal(row_idx, lane_idx, step_idx) {
-                return Ok((row_idx, ordinal));
+        while let Some((start, end)) = self.resident_row_bounds(row_idx) {
+            if start <= step_idx && step_idx < end {
+                return Ok(row_idx);
             }
             row_idx += 1;
         }
@@ -187,26 +162,39 @@ impl EventCursor {
         idx: usize,
         lane_idx: usize,
     ) -> Result<RelocatableResidentLaneStep, CursorInvariantError> {
-        if lane_idx >= self.logical_lane_count() || lane_idx > u8::MAX as usize {
+        if lane_idx >= self.logical_lane_count()
+            || lane_idx > u8::MAX as usize
+            || !self.event_lane_step_matches(idx, lane_idx)
+        {
             return Err(CursorInvariantError::INVARIANT);
         }
-        let target_state = StateIndex::from_usize(idx);
-        let mut step_idx = 0usize;
-        while step_idx < self.local_steps_len() {
-            if self.machine().state_for_step_index(step_idx) == Some(target_state) {
-                if !self.event_lane_step_matches(step_idx, lane_idx) {
-                    return Err(CursorInvariantError::INVARIANT);
-                }
-                let step_idx_u16 =
-                    u16::try_from(step_idx).map_err(|_| CursorInvariantError::INVARIANT)?;
-                return Ok(RelocatableResidentLaneStep(ResidentLaneStep {
-                    step_idx: step_idx_u16,
-                    lane: lane_idx as u8,
-                }));
+        let step_idx = u16::try_from(idx).map_err(|_| CursorInvariantError::INVARIANT)?;
+        Ok(RelocatableResidentLaneStep(ResidentLaneStep {
+            step_idx,
+            lane: lane_idx as u8,
+        }))
+    }
+
+    // Each lane stores its descriptor event index. The row end is its terminal
+    // value; no ordinal/count/sparse-layout reconstruction runs on every poll.
+    pub(super) fn seed_resident_lane_heads(&mut self) {
+        let Some((start, end)) = self.resident_row_bounds(self.resident_row_index_usize()) else {
+            if self.local_steps_len() != 0 {
+                crate::invariant();
             }
-            step_idx += 1;
+            self.lane_cursors_mut().fill(0);
+            return;
+        };
+        self.lane_cursors_mut().fill(Self::encode_index(end));
+        for step in start..end {
+            let Some(lane) = self.machine().event_program().local_step_lane(step) else {
+                crate::invariant();
+            };
+            let head = &mut self.lane_cursors_mut()[usize::from(lane)];
+            if usize::from(*head) == end {
+                *head = Self::encode_index(step);
+            }
         }
-        Err(CursorInvariantError::INVARIANT)
     }
 
     #[inline(always)]
@@ -216,7 +204,7 @@ impl EventCursor {
                 crate::invariant();
             };
             self.state_mut().resident_row_index = row;
-            self.lane_cursors_mut().fill(0);
+            self.seed_resident_lane_heads();
             self.rebuild_current_step_label_codes();
             CursorRefresh::AllLanes
         } else {
@@ -231,14 +219,21 @@ impl EventCursor {
     ) -> CursorRefresh {
         let target = target.0;
         let lane_idx = target.lane as usize;
-        let Ok((row_idx, ordinal)) =
-            self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
+        let Ok(row_idx) = self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
         else {
             crate::invariant();
         };
         self.mark_local_event_done(target.step_idx as usize);
         let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
-        let next = usize::from(ordinal) + 1;
+        let Some((_, end)) = self.resident_row_bounds(row_idx) else {
+            crate::invariant();
+        };
+        let mut next = usize::from(target.step_idx) + 1;
+        while next < end
+            && self.machine().event_program().local_step_lane(next) != Some(target.lane)
+        {
+            next += 1;
+        }
         if next > self.lane_cursors()[lane_idx] as usize {
             self.lane_cursors_mut()[lane_idx] = Self::encode_index(next);
             self.refresh_current_step_label_code(lane_idx);
@@ -278,14 +273,16 @@ impl EventCursor {
     ) -> CursorRefresh {
         let target = target.0;
         let lane_idx = target.lane as usize;
-        let Ok((row_idx, ordinal)) =
-            self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
+        let Ok(row_idx) = self.resident_lane_step_locator(lane_idx, target.step_idx as usize)
         else {
             crate::invariant();
         };
         let refresh = self.select_resident_row_for_lane(row_idx, target.lane);
-        self.lane_cursors_mut()[lane_idx] = Self::encode_index(ordinal as usize);
+        self.lane_cursors_mut()[lane_idx] = target.step_idx;
         self.refresh_current_step_label_code(lane_idx);
         refresh
     }
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;

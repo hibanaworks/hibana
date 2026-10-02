@@ -51,10 +51,11 @@ pub(crate) const fn structured_scope_event_range(
     let marker = scope_markers.at(enter_idx);
     match marker.scope_id.kind() {
         Some(ScopeKind::Route) => {
-            let [left, right] = match route_arm_event_ranges_for_scope(scope_markers, scope) {
-                Some(ranges) => ranges,
-                None => return None,
-            };
+            let [left, right] =
+                match closed_route_arm_ranges_from_first_enter(scope_markers, enter_idx) {
+                    Some(ranges) => ranges,
+                    None => return None,
+                };
             Some((left.0, right.1))
         }
         Some(ScopeKind::Roll | ScopeKind::Parallel) => Some((
@@ -106,7 +107,7 @@ pub(crate) const fn route_parent_arm_for_scope(
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(scope)
         {
-            let ranges = match route_arm_event_ranges_for_scope(scope_markers, marker.scope_id) {
+            let ranges = match closed_route_arm_ranges_from_first_enter(scope_markers, idx) {
                 Some(ranges) => ranges,
                 None => crate::invariant(),
             };
@@ -157,11 +158,11 @@ pub(crate) const fn passive_route_child_scope(
             && !marker.scope_id.same(route)
             && marker.offset() == arm_start
         {
-            let (_, child_end) = match structured_scope_event_range(scope_markers, marker.scope_id)
-            {
-                Some(range) => range,
-                None => crate::invariant(),
-            };
+            let [_, (_, child_end)] =
+                match closed_route_arm_ranges_from_first_enter(scope_markers, idx) {
+                    Some(ranges) => ranges,
+                    None => crate::invariant(),
+                };
             if child_end <= arm_end {
                 let candidate = StructuredScopeRange::new(marker.scope_id, arm_start, child_end);
                 child = Some(match child {

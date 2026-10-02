@@ -4,7 +4,7 @@ import Hibana.DescriptorParticipants
 
 namespace Hibana
 
-def productionProgramAtomStride : Nat := 11
+def productionProgramAtomStride : Nat := 9
 
 def productionProgramRouteResolverStride : Nat := 8
 
@@ -40,7 +40,7 @@ def productionAtomOnlyEventCapacity : Nat :=
   productionDescriptorByteCapacity / productionProgramAtomStride
 
 theorem production_atom_only_event_capacity_exact :
-    productionAtomOnlyEventCapacity = 5957 := by
+    productionAtomOnlyEventCapacity = 7281 := by
   decide
 
 theorem descriptor_byte_ceiling_dominates_event_identity_domain :
@@ -1450,13 +1450,13 @@ def RustDescriptorImage.decodeAtomRow?
     (image : RustDescriptorImage) (row : Nat) : Option DecodedProgramAtom := do
   if row < image.atomCount then pure () else none
   let offset := row * productionProgramAtomStride
-  let effIndex ← readU16LE? image.programBytes offset
-  let sender ← readByte? image.programBytes (offset + 2)
-  let receiver ← readByte? image.programBytes (offset + 3)
-  let label ← readByte? image.programBytes (offset + 4)
-  let schema ← readU32LE? image.programBytes (offset + 5)
-  let origin ← readByte? image.programBytes (offset + 9)
-  let lane ← readByte? image.programBytes (offset + 10)
+  let effIndex := row
+  let sender ← readByte? image.programBytes offset
+  let receiver ← readByte? image.programBytes (offset + 1)
+  let label ← readByte? image.programBytes (offset + 2)
+  let schema ← readU32LE? image.programBytes (offset + 3)
+  let origin ← readByte? image.programBytes (offset + 7)
+  let lane ← readByte? image.programBytes (offset + 8)
   if effIndex < productionEventIdentityCapacity ∧
       0 < image.roleCount ∧
       sender < image.roleCount ∧

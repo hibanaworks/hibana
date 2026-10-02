@@ -31,15 +31,12 @@ impl RoleImagePlan {
     }
 
     pub(crate) const fn from_program<const E: usize>(
-        eff_list: &EffList<E>,
+        source: (&EffList<E>, &projection::ScopeFacts),
         facts: RuntimeRoleFacts,
         role: u8,
     ) -> Self {
-        let counts = RoleImageColumnCounts::from_program(
-            eff_list,
-            facts.footprint().logical_lane_count,
-            role,
-        );
+        let counts =
+            RoleImageColumnCounts::from_program(source, facts.footprint().logical_lane_count, role);
         Self {
             columns: counts.columns(facts),
         }
@@ -113,10 +110,11 @@ impl RoleImageColumnCounts {
 
 impl RoleImageColumnCounts {
     pub(super) const fn from_program<const E: usize>(
-        eff_list: &EffList<E>,
+        source: (&EffList<E>, &projection::ScopeFacts),
         logical_lane_count: usize,
         role: u8,
     ) -> Self {
+        let (eff_list, scopes) = source;
         if logical_lane_count == 0 || logical_lane_count > LANE_DOMAIN_SIZE {
             panic!("role logical lane domain invalid");
         }
@@ -126,7 +124,7 @@ impl RoleImageColumnCounts {
         let mut dependency_rows = 0usize;
         let mut conflict_rows = 0usize;
         let mut max_lane_plus_one = 0usize;
-        let mut dependencies = projection::DependencyCursor::new(eff_list, role);
+        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, role);
         let mut idx = 0usize;
         while idx < eff_list.len() {
             let atom = eff_list.atom_at(idx);
@@ -152,7 +150,7 @@ impl RoleImageColumnCounts {
             idx += 1;
         }
         let resident_rows = Self::resident_row_count(eff_list, role);
-        let route_facts = Self::route_facts(eff_list, role);
+        let route_facts = Self::route_facts(source, role);
         let roll_scopes = Self::roll_scope_count(eff_list, role);
         let active_lane_bits = lane_byte_count(max_lane_plus_one);
         let resident_boundaries = if resident_rows == 0 {
@@ -181,9 +179,10 @@ impl RoleImageColumnCounts {
     }
 
     const fn route_facts<const E: usize>(
-        eff_list: &EffList<E>,
+        source: (&EffList<E>, &projection::ScopeFacts),
         role: u8,
     ) -> RouteImagePlanRouteFacts {
+        let (eff_list, scopes) = source;
         let markers = eff_list.scope_markers();
         if !projection::scope_markers_contain_kind(markers, ScopeKind::Route) {
             return RouteImagePlanRouteFacts {
@@ -216,14 +215,9 @@ impl RoleImageColumnCounts {
                     arm_lane_bits[arm] = lanes.lane_bit_len();
                     facts.lane_bits += lanes.lane_bit_len();
                     facts.route_arm_lane_steps += lanes.relation_count();
-                    facts.route_commit_rows += projection::route_commit_row_count(
-                        markers,
-                        eff_list.len(),
-                        scope,
-                        arm as u8,
-                    );
                     arm += 1;
                 }
+                facts.route_commit_rows += 2 * projection::route_commit_row_count(scopes, scope);
                 let offer_lane_bits = if arm_lane_bits[0] > arm_lane_bits[1] {
                     arm_lane_bits[0]
                 } else {

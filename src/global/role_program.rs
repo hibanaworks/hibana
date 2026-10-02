@@ -4,7 +4,7 @@
 //! Crate-private lowering facts stay behind this module and the compiled layer.
 
 use super::compiled::lowering::RoleCompiledCounts;
-use crate::global::const_dsl::{ScopeEvent, ScopeId, ScopeKind, ScopeMarkerView};
+use crate::global::const_dsl::{ScopeId, ScopeKind, ScopeMarkerView};
 use core::marker::PhantomData;
 
 mod image_impl;
@@ -16,6 +16,7 @@ mod tests;
 
 pub use program::{RoleProgram, project};
 
+pub(crate) use image_impl::ScopeFacts;
 pub(crate) use image_types::*;
 pub(crate) use lane_set::*;
 pub(crate) use program::role_program_from_image;

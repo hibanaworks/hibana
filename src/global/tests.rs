@@ -25,8 +25,8 @@ fn descriptor_first_size_gates_hold() {
 #[test]
 fn compact_event_identity_and_descriptor_byte_domains_are_not_conflated() {
     assert_eq!(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY, 65_535);
-    assert_eq!(PROGRAM_IMAGE_ATOM_STRIDE, 11);
-    assert_eq!(PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, 5_957);
+    assert_eq!(PROGRAM_IMAGE_ATOM_STRIDE, 9);
+    assert_eq!(PROGRAM_IMAGE_ATOM_ONLY_EVENT_CAPACITY, 7_281);
 }
 
 #[test]

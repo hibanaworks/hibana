@@ -19,19 +19,14 @@ use layout::validate_role_image_layout;
 impl RoleImagePlan {
     pub(crate) const fn build_if_fits<const N: usize, const E: usize>(
         &self,
-        eff_list: &EffList<E>,
+        source: (&EffList<E>, &projection::ScopeFacts),
         facts: RuntimeRoleFacts,
         role: u8,
     ) -> Option<RoleImageBuild<N>> {
         if self.blob_len() > N {
             return None;
         }
-        Some(RoleImageBytes::<N>::emit(
-            eff_list,
-            facts,
-            role,
-            self.columns,
-        ))
+        Some(RoleImageBytes::<N>::emit(source, facts, role, self.columns))
     }
 }
 
@@ -170,11 +165,12 @@ impl<const N: usize> RoleImageBytes<N> {
     }
 
     pub(crate) const fn emit<const E: usize>(
-        eff_list: &EffList<E>,
+        source: (&EffList<E>, &projection::ScopeFacts),
         facts: RuntimeRoleFacts,
         role: u8,
         columns: RoleImageColumns,
     ) -> RoleImageBuild<N> {
+        let (eff_list, scopes) = source;
         let footprint = facts.footprint();
         let local_len = footprint.local_step_count;
         let route_scope_len = footprint.route_scope_count;
@@ -187,7 +183,7 @@ impl<const N: usize> RoleImageBytes<N> {
         let mut dependency_row = 0usize;
         let mut conflict_row = 0usize;
         let mut local_step = 0usize;
-        let mut dependencies = projection::DependencyCursor::new(eff_list, role);
+        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, role);
         let mut eff_idx = 0usize;
         while eff_idx < eff_list.len() {
             let atom = eff_list.atom_at(eff_idx);
@@ -293,10 +289,8 @@ impl<const N: usize> RoleImageBytes<N> {
                     ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
                     scope.raw(),
                 );
-                let scope_conflict = PackedEventConflict::from_conflict(
-                    projection::dependency_conflict_for_scope(markers, eff_list.len(), scope),
-                )
-                .with_route_reentry(marker.reentry);
+                let scope_conflict = PackedEventConflict::from_conflict(scopes.conflict(scope))
+                    .with_route_reentry(marker.reentry);
                 out.w16(
                     columns.route_scope_conflicts,
                     route_slot,
@@ -306,6 +300,7 @@ impl<const N: usize> RoleImageBytes<N> {
                 let Some(ranges) = projection::route_arm_ranges(markers, scope) else {
                     panic!("route scope missing binary arm ranges");
                 };
+                let commit_len = projection::route_commit_row_count(scopes, scope);
                 let mut local_rows = [PackedLaneRange::EMPTY; 2];
                 let mut arm_lane_rows = [PackedLaneRange::EMPTY; 2];
                 let mut arm = 0usize;
@@ -359,12 +354,6 @@ impl<const N: usize> RoleImageBytes<N> {
                         arm_row_index,
                         super::super::PackedRouteArmRow::new(local_row, child_slot, lane_step_row),
                     );
-                    let commit_len = projection::route_commit_row_count(
-                        markers,
-                        eff_list.len(),
-                        scope,
-                        arm as u8,
-                    );
                     let commit_range = PackedLaneRange::new(route_commit_row, commit_len);
                     out.w32(
                         columns.route_commit_ranges,
@@ -372,23 +361,22 @@ impl<const N: usize> RoleImageBytes<N> {
                         ROLE_IMAGE_LANE_RANGE_STRIDE,
                         commit_range.raw(),
                     );
-                    let mut pos = 0usize;
-                    while pos < commit_len {
-                        let target = commit_len - pos - 1;
+                    let mut commits = projection::RouteCommitCursor::new(scopes, scope, arm as u8);
+                    let mut pos = commit_len;
+                    while let Some(conflict) = commits.next() {
+                        if pos == 0 {
+                            panic!("route commit rows exceed planned length");
+                        }
+                        pos -= 1;
                         out.w16(
                             columns.route_commit_rows,
                             route_commit_row + pos,
                             ROLE_IMAGE_CONFLICT_STRIDE,
-                            projection::route_commit_conflict_at(
-                                markers,
-                                eff_list.len(),
-                                scope,
-                                arm as u8,
-                                target,
-                            )
-                            .raw(),
+                            conflict.raw(),
                         );
-                        pos += 1;
+                    }
+                    if pos != 0 {
+                        panic!("route commit rows do not fill planned length");
                     }
                     route_commit_row += commit_len;
                     arm += 1;

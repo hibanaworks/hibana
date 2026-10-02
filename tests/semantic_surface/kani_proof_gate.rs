@@ -656,7 +656,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(!route_knowledge_harnesses.contains("kani::assume"));
 
     for harness in [
-        "causal_witness_table_is_first_write_wins_and_role_exact",
+        "causal_role_facts_and_joins_are_role_exact",
         "three_event_linear_scan_matches_pairwise_checker",
         "three_event_causal_handoff_accepts_every_valid_role_assignment",
         "sender_change_without_causal_handoff_is_rejected",
@@ -707,8 +707,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "compiled_program_blob_comparison_matches_array_equality",
         "compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
         "program_atom_row_decoding_accepts_exact_domain",
-        "compiled_program_atom_binary_search_is_exact_for_sorted_rows",
-        "compiled_program_atom_order_rejects_noncanonical_rows",
+        "compiled_program_atom_lookup_is_exact_for_dense_rows",
+        "compiled_program_atom_constructor_rejects_invalid_roles",
         "compiled_program_atom_blob_decoding_preserves_every_schema_bit",
     ] {
         assert!(program_ref_harnesses.contains(&format!("fn {harness}()")));
@@ -724,7 +724,6 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         program_ref_harnesses.contains("route_resolver_len > COMPACT_DESCRIPTOR_BYTE_CAPACITY")
     );
     assert!(program_ref_harnesses.contains("assert!(decoded.is_some() == expected)"));
-    assert!(program_ref_harnesses.contains("row.atom.payload_schema == payload_schema"));
     assert!(program_ref_harnesses.contains("row.payload_schema == payload_schema"));
     assert_eq!(
         program_ref_harnesses
@@ -741,7 +740,7 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_ref_harnesses.contains("kani::cover!(valid);"));
     assert!(program_ref_harnesses.contains("kani::cover!(!valid);"));
     for stride in [
-        "0 => 1", "1 => 2", "2 => 4", "3 => 5", "4 => 6", "5 => 7", "6 => 8", "7 => 10", "8 => 11",
+        "0 => 1", "1 => 2", "2 => 4", "3 => 5", "4 => 6", "5 => 7", "6 => 8", "7 => 10", "8 => 9",
     ] {
         assert!(program_ref_harnesses.contains(stride));
     }
@@ -803,12 +802,12 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
         "assert!(canonical.columns.blob_len() == different_columns.columns.blob_len());"
     ));
     assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 0, 27, 0)"));
-    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(2, 0, 5, 0)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 1, 19, 0)"));
     assert!(
         program_ref_harnesses
             .contains("usize::from(u16::MAX) / PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE + 1")
     );
-    assert!(program_ref_harnesses.contains("ProgramImageBytes::<10>::from_image_if_fits"));
+    assert!(program_ref_harnesses.contains("ProgramImageBytes::<8>::from_image_if_fits"));
     assert!(program_ref_harnesses.contains(".is_none()"));
     assert!(!program_ref_harnesses.contains("kani::assume"));
 

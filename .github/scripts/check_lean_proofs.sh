@@ -6,6 +6,8 @@ PROOF_DIR="${ROOT_DIR}/proofs/lean"
 GENERATED="${ROOT_DIR}/target/lean-proof/Generated.lean"
 RUNTIME_GENERATED="${ROOT_DIR}/target/lean-proof/RuntimeGenerated.lean"
 PUBLIC_OPERATION_GENERATED="${ROOT_DIR}/target/lean-proof/PublicOperationGenerated.lean"
+CAUSAL_GENERATED="${ROOT_DIR}/target/lean-proof/CausalGenerated.lean"
+PARALLEL_GENERATED="${ROOT_DIR}/target/lean-proof/ParallelGenerated.lean"
 EXPECTED_TOOLCHAIN="leanprover/lean4:v4.30.0"
 EXPECTED_MARKER="hibana Lean generated certificate check passed traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8"
 EXPECTED_PRODUCTION_MARKER="hibana Lean production artifact passed transitions=7 operations=6 owners=8 kernel-refinement=external-premise owner-evidence=external-premise codecs=3 family=8 deployments=8 deployment-rejections=3 capabilities=6 agreement=static-exact-family profile=closing"
@@ -14,7 +16,7 @@ EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof pass
 EXPECTED_GENERATED_AXIOM_MARKER="Generated Lean axiom audit passed theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506"
 EXPECTED_RUNTIME_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=RuntimeGenerated theorems=16 claims=16"
 EXPECTED_PUBLIC_OPERATION_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=PublicOperationGenerated theorems=2 claims=2"
-EXPECTED_STATIC_AUDIT_MARKER="Lean static theorem audit passed theorems=693 both=354 propext=244 free=95"
+EXPECTED_STATIC_AUDIT_MARKER="Lean static theorem audit passed theorems=709 both=365 propext=247 free=97"
 GENERATED_CLAIM_SNAPSHOT="${PROOF_DIR}/generated-claim-surface.txt"
 RUNTIME_CLAIM_SNAPSHOT="${PROOF_DIR}/runtime-generated-claim-surface.txt"
 PUBLIC_OPERATION_CLAIM_SNAPSHOT="${PROOF_DIR}/public-operation-generated-claim-surface.txt"
@@ -51,7 +53,7 @@ python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" --self-test
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
 static_audit_output="$(python3 \
   "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 693 354 244 95)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 709 365 247 97)"
 printf '%s\n' "${static_audit_output}"
 if [[ "${static_audit_output}" != *"${EXPECTED_STATIC_AUDIT_MARKER}"* ]]; then
   echo "Lean proof gate static theorem boundary mismatch" >&2
@@ -63,7 +65,7 @@ python3 "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
 source "${ROOT_DIR}/.github/scripts/repo_rustflags.sh"
 hibana_enable_repo_tests_cfg
 mkdir -p "$(dirname "${GENERATED}")"
-rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}"
+rm -f "${GENERATED}" "${RUNTIME_GENERATED}" "${PUBLIC_OPERATION_GENERATED}" "${CAUSAL_GENERATED}" "${PARALLEL_GENERATED}"
 CARGO_BUILD_JOBS=1 \
   RUST_TEST_THREADS=1 \
 cargo +"${TOOLCHAIN}" test -p hibana --lib \
@@ -89,6 +91,36 @@ CARGO_BUILD_JOBS=1 \
     -- --ignored --exact
 if [[ ! -s "${PUBLIC_OPERATION_GENERATED}" ]]; then
   echo "Lean proof gate public-operation exporter did not create a nonempty artifact" >&2
+  exit 1
+fi
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  global::const_dsl::receive_lane_causality::tests::export_causal_flow_for_lean \
+  -- --ignored --exact
+if [[ ! -s "${CAUSAL_GENERATED}" ]]; then
+  echo "Lean proof gate causal exporter did not create a nonempty artifact" >&2
+  exit 1
+fi
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=1 cargo +"${TOOLCHAIN}" test -p hibana --lib \
+  global::event_program_cursor_tests::lean_proof_export::parallel_certificate::export_parallel_dependencies_for_lean \
+  -- --ignored --exact
+if [[ ! -s "${PARALLEL_GENERATED}" ]]; then
+  echo "Lean proof gate parallel exporter did not create a nonempty artifact" >&2
+  exit 1
+fi
+parallel_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+  --kernel "${PARALLEL_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/parallel-generated-claim-surface.txt" 182)"
+printf '%s\n' "${parallel_output}"
+if [[ "${parallel_output}" != *"Generated Lean kernel artifact audit passed artifact=ParallelGenerated theorems=182 claims=182"* ]]; then
+  echo "Lean proof gate parallel descriptor correspondence mismatch" >&2
+  exit 1
+fi
+causal_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+  --kernel "${CAUSAL_GENERATED}" "${PROOF_DIR}" \
+  "${PROOF_DIR}/causal-generated-claim-surface.txt" 36)"
+printf '%s\n' "${causal_output}"
+if [[ "${causal_output}" != *"Generated Lean kernel artifact audit passed artifact=CausalGenerated theorems=36 claims=36"* ]]; then
+  echo "Lean proof gate causal correspondence boundary mismatch" >&2
   exit 1
 fi
 lean_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
@@ -131,4 +163,4 @@ if [[ "${public_operation_lean_output}" != *"${EXPECTED_PUBLIC_OPERATION_AUDIT_M
   exit 1
 fi
 
-echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=693 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"
+echo "Lean proof gate passed toolchain=v4.30.0 traces=14 frames=66 projections=22 exact-descriptors=22 progress=4 projectability=8 distributed-progress=8 verified-protocols=8 static-theorems=709 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36 generated-theorems=506 generated-obligations=458 production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6 runtime-regions=4 atomic-failures=4 public-operation-edges=16 public-operation-transitions=144 native-regressions=32"

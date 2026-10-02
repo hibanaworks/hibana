@@ -1,7 +1,5 @@
 use super::{
-    super::{
-        PackedLaneRange, PackedLocalEventRow, ScopeEvent, ScopeId, ScopeKind, ScopeMarkerView,
-    },
+    super::{PackedLaneRange, PackedLocalEventRow, ScopeId, ScopeKind, ScopeMarkerView},
     binary_route_arm_index,
 };
 use crate::global::{
@@ -16,6 +14,7 @@ mod dependency;
 mod lanes;
 mod resident;
 mod route;
+mod scope_facts;
 pub(super) use crate::global::const_dsl::route_arm_event_ranges_for_scope as route_arm_ranges;
 pub(super) use crate::global::const_dsl::scope_segment_end_from_enter as scope_segment_end;
 pub(super) use crate::global::const_dsl::{
@@ -24,7 +23,8 @@ pub(super) use crate::global::const_dsl::{
 pub(super) use dependency::DependencyCursor;
 pub(super) use lanes::{LANE_BITMAP_BYTES, LocalLaneFacts};
 pub(super) use resident::ResidentRowCursor;
-pub(super) use route::{route_commit_conflict_at, route_commit_row_count};
+pub(super) use route::{RouteCommitCursor, route_commit_row_count};
+pub(crate) use scope_facts::ScopeFacts;
 
 pub(super) const fn same_scope(left: ScopeId, right: ScopeId) -> bool {
     !left.is_none() && left.same(right)
@@ -112,7 +112,9 @@ pub(super) const fn nearest_route_for_scope(
             && !same_scope(marker.scope_id, scope_id)
         {
             let start = marker.offset();
-            let end = match route_arm_ranges(markers, marker.scope_id) {
+            let end = match crate::global::const_dsl::closed_route_arm_ranges_from_first_enter(
+                markers, idx,
+            ) {
                 Some(ranges) => {
                     if ranges[0].1 > ranges[1].1 {
                         ranges[0].1
@@ -200,33 +202,6 @@ pub(super) const fn parallel_exit_for_enter(
         panic!("parallel scope enter expected");
     };
     end
-}
-
-pub(super) const fn nearest_parent_parallel_end(
-    markers: ScopeMarkerView<'_>,
-    enter_idx: usize,
-    exit_eff: usize,
-) -> usize {
-    let mut depth = 0usize;
-    let mut scan = enter_idx;
-    while scan > 0 {
-        scan -= 1;
-        let candidate = markers.at(scan);
-        match candidate.event {
-            ScopeEvent::Exit => depth += 1,
-            ScopeEvent::Enter(_) => {
-                if depth == 0 {
-                    if matches!(candidate.scope_id.kind(), Some(ScopeKind::Parallel)) {
-                        return parallel_exit_for_enter(markers, scan);
-                    }
-                } else {
-                    depth -= 1;
-                }
-            }
-            ScopeEvent::Split => {}
-        }
-    }
-    exit_eff
 }
 
 pub(super) const fn local_step_range_for_eff_range<const E: usize>(

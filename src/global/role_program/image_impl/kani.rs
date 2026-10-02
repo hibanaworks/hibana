@@ -3,7 +3,7 @@ use super::{
         ColumnRange, PackedLaneRange, PackedRouteArmRow, ROLE_IMAGE_EVENT_STRIDE, RoleImageColumns,
         RoleImagePlan, RouteArmLaneStepRow, RuntimeRoleFacts,
     },
-    decode_binary_route_arm_index,
+    ScopeFacts, decode_binary_route_arm_index,
     event_rows::{
         RoleLocalDirection, decode_resident_event_header, encode_optional_event_fact_row,
         role_local_direction,
@@ -61,11 +61,12 @@ fn one_event_role_image_plan() -> RoleImagePlan {
 #[kani::proof]
 fn role_image_fit_probe_rejects_undersized_storage() {
     let source = crate::global::const_dsl::EffList::<1>::new();
+    let scopes = ScopeFacts::new(&source);
     let facts = empty_role_facts();
     let plan = one_event_role_image_plan();
     assert!(plan.blob_len() == ROLE_IMAGE_EVENT_STRIDE);
     assert!(
-        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>(&source, facts, 0)
+        plan.build_if_fits::<{ ROLE_IMAGE_EVENT_STRIDE - 1 }, 1>((&source, &scopes), facts, 0)
             .is_none()
     );
 }
@@ -82,6 +83,7 @@ fn optional_event_fact_row_reserves_only_the_absent_u16_value() {
 #[kani::should_panic]
 fn role_image_fit_probe_rejects_plan_mismatch() {
     let source = crate::global::const_dsl::EffList::<1>::new();
+    let scopes = ScopeFacts::new(&source);
     let facts = RuntimeRoleFacts::from_counts(RoleCompiledCounts {
         max_route_commit_count: 0,
         local_step_count: 0,
@@ -91,7 +93,7 @@ fn role_image_fit_probe_rejects_plan_mismatch() {
         logical_lane_count: 1,
     });
     let plan = one_event_role_image_plan();
-    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>(&source, facts, 0);
+    let _ = plan.build_if_fits::<ROLE_IMAGE_EVENT_STRIDE, 1>((&source, &scopes), facts, 0);
 }
 
 #[kani::proof]

@@ -164,7 +164,7 @@ The compact descriptor domains impose these explicit limits:
 | Roles | 256 | The complete `u8` role domain, `0..=255` |
 | Event identities | 65,535 | Dense identity domain; `u16::MAX` remains the absent sentinel |
 | Program image | 65,535 B | Compact `u16` byte-offset domain for one immutable global image |
-| Atom-only program | 5,957 events | `65,535 / 11`; control columns reduce this shape-dependent ceiling |
+| Atom-only program | 7,281 events | `65,535 / 9`; control columns reduce this shape-dependent ceiling |
 | Role image | 65,535 B per role | Compact `u16` byte-offset domain for one projected role image |
 | Structured scopes | Image-derived | Every scope contributes at least two five-byte markers, so the byte ceiling binds before the compact scope-id domain |
 | Route commit chain | Image-derived | A `u16` descriptor range; no separate `u8` chain ceiling |
@@ -202,7 +202,7 @@ Row contents remain the separate responsibility of translation validation. The
 temporary arena therefore has no smaller independent acceptance ceiling. Its
 lane matching scratch is bounded by the 256-value wire lane domain rather than
 by event count.
-A const fixture constructs and emits the full 5,957-event
+A const fixture constructs and emits the full 7,281-event
 atom-only image. Public typed fixtures separately track 289 messages and 258
 parallel events under rustc's default recursion limit. A Pico-target compile
 gate projects 256 linear cyclic sender handoffs, 64 handoffs per route arm, and
@@ -211,6 +211,31 @@ validation path. Large generated type trees should compose balanced subtrees;
 genuinely nested source semantics deeper than that compiler limit may require a
 crate-level `recursion_limit`. The dedicated `>128` scope test keeps this source
 constraint separate from runtime, descriptor, stack, and SRAM measurements.
+
+Receive-lane sender changes use structured causal must analysis. A route joins
+only facts established in every possible arm; parallel arms start from the
+same incoming facts and cannot relay each other's intermediate results. A
+rolled body composes fresh visits with independent route choices. The exact
+256-role fact set occupies 32 bytes of compiler scratch and adds no endpoint,
+wire, or runtime state. The Lean model proves must facts for every selected-arm
+execution and derives receive-before-send order under its explicit schedule
+premises. Generated kernel checks compare concrete Rust and Lean decisions;
+they are finite correspondence evidence, not a universal Rust refinement.
+
+Role projection computes immutable source-to-parent scope facts once and shares
+those compiler facts across roles. The exact kind/ordinal domain is erased from
+the final descriptor. Route validation checks global authority once per scope
+and retains every role's observer checks. Parallel dependency compilation saves
+the shared sequential prefix at each fork, restores it at the split, and applies
+the whole local join after both arms. Both arms require that prefix even when
+the right arm introduces a new lane; neither arm acquires a dependency on its
+sibling's intermediate events. Shared-offset boundaries finish joins, restore splits,
+then record new inputs; serialized marker tie order is preserved. Initial offer
+dispatch follows the observed lane head when another arm has moved the shared
+cursor. Lean proves the sibling exclusion, retained sequential join, saved fork
+input, and lane-head preservation properties. Ten additional exact Rust/Lean
+descriptor fixtures and their corruption rejections are kernel-checked; these
+remain finite correspondence evidence rather than a universal Rust proof.
 
 ### Messages And Payloads
 
@@ -514,6 +539,13 @@ path changes may remain inside one generation. Reusing a `SessionId` after
 retirement requires carrier state that cannot expose a frame from the retired
 generation. A multiplexed carrier may retire one logical direction while
 unrelated sessions remain live.
+
+Route agreement also requires every controller to execute its accepted image
+through its Endpoint. Passive endpoints cannot detect a controller that bypasses
+the kernel and fabricates opposite-arm frames for different peers. Peer
+authentication alone does not make such a controller conforming. Hibana does
+not implement Byzantine agreement between independent passive endpoints; the
+carrier must preserve provenance from the conforming sender execution.
 
 Protocol-invisible liveness detection belongs to the transport. A wait that
 cannot progress returns `TransportError` from `poll_send` or `poll_recv`; it

@@ -646,10 +646,11 @@ fn streaming_role_image_tracks_actual_event_count() {
         endpoint_lane_slot_count: LANE_DOMAIN_SIZE,
         logical_lane_count: LANE_DOMAIN_SIZE,
     });
-    let plan = RoleImagePlan::from_program(&OVER_LOCAL_STEP_CAPACITY_ATOMS, facts, 0);
+    let scopes = ScopeFacts::new(&OVER_LOCAL_STEP_CAPACITY_ATOMS);
+    let plan = RoleImagePlan::from_program((&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes), facts, 0);
     let build = plan
         .build_if_fits::<{ u16::MAX as usize }, { LOCAL_STEP_STRESS_ROW_BUDGET + 1 }>(
-            &OVER_LOCAL_STEP_CAPACITY_ATOMS,
+            (&OVER_LOCAL_STEP_CAPACITY_ATOMS, &scopes),
             facts,
             0,
         )
@@ -693,9 +694,10 @@ fn streaming_role_image_accepts_more_than_256_resident_rows() {
         endpoint_lane_slot_count: 2,
         logical_lane_count: 2,
     });
-    let plan = RoleImagePlan::from_program(&source, facts, 0);
+    let scopes = ScopeFacts::new(&source);
+    let plan = RoleImagePlan::from_program((&source, &scopes), facts, 0);
     let build = plan
-        .build_if_fits::<{ u16::MAX as usize }, 2048>(&source, facts, 0)
+        .build_if_fits::<{ u16::MAX as usize }, 2048>((&source, &scopes), facts, 0)
         .expect("257 resident phases fit their exact role image");
 
     assert_eq!(build.columns.resident_boundaries.len as usize, PHASES + 1);
@@ -703,16 +705,10 @@ fn streaming_role_image_accepts_more_than_256_resident_rows() {
 
 fn assert_parallel_resident_row_shape(image: RoleDescriptorRef) {
     let rows = image.local_event_rows();
-    assert_eq!(
-        rows.resident_row_lane_steps(0, 0).map(|steps| steps.len),
-        Some(1)
-    );
-    assert_eq!(
-        rows.resident_row_lane_steps(0, 1).map(|steps| steps.len),
-        Some(1)
-    );
-    assert!(rows.resident_row_lane_steps(1, 0).is_none());
-    assert!(rows.resident_row_lane_steps(1, 1).is_none());
+    assert_eq!(rows.reference_resident_lane_count(0, 0), Some(1));
+    assert_eq!(rows.reference_resident_lane_count(0, 1), Some(1));
+    assert!(rows.reference_resident_lane_count(1, 0).is_none());
+    assert!(rows.reference_resident_lane_count(1, 1).is_none());
 }
 
 type ParallelLane0 = g::Send<0, 1, Msg<9, ()>>;
@@ -1016,22 +1012,16 @@ fn resident_rows_cover_multiple_exact_layout_rows() {
     with_role_descriptor(&program, |descriptor| {
         let rows = descriptor.local_event_rows();
         assert_eq!(rows.resident_row_min_start(0), Some(0));
-        assert_eq!(
-            rows.resident_row_lane_steps(0, 0).map(|steps| steps.len),
-            Some(1)
-        );
-        assert!(rows.resident_row_lane_steps(0, 1).is_none());
+        assert_eq!(rows.reference_resident_lane_count(0, 0), Some(1));
+        assert!(rows.reference_resident_lane_count(0, 1).is_none());
 
         assert_eq!(rows.resident_row_min_start(1), Some(1));
-        assert_eq!(rows.resident_row_lane_step_at(1, 0, 0), Some(1));
-        assert_eq!(rows.resident_row_lane_step_at(1, 1, 0), Some(2));
+        assert_eq!(rows.reference_resident_lane_step_at(1, 0, 0), Some(1));
+        assert_eq!(rows.reference_resident_lane_step_at(1, 1, 0), Some(2));
 
         assert_eq!(rows.resident_row_min_start(2), Some(3));
-        assert_eq!(
-            rows.resident_row_lane_steps(2, 0).map(|steps| steps.len),
-            Some(1)
-        );
-        assert!(rows.resident_row_lane_steps(2, 1).is_none());
+        assert_eq!(rows.reference_resident_lane_count(2, 0), Some(1));
+        assert!(rows.reference_resident_lane_count(2, 1).is_none());
         assert!(rows.resident_row_min_start(3).is_none());
     });
 }
@@ -1082,7 +1072,7 @@ fn parallel_route_projection_keeps_resident_descriptor_without_public_step_surfa
         assert!(
             descriptor
                 .local_event_rows()
-                .resident_row_lane_steps(0, 0)
+                .reference_resident_lane_count(0, 0)
                 .is_some(),
             "parallel projection should preserve compact lane step facts"
         );

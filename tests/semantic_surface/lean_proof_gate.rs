@@ -40,6 +40,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     let distributed_semantics_examples =
         read("proofs/lean/Hibana/DistributedSemanticsExamples.lean");
     let iteration_erasure = read("proofs/lean/Hibana/IterationErasure.lean");
+    let causal_flow = read("proofs/lean/Hibana/CausalFlow.lean");
     let in_band_choice_knowledge = read("proofs/lean/Hibana/InBandChoiceKnowledge.lean");
     let global_coherence = read("proofs/lean/Hibana/GlobalCoherence.lean");
     let distributed_semantics = read("proofs/lean/Hibana/DistributedSemantics.lean");
@@ -94,6 +95,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         static_projectability.as_str(),
         static_projectability_examples.as_str(),
         iteration_erasure.as_str(),
+        causal_flow.as_str(),
         in_band_choice_knowledge.as_str(),
         global_coherence.as_str(),
         distributed_semantics.as_str(),
@@ -412,7 +414,7 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
     );
     assert!(
         descriptor_refinement.contains("structure RustDescriptorImage")
-            && descriptor_refinement.contains("productionProgramAtomStride : Nat := 11")
+            && descriptor_refinement.contains("productionProgramAtomStride : Nat := 9")
             && descriptor_refinement.contains("productionProgramRouteResolverStride : Nat := 8")
             && descriptor_refinement
                 .contains("productionRouteResolverDynamicScopeBit : Nat := 32768")
@@ -661,12 +663,9 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && static_projectability.contains("roll_receive_lane_causality_checker_sound")
             && static_projectability.contains("roll_body_occurrences_cross_iteration_safe")
             && static_projectability.contains("roll_reentry_sender_change_requires_causal_handoff")
-            && static_projectability.contains("add_causal_witness_first_write_wins")
-            && static_projectability.contains("add_causal_witness_preserves_other_role")
-            && static_projectability.contains(
-                "propagate_causal_witness_without_route_conflicts_is_endpoint_independent"
-            )
-            && static_projectability.contains("causal_witness_fold_reuses_prefix_exactly")
+            && causal_flow.contains("causal_flow_monotone")
+            && causal_flow.contains("causal_flow_is_must_analysis")
+            && causal_flow.contains("roll_causal_flow_composes_fresh_visits")
             && static_projectability.contains("ConflictListsMutuallyExclusive")
             && static_projectability.contains("ParallelListsIndependent")
             && static_projectability.contains("receivePrecedesLaterSend")
@@ -692,10 +691,10 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
             && static_projectability.contains("dynamic_route_competing_first_senders_are_rejected")
             && static_projectability.contains("checkRollReentryLinearityFrom")
             && static_projectability.contains("static_projectability_checker_sound")
-            && iteration_erasure.contains("inductive CausalHandoffPath")
-            && iteration_erasure.contains("structure CausalSchedule")
-            && iteration_erasure.contains("receive_precedes_later_send_has_causal_path")
-            && iteration_erasure.contains("causal_handoff_path_orders_receive_before_send")
+            && iteration_erasure.contains("inductive TimedCausalFlowRun")
+            && iteration_erasure.contains("def MustCausalHandoff")
+            && iteration_erasure.contains("receive_precedes_later_send_has_must_handoff")
+            && iteration_erasure.contains("must_handoff_orders_receive_before_send")
             && iteration_erasure.contains("roll_reentry_has_fifo_or_causal_order")
             && in_band_choice_knowledge.contains("inductive LocalMembership")
             && in_band_choice_knowledge.contains("sealLocalMembership")
@@ -1186,10 +1185,11 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
         "theorem roll_receive_lane_causality_checker_sound",
         "theorem roll_body_occurrences_cross_iteration_safe",
         "theorem roll_reentry_sender_change_requires_causal_handoff",
-        "theorem add_causal_witness_first_write_wins",
-        "theorem add_causal_witness_preserves_other_role",
-        "theorem propagate_causal_witness_without_route_conflicts_is_endpoint_independent",
-        "theorem causal_witness_fold_reuses_prefix_exactly",
+        "theorem causal_flow_monotone",
+        "theorem causal_flow_is_must_analysis",
+        "theorem causal_flow_preserves_schedule_evidence",
+        "theorem accepted_causal_flow_has_must_handoff",
+        "theorem roll_causal_flow_composes_fresh_visits",
         "theorem local_queued_frame_has_canonical_lane",
         "theorem initial_route_selection_fidelity",
         "theorem global_step_preserves_route_selection_fidelity",
@@ -1313,6 +1313,8 @@ fn lean_proof_gate_is_pinned_fail_closed_and_runtime_free() {
                 || async_cancellation_termination.contains(theorem)
                 || global_progress.contains(theorem)
                 || static_projectability.contains(theorem)
+                || causal_flow.contains(theorem)
+                || iteration_erasure.contains(theorem)
                 || global_coherence.contains(theorem)
                 || distributed_semantics.contains(theorem)
                 || roll_freshness.contains(theorem)

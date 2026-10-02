@@ -2,206 +2,119 @@ import Hibana.StaticProjectability
 
 namespace Hibana
 
-/-- A concrete receive-to-send causal chain accepted by the static checker.
-Each relay is a descriptor occurrence whose sender is the role reached by the
-previous receive. -/
-inductive CausalHandoffPath
-    (occurrences : List StaticGlobalOccurrence)
-    (earlier later : StaticGlobalOccurrence)
-    (roleCount : Nat) : StaticGlobalOccurrence -> Prop where
-  | origin : CausalHandoffPath occurrences earlier later roleCount earlier
-  | handoff {source target : StaticGlobalOccurrence}
-      (chain : CausalHandoffPath occurrences earlier later roleCount source)
-      (member : target ∈ occurrences)
-      (senderBound : target.event.sender < roleCount)
-      (receiverBound : target.event.receiver < roleCount)
-      (sameRole : source.event.receiver = target.event.sender)
-      (locallyOrdered : occurrenceLocallyOrdered source target = true) :
-      CausalHandoffPath occurrences earlier later roleCount target
+abbrev CausalRoleTimes := Nat → Nat
 
-def CausalWitnessesSound
-    (occurrences : List StaticGlobalOccurrence)
-    (earlier later : StaticGlobalOccurrence)
-    (roleCount : Nat)
-    (witnesses : CausalWitnesses) : Prop :=
-  ∀ role witness, witnesses role = some witness ->
-    witness.event.receiver = role ∧
-      CausalHandoffPath occurrences earlier later roleCount witness
+def CausalRoleTimes.update (times : CausalRoleTimes) (role time : Nat) : CausalRoleTimes :=
+  fun query => if query = role then time else times query
 
-theorem initial_causal_witnesses_sound
-    {occurrences : List StaticGlobalOccurrence}
-    {earlier later : StaticGlobalOccurrence}
-    {roleCount : Nat} :
-    CausalWitnessesSound occurrences earlier later roleCount
-      (fun role => if role = earlier.event.receiver then some earlier else none) := by
-  intro role witness found
-  by_cases same : role = earlier.event.receiver
-  · simp [same] at found
-    subst witness
-    exact ⟨same.symm, .origin⟩
-  · simp [same] at found
+/-- A concrete schedule for the query's projected prefix. A relay consumes
+its sender's prior local action, sends, then receives. A parallel join waits
+for both arms; route execution chooses only one arm. These are interpretation
+premises, not claims that Lean has verified arbitrary Rust or carriers. -/
+inductive TimedCausalFlowRun (origin : Nat) :
+    CausalFlowExpr → CausalRoleTimes → CausalRoleTimes → Prop where
+  | empty (before) : TimedCausalFlowRun origin .empty before before
+  | seed {before role} (ordered : before role ≤ origin) :
+      TimedCausalFlowRun origin (.seed role) before (before.update role origin)
+  | relay {before sender receiver sent received}
+      (localOrder : before sender < sent) (delivery : sent < received)
+      (receiverOrder : before receiver ≤ received) :
+      TimedCausalFlowRun origin (.relay sender receiver) before (before.update receiver received)
+  | seq {left right before middle after}
+      (first : TimedCausalFlowRun origin left before middle)
+      (second : TimedCausalFlowRun origin right middle after) :
+      TimedCausalFlowRun origin (.seq left right) before after
+  | left {left right before after} (run : TimedCausalFlowRun origin left before after) :
+      TimedCausalFlowRun origin (.choice left right) before after
+  | right {left right before after} (run : TimedCausalFlowRun origin right before after) :
+      TimedCausalFlowRun origin (.choice left right) before after
+  | parallel {left right before leftAfter rightAfter}
+      (first : TimedCausalFlowRun origin left before leftAfter)
+      (second : TimedCausalFlowRun origin right before rightAfter) :
+      TimedCausalFlowRun origin (.parallel left right) before
+        (fun role => max (leftAfter role) (rightAfter role))
 
-theorem add_causal_witness_preserves_soundness
-    {occurrences : List StaticGlobalOccurrence}
-    {earlier later candidate : StaticGlobalOccurrence}
-    {roleCount role : Nat}
-    {witnesses : CausalWitnesses}
-    (sound : CausalWitnessesSound occurrences earlier later roleCount witnesses)
-    (candidateReceiver : candidate.event.receiver = role)
-    (candidatePath : CausalHandoffPath occurrences earlier later roleCount candidate) :
-    CausalWitnessesSound occurrences earlier later roleCount
-      (addCausalWitness witnesses role candidate) := by
-  intro query witness found
-  by_cases same : query = role
-  · subst query
-    cases prior : witnesses role with
-    | none =>
-        simp [addCausalWitness, prior] at found
-        subst witness
-        exact ⟨candidateReceiver, candidatePath⟩
-    | some existing =>
-        simp [addCausalWitness, prior] at found
-        subst witness
-        exact sound role existing prior
-  · have base : witnesses query = some witness := by
-      simpa [addCausalWitness, same] using found
-    exact sound query witness base
+def CausalRoles.SoundAt (facts : CausalRoles) (origin : Nat) (times : CausalRoleTimes) : Prop :=
+  ∀ role, facts role = true → origin ≤ times role
 
-theorem propagate_causal_witness_preserves_soundness
-    {occurrences : List StaticGlobalOccurrence}
-    {earlier later candidate : StaticGlobalOccurrence}
-    {roleCount : Nat}
-    {witnesses : CausalWitnesses}
-    (candidateMember : candidate ∈ occurrences)
-    (sound : CausalWitnessesSound occurrences earlier later roleCount witnesses) :
-    CausalWitnessesSound occurrences earlier later roleCount
-      (propagateCausalWitness earlier later roleCount witnesses candidate) := by
-  unfold propagateCausalWitness
-  split
-  next accepted =>
-    simp only [Bool.and_eq_true] at accepted
-    rcases accepted with ⟨⟨senderBound, receiverBound⟩, onRoutePath⟩
-    cases found : witnesses candidate.event.sender with
-    | none => exact sound
-    | some prior =>
-        simp only
-        by_cases locallyOrdered : occurrenceLocallyOrdered prior candidate = true
-        · rw [if_pos locallyOrdered]
-          have priorSound := sound candidate.event.sender prior found
-          exact add_causal_witness_preserves_soundness sound rfl <|
-            .handoff priorSound.2 candidateMember
-              (of_decide_eq_true senderBound) (of_decide_eq_true receiverBound)
-              priorSound.1 locallyOrdered
-        · rw [if_neg locallyOrdered]
-          exact sound
-  next _ => exact sound
+theorem causal_flow_preserves_schedule_evidence
+    {origin : Nat} {flow : CausalFlowExpr} {before after : CausalRoleTimes}
+    (run : TimedCausalFlowRun origin flow before after)
+    {facts : CausalRoles} (sound : facts.SoundAt origin before) :
+    (flow.eval facts).SoundAt origin after := by
+  induction run generalizing facts with
+  | empty => exact sound
+  | @seed before role ordered =>
+      intro query found
+      by_cases same : query = role
+      · simp [CausalRoleTimes.update, same]
+      · simp only [CausalFlowExpr.eval, CausalRoles.insert, Bool.or_eq_true] at found
+        have prior : facts query = true := by simpa [same] using found
+        simpa [CausalRoleTimes.update, same] using sound query prior
+  | @relay before sender receiver sent received localOrder delivery receiverOrder =>
+      intro query found
+      by_cases same : query = receiver
+      · subst query
+        by_cases reached : facts sender = true
+        · have causal := Nat.le_trans (sound sender reached)
+            (Nat.le_of_lt (Nat.lt_trans localOrder delivery))
+          simpa [CausalRoleTimes.update] using causal
+        · have prior : facts receiver = true := by simpa [CausalFlowExpr.eval, reached] using found
+          simpa [CausalRoleTimes.update] using Nat.le_trans (sound receiver prior) receiverOrder
+      · have prior : facts query = true := by
+          by_cases reached : facts sender = true
+          · simpa [CausalFlowExpr.eval, reached, CausalRoles.insert, same] using found
+          · simpa [CausalFlowExpr.eval, reached] using found
+        simpa [CausalRoleTimes.update, same] using sound query prior
+  | seq _ _ firstIH secondIH => exact secondIH (firstIH sound)
+  | left _ ih =>
+      intro role found
+      simp only [CausalFlowExpr.eval, Bool.and_eq_true] at found
+      exact ih sound role found.1
+  | right _ ih =>
+      intro role found
+      simp only [CausalFlowExpr.eval, Bool.and_eq_true] at found
+      exact ih sound role found.2
+  | parallel _ _ leftIH rightIH =>
+      intro role found
+      simp only [CausalFlowExpr.eval, Bool.or_eq_true] at found
+      rcases found with first | second
+      · exact Nat.le_trans (leftIH sound role first) (Nat.le_max_left _ _)
+      · exact Nat.le_trans (rightIH sound role second) (Nat.le_max_right _ _)
 
-theorem fold_causal_witnesses_sound
-    {occurrences candidates : List StaticGlobalOccurrence}
-    {earlier later : StaticGlobalOccurrence}
-    {roleCount : Nat}
-    {witnesses : CausalWitnesses}
-    (candidatesSubset : ∀ candidate ∈ candidates, candidate ∈ occurrences)
-    (sound : CausalWitnessesSound occurrences earlier later roleCount witnesses) :
-    CausalWitnessesSound occurrences earlier later roleCount
-      (candidates.foldl
-        (propagateCausalWitness earlier later roleCount) witnesses) := by
-  induction candidates generalizing witnesses with
-  | nil => exact sound
-  | cons candidate rest induction =>
-      simp only [List.foldl_cons]
-      apply induction
-      · intro member memberInRest
-        exact candidatesSubset member (List.mem_cons_of_mem candidate memberInRest)
-      · exact propagate_causal_witness_preserves_soundness
-          (candidatesSubset candidate (by simp)) sound
+/-- The earlier receive precedes the target sender's prefix in *every*
+projected execution of every unfixed route choice. -/
+def MustCausalHandoff (flow : CausalFlowExpr) (sender : Nat) : Prop :=
+  ∀ origin before after, TimedCausalFlowRun origin flow before after → origin ≤ after sender
 
-theorem receive_precedes_later_send_has_causal_path
-    {occurrences : List StaticGlobalOccurrence}
-    {roleCount : Nat}
-    {earlier later : StaticGlobalOccurrence}
-    (accepted : receivePrecedesLaterSend occurrences roleCount earlier later = true)
-    (laterMember : later ∈ occurrences)
-    (laterReceiverBound : later.event.receiver < roleCount) :
-    CausalHandoffPath occurrences earlier later roleCount later := by
+theorem accepted_causal_flow_has_must_handoff
+    {flow : CausalFlowExpr} {sender : Nat}
+    (accepted : flow.eval (fun _ => false) sender = true) : MustCausalHandoff flow sender := by
+  intro origin before after run
+  have initial : CausalRoles.SoundAt (fun _ => false) origin before := by
+    intro role found
+    contradiction
+  exact causal_flow_preserves_schedule_evidence run initial sender accepted
+
+theorem must_handoff_orders_receive_before_send
+    {flow : CausalFlowExpr} {sender origin sent : Nat} {before after : CausalRoleTimes}
+    (must : MustCausalHandoff flow sender)
+    (run : TimedCausalFlowRun origin flow before after)
+    (targetLocalOrder : after sender < sent) : origin < sent :=
+  Nat.lt_of_le_of_lt (must origin before after run) targetLocalOrder
+
+theorem receive_precedes_later_send_has_must_handoff
+    {flow : CausalFlowExpr} {roleCount : Nat} {earlier later : StaticGlobalOccurrence}
+    (accepted : receivePrecedesLaterSend flow roleCount earlier later = true) :
+    MustCausalHandoff flow later.event.sender := by
   unfold receivePrecedesLaterSend at accepted
   split at accepted
-  next endpointsBound =>
-    simp only [Bool.and_eq_true] at endpointsBound
-    let initial : CausalWitnesses := fun role =>
-      if role = earlier.event.receiver then some earlier else none
-    let between := occurrences.filter fun candidate =>
-      earlier.globalId < candidate.globalId && candidate.globalId < later.globalId
-    let witnesses := between.foldl
-      (propagateCausalWitness earlier later roleCount) initial
-    have initialSound : CausalWitnessesSound occurrences earlier later roleCount initial :=
-      initial_causal_witnesses_sound
-    have betweenSubset : ∀ candidate ∈ between, candidate ∈ occurrences := by
-      intro candidate member
-      exact (List.mem_filter.mp member).1
-    have witnessesSound :
-        CausalWitnessesSound occurrences earlier later roleCount witnesses :=
-      fold_causal_witnesses_sound betweenSubset initialSound
-    change (match witnesses later.event.sender with
-      | none => false
-      | some witness => occurrenceLocallyOrdered witness later) = true at accepted
-    cases found : witnesses later.event.sender with
-    | none => simp [found] at accepted
-    | some witness =>
-        have ordered : occurrenceLocallyOrdered witness later = true := by
-          simpa [found] using accepted
-        have witnessSound := witnessesSound later.event.sender witness found
-        apply CausalHandoffPath.handoff witnessSound.2 laterMember
-          (of_decide_eq_true endpointsBound.2)
-          laterReceiverBound witnessSound.1
-        exact ordered
-  next endpointsOutOfRange => simp at accepted
+  next _ => exact accepted_causal_flow_has_must_handoff accepted
+  next _ => simp at accepted
 
-/-- A schedule interpretation for the checker: each send precedes its receive,
-and locally ordered receive-to-send handoffs preserve endpoint program order. -/
-structure CausalSchedule (occurrences : List StaticGlobalOccurrence) where
-  sendTime : Nat -> Nat
-  receiveTime : Nat -> Nat
-  deliveryOrder : ∀ occurrence ∈ occurrences,
-    sendTime occurrence.globalId < receiveTime occurrence.globalId
-  localOrder : ∀ source target,
-    source.event.receiver = target.event.sender ->
-    occurrenceLocallyOrdered source target = true ->
-    receiveTime source.globalId < sendTime target.globalId
-
-theorem causal_handoff_path_orders_receive_before_send
-    {occurrences : List StaticGlobalOccurrence}
-    {earlier later : StaticGlobalOccurrence}
-    {roleCount : Nat}
-    (schedule : CausalSchedule occurrences)
-    (path : CausalHandoffPath occurrences earlier later roleCount later)
-    (different : earlier ≠ later) :
-    schedule.receiveTime earlier.globalId < schedule.sendTime later.globalId := by
-  have receiveProgress : ∀ occurrence,
-      CausalHandoffPath occurrences earlier later roleCount occurrence ->
-      occurrence = earlier ∨
-        schedule.receiveTime earlier.globalId < schedule.receiveTime occurrence.globalId := by
-    intro occurrence occurrencePath
-    induction occurrencePath with
-    | origin => exact Or.inl rfl
-    | handoff chain member _ _ sameRole locallyOrdered induction =>
-        right
-        have localStep := schedule.localOrder _ _ sameRole locallyOrdered
-        have delivered := schedule.deliveryOrder _ member
-        rcases induction with rfl | prior
-        · exact Nat.lt_trans localStep delivered
-        · exact Nat.lt_trans (Nat.lt_trans prior localStep) delivered
-  cases path with
-  | origin => exact False.elim (different rfl)
-  | handoff chain _ _ _ sameRole locallyOrdered =>
-      have localStep := schedule.localOrder _ _ sameRole locallyOrdered
-      rcases receiveProgress _ chain with rfl | prior
-      · exact localStep
-      · exact Nat.lt_trans prior localStep
-
-/-- Hibana's iteration-erasure criterion: a reused receive lane is ordered by
-one authenticated FIFO channel when the sender is stable, otherwise by a real
-receive-to-send causal handoff before the next iteration can publish. -/
+/-- The FIFO/causal alternative is preserved across reentry. The two visits
+use distinct route choices; a one-sided current-iteration handoff cannot be
+borrowed from a different next-iteration route arm. -/
 theorem roll_reentry_has_fifo_or_causal_order
     {body : Choreo} {roleCount : Nat}
     {left right : StaticGlobalOccurrence}
@@ -212,20 +125,45 @@ theorem roll_reentry_has_fifo_or_causal_order
     (rightNonlocal : right.event.sender ≠ right.event.receiver)
     (sameReceiver : left.event.receiver = right.event.receiver)
     (sameLane : left.event.lane = right.event.lane)
-    (rightReceiverBound : right.event.receiver < roleCount) :
+    (_rightReceiverBound : right.event.receiver < roleCount) :
     left.event.sender = right.event.sender ∨
-      CausalHandoffPath body.rollUnfoldedOccurrences
-        (left.inRollIteration body.globalEvents.length .current)
-        (right.inRollIteration body.globalEvents.length .next)
-        roleCount
-        (right.inRollIteration body.globalEvents.length .next) := by
+      MustCausalHandoff
+        (body.rollCausalFlow left.globalId (body.globalEvents.length + right.globalId) roleCount)
+        right.event.sender := by
   by_cases sameSender : left.event.sender = right.event.sender
   · exact Or.inl sameSender
   · right
-    apply receive_precedes_later_send_has_causal_path
-    · exact roll_reentry_sender_change_requires_causal_handoff safe leftMember rightMember
-        leftNonlocal rightNonlocal sameReceiver sameLane sameSender
-    · exact List.mem_append_right _ (List.mem_map.mpr ⟨right, rightMember, rfl⟩)
-    · exact rightReceiverBound
+    exact receive_precedes_later_send_has_must_handoff
+      (roll_reentry_sender_change_requires_causal_handoff safe leftMember rightMember
+        leftNonlocal rightNonlocal sameReceiver sameLane sameSender)
+
+private def joinedRoute : Choreo :=
+  .seq (.send 0 1 1 1)
+    (.seq (.route .intrinsic (.send 1 2 2 1) (.send 1 2 3 1)) (.send 2 1 4 1))
+
+theorem route_join_common_reply_accepted :
+    checkStaticProjectability 3 joinedRoute = true := by decide
+
+theorem route_join_common_reply_has_must_handoff :
+    MustCausalHandoff (joinedRoute.causalFlow 0 3 3) 2 :=
+  accepted_causal_flow_has_must_handoff (by decide)
+
+theorem route_join_one_sided_handoff_rejected :
+    (Choreo.seq (.send 0 1 1 1)
+      (.seq (.route (.dynamic 7) (.send 1 2 2 1) (.send 3 4 3 1))
+        (.send 2 1 4 1))).checkReceiveLaneCausality 5 = false := by decide
+
+theorem parallel_arms_cannot_relay_facts :
+    (Choreo.seq (.send 0 1 1 1)
+      (.seq (.par (.send 1 2 2 1) (.send 2 3 3 1))
+        (.send 3 1 4 1))).checkReceiveLaneCausality 4 = false := by decide
+
+theorem rolled_route_join_closed_cycle_accepted :
+    (Choreo.roll (.seq joinedRoute (.send 1 0 5 1))).checkRollReceiveLaneCausality 3 = true := by decide
+
+theorem rolled_route_one_sided_cycle_rejected :
+    (Choreo.roll (.seq (.send 0 1 1 1)
+      (.seq (.route (.dynamic 7) (.send 1 2 2 1) (.send 3 4 3 1))
+        (.seq (.send 2 1 4 1) (.send 1 0 5 1))))).checkRollReceiveLaneCausality 5 = false := by decide
 
 end Hibana

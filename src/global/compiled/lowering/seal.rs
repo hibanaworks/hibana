@@ -94,16 +94,10 @@ pub(super) const fn exact_role_facts<const E: usize>(
     }
 }
 
-#[inline(always)]
-const fn validate_compiled_layout<const E: usize>(
-    role: u8,
-    eff_list: &EffList<E>,
-) -> Option<ProgramSourceError> {
-    validate_route_projection_guarantees(role, eff_list)
-}
-
+// Global route authority and selector facts do not depend on a projected role.
+// Validate them once per scope, then check every role's observer obligation.
 const fn validate_route_projection_guarantees<const E: usize>(
-    role: u8,
+    summary: &CompiledProgramImage,
     eff_list: &EffList<E>,
 ) -> Option<ProgramSourceError> {
     let scope_markers = eff_list.scope_markers();
@@ -112,8 +106,12 @@ const fn validate_route_projection_guarantees<const E: usize>(
         let marker = scope_markers.at(marker_idx);
         if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && marker.event.is_primary_enter()
-            && scope_markers.is_first_enter(marker_idx)
-            && let Some(error) = validate_route_scope(role, eff_list, scope_markers, marker_idx)
+            && let Some(error) = validate_route_scope(
+                summary.compiled_program_role_count(),
+                eff_list,
+                scope_markers,
+                marker_idx,
+            )
         {
             return Some(error);
         }
@@ -123,7 +121,7 @@ const fn validate_route_projection_guarantees<const E: usize>(
 }
 
 const fn validate_route_scope<const E: usize>(
-    role: u8,
+    role_count: usize,
     eff_list: &EffList<E>,
     scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
     route_enter_marker_idx: usize,
@@ -152,13 +150,17 @@ const fn validate_route_scope<const E: usize>(
     {
         return Some(ProgramSourceError::ProjectionRouteUnprojectable);
     }
-    let observer_paths_mergeable = local_route_observer_paths_mergeable(
-        eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role,
-    );
-    if route_role_has_branch_knowledge(role, controller, observer_paths_mergeable) {
-        return None;
+    let mut role = 0usize;
+    while role < role_count {
+        let observer_paths_mergeable = local_route_observer_paths_mergeable(
+            eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role as u8,
+        );
+        if !route_role_has_branch_knowledge(role as u8, controller, observer_paths_mergeable) {
+            return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+        }
+        role += 1;
     }
-    Some(ProgramSourceError::ProjectionRouteUnprojectable)
+    None
 }
 
 #[inline(always)]
@@ -196,12 +198,5 @@ pub(crate) const fn projection_error_all_roles<const E: usize>(
     {
         return Some(error);
     }
-    let mut role = 0usize;
-    while role < summary.compiled_program_role_count() {
-        if let Some(error) = validate_compiled_layout(role as u8, eff_list) {
-            return Some(error);
-        }
-        role += 1;
-    }
-    None
+    validate_route_projection_guarantees(summary, eff_list)
 }

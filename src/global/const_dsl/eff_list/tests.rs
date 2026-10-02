@@ -1,6 +1,38 @@
 use super::super::{EffList, ReentryMark, ScopeEvent, ScopeId};
 use crate::eff::{EffAtom, EventOrigin};
 
+#[test]
+fn boundary_seek_preserves_floors_and_every_equal_offset_marker() {
+    use super::super::source_arena::{ScopeMarker, ScopeMarkerView, SourceRow};
+    for mask in 0usize..256 {
+        let mut rows = [SourceRow::Empty; 8];
+        let mut offset = 0;
+        for (index, row) in rows.iter_mut().enumerate() {
+            offset += (mask >> index) & 1;
+            *row = SourceRow::Scope(ScopeMarker::new(
+                offset,
+                offset + 1,
+                ScopeId::roll_scope(0),
+                ScopeEvent::roll_enter(),
+                ReentryMark::SinglePass,
+            ));
+        }
+        let markers = ScopeMarkerView {
+            rows: &rows,
+            start: 0,
+            len: rows.len(),
+        };
+        for floor in 0..=rows.len() {
+            for query in 0..=9 {
+                let expected = (floor..rows.len())
+                    .find(|&index| markers.at(index).offset() >= query)
+                    .unwrap_or(rows.len());
+                assert_eq!(markers.offset_lower_bound(query, floor), expected);
+            }
+        }
+    }
+}
+
 const fn atom() -> EffAtom {
     EffAtom {
         from: 0,

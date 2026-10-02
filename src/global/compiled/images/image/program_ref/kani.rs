@@ -1,4 +1,4 @@
-use super::{CompiledProgramRef, PackedProgramAtomFields, ProgramAtomRow};
+use super::{CompiledProgramRef, decode_program_atom};
 use crate::global::compiled::images::image::blob_storage::{
     DescriptorScopeEvent, ProgramImageBytes, erase_scope_event, scope_marker_identity_tag,
 };
@@ -20,19 +20,18 @@ static LAST_BYTE_DIFFERENT: [u8; 27] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     27,
 ];
-static SORTED_ATOM_ROWS: [u8; 33] = atom_rows([1, 3, 5]);
-static NONCANONICAL_ATOM_ROWS: [u8; 33] = atom_rows([1, 5, 3]);
+static DENSE_ATOM_ROWS: [u8; 27] = atom_rows();
 
 fn route_columns() -> ProgramImageColumns {
     ProgramImageColumns::new(0, 0, 27, 0)
 }
 
 fn identity_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(1, 0, 0, 1)
+    ProgramImageColumns::new(0, 0, 16, 0)
 }
 
 fn alternate_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(2, 0, 5, 0)
+    ProgramImageColumns::new(0, 1, 19, 0)
 }
 
 fn program<const N: usize>(
@@ -43,14 +42,11 @@ fn program<const N: usize>(
     CompiledProgramRef::compact(facts, columns, bytes)
 }
 
-const fn atom_rows(eff_indices: [u16; 3]) -> [u8; 33] {
-    let mut bytes = [0u8; 33];
-    let mut row = 0usize;
-    while row < eff_indices.len() {
-        let offset = row * PROGRAM_IMAGE_ATOM_STRIDE;
-        bytes[offset] = eff_indices[row] as u8;
-        bytes[offset + 1] = (eff_indices[row] >> 8) as u8;
-        bytes[offset + 4] = row as u8;
+const fn atom_rows() -> [u8; 27] {
+    let mut bytes = [0u8; 27];
+    let mut row = 0;
+    while row < 3 {
+        bytes[row * PROGRAM_IMAGE_ATOM_STRIDE + 2] = row as u8;
         row += 1;
     }
     bytes
@@ -135,7 +131,7 @@ fn program_image_columns_reject_first_total_byte_overflow() {
 fn program_image_fit_probe_rejects_undersized_storage() {
     let source = EffList::<1>::new();
     let columns = ProgramImageColumns::new(1, 0, 0, 0);
-    assert!(ProgramImageBytes::<10>::from_image_if_fits(&source, columns).is_none());
+    assert!(ProgramImageBytes::<8>::from_image_if_fits(&source, columns).is_none());
 }
 
 #[kani::proof]
@@ -143,7 +139,7 @@ fn program_image_fit_probe_rejects_undersized_storage() {
 fn program_image_constructor_rejects_undersized_storage() {
     let source = EffList::<1>::new();
     let columns = ProgramImageColumns::new(1, 0, 0, 0);
-    let _ = ProgramImageBytes::<10>::from_image(&source, columns);
+    let _ = ProgramImageBytes::<8>::from_image(&source, columns);
 }
 
 #[kani::proof]
@@ -196,7 +192,7 @@ fn packed_column_range_construction_is_exact_for_resident_stride_domain() {
         5 => 7,
         6 => 8,
         7 => 10,
-        8 => 11,
+        8 => 9,
         _ => crate::invariant(),
     };
     let byte_len = usize::from(len) * stride;
@@ -291,70 +287,48 @@ fn compiled_program_image_identity_is_exact_over_facts_columns_and_blob() {
 
 #[kani::proof]
 fn program_atom_row_decoding_accepts_exact_domain() {
-    let eff_idx: u16 = kani::any();
-    let from: u8 = kani::any();
-    let to: u8 = kani::any();
-    let label: u8 = kani::any();
-    let payload_schema: u32 = kani::any();
-    let origin: u8 = kani::any();
-    let lane: u8 = kani::any();
+    let bytes: [u8; 9] = kani::any();
     let max_role: u8 = kani::any();
-
-    let expected = (eff_idx as usize) < crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY
-        && from <= max_role
-        && to <= max_role
-        && origin <= 1;
-    let decoded = ProgramAtomRow::decode(
-        eff_idx,
-        PackedProgramAtomFields {
-            from,
-            to,
-            label,
-            payload_schema,
-            origin,
-            lane,
-        },
-        max_role,
-    );
-
+    let expected = bytes[0] <= max_role && bytes[1] <= max_role && bytes[7] <= 1;
+    let decoded = decode_program_atom(bytes, max_role);
     assert!(decoded.is_some() == expected);
-    if let Some(row) = decoded {
-        assert!(row.eff_idx == eff_idx);
-        assert!(row.atom.from == from);
-        assert!(row.atom.to == to);
-        assert!(row.atom.label == label);
-        assert!(row.atom.payload_schema == payload_schema);
-        assert!(row.atom.origin.packed_bits() == origin);
-        assert!(row.atom.lane == lane);
+    if let Some(atom) = decoded {
+        assert!(atom.from == bytes[0]);
+        assert!(atom.to == bytes[1]);
+        assert!(atom.label == bytes[2]);
+        assert!(
+            atom.payload_schema == u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]])
+        );
+        assert!(atom.origin.packed_bits() == bytes[7]);
+        assert!(atom.lane == bytes[8]);
     }
 }
 
 #[kani::proof]
-fn compiled_program_atom_binary_search_is_exact_for_sorted_rows() {
-    // The search is comparison-only. These calls cover all seven
-    // before/equal/between/after order classes; Lean proves arbitrary
-    // canonical descriptor keys are strictly ordered.
+fn compiled_program_atom_lookup_is_exact_for_dense_rows() {
     let image = program(
-        &SORTED_ATOM_ROWS,
+        &DENSE_ATOM_ROWS,
         ProgramImageFacts { max_role: 0 },
         ProgramImageColumns::new(3, 0, 0, 0),
     );
-    assert!(image.atom_at(0).is_none());
-    assert!(image.atom_at(1).map(|atom| atom.label) == Some(0));
-    assert!(image.atom_at(2).is_none());
-    assert!(image.atom_at(3).map(|atom| atom.label) == Some(1));
-    assert!(image.atom_at(4).is_none());
-    assert!(image.atom_at(5).map(|atom| atom.label) == Some(2));
-    assert!(image.atom_at(6).is_none());
+    let query: u16 = kani::any();
+    let index = usize::from(query) % crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY;
+    assert!(
+        image.atom_at(index).map(|atom| atom.label)
+            == if index < 3 { Some(index as u8) } else { None }
+    );
+    kani::cover!(index < 3);
+    kani::cover!(index >= 3);
 }
 
 #[kani::proof]
 #[kani::should_panic]
-fn compiled_program_atom_order_rejects_noncanonical_rows() {
+fn compiled_program_atom_constructor_rejects_invalid_roles() {
+    static INVALID: [u8; 9] = [1, 0, 0, 0, 0, 0, 0, 0, 0];
     let _ = program(
-        &NONCANONICAL_ATOM_ROWS,
+        &INVALID,
         ProgramImageFacts { max_role: 0 },
-        ProgramImageColumns::new(3, 0, 0, 0),
+        ProgramImageColumns::new(1, 0, 0, 0),
     );
 }
 
@@ -362,8 +336,6 @@ fn compiled_program_atom_order_rejects_noncanonical_rows() {
 fn compiled_program_atom_blob_decoding_preserves_every_schema_bit() {
     let payload_schema: u32 = kani::any();
     let bytes = [
-        0,
-        0,
         0,
         1,
         9,
@@ -374,7 +346,7 @@ fn compiled_program_atom_blob_decoding_preserves_every_schema_bit() {
         0,
         7,
     ];
-    let bytes: &'static [u8; 11] = unsafe {
+    let bytes: &'static [u8; 9] = unsafe {
         /* SAFETY: the forged atom bytes remain live until the program ref has
         decoded the row and the ref does not escape this proof harness. */
         core::mem::transmute(&bytes)

@@ -71,10 +71,22 @@ where
                 .map_err(|_| RecvError::PhaseInvariant)?
             {
                 Some(active_reentry) => Some(active_reentry),
-                None => self
-                    .cursor
-                    .enclosing_passive_route_scope_for_key(current_idx, key)
-                    .map_err(|_| RecvError::PhaseInvariant)?,
+                None => {
+                    // A cursor in this lane retains its active iteration's
+                    // position. A foreign cursor supplies no ingress context:
+                    // the observed lane then owns its pending head instead.
+                    let ingress_index = match self.cursor.event_lane_at(current_idx) {
+                        Some(lane) if lane == key.lane => Some(current_idx),
+                        Some(_) | None => self.cursor.index_for_lane_step(key.lane as usize),
+                    };
+                    match ingress_index {
+                        Some(index) => self
+                            .cursor
+                            .enclosing_passive_route_scope_for_key(index, key)
+                            .map_err(|_| RecvError::PhaseInvariant)?,
+                        None => None,
+                    }
+                }
             } {
                 let target_idx = self
                     .cursor

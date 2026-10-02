@@ -13,6 +13,8 @@ use std::{
 mod choreo_source;
 #[path = "lean_proof_export/cyclic_roll_certificate.rs"]
 mod cyclic_roll_certificate;
+#[path = "lean_proof_export/parallel_certificate.rs"]
+mod parallel_certificate;
 #[path = "lean_proof_export/production_kernel_artifact.rs"]
 mod production_kernel_artifact;
 #[path = "lean_proof_export/projection_certificate.rs"]

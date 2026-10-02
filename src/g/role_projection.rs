@@ -24,6 +24,9 @@ impl<Steps, const CAPACITY: usize> ProgramProjection<Steps, CAPACITY>
 where
     Steps: ProgramShape,
 {
+    const SCOPE_FACTS: crate::global::role_program::ScopeFacts =
+        crate::global::role_program::ScopeFacts::new(Self::SOURCE_EFF_LIST);
+
     const PROGRAM_PLAN: crate::global::compiled::images::ProgramImagePlan =
         crate::global::compiled::images::ProgramImagePlan::from_program(Self::SOURCE_EFF_LIST);
     const PROGRAM_COLUMNS: crate::global::compiled::images::ProgramImageColumns =
@@ -97,7 +100,10 @@ where
         crate::global::role_program::RuntimeRoleFacts::from_counts(Self::COUNTS);
     const PLAN: crate::global::role_program::RoleImagePlan =
         crate::global::role_program::RoleImagePlan::from_program(
-            ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
+            (
+                ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
+                &ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
+            ),
             Self::FACTS,
             ROLE,
         );
@@ -157,7 +163,10 @@ where
 {
     const BUILD: Option<crate::global::role_program::RoleImageBuild<N>> =
         RoleProjection::<ROLE, Steps, CAPACITY>::PLAN.build_if_fits(
-            ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
+            (
+                ProgramProjection::<Steps, CAPACITY>::SOURCE_EFF_LIST,
+                &ProgramProjection::<Steps, CAPACITY>::SCOPE_FACTS,
+            ),
             RoleProjection::<ROLE, Steps, CAPACITY>::FACTS,
             ROLE,
         );

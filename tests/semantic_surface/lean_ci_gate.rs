@@ -134,16 +134,16 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
                         && line.contains(" : ")
                 })
                 .count()
-                == 693
+                == 709
             && all_claim_snapshot.contains(
                 "@Hibana.assumption_indexed_epoch_erased_byte_exact_end_to_end_refinement :"
             )
             && proof_gate.contains("all-claim-surface.txt")
             && proof_gate.contains(
-                "--static \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 693 354 244 95",
+                "--static \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 709 365 247 97",
             )
             && proof_gate.contains("EXPECTED_STATIC_AUDIT_MARKER")
-            && proof_gate.contains("theorems=693 both=354 propext=244 free=95")
+            && proof_gate.contains("theorems=709 both=365 propext=247 free=97")
             && proof_gate.contains("example-claim-surface.txt")
             && proof_gate.contains(
                 "--example-types \"${PROOF_DIR}\" \"${EXAMPLE_CLAIM_SNAPSHOT}\" 36",
@@ -173,7 +173,7 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             && proof_gate
                 .contains("theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506")
             && proof_gate.contains("generated-theorems=506 generated-obligations=458")
-            && proof_gate.contains("static-theorems=693 anonymous-regressions=36")
+            && proof_gate.contains("static-theorems=709 parallel-descriptors=10 parallel-correspondence=182 causal-correspondence=36 anonymous-regressions=36")
             && proof_gate.contains(
                 "production-transitions=7 production-operations=6 production-owners=8 verified-codecs=3 verified-family=8 static-deployments=8 deployment-rejections=3 capabilities=6"
             )
@@ -182,6 +182,10 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
                 "public-operation kernel proof passed states=9 edges=16 transitions=144",
             )
             && proof_gate.contains("export_production_trace_for_lean")
+            && proof_gate.contains("export_parallel_dependencies_for_lean")
+            && proof_gate.contains("parallel-generated-claim-surface.txt")
+            && proof_gate.contains("artifact=ParallelGenerated theorems=182 claims=182")
+            && proof_gate.contains("[[ ! -s \"${PARALLEL_GENERATED}\" ]]")
             && proof_gate.contains("export_runtime_certificates_for_lean")
             && proof_gate.contains("export_public_operation_kernel_for_lean")
             && proof_gate.contains("\"${PUBLIC_OPERATION_GENERATED}\"")
