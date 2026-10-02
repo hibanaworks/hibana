@@ -98,8 +98,8 @@ again before publication; this repair extends the handoff's development base.
 | Core and projection example, no default features | Passed for `thumbv6m-none-eabi` and `thumbv8m.main-none-eabi` |
 | Stackchan radio firmware ABI check, Clippy and link | Passed using the local core path and pinned binary SDK |
 | Targeted strict-provenance Miri checks | Five rolled-route regressions and nine descriptor/decoder/image-identity cases passed |
-| Complete Kani/CBMC CI on `08bba17a` | 200 harnesses verified; zero failures |
-| Complete strict-provenance Miri CI on `08bba17a` | 223 passed; two intentionally ignored |
+| Complete Kani/CBMC CI on `fe09aad8` | 200 harnesses verified; zero failures |
+| Complete strict-provenance Miri CI on `fe09aad8` | 223 passed; two intentionally ignored |
 
 The existing fixed-snapshot size gate passed: measured sample peak stack was
 2,655 bytes, modeled sample runtime SRAM 5,322 bytes, and aggregate core rlib
@@ -147,3 +147,12 @@ canonical Lean gate, six supplemental Lean files and Z3 obligations were
 checked again. Evidence is retained under
 `/tmp/hibana-proof-audit-evidence.Ftyoo2/`; Rust verification products were
 removed after each check.
+
+The [CI run on `fe09aad8`](https://github.com/hibanaworks/hibana/actions/runs/37042194990)
+again passed Kani, Miri, canonical Lean and carrier conformance, and passed the
+unchanged source-lowering hygiene rule. Its final-form job reached the README
+measurement consistency check: the published table still described the earlier
+runtime. The measured publication-host stack was 2,639 bytes, modeled SRAM
+5,322 bytes and thumbv6m rlib sections 88,874 bytes. The table now records these
+measurements; release ceilings and checks are unchanged. The complete job log
+is retained as `final-form-ci-fe09aad8.log` in the proof-audit evidence directory.
