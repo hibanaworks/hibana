@@ -1,0 +1,12 @@
+certified_arm_comparisons=200
+role=16 events=21 routes=50 sorted=true passive=true blob_bytes=3188 RoleImageRef=96 RoleLaneImage=16 RoleImageColumns=60 lookup_comparisons=61
+certified_arm_comparisons=200
+role=17 events=21 routes=50 sorted=true passive=true blob_bytes=3188 RoleImageRef=96 RoleLaneImage=16 RoleImageColumns=60 lookup_comparisons=61
+certified_arm_comparisons=200
+role=18 events=21 routes=50 sorted=true passive=true blob_bytes=3188 RoleImageRef=96 RoleLaneImage=16 RoleImageColumns=60 lookup_comparisons=61
+certified_arm_comparisons=200
+role=19 events=21 routes=50 sorted=true passive=true blob_bytes=3188 RoleImageRef=96 RoleLaneImage=16 RoleImageColumns=60 lookup_comparisons=61
+certified_arm_comparisons=200
+role=24 events=79 routes=50 sorted=true passive=true blob_bytes=4280 RoleImageRef=96 RoleLaneImage=16 RoleImageColumns=60 lookup_comparisons=61
+certified_arm_comparisons=200
+role=25 events=79 routes=50 sorted=true passive=true blob_bytes=4280 RoleImageRef=96 RoleLaneImage=16 RoleImageColumns=60 lookup_comparisons=61
