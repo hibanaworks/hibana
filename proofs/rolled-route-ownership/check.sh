@@ -6,7 +6,11 @@ PROOFS="$ROOT/proofs/rolled-route-ownership"
 TOOLCHAIN=leanprover/lean4:v4.30.0
 EVIDENCE=${1:-$(mktemp -d /tmp/hibana-rolled-route-proofs.XXXXXX)}
 mkdir -p "$EVIDENCE"
-if rg -n '\b(sorry|admit|axiom|native_decide|unsafe)\b' "$PROOFS"/*.lean; then
+source "$ROOT/.github/scripts/lib/hygiene_common.sh"
+FAILED=0
+check_absent '\b(sorry|admit|axiom|native_decide|unsafe)\b' \
+  "rolled-route trusted proof declarations" "$PROOFS"/*.lean
+if [[ "$FAILED" -ne 0 ]]; then
   echo 'Untrusted declaration or proof bypass in supplemental proofs' >&2
   exit 1
 fi

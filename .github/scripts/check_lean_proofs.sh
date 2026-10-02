@@ -37,8 +37,12 @@ if [[ "$(cd "${PROOF_DIR}" && lake env lean --version)" != *"version 4.30.0"* ]]
   echo "Lean proof gate toolchain mismatch" >&2
   exit 1
 fi
-if rg -n 'Mathlib|^[[:space:]]*\[\[require\]\]|^[[:space:]]*git[[:space:]]*=' \
-  "${PROOF_DIR}/lakefile.toml" "${PROOF_DIR}/lake-manifest.json"; then
+source "${ROOT_DIR}/.github/scripts/lib/hygiene_common.sh"
+FAILED=0
+check_absent 'Mathlib|^[[:space:]]*\[\[require\]\]|^[[:space:]]*git[[:space:]]*=' \
+  "Lean Core/Std-only dependencies" \
+  "${PROOF_DIR}/lakefile.toml" "${PROOF_DIR}/lake-manifest.json"
+if [[ "${FAILED}" -ne 0 ]]; then
   echo "Lean proof gate must remain Core/Std-only" >&2
   exit 1
 fi

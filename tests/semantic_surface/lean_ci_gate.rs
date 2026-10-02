@@ -1,4 +1,73 @@
 use super::common::{read, repo_file_exists};
+use std::{path::PathBuf, process::Command};
+
+#[test]
+fn lean_source_audits_reject_tool_failures_before_running_proofs() {
+    let root = PathBuf::from(option_env!("HIBANA_REPO_ROOT").unwrap_or(env!("CARGO_MANIFEST_DIR")));
+    let script = r#"
+set -euo pipefail
+root="$1"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/hibana-lean-audit.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT
+mkdir "$scratch/bin"
+for tool in dirname mkdir; do
+  ln -s "$(command -v "$tool")" "$scratch/bin/$tool"
+done
+export PROOF_AUDIT_MARKER="$scratch/proof-ran"
+for tool in lake lean python3; do
+  cat > "$scratch/bin/$tool" <<'SH'
+#!/bin/bash
+if [[ "$*" == 'env lean --version' ]]; then
+  printf 'Lean (version 4.30.0)\n'
+  exit 0
+fi
+printf '%s\n' "$*" > "$PROOF_AUDIT_MARKER"
+exit 91
+SH
+  chmod +x "$scratch/bin/$tool"
+done
+for gate in .github/scripts/check_lean_proofs.sh proofs/rolled-route-ownership/check.sh; do
+  for audit in missing error forbidden clean; do
+    rm -f "$scratch/bin/rg" "$PROOF_AUDIT_MARKER"
+    case "$audit" in
+      missing) ;;
+      error) printf '#!/bin/bash\nexit 2\n' > "$scratch/bin/rg" ;;
+      forbidden) printf '#!/bin/bash\nprintf "forbidden proof fixture\\n"\nexit 0\n' > "$scratch/bin/rg" ;;
+      clean) printf '#!/bin/bash\nexit 1\n' > "$scratch/bin/rg" ;;
+    esac
+    if [[ -f "$scratch/bin/rg" ]]; then chmod +x "$scratch/bin/rg"; fi
+    set +e
+    PATH="$scratch/bin" "$BASH" "$root/$gate" "$scratch/evidence" > "$scratch/gate.log" 2>&1
+    status="$?"
+    set -e
+    if [[ "$audit" == clean ]]; then
+      if [[ "$status" != 91 || ! -f "$PROOF_AUDIT_MARKER" ]]; then
+        cat "$scratch/gate.log" >&2
+        printf 'clean audit did not reach the proof runner: %s\n' "$gate" >&2
+        exit 1
+      fi
+    elif [[ "$status" == 0 || -f "$PROOF_AUDIT_MARKER" ]]; then
+      cat "$scratch/gate.log" >&2
+      printf 'proof runner passed a failed source audit: %s %s\n' "$gate" "$audit" >&2
+      exit 1
+    fi
+  done
+done
+"#;
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .arg("lean-source-audit-test")
+        .arg(root)
+        .output()
+        .expect("run Lean source-audit fault injection");
+    assert!(
+        output.status.success(),
+        "Lean source-audit fault injection failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 #[test]
 fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {

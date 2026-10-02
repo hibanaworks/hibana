@@ -98,6 +98,7 @@ again before publication; this repair extends the handoff's development base.
 | Core and projection example, no default features | Passed for `thumbv6m-none-eabi` and `thumbv8m.main-none-eabi` |
 | Stackchan radio firmware ABI check, Clippy and link | Passed using the local core path and pinned binary SDK |
 | Targeted strict-provenance Miri checks | Five rolled-route regressions and nine descriptor/decoder/image-identity cases passed |
+| Complete Kani/CBMC CI on `08bba17a` | 200 harnesses verified; zero failures |
 
 The existing fixed-snapshot size gate passed: measured sample peak stack was
 2,655 bytes, modeled sample runtime SRAM 5,322 bytes, and aggregate core rlib
@@ -123,4 +124,19 @@ lookup, decoder boundaries and image identity. The five regressions join the
 Miri gate, bringing its reviewed total to 223 passed and two intentionally
 ignored tests. No harness is removed and no assumption is added. The first
 complete CBMC attempt verified 199 of 200; the failing proof-fixture assertion
-is repaired and awaits a new complete CI result.
+was repaired. The subsequent [CI run on `08bba17a`](https://github.com/hibanaworks/hibana/actions/runs/37038053959)
+verified all 200 harnesses with zero failures. Its Kani log is retained as
+`kani-ci-08bba17a.log` in the handoff evidence directory. The full final-form
+and Miri job is still running; its reviewed counts are not yet a completed CI
+result.
+
+The canonical and supplemental Lean source audits now use the existing
+fail-closed search helper. Missing ripgrep, unreadable search inputs and other
+search errors reject the gate before any proof run. A fault-injection
+regression exercises each script with missing, failed, forbidden and clean
+searches; the clean control reaches the proof runner while the three negative
+cases cannot. The 124 semantic-surface tests and strict Clippy passed, and the
+canonical Lean gate, six supplemental Lean files and Z3 obligations were
+checked again. Evidence is retained under
+`/tmp/hibana-proof-audit-evidence.Ftyoo2/`; Rust verification products were
+removed after each check.
