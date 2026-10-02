@@ -260,6 +260,11 @@ impl LocalEventProgram {
     }
 
     #[inline(always)]
+    pub(crate) fn has_passive_parent_index(&self) -> bool {
+        self.rows().has_passive_parent_index()
+    }
+
+    #[inline(always)]
     pub(crate) fn passive_arm_child_fact_by_slot(
         &self,
         slot: usize,

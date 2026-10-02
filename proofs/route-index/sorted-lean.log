@@ -1,0 +1,2 @@
+'Hibana.SortedRouteIndex.indexed_equals_scan' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.SortedRouteIndex.binary_equals_scan' depends on axioms: [propext, Classical.choice, Quot.sound]

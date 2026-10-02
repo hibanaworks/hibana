@@ -1,0 +1,73 @@
+   Compiling proc-macro2 v1.0.103
+   Compiling quote v1.0.41
+   Compiling unicode-ident v1.0.20
+   Compiling syn v2.0.108
+   Compiling serde_core v1.0.228
+   Compiling memchr v2.7.6
+   Compiling libc v0.2.177
+   Compiling futures-sink v0.3.31
+   Compiling pin-project-lite v0.2.16
+   Compiling futures-core v0.3.31
+   Compiling futures-channel v0.3.31
+   Compiling futures-macro v0.3.31
+   Compiling serde_json v1.0.145
+   Compiling target-triple v0.1.4
+   Compiling serde v1.0.228
+   Compiling futures-task v0.3.31
+   Compiling winnow v0.7.13
+   Compiling futures-io v0.3.31
+   Compiling pin-utils v0.1.0
+   Compiling slab v0.4.11
+   Compiling futures-util v0.3.31
+   Compiling toml_parser v1.0.4
+   Compiling toml_datetime v0.7.3
+   Compiling serde_spanned v1.0.3
+   Compiling itoa v1.0.15
+   Compiling ryu v1.0.20
+   Compiling toml_writer v1.0.4
+   Compiling toml v0.9.8
+   Compiling futures-executor v0.3.31
+   Compiling mio v1.1.0
+   Compiling socket2 v0.6.2
+   Compiling tokio-macros v2.6.0
+   Compiling serde_derive v1.0.228
+   Compiling termcolor v1.4.1
+   Compiling bytes v1.11.1
+   Compiling glob v0.3.3
+   Compiling trybuild v1.0.112
+   Compiling tokio v1.48.0
+   Compiling futures v0.3.31
+   Compiling static_assertions v1.1.0
+   Compiling hibana v0.9.6 (/workspace/scratch/0915e8fbff81/publication/hibana-perf-core)
+    Finished `test` profile [unoptimized] target(s) in 41.55s
+     Running unittests src/lib.rs (/workspace/scratch/0915e8fbff81/hibana-arm-row-index/target/debug/deps/hibana-e6007ee29d313775)
+
+running 4 tests
+test global::role_program::image_impl::tests::arm_row_index::constructor_rejected_certificate_keeps_original_accessors ... ok
+test global::role_program::image_impl::tests::arm_row_index::malformed_prefix_requires_checked_decoding_and_later_damage_keeps_early_success ... ok
+test global::role_program::image_impl::tests::arm_row_index::certified_arm_byte_mutations_match_exact_original_rows ... ok
+test global::role_program::image_impl::tests::arm_row_index::certified_arm_rows_match_original_with_full_query_guards ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 455 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized] target(s) in 0.02s
+     Running unittests src/lib.rs (/workspace/scratch/0915e8fbff81/hibana-arm-row-index/target/debug/deps/hibana-e6007ee29d313775)
+
+running 6 tests
+test global::typestate::cursor::first_recv_dispatch::tests::invalid_unused_owner_disables_new_read_without_changing_harmless_miss ... ok
+test global::typestate::cursor::first_recv_dispatch::tests::malformed_later_edge_and_duplicate_target_preserve_earlier_match ... ok
+test global::typestate::cursor::first_recv_dispatch::tests::passive_cycle_disables_index_and_preserves_ordered_legacy_outcomes ... ok
+test global::typestate::cursor::first_recv_dispatch::tests::unused_cyclic_owners_do_not_create_passive_edges ... ok
+test global::typestate::cursor::first_recv_dispatch::tests::wrong_owner_arm_disables_index_and_keeps_original_failure ... ok
+test global::typestate::cursor::first_recv_dispatch::tests::certified_parent_index_matches_legacy_for_every_decodable_scope ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 453 filtered out; finished in 0.05s
+
+mgmt boundary check passed
+plane boundary check passed
+resolver/route surface boundary check passed
+lowering hygiene check passed
+surface test alias hygiene check passed
+projection surface hygiene check passed
+endpoint surface owner check passed
+surface hygiene check passed

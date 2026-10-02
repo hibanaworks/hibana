@@ -2,6 +2,7 @@ use super::{
     CursorInvariantError, EventCursorMachine, InboundFrameKey, LocalAction, ScopeId, StateIndex,
     state_index_to_usize,
 };
+use crate::global::typestate::LocalConflict;
 use crate::runtime_core::UniqueMatch;
 
 #[inline(always)]
@@ -123,6 +124,29 @@ impl EventCursorMachine {
     }
 
     fn passive_child_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
+        if self.event_program().has_passive_parent_index() {
+            self.indexed_passive_child_parent_route(child_scope)
+        } else {
+            self.scanned_passive_child_parent_route(child_scope)
+        }
+    }
+
+    fn indexed_passive_child_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
+        let child_slot = self.route_scope_dense_ordinal(child_scope)?;
+        let LocalConflict::RouteArm { scope: parent, arm } = self
+            .route_scope_conflict_by_slot(child_slot)
+            .to_conflict()?
+        else {
+            return None;
+        };
+        let parent_slot = self.route_scope_dense_ordinal(parent)?;
+        let row = self.passive_arm_child_fact_by_slot(parent_slot, arm)?;
+        row.child_route_scope()
+            .is_some_and(|child| child.same(child_scope))
+            .then_some((row.route_scope(), row.arm()))
+    }
+
+    fn scanned_passive_child_parent_route(&self, child_scope: ScopeId) -> Option<(ScopeId, u8)> {
         let route_count = self.event_program().footprint().route_scope_count;
         let mut slot = 0usize;
         while slot < route_count {
@@ -142,3 +166,6 @@ impl EventCursorMachine {
         None
     }
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+mod tests;

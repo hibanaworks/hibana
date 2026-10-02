@@ -410,11 +410,25 @@ impl<'a> RoleLaneImage<'a> {
         slot: usize,
         arm: u8,
     ) -> Option<u16> {
+        self.passive_arm_child_ordinal_with_certificate(slot, arm, false)
+    }
+
+    pub(super) const fn passive_arm_child_ordinal_with_certificate(
+        &self,
+        slot: usize,
+        arm: u8,
+        rows_certified: bool,
+    ) -> Option<u16> {
         let row_idx = route_arm_row_index(slot, arm);
         let Some(parent_scope) = self.route_scope_by_slot(slot) else {
             invalid_resident_descriptor();
         };
-        match self.route_arm_row(row_idx).child_slot() {
+        let row = if rows_certified {
+            self.packed_route_arm_row(row_idx)
+        } else {
+            self.route_arm_row(row_idx)
+        };
+        match row.child_slot() {
             Some(child_slot) => {
                 let child_slot = child_slot as usize;
                 if child_slot <= slot {
@@ -445,6 +459,16 @@ impl<'a> RoleLaneImage<'a> {
     ) -> PackedLaneRange {
         let row_idx = route_arm_row_index(slot, arm);
         self.route_arm_row(row_idx).event_row()
+    }
+
+    #[inline(always)]
+    pub(super) const fn certified_route_arm_event_row_by_slot(
+        &self,
+        slot: usize,
+        arm: u8,
+    ) -> PackedLaneRange {
+        let row_idx = route_arm_row_index(slot, arm);
+        self.packed_route_arm_row(row_idx).event_row()
     }
 
     #[inline(always)]

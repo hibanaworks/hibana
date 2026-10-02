@@ -19,6 +19,10 @@ use crate::{
     },
 };
 
+mod arm_row_index;
+mod passive_parent;
+mod route_index;
+
 const BLOB_LEN: usize = 40;
 
 #[test]
@@ -883,6 +887,7 @@ fn resident_descriptor_rejects_program_lane_mismatch() {
         blob: BlobPtr::from_array(&LOCAL_EVENT_LANE_MISMATCH_BYTES, columns.blob_len()),
         active_lane_row: PackedLaneRange::new(0, 0),
         first_active_lane: 1,
+        route_lookup_index: 0,
     };
 
     let raw_node = image
@@ -930,6 +935,7 @@ fn resident_descriptor_rejects_foreign_role_event() {
         blob: BlobPtr::from_array(&LOCAL_EVENT_LANE_MISMATCH_BYTES, columns.blob_len()),
         active_lane_row: PackedLaneRange::new(0, 0),
         first_active_lane: 1,
+        route_lookup_index: 0,
     };
 
     assert_invariant(|| {
@@ -964,6 +970,7 @@ fn resident_descriptor_rejects_missing_program_event() {
         blob: BlobPtr::from_array(&MISSING_PROGRAM_EVENT_BYTES, columns.blob_len()),
         active_lane_row: PackedLaneRange::new(0, 0),
         first_active_lane: 0,
+        route_lookup_index: 0,
     };
 
     assert_invariant(|| {
@@ -991,6 +998,7 @@ fn resident_descriptor_rejects_in_range_missing_event_and_lane_columns() {
         blob: BlobPtr::from_array(&EMPTY_DESCRIPTOR_BYTES, columns.blob_len()),
         active_lane_row: PackedLaneRange::new(0, 0),
         first_active_lane: 0,
+        route_lookup_index: 0,
     };
 
     assert_invariant(|| {

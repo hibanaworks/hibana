@@ -5,6 +5,15 @@ use super::super::{
 };
 use crate::global::const_dsl::ScopeId;
 
+mod route_arm;
+use route_arm::{RouteArmLaneMetadata, decode_route_arm_lane_metadata};
+
+mod passive_parent;
+pub(super) use passive_parent::passive_parent_rows_are_coherent;
+
+mod route_index;
+pub(super) use route_index::route_scopes_are_sorted;
+
 mod scope_ranges;
 pub(super) use scope_ranges::{roll_scope_columns_are_coherent, route_commit_capacity_is_exact};
 
@@ -237,61 +246,6 @@ const fn lane_bitmap_row_is_minimal_active_subset<const N: usize>(
     true
 }
 
-#[derive(Clone, Copy)]
-struct RouteArmLaneMetadata {
-    event_start: usize,
-    event_len: usize,
-    lane_step_len: usize,
-}
-
-const fn decode_route_arm_lane_metadata<const N: usize>(
-    bytes: &[u8; N],
-    route_arms: ColumnRange,
-    row: usize,
-) -> Option<RouteArmLaneMetadata> {
-    let offset = match column_row_offset(route_arms, row, ROLE_IMAGE_ROUTE_ARM_STRIDE, 0) {
-        Some(offset) => offset,
-        None => return None,
-    };
-    let event_range = match read_u32(bytes, offset) {
-        Some(raw) => raw,
-        None => return None,
-    };
-    let metadata_offset = match offset.checked_add(4) {
-        Some(offset) => offset,
-        None => return None,
-    };
-    let metadata = match read_u32(bytes, metadata_offset) {
-        Some(raw) => raw,
-        None => return None,
-    };
-    let event_start = (event_range >> 16) as usize;
-    let event_len = (event_range & u16::MAX as u32) as usize;
-    let encoded_step_len = ((metadata >> 16) & u8::MAX as u32) as usize;
-    if event_range == u32::MAX
-        || (event_len == 0 && event_start != 0)
-        || metadata & 0xff00_0000 != 0
-    {
-        return None;
-    }
-    let lane_step_len = if event_len == 0 {
-        if encoded_step_len == 0 {
-            0
-        } else {
-            return None;
-        }
-    } else {
-        match encoded_step_len.checked_add(1) {
-            Some(len) => len,
-            None => return None,
-        }
-    };
-    Some(RouteArmLaneMetadata {
-        event_start,
-        event_len,
-        lane_step_len,
-    })
-}
 
 const fn arm_bitmap_matches_lane_steps<const N: usize>(
     bytes: &[u8; N],
