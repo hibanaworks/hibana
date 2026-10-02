@@ -170,3 +170,118 @@ fn alternating_route_parallel_join_uses_only_selected_arms() {
         });
     });
 }
+
+fn prefixed_independent_rolled_routes<const ROLE: u8>() -> RoleProgram<ROLE> {
+    let first = g::seq(
+        g::send::<0, 1, Msg<70, u32>>(),
+        g::route(
+            g::seq(
+                g::send::<0, 1, Msg<71, u32>>(),
+                g::send::<1, 0, Msg<72, u32>>(),
+            ),
+            g::send::<0, 1, Msg<73, u32>>(),
+        )
+        .roll(),
+    );
+    let sibling = g::seq(
+        g::send::<0, 1, Msg<90, u32>>(),
+        g::route(
+            g::seq(
+                g::send::<0, 1, Msg<91, u32>>(),
+                g::send::<1, 0, Msg<92, u32>>(),
+            ),
+            g::send::<0, 1, Msg<93, u32>>(),
+        )
+        .roll(),
+    );
+    project(&g::par(first, sibling))
+}
+
+#[test]
+fn completed_same_lane_prefix_does_not_hide_fresh_sibling_offer() {
+    with_runtime_workspace(|slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+            let controller_program = prefixed_independent_rolled_routes::<0>();
+            let receiver_program = prefixed_independent_rolled_routes::<1>();
+            futures::executor::block_on(async {
+                for (case, (use_before_retiring, retire_fresh_sibling)) in
+                    [(false, false), (false, true), (true, false), (true, true)]
+                        .into_iter()
+                        .enumerate()
+                {
+                    let sid = SessionId::new(1900 + case as u32);
+                    let mut controller = rv.enter(sid, &controller_program).unwrap();
+                    let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+                    controller.send::<Msg<70, u32>>(&1).await.unwrap();
+                    assert_eq!(receiver.recv::<Msg<70, u32>>().await.unwrap(), 1);
+                    controller.send::<Msg<90, u32>>(&2).await.unwrap();
+                    assert_eq!(receiver.recv::<Msg<90, u32>>().await.unwrap(), 2);
+                    if use_before_retiring {
+                        controller.send::<Msg<71, u32>>(&3).await.unwrap();
+                        let branch = receiver.offer().await.unwrap();
+                        assert_eq!(branch.label(), 71);
+                        assert_eq!(branch.recv::<Msg<71, u32>>().await.unwrap(), 3);
+                        receiver.send::<Msg<72, u32>>(&3).await.unwrap();
+                        assert_eq!(controller.recv::<Msg<72, u32>>().await.unwrap(), 3);
+                    }
+                    controller.send::<Msg<73, u32>>(&1).await.unwrap();
+                    let branch = receiver.offer().await.unwrap();
+                    assert_eq!(branch.label(), 73);
+                    assert_eq!(branch.recv::<Msg<73, u32>>().await.unwrap(), 1);
+
+                    // The ordinary cursor now points at the already consumed
+                    // sibling installation, while its lane head is the fresh
+                    // route. Both arms must use that still-pending route context.
+                    if retire_fresh_sibling {
+                        controller.send::<Msg<93, u32>>(&2).await.unwrap();
+                        let branch = receiver.offer().await.expect("fresh sibling retire offer");
+                        assert_eq!(branch.label(), 93);
+                        assert_eq!(branch.recv::<Msg<93, u32>>().await.unwrap(), 2);
+                    } else {
+                        controller.send::<Msg<91, u32>>(&4).await.unwrap();
+                        let branch = receiver.offer().await.expect("fresh sibling use offer");
+                        assert_eq!(branch.label(), 91);
+                        // Restoring an unconsumed preview remains affine.
+                        drop(branch);
+                        let branch = receiver.offer().await.unwrap();
+                        assert_eq!(branch.recv::<Msg<91, u32>>().await.unwrap(), 4);
+                        receiver.send::<Msg<92, u32>>(&4).await.unwrap();
+                        assert_eq!(controller.recv::<Msg<92, u32>>().await.unwrap(), 4);
+                        // Preserve reentry on an already-used sibling as well.
+                        controller.send::<Msg<91, u32>>(&5).await.unwrap();
+                        let branch = receiver.offer().await.unwrap();
+                        assert_eq!(branch.recv::<Msg<91, u32>>().await.unwrap(), 5);
+                        receiver.send::<Msg<92, u32>>(&5).await.unwrap();
+                        assert_eq!(controller.recv::<Msg<92, u32>>().await.unwrap(), 5);
+                    }
+                }
+            });
+        });
+    });
+}
+
+#[test]
+fn fresh_sibling_still_requires_its_installation_prefix() {
+    with_runtime_workspace(|slab| {
+        with_resident_tls_ref(&SESSION_SLOT, |cluster| {
+            let rv = cluster.rendezvous(slab, TestTransport::new()).unwrap();
+            let controller_program = prefixed_independent_rolled_routes::<0>();
+            let receiver_program = prefixed_independent_rolled_routes::<1>();
+            futures::executor::block_on(async {
+                let sid = SessionId::new(1904);
+                let mut controller = rv.enter(sid, &controller_program).unwrap();
+                let mut receiver = rv.enter(sid, &receiver_program).unwrap();
+                controller.send::<Msg<70, u32>>(&1).await.unwrap();
+                receiver.recv::<Msg<70, u32>>().await.unwrap();
+                controller.send::<Msg<73, u32>>(&1).await.unwrap();
+                let branch = receiver.offer().await.unwrap();
+                branch.recv::<Msg<73, u32>>().await.unwrap();
+                controller
+                    .send::<Msg<91, u32>>(&2)
+                    .await
+                    .expect_err("missing sibling installation cannot be skipped");
+            });
+        });
+    });
+}

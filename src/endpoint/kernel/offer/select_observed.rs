@@ -72,11 +72,10 @@ where
             {
                 Some(active_reentry) => Some(active_reentry),
                 None => {
-                    // A cursor in this lane retains its active iteration's
-                    // position. A foreign cursor supplies no ingress context:
-                    // the observed lane then owns its pending head instead.
+                    // A completed same-lane prefix must not hide the pending head.
+                    let done = |lane| self.cursor.node_event_done_for_lane(current_idx, lane);
                     let ingress_index = match self.cursor.event_lane_at(current_idx) {
-                        Some(lane) if lane == key.lane => Some(current_idx),
+                        Some(lane) if lane == key.lane && !done(lane) => Some(current_idx),
                         Some(_) | None => self.cursor.index_for_lane_step(key.lane as usize),
                     };
                     match ingress_index {
