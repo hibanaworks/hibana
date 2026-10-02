@@ -488,6 +488,7 @@ pub(crate) struct RoleImageRef {
     pub(crate) blob: BlobPtr,
     pub(crate) active_lane_row: PackedLaneRange,
     pub(crate) first_active_lane: u16,
+    pub(super) route_scopes_sorted: bool,
 }
 
 #[derive(Clone, Copy)]

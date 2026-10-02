@@ -5,6 +5,9 @@ use super::super::{
 };
 use crate::global::const_dsl::ScopeId;
 
+mod route_index;
+pub(super) use route_index::route_scopes_are_sorted;
+
 mod scope_ranges;
 pub(super) use scope_ranges::{roll_scope_columns_are_coherent, route_commit_capacity_is_exact};
 
