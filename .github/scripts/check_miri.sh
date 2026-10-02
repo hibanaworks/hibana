@@ -447,12 +447,21 @@ run_miri_test \
 
 run_miri_test \
   compiled-program-atom-validation \
-  7 \
-  7 \
+  6 \
+  6 \
   0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_
+
+run_miri_test \
+  compiled-program-atom-decoder-boundaries \
+  1 \
+  1 \
+  0 \
+  -p hibana \
+  --lib \
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_decoder_rejects_exact_invalid_boundaries
 
 run_miri_test \
   compiled-program-atom-lookup \
@@ -461,16 +470,16 @@ run_miri_test \
   0 \
   -p hibana \
   --lib \
-  global::compiled::images::image::program_ref::tests::compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows
+  global::compiled::images::image::program_ref::tests::compiled_program_atom_lookup_is_exact_for_dense_rows
 
 run_miri_test \
-  compiled-program-atom-order-rejection \
+  compiled-program-image-identity \
   1 \
   1 \
   0 \
   -p hibana \
   --lib \
-  global::compiled::images::image::program_ref::tests::compiled_program_descriptor_rejects_noncanonical_atom_order
+  global::compiled::images::image::program_ref::tests::compiled_program_image_identity_is_exact_over_facts_columns_and_blob
 
 run_miri_test \
   program-image-storage-validation \

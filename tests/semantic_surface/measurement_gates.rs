@@ -623,12 +623,16 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             "program_ref::tests::compiled_program_atom_descriptor_",
         ),
         (
-            "compiled-program-atom-lookup",
-            "compiled_program_atom_lookup_is_exact_for_sparse_sorted_rows",
+            "compiled-program-atom-decoder-boundaries",
+            "compiled_program_atom_decoder_rejects_exact_invalid_boundaries",
         ),
         (
-            "compiled-program-atom-order-rejection",
-            "compiled_program_descriptor_rejects_noncanonical_atom_order",
+            "compiled-program-atom-lookup",
+            "compiled_program_atom_lookup_is_exact_for_dense_rows",
+        ),
+        (
+            "compiled-program-image-identity",
+            "compiled_program_image_identity_is_exact_over_facts_columns_and_blob",
         ),
         (
             "program-image-storage-validation",
