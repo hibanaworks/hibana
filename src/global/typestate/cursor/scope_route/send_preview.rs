@@ -589,18 +589,18 @@ impl EventCursor {
         }
 
         if contract_matches {
+            let mut committed = |scope, _view| committed_arm_for_scope(scope);
             if self.relocatable_step_done(progress_step)
-                && !self.roll_reentry_event_allows_index(
-                    *idx,
-                    current_meta.lane,
-                    &mut *committed_arm_for_scope,
-                )
+                && !self.roll_reentry_event_allows_index(*idx, current_meta.lane, &mut committed)
             {
                 *idx = state_index_to_usize(self.node_next_index_at(*idx));
                 return Ok(None);
             }
             let preview_conflict = self.machine().event_conflict_for_index(*idx);
-            let mut arm_for_scope = |scope| {
+            let mut arm_for_scope = |scope, view| {
+                if matches!(view, super::EventArmView::Committed) {
+                    return committed_arm_for_scope(scope);
+                }
                 self.send_preview_arm_for_scope_with_reentry_path(
                     scope,
                     preview_route_arm,

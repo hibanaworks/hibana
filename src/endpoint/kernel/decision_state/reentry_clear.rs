@@ -112,6 +112,9 @@ impl RouteState {
                 crate::invariant();
             }
             self.publish_selected_arm_slot(scope_slot, next_slot);
+            // The removed visit owns its readiness evidence too. Keeping an
+            // old nested arm's evidence would conflict with the next visit.
+            self.scope_evidence.clear(scope_slot);
         }
         let mut has_reentry = false;
         let mut remaining = 0usize;

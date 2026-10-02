@@ -117,52 +117,41 @@ fn direct_recv_commits_only_through_observed_evidence_plan() {
 }
 
 #[test]
-fn offer_admission_prioritizes_the_unconsumed_current_frontier() {
+fn offer_admission_requires_one_enabled_descriptor_with_full_identity() {
     let select = read("src/endpoint/kernel/offer/select.rs");
     let observed = read("src/endpoint/kernel/offer/select_observed.rs");
     let roll = read("src/global/typestate/cursor/scope_route/roll.rs");
 
-    let current = select
-        .find("self.select_current_materialized_ingress_scope")
-        .expect("offer selection must inspect the current materialized frontier");
-    let reentry = select
-        .find("self.select_observed_ingress_route_scope")
-        .expect("offer selection must retain elastic reentry admission");
+    let event_progress = read("src/global/typestate/cursor/scope_route/event_progress.rs");
     assert!(
-        current < reentry,
-        "the exact unconsumed current occurrence must precede next-iteration reentry admission"
+        select.contains("self.select_observed_ingress_route_scope")
+            && !select.contains("select_current_materialized_ingress_scope")
+            && observed.contains("!key.matches_recv(meta)")
+            && observed.contains(".event_enabled(idx, meta.into(), &mut selected)")
+            && observed.contains("UniqueMatch::NONE")
+            && observed.contains("matched.is_ambiguous()")
+            && observed.contains(".finish_optional()")
+            && observed.contains(".passive_descendant_target_index_for_key(scope, key)")
+            && observed.contains(".route_arm_lane_first_step(scope, arm, meta.lane)")
+            && !observed.contains("idx == current_idx"),
+        "current and elastic receives must share descriptor eligibility and reject ambiguous full-key matches"
     );
     assert!(
-        observed.contains("self.cursor.node_event_done_for_lane(current_idx, key.lane)"),
-        "a consumed current occurrence must not shadow a legal rolled reentry frame"
-    );
-    assert!(
-        observed.contains(".active_reentry_scope_for_observed_frame(key)")
-            && observed.contains(".map_err(|_| RecvError::PhaseInvariant)?")
-            && observed.contains("Some(active_reentry) => Some(active_reentry)")
+        !observed.contains("active_reentry_scope_for_observed_frame")
             && !observed.contains(".or_else(")
             && !observed.contains("return self.select_carried_ingress_scope(")
             && observed.contains("info = self.decision_state.lane_offer_state(lane_idx);")
             && observed.contains("state_index_to_usize(info.entry) != self.cursor.index()"),
-        "observed ingress must name reentry precedence and revalidate one exact owner after non-recursive realignment"
+        "observed ingress must revalidate the descriptor owner without a separate unchecked reentry path"
     );
 
-    let roll_admission = roll
-        .split("pub(crate) fn roll_reentry_recv_index_for_frame")
-        .nth(1)
-        .and_then(|body| {
-            body.split("pub(crate) fn roll_reentry_event_allows_index")
-                .next()
-        })
-        .expect("roll frame admission function must remain inspectable");
-    let current_progress = roll_admission
-        .find("RollLaneAdmission::Progress")
-        .expect("roll frame admission must name current progress");
-    let next_head = roll_admission
-        .find("RollLaneAdmission::Head")
-        .expect("roll frame admission must name the next iteration head");
     assert!(
-        current_progress < next_head,
-        "same-color roll admission must exhaust current progress before considering a next-iteration head"
+        !roll.contains("fn roll_reentry_recv_index_for_frame")
+            && roll.contains("EventArmView::Committed")
+            && roll.contains("EventArmView::Preview")
+            && event_progress.contains("!self.event_progress_passed(progress_step)")
+            && event_progress
+                .contains("self.roll_reentry_event_allows_index(idx, event.lane, arm_for_scope)"),
+        "past unchosen events require a fresh visit; candidate conflict preview must retain committed completion history"
     );
 }

@@ -5,6 +5,7 @@ mod row_completion;
 mod send_preview;
 mod send_preview_route;
 mod send_preview_start;
+pub(crate) use event_progress::EventArmView;
 
 use super::super::facts::{LocalConflict, PackedEventConflict, PassiveArmChildFact};
 use super::{
@@ -48,17 +49,6 @@ impl EventCursor {
         selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> bool {
         let target = progress_step.0;
-        if self.relocatable_step_done(progress_step) {
-            if !self.has_reentry_scopes() {
-                return false;
-            }
-            let Some(idx) = self.node_index_for_relocatable_step(progress_step) else {
-                return false;
-            };
-            if !self.roll_reentry_event_allows_index(idx, target.lane, selected_arm_for_scope) {
-                return false;
-            }
-        }
         let mut step_idx = 0usize;
         while step_idx < target.step_idx as usize {
             if self.machine().event_program().local_step_lane(step_idx) == Some(target.lane) {
@@ -202,7 +192,6 @@ impl EventCursor {
         scope: ScopeId,
         lane: u8,
         eff_index: EffIndex,
-        next_index: StateIndex,
         mut authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
         let mut reentry_scope = scope;
@@ -221,29 +210,18 @@ impl EventCursor {
             reentry_scope = parent;
         }
 
-        let next_usize = state_index_to_usize(next_index);
-        if let Some(region) = self.route_scope_rows_at(next_usize)
-            && region.reentry()
-            && next_usize == region.start()
-            && let Some(arm) = authorized_arm_for_scope(region.scope())
-            && let Some(first_step) = self.route_arm_lane_first_step(region.scope(), arm, lane)
-        {
-            return Some(first_step);
-        }
         None
     }
 
     pub(crate) fn recv_reentry_cursor_step(
         &self,
         meta: RecvMeta,
-        next_index: StateIndex,
         authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
         self.event_reentry_cursor_step(
             meta.scope,
             meta.lane,
             meta.eff_index,
-            next_index,
             authorized_arm_for_scope,
         )
     }
@@ -251,7 +229,6 @@ impl EventCursor {
     pub(crate) fn send_reentry_cursor_step(
         &self,
         meta: SendMeta,
-        next_index: StateIndex,
         authorized_arm_for_scope: impl FnMut(ScopeId) -> Option<u8>,
     ) -> Option<RelocatableResidentLaneStep> {
         let scope = if meta.route_scope.is_none() {
@@ -259,13 +236,7 @@ impl EventCursor {
         } else {
             meta.route_scope
         };
-        self.event_reentry_cursor_step(
-            scope,
-            meta.lane,
-            meta.eff_index,
-            next_index,
-            authorized_arm_for_scope,
-        )
+        self.event_reentry_cursor_step(scope, meta.lane, meta.eff_index, authorized_arm_for_scope)
     }
 
     #[inline]

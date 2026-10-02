@@ -30,6 +30,11 @@ where
             }
             let current_scope = self.current_offer_scope_id();
             if current_scope != node_scope
+                && !self.cursor.route_offer_entry_allows_current(
+                    current_scope,
+                    self.cursor.index(),
+                    self.preview_live_selected_arm_for_scope(current_scope),
+                )
                 && let Some(entry_idx) = self.route_scope_offer_entry_index(current_scope)
                 && entry_idx != self.cursor.index()
             {

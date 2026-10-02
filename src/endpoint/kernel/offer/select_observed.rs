@@ -1,41 +1,19 @@
 use super::{
     CursorEndpoint, OfferScopeSelection, RecvError, RecvResult, Transport, state_index_to_usize,
 };
-use crate::endpoint::kernel::frontier::checked_state_index;
-use crate::global::typestate::InboundFrameKey;
+use crate::{
+    endpoint::kernel::frontier::checked_state_index,
+    global::typestate::{EventArmView, InboundFrameKey},
+    runtime_core::UniqueMatch,
+};
 
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
 {
-    pub(in crate::endpoint::kernel::offer) fn select_current_materialized_ingress_scope(
-        &self,
-        carried_key: Option<InboundFrameKey>,
-    ) -> RecvResult<Option<OfferScopeSelection>> {
-        let Some(key) = carried_key else {
-            return Ok(None);
-        };
-        let current_idx = self.cursor.index();
-        let Some(meta) = self.cursor.try_recv_meta_at(current_idx) else {
-            return Ok(None);
-        };
-        if !key.matches_recv(meta) {
-            return Ok(None);
-        }
-        if self.cursor.node_event_done_for_lane(current_idx, key.lane) {
-            return Ok(None);
-        }
-        let node_scope = self.cursor.node_scope_id_at(current_idx);
-        let Some(scope_id) = self
-            .cursor
-            .route_scope_for_offer_node(node_scope, current_idx)
-        else {
-            return Ok(None);
-        };
-        self.offer_scope_selection_for_scope_lane(scope_id, current_idx, key.lane)
-            .map(Some)
-    }
-
+    /// Frame identity selects a unique enabled receive, never a nearby cursor.
+    /// An offer requires a projected first-visible receive or a route arm's
+    /// first receive on that lane. The event checks are shared with recv.
     pub(in crate::endpoint::kernel::offer) fn select_observed_ingress_route_scope(
         &mut self,
         carried_key: Option<InboundFrameKey>,
@@ -45,76 +23,77 @@ where
             return Ok(None);
         };
         let current_idx = self.cursor.index();
-        let reentry_target = {
-            let endpoint = &*self;
-            let mut live_arm_for_scope =
-                |scope| endpoint.preview_live_selected_arm_for_scope(scope);
-            // A completed arm still owns the enclosing iteration whose
-            // completion admits reentry; unrelated inner scopes must not leak.
-            let mut committed_arm_for_scope = |scope| endpoint.selected_arm_for_scope(scope);
-            endpoint.cursor.roll_reentry_recv_index_for_frame(
-                key,
-                &mut live_arm_for_scope,
-                &mut committed_arm_for_scope,
-            )
-        };
-        let (scope_id, target_idx, reentry_observed_target) =
-            if let Some(target_idx) = reentry_target {
-                let node_scope = self.cursor.node_scope_id_at(target_idx);
-                let scope_id = self
-                    .cursor
-                    .route_scope_for_offer_node(node_scope, target_idx)
-                    .ok_or(RecvError::PhaseInvariant)?;
-                (scope_id, target_idx, true)
-            } else if let Some(scope_id) = match self
-                .active_reentry_scope_for_observed_frame(key)
-                .map_err(|_| RecvError::PhaseInvariant)?
-            {
-                Some(active_reentry) => Some(active_reentry),
-                None => {
-                    // A completed same-lane prefix must not hide the pending head.
-                    let done = |lane| self.cursor.node_event_done_for_lane(current_idx, lane);
-                    let ingress_index = match self.cursor.event_lane_at(current_idx) {
-                        Some(lane) if lane == key.lane && !done(lane) => Some(current_idx),
-                        Some(_) | None => self.cursor.index_for_lane_step(key.lane as usize),
-                    };
-                    match ingress_index {
-                        Some(index) => self
-                            .cursor
-                            .enclosing_passive_route_scope_for_key(index, key)
-                            .map_err(|_| RecvError::PhaseInvariant)?,
-                        None => None,
-                    }
-                }
-            } {
-                let target_idx = self
-                    .cursor
-                    .passive_descendant_target_index_for_key(scope_id, key)
-                    .map_err(|_| RecvError::PhaseInvariant)?
-                    .ok_or(RecvError::PhaseInvariant)?;
-                (scope_id, target_idx, false)
-            } else {
-                return Ok(None);
+        let mut matched = UniqueMatch::NONE;
+        for idx in 0..self.cursor.local_steps_len() {
+            let Some(meta) = self.cursor.try_recv_meta_at(idx) else {
+                continue;
             };
-        let observed_arm = if reentry_observed_target {
-            self.cursor.route_arm_for_index(scope_id, target_idx)
-        } else {
-            self.cursor
-                .passive_descendant_dispatch_arm_for_key(scope_id, key)
-                .map_err(|_| RecvError::PhaseInvariant)?
+            if meta.origin.is_session() || !key.matches_recv(meta) {
+                continue;
+            }
+            let lane = usize::from(meta.lane);
+            if lane >= self.cursor.logical_lane_count()
+                || self.port_for_lane(lane).lane().as_wire() != meta.lane
+            {
+                return Err(RecvError::PhaseInvariant);
+            }
+            let preview_conflict = self.cursor.event_conflict_for_index(idx);
+            let mut selected =
+                |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
+            if self
+                .cursor
+                .event_enabled(idx, meta.into(), &mut selected)
+                .is_err()
+            {
+                continue;
+            }
+            let scope = if let Some(scope) = self
+                .cursor
+                .route_scope_for_offer_node(self.cursor.node_scope_id_at(idx), idx)
+                && let Some(arm) = self.cursor.route_arm_for_index(scope, idx)
+                && self
+                    .cursor
+                    .route_arm_lane_first_step(scope, arm, meta.lane)
+                    .and_then(|step| self.cursor.node_index_for_relocatable_step(step))
+                    == Some(idx)
+            {
+                Some(scope)
+            } else {
+                let scope = self
+                    .cursor
+                    .enclosing_passive_route_scope_for_key(idx, key)
+                    .map_err(|_| RecvError::PhaseInvariant)?;
+                match scope {
+                    Some(scope)
+                        if self
+                            .cursor
+                            .passive_descendant_target_index_for_key(scope, key)
+                            .map_err(|_| RecvError::PhaseInvariant)?
+                            == Some(idx) =>
+                    {
+                        Some(scope)
+                    }
+                    Some(_) | None => None,
+                }
+            };
+            if let Some(scope) = scope {
+                matched = matched.add((scope, idx));
+                if matched.is_ambiguous() {
+                    break;
+                }
+            }
+        }
+        let Some((scope_id, target_idx)) = matched
+            .finish_optional()
+            .map_err(|_| RecvError::PhaseInvariant)?
+        else {
+            return Ok(None);
         };
-        let selected_arm_for_observed = {
-            let preview_conflict = self.cursor.event_conflict_for_index(target_idx);
-            let endpoint = &*self;
-            let mut selected_arm_for_scope =
-                |scope| endpoint.preview_live_selected_arm_for_scope(scope);
-            self.cursor.selected_arm_for_reentry_preview_conflict(
-                scope_id,
-                preview_conflict,
-                &mut selected_arm_for_scope,
-            )
-        };
-        if let (Some(selected), Some(observed)) = (selected_arm_for_observed, observed_arm)
+        let observed_arm = self.cursor.route_arm_for_index(scope_id, target_idx);
+        let preview_conflict = self.cursor.event_conflict_for_index(target_idx);
+        let selected =
+            self.selected_arm_for_recv_event(preview_conflict, scope_id, EventArmView::Preview);
+        if let (Some(selected), Some(observed)) = (selected, observed_arm)
             && selected != observed
         {
             let observation = carried_observation.ok_or(RecvError::PhaseInvariant)?;
@@ -130,15 +109,11 @@ where
                 .map_err(|_| RecvError::PhaseInvariant)?;
             self.sync_lane_offer_state();
         }
-        let effective_arm = match selected_arm_for_observed {
-            Some(selected) => Some(selected),
-            None => observed_arm,
-        };
         let mut selection = self.offer_scope_selection_for_scope_lane_with_selected_arm(
             scope_id,
             target_idx,
             key.lane,
-            effective_arm,
+            observed_arm,
         )?;
         selection.observed_target =
             checked_state_index(target_idx).ok_or(RecvError::PhaseInvariant)?;

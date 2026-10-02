@@ -38,11 +38,29 @@ impl EventCursor {
         let Some((mut idx, end)) = self.reentry_scope_event_bounds(scope) else {
             crate::invariant();
         };
+        let mut rewind_row = None;
         while idx < end && self.contains_node_index(idx) {
             if self.roll_scope_contains_index(scope, idx)
                 && let Some(lane) = self.event_lane_at(idx)
             {
                 self.clear_node_event_done_for_lane(idx, lane);
+                let Ok(step) = self.relocatable_resident_lane_step_at_index(idx, usize::from(lane))
+                else {
+                    crate::invariant();
+                };
+                let Ok(row) = self
+                    .resident_lane_step_locator(usize::from(lane), usize::from(step.0.step_idx))
+                else {
+                    crate::invariant();
+                };
+                // Materialize the first row once. Selecting a later row while
+                // resetting another lane would overwrite the fresh prefix.
+                if rewind_row.is_none() {
+                    rewind_row = Some(row);
+                    self.set_lane_cursor_to_relocatable_step(step);
+                } else if rewind_row == Some(row) && self.event_is_before_lane_cursor(idx, lane) {
+                    self.set_lane_cursor_to_relocatable_step(step);
+                }
             }
             idx += 1;
         }

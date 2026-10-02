@@ -42,9 +42,6 @@ where
         frontier_visited: &mut FrontierVisitSet,
         scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> RecvResult<OfferScopeSelection> {
-        if let Some(selection) = self.select_current_materialized_ingress_scope(carried_key)? {
-            return Ok(selection);
-        }
         if let Some(selection) =
             self.select_observed_ingress_route_scope(carried_key, carried_observation)?
         {

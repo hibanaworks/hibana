@@ -137,8 +137,10 @@ where
                 .cursor
                 .node_index_for_relocatable_step(event.progress_step())
                 .ok_or(CursorInvariantError::INVARIANT)?;
-            let mut selected_arm = |scope| {
-                if scope == event.scope() {
+            let mut selected_arm = |scope, view| {
+                if matches!(view, crate::global::typestate::EventArmView::Preview)
+                    && scope == event.scope()
+                {
                     event.route_arm()
                 } else {
                     self.selected_arm_for_scope(scope)

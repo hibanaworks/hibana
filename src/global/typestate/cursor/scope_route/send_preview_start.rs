@@ -1,13 +1,25 @@
 use super::super::{EventCursor, ScopeId};
+use crate::global::typestate::{EventArmView, EventCommitMeta};
 
 impl EventCursor {
     #[inline(never)]
-    fn send_preview_outbound_contract_lane_at(&self, idx: usize) -> Option<(u8, u32, u8)> {
+    fn send_preview_outbound_event_at(&self, idx: usize) -> Option<(EventCommitMeta, u32)> {
         if let Some(meta) = self.try_send_meta_at(idx) {
-            return Some((meta.label, meta.payload_schema, meta.lane));
+            return Some((meta.into(), meta.payload_schema));
         }
-        self.try_local_meta_at(idx)
-            .map(|meta| (meta.label, meta.payload_schema, meta.lane))
+        self.try_local_meta_at(idx).map(|meta| {
+            (
+                EventCommitMeta::new(
+                    meta.eff_index,
+                    meta.label,
+                    meta.origin,
+                    meta.scope,
+                    meta.route_arm,
+                    meta.lane,
+                ),
+                meta.payload_schema,
+            )
+        })
     }
 
     #[inline(never)]
@@ -15,51 +27,27 @@ impl EventCursor {
         &self,
         target_label: u8,
         target_schema: u32,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
     ) -> Option<usize> {
-        let mut idx = 0usize;
-        while self.contains_node_index(idx) {
-            let Some((label, schema, lane)) = self.send_preview_outbound_contract_lane_at(idx)
-            else {
-                idx += 1;
+        for idx in 0..self.local_steps_len() {
+            let Some((event, schema)) = self.send_preview_outbound_event_at(idx) else {
                 continue;
             };
-            if label != target_label || schema != target_schema {
-                idx += 1;
+            if event.label != target_label || schema != target_schema {
                 continue;
             }
-            let progress_step =
-                match self.relocatable_resident_lane_step_at_index(idx, lane as usize) {
-                    Ok(step) => step,
-                    Err(_) => crate::invariant(),
-                };
             let preview_conflict = self.machine().event_conflict_for_index(idx);
-            let mut arm_for_scope = |scope| {
-                self.selected_arm_for_reentry_preview_conflict(
+            let mut arms = |scope, view| match view {
+                EventArmView::Committed => committed_arm_for_scope(scope),
+                EventArmView::Preview => self.selected_arm_for_reentry_preview_conflict(
                     scope,
                     preview_conflict,
-                    selected_arm_for_scope,
-                )
+                    committed_arm_for_scope,
+                ),
             };
-            if !self.event_conflict_row_allows_with_preview(
-                preview_conflict,
-                preview_conflict,
-                &mut arm_for_scope,
-            ) {
-                idx += 1;
-                continue;
-            }
-            let mut arm_for_scope = |scope| {
-                self.selected_arm_for_reentry_preview_conflict(
-                    scope,
-                    preview_conflict,
-                    selected_arm_for_scope,
-                )
-            };
-            if self.event_lane_head_allows(progress_step, preview_conflict, &mut arm_for_scope) {
+            if self.event_enabled(idx, event, &mut arms).is_ok() {
                 return Some(idx);
             }
-            idx += 1;
         }
         None
     }

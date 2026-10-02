@@ -1,9 +1,16 @@
 use super::super::super::facts::LocalDependencyState;
 use super::super::{
     CursorInvariantError, EnabledEventCommit, EventCursor, LocalDependency,
-    RelocatableResidentLaneStep, ScopeId, StateIndex,
+    RelocatableResidentLaneStep, ResidentLaneStep, ScopeId, StateIndex,
 };
 use crate::global::typestate::EventCommitMeta;
+
+/// Completion belongs to the committed visit; conflict preview belongs to the
+/// candidate visit. A prospective arm must never rewrite completion history.
+pub(crate) enum EventArmView {
+    Committed,
+    Preview,
+}
 
 impl EventCursor {
     #[inline]
@@ -64,19 +71,46 @@ impl EventCursor {
         Ok(())
     }
 
+    #[inline(never)]
+    fn event_progress_passed(&self, target: RelocatableResidentLaneStep) -> bool {
+        if let Some(head) = self.step_index_at_lane(usize::from(target.0.lane)) {
+            // A reset head bounds the fresh visit; completed events beyond the
+            // enclosing roll must not leak into its new progress.
+            return usize::from(target.0.step_idx) < head;
+        }
+        // A parked lane has no materialized head, including at a parallel join.
+        // Only a later committed event proves that this visit passed a suffix.
+        let event_program = self.machine().event_program();
+        for step_idx in usize::from(target.0.step_idx) + 1..self.local_steps_len() {
+            if event_program.local_step_lane(step_idx) == Some(target.0.lane)
+                && self.relocatable_step_done(RelocatableResidentLaneStep(ResidentLaneStep {
+                    step_idx: step_idx as u16,
+                    lane: target.0.lane,
+                }))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     #[inline]
-    fn validate_event_enabled_reentry_if_done(
+    fn validate_event_enabled_reentry(
         &self,
         idx: usize,
         progress_step: RelocatableResidentLaneStep,
         event: EventCommitMeta,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<(), CursorInvariantError> {
-        if !self.relocatable_step_done(progress_step) {
+        // Unchosen events keep a clear completion bit even after lane progress
+        // has passed their region. They need a fresh roll visit just as consumed
+        // events do; a previous visit's prefix cannot authorize a past suffix.
+        if !self.relocatable_step_done(progress_step) && !self.event_progress_passed(progress_step)
+        {
             return Ok(());
         }
         if !self.has_reentry_scopes()
-            || !self.roll_reentry_event_allows_index(idx, event.lane, &mut *selected_arm_for_scope)
+            || !self.roll_reentry_event_allows_index(idx, event.lane, arm_for_scope)
         {
             return Err(CursorInvariantError::INVARIANT);
         }
@@ -90,47 +124,42 @@ impl EventCursor {
         progress_step: RelocatableResidentLaneStep,
         cursor_after: StateIndex,
         event: EventCommitMeta,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<(), CursorInvariantError> {
         if self.node_next_index_at(idx) != cursor_after {
             return Err(CursorInvariantError::INVARIANT);
         }
-        self.validate_event_enabled_dependency(idx, selected_arm_for_scope)?;
         let preview_conflict = self.machine().event_conflict_for_index(idx);
-        if !self.event_conflict_row_allows_with_preview(
-            preview_conflict,
-            preview_conflict,
-            &mut *selected_arm_for_scope,
-        ) {
-            return Err(CursorInvariantError::INVARIANT);
+        {
+            let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
+            self.validate_event_enabled_dependency(idx, &mut preview)?;
+            if !self.event_conflict_row_allows_with_preview(
+                preview_conflict,
+                preview_conflict,
+                &mut preview,
+            ) {
+                return Err(CursorInvariantError::INVARIANT);
+            }
         }
         let resident_step =
             self.relocatable_resident_lane_step_at_index(idx, event.lane as usize)?;
         if resident_step != progress_step {
             return Err(CursorInvariantError::INVARIANT);
         }
-        self.validate_event_enabled_reentry_if_done(
-            idx,
-            progress_step,
-            event,
-            selected_arm_for_scope,
-        )?;
-        if !self.event_lane_head_allows(
-            progress_step,
-            preview_conflict,
-            &mut *selected_arm_for_scope,
-        ) {
+        self.validate_event_enabled_reentry(idx, progress_step, event, arm_for_scope)?;
+        let mut preview = |scope| arm_for_scope(scope, EventArmView::Preview);
+        if !self.event_lane_head_allows(progress_step, preview_conflict, &mut preview) {
             return Err(CursorInvariantError::INVARIANT);
         }
         Ok(())
     }
 
-    #[inline]
+    #[inline(never)]
     pub(crate) fn event_enabled(
         &self,
         idx: usize,
         event: EventCommitMeta,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        arm_for_scope: &mut dyn FnMut(ScopeId, EventArmView) -> Option<u8>,
     ) -> Result<EnabledEventCommit, CursorInvariantError> {
         if !self.event_row_matches_commit(idx, event) {
             return Err(CursorInvariantError::INVARIANT);
@@ -138,13 +167,7 @@ impl EventCursor {
         let progress_step =
             self.relocatable_resident_lane_step_at_index(idx, event.lane as usize)?;
         let cursor_after = self.node_next_index_at(idx);
-        self.validate_event_enabled_commit(
-            idx,
-            progress_step,
-            cursor_after,
-            event,
-            selected_arm_for_scope,
-        )?;
+        self.validate_event_enabled_commit(idx, progress_step, cursor_after, event, arm_for_scope)?;
         Ok(EnabledEventCommit::new(
             StateIndex::from_usize(idx),
             progress_step,

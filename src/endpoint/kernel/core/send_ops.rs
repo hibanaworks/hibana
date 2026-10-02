@@ -41,7 +41,10 @@ where
             }
         };
         let route_audit = route_authority.route_audit();
-        let mut selected_arm = |scope| {
+        let mut selected_arm = |scope, view| {
+            if matches!(view, crate::global::typestate::EventArmView::Committed) {
+                return self.selected_arm_for_scope(scope);
+            }
             let mut row_idx = 0usize;
             while row_idx < route_rows.len() {
                 if let Some(row) = route_rows.get(&self.cursor, row_idx)
@@ -72,28 +75,26 @@ where
         };
         let current_route_scope = meta.route_scope;
         let current_route_arm = meta.selected_route_arm;
-        let reentry_cursor =
-            self.cursor
-                .send_reentry_cursor_step(meta, enabled.cursor_after(), |scope| {
-                    let mut row_idx = 0usize;
-                    while row_idx < route_rows.len() {
-                        if let Some(row) = route_rows.get(&self.cursor, row_idx)
-                            && row.scope() == scope
-                        {
-                            return Some(row.selected_arm());
-                        }
-                        row_idx += 1;
-                    }
-                    if scope == current_route_scope {
-                        return current_route_arm;
-                    }
-                    let mut committed = |candidate| self.selected_arm_for_scope(candidate);
-                    self.cursor.selected_arm_for_reentry_preview_conflict(
-                        scope,
-                        preview_conflict,
-                        &mut committed,
-                    )
-                });
+        let reentry_cursor = self.cursor.send_reentry_cursor_step(meta, |scope| {
+            let mut row_idx = 0usize;
+            while row_idx < route_rows.len() {
+                if let Some(row) = route_rows.get(&self.cursor, row_idx)
+                    && row.scope() == scope
+                {
+                    return Some(row.selected_arm());
+                }
+                row_idx += 1;
+            }
+            if scope == current_route_scope {
+                return current_route_arm;
+            }
+            let mut committed = |candidate| self.selected_arm_for_scope(candidate);
+            self.cursor.selected_arm_for_reentry_preview_conflict(
+                scope,
+                preview_conflict,
+                &mut committed,
+            )
+        });
         let delta = super::CommitDelta::from_meta(
             meta,
             route_rows,

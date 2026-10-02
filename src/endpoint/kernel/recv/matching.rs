@@ -39,7 +39,8 @@ where
             return Ok(None);
         }
         let preview_conflict = self.cursor.event_conflict_for_index(idx);
-        let mut selected_arm = |scope| self.selected_arm_for_recv_event(preview_conflict, scope);
+        let mut selected_arm =
+            |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
         let enabled =
             self.cursor
                 .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);
@@ -78,7 +79,8 @@ where
             return Ok(None);
         }
         let preview_conflict = self.cursor.event_conflict_for_index(idx);
-        let mut selected_arm = |scope| self.selected_arm_for_recv_event(preview_conflict, scope);
+        let mut selected_arm =
+            |scope, view| self.selected_arm_for_recv_event(preview_conflict, scope, view);
         let enabled =
             self.cursor
                 .event_enabled(idx, EventCommitMeta::from(meta), &mut selected_arm);

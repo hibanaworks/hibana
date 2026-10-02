@@ -25,6 +25,7 @@ mod kani;
 mod lane_progress;
 mod navigation;
 mod scope_route;
+pub(crate) use scope_route::EventArmView;
 
 #[cfg(all(test, hibana_repo_tests))]
 mod compact_cursor_position_tests {

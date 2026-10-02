@@ -119,7 +119,7 @@ impl EventCursor {
         Some((start, end))
     }
 
-    fn resident_lane_step_locator(
+    pub(super) fn resident_lane_step_locator(
         &self,
         lane_idx: usize,
         step_idx: usize,

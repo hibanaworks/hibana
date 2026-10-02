@@ -107,10 +107,7 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
     let dependency_validation_guard = cursor_scope_route
         .split("fn validate_event_enabled_dependency")
         .nth(1)
-        .and_then(|tail| {
-            tail.split("fn validate_event_enabled_reentry_if_done")
-                .next()
-        })
+        .and_then(|tail| tail.split("fn event_progress_passed").next())
         .expect("event dependency validation must stay cursor-owned");
     let event_conflict_guard = cursor_scope_route_navigation
         .split("pub(crate) fn event_conflict_row_allows")
@@ -303,7 +300,8 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !cursor_scope_route.contains("fn dependency_conflict")
             && !cursor_scope_route.contains("pub(crate) fn scope_events_done")
             && dependency_guard
-                .contains("self.validate_event_enabled_dependency(idx, selected_arm_for_scope)?")
+                .contains("self.validate_event_enabled_dependency(idx, &mut preview)?")
+            && dependency_guard.contains("EventArmView::Preview")
             && cursor_scope_route.contains("fn dependency_state(")
             && cursor_scope_route.contains(".dependency_state(dependency, selected_arm_for_scope)")
             && dependency_validation_guard.contains(".allows_event()")
@@ -750,7 +748,9 @@ fn route_selection_keeps_descriptor_facts_without_endpoint_cleanup_shortcut() {
             && send_preview_start.contains("self.first_pending_step_index()")
             && send_preview_start.contains("Some(self.index())")
             && cursor_send_preview_start.contains("selected_arm_for_reentry_preview_conflict")
-            && cursor_send_preview_start.contains("event_conflict_row_allows_with_preview")
+            && cursor_send_preview_start.contains("self.event_enabled(idx, event, &mut arms)")
+            && cursor_send_preview_start.contains("EventArmView::Committed")
+            && cursor_send_preview_start.contains("EventArmView::Preview")
             && cursor_send_preview.contains("self.relocatable_step_done(progress_step)")
             && cursor_send_preview
                 .contains("*idx = state_index_to_usize(self.node_next_index_at(*idx));"),

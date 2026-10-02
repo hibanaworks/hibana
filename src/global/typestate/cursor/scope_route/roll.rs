@@ -338,75 +338,8 @@ impl EventCursor {
     }
 
     #[inline]
-    fn event_is_before_lane_cursor(&self, idx: usize, lane: u8) -> bool {
+    pub(super) fn event_is_before_lane_cursor(&self, idx: usize, lane: u8) -> bool {
         self.event_step_is_before(idx, lane, self.step_index_at_lane(lane as usize))
-    }
-
-    #[inline(never)]
-    fn roll_reentry_recv_index_for_frame_phase(
-        &self,
-        key: super::super::InboundFrameKey,
-        phase: RollLaneAdmission,
-        live_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
-        let mut idx = 0usize;
-        while self.contains_node_index(idx) {
-            let Some(meta) = self.try_recv_meta_at(idx) else {
-                idx += 1;
-                continue;
-            };
-            if !key.matches_recv(meta) {
-                idx += 1;
-                continue;
-            }
-            let before_cursor = self.event_is_before_lane_cursor(idx, key.lane);
-            let phase_matches = match phase {
-                RollLaneAdmission::Head => before_cursor,
-                RollLaneAdmission::Progress { .. } => !before_cursor,
-            };
-            let mut arm_for_candidate = |scope| {
-                let live = live_arm_for_scope(scope);
-                let membership = self.route_arm_for_index(scope, idx);
-                let committed = membership.and_then(|_| committed_arm_for_scope(scope));
-                if live.is_some() { live } else { committed }
-            };
-            let allows = phase_matches
-                && self.roll_reentry_event_allows_index(idx, key.lane, &mut arm_for_candidate);
-            if allows {
-                return Some(idx);
-            }
-            idx += 1;
-        }
-        None
-    }
-
-    #[inline(never)]
-    pub(crate) fn roll_reentry_recv_index_for_frame(
-        &self,
-        key: super::super::InboundFrameKey,
-        live_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-        committed_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
-    ) -> Option<usize> {
-        if !self.has_reentry_scopes() {
-            return None;
-        }
-        if let Some(current) = self.roll_reentry_recv_index_for_frame_phase(
-            key,
-            RollLaneAdmission::Progress {
-                current_step: self.step_index_at_lane(key.lane as usize),
-            },
-            live_arm_for_scope,
-            committed_arm_for_scope,
-        ) {
-            return Some(current);
-        }
-        self.roll_reentry_recv_index_for_frame_phase(
-            key,
-            RollLaneAdmission::Head,
-            live_arm_for_scope,
-            committed_arm_for_scope,
-        )
     }
 
     #[inline(never)]
@@ -414,21 +347,23 @@ impl EventCursor {
         &self,
         idx: usize,
         lane: u8,
-        selected_arm_for_scope: &mut dyn FnMut(ScopeId) -> Option<u8>,
+        arm_for_scope: &mut dyn FnMut(ScopeId, super::EventArmView) -> Option<u8>,
     ) -> bool {
         if !self.has_reentry_scopes() {
             return false;
         }
-        let Some(scope) = self.complete_roll_scope_for_index(idx, selected_arm_for_scope) else {
+        let mut committed = |scope| arm_for_scope(scope, super::EventArmView::Committed);
+        let Some(scope) = self.complete_roll_scope_for_index(idx, &mut committed) else {
             return false;
         };
+        let mut selected_arm_for_scope = |scope| arm_for_scope(scope, super::EventArmView::Preview);
         if self.event_is_before_lane_cursor(idx, lane) {
             return self.roll_scope_lane_allows_index(
                 scope,
                 idx,
                 lane,
                 RollLaneAdmission::Head,
-                selected_arm_for_scope,
+                &mut selected_arm_for_scope,
             );
         }
         self.roll_scope_lane_allows_index(
@@ -438,7 +373,7 @@ impl EventCursor {
             RollLaneAdmission::Progress {
                 current_step: self.step_index_at_lane(lane as usize),
             },
-            selected_arm_for_scope,
+            &mut selected_arm_for_scope,
         )
     }
 }

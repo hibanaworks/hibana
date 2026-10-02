@@ -3,7 +3,6 @@ use super::{
     FrontierScratchSectionLease, LaneOfferState, OfferEntryKey, ReentryScopeLiveness, ScopeId,
     StateIndex, Transport, frontier_global_active_entries_view, state_index_to_usize,
 };
-use crate::global::typestate::InboundFrameKey;
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
@@ -174,36 +173,5 @@ where
             Err(CursorInvariantError::INVARIANT) => crate::invariant(),
         };
         self.cursor.active_reentry_offer_entry(scope)
-    }
-
-    pub(in crate::endpoint::kernel) fn active_reentry_scope_for_observed_frame(
-        &self,
-        key: InboundFrameKey,
-    ) -> Result<Option<ScopeId>, CursorInvariantError> {
-        let lane_idx = key.lane as usize;
-        if lane_idx >= self.cursor.logical_lane_count() {
-            return Ok(None);
-        }
-        self.decision_state
-            .active_reentry_scope_for_lane(lane_idx, |scope| {
-                if !self.is_reentry_route(scope) {
-                    return Ok(ReentryScopeLiveness::NotReentry);
-                }
-                if self
-                    .cursor
-                    .passive_descendant_target_index_for_key(scope, key)?
-                    .is_none()
-                {
-                    return Ok(ReentryScopeLiveness::NotReentry);
-                }
-                let Some(arm) = self.selected_arm_for_scope(scope) else {
-                    return Ok(ReentryScopeLiveness::Incomplete);
-                };
-                Ok(if self.reentrant_selected_arm_complete(scope, arm) {
-                    ReentryScopeLiveness::Complete
-                } else {
-                    ReentryScopeLiveness::Incomplete
-                })
-            })
     }
 }

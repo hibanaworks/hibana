@@ -12,8 +12,8 @@ pub(crate) use self::facts::LocalAction;
 pub(crate) use self::facts::StateIndex;
 pub(crate) use self::{
     cursor::{
-        CursorInvariantError, CursorRefresh, EnabledEventCommit, EventCursor, EventCursorState,
-        RelocatableResidentLaneStep, SendPreviewError,
+        CursorInvariantError, CursorRefresh, EnabledEventCommit, EventArmView, EventCursor,
+        EventCursorState, RelocatableResidentLaneStep, SendPreviewError,
     },
     facts::{
         DeterministicInboundKey, EventCommitMeta, InboundFrameKey, LocalAtomFacts, LocalConflict,

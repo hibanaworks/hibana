@@ -254,6 +254,7 @@ tests	tests/no_default_rodata.rs
 tests	tests/offer_branch_recv_evidence.rs
 tests	tests/parallel_route_nesting.rs
 tests	tests/security_report_regressions.rs
+tests	tests/security_report_regressions
 tests	tests/parallel_route_alternating.rs
 tests	tests/program_capacity_regression.rs
 tests	tests/public_surface_guards.rs

@@ -73,10 +73,10 @@ where
                         CommitDeltaApplyPermit::new(),
                     );
                 }
-                self.refresh_lane_offer_state(lane_idx);
             }
             lane_idx += 1;
         }
+        self.sync_lane_offer_state();
     }
 
     #[inline(always)]
@@ -193,6 +193,10 @@ where
             row,
             CommitDeltaApplyPermit::new(),
         );
-        self.refresh_lane_offer_state(lane_idx);
+        if completed_iteration_arm.is_some() {
+            self.sync_lane_offer_state();
+        } else {
+            self.refresh_lane_offer_state(lane_idx);
+        }
     }
 }

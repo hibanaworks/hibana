@@ -1404,7 +1404,7 @@ impl ProductionCursorTrace {
             LocalAction::Terminate => return None,
         };
         let selected = &self.selected;
-        let mut selected_arm_for_scope = |scope| selected_arm(selected, scope);
+        let mut selected_arm_for_scope = |scope, _view| selected_arm(selected, scope);
         self.cursor()
             .event_enabled(
                 idx,
