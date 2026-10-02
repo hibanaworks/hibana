@@ -24,9 +24,10 @@ fn boundary_seek_preserves_floors_and_every_equal_offset_marker() {
         };
         for floor in 0..=rows.len() {
             for query in 0..=9 {
-                let expected = (floor..rows.len())
-                    .find(|&index| markers.at(index).offset() >= query)
-                    .unwrap_or(rows.len());
+                let expected = floor
+                    + (floor..rows.len())
+                        .take_while(|&index| markers.at(index).offset() < query)
+                        .count();
                 assert_eq!(markers.offset_lower_bound(query, floor), expected);
             }
         }

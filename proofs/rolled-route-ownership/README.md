@@ -99,6 +99,7 @@ again before publication; this repair extends the handoff's development base.
 | Stackchan radio firmware ABI check, Clippy and link | Passed using the local core path and pinned binary SDK |
 | Targeted strict-provenance Miri checks | Five rolled-route regressions and nine descriptor/decoder/image-identity cases passed |
 | Complete Kani/CBMC CI on `08bba17a` | 200 harnesses verified; zero failures |
+| Complete strict-provenance Miri CI on `08bba17a` | 223 passed; two intentionally ignored |
 
 The existing fixed-snapshot size gate passed: measured sample peak stack was
 2,655 bytes, modeled sample runtime SRAM 5,322 bytes, and aggregate core rlib
@@ -112,7 +113,7 @@ build evidence is `/tmp/dots-radio-evidence.bJyR7D/`. Rust verification products
 were removed. Targeted Miri evidence is
 `/tmp/hibana-miri-repair-evidence.BBiRQD/`; the five regressions also record a
 successful command exit under the existing 480-second deep-route limit.
-The complete Miri/Kani and final-form suites remain CI responsibilities.
+The complete final-form suite remains a CI responsibility.
 
 CI exposed stale verification fixtures inherited from the development base:
 Kani's reviewed inventory had the same 200 harnesses in a different order, its
@@ -126,9 +127,15 @@ ignored tests. No harness is removed and no assumption is added. The first
 complete CBMC attempt verified 199 of 200; the failing proof-fixture assertion
 was repaired. The subsequent [CI run on `08bba17a`](https://github.com/hibanaworks/hibana/actions/runs/37038053959)
 verified all 200 harnesses with zero failures. Its Kani log is retained as
-`kani-ci-08bba17a.log` in the handoff evidence directory. The full final-form
-and Miri job is still running; its reviewed counts are not yet a completed CI
-result.
+`kani-ci-08bba17a.log` in the handoff evidence directory. The same run passed
+all 223 Miri tests (two intentional ignores), the canonical Lean gate, and
+Unix carrier conformance. Its final-form job stopped at the existing source
+lowering hygiene rule: the scope-boundary reference test used an optional
+search with an end-position default. That reference now counts the sorted
+prefix below the query, preserving all 256 marker layouts, floors and query
+boundaries. The four source-arena tests and the unchanged hygiene rule pass.
+The full job log is retained as
+`/tmp/hibana-proof-audit-evidence.Ftyoo2/final-form-ci-08bba17a.log`.
 
 The canonical and supplemental Lean source audits now use the existing
 fail-closed search helper. Missing ripgrep, unreadable search inputs and other
