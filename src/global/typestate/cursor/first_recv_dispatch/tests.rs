@@ -15,7 +15,8 @@ fn fixture() -> &'static RoleImageRef {
         .roll(),
         g::route(g::send::<0, 1, Msg<5, ()>>(), g::send::<0, 1, Msg<6, ()>>()),
     );
-    project::<1, _>(&global).role_image_ref()
+    let program: crate::runtime::program::RoleProgram<1> = project(&global);
+    program.role_image_ref()
 }
 
 fn machine(rows: &'static RoleImageRef) -> EventCursorMachine {

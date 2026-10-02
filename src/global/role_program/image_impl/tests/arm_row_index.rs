@@ -14,7 +14,8 @@ fn projected_image() -> &'static RoleImageRef {
         .roll(),
         g::route(g::send::<0, 1, Msg<5, ()>>(), g::send::<0, 1, Msg<6, ()>>()),
     );
-    project::<1, _>(&global).role_image_ref()
+    let program: crate::runtime::program::RoleProgram<1> = project(&global);
+    program.role_image_ref()
 }
 
 fn copy_bytes(rows: &RoleImageRef) -> [u8; 2048] {
@@ -96,7 +97,7 @@ fn certified_arm_byte_mutations_match_exact_original_rows() {
 }
 
 #[test]
-fn malformed_prefix_requires_fallback_and_later_damage_keeps_early_success() {
+fn malformed_prefix_requires_checked_decoding_and_later_damage_keeps_early_success() {
     let rows = projected_image();
     let mut bytes = copy_bytes(rows);
     let start = rows.columns.route_arms.offset as usize;
