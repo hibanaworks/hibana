@@ -272,6 +272,7 @@ tests	tests/support
 tests	tests/ui
 tests	tests/ui-pass
 tests	tests/ui.rs
+tests	tests/verification_oracles
 tests/semantic_surface	tests/semantic_surface/common.rs
 tests/semantic_surface	tests/semantic_surface/descriptor_measurement.rs
 tests/semantic_surface	tests/semantic_surface/endpoint_active_leases.rs
