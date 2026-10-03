@@ -1,0 +1,22 @@
+[
+  {
+    "check": "check_surface_hygiene",
+    "returncode": 0
+  },
+  {
+    "check": "check_surface_test_alias_hygiene",
+    "returncode": 0
+  },
+  {
+    "check": "check_endpoint_surface_owner",
+    "returncode": 0
+  },
+  {
+    "check": "check_text_integrity",
+    "returncode": 0
+  },
+  {
+    "check": "check_no_split_guard_literals",
+    "returncode": 0
+  }
+]

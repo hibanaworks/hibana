@@ -62,11 +62,11 @@ if not args.skip_compiler_cost:
         preserved = json.loads((root / 'preserved-artifacts.json').read_text())
         for rel, expected_hash in preserved['files'].items():
             assert sha((root / rel).read_bytes()) == expected_hash, (directory, rel)
-    # The original seven-source manifest remains immutable. Three test files
-    # have a separately checked hygiene-only mapping to this current tree.
-    subprocess.run([sys.executable, str(HERE.parent / 'core-followup/check_sources.py')],
-                   check=True)
-    print('PASS exact compiler-cost artifacts, historical source identity, and current followup mapping', flush=True)
+    qualified = json.loads((HERE.parent / 'route-path-refinement/qualified-source-manifest.json').read_text())
+    assert len(qualified['files']) == 7
+    for rel, expected_hash in qualified['files'].items():
+        assert sha((REPO / rel).read_bytes()) == expected_hash, rel
+    print('PASS exact compiler-cost artifacts and qualified seven-source manifest', flush=True)
 
 version = subprocess.check_output([args.lean, '--version'], text=True).strip()
 assert 'version 4.30.0' in version, version
@@ -102,8 +102,6 @@ with tempfile.TemporaryDirectory(prefix='hibana-elastic-proof-') as temp:
             ('compiler-participant-mask', ['ParticipantMask'], ['check_participant_mask.py']),
             ('route-path-refinement', ['RoutePathRefinement', 'ProcessedCardinality'],
              ['prove_unbounded_loop.py', 'check_route_path_refinement.py']),
-            ('passive-child-window', ['PassiveChildWindow'], ['check_window.py']),
-            ('projection-conflict-reuse', ['ConflictReuse'], ['check_conflict_reuse.py']),
         ]:
             root = HERE.parent / directory
             # The original unbounded script writes JSON. Run exact copies in temp.

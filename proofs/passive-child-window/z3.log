@@ -1,0 +1,97 @@
+{
+  "status": "PASS",
+  "checks": [
+    {
+      "name": "unbounded midpoint bounds",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded right interval strictly shrinks",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded left interval strictly shrinks",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded right search preserves smaller prefix",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded left search preserves greater-or-equal suffix",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded no equal row before lower bound",
+      "result": "unsat"
+    },
+    {
+      "name": "unbounded stop excludes all later matches",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 0",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 1",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 2",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 3",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 4",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 5",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 6",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 7",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 8",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 9",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 10",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 11",
+      "result": "unsat"
+    },
+    {
+      "name": "ordered fold exact length 12",
+      "result": "unsat"
+    },
+    {
+      "name": "negative control: unsorted input can change result",
+      "result": "sat"
+    },
+    {
+      "name": "negative control: keeping only one tie changes result",
+      "result": "sat"
+    },
+    {
+      "name": "negative control: reordering equal offsets changes result",
+      "result": "sat"
+    }
+  ]
+}

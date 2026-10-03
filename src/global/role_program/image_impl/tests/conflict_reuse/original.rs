@@ -1,170 +1,61 @@
-use super::super::{
-    ColumnRange, PackedLaneRange, PackedLocalEventRow, PackedRollScopeRow,
-    ROLE_IMAGE_CONFLICT_STRIDE, ROLE_IMAGE_DEPENDENCY_STRIDE, ROLE_IMAGE_EVENT_STRIDE,
-    ROLE_IMAGE_LANE_RANGE_STRIDE, ROLE_IMAGE_LANE_STRIDE, ROLE_IMAGE_ROLL_SCOPE_STRIDE,
-    ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE, ROLE_IMAGE_ROUTE_ARM_STRIDE,
-    ROLE_IMAGE_ROUTE_SCOPE_STRIDE, ROLE_IMAGE_U16_STRIDE, RoleImageBuild, RoleImageBytes,
-    RoleImageColumns, RoleImagePlan, RoleImageRef, RouteArmLaneStepRow, RuntimeRoleFacts,
-    ScopeKind,
-};
-use super::{projection, route_arm_row_index};
-use crate::global::compiled::images::CompiledProgramRef;
-use crate::global::const_dsl::EffList;
-use crate::global::typestate::{PackedEventConflict, PackedLocalDependency};
+// Frozen pre-edit emitter and row helpers; only names/visibility/import paths adapted.
+use super::super::*;
+use crate::global::const_dsl::ScopeId;
+use crate::global::typestate::{LocalConflict, RouteChoiceMark};
 
-mod lanes;
-mod layout;
-use layout::validate_role_image_layout;
-
-impl RoleImagePlan {
-    pub(crate) const fn build_if_fits<const N: usize, const E: usize>(
-        &self,
-        source: (&EffList<E>, &projection::ScopeFacts),
-        facts: RuntimeRoleFacts,
-        role: u8,
-    ) -> Option<RoleImageBuild<N>> {
-        if self.blob_len() > N {
-            return None;
-        }
-        Some(RoleImageBytes::<N>::emit(source, facts, role, self.columns))
+const fn route_scope_and_arm_at<const E: usize>(
+    eff_list: &EffList<E>,
+    eff_idx: usize,
+) -> Option<(ScopeId, u8)> {
+    match projection::route_conflict_for_eff(eff_list.scope_markers(), eff_idx).to_conflict() {
+        Some(LocalConflict::RouteArm { scope, arm }) => Some((scope, arm)),
+        Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
     }
 }
 
-impl<const N: usize> RoleImageBuild<N> {
-    #[inline(always)]
-    pub(crate) const fn image_ref(
-        &'static self,
-        program: &'static CompiledProgramRef,
-        role: u8,
-        facts: RuntimeRoleFacts,
-    ) -> RoleImageRef {
-        self.bytes.image_ref(program, role, facts, self.columns)
+const fn first_recv_eff_for_route_arm<const E: usize>(
+    eff_list: &EffList<E>,
+    route: ScopeId,
+    arm: u8,
+    role: u8,
+) -> Option<usize> {
+    let arm = super::super::super::binary_route_arm_index(arm);
+    let Some(ranges) = projection::route_arm_ranges(eff_list.scope_markers(), route) else {
+        crate::invariant();
+    };
+    let (start, end) = ranges[arm];
+    let mut idx = start;
+    while idx < end && idx < eff_list.len() {
+        let atom = eff_list.atom_at(idx);
+        if atom.to == role && atom.from != role {
+            return Some(idx);
+        }
+        idx += 1;
     }
+    None
+}
+
+pub(super) const fn local_event_row_for_eff<const E: usize>(
+    eff_list: &EffList<E>,
+    eff_idx: usize,
+    frame_label: u8,
+    role: u8,
+) -> PackedLocalEventRow {
+    let scope = projection::scope_at(eff_list, eff_idx);
+    let choice = match route_scope_and_arm_at(eff_list, eff_idx) {
+        Some((route_scope, arm)) => {
+            match first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
+                Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
+                Some(_) | None => RouteChoiceMark::Ordinary,
+            }
+        }
+        None => RouteChoiceMark::Ordinary,
+    };
+    PackedLocalEventRow::new(eff_idx, scope, frame_label, choice)
 }
 
 impl<const N: usize> RoleImageBytes<N> {
-    #[inline(always)]
-    const fn empty() -> Self {
-        Self { bytes: [0; N] }
-    }
-
-    #[inline(always)]
-    pub(crate) const fn image_ref(
-        &'static self,
-        program: &'static CompiledProgramRef,
-        role: u8,
-        facts: RuntimeRoleFacts,
-        columns: RoleImageColumns,
-    ) -> RoleImageRef {
-        RoleImageRef::new(program, role, facts, columns, &self.bytes)
-    }
-
-    #[inline(always)]
-    const fn write_u8(&mut self, offset: usize, value: u8) {
-        if offset >= self.bytes.len() {
-            panic!("role image");
-        }
-        self.bytes[offset] = value;
-    }
-
-    #[inline(always)]
-    const fn write_u16(&mut self, offset: usize, value: u16) {
-        self.write_u8(offset, value as u8);
-        self.write_u8(offset + 1, (value >> 8) as u8);
-    }
-
-    #[inline(always)]
-    const fn write_u32(&mut self, offset: usize, value: u32) {
-        self.write_u16(offset, value as u16);
-        self.write_u16(offset + 2, (value >> 16) as u16);
-    }
-
-    #[inline(always)]
-    const fn column_offset(column: ColumnRange, row: usize, stride: usize) -> usize {
-        if row >= column.len as usize {
-            panic!("role image");
-        }
-        column.offset as usize + row * stride
-    }
-
-    #[inline(always)]
-    const fn w8(&mut self, column: ColumnRange, row: usize, stride: usize, value: u8) {
-        self.write_u8(Self::column_offset(column, row, stride), value);
-    }
-
-    #[inline(always)]
-    const fn w16(&mut self, column: ColumnRange, row: usize, stride: usize, value: u16) {
-        self.write_u16(Self::column_offset(column, row, stride), value);
-    }
-
-    #[inline(always)]
-    const fn w32(&mut self, column: ColumnRange, row: usize, stride: usize, value: u32) {
-        self.write_u32(Self::column_offset(column, row, stride), value);
-    }
-
-    #[inline(always)]
-    const fn write_event(&mut self, column: ColumnRange, row: usize, event: PackedLocalEventRow) {
-        let offset = Self::column_offset(column, row, ROLE_IMAGE_EVENT_STRIDE);
-        self.write_u16(offset, event.eff_index);
-        self.write_u16(offset + 2, event.dependency_row);
-        self.write_u16(offset + 4, event.conflict_row);
-        self.write_u16(offset + 6, event.scope().raw());
-        self.write_u8(offset + 8, event.frame_label);
-        self.write_u8(offset + 9, event.flags);
-    }
-
-    #[inline(always)]
-    const fn write_route_arm_lane_step(
-        &mut self,
-        column: ColumnRange,
-        row: usize,
-        step: RouteArmLaneStepRow,
-    ) {
-        let offset = Self::column_offset(column, row, ROLE_IMAGE_ROUTE_ARM_LANE_STEP_STRIDE);
-        self.write_u8(offset, step.lane());
-        self.write_u16(offset + 1, step.first_step());
-        self.write_u16(offset + 3, step.last_step());
-    }
-
-    #[inline(always)]
-    const fn write_dependency_row(
-        &mut self,
-        column: ColumnRange,
-        row: usize,
-        dependency: PackedLocalDependency,
-    ) {
-        let offset = Self::column_offset(column, row, ROLE_IMAGE_DEPENDENCY_STRIDE);
-        self.write_u16(offset, dependency.start());
-        self.write_u16(offset + 2, dependency.end());
-        self.write_u16(offset + 4, dependency.dep_ordinal());
-        self.write_u16(offset + 6, dependency.conflict_route());
-    }
-
-    #[inline(always)]
-    const fn write_route_arm_row(
-        &mut self,
-        column: ColumnRange,
-        row: usize,
-        arm_row: super::super::PackedRouteArmRow,
-    ) {
-        let offset = Self::column_offset(column, row, ROLE_IMAGE_ROUTE_ARM_STRIDE);
-        self.write_u32(offset, arm_row.event_row_raw());
-        self.write_u32(offset + 4, arm_row.lane_step_len_and_child_slot_raw());
-    }
-
-    #[inline(always)]
-    const fn write_roll_scope_row(
-        &mut self,
-        column: ColumnRange,
-        row: usize,
-        roll_row: PackedRollScopeRow,
-    ) {
-        let offset = Self::column_offset(column, row, ROLE_IMAGE_ROLL_SCOPE_STRIDE);
-        self.write_u16(offset, roll_row.scope_raw());
-        self.write_u32(offset + 2, roll_row.event_row_raw());
-    }
-
-    pub(crate) const fn emit<const E: usize>(
+    pub(super) const fn emit_reference<const E: usize>(
         source: (&EffList<E>, &projection::ScopeFacts),
         facts: RuntimeRoleFacts,
         role: u8,
@@ -191,7 +82,7 @@ impl<const N: usize> RoleImageBytes<N> {
                 if atom.lane as usize >= footprint.logical_lane_count {
                     panic!("local event lane outside role logical domain");
                 }
-                let (mut event, event_conflict) = projection::local_event_row_for_eff(
+                let mut event = local_event_row_for_eff(
                     eff_list,
                     eff_idx,
                     eff_list.frame_label_at(eff_idx),
@@ -204,7 +95,7 @@ impl<const N: usize> RoleImageBytes<N> {
                     dependency_row += 1;
                 }
                 let conflict = if has_route {
-                    event_conflict
+                    projection::route_conflict_for_eff(markers, eff_idx)
                 } else {
                     PackedEventConflict::none()
                 };
@@ -352,7 +243,7 @@ impl<const N: usize> RoleImageBytes<N> {
                     out.write_route_arm_row(
                         columns.route_arms,
                         arm_row_index,
-                        super::super::PackedRouteArmRow::new(local_row, child_slot, lane_step_row),
+                        crate::global::role_program::PackedRouteArmRow::new(local_row, child_slot, lane_step_row),
                     );
                     let commit_range = PackedLaneRange::new(route_commit_row, commit_len);
                     out.w32(
@@ -450,7 +341,3 @@ impl<const N: usize> RoleImageBytes<N> {
         }
     }
 }
-
-#[cfg(all(test, hibana_repo_tests))]
-#[path = "tests/conflict_reuse.rs"]
-mod conflict_reuse;

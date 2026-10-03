@@ -1,0 +1,8 @@
+source file budget check passed
+maintainability budget check passed
+source lowering hygiene check passed
+lowering hygiene check passed
+compiled descriptor authority check passed
+no nightly feature check passed
+no generic const expressions check passed
+no underscore discard check passed

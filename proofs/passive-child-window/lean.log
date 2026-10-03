@@ -1,0 +1,7 @@
+/workspace/scratch/0915e8fbff81/artifacts/passive-child-window/PassiveChildWindow.lean:60:34: warning: unused variable `hin`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+'Hibana.PassiveChildWindow.initial_search_lower_bound' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Hibana.PassiveChildWindow.no_equal_marker_skipped' depends on axioms: [propext, Quot.sound]
+'Hibana.PassiveChildWindow.first_greater_ends_equal_group' depends on axioms: [propext, Quot.sound]
+'Hibana.PassiveChildWindow.stable_window_exact' depends on axioms: [propext, Quot.sound]

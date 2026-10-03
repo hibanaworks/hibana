@@ -3,8 +3,8 @@ use crate::{
     eff::{EffAtom, EventOrigin},
     global::const_dsl::{ReentryMark, ScopeId},
 };
-#[path = "participant_reference.rs"]
-mod reference;
+#[path = "legacy_participant_validation.rs"]
+mod legacy;
 
 fn atom(from: u8, to: u8, label: u8) -> EffAtom {
     EffAtom {
@@ -20,12 +20,11 @@ fn atom(from: u8, to: u8, label: u8) -> EffAtom {
 fn assert_equivalent<const E: usize>(source: &EffList<E>) -> Option<u8> {
     let summary = CompiledProgramImage::scan_const(source);
     let actual = projection_error_all_roles(&summary, source).map(|e| e as u8);
-    let expected =
-        reference::reference_projection_error_all_roles(&summary, source).map(|e| e as u8);
+    let expected = legacy::legacy_projection_error_all_roles(&summary, source).map(|e| e as u8);
     assert_eq!(actual, expected, "full ordered pipeline");
     assert_eq!(
         validate_route_projection_guarantees(&summary, source).map(|e| e as u8),
-        reference::reference_route_projection_guarantees(&summary, source).map(|e| e as u8),
+        legacy::legacy_route_projection_guarantees(&summary, source).map(|e| e as u8),
         "ordered route stages, independently of earlier validation errors"
     );
     let mask = participating_roles(source);

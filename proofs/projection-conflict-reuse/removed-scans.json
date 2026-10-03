@@ -1,0 +1,65 @@
+{
+  "evidence": "source-derived operation model, not rustc instruction count or measured savings",
+  "parser_sha256": "6dc374517bbee478335009d4a8188e888ccd847946a763511420b06ccf74b6de",
+  "source_sha256": {
+    "src/roles/protocol_tls_phases.rs": "35f96c9df527bd1e5914a5063d27e09625fba82b886661d8a1d80cde75fdd38f",
+    "src/roles/protocol.rs": "2bfd9d80a157ca5ecb022dc1aeab9e0c4f03b9f1261ec17ed3f1b60417f40943"
+  },
+  "tls": {
+    "structure": {
+      "Seq": 192,
+      "Send": 333,
+      "Roll": 5,
+      "Route": 140
+    },
+    "markers": 570,
+    "roles": [
+      {
+        "role": 24,
+        "duplicate_scan_calls_removed": 333,
+        "outer_marker_loop_reads_removed": 95181
+      },
+      {
+        "role": 25,
+        "duplicate_scan_calls_removed": 333,
+        "outer_marker_loop_reads_removed": 95181
+      }
+    ],
+    "duplicate_scan_calls_removed": 666,
+    "outer_marker_loop_reads_removed": 190362
+  },
+  "tls_key_par": {
+    "structure": {
+      "Par": 1,
+      "Seq": 204,
+      "Send": 354,
+      "Roll": 6,
+      "Route": 148
+    },
+    "markers": 607,
+    "roles": [
+      {
+        "role": 16,
+        "duplicate_scan_calls_removed": 21,
+        "outer_marker_loop_reads_removed": 12362
+      },
+      {
+        "role": 17,
+        "duplicate_scan_calls_removed": 21,
+        "outer_marker_loop_reads_removed": 12362
+      },
+      {
+        "role": 24,
+        "duplicate_scan_calls_removed": 333,
+        "outer_marker_loop_reads_removed": 95514
+      },
+      {
+        "role": 25,
+        "duplicate_scan_calls_removed": 333,
+        "outer_marker_loop_reads_removed": 95514
+      }
+    ],
+    "duplicate_scan_calls_removed": 708,
+    "outer_marker_loop_reads_removed": 215752
+  }
+}
