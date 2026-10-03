@@ -126,6 +126,28 @@ where
             if committed.route_is_fresh(route_idx) && row.scope() == scope_id {
                 branch_route_fresh = true;
             }
+            if committed.route_is_fresh(route_idx)
+                && self.cursor.is_route_controller(row.scope())
+                && let Some(resolver) = self.cursor.route_scope_resolver(row.scope())
+            {
+                let arm = match row.selected_arm() {
+                    0 => DecisionArm::Left,
+                    1 => DecisionArm::Right,
+                    _ => crate::invariant(),
+                };
+                let lane = self.offer_lane_for_scope(row.scope());
+                self.emit_dynamic_resolver_success_audit(
+                    lane,
+                    row.scope(),
+                    resolver.resolver_id(),
+                    arm,
+                );
+                self.emit_route_arm_selection(
+                    row.scope(),
+                    RouteArmToken::from_resolver(Arm::from_raw(row.selected_arm())),
+                    lane,
+                );
+            }
             route_idx += 1;
         }
 
@@ -133,18 +155,9 @@ where
             if !branch_route_fresh {
                 crate::invariant();
             }
-            let Some(resolver) = self.cursor.route_scope_resolver(scope_id) else {
+            if self.cursor.route_scope_resolver(scope_id).is_none() {
                 crate::invariant();
-            };
-            let resolver_id = resolver.resolver_id();
-            let decision_lane = self.offer_lane_for_scope(scope_id);
-            let arm = match selected_arm {
-                0 => DecisionArm::Left,
-                1 => DecisionArm::Right,
-                _ => crate::invariant(),
-            };
-            self.emit_dynamic_resolver_success_audit(decision_lane, scope_id, resolver_id, arm);
-            self.emit_route_arm_selection(scope_id, route_token, decision_lane);
+            }
         } else if route_token.is_ack() && branch.profile.publishes_controller_ack_decision() {
             let arm = Arm::from_raw(selected_arm);
             let token = RouteArmToken::from_ack(arm);

@@ -102,7 +102,17 @@ where
         let reentry_offer = self.active_reentry_offer_for_lane(lane_idx);
         let (entry_idx, scope_id) = if let Some(idx) = self.cursor.index_for_lane_step(lane_idx) {
             let scope_id = self.cursor.node_scope_id_at(idx);
-            if self.cursor.has_route_scope(scope_id) {
+            // A completed enclosing visit owns reentry; the old child scope
+            // cannot keep the lane inside that visit's already chosen arm.
+            if let Some((reentry_scope, entry)) = reentry_offer
+                && self.selected_live_arm_for_scope(reentry_scope).is_none()
+                && self
+                    .cursor
+                    .route_scope_conflict_arm_for_scope(scope_id, reentry_scope)
+                    .is_some()
+            {
+                (state_index_to_usize(entry), reentry_scope)
+            } else if self.cursor.has_route_scope(scope_id) {
                 (idx, scope_id)
             } else {
                 let (scope_id, entry) = reentry_offer?;

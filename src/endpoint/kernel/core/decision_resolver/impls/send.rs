@@ -189,7 +189,7 @@ where
             let scope_id = route_row.scope();
             let arm_index = route_row.selected_arm();
             if self.cursor.route_scope_resolver(scope_id).is_some()
-                && let Some(selected) = self.selected_arm_for_scope(scope_id)
+                && let Some(selected) = self.selected_live_arm_for_scope(scope_id)
                 && selected != arm_index
             {
                 return Err(SendError::PhaseInvariant);

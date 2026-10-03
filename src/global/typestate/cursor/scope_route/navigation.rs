@@ -395,13 +395,10 @@ impl EventCursor {
         if node_scope.is_none() {
             return node_scope;
         }
-        if self.route_scope_slot_inner(node_scope).is_some()
-            && selected_arm_for_scope(node_scope).is_some()
-        {
-            return node_scope;
-        }
         let mut conflict = self.machine().event_conflict_for_index(self.idx_usize());
-        let mut first_unresolved = ScopeId::none();
+        // Conflict rows run from the event outwards. An unresolved ancestor
+        // must decide before any of its descendants, including on a fresh roll.
+        let mut pending_scope = ScopeId::none();
         let mut depth = 0usize;
         let depth_bound = self.route_chain_bound();
         while depth < depth_bound {
@@ -416,21 +413,19 @@ impl EventCursor {
                 None => preview_selected_arm_for_scope(scope),
             };
             let Some(selected) = selected else {
-                if first_unresolved.is_none() {
-                    first_unresolved = scope;
-                }
+                pending_scope = scope;
                 conflict = self.route_scope_conflict_row(scope);
                 depth += 1;
                 continue;
             };
             if selected != arm {
-                return scope;
+                pending_scope = scope;
             }
             conflict = self.route_scope_conflict_row(scope);
             depth += 1;
         }
-        if !first_unresolved.is_none() {
-            return first_unresolved;
+        if !pending_scope.is_none() {
+            return pending_scope;
         }
         node_scope
     }

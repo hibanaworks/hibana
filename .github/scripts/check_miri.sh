@@ -34,7 +34,7 @@ fi
 
 miri_passed_total=0
 miri_ignored_total=0
-readonly EXPECTED_MIRI_PASSED_TOTAL=230
+readonly EXPECTED_MIRI_PASSED_TOTAL=238
 readonly EXPECTED_MIRI_IGNORED_TOTAL=2
 
 run_miri_test() {
@@ -507,6 +507,14 @@ MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_t
   -p hibana \
   --test security_report_regressions \
   send_continuations::
+
+run_miri_test \
+  nested-controller-offer-ownership \
+  8 \
+  8 \
+  0 \
+  -p hibana \
+  --test nested_resolver_self_continuations
 
 run_miri_test \
   program-image-storage-validation \

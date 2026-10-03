@@ -7,7 +7,7 @@ use super::super::super::{
     preview_selected_arm_for_scope_from_parts, state_index_to_usize,
 };
 use crate::eff::EventOrigin;
-use crate::global::typestate::InboundFrameKey;
+use crate::global::typestate::{InboundFrameKey, LocalAction};
 impl<'r, const ROLE: u8, T> CursorEndpoint<'r, ROLE, T>
 where
     T: Transport + 'r,
@@ -296,14 +296,26 @@ where
 
         let direct_meta = if let Some((arm_entry_idx, arm_entry_label)) = controller_arm_entry {
             let arm_entry_idx = state_index_to_usize(arm_entry_idx);
-            if let Some(local_meta) = self.cursor.try_local_meta_at(arm_entry_idx) {
-                Self::cached_recv_meta_from_local(arm_entry_idx, local_meta)
-            } else {
-                Self::route_arm_cached_recv_meta(
+            // Every real event retains its exact resident identity, including
+            // its wire color. Synthetic arm metadata belongs only to terminal arms.
+            match self.cursor.action_at(arm_entry_idx) {
+                LocalAction::Send { .. } => Self::cached_recv_meta_from_send(
+                    arm_entry_idx,
+                    crate::invariant_some(self.cursor.try_send_meta_at(arm_entry_idx)),
+                ),
+                LocalAction::Recv { .. } => Self::cached_recv_meta_from_recv(
+                    arm_entry_idx,
+                    crate::invariant_some(self.cursor.try_recv_meta_at(arm_entry_idx)),
+                ),
+                LocalAction::Local { .. } => Self::cached_recv_meta_from_local(
+                    arm_entry_idx,
+                    crate::invariant_some(self.cursor.try_local_meta_at(arm_entry_idx)),
+                ),
+                LocalAction::Terminate => Self::route_arm_cached_recv_meta(
                     arm_entry_idx,
                     arm_entry_label,
                     selection.offer_lane,
-                )
+                ),
             }
         } else if selected_arm
             < self

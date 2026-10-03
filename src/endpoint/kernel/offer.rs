@@ -317,6 +317,7 @@ where
         scratch: &mut FrontierScratchWorkspace<'_>,
     ) -> Poll<RecvResult<Option<u8>>> {
         let mut restart = None;
+        let mut nested = None;
         let mut branch_label = None;
         {
             let OfferExecution::Resolving {
@@ -348,7 +349,35 @@ where
                     ));
                 }
                 ResolveTokenOutcome::Resolved(resolved) => {
-                    if stage.facts.profile.is_passive() {
+                    if stage.facts.profile.is_controller()
+                        && let Some(child) = self
+                            .cursor
+                            .passive_child_scope(stage.selection().scope_id, resolved.selected_arm)
+                    {
+                        // The child owns the next visible event. Carry the affine preview
+                        // through every immediate decision; only event commit publishes
+                        // the selected ancestry recorded by the resident descriptor.
+                        let entry = self
+                            .cursor
+                            .route_scope_materialization_index(child)
+                            .ok_or(RecvError::PhaseInvariant)?;
+                        let selection = self.offer_scope_selection_for_scope_lane(
+                            child,
+                            entry,
+                            stage.selection().offer_lane,
+                        )?;
+                        let facts = self.prepare_frontier_facts(selection, frontier_visited);
+                        nested = Some((
+                            frontier_visited.take(),
+                            OfferCollectState {
+                                facts,
+                                ingress: core::mem::replace(
+                                    &mut stage.ingress,
+                                    OfferStagedIngress::empty(),
+                                ),
+                            },
+                        ));
+                    } else if stage.facts.profile.is_passive() {
                         let descended = match self.descend_selected_passive_route(
                             stage.selection(),
                             resolved,
@@ -367,7 +396,7 @@ where
                             ));
                         }
                     }
-                    if restart.is_none() {
+                    if restart.is_none() && nested.is_none() {
                         let selection = stage.selection();
                         match self.produce_branch(
                             selection,
@@ -381,6 +410,13 @@ where
                     }
                 }
             }
+        }
+        if let Some((frontier_visited, stage)) = nested {
+            state.execution = OfferExecution::Collecting {
+                frontier_visited,
+                stage,
+            };
+            return Poll::Ready(Ok(None));
         }
         if let Some((frontier_visited, ingress)) = restart {
             state.carry_ingress(ingress);

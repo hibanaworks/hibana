@@ -250,6 +250,7 @@ tests	tests/local_only_hygiene.rs
 tests	tests/miri_runtime_owner
 tests	tests/miri_runtime_owner.rs
 tests	tests/nested_route_runtime.rs
+tests	tests/nested_resolver_self_continuations.rs
 tests	tests/no_default_rodata.rs
 tests	tests/offer_branch_recv_evidence.rs
 tests	tests/parallel_route_nesting.rs

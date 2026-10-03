@@ -125,6 +125,10 @@ name = "local_action"
 path = "tests/local_action.rs"
 
 [[test]]
+name = "nested_resolver_self_continuations"
+path = "tests/nested_resolver_self_continuations.rs"
+
+[[test]]
 name = "miri_runtime_owner"
 path = "tests/miri_runtime_owner.rs"
 
