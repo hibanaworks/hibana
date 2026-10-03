@@ -18,12 +18,6 @@ def check_hash(path, expected):
     assert sha(path.read_bytes()) == expected, str(path)
 
 
-preserved = read_json(HERE / 'integration-preserved.json')
-for path, expected_hash in preserved['files'].items():
-    check_hash(REPO / path, expected_hash)
-print('PASS immutable local and external pre-integration correspondence records')
-
-
 mapping = read_json(REPO / 'proofs/compiler-participant-mask/test-hygiene-followup.json')
 qualified_path = REPO / mapping['qualified_manifest']
 check_hash(qualified_path, mapping['qualified_manifest_sha256'])
@@ -31,7 +25,7 @@ qualified = read_json(qualified_path)
 assert len(qualified['files']) == 7
 assert mapping['files'].keys() == qualified['files'].keys()
 old_oracle = 'src/global/compiled/lowering/seal/tests/legacy_participant_validation.rs'
-new_oracle = 'tests/verification_oracles/participant_validation.rs'
+new_oracle = 'src/global/compiled/lowering/seal/tests/participant_reference.rs'
 participant = 'src/global/compiled/lowering/seal/tests/participant_mask.rs'
 boundary = 'src/global/const_dsl/event_relations/tests.rs'
 changed = {old_oracle, participant, boundary}
@@ -54,10 +48,10 @@ def tokens(text):
     return re.sub(r'\s+', '', text)
 
 
-expected = old_text(old_oracle)
+expected = old_text(old_oracle).replace('test-only differential oracle', 'differential oracle')
 expected = expected.replace('legacy_', 'reference_')
 assert expected == (REPO / new_oracle).read_text()
-expected = old_text(participant).replace('legacy_participant_validation.rs', '../../../../../../tests/verification_oracles/participant_validation.rs')
+expected = old_text(participant).replace('legacy_participant_validation.rs', 'participant_reference.rs')
 expected = expected.replace('mod legacy;', 'mod reference;').replace('legacy::legacy_', 'reference::reference_')
 assert tokens(expected) == tokens((REPO / participant).read_text())
 expected = old_text(boundary)
@@ -66,8 +60,8 @@ suffix = '        })\n        .unwrap()\n        .join()\n        .unwrap();'
 assert expected.count(prefix) == expected.count(suffix) == 1
 expected = expected.replace(prefix, '').replace(suffix, '')
 expected = expected.replace('compact_boundary_and_large_private_fallback_preserve_relation',
-                            'compact_and_wide_input_boundaries_preserve_the_exact_relation')
-expected = re.sub(r'\bfallback\b', 'wide', expected)
+                            'compact_boundary_and_large_private_source_preserve_relation')
+expected = re.sub(r'\bfallback\b', 'uncached', expected)
 assert tokens(expected) == tokens((REPO / boundary).read_text())
 print('PASS original seven-source qualification and exact test-hygiene-only mapping')
 
@@ -124,7 +118,7 @@ for directory, proof_key, source_key in [
     print('PASS preserved ' + directory + ' pre-edit evidence and exact current candidate sources')
 
 current = read_json(HERE / 'current-source-manifest.json')
-paths = list((REPO / 'src').rglob('*.rs')) + list((REPO / 'tests/verification_oracles').rglob('*.rs')) + [
+paths = list((REPO / 'src').rglob('*.rs')) + [
     REPO / 'Cargo.toml', REPO / 'Cargo.lock', REPO / '.github/repo-tests/Cargo.toml']
 assert set(current['files']) == {str(path.relative_to(REPO)) for path in paths}
 for path, expected_hash in current['files'].items():

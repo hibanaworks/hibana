@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "scope": "Current integrated source identity: all src/**/*.rs, relocated verification oracle Rust files, workspace manifests and lockfile. Hashes establish identity, not semantic proof; previous qualified source identity is archived under historical/pre-d906-integration.",
+  "scope": "Current combined source identity for the internal Rust qualification: all src/**/*.rs plus workspace manifests and lockfile. Hashes establish exact identity, not semantic proof.",
   "base_commit": "ff6d167ed23f2f566d16affdeedd3b2ca8569cc2",
-  "tree_sha256": "ff09b0223cf7d0f6b467a18416ca25ba1371a3fbc7e93ea8732ed76f5326a02d",
+  "tree_sha256": "4068d89e28a18f555882cd4f7a713449516903fbe003a2e9e28409d5c1d2875b",
   "tree_hash_encoding": "UTF-8; sorted path entries, SHA-256 + two spaces + repository-relative path + newline",
   "files": {
     ".github/repo-tests/Cargo.toml": "318cd94936dd133123c91f4c7c1bb65538bd22d46a6a0f8ea2454330cf276710",
@@ -160,7 +160,8 @@
     "src/global/compiled/lowering/mod.rs": "c12cad9edbc9d792e2423b1b316ba816471bb0f9de86630149478d762233e67c",
     "src/global/compiled/lowering/seal/kani.rs": "5184fe90358f7fce3072d8d602818f9bb6742110da20fdfd0e02c9c6a9f2963f",
     "src/global/compiled/lowering/seal/passive_child.rs": "6c0c36f333ebdef86587c0b9821933550930aff0a3a599b03fb0713cd5c1ec09",
-    "src/global/compiled/lowering/seal/tests/participant_mask.rs": "198a4638e8b44546a6203a92de565ee069ab04523f5cb01005b0d418692ece05",
+    "src/global/compiled/lowering/seal/tests/participant_mask.rs": "64a4d3421a27e81c9f0bf4953f92d2dfee2b9bd1bd88724323ff602ffeec4290",
+    "src/global/compiled/lowering/seal/tests/participant_reference.rs": "187816b9c493069455724f789f5608951d64fbbee530497e3d66fd69d02e89ca",
     "src/global/compiled/lowering/seal/tests.rs": "edcc9f28fdcc5abbb21f4e90f381ea8e04eb1c199f9994b6d5be23f6f87ca7d8",
     "src/global/compiled/lowering/seal.rs": "75897cdb082bdb117606d926e1fb358477c9185abbdbcc6754071431007f25ed",
     "src/global/compiled/mod.rs": "ba93b70c0b51e8ef1bb68bc1c9a9a48e41a8e0a7af01c5fa11e81600fed1fffc",
@@ -184,7 +185,7 @@
     "src/global/const_dsl/endpoint_controller.rs": "9cc112d388884b231f7ecef429f1d26d40cb8a818bb77d8ddb5191d3f04da499",
     "src/global/const_dsl/endpoint_selectors/kani.rs": "087d1d91560f33477b4ac7d3ee4717e82bd23c16530c658326651f36f826228b",
     "src/global/const_dsl/endpoint_selectors.rs": "7d52066eae327eec0f640d0ab444cf1960ab76cf8a31b14efb859df7227bb85e",
-    "src/global/const_dsl/event_relations/tests.rs": "a4d9214c4c98bbf465ffff56053ad5e4ac3f2c8d57431311a8fcb0d4a84cba2b",
+    "src/global/const_dsl/event_relations/tests.rs": "7d3584032f1584bd96122d1fa698ebaf8093eb350a72cf7ad6e977cd926bd35f",
     "src/global/const_dsl/event_relations.rs": "09a9d8a435bebb128b78eaf20a8858bb5680570c1cd7b96c056c9bbc40a67456",
     "src/global/const_dsl/receive_lane_causality/kani.rs": "4b3ceefac8de90270be1825e2164e71e281800494704291e3bffec65d0a4b79e",
     "src/global/const_dsl/receive_lane_causality/tests.rs": "e7974a27c8863fc74c7d791df2497b6bfce07981cb2a503c132514eb80d42507",
@@ -366,11 +367,6 @@
     "src/transport/trace.rs": "3d32c7bbdddef7d6c179258acb9bf9995bc22cc2ff9b6c95ffb0c82072b572a9",
     "src/transport/wire/kani.rs": "c38f0f36727a8892b7a5d85feb88a574deb9062d5dbc12900e84acbbaa937433",
     "src/transport/wire.rs": "ca5080b4480df0b8124389e3c39da8d25a4dbfebe293b7c11d0f16b3f1dce7e9",
-    "src/transport.rs": "8c7a09f32a8777cf5e829267cc022c4beca89dcf8eccf3fe2671ba472c6ac936",
-    "tests/verification_oracles/participant_validation.rs": "b722662e56fa2bfeac4e690967bc8aa42c9de12be17e24f399a69ec72cab4905"
-  },
-  "integration_heads": [
-    "a1598cd905250564d1bc10d40d8892934c8feced",
-    "d906c2c460519ac64ae3e1e0e58e6eb6dcfa6033"
-  ]
+    "src/transport.rs": "8c7a09f32a8777cf5e829267cc022c4beca89dcf8eccf3fe2671ba472c6ac936"
+  }
 }
