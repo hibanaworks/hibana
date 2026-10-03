@@ -275,7 +275,19 @@ fn endpoint_dependency_guard_uses_local_dependency_facts() {
             && !role_program_types.contains("route_scope_conflicts: &'static")
             && role_program_impl.contains("LocalDependency::with_conflict_range")
             && role_program_impl.contains("PackedLocalDependency::from_dependency(")
-            && role_program_impl.contains("projection::route_conflict_for_eff(markers, eff_idx)")
+            // The projection computes this fact once and carries it with its row.
+            // The differential emitter tests retain byte/error equality; do not
+            // require the removed duplicate scan to establish resident authority.
+            && role_program_impl.contains(
+                "let (mut event, event_conflict) = projection::local_event_row_for_eff(",
+            )
+            && role_program_impl.contains(
+                "let conflict = route_conflict_for_eff(eff_list.scope_markers(), eff_idx);",
+            )
+            && role_program_impl.contains(
+                "let conflict = if has_route {\n                    event_conflict",
+            )
+            && !role_program_impl.contains("projection::route_conflict_for_eff(markers, eff_idx)")
             && role_program_impl.contains("columns.route_scope_conflicts")
             && role_program_impl.contains("eff_list.frame_label_at(eff_idx)")
             && event_program.contains("self.rows().dependency_for_index(idx)")
