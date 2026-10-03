@@ -127,9 +127,14 @@ if [[ "${causal_output}" != *"Generated Lean kernel artifact audit passed artifa
   echo "Lean proof gate causal correspondence boundary mismatch" >&2
   exit 1
 fi
-lean_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
-  "${GENERATED}" "${PROOF_DIR}" "${GENERATED_CLAIM_SNAPSHOT}")"
-printf '%s\n' "${lean_output}"
+if lean_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+  "${GENERATED}" "${PROOF_DIR}" "${GENERATED_CLAIM_SNAPSHOT}")"; then
+  printf '%s\n' "${lean_output}"
+else
+  lean_status=$?
+  printf '%s\n' "${lean_output}"
+  exit "${lean_status}"
+fi
 if [[ "${lean_output}" != *"${EXPECTED_MARKER}"* ]]; then
   echo "Lean proof gate generated certificate mismatch" >&2
   exit 1
