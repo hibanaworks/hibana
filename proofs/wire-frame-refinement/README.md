@@ -38,6 +38,17 @@ against current production definitions, audits every named theorem, and runs
 the Z3/finite correspondence checker into a temporary directory. The final-form
 CI gate invokes it after the existing Lean and elastic proof gates.
 
+The semantic-surface gate also requires explicit option handling in production
+Lean sources. `explicit-match/` preserves the separate pre-edit Lean/Z3 gate
+for replacing the original two default-extraction calls with exhaustive
+`some`/`none` matches. The owner still defaults to 0 and exhaustion still yields
+256. Four axiom-free Lean theorems prove the replacements in every observing
+context; eight additional Z3 obligations/controls cover both constructors and
+the boundary values. The runner verifies the exact two recorded source rewrites
+and now audits 44 Lean theorems. Original pre-edit records remain unchanged.
+`validation-explicit-match/` records the full Lean replay and all 124 semantic
+surface regressions for this followup; `validation/` preserves the earlier run.
+
 The Lean proofs establish selected-color bounds and exclusion, preservation of
 original inequalities and owner separation, safe same-class reuse at the graph
 level, domain isolation, field/event preservation, self-send and no-Roll

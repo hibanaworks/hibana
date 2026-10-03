@@ -1571,7 +1571,9 @@ def rollFrameOwner (markers : List DecodedScopeMarker) (atomCount event : Nat) :
     | none => selected
     | some marker => selectRollFrameOwner event
         (scopeSegmentEnd markers index atomCount marker) marker selected) none
-  (selected.map Prod.snd).getD 0
+  match selected with
+  | some (_, owner) => owner
+  | none => 0
 
 structure RollFrameAssignment where
   original : ProgramAtomBody
@@ -1594,7 +1596,9 @@ def separateRollFrameAtomsFrom (markers : List DecodedScopeMarker) (atomCount : 
   | index, assigned, atom :: rest =>
       let owner := rollFrameOwner markers atomCount index
       let color := if atom.sender == atom.receiver then atom.frameLabel
-        else (firstAvailableFrameLabel (rollFrameUsed atom owner assigned)).getD 256
+        else match firstAvailableFrameLabel (rollFrameUsed atom owner assigned) with
+          | some color => color
+          | none => 256
       { atom with frameLabel := color } ::
         separateRollFrameAtomsFrom markers atomCount (index + 1)
           ({ original := atom, owner, color } :: assigned) rest

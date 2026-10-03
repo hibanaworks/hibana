@@ -18,15 +18,7 @@
     "pre-edit/CandidateAxiomAudit.lean": "05db48a4e10c0b1f1f625bcc37f7a40c34ca6525c5db46468d77383971167e45",
     "pre-edit/source-bridge.log": "9620746cc0e0cdc24d8b8429692d8ca7d0be68f6fc97d292e6b613898e734e24",
     "pre-edit/capacity-scope.log": "a1d3ed7c70a3cdfbcabcaabf82c3bbf1405ae72dc72c0943c82a12ba0ecbfafc",
-    "pre-edit/run.log": "e948335eb6e336fa221cac79650f3e8460bd1743ef892f71126b694eec56c2d2",
-    "explicit-match/pre-edit-gate.json": "8437147a93666fee36016ddcde6501b795e5896d51cfa9d6a1f1d009e16081ca",
-    "explicit-match/lean.log": "5c9f0fef849e999caf0fb87a2d6f29c98e68874cf38e95500b8445a7b0b9a662",
-    "explicit-match/check_all-before.py": "f014542df36112ff4561b39cb7dce962763c050c72aebba4554ec8d5a8474c71",
-    "explicit-match/proposed.patch": "6381c234eec257ea44c94c8c2f4705fb746e97bd0218686984de146beaa4f627",
-    "explicit-match/OptionMatchEquivalence.lean": "4271b416a1940a394e65f8bcb659a64b80bac6fdb9a6346ecaacad4c92286a04",
-    "explicit-match/z3.log": "5518eeacd80e1d14b937f0699288952df441d19583f10b1f662eb0ac52e59908",
-    "explicit-match/source-manifest-before.json": "c930fab9bdb431113cc00eb0e441ad5bcdd2d6d76e8e88b0fd6fe5a0e73c74e8",
-    "explicit-match/check_option_match.py": "3c645c1fe318c1209ec269a6ace4049f83587b5a91fd90d271b3053b55e51357"
+    "pre-edit/run.log": "e948335eb6e336fa221cac79650f3e8460bd1743ef892f71126b694eec56c2d2"
   },
   "unchanged_sources": {
     "proofs/lean/Hibana/GlobalSyntax.lean": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338",
@@ -34,7 +26,6 @@
     "proofs/lean/Hibana/DescriptorRefinement.lean": "c75a4f3ed8cb70d9a6be8f93f023038694d5e90bc7b061c84302481bc39af3a4",
     "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs": "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8"
   },
-  "production_descriptor_sha256": "9c239bf4a3c0e428a18b2b902c2680dca51c48ed90a51fa5a516021f453d0127",
-  "claim_limits": "Valid successfully lowered Rust sources; exhaustion admission is role-local under retained-invalid-row premise. Concrete runtime Covers/SameClassUnique remains explicit.",
-  "explicit_match_gate": "explicit-match/pre-edit-gate.json"
+  "production_descriptor_sha256": "ab912462316416e0a7d3dd1d553d44161ccefce1c3246d8e2ff1ab55092d90e5",
+  "claim_limits": "Valid successfully lowered Rust sources; exhaustion admission is role-local under retained-invalid-row premise. Concrete runtime Covers/SameClassUnique remains explicit."
 }

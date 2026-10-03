@@ -1,0 +1,28 @@
+{
+  "checked_utc": "2026-10-03T03:46:59.820275+00:00",
+  "status": "Lean four kernel theorems and eight Z3 obligations/controls passed before production edit",
+  "base_commit": "7762836741fc6d6c73f03c63980bc56e5c67e0fa",
+  "source_before_sha256": "ab912462316416e0a7d3dd1d553d44161ccefce1c3246d8e2ff1ab55092d90e5",
+  "source_after_sha256": "9c239bf4a3c0e428a18b2b902c2680dca51c48ed90a51fa5a516021f453d0127",
+  "rewrites": [
+    {
+      "name": "owner_none_zero",
+      "before": "  (selected.map Prod.snd).getD 0",
+      "after": "  match selected with\n  | some (_, owner) => owner\n  | none => 0"
+    },
+    {
+      "name": "color_none_invalid_256",
+      "before": "        else (firstAvailableFrameLabel (rollFrameUsed atom owner assigned)).getD 256",
+      "after": "        else match firstAvailableFrameLabel (rollFrameUsed atom owner assigned) with\n          | some color => color\n          | none => 256"
+    }
+  ],
+  "proof_files": {
+    "lean.log": "5c9f0fef849e999caf0fb87a2d6f29c98e68874cf38e95500b8445a7b0b9a662",
+    "proposed.patch": "6381c234eec257ea44c94c8c2f4705fb746e97bd0218686984de146beaa4f627",
+    "OptionMatchEquivalence.lean": "4271b416a1940a394e65f8bcb659a64b80bac6fdb9a6346ecaacad4c92286a04",
+    "z3.log": "5518eeacd80e1d14b937f0699288952df441d19583f10b1f662eb0ac52e59908",
+    "check_option_match.py": "3c645c1fe318c1209ec269a6ace4049f83587b5a91fd90d271b3053b55e51357"
+  },
+  "lean_command": "LEAN_PATH=hibana-roll-color-fix/proofs/lean/.lake/build/lib/lean tools/lean/lean-4.30.0-linux/bin/lean artifacts/lean-wire-explicit-match-gate/OptionMatchEquivalence.lean",
+  "z3_command": "/tmp/hibana-quic-proof-venv/bin/python artifacts/lean-wire-explicit-match-gate/check_option_match.py"
+}

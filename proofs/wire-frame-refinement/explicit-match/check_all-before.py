@@ -41,12 +41,6 @@ assert sha(HERE / 'check_correspondence.py') == sha(HERE / 'pre-edit/check_corre
 candidate = (HERE / 'pre-edit/Candidate.lean').read_text()
 definitions = candidate.split('-- BEGIN PROPOSED DEFINITIONS\n')[1].split(
     '-- END PROPOSED DEFINITIONS')[0]
-match_gate = json.loads((HERE / manifest['explicit_match_gate']).read_text())
-for rewrite in match_gate['rewrites']:
-    assert definitions.count(rewrite['before']) == 1, rewrite['name']
-    definitions = definitions.replace(rewrite['before'], rewrite['after'])
-assert sha(HERE / 'OptionMatchEquivalence.lean') == \
-    sha(HERE / 'explicit-match/OptionMatchEquivalence.lean'), 'Option equivalence proof changed'
 current = (proof_dir / 'Hibana/DescriptorImage.lean').read_text()
 assert current.count(definitions) == 1, 'Reviewed allocator definitions changed'
 for name, digest in manifest['unchanged_sources'].items():
@@ -67,8 +61,7 @@ with tempfile.TemporaryDirectory(prefix='hibana-wire-frame-proof-') as temporary
     build = Path(temporary)
     env = dict(os.environ, LEAN_PATH=str(build) + os.pathsep + base_path)
     names = []
-    for module, namespace in [('OptionMatchEquivalence', 'Hibana.WireOptionMatchEquivalence'),
-                              ('WireFrameRefinement', 'Hibana.WireFrameRefinement'),
+    for module, namespace in [('WireFrameRefinement', 'Hibana.WireFrameRefinement'),
                               ('WireSourceBridge', 'Hibana.WireFrameSourceBridge')]:
         source = (HERE / (module + '.lean')).read_text()
         code = erase_non_code(source)
@@ -78,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix='hibana-wire-frame-proof-') as temporary
                       str(HERE / (module + '.lean'))], HERE, env)
         assert 'error:' not in output and 'sorryAx' not in output, module
     audit = build / 'Audit.lean'
-    audit.write_text('import OptionMatchEquivalence\nimport WireFrameRefinement\nimport WireSourceBridge\n' +
+    audit.write_text('import WireFrameRefinement\nimport WireSourceBridge\n' +
                      '\n'.join('#print axioms ' + name for name in names) + '\n')
     output = run([lean, str(audit)], build, env)
     blocks = re.findall(r"'([^']+)' (does not depend on any axioms|depends on axioms: \[(.*?)\])",
@@ -89,7 +82,6 @@ with tempfile.TemporaryDirectory(prefix='hibana-wire-frame-proof-') as temporary
         assert actual <= {'propext', 'Quot.sound'}, (name, actual)
     run([sys.executable, str(HERE / 'check_correspondence.py'), '--repo', str(REPO),
          '--output', str(build / 'z3-result.json')])
-    run([sys.executable, str(HERE / 'explicit-match/check_option_match.py')])
 print(f'PASS wire-frame refinement: {len(names)} Lean theorems; unchanged exact admission; '
       'Z3 and finite source correspondence', flush=True)
 print('LIMIT: concrete runtime Covers/SameClassUnique remains an explicit premise', flush=True)
