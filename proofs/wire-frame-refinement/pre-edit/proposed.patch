@@ -1,0 +1,101 @@
+--- a/proofs/lean/Hibana/DescriptorImage.lean
++++ b/proofs/lean/Hibana/DescriptorImage.lean
+@@ -1535,17 +1535,6 @@
+   choreo.canonicalProgramAtoms.filterMap fun atom =>
+     if (atom.localAction? role).isSome then some atom.effIndex else none
+ 
+-def Choreo.canonicalFrameLabel (choreo : Choreo) (index : Nat) : Nat :=
+-  match (canonicalProgramSource choreo).atoms[index]? with
+-  | some atom => atom.frameLabel
+-  | none => 256
+-
+-def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
+-  (canonicalProgramSource choreo).atoms.filterMap fun atom =>
+-    if (Choreo.localAction? role atom.sender atom.receiver atom.label atom.schema).isSome then
+-      some atom.frameLabel
+-    else none
+-
+ structure ScopeSelection where
+   scope : Nat
+   start : Nat
+@@ -1559,6 +1548,80 @@
+       candidate.scope = marker.scope && candidate.tag % 4 = 2 with
+   | some exit => exit.offset
+   | none => limit
++
++def isRollFrameEnter (marker : DecodedScopeMarker) : Bool :=
++  marker.scope / 8192 == 1 && marker.tag % 4 == 0
++
++def selectRollFrameOwner (event stop : Nat) (marker : DecodedScopeMarker)
++    (selected : Option (Nat × Nat)) : Option (Nat × Nat) :=
++  if isRollFrameEnter marker && marker.offset ≤ event && event < stop then
++    let span := stop - marker.offset
++    let owner := marker.scope % 8192 + 1
++    match selected with
++    | none => some (span, owner)
++    | some (oldSpan, oldOwner) =>
++        if span < oldSpan || (span == oldSpan && oldOwner < owner) then
++          some (span, owner)
++        else selected
++  else selected
++
++def rollFrameOwner (markers : List DecodedScopeMarker) (atomCount event : Nat) : Nat :=
++  let selected := (List.range markers.length).foldl (fun selected index =>
++    match markers[index]? with
++    | none => selected
++    | some marker => selectRollFrameOwner event
++        (scopeSegmentEnd markers index atomCount marker) marker selected) none
++  (selected.map Prod.snd).getD 0
++
++structure RollFrameAssignment where
++  original : ProgramAtomBody
++  owner : Nat
++  color : Nat
++
++def rollFrameConflict (atom : ProgramAtomBody) (owner : Nat)
++    (prior : RollFrameAssignment) : Bool :=
++  prior.original.sender == atom.sender &&
++    prior.original.receiver == atom.receiver && prior.original.lane == atom.lane &&
++    (prior.original.frameLabel != atom.frameLabel || prior.owner != owner)
++
++def rollFrameUsed (atom : ProgramAtomBody) (owner : Nat)
++    (assigned : List RollFrameAssignment) : List Nat :=
++  (assigned.filter (rollFrameConflict atom owner)).map RollFrameAssignment.color
++
++def separateRollFrameAtomsFrom (markers : List DecodedScopeMarker) (atomCount : Nat) :
++    Nat → List RollFrameAssignment → List ProgramAtomBody → List ProgramAtomBody
++  | _, _, [] => []
++  | index, assigned, atom :: rest =>
++      let owner := rollFrameOwner markers atomCount index
++      let color := if atom.sender == atom.receiver then atom.frameLabel
++        else (firstAvailableFrameLabel (rollFrameUsed atom owner assigned)).getD 256
++      { atom with frameLabel := color } ::
++        separateRollFrameAtomsFrom markers atomCount (index + 1)
++          ({ original := atom, owner, color } :: assigned) rest
++
++/-- The final production phase refines frozen route colors by elastic owner.
++    Failure retains an invalid byte value, 256, in the original event row;
++    exact descriptor equality cannot admit that row as a decoded wire byte. -/
++def separateRollFrameAtoms (markers : List DecodedScopeMarker)
++    (atoms : List ProgramAtomBody) : List ProgramAtomBody :=
++  if markers.any isRollFrameEnter then
++    separateRollFrameAtomsFrom markers atoms.length 0 [] atoms
++  else atoms
++
++def canonicalWireAtoms (choreo : Choreo) : List ProgramAtomBody :=
++  let source := canonicalProgramSource choreo
++  separateRollFrameAtoms source.markers source.atoms
++
++def Choreo.canonicalFrameLabel (choreo : Choreo) (index : Nat) : Nat :=
++  match (canonicalWireAtoms choreo)[index]? with
++  | some atom => atom.frameLabel
++  | none => 256
++
++def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
++  (canonicalWireAtoms choreo).filterMap fun atom =>
++    if (Choreo.localAction? role atom.sender atom.receiver atom.label atom.schema).isSome then
++      some atom.frameLabel
++    else none
+ 
+ def selectInnermostScope
+     (current : Option ScopeSelection)
