@@ -149,10 +149,10 @@ theorem accepted_descriptor_global_events_bind_canonical_lanes
   unfold ExactDescriptorCertificate.Matches at agreement
   exact agreement.2.2.1.1
 
-/-- Every accepted role image carries exactly the frame-label coloring produced
-by the host-only compiled occurrence source. Sequential reuse and competing
-frontier separation therefore reach the resident descriptor without an
-independent label authority. -/
+/-- Every accepted role image carries exactly the final frame-label coloring:
+route classes refined by the canonical scope markers' elastic owners. This
+same production pipeline binds the resident bytes without a separate label
+authority. -/
 theorem accepted_descriptor_frame_labels_bind_compiled_coloring
     {certificate : ExactDescriptorCertificate}
     (accepted : certificate.check = true) :

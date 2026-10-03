@@ -209,10 +209,10 @@ fn lean_ci_gate_audits_every_exported_theorem_and_runs_pinned_artifacts() {
             )
             && proof_gate.contains("all-claim-surface.txt")
             && proof_gate.contains(
-                "--static \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 709 365 247 97",
+                "--static \"${PROOF_DIR}\" \"${STATIC_CLAIM_SNAPSHOT}\" 709 364 248 97",
             )
             && proof_gate.contains("EXPECTED_STATIC_AUDIT_MARKER")
-            && proof_gate.contains("theorems=709 both=365 propext=247 free=97")
+            && proof_gate.contains("theorems=709 both=364 propext=248 free=97")
             && proof_gate.contains("example-claim-surface.txt")
             && proof_gate.contains(
                 "--example-types \"${PROOF_DIR}\" \"${EXAMPLE_CLAIM_SNAPSHOT}\" 36",

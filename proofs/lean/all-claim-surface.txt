@@ -701,8 +701,10 @@ Hibana.canonical_program_source_frame_labels : ∀ (choreo : Hibana.Choreo),
   @Eq.{1} (List.{0} Nat)
     (@List.map.{0, 0} Hibana.ProgramAtomBody Nat Hibana.ProgramAtomBody.frameLabel
       (Hibana.canonicalProgramSource choreo).atoms)
-    (@List.map.{0, 0} Hibana.CompiledOccurrence Nat Hibana.CompiledOccurrence.frameLabel
-      choreo.compiledOccurrences.occurrences)
+    (@List.map.{0, 0} Hibana.ProgramAtomBody Nat Hibana.ProgramAtomBody.frameLabel
+      (Hibana.separateElasticFrameDomains (Hibana.canonicalControlSource choreo).markers
+        (@List.map.{0, 0} Hibana.CompiledOccurrence Hibana.ProgramAtomBody Hibana.CompiledOccurrence.programAtomBody
+          choreo.compiledOccurrences.occurrences)))
 Hibana.canonical_program_source_global_events_from : ∀ (choreo : Hibana.Choreo) (laneBase : Nat),
   @Eq.{1} (List.{0} Hibana.GlobalEvent)
     (@List.map.{0, 0} Hibana.ProgramAtomBody Hibana.GlobalEvent (fun x => x.globalEventFrom laneBase)
