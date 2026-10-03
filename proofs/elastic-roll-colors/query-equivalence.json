@@ -1,0 +1,9 @@
+{
+  "original_checker": "historical/check_roll_membership_gate.py",
+  "original_checker_sha256": "9063a35b240f67e2f368e5f0c92e9b67148e3a7feeb9422705706e86d43f78b7",
+  "original_check_function_sha256": "148634a1adcfd813573fc4e77a668cdd3e71a80f033b35c1ffefb8ac509940ea",
+  "query_core_sha256": "fa95280d61ac5afa99e08f182d3698f3e3bc3d5c01ca802550465f16abbce829",
+  "comparison": "The complete query-generating core and check function are byte-identical. Only evidence I/O and save behavior are adapted; all 31 names, expected results, and actual results must match the immutable original record.",
+  "start": "# Parse observed metadata",
+  "end": "\\nsave(True)"
+}

@@ -1,0 +1,132 @@
+{
+  "event_bound": "none (symbolic n with production u16 capacity precondition)",
+  "solver_timeout_ms": 20000,
+  "limits_increased": false,
+  "results": [
+    {
+      "name": "initial invariant 0",
+      "result": "unsat",
+      "elapsed_seconds": 0.00023773899010848254
+    },
+    {
+      "name": "initial invariant 1",
+      "result": "unsat",
+      "elapsed_seconds": 0.0020931070030201226
+    },
+    {
+      "name": "initial invariant 2",
+      "result": "unsat",
+      "elapsed_seconds": 0.0015886959881754592
+    },
+    {
+      "name": "initial invariant 3",
+      "result": "unsat",
+      "elapsed_seconds": 0.00033525600156281143
+    },
+    {
+      "name": "initial invariant 4",
+      "result": "unsat",
+      "elapsed_seconds": 8.614000398665667e-05
+    },
+    {
+      "name": "matching event still contains its original old ID",
+      "result": "unsat",
+      "elapsed_seconds": 0.0023175260139396414
+    },
+    {
+      "name": "conditional remap index is in old-class bounds",
+      "result": "unsat",
+      "elapsed_seconds": 0.002190824001445435
+    },
+    {
+      "name": "new IDs monotone and allocation count is at most processed slots",
+      "result": "unsat",
+      "elapsed_seconds": 0.00273372299852781
+    },
+    {
+      "name": "fresh stored ID excludes sentinel, increment fits u16",
+      "result": "unsat",
+      "elapsed_seconds": 0.002360520011279732
+    },
+    {
+      "name": "event step preserves invariant 0",
+      "result": "unsat",
+      "elapsed_seconds": 0.002881847001845017
+    },
+    {
+      "name": "event step preserves invariant 1",
+      "result": "unsat",
+      "elapsed_seconds": 0.004489330996875651
+    },
+    {
+      "name": "event step preserves invariant 2",
+      "result": "unsat",
+      "elapsed_seconds": 0.006202564996783622
+    },
+    {
+      "name": "event step preserves invariant 3",
+      "result": "unsat",
+      "elapsed_seconds": 0.003631607993156649
+    },
+    {
+      "name": "event step preserves invariant 4",
+      "result": "unsat",
+      "elapsed_seconds": 0.004623002998414449
+    },
+    {
+      "name": "non-sentinel remap entries are injective",
+      "result": "unsat",
+      "elapsed_seconds": 0.0025661810068413615
+    },
+    {
+      "name": "category reset preserves invariant 0",
+      "result": "unsat",
+      "elapsed_seconds": 0.0023103239946067333
+    },
+    {
+      "name": "category reset preserves invariant 1",
+      "result": "unsat",
+      "elapsed_seconds": 0.002116092000505887
+    },
+    {
+      "name": "category reset preserves invariant 2",
+      "result": "unsat",
+      "elapsed_seconds": 0.0025718099932419136
+    },
+    {
+      "name": "category reset preserves invariant 3",
+      "result": "unsat",
+      "elapsed_seconds": 0.000614807999227196
+    },
+    {
+      "name": "category reset preserves invariant 4",
+      "result": "unsat",
+      "elapsed_seconds": 0.00012832399806939065
+    },
+    {
+      "name": "all events processed after categories zero one two",
+      "result": "unsat",
+      "elapsed_seconds": 0.0026250499940942973
+    },
+    {
+      "name": "final exact equality of old-class and membership pairs",
+      "result": "unsat",
+      "elapsed_seconds": 0.003082600000197999
+    },
+    {
+      "name": "final IDs compactly bounded and sentinel excluded",
+      "result": "unsat",
+      "elapsed_seconds": 0.0027642189961625263
+    },
+    {
+      "name": "nonempty domain allocates at least one ID",
+      "result": "unsat",
+      "elapsed_seconds": 0.003449503012234345
+    },
+    {
+      "name": "scratch addresses and byte size fit 32-bit usize",
+      "result": "unsat",
+      "elapsed_seconds": 0.0013102070079185069
+    }
+  ]
+}

@@ -1,0 +1,384 @@
+{
+  "baseline_commit": "a6339772d4bf2c905f491e0284d3bef36e79bb6f",
+  "claim": "Source identity and exact finite descriptor correspondence, not proof that Rust implements Lean or universal coeligibility coverage",
+  "remaining_obligation": "SameClassUnique for all reachable well-formed unchanged-Rust selector states under proposed wire colors",
+  "sha256": {
+    "hibana-rolled-route-perf-integration/src/g/source.rs": "b8e10044c47a12722729a07fcf9aa9383fd3c1c0e70d3220dfed44b100b4704b",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/eff_list.rs": "19ec1efeab3953aaed72c9c155c1f9713d5fe7047357ea431369f883264e1f63",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/allocation.rs": "a036964b81fa7fc3af794ce37239f788c70ac422f888ef679d3437b81e69499a",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/allocation/frame_labels.rs": "99a8a8c04dbd94fa6119c82e0af85f716a6cfb13e51f8bfa21facdc266fff9dd",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/allocation/frame_labels/route.rs": "b9505305856f1170676039d2e70d318eadef52f9038d5537c9537839a265055e",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/allocation/frame_labels/roll.rs": "b9671aec8199e4722d97ea5e41e98eda7df41540d06224efa7efb0dec35814d6",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/event_relations.rs": "f2a761b8bb87d0c093b24589d84d87dbace91b904101ab9ee214501c34b3766c",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/scope_ranges.rs": "2861c2211eb75d94abb9c596407f397741ea9b9282addc272ea9b73cfc1ef41a",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/scope_ranges/nesting.rs": "88e1d4b3f090d12054008d15c1d9fbd1c10b42949f85add635198abbf95d972e",
+    "hibana-rolled-route-perf-integration/src/global/const_dsl/endpoint_selectors.rs": "7d52066eae327eec0f640d0ab444cf1960ab76cf8a31b14efb859df7227bb85e",
+    "hibana-rolled-route-perf-integration/src/global/typestate/facts/inbound_key.rs": "d9810c5da18a26f17476936cc18ebe8abe07e60d46d3d025ff9d44011b5e2978",
+    "hibana-rolled-route-perf-integration/src/global/typestate/cursor/scope_route.rs": "cff5a49d62e91b45a3084f2f761eeb762e9db702a833a210a7ae032ea65a79fa",
+    "hibana-rolled-route-perf-integration/src/global/typestate/cursor/scope_route/roll.rs": "6f8e51efcee8aced30aca96484811c11420232fad4df85f8d1dfdfeccca03089",
+    "hibana-rolled-route-perf-integration/src/global/typestate/cursor/scope_route/roll/nesting.rs": "1b45f0b3876bf76336f0cf7395a0a69d2f81569ed0bc2d396b76f0ee8ab6a5a5",
+    "hibana-rolled-route-perf-integration/src/global/typestate/cursor/scope_route/roll/reentry.rs": "7003ada3b89e75bea6e0f0dfa9b3de8e31a2461f07772656fe5ade01880c3c9e",
+    "hibana-rolled-route-perf-integration/src/global/typestate/cursor/scope_route/navigation.rs": "7fd69270873d261bfe1d960b5da29e2cd6ad9ead2b63c3958cefa89b2d046487",
+    "hibana-rolled-route-perf-integration/src/global/typestate/cursor/scope_route/event_progress.rs": "848878d68ed6679bac7c441e1580e4b433d2918fab03643e2c0a2ba592487a6e",
+    "hibana-rolled-route-perf-integration/src/global/typestate/cursor/scope_route/row_completion.rs": "d032580839671fa8faabe22eb67bfbffc414ae7f8e2dba951fe689458e8acaca",
+    "hibana-rolled-route-perf-integration/src/endpoint/kernel/recv.rs": "95f12fb5757a57ac6f58502c10a8a188ad0b3378c0540b61e59fa2e930a76424",
+    "hibana-rolled-route-perf-integration/src/endpoint/kernel/offer/select_observed.rs": "815969efb680df3fc02d59d7a05c8e8f8347805c43648a6dc6aeaac5381bc8b2",
+    "hibana-rolled-route-perf-integration/src/runtime_core/unique_match.rs": "049e94f3b88fa2d979cbee3e29b455354b8d89af08c47b99145fa132542fc814",
+    "hibana-quic/reference-tls/src/bin/support/connection_roles.rs": "3655c7c63e7764e51b2b21de5f814e7501002835541c276e92efb0ea5bfd658b",
+    "hibana-quic/src/roles/protocol.rs": "2bfd9d80a157ca5ecb022dc1aeab9e0c4f03b9f1261ec17ed3f1b60417f40943",
+    "hibana-quic/src/roles/protocol_early.rs": "75a0357e49b23cc24da57e593c968bbd348d5242a160fa3d1f26ff2f46d8df18",
+    "hibana-quic/src/roles/protocol_path.rs": "4506e19fbe5cf56d8b2bd8c235419dd693b1bbf623ebcadb82521c23347151aa",
+    "hibana-quic/src/roles/protocol_recovery.rs": "20a7f7ef03202c192c3a509459a6ecfcd405c342d9b3e2a1116fcc93304d2403",
+    "hibana-quic/src/roles/protocol_stream.rs": "b268e912106d2897feb2f50b51026df88d9c54e411d99d2dde24bc56b74e5a1b",
+    "hibana-quic/src/roles/protocol_tls_phases.rs": "35f96c9df527bd1e5914a5063d27e09625fba82b886661d8a1d80cde75fdd38f",
+    "artifacts/current-offer-source-diagnostic/run.log": "ab86bb0997e1b2fa78dcf45d341e77b7674134cdafd6138cc3f238b9dba8049f",
+    "artifacts/current-offer-source-diagnostic/run-inventory.log": "e8be527d7ce867cf840dc1930bedaaf401db48ac6d283205d9c5db5ceae590ba",
+    "artifacts/elastic-roll-color-fix/security-before-expanded.log": "116222a27c51a91713601a4bb4cd51e6f1a358efa29f0ddc3d5b682af844c4da",
+    "hibana-roll-color-fix/tests/security_report_regressions/reentry_colors.rs": "b008376eacb79b4843d7b2af47327e08625ce40a00556cae5f71640fca9806fe",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanColorGate-recheck.log": "40a07145d144f0e95d4262f6a5264f8c1333e671207065282f597d3e5e7d3a28",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanMinimalTrace.log": "96e6c2420c0fea0c8616eb1eff6ad99d5739a90d603544b9e267069beb679cc4",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanMinimalTrace-recheck.log": "96e6c2420c0fea0c8616eb1eff6ad99d5739a90d603544b9e267069beb679cc4",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.log": "8d0f719a1eedea840256377f38900efc7e4a3ca7b0a7e4e9464fd5df70d1446d",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanNestedReverse.log": "ac03a3f474e273311c1cc7cfeddf9bd6a57660acb51d303474962868f7492c11",
+    "artifacts/current-offer-source-diagnostic/proofs/color_capacity_model.py": "1ee472c4a066b0a20b62116a36caf22dc5253c566ab800bab6b309145730d5e2",
+    "artifacts/current-offer-source-diagnostic/proofs/check_source_bridge.py": "3a48cb6a82a8c3bd79e3f60606eee2b5d86b233747a11b6a0a3d92fff0b3a469",
+    "artifacts/current-offer-source-diagnostic/proofs/check_roll_membership_gate.py": "9063a35b240f67e2f368e5f0c92e9b67148e3a7feeb9422705706e86d43f78b7",
+    "artifacts/current-offer-source-diagnostic/proofs/roll_membership_capacity_model.py": "af664bcb59a603bccd304ea13bda2c7439fd39e7add0cdc5c467e48b3afe4cf7",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean": "1d47101d899ae0fbe98ebd62770bcad8cd01c32f2494f3defee29a11d3d7fda6",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanNestedReverse.lean": "42f2492b696fa302cd91bc94f71ac6bd2dda93079169646db9b4714e4c1e25c7",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanMinimalTrace.lean": "ec6eb31234eab800d65ac7d159f42792738f343d16c341f487de0b296489cc15",
+    "artifacts/current-offer-source-diagnostic/proofs/LeanColorGate.lean": "e7baee40b3dbeeafabe04f342c5315b857cd07c50e5ed5be6cda4d61d9fb64a6",
+    "artifacts/current-offer-source-diagnostic/proofs/SOURCE_BRIDGE.md": "37c6024ced02912281cbbb60f15429b912dc45609093d7b815e41a59defdc967",
+    "artifacts/current-offer-source-diagnostic/proofs/roll-membership-z3.json": "0025dbccef7841ef9af2e0603594a29e341a1dff409a90984a6a75e9a0691776",
+    "artifacts/current-offer-source-diagnostic/proofs/roll-membership-capacity-model.json": "40b4c9317adb173ad1016ad10d436a64e3b1b2fc29579e1ef48d3d588dd469e6"
+  },
+  "lean_cache_source_identity": [
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Allocation.lean",
+      "source_sha256": "4d5f80ae59c841bf9c6473692059cf3b7fe0e1bbc17c774a5edbcf05f997b406",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Allocation.olean",
+      "cache_sha256": "8dd7890920595dbfc703ae5c5c1dcc2a61079ccb1512d4291001b70f062f1f5a"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/AsyncCancellation.lean",
+      "source_sha256": "e4d5c1d9cd3fd5bb479334ada597e4030f9bb7268028bbea1ad7860e7777b20d",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/AsyncCancellation.olean",
+      "cache_sha256": "9ee1fdaf02fd41bdc1366eab95e6c3f3b31f20ac223d999da6cef6d483a14467"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/AsyncCancellationTermination.lean",
+      "source_sha256": "92e9d9af25986f85a3266a4d02a080837cf03292d76d92f3a1d54508be102569",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/AsyncCancellationTermination.olean",
+      "cache_sha256": "c5f9d803dd6f86eab94909e72e5bd34fa598d2a512ea59cb186eacc2f070497e"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Authority.lean",
+      "source_sha256": "68adb4891cede27f33e9f6338cb9b85d1aaef41676edbe2816ebfa67d9bfc1f9",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Authority.olean",
+      "cache_sha256": "f3296825df046dc6d0ac6b0dae4d7aeb1de9e23c24129a05c485db2aa171088a"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Cancellation.lean",
+      "source_sha256": "66bf9ff80b977ada82b377e942989fd63dd7a0ccbc45e0b1a3734b4f3b4ac739",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Cancellation.olean",
+      "cache_sha256": "9fc32a47d7808fa788ad0cdd1e6c85b79b65e5501f90fc61342fd3590c5fa9d8"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/CarrierProfile.lean",
+      "source_sha256": "c5648bcb79a14e6d52f08155467a989fd2aba2c4b60643311280196697994f78",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/CarrierProfile.olean",
+      "cache_sha256": "98eea6fa1645de971f8a800879e36c6ff2a2ece8e0aedfc20bde8dc5283f8f41"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/CarrierRefinement.lean",
+      "source_sha256": "b50bdad3661b0c0c3d24eb3dfbbea6a02b25294f84ed495283e90bbc2c70440b",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/CarrierRefinement.olean",
+      "cache_sha256": "a544d78250da2a83285e45ad7964aa04d64cc3fed37542e4ea55516e2074693b"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/CausalFlow.lean",
+      "source_sha256": "091bf8b3e5df153a110409f86e15644be56e13da4f71b0328239152b30d20b3b",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/CausalFlow.olean",
+      "cache_sha256": "b5b7dce49445d0423e0f8c5f698c2190c72b09259f7cba30f102eb4e637f05cd"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/CodecEvidence.lean",
+      "source_sha256": "10b1a0fb83af81f9190d22b2f6279adcf12e52ac7248451bb60e1638cbbb15c6",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/CodecEvidence.olean",
+      "cache_sha256": "b39754fde0eed05f4d07d30d3e7712d88827e96de6a276b3182ada5e671cd031"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Commit.lean",
+      "source_sha256": "2171e9f8d53b6a4373fa757e5b8a60b5d5d6416828186be7e30441ccd500bf78",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Commit.olean",
+      "cache_sha256": "841780454abb7fe47abb98e9b92fb986014b58d8594b0a7254653450f4514c18"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Deployment.lean",
+      "source_sha256": "a3c4c945aecfbf108df09bff328b0a14a62f978aa774c22f94ad01ea3c320030",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Deployment.olean",
+      "cache_sha256": "79af04895e130283e5139959811e7b9f9d3ec8c7a3a04c52e00efbe39193119c"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DescriptorImage.lean",
+      "source_sha256": "b9c65f82c90e68c2017d18066e162454de22e1f65cbb79cb7a29cd3db7615b8e",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/DescriptorImage.olean",
+      "cache_sha256": "181bee9c4e48d22d4e7daab5088a84ac9cb532140a55afec021bab3d3c5bad6b"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DescriptorParticipants.lean",
+      "source_sha256": "cf5819e91634f91de9955f6e3b428c2f3a3bdba293c75d9d9132dc22a4bb1a47",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/DescriptorParticipants.olean",
+      "cache_sha256": "6cd3c9a71613011d6715eb20cc7fe765120df9b64eb84f0d0a1bee2e74ac36bf"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DescriptorRefinement.lean",
+      "source_sha256": "c75a4f3ed8cb70d9a6be8f93f023038694d5e90bc7b061c84302481bc39af3a4",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/DescriptorRefinement.olean",
+      "cache_sha256": "ea78849b7857b6c549af2f00d5fd78b11d3c1ad2c261f4bf32d76eab99772a58"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DescriptorTopology.lean",
+      "source_sha256": "23e6731b806003ac15cee7933c05f92b7e4996144141197bf0f9370d3bf572c0",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/DescriptorTopology.olean",
+      "cache_sha256": "f5b02d4e4db9dac20e974b66f821bc875a59f26573e87d66200f3e466374ab62"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DistributedProgress.lean",
+      "source_sha256": "6499f84f14798592493ce1a0762b2438367d6feba071fcec8771f9774b3f0e41",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/DistributedProgress.olean",
+      "cache_sha256": "a176bbf3a81ecc7afe0d4bdbbdd795c4f63c936335a8a832ac457ba043208b0e"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DistributedRollRefinement.lean",
+      "source_sha256": "847d80cc2f4f48b021f2cf7dd3394e8c6c75d8e40d5618bce4600c921ce37a53",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/DistributedRollRefinement.olean",
+      "cache_sha256": "93d2842eb1ba038ce6a7035f73a57022062b43455a283da4aa356455c137a395"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DistributedSemantics.lean",
+      "source_sha256": "00eab740a3c6124a256ed227df8b84c6e66bc6b33cc0ebea187afc8b7cce8a87",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/DistributedSemantics.olean",
+      "cache_sha256": "9c1d59e20dbd80d2166229c426c7d68802f11ebf3f4f6444b78fbddeee5f7eea"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/DistributedSemanticsExamples.lean",
+      "source_sha256": "df25a3cc5fd7adb1aa3c4045a70d33c4213448052d74c65df334c6f07da400b2"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ElasticAdmissionHistory.lean",
+      "source_sha256": "ce7d46e97199eb09548d143431d33fb747cc34b572de724f4d7698e950e39aa2",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ElasticAdmissionHistory.olean",
+      "cache_sha256": "4f9283fa5dce4c5a80c5a8cc72c4cae3643ff25196ffb33fb659f84bf4469807"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ElasticErasure.lean",
+      "source_sha256": "47ded6a0c63c151e3d57d02105f87b534d6c61f3164d46fd2a3ecd9d9f25a716",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ElasticErasure.olean",
+      "cache_sha256": "3d0ecb984ac21ec854b313488d28493af37bea8fa0cf264c25b2fb2960120160"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ElasticIterationQueue.lean",
+      "source_sha256": "b94c6c583ab7c6c789ea57b85bc32afe8d274f7d26efa26f896c477913646207",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ElasticIterationQueue.olean",
+      "cache_sha256": "db7f538e25016166dcede43d641802d8b549163b21d0395acee13a733ec4d84f"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ElasticRouteHistory.lean",
+      "source_sha256": "ffb4fd55981c3da01b7f109279a9d2c6bc7f5f9deac0527b835eb070870e7e01",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ElasticRouteHistory.olean",
+      "cache_sha256": "dc677c429e733781f184ff1e3ebf17fed0be051be42dc8bc088cb782ddfb8cae"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/EndToEndRefinement.lean",
+      "source_sha256": "441f7e5e33483efd9e7a3f3837f0332e438a66332702528898c591d25c1a83d3",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/EndToEndRefinement.olean",
+      "cache_sha256": "8ca86caac9529abce0cc5fcdbb2a65e28c7e6c39a48ac04f52ee94308ec7164f"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/EventGraph.lean",
+      "source_sha256": "c4bda323fdc94af0317fae94cff816685946d8f2ff7a7d5217a5c6ac09e82289",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/EventGraph.olean",
+      "cache_sha256": "a9eec6c4ca208f17aff91e2710d4f6ef24f92f0e9352ea9ea7cd3e8645ca3727"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Generation.lean",
+      "source_sha256": "05f6dc0fdea785616652ec57956cdfb646a76e609c4c127213295fb8f1d5a656",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Generation.olean",
+      "cache_sha256": "f6c87b3f7c7d7c49da476776a2eceaf4633d3382adc98e7bb0b109ea1e447804"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/GlobalAllocationCorrectness.lean",
+      "source_sha256": "75f50fecf9d344916d60eb1bd75541c4f373b3660ec64aee084a016c76007678",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/GlobalAllocationCorrectness.olean",
+      "cache_sha256": "94c5edbf4cafafdecdf55c5ed08b534967ed2bf033cc0ff22e83479f40b90bd1"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/GlobalCoherence.lean",
+      "source_sha256": "90523160ca1ef45c4317390a782bba2756f0f745278308e2ae79b55f65526efd",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/GlobalCoherence.olean",
+      "cache_sha256": "1fb20b47bcd5b01320f77064771508a773974b5733070a204cf61dc8eb622535"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/GlobalFidelity.lean",
+      "source_sha256": "5c649194a0cf32f7fabf9d023eb0bdbdfccb24349ed6881887a4c74535ef70be",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/GlobalFidelity.olean",
+      "cache_sha256": "29de03d297ad6328a05546e92f4f0564c34ccd72eb2fd289cacbc40e2f72ffed"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/GlobalMessageTransitions.lean",
+      "source_sha256": "daf645c45452d0c83dd8cdab846d28504c091c2209918d02916e9896f415d1ef",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/GlobalMessageTransitions.olean",
+      "cache_sha256": "1333a7e41675018c91106f3ba7eaeaa1beba018e23816d6588a1c23bada07db3"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/GlobalProgress.lean",
+      "source_sha256": "537b8b220d55608cf739a3c724836644ef5f87fc3e280049eea913ffa2d5a631",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/GlobalProgress.olean",
+      "cache_sha256": "8368703cfb3440d55f33e49b7f95fc69c0d9468587af3ad1101a84076d763baf"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/GlobalSemantics.lean",
+      "source_sha256": "be5c78505369e99e52cbbc9562622936d8e418a075ec19dd9ef9c8f512382337",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/GlobalSemantics.olean",
+      "cache_sha256": "acec6378edafbccf3942c16a5fb6eaffa33523c1183b5772cec27556a8681e2a"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/GlobalSyntax.lean",
+      "source_sha256": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/GlobalSyntax.olean",
+      "cache_sha256": "46e47d346bea7e3dee453de3112b7d13be53e3352f0902b496bd73a5fcf89494"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/InBandChoiceKnowledge.lean",
+      "source_sha256": "3f9e4ac9cc2362ed98769ef15133cbd8d5bdc3855ff032718dba350cb589ba1f",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/InBandChoiceKnowledge.olean",
+      "cache_sha256": "9aec18b12faa33679b82b7a7721e9644d0b3a1867247947cf5ab91c61226a3e6"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/IterationErasure.lean",
+      "source_sha256": "3723481c3d90d4722226ee1d0a92ac056b1e33180a86dae2425cdc81a28f99b1",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/IterationErasure.olean",
+      "cache_sha256": "efc2000f6329e670f851d5996d4ab7dfd34e5a57f3e5d2958f78895c930752e4"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Layout.lean",
+      "source_sha256": "caaa8dec70f675048f1115a454555d1554ac559b4d312f4d6a08e9ca1a7faced",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Layout.olean",
+      "cache_sha256": "7aea88b742b3c317ba0436322972fab8b6a6e57c1a8cb9df001ef306e27973c2"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/MainTheorems.lean",
+      "source_sha256": "b68c5d71cd13fe9e4479c307bcf3796006b37089336b5564d7f54a0c43e41c1d",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/MainTheorems.olean",
+      "cache_sha256": "30639e04d395f5609b66fd151b230a10849b9bc534c66da09fa6c78e8133fa02"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/MediatedCarrier.lean",
+      "source_sha256": "eb20dedf0a3bfce20e8d5086ab02bf444360c3dd452358814964574c74559a85",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/MediatedCarrier.olean",
+      "cache_sha256": "5a9afc47e449af0ea85590d588d85e24df44c2a3389a79fea780580884d3fc7c"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/OperationAdmission.lean",
+      "source_sha256": "c0790656bfdfd7e9c55bb0f2bfee7e496bf98a9f07ca0febee06bbbdd907d60c",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/OperationAdmission.olean",
+      "cache_sha256": "4ef26b7de9a30e5cadca077faf460ebd4be72466c4c25bde269191041ba91aff"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/PreparedKernelRefinement.lean",
+      "source_sha256": "00d8fb2547c9eb369b39871ec765f5a8f2a377583bbe6ced269f0085e680ae5a",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/PreparedKernelRefinement.olean",
+      "cache_sha256": "e86ccc93752c66f42e751f687ef33de8e290d642ad10770191b59d534895e702"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ProductionEndToEnd.lean",
+      "source_sha256": "6a762dd246fcfe45a50062dacf27387cc9abed92e7db107696ac6d386dbf1e91",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ProductionEndToEnd.olean",
+      "cache_sha256": "bac4e4c4bb7280e737800d266658372ebf44b8ee3c4aca8eb357856a0c4e16c6"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ProductionKernelArtifact.lean",
+      "source_sha256": "237e8f7f41a7acaa6940f9ed06ff6af34079d1a3920626a7bdbdc084b750a4ea",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ProductionKernelArtifact.olean",
+      "cache_sha256": "2f7a8986d164fcfac327066d5cfbe90b667168be6629256dcf08475b03f040b6"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Progress.lean",
+      "source_sha256": "d954dc18397a9a17b77d84290c5a6988479fa4ebfbefe81dc9bdcf780160fd0c",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Progress.olean",
+      "cache_sha256": "adda0cfd9e6eb468d6877484951e08b7eb68720561f58750568b1803729cc9b1"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ProtocolArtifact.lean",
+      "source_sha256": "2f65e38277035287c39e88d09e9173cf6f1f021948beabcbe68ba26a5445fac0",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ProtocolArtifact.olean",
+      "cache_sha256": "cc2b8a504e7e282cb8dff1a4b5b13974dc008ea71f3fd0117b466433a8a4adc0"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/ProtocolCapability.lean",
+      "source_sha256": "30005f254b6f7aafc0049b4be617b806b5e642f7fadb8d184a8c74606271c0eb",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/ProtocolCapability.olean",
+      "cache_sha256": "1c6f49dfe32a6e4b65a447704b4ba7a0d84c4dcc4f44ae1653bec8cb943eac1f"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/PublicOperationKernel.lean",
+      "source_sha256": "3c405f2c527f6ac3be5365a4c4da74c13856c05648e033a5b48208a87335e7df",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/PublicOperationKernel.olean",
+      "cache_sha256": "f4e0f5c04f2daebe6f4cbd35e0e161a52f5c2e4c7d708dfd3f23779f3565aadb"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Refinement.lean",
+      "source_sha256": "eb8a83318b4d204a1cf2df961f42ca3f03c6fde740955a01c1aa7bc75fb5e2d3",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Refinement.olean",
+      "cache_sha256": "8f6c3b3dbd7364f1f1c7a7062f30f9c4440fdba9bf6c4f1b704681f5e780826f"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/RollFreshness.lean",
+      "source_sha256": "1810752476919e8e7ae3e074cb0a9299db37070a22a086fa50ca794145d87131",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/RollFreshness.olean",
+      "cache_sha256": "59899f62d3d958096ff094876550957c085e6e11d4e9f61032a54c4c46856f05"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/RuntimeRefinement.lean",
+      "source_sha256": "b4ff02185814faaedae2e671a7e5f39961275638f1f606a0cb5bf9bdd33e2c14",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/RuntimeRefinement.olean",
+      "cache_sha256": "e7f1e4ebc12e954e810124206ebccf5299f3c1d753a13b9a5398ca3d6222cf0a"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/SessionComposition.lean",
+      "source_sha256": "f6504bef7817c93d67f9c7ee5d33ef00ab5117aebddc9fa03b497dbc911d4723",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/SessionComposition.olean",
+      "cache_sha256": "4e8c40f44bb866ce951c7ce6882389adc4be7a7590bff8572f1e6448593d573c"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/SessionLifecycle.lean",
+      "source_sha256": "d726bcd305d24883871c78582d8f6517eb50688c59a1a453059943670a6f0bc4",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/SessionLifecycle.olean",
+      "cache_sha256": "aeed4be83508961e9015ee91963cd0930fece748e64994bf94c8d8baff2c8259"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/StaticProjectability.lean",
+      "source_sha256": "974448bf988a788109a5512550c9501142c220a71ddf89caae33efa4962fb876",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/StaticProjectability.olean",
+      "cache_sha256": "10aa29bb9e9c2cace3d0f9d9a2c97c0e126263b1f4be40fe7e4c254232a3f773"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/StaticProjectabilityExamples.lean",
+      "source_sha256": "b77269eaaba78cb9438a4913364a2d53f22791e95eab41841cfbdf1fa31c34d5"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/Syntax.lean",
+      "source_sha256": "4604c81cbbcffbbbe5113a81c1e2272333e57dc9e535555f14b05160a23ce419",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/Syntax.olean",
+      "cache_sha256": "e3e9ee40008f0706137986a27380e7293324f74a4b45ffc13e6dfba0c63a2362"
+    },
+    {
+      "source": "hibana-rolled-route-perf-integration/proofs/lean/Hibana/TransportContract.lean",
+      "source_sha256": "4339ab574d9cf94dde6d1fc52144f3f6382a7263a1192878ca1ddf7b722d70a7",
+      "cache": "hibana/proofs/lean/.lake/build/lib/lean/Hibana/TransportContract.olean",
+      "cache_sha256": "ecd3f548a251d069677170957e70c4ede812365eab679d1e3405b423f7e31140"
+    }
+  ],
+  "cache_limit": "Matching sources do not independently attest how preexisting compiled modules were produced"
+}

@@ -1,0 +1,12 @@
+=== check_lowering_hygiene.sh
+lowering hygiene check passed
+=== check_compiled_descriptor_authority.sh
+compiled descriptor authority check passed
+=== check_source_file_budget.sh
+source file budget check passed
+=== check_no_nightly_features.sh
+no nightly feature check passed
+=== check_no_generic_const_exprs.sh
+no generic const expressions check passed
+=== check_no_underscore_discards.sh
+no underscore discard check passed

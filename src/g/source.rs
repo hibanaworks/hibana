@@ -2,7 +2,7 @@ use crate::{
     eff::EffAtom,
     global::const_dsl::{
         EffList, ReentryMark, ScopeId, ScopeKind, color_roll_frame_labels, merge_parallel_lanes,
-        merge_route_frame_labels,
+        merge_route_frame_labels, separate_roll_frame_domains,
     },
 };
 
@@ -156,6 +156,7 @@ impl<const CAPACITY: usize> ProgramSourceData<CAPACITY> {
         {
             panic!("type tree and lowered source disagree");
         }
+        separate_roll_frame_domains(&mut lowering.eff);
         Self { eff: lowering.eff }
     }
 

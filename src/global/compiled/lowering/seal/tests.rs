@@ -99,3 +99,5 @@ fn scope_first_route_validation_does_not_skip_later_observers() {
         Some(ProgramSourceError::ProjectionRouteUnprojectable)
     ));
 }
+
+mod participant_mask;

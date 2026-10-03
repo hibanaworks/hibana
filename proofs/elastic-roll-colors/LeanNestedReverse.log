@@ -1,0 +1,7 @@
+[[1], [0, 1]]
+'AuditNestedReverse.initial_visit' depends on axioms: [propext]
+'AuditNestedReverse.inner_head_can_repeat' depends on axioms: [propext]
+'AuditNestedReverse.outer_prefix_can_repeat' depends on axioms: [propext]
+'AuditNestedReverse.outer_reset_blocks_inner_without_prefix' depends on axioms: [propext]
+'AuditNestedReverse.outer_reset_invalidates_inner_completion' depends on axioms: [propext]
+'AuditNestedReverse.fresh_prefix_then_inner_is_legal' depends on axioms: [propext]

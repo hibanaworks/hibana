@@ -1,5 +1,5 @@
 use super::{BYTE_DOMAIN_MASK_BYTES, first_available, insert};
-use crate::global::const_dsl::{EffList, event_relations::events_share_route_path};
+use crate::global::const_dsl::{EffList, event_relations::RoutePathClasses};
 
 /// Canonicalize one roll body by inbound operation key and exact route path.
 /// Ordered occurrences on one path retain a shared color, while every path
@@ -13,6 +13,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
         panic!("roll frame-label coloring requires a non-empty body");
     }
 
+    let route_paths = RoutePathClasses::<E>::new(eff_list.scope_markers(), start, end);
     let mut class_idx = start;
     while class_idx < end {
         let class = eff_list.atom_at(class_idx);
@@ -28,7 +29,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
             if prior.from == class.from
                 && prior.to == class.to
                 && prior.lane == class.lane
-                && events_share_route_path(eff_list.scope_markers(), prior_idx, class_idx)
+                && route_paths.share_path(eff_list.scope_markers(), prior_idx, class_idx)
             {
                 already_colored = true;
                 break;
@@ -56,7 +57,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
                 if member.from == class.from
                     && member.to == class.to
                     && member.lane == class.lane
-                    && events_share_route_path(eff_list.scope_markers(), class_idx, member_idx)
+                    && route_paths.share_path(eff_list.scope_markers(), class_idx, member_idx)
                 {
                     eff_list.set_frame_label(member_idx, color);
                 }

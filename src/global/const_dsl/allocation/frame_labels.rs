@@ -1,6 +1,8 @@
+mod reentry_domains;
 mod roll;
 mod route;
 
+pub(crate) use reentry_domains::separate_roll_frame_domains;
 pub(crate) use roll::color_roll_frame_labels;
 pub(crate) use route::merge_route_frame_labels;
 

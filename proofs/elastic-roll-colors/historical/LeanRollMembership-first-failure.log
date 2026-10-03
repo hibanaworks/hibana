@@ -1,0 +1,48 @@
+artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean:89:2: error: Tactic `simp` failed with a nested error:
+maximum recursion depth has been reached
+use `set_option maxRecDepth <num>` to increase limit
+use `set_option diagnostics true` to get diagnostic information
+artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean:86:37: warning: This simp argument is unused:
+  bne_iff_ne
+
+Hint: Omit it from the simp argument list.
+  simp only [classGraph, finalGraph, b̵ne_i̵f̵f̵_̵n̵e,̵ ̵n̵e̵_̵e̵q, Bool.and_eq_true,
+  ̵  ̵ ̵ ̵Bool.or_eq_true, decide_eq_true_eq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean:86:49: warning: This simp argument is unused:
+  ne_eq
+
+Hint: Omit it from the simp argument list.
+  simp only [classGraph, finalGraph, bne_iff_ne, n̵e̵_̵e̵q̵,̵ ̵Bool.and_eq_true,
+  ̵  ̵ ̵ ̵Bool.or_eq_true,
+  ̲  ̲ ̲ ̲decide_eq_true_eq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean:86:56: warning: This simp argument is unused:
+  Bool.and_eq_true
+
+Hint: Omit it from the simp argument list.
+  simp only [classGraph, finalGraph, bne_iff_ne, ne_eq, B̵o̵o̵l̵.̵a̵n̵d̵_̵e̵q̵_̵t̵r̵u̵e̵,̵Bool.or_eq_true, decide_eq_true_eq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean:87:4: warning: This simp argument is unused:
+  Bool.or_eq_true
+
+Hint: Omit it from the simp argument list.
+  simp only [classGraph, finalGraph, bne_iff_ne, ne_eq, Bool.and_eq_true, B̵o̵o̵l̵.̵o̵r̵_̵e̵q̵_̵t̵r̵u̵e̵,̵ ̵decide_eq_true_eq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+artifacts/current-offer-source-diagnostic/proofs/LeanRollMembership.lean:87:21: warning: This simp argument is unused:
+  decide_eq_true_eq
+
+Hint: Omit it from the simp argument list.
+  simp only [classGraph, finalGraph, bne_iff_ne, ne_eq, Bool.and_eq_true, B̵o̵o̵l̵.̵o̵r̵_̵e̵q̵_̵t̵r̵u̵e̵,̵ ̵d̵e̵c̵i̵d̵e̵_̵e̵q̵_̵t̵r̵u̵e̵_̵e̵q̵]̵B̲o̲o̲l̲.̲o̲r̲_̲e̲q̲_̲t̲r̲u̲e̲]̲
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'ReentryRollMembership.membership_graph_has_no_self_edges' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.membership_graph_retains_prior_inequality' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.membership_graph_separates_distinct_roll_classes' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.exact_remaining_obligation_implies_covers' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.innermost_identity_iff_full_membership' depends on axioms: [propext]
+'ReentryRollMembership.membership_graph_is_symmetric' depends on axioms: [propext, sorryAx]

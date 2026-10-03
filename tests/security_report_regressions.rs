@@ -4,6 +4,8 @@
 mod common;
 #[path = "security_report_regressions/rolled_routes.rs"]
 mod rolled_routes;
+#[path = "security_report_regressions/reentry_colors.rs"]
+mod reentry_colors;
 
 use common::{TestTransport, TestTx};
 use core::{

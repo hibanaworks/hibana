@@ -1,0 +1,6 @@
+'ReentryRollMembership.membership_graph_has_no_self_edges' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.membership_graph_retains_prior_inequality' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.membership_graph_separates_distinct_roll_classes' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.exact_remaining_obligation_implies_covers' depends on axioms: [propext, Quot.sound]
+'ReentryRollMembership.innermost_identity_iff_full_membership' depends on axioms: [propext]
+'ReentryRollMembership.membership_graph_is_symmetric' depends on axioms: [propext, Classical.choice, Quot.sound]

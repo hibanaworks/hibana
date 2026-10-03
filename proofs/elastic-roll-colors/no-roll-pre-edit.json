@@ -1,0 +1,9 @@
+{
+  "at": "2026-10-03T00:02:02.065189+00:00",
+  "files": {
+    "NoRollFastPath.lean": "d703c60bea5c9492618ee84ff75faf4d2ba0b029a1ff14f16a54c25cac62d4ce",
+    "no-roll-lean.log": "3a59241b5754ce0f9c565819d1fff1527a7c3f77021fb5d86760c3fc0503666f",
+    "no-roll-z3.log": "5598802dfaaf43115b402fb3828ab9d8672b6cf4e75524b5a3676b07786b8b8c"
+  },
+  "scope": "Move no-roll guard before total read-only scratch initialization; same returned source, no removed source validation"
+}

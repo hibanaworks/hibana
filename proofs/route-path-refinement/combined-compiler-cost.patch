@@ -1,0 +1,797 @@
+diff --git a/src/global/compiled/lowering/seal.rs b/src/global/compiled/lowering/seal.rs
+index 315e09cf..2928e1fc 100644
+--- a/src/global/compiled/lowering/seal.rs
++++ b/src/global/compiled/lowering/seal.rs
+@@ -21,6 +21,8 @@ mod passive_child;
+ #[cfg(all(test, hibana_repo_tests))]
+ mod tests;
+ 
++const PARTICIPATING_ROLE_BYTES: usize = (u8::MAX as usize + 1) / 8;
++
+ const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
+ 
+ #[derive(Clone, Copy)]
+@@ -94,12 +96,31 @@ pub(super) const fn exact_role_facts<const E: usize>(
+     }
+ }
+ 
++// A globally absent role has no selector in either route arm, so its observer
++// check always accepts. Collect both endpoints; receiver-only roles still matter.
++const fn participating_roles<const E: usize>(
++    eff_list: &EffList<E>,
++) -> [u8; PARTICIPATING_ROLE_BYTES] {
++    let mut roles = [0u8; PARTICIPATING_ROLE_BYTES];
++    let mut event_idx = 0usize;
++    while event_idx < eff_list.len() {
++        let atom = eff_list.atom_at(event_idx);
++        let sender = atom.from as usize;
++        let receiver = atom.to as usize;
++        roles[sender / 8] |= 1u8 << (sender % 8);
++        roles[receiver / 8] |= 1u8 << (receiver % 8);
++        event_idx += 1;
++    }
++    roles
++}
++
+ // Global route authority and selector facts do not depend on a projected role.
+ // Validate them once per scope, then check every role's observer obligation.
+ const fn validate_route_projection_guarantees<const E: usize>(
+     summary: &CompiledProgramImage,
+     eff_list: &EffList<E>,
+ ) -> Option<ProgramSourceError> {
++    let participants = participating_roles(eff_list);
+     let scope_markers = eff_list.scope_markers();
+     let mut marker_idx = 0usize;
+     while marker_idx < scope_markers.len() {
+@@ -108,6 +129,7 @@ const fn validate_route_projection_guarantees<const E: usize>(
+             && marker.event.is_primary_enter()
+             && let Some(error) = validate_route_scope(
+                 summary.compiled_program_role_count(),
++                &participants,
+                 eff_list,
+                 scope_markers,
+                 marker_idx,
+@@ -122,6 +144,7 @@ const fn validate_route_projection_guarantees<const E: usize>(
+ 
+ const fn validate_route_scope<const E: usize>(
+     role_count: usize,
++    participants: &[u8; PARTICIPATING_ROLE_BYTES],
+     eff_list: &EffList<E>,
+     scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
+     route_enter_marker_idx: usize,
+@@ -152,11 +175,13 @@ const fn validate_route_scope<const E: usize>(
+     }
+     let mut role = 0usize;
+     while role < role_count {
+-        let observer_paths_mergeable = local_route_observer_paths_mergeable(
+-            eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role as u8,
+-        );
+-        if !route_role_has_branch_knowledge(role as u8, controller, observer_paths_mergeable) {
+-            return Some(ProgramSourceError::ProjectionRouteUnprojectable);
++        if (participants[role / 8] & (1u8 << (role % 8))) != 0 {
++            let observer_paths_mergeable = local_route_observer_paths_mergeable(
++                eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role as u8,
++            );
++            if !route_role_has_branch_knowledge(role as u8, controller, observer_paths_mergeable) {
++                return Some(ProgramSourceError::ProjectionRouteUnprojectable);
++            }
+         }
+         role += 1;
+     }
+diff --git a/src/global/compiled/lowering/seal/tests.rs b/src/global/compiled/lowering/seal/tests.rs
+index 38255f89..8a9cba11 100644
+--- a/src/global/compiled/lowering/seal/tests.rs
++++ b/src/global/compiled/lowering/seal/tests.rs
+@@ -99,3 +99,5 @@ fn scope_first_route_validation_does_not_skip_later_observers() {
+         Some(ProgramSourceError::ProjectionRouteUnprojectable)
+     ));
+ }
++
++mod participant_mask;
+diff --git a/src/global/const_dsl/allocation/frame_labels/roll.rs b/src/global/const_dsl/allocation/frame_labels/roll.rs
+index 4f4344ab..0a395359 100644
+--- a/src/global/const_dsl/allocation/frame_labels/roll.rs
++++ b/src/global/const_dsl/allocation/frame_labels/roll.rs
+@@ -1,5 +1,5 @@
+ use super::{BYTE_DOMAIN_MASK_BYTES, first_available, insert};
+-use crate::global::const_dsl::{EffList, event_relations::events_share_route_path};
++use crate::global::const_dsl::{EffList, event_relations::RoutePathClasses};
+ 
+ /// Canonicalize one roll body by inbound operation key and exact route path.
+ /// Ordered occurrences on one path retain a shared color, while every path
+@@ -13,6 +13,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
+         panic!("roll frame-label coloring requires a non-empty body");
+     }
+ 
++    let route_paths = RoutePathClasses::<E>::new(eff_list.scope_markers(), start, end);
+     let mut class_idx = start;
+     while class_idx < end {
+         let class = eff_list.atom_at(class_idx);
+@@ -28,7 +29,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
+             if prior.from == class.from
+                 && prior.to == class.to
+                 && prior.lane == class.lane
+-                && events_share_route_path(eff_list.scope_markers(), prior_idx, class_idx)
++                && route_paths.share_path(eff_list.scope_markers(), prior_idx, class_idx)
+             {
+                 already_colored = true;
+                 break;
+@@ -56,7 +57,7 @@ pub(crate) const fn color_roll_frame_labels<const E: usize>(
+                 if member.from == class.from
+                     && member.to == class.to
+                     && member.lane == class.lane
+-                    && events_share_route_path(eff_list.scope_markers(), class_idx, member_idx)
++                    && route_paths.share_path(eff_list.scope_markers(), class_idx, member_idx)
+                 {
+                     eff_list.set_frame_label(member_idx, color);
+                 }
+diff --git a/src/global/const_dsl/event_relations.rs b/src/global/const_dsl/event_relations.rs
+index 82e131ec..a7a13f64 100644
+--- a/src/global/const_dsl/event_relations.rs
++++ b/src/global/const_dsl/event_relations.rs
+@@ -43,3 +43,96 @@ pub(super) const fn events_share_route_path(
+     }
+     true
+ }
++
++/// Exact route-path equivalence for one contiguous event interval. The IDs
++/// are temporary lowering scratch, not wire labels or persisted metadata.
++/// Each closed route refines the current partition by left/right/outside
++/// membership, so equality is identical to `events_share_route_path`.
++pub(super) struct RoutePathClasses<const E: usize> {
++    ids: [u16; E],
++    start: usize,
++    cached: bool,
++}
++
++impl<const E: usize> RoutePathClasses<E> {
++    pub(super) const fn new(markers: ScopeMarkerView<'_>, start: usize, end: usize) -> Self {
++        let mut result = Self {
++            ids: [0; E],
++            start,
++            cached: end - start <= u16::MAX as usize,
++        };
++        // Published scope offsets already fit u16. Keep the original relation
++        // for larger private inputs as well, without introducing a new limit.
++        if !result.cached || start == end {
++            return result;
++        }
++        let mut remap = [u16::MAX; E];
++        let mut class_count = 1usize;
++        let mut marker_idx = 0usize;
++        while marker_idx < markers.len() {
++            let marker = markers.at(marker_idx);
++            if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
++                && markers.is_first_enter(marker_idx)
++                && let Some([(left_start, split), (_, right_end)]) =
++                    closed_route_arm_ranges_from_first_enter(markers, marker_idx)
++                // Uniform membership cannot split any current class. Testing
++                // both endpoints alone would miss a route inside the body.
++                && !(end <= left_start
++                    || right_end <= start
++                    || (left_start <= start && end <= split)
++                    || (split <= start && end <= right_end))
++            {
++                let mut next_id = 0u16;
++                let mut category = 0u8;
++                while category < 3 {
++                    let mut reset_idx = 0usize;
++                    while reset_idx < class_count {
++                        remap[reset_idx] = u16::MAX;
++                        reset_idx += 1;
++                    }
++                    let mut event_idx = start;
++                    while event_idx < end {
++                        let membership = if left_start <= event_idx && event_idx < split {
++                            0
++                        } else if split <= event_idx && event_idx < right_end {
++                            1
++                        } else {
++                            2
++                        };
++                        if membership == category {
++                            // An event is visited in exactly one category, so
++                            // this slot still contains its previous class ID.
++                            let key = result.ids[event_idx - start] as usize;
++                            if remap[key] == u16::MAX {
++                                remap[key] = next_id;
++                                next_id += 1;
++                            }
++                            result.ids[event_idx - start] = remap[key];
++                        }
++                        event_idx += 1;
++                    }
++                    category += 1;
++                }
++                class_count = next_id as usize;
++            }
++            marker_idx += 1;
++        }
++        result
++    }
++
++    pub(super) const fn share_path(
++        &self,
++        markers: ScopeMarkerView<'_>,
++        left: usize,
++        right: usize,
++    ) -> bool {
++        if self.cached {
++            self.ids[left - self.start] == self.ids[right - self.start]
++        } else {
++            events_share_route_path(markers, left, right)
++        }
++    }
++}
++
++#[cfg(all(test, hibana_repo_tests))]
++mod tests;
+diff --git a/src/global/compiled/lowering/seal/tests/legacy_participant_validation.rs b/src/global/compiled/lowering/seal/tests/legacy_participant_validation.rs
+new file mode 100644
+index 00000000..4343bf66
+--- /dev/null
++++ b/src/global/compiled/lowering/seal/tests/legacy_participant_validation.rs
+@@ -0,0 +1,109 @@
++// Frozen from a6339772 before production edit; test-only differential oracle.
++use super::*;
++
++// Global route authority and selector facts do not depend on a projected role.
++// Validate them once per scope, then check every role's observer obligation.
++pub(super) const fn legacy_route_projection_guarantees<const E: usize>(
++    summary: &CompiledProgramImage,
++    eff_list: &EffList<E>,
++) -> Option<ProgramSourceError> {
++    let scope_markers = eff_list.scope_markers();
++    let mut marker_idx = 0usize;
++    while marker_idx < scope_markers.len() {
++        let marker = scope_markers.at(marker_idx);
++        if matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
++            && marker.event.is_primary_enter()
++            && let Some(error) = legacy_route_scope(
++                summary.compiled_program_role_count(),
++                eff_list,
++                scope_markers,
++                marker_idx,
++            )
++        {
++            return Some(error);
++        }
++        marker_idx += 1;
++    }
++    None
++}
++
++const fn legacy_route_scope<const E: usize>(
++    role_count: usize,
++    eff_list: &EffList<E>,
++    scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
++    route_enter_marker_idx: usize,
++) -> Option<ProgramSourceError> {
++    let [(arm0_start, arm0_end), (arm1_start, arm1_end)] =
++        route_arm_ranges_from_first_enter(scope_markers, route_enter_marker_idx);
++    let route_scope = scope_markers.at(route_enter_marker_idx).scope_id;
++    let has_dynamic_resolver = scope_has_dynamic_resolver(eff_list, route_scope);
++    let controller = match first_visible_controller(eff_list, arm0_start, arm0_end)
++        .merge(first_visible_controller(eff_list, arm1_start, arm1_end))
++        .unique()
++    {
++        Some(controller) => controller,
++        None => return Some(ProgramSourceError::RouteControllerMismatch),
++    };
++    if !has_dynamic_resolver
++        && first_visible_endpoint_selector_conflicts_from_markers(
++            eff_list,
++            arm0_start,
++            arm0_end,
++            arm1_start,
++            arm1_end,
++            route_enter_marker_idx + 1,
++            route_enter_marker_idx + 1,
++        )
++    {
++        return Some(ProgramSourceError::ProjectionRouteUnprojectable);
++    }
++    let mut role = 0usize;
++    while role < role_count {
++        let observer_paths_mergeable = local_route_observer_paths_mergeable(
++            eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role as u8,
++        );
++        if !route_role_has_branch_knowledge(role as u8, controller, observer_paths_mergeable) {
++            return Some(ProgramSourceError::ProjectionRouteUnprojectable);
++        }
++        role += 1;
++    }
++    None
++}
++
++#[inline(always)]
++const fn route_role_has_branch_knowledge(
++    role: u8,
++    controller: u8,
++    observer_paths_mergeable: bool,
++) -> bool {
++    role == controller || observer_paths_mergeable
++}
++
++#[inline(always)]
++const fn scope_has_dynamic_resolver<const E: usize>(
++    eff_list: &EffList<E>,
++    route_scope: crate::global::const_dsl::ScopeId,
++) -> bool {
++    eff_list.resolver_for_scope(route_scope).is_some()
++}
++
++pub(crate) const fn legacy_projection_error_all_roles<const E: usize>(
++    summary: &CompiledProgramImage,
++    eff_list: &EffList<E>,
++) -> Option<ProgramSourceError> {
++    if !validate_receive_lane_causality(eff_list) {
++        return Some(ProgramSourceError::ReceiveLaneCausalityConflict);
++    }
++    if !validate_parallel_endpoint_selectors(eff_list) {
++        return Some(ProgramSourceError::ParallelAmbiguousEndpointSelector);
++    }
++    if !validate_roll_reentry_endpoint_selectors(eff_list) {
++        return Some(ProgramSourceError::ReentryAmbiguousEndpointSelector);
++    }
++    if let Some(error) =
++        passive_child::validate_passive_child_projection_guarantees(eff_list.scope_markers())
++    {
++        return Some(error);
++    }
++    legacy_route_projection_guarantees(summary, eff_list)
++}
+diff --git a/src/global/compiled/lowering/seal/tests/participant_mask.rs b/src/global/compiled/lowering/seal/tests/participant_mask.rs
+new file mode 100644
+index 00000000..f8431d9f
+--- /dev/null
++++ b/src/global/compiled/lowering/seal/tests/participant_mask.rs
+@@ -0,0 +1,174 @@
++use super::*;
++use crate::{
++    eff::{EffAtom, EventOrigin},
++    global::const_dsl::{ReentryMark, ScopeId},
++};
++#[path = "legacy_participant_validation.rs"]
++mod legacy;
++
++fn atom(from: u8, to: u8, label: u8) -> EffAtom {
++    EffAtom {
++        from,
++        to,
++        label,
++        payload_schema: 0,
++        origin: EventOrigin::User,
++        lane: 0,
++    }
++}
++
++fn assert_equivalent<const E: usize>(source: &EffList<E>) -> Option<u8> {
++    let summary = CompiledProgramImage::scan_const(source);
++    let actual = projection_error_all_roles(&summary, source).map(|e| e as u8);
++    let expected = legacy::legacy_projection_error_all_roles(&summary, source).map(|e| e as u8);
++    assert_eq!(actual, expected, "full ordered pipeline");
++    assert_eq!(
++        validate_route_projection_guarantees(&summary, source).map(|e| e as u8),
++        legacy::legacy_route_projection_guarantees(&summary, source).map(|e| e as u8),
++        "ordered route stages, independently of earlier validation errors"
++    );
++    let mask = participating_roles(source);
++    for role in 0..=255usize {
++        let marked = mask[role / 8] & (1u8 << (role % 8)) != 0;
++        let occurs = (0..source.len()).any(|i| {
++            let event = source.atom_at(i);
++            event.from == role as u8 || event.to == role as u8
++        });
++        assert_eq!(marked, occurs, "role {role}");
++    }
++    actual
++}
++
++fn one_route(left: &[(u8, u8, u8)], right: &[(u8, u8, u8)], resolver: bool) -> EffList<40> {
++    let mut source = EffList::new_partitioned(left.len() + right.len(), 4, usize::from(resolver));
++    for &(from, to, label) in left.iter().chain(right) {
++        source.push_event_mut(atom(from, to, label));
++    }
++    source.push_route_scope_mut(
++        ScopeId::route(0),
++        0,
++        left.len(),
++        left.len() + right.len(),
++        ReentryMark::SinglePass,
++    );
++    if resolver {
++        source.push_route_resolver_mut(ScopeId::route(0), 0);
++    }
++    source
++}
++
++#[test]
++fn participant_mask_covers_receiver_only_255_and_sparse_holes() {
++    let source = one_route(&[(0, 255, 1)], &[(0, 255, 2)], false);
++    assert_eq!(assert_equivalent(&source), None);
++    assert_eq!(
++        CompiledProgramImage::scan_const(&source).compiled_program_role_count(),
++        256
++    );
++    let mask = participating_roles(&source);
++    assert_eq!(mask[0], 1);
++    assert_eq!(mask[31], 128);
++    assert!(mask[1..31].iter().all(|byte| *byte == 0));
++    let invalid = one_route(&[(0, 255, 1)], &[(0, 1, 2)], false);
++    assert_eq!(
++        assert_equivalent(&invalid),
++        Some(ProgramSourceError::ProjectionRouteUnprojectable as u8)
++    );
++}
++
++#[test]
++fn participant_mask_preserves_self_sends_duplicates_and_controller_errors() {
++    for resolver in [false, true] {
++        for role in [0, 1, 7, 8, 15, 16, 24, 25, 63, 64, 127, 128, 254, 255] {
++            let source = one_route(
++                &[(role, role, 3), (role, role, 3)],
++                &[(role, role, 3), (role, role, 3)],
++                resolver,
++            );
++            assert_equivalent(&source);
++            let mismatch = one_route(
++                &[(role, role, 1)],
++                &[(role.wrapping_add(1), role, 2)],
++                resolver,
++            );
++            assert_equivalent(&mismatch);
++        }
++    }
++}
++
++#[test]
++fn participant_mask_dense_all_256_roles_and_byte_boundaries() {
++    let mut source = EffList::<1530>::new_partitioned(510, 1020, 0);
++    for role in 1..=255u8 {
++        source.push_event_mut(atom(0, role, 1));
++        source.push_event_mut(atom(0, role, 2));
++    }
++    for index in 0..255 {
++        source.push_route_scope_mut(
++            ScopeId::route(index as u16),
++            index * 2,
++            index * 2 + 1,
++            index * 2 + 2,
++            ReentryMark::SinglePass,
++        );
++    }
++    assert_eq!(participating_roles(&source), [255u8; 32]);
++    assert_eq!(assert_equivalent(&source), None);
++}
++
++#[test]
++fn participant_mask_differential_generated_valid_and_malformed_graphs() {
++    let roles = [0u8, 1, 7, 8, 24, 25, 63, 64, 127, 128, 254, 255];
++    let mut seed = 0x4350_4c45u32;
++    let mut accepted = 0;
++    let mut rejected = 0;
++    for sample in 0..2048usize {
++        let mut endpoints = [(0u8, 0u8, 0u8); 8];
++        for (index, event) in endpoints.iter_mut().enumerate() {
++            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
++            let from = roles[((seed >> 16) as usize) % roles.len()];
++            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
++            let to = roles[((seed >> 16) as usize) % roles.len()];
++            *event = (from, to, if sample % 7 == 0 { 0 } else { index as u8 });
++        }
++        // Include guaranteed accepting sparse routes, then missing receivers,
++        // receiver-led followups, controller mismatches, and selector duplicates.
++        if sample % 4 == 0 {
++            let from = roles[sample % roles.len()];
++            let to = roles[(sample + 1) % roles.len()];
++            for event in &mut endpoints {
++                event.0 = from;
++                event.1 = to;
++            }
++        }
++        let source = one_route(&endpoints[..4], &endpoints[4..], sample % 2 == 0);
++        if assert_equivalent(&source).is_none() {
++            accepted += 1;
++        } else {
++            rejected += 1;
++        }
++    }
++    assert!(
++        accepted > 0 && rejected > 0,
++        "nonvacuity: accepted={accepted} rejected={rejected}"
++    );
++}
++
++#[test]
++fn participant_mask_preserves_nested_route_and_earlier_stage_errors() {
++    use crate::g::{Msg, Par, ProgramSourceData, Roll, Route, Send, Seq};
++    type Missing =
++        Route<Seq<Send<0, 255, Msg<1, ()>>, Send<255, 24, Msg<2, ()>>>, Send<0, 255, Msg<3, ()>>>;
++    type Controller = Route<Send<0, 255, Msg<1, ()>>, Send<24, 255, Msg<2, ()>>>;
++    type Nested = Route<
++        Route<Send<24, 255, Msg<1, ()>>, Send<24, 255, Msg<2, ()>>>,
++        Send<24, 255, Msg<3, ()>>,
++    >;
++    type Parallel = Par<Send<24, 255, Msg<1, ()>>, Send<24, 255, Msg<1, ()>>>;
++    type Reentry = Roll<Route<Send<24, 255, Msg<1, ()>>, Send<24, 255, Msg<2, ()>>>>;
++    assert_equivalent(ProgramSourceData::<40>::lower::<Missing>().eff_list());
++    assert_equivalent(ProgramSourceData::<40>::lower::<Controller>().eff_list());
++    assert_equivalent(ProgramSourceData::<40>::lower::<Nested>().eff_list());
++    assert_equivalent(ProgramSourceData::<40>::lower::<Parallel>().eff_list());
++    assert_equivalent(ProgramSourceData::<40>::lower::<Reentry>().eff_list());
++}
+diff --git a/src/global/const_dsl/event_relations/tests.rs b/src/global/const_dsl/event_relations/tests.rs
+new file mode 100644
+index 00000000..0c1ec96b
+--- /dev/null
++++ b/src/global/const_dsl/event_relations/tests.rs
+@@ -0,0 +1,268 @@
++use super::{RoutePathClasses, events_share_route_path};
++use crate::{
++    eff::{EffAtom, EventOrigin},
++    global::const_dsl::{EffList, ReentryMark, ScopeId, allocation::color_roll_frame_labels},
++};
++
++const BYTE_DOMAIN_MASK_BYTES: usize = 32;
++const fn insert(mask: &mut [u8; BYTE_DOMAIN_MASK_BYTES], value: u8) {
++    mask[(value >> 3) as usize] |= 1u8 << (value & 7);
++}
++const fn first_available(mask: &[u8; BYTE_DOMAIN_MASK_BYTES]) -> Option<u8> {
++    let mut value = 0usize;
++    while value < 256 {
++        if mask[value >> 3] & (1u8 << (value & 7)) == 0 {
++            return Some(value as u8);
++        }
++        value += 1;
++    }
++    None
++}
++
++// Kept byte-for-byte in control flow from a6339772, independently of the cache.
++const fn original_color_roll_frame_labels<const E: usize>(
++    eff_list: &mut EffList<E>,
++    start: usize,
++    end: usize,
++) {
++    if start >= end || end > eff_list.len() {
++        panic!("roll frame-label coloring requires a non-empty body");
++    }
++
++    let mut class_idx = start;
++    while class_idx < end {
++        let class = eff_list.atom_at(class_idx);
++        if class.from == class.to {
++            class_idx += 1;
++            continue;
++        }
++
++        let mut already_colored = false;
++        let mut prior_idx = start;
++        while prior_idx < class_idx {
++            let prior = eff_list.atom_at(prior_idx);
++            if prior.from == class.from
++                && prior.to == class.to
++                && prior.lane == class.lane
++                && events_share_route_path(eff_list.scope_markers(), prior_idx, class_idx)
++            {
++                already_colored = true;
++                break;
++            }
++            prior_idx += 1;
++        }
++
++        if !already_colored {
++            let mut used = [0u8; BYTE_DOMAIN_MASK_BYTES];
++            prior_idx = start;
++            while prior_idx < class_idx {
++                let prior = eff_list.atom_at(prior_idx);
++                if prior.from == class.from && prior.to == class.to && prior.lane == class.lane {
++                    insert(&mut used, eff_list.frame_label_at(prior_idx));
++                }
++                prior_idx += 1;
++            }
++            let Some(color) = first_available(&used) else {
++                panic!("roll inbound occurrence coloring exceeds wire domain");
++            };
++
++            let mut member_idx = class_idx;
++            while member_idx < end {
++                let member = eff_list.atom_at(member_idx);
++                if member.from == class.from
++                    && member.to == class.to
++                    && member.lane == class.lane
++                    && events_share_route_path(eff_list.scope_markers(), class_idx, member_idx)
++                {
++                    eff_list.set_frame_label(member_idx, color);
++                }
++                member_idx += 1;
++            }
++        }
++        class_idx += 1;
++    }
++}
++
++fn atom(from: u8, to: u8, lane: u8) -> EffAtom {
++    EffAtom {
++        from,
++        to,
++        lane,
++        label: 0,
++        payload_schema: 0,
++        origin: EventOrigin::User,
++    }
++}
++
++fn copy_source<const E: usize>(source: &EffList<E>) -> EffList<E> {
++    EffList {
++        rows: source.rows,
++        scope_marker_start: source.scope_marker_start,
++        resolver_start: source.resolver_start,
++        source_end: source.source_end,
++        len: source.len,
++        scope_marker_len: source.scope_marker_len,
++        resolver_marker_len: source.resolver_marker_len,
++    }
++}
++
++fn assert_relation<const E: usize>(source: &EffList<E>, start: usize, end: usize) {
++    let classes = RoutePathClasses::<E>::new(source.scope_markers(), start, end);
++    for left in start..end {
++        for right in start..end {
++            assert_eq!(
++                classes.share_path(source.scope_markers(), left, right),
++                events_share_route_path(source.scope_markers(), left, right),
++                "interval {start}..{end}, events {left},{right}"
++            );
++        }
++    }
++}
++
++#[test]
++fn exact_classes_cover_every_pair_of_small_route_intervals_and_subranges() {
++    let mut routes = std::vec::Vec::new();
++    for start in 0..5 {
++        for split in start + 1..5 {
++            for end in split + 1..=5 {
++                routes.push((start, split, end));
++            }
++        }
++    }
++    for &(a, b, c) in &routes {
++        for &(d, e, f) in &routes {
++            let mut source = EffList::<13>::new_partitioned(5, 8, 0);
++            for _ in 0..5 {
++                source.push_event_mut(atom(0, 1, 0));
++            }
++            source.push_route_scope_mut(ScopeId::route(0), a, b, c, ReentryMark::Reentrant);
++            source.push_route_scope_mut(ScopeId::route(1), d, e, f, ReentryMark::SinglePass);
++            for start in 0..5 {
++                for end in start + 1..=5 {
++                    assert_relation(&source, start, end);
++                }
++            }
++        }
++    }
++}
++
++fn next(seed: &mut u32) -> u32 {
++    *seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
++    *seed
++}
++
++#[test]
++fn cached_coloring_preserves_every_baseline_label_on_generated_sources() {
++    for seed in 0..256u32 {
++        let mut random = seed;
++        let mut source = EffList::<80>::new_partitioned(32, 48, 0);
++        for index in 0..32 {
++            let from = ((next(&mut random) >> 16) % 4) as u8;
++            let to = ((next(&mut random) >> 16) % 4) as u8;
++            let lane = ((next(&mut random) >> 16) % 3) as u8;
++            source.push_event_mut(atom(from, to, lane));
++            source.set_frame_label(index, (next(&mut random) >> 16) as u8);
++        }
++        for id in 0..12 {
++            let start = next(&mut random) as usize % 30;
++            let split = start + 1 + next(&mut random) as usize % (31 - start);
++            let end = split + 1 + next(&mut random) as usize % (32 - split);
++            source.push_route_scope_mut(
++                ScopeId::route(id),
++                start,
++                split,
++                end,
++                ReentryMark::Reentrant,
++            );
++        }
++        let start = seed as usize % 8;
++        let end = 32 - seed as usize % 8;
++        assert_relation(&source, start, end);
++        let mut baseline = copy_source(&source);
++        let mut candidate = source;
++        original_color_roll_frame_labels(&mut baseline, start, end);
++        color_roll_frame_labels(&mut candidate, start, end);
++        for index in 0..32 {
++            assert_eq!(
++                candidate.frame_label_at(index),
++                baseline.frame_label_at(index),
++                "seed {seed}, event {index}"
++            );
++        }
++    }
++}
++
++fn panic_message(error: std::boxed::Box<dyn core::any::Any + Send>) -> std::string::String {
++    if let Some(message) = error.downcast_ref::<&str>() {
++        (*message).into()
++    } else {
++        error.downcast_ref::<std::string::String>().unwrap().clone()
++    }
++}
++
++#[test]
++fn cached_coloring_preserves_wire_exhaustion_and_partial_labels() {
++    let mut source = EffList::<774>::new_partitioned(258, 516, 0);
++    for _ in 0..258 {
++        source.push_event_mut(atom(0, 1, 0));
++    }
++    for id in 0..129 {
++        source.push_route_scope_mut(
++            ScopeId::route(id as u16),
++            id * 2,
++            id * 2 + 1,
++            id * 2 + 2,
++            ReentryMark::Reentrant,
++        );
++    }
++    let mut baseline = copy_source(&source);
++    let mut candidate = source;
++    let old = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        original_color_roll_frame_labels(&mut baseline, 0, 258)
++    }))
++    .unwrap_err();
++    let new = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++        color_roll_frame_labels(&mut candidate, 0, 258)
++    }))
++    .unwrap_err();
++    assert_eq!(panic_message(new), panic_message(old));
++    for index in 0..258 {
++        assert_eq!(
++            candidate.frame_label_at(index),
++            baseline.frame_label_at(index)
++        );
++    }
++}
++
++#[test]
++fn compact_boundary_and_large_private_fallback_preserve_relation() {
++    std::thread::Builder::new()
++        .stack_size(4 * 1024 * 1024)
++        .spawn(|| {
++            let mut source = EffList::<6>::new_partitioned(2, 4, 0);
++            source.push_event_mut(atom(0, 1, 0));
++            source.push_event_mut(atom(0, 1, 0));
++            source.push_route_scope_mut(ScopeId::route(0), 0, 1, 2, ReentryMark::Reentrant);
++            let compact = RoutePathClasses::<65536>::new(source.scope_markers(), 0, 65535);
++            let fallback = RoutePathClasses::<65536>::new(source.scope_markers(), 0, 65536);
++            assert!(compact.cached);
++            assert!(!fallback.cached);
++            for left in [0, 1, 2, 65534] {
++                for right in [0, 1, 2, 65534] {
++                    let expected = events_share_route_path(source.scope_markers(), left, right);
++                    assert_eq!(
++                        compact.share_path(source.scope_markers(), left, right),
++                        expected
++                    );
++                    assert_eq!(
++                        fallback.share_path(source.scope_markers(), left, right),
++                        expected
++                    );
++                }
++            }
++            assert!(fallback.share_path(source.scope_markers(), 65534, 65535));
++        })
++        .unwrap()
++        .join()
++        .unwrap();
++}

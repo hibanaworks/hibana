@@ -1,0 +1,28 @@
+proofs/route-path-refinement/ProcessedCardinality.lean:84:6: error: Tactic `apply` failed: could not unify the conclusion of `congrArg ?m.44`
+  ?m.44 ?m.41 = ?m.44 ?m.42
+with the goal
+  decide (↑x ≤ category) = decide (↑x < category + 1)
+
+Note: The full type of `congrArg ?m.44` is
+  ?m.41 = ?m.42 → ?m.44 ?m.41 = ?m.44 ?m.42
+
+category : Nat
+x : Tag
+xs : List Tag
+ih : countBy (through category) xs = countBy (below (category + 1)) xs
+⊢ decide (↑x ≤ category) = decide (↑x < category + 1)
+proofs/route-path-refinement/ProcessedCardinality.lean:84:21: error: Application type mismatch: The argument
+  decide
+has type
+  (p : Prop) → [h : Decidable p] → Bool
+but is expected to have type
+  ?m.39 → ?m.40
+in the application
+  congrArg decide
+'Hibana.RoutePathRefinement.Loop.initial_count' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.processed_bound' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.event_step' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.matching_has_credit' depends on axioms: [propext, Quot.sound]
+'Hibana.RoutePathRefinement.Loop.category_reset' depends on axioms: [sorryAx]
+'Hibana.RoutePathRefinement.Loop.final_count' depends on axioms: [propext]
+'Hibana.RoutePathRefinement.Loop.fresh_id_safe' depends on axioms: [propext, Classical.choice, Quot.sound]

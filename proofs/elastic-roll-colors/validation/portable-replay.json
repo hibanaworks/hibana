@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "recorded_utc": "2026-10-03T00:23:47.224133+00:00",
+  "command": "python proofs/elastic-roll-colors/check_all.py --lean /path/to/lean --quic-source /path/to/hibana-quic",
+  "lean_version": "4.30.0",
+  "z3_version": "5.1.0",
+  "elastic_lean_files": 5,
+  "fresh_lean_dependencies": 7,
+  "elastic_z3_checks": 31,
+  "no_roll_z3_checks": 2,
+  "compiler_cost_lean_files": 3,
+  "participant_mask_z3_checks": 44,
+  "route_unbounded_z3_conditions": 25,
+  "route_concrete_z3_checks": 18,
+  "checksums": "All immutable preserved artifacts, original pre-edit hashes, query-core byte identity, historical Lean dependency identity, exact seven-source qualified compiler-cost manifest, and live seven-file QUIC inputs verified.",
+  "scope": "Fresh proof replay plus input identity checks; no universal Rust Covers/SameClassUnique proof and no fresh Rust tests or consumer compilation here.",
+  "log_sha256": "504825ef46e8b1ed2d3059d868edc218ef68dc3c4959315ca81717db692a4fd2"
+}

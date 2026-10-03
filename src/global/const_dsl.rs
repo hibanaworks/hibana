@@ -24,6 +24,7 @@ mod scope;
 
 pub(crate) use self::allocation::{
     color_roll_frame_labels, merge_parallel_lanes, merge_route_frame_labels,
+    separate_roll_frame_domains,
 };
 #[cfg(all(test, hibana_repo_tests))]
 pub(crate) use self::eff_list::const_send_typed;

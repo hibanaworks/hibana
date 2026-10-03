@@ -1,0 +1,21 @@
+warning: struct `RoutePathClasses` is never constructed
+  --> /workspace/scratch/0915e8fbff81/hibana-route-path-measurement/baseline/src/global/const_dsl/event_relations.rs:51:19
+   |
+51 | pub(super) struct RoutePathClasses<const E: usize> {
+   |                   ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated items `new` and `share_path` are never used
+   --> /workspace/scratch/0915e8fbff81/hibana-route-path-measurement/baseline/src/global/const_dsl/event_relations.rs:58:25
+    |
+ 57 | impl<const E: usize> RoutePathClasses<E> {
+    | ---------------------------------------- associated items in this implementation
+ 58 |     pub(super) const fn new(markers: ScopeMarkerView<'_>, start: usize, end: usize) -> Self {
+    |                         ^^^
+...
+123 |     pub(super) const fn share_path(
+    |                         ^^^^^^^^^^
+
+warning: 2 warnings emitted
+

@@ -21,6 +21,8 @@ mod passive_child;
 #[cfg(all(test, hibana_repo_tests))]
 mod tests;
 
+const PARTICIPATING_ROLE_BYTES: usize = (u8::MAX as usize + 1) / 8;
+
 const LANE_FACT_WORDS: usize = lane_word_count(u8::MAX as usize + 1);
 
 #[derive(Clone, Copy)]
@@ -94,12 +96,31 @@ pub(super) const fn exact_role_facts<const E: usize>(
     }
 }
 
+// A globally absent role has no selector in either route arm, so its observer
+// check always accepts. Collect both endpoints; receiver-only roles still matter.
+const fn participating_roles<const E: usize>(
+    eff_list: &EffList<E>,
+) -> [u8; PARTICIPATING_ROLE_BYTES] {
+    let mut roles = [0u8; PARTICIPATING_ROLE_BYTES];
+    let mut event_idx = 0usize;
+    while event_idx < eff_list.len() {
+        let atom = eff_list.atom_at(event_idx);
+        let sender = atom.from as usize;
+        let receiver = atom.to as usize;
+        roles[sender / 8] |= 1u8 << (sender % 8);
+        roles[receiver / 8] |= 1u8 << (receiver % 8);
+        event_idx += 1;
+    }
+    roles
+}
+
 // Global route authority and selector facts do not depend on a projected role.
 // Validate them once per scope, then check every role's observer obligation.
 const fn validate_route_projection_guarantees<const E: usize>(
     summary: &CompiledProgramImage,
     eff_list: &EffList<E>,
 ) -> Option<ProgramSourceError> {
+    let participants = participating_roles(eff_list);
     let scope_markers = eff_list.scope_markers();
     let mut marker_idx = 0usize;
     while marker_idx < scope_markers.len() {
@@ -108,6 +129,7 @@ const fn validate_route_projection_guarantees<const E: usize>(
             && marker.event.is_primary_enter()
             && let Some(error) = validate_route_scope(
                 summary.compiled_program_role_count(),
+                &participants,
                 eff_list,
                 scope_markers,
                 marker_idx,
@@ -122,6 +144,7 @@ const fn validate_route_projection_guarantees<const E: usize>(
 
 const fn validate_route_scope<const E: usize>(
     role_count: usize,
+    participants: &[u8; PARTICIPATING_ROLE_BYTES],
     eff_list: &EffList<E>,
     scope_markers: crate::global::const_dsl::ScopeMarkerView<'_>,
     route_enter_marker_idx: usize,
@@ -152,11 +175,13 @@ const fn validate_route_scope<const E: usize>(
     }
     let mut role = 0usize;
     while role < role_count {
-        let observer_paths_mergeable = local_route_observer_paths_mergeable(
-            eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role as u8,
-        );
-        if !route_role_has_branch_knowledge(role as u8, controller, observer_paths_mergeable) {
-            return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+        if (participants[role / 8] & (1u8 << (role % 8))) != 0 {
+            let observer_paths_mergeable = local_route_observer_paths_mergeable(
+                eff_list, arm0_start, arm0_end, arm1_start, arm1_end, role as u8,
+            );
+            if !route_role_has_branch_knowledge(role as u8, controller, observer_paths_mergeable) {
+                return Some(ProgramSourceError::ProjectionRouteUnprojectable);
+            }
         }
         role += 1;
     }
