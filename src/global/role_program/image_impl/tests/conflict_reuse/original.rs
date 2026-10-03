@@ -1,0 +1,343 @@
+// Frozen pre-edit emitter and row helpers; only names/visibility/import paths adapted.
+use super::super::*;
+use crate::global::const_dsl::ScopeId;
+use crate::global::typestate::{LocalConflict, RouteChoiceMark};
+
+const fn route_scope_and_arm_at<const E: usize>(
+    eff_list: &EffList<E>,
+    eff_idx: usize,
+) -> Option<(ScopeId, u8)> {
+    match projection::route_conflict_for_eff(eff_list.scope_markers(), eff_idx).to_conflict() {
+        Some(LocalConflict::RouteArm { scope, arm }) => Some((scope, arm)),
+        Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
+    }
+}
+
+const fn first_recv_eff_for_route_arm<const E: usize>(
+    eff_list: &EffList<E>,
+    route: ScopeId,
+    arm: u8,
+    role: u8,
+) -> Option<usize> {
+    let arm = super::super::super::binary_route_arm_index(arm);
+    let Some(ranges) = projection::route_arm_ranges(eff_list.scope_markers(), route) else {
+        crate::invariant();
+    };
+    let (start, end) = ranges[arm];
+    let mut idx = start;
+    while idx < end && idx < eff_list.len() {
+        let atom = eff_list.atom_at(idx);
+        if atom.to == role && atom.from != role {
+            return Some(idx);
+        }
+        idx += 1;
+    }
+    None
+}
+
+pub(super) const fn local_event_row_for_eff<const E: usize>(
+    eff_list: &EffList<E>,
+    eff_idx: usize,
+    frame_label: u8,
+    role: u8,
+) -> PackedLocalEventRow {
+    let scope = projection::scope_at(eff_list, eff_idx);
+    let choice = match route_scope_and_arm_at(eff_list, eff_idx) {
+        Some((route_scope, arm)) => {
+            match first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
+                Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
+                Some(_) | None => RouteChoiceMark::Ordinary,
+            }
+        }
+        None => RouteChoiceMark::Ordinary,
+    };
+    PackedLocalEventRow::new(eff_idx, scope, frame_label, choice)
+}
+
+impl<const N: usize> RoleImageBytes<N> {
+    pub(super) const fn emit_reference<const E: usize>(
+        source: (&EffList<E>, &projection::ScopeFacts),
+        facts: RuntimeRoleFacts,
+        role: u8,
+        columns: RoleImageColumns,
+    ) -> RoleImageBuild<N> {
+        let (eff_list, scopes) = source;
+        let footprint = facts.footprint();
+        let local_len = footprint.local_step_count;
+        let route_scope_len = footprint.route_scope_count;
+        let route_arm_len = route_scope_len * 2;
+        validate_role_image_layout::<N>(columns, facts);
+
+        let mut out = Self::empty();
+        let markers = eff_list.scope_markers();
+        let has_route = projection::scope_markers_contain_kind(markers, ScopeKind::Route);
+        let mut dependency_row = 0usize;
+        let mut conflict_row = 0usize;
+        let mut local_step = 0usize;
+        let mut dependencies = projection::DependencyCursor::new(eff_list, scopes, role);
+        let mut eff_idx = 0usize;
+        while eff_idx < eff_list.len() {
+            let atom = eff_list.atom_at(eff_idx);
+            if atom.from == role || atom.to == role {
+                if atom.lane as usize >= footprint.logical_lane_count {
+                    panic!("local event lane outside role logical domain");
+                }
+                let mut event = local_event_row_for_eff(
+                    eff_list,
+                    eff_idx,
+                    eff_list.frame_label_at(eff_idx),
+                    role,
+                );
+                let dependency = dependencies.next(eff_idx, atom.lane, local_step);
+                if !dependency.is_none() {
+                    out.write_dependency_row(columns.dependencies, dependency_row, dependency);
+                    event = event.with_dependency_row(dependency_row);
+                    dependency_row += 1;
+                }
+                let conflict = if has_route {
+                    projection::route_conflict_for_eff(markers, eff_idx)
+                } else {
+                    PackedEventConflict::none()
+                };
+                if !conflict.is_none() {
+                    out.w16(
+                        columns.conflicts,
+                        conflict_row,
+                        ROLE_IMAGE_CONFLICT_STRIDE,
+                        conflict.raw(),
+                    );
+                    event = event.with_conflict_row(conflict_row);
+                    conflict_row += 1;
+                }
+                out.write_event(columns.events, local_step, event);
+                out.w8(columns.lanes, local_step, ROLE_IMAGE_LANE_STRIDE, atom.lane);
+                local_step += 1;
+            }
+            eff_idx += 1;
+        }
+        if local_step != local_len
+            || dependency_row != columns.dependencies.len as usize
+            || conflict_row != columns.conflicts.len as usize
+        {
+            panic!("role image plan mismatch");
+        }
+
+        let active_lane_facts =
+            projection::LocalLaneFacts::for_eff_range(eff_list, role, 0, eff_list.len());
+        let active_lane_row = out.write_lane_bit_row(columns.lane_bits, 0, &active_lane_facts);
+        let mut lane_bit_row = active_lane_row.end();
+
+        let resident_row_count = if columns.resident_boundaries.len == 0 {
+            0
+        } else {
+            columns.resident_boundaries.len as usize - 1
+        };
+        let mut resident_rows = projection::ResidentRowCursor::new(eff_list, role);
+        let mut resident_row = 0usize;
+        let mut resident_end = None;
+        while let Some(row) = resident_rows.next() {
+            if resident_row >= resident_row_count {
+                panic!("role image plan mismatch");
+            }
+            if resident_row == 0 {
+                out.w16(
+                    columns.resident_boundaries,
+                    0,
+                    ROLE_IMAGE_U16_STRIDE,
+                    row.start() as u16,
+                );
+            } else {
+                let Some(previous_end) = resident_end else {
+                    panic!("role resident row boundary missing");
+                };
+                if previous_end != row.start() {
+                    panic!("role resident rows must be contiguous");
+                }
+            }
+            out.w16(
+                columns.resident_boundaries,
+                resident_row + 1,
+                ROLE_IMAGE_U16_STRIDE,
+                row.end() as u16,
+            );
+            resident_end = Some(row.end());
+            resident_row += 1;
+        }
+
+        let mut route_slot = 0usize;
+        let mut route_arm_lane_step_row = 0usize;
+        let mut route_commit_row = 0usize;
+        let mut marker_idx = 0usize;
+        while marker_idx < markers.len() {
+            let marker = markers.at(marker_idx);
+            if markers.is_first_enter(marker_idx)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
+            {
+                let scope = marker.scope_id;
+                out.w16(
+                    columns.route_scopes,
+                    route_slot,
+                    ROLE_IMAGE_ROUTE_SCOPE_STRIDE,
+                    scope.raw(),
+                );
+                let scope_conflict = PackedEventConflict::from_conflict(scopes.conflict(scope))
+                    .with_route_reentry(marker.reentry);
+                out.w16(
+                    columns.route_scope_conflicts,
+                    route_slot,
+                    ROLE_IMAGE_CONFLICT_STRIDE,
+                    scope_conflict.raw(),
+                );
+                let Some(ranges) = projection::route_arm_ranges(markers, scope) else {
+                    panic!("route scope missing binary arm ranges");
+                };
+                let commit_len = projection::route_commit_row_count(scopes, scope);
+                let mut local_rows = [PackedLaneRange::EMPTY; 2];
+                let mut arm_lane_rows = [PackedLaneRange::EMPTY; 2];
+                let mut arm = 0usize;
+                while arm < 2 {
+                    let (start_eff, end_eff) = ranges[arm];
+                    let lane_facts = projection::LocalLaneFacts::for_eff_range(
+                        eff_list, role, start_eff, end_eff,
+                    );
+                    let local_row = lane_facts.local_row();
+                    local_rows[arm] = local_row;
+                    let arm_row_index = route_arm_row_index(route_slot, arm as u8);
+                    let lane_row =
+                        out.write_lane_bit_row(columns.lane_bits, lane_bit_row, &lane_facts);
+                    arm_lane_rows[arm] = lane_row;
+                    lane_bit_row += lane_row.len();
+                    out.w32(
+                        columns.route_arm_lane_rows,
+                        arm_row_index,
+                        ROLE_IMAGE_LANE_RANGE_STRIDE,
+                        lane_row.raw(),
+                    );
+                    let written_steps = out.write_route_arm_lane_steps(
+                        columns.route_arm_lane_step_rows,
+                        route_arm_lane_step_row,
+                        eff_list,
+                        role,
+                        &lane_facts,
+                    );
+                    let lane_step_row =
+                        PackedLaneRange::new(route_arm_lane_step_row, written_steps);
+                    route_arm_lane_step_row += written_steps;
+                    let child_slot =
+                        match projection::passive_arm_child_scope(markers, scope, arm as u8) {
+                            Some(child_scope) => {
+                                let Some(child_slot) =
+                                    projection::route_scope_slot_for_scope(markers, child_scope)
+                                else {
+                                    panic!("passive route child scope missing route row slot");
+                                };
+                                if child_slot <= route_slot {
+                                    panic!(
+                                        "passive route child scope must follow parent route slot"
+                                    );
+                                }
+                                Some(child_slot)
+                            }
+                            None => None,
+                        };
+                    out.write_route_arm_row(
+                        columns.route_arms,
+                        arm_row_index,
+                        crate::global::role_program::PackedRouteArmRow::new(local_row, child_slot, lane_step_row),
+                    );
+                    let commit_range = PackedLaneRange::new(route_commit_row, commit_len);
+                    out.w32(
+                        columns.route_commit_ranges,
+                        arm_row_index,
+                        ROLE_IMAGE_LANE_RANGE_STRIDE,
+                        commit_range.raw(),
+                    );
+                    let mut commits = projection::RouteCommitCursor::new(scopes, scope, arm as u8);
+                    let mut pos = commit_len;
+                    while let Some(conflict) = commits.next() {
+                        if pos == 0 {
+                            panic!("route commit rows exceed planned length");
+                        }
+                        pos -= 1;
+                        out.w16(
+                            columns.route_commit_rows,
+                            route_commit_row + pos,
+                            ROLE_IMAGE_CONFLICT_STRIDE,
+                            conflict.raw(),
+                        );
+                    }
+                    if pos != 0 {
+                        panic!("route commit rows do not fill planned length");
+                    }
+                    route_commit_row += commit_len;
+                    arm += 1;
+                }
+                let offer_row = out.write_lane_bit_union_row(
+                    columns.lane_bits,
+                    lane_bit_row,
+                    arm_lane_rows[0],
+                    arm_lane_rows[1],
+                );
+                lane_bit_row += offer_row.len();
+                out.w32(
+                    columns.route_offer_lane_rows,
+                    route_slot,
+                    ROLE_IMAGE_LANE_RANGE_STRIDE,
+                    offer_row.raw(),
+                );
+                route_slot += 1;
+            }
+            marker_idx += 1;
+        }
+
+        let mut roll_scope = 0usize;
+        marker_idx = 0;
+        while marker_idx < markers.len() {
+            let marker = markers.at(marker_idx);
+            if markers.is_first_enter(marker_idx)
+                && matches!(marker.scope_id.kind(), Some(ScopeKind::Roll))
+            {
+                let end_eff =
+                    projection::scope_segment_end(markers, marker_idx, Some(eff_list.len()));
+                let row = projection::local_step_range_for_eff_range(
+                    eff_list,
+                    marker.offset(),
+                    end_eff,
+                    role,
+                );
+                if !row.is_absent_or_zero_len() {
+                    out.write_roll_scope_row(
+                        columns.roll_scopes,
+                        roll_scope,
+                        PackedRollScopeRow::new(marker.scope_id, row),
+                    );
+                    roll_scope += 1;
+                }
+            }
+            marker_idx += 1;
+        }
+
+        if route_slot != route_scope_len
+            || route_slot * 2 != route_arm_len
+            || resident_row != resident_row_count
+            || lane_bit_row != columns.lane_bits.len as usize
+            || route_arm_lane_step_row != columns.route_arm_lane_step_rows.len as usize
+            || route_commit_row != columns.route_commit_rows.len as usize
+            || roll_scope != columns.roll_scopes.len as usize
+        {
+            panic!("role image plan mismatch");
+        }
+
+        let offset = columns.blob_len();
+        if offset > u16::MAX as usize {
+            panic!("role image");
+        }
+        if offset > out.bytes.len() {
+            panic!("role image");
+        }
+        RoleImageBuild {
+            bytes: out,
+            columns,
+        }
+    }
+}

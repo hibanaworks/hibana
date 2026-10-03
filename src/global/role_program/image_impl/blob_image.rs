@@ -191,7 +191,7 @@ impl<const N: usize> RoleImageBytes<N> {
                 if atom.lane as usize >= footprint.logical_lane_count {
                     panic!("local event lane outside role logical domain");
                 }
-                let mut event = projection::local_event_row_for_eff(
+                let (mut event, event_conflict) = projection::local_event_row_for_eff(
                     eff_list,
                     eff_idx,
                     eff_list.frame_label_at(eff_idx),
@@ -204,7 +204,7 @@ impl<const N: usize> RoleImageBytes<N> {
                     dependency_row += 1;
                 }
                 let conflict = if has_route {
-                    projection::route_conflict_for_eff(markers, eff_idx)
+                    event_conflict
                 } else {
                     PackedEventConflict::none()
                 };
@@ -450,3 +450,7 @@ impl<const N: usize> RoleImageBytes<N> {
         }
     }
 }
+
+#[cfg(all(test, hibana_repo_tests))]
+#[path = "tests/conflict_reuse.rs"]
+mod conflict_reuse;

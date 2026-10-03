@@ -269,16 +269,6 @@ pub(super) const fn scope_at<const E: usize>(eff_list: &EffList<E>, eff_idx: usi
     }
 }
 
-const fn route_scope_and_arm_at<const E: usize>(
-    eff_list: &EffList<E>,
-    eff_idx: usize,
-) -> Option<(ScopeId, u8)> {
-    match route_conflict_for_eff(eff_list.scope_markers(), eff_idx).to_conflict() {
-        Some(LocalConflict::RouteArm { scope, arm }) => Some((scope, arm)),
-        Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => None,
-    }
-}
-
 const fn first_recv_eff_for_route_arm<const E: usize>(
     eff_list: &EffList<E>,
     route: ScopeId,
@@ -306,16 +296,25 @@ pub(super) const fn local_event_row_for_eff<const E: usize>(
     eff_idx: usize,
     frame_label: u8,
     role: u8,
-) -> PackedLocalEventRow {
+) -> (PackedLocalEventRow, PackedEventConflict) {
     let scope = scope_at(eff_list, eff_idx);
-    let choice = match route_scope_and_arm_at(eff_list, eff_idx) {
-        Some((route_scope, arm)) => {
+    let conflict = route_conflict_for_eff(eff_list.scope_markers(), eff_idx);
+    let choice = match conflict.to_conflict() {
+        Some(LocalConflict::RouteArm {
+            scope: route_scope,
+            arm,
+        }) => {
             match first_recv_eff_for_route_arm(eff_list, route_scope, arm, role) {
                 Some(first) if first == eff_idx => RouteChoiceMark::Determinant,
                 Some(_) | None => RouteChoiceMark::Ordinary,
             }
         }
-        None => RouteChoiceMark::Ordinary,
+        Some(LocalConflict::Unconditional | LocalConflict::SharedRoute) | None => {
+            RouteChoiceMark::Ordinary
+        }
     };
-    PackedLocalEventRow::new(eff_idx, scope, frame_label, choice)
+    (
+        PackedLocalEventRow::new(eff_idx, scope, frame_label, choice),
+        conflict,
+    )
 }

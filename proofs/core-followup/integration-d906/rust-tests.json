@@ -1,0 +1,31 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "hibana",
+    "--lib",
+    "--test",
+    "security_report_regressions",
+    "--test",
+    "program_capacity_regression",
+    "--test",
+    "visible_route_reentry",
+    "--test",
+    "rolled_resolver_reentry"
+  ],
+  "cwd": "/workspace/scratch/0915e8fbff81/hibana-latest-proof-integration",
+  "fresh_unique_target": "/workspace/scratch/0915e8fbff81/hibana-latest-proof-integration-target",
+  "returncode": 0,
+  "stop_reason": null,
+  "elapsed_seconds": 56.611,
+  "peak_process_group_rss_kib": 573024,
+  "minimum_free_bytes": 51957760,
+  "source_tree_sha256": "ff09b0223cf7d0f6b467a18416ca25ba1371a3fbc7e93ea8732ed76f5326a02d",
+  "source_changed_during_build": [],
+  "normal_stack": true,
+  "compiler_limit_overrides": false,
+  "samples": 113
+}

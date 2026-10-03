@@ -150,9 +150,12 @@ pub(crate) const fn passive_route_child_scope(
     };
     let (arm_start, arm_end) = ranges[arm as usize];
     let mut child: Option<StructuredScopeRange> = None;
-    let mut idx = 0usize;
+    let mut idx = scope_markers.offset_lower_bound(arm_start, 0);
     while idx < scope_markers.len() {
         let marker = scope_markers.at(idx);
+        if marker.offset() > arm_start {
+            break;
+        }
         if scope_markers.is_first_enter(idx)
             && matches!(marker.scope_id.kind(), Some(ScopeKind::Route))
             && !marker.scope_id.same(route)

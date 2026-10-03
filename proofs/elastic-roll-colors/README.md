@@ -24,8 +24,9 @@ python proofs/elastic-roll-colors/check_all.py --lean /path/to/lean
 pre-edit records, builds seven required Hibana Lean modules from checked-in
 source in a fresh temporary directory, and checks all four color/trace Lean
 files plus `NoRollFastPath.lean`. It then replays all 31 recorded Z3 checks,
-the no-roll abstraction, and the qualified compiler-cost proofs in the sibling
-directories. It does not reuse historical `.olean` caches or run Rust builds.
+the no-roll abstraction, and the qualified compiler-cost, passive-child-window,
+and projection-conflict-reuse proofs in the sibling directories. It does not
+reuse historical `.olean` caches or run Rust builds.
 The original proof scripts that emit result files run only from temporary copies.
 
 For only the color/no-roll proof layer, add `--skip-compiler-cost`. For only the
@@ -84,13 +85,33 @@ initialization is the assumption; the rewrite does not remove source validation.
   records; their original absolute command paths are historical, not portable
   commands to rerun
 - `../route-path-refinement/qualified-source-manifest.json`: original exact
-  seven-file compiler-cost qualification manifest, verified against this checkout
+  seven-file compiler-cost qualification manifest, verified against preserved
+  source snapshots. Four current files still match directly; the three test
+  files map through `../compiler-participant-mask/test-hygiene-followup.json`.
+  `../core-followup/check_sources.py` checks both sets of hashes and verifies the
+  exact naming/stack-wrapper changes, preserving the original boundary assertions
+- `../passive-child-window/` and `../projection-conflict-reuse/`: original
+  separately qualified artifacts, preserved byte-for-byte with fresh current
+  source identity checks. Their original absolute paths and results are historical
+- `../core-followup/`: current integration validation and the original wrapper,
+  README, and package manifest archived before this followup
 
 No original artifact was overwritten. `preserved-artifacts.json` records copies
 and compression. Failed Lean attempts, the source-bridge first failure, and the
 superseded model remain under `historical/`. They are not passing proof evidence.
 The original checker/generator scripts are archived for inspection and depend on
 the original workspace layout; use the new portable runner above.
+
+The integration of external head `d906c2c4` with local head `a1598cd9` keeps the
+local production sources byte-for-byte. It adds the external eight-file source
+binding and immutable fixture token map, while retaining the local passive-child
+and conflict-reuse proof checks. The current oracle uses the external path
+`tests/verification_oracles/participant_validation.rs`, registered in the owner
+partition. Both pre-integration wrappers and correspondence records are archived
+and checked through `../core-followup/integration-preserved.json`. The current
+combined source manifest describes this integration; the previous manifest and
+its validation remain historical evidence. No new measurement or runtime result
+is inferred from these source checks.
 
 ## Runtime regressions and compiler validation
 
