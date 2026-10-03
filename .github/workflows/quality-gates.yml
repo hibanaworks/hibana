@@ -28,7 +28,10 @@ jobs:
       - name: Install host tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ripgrep z3
+          sudo apt-get install -y ripgrep z3 python3-venv
+          python3 -m venv "${RUNNER_TEMP}/hibana-elastic-proof"
+          "${RUNNER_TEMP}/hibana-elastic-proof/bin/python3" -m pip install 'z3-solver==4.16.0.0'
+          echo "${RUNNER_TEMP}/hibana-elastic-proof/bin" >> "${GITHUB_PATH}"
           rustup toolchain install 1.95.0 --profile minimal --component clippy --component rust-src
           MIRI_TOOLCHAIN="$(< .github/miri-toolchain)"
           rustup toolchain install "${MIRI_TOOLCHAIN}" --profile minimal --component miri --component rust-src

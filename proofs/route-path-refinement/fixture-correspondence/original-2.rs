@@ -235,27 +235,34 @@ fn cached_coloring_preserves_wire_exhaustion_and_partial_labels() {
 }
 
 #[test]
-fn compact_and_wide_input_boundaries_preserve_the_exact_relation() {
-    let mut source = EffList::<6>::new_partitioned(2, 4, 0);
-    source.push_event_mut(atom(0, 1, 0));
-    source.push_event_mut(atom(0, 1, 0));
-    source.push_route_scope_mut(ScopeId::route(0), 0, 1, 2, ReentryMark::Reentrant);
-    let compact = RoutePathClasses::<65536>::new(source.scope_markers(), 0, 65535);
-    let wide = RoutePathClasses::<65536>::new(source.scope_markers(), 0, 65536);
-    assert!(compact.cached);
-    assert!(!wide.cached);
-    for left in [0, 1, 2, 65534] {
-        for right in [0, 1, 2, 65534] {
-            let expected = events_share_route_path(source.scope_markers(), left, right);
-            assert_eq!(
-                compact.share_path(source.scope_markers(), left, right),
-                expected
-            );
-            assert_eq!(
-                wide.share_path(source.scope_markers(), left, right),
-                expected
-            );
-        }
-    }
-    assert!(wide.share_path(source.scope_markers(), 65534, 65535));
+fn compact_boundary_and_large_private_fallback_preserve_relation() {
+    std::thread::Builder::new()
+        .stack_size(4 * 1024 * 1024)
+        .spawn(|| {
+            let mut source = EffList::<6>::new_partitioned(2, 4, 0);
+            source.push_event_mut(atom(0, 1, 0));
+            source.push_event_mut(atom(0, 1, 0));
+            source.push_route_scope_mut(ScopeId::route(0), 0, 1, 2, ReentryMark::Reentrant);
+            let compact = RoutePathClasses::<65536>::new(source.scope_markers(), 0, 65535);
+            let fallback = RoutePathClasses::<65536>::new(source.scope_markers(), 0, 65536);
+            assert!(compact.cached);
+            assert!(!fallback.cached);
+            for left in [0, 1, 2, 65534] {
+                for right in [0, 1, 2, 65534] {
+                    let expected = events_share_route_path(source.scope_markers(), left, right);
+                    assert_eq!(
+                        compact.share_path(source.scope_markers(), left, right),
+                        expected
+                    );
+                    assert_eq!(
+                        fallback.share_path(source.scope_markers(), left, right),
+                        expected
+                    );
+                }
+            }
+            assert!(fallback.share_path(source.scope_markers(), 65534, 65535));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

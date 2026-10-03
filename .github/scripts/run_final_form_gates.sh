@@ -52,6 +52,8 @@ bash ./.github/scripts/check_unsafe_contract_hygiene.sh
 bash ./.github/scripts/check_manifest_tests.sh
 bash ./.github/scripts/check_miri.sh
 bash ./.github/scripts/check_lean_proofs.sh
+ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
+  PYTHONDONTWRITEBYTECODE=1 python3 -B proofs/elastic-roll-colors/check_all.py --lean lean
 bash ./.github/scripts/check_unix_carrier_proof.sh
 bash ./.github/scripts/check_proof_erasure_surface.sh
 bash ./.github/scripts/check_boundary_contracts.sh --local-only

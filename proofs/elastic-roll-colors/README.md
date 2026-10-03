@@ -45,12 +45,26 @@ in `preserved-artifacts.json`. Replay reconstructs from the accepted membership
 model. The earlier lexical-lifetime model remains archived as superseded evidence.
 
 Source correspondence is a separate check. By default, the runner validates
-recorded evidence bytes and Lean dependency source identity. It does not claim
+recorded evidence bytes, the exact allocator implementation/regression snapshot,
+and Lean dependency source identity. It does not claim
 access to a fresh QUIC source tree. Add `--quic-source /path/to/hibana-quic` to
 compare the seven historical external source input hashes with a local checkout.
 `source-correspondence-final.json` remains an unchanged historical report,
 including its explicit cache provenance limits. Fresh Lean dependency compilation
 here does not retroactively change the provenance of the original recorded run.
+
+The current CI fixture correspondence is recorded in
+`../route-path-refinement/fixture-correspondence.json`. Three original fixture
+sources are preserved byte-for-byte. The checker permits only the recorded
+oracle relocation/import names and removal of the 4 MiB thread stack wrapper;
+all other Rust tokens, including every assertion, must match. The three qualified
+production sources keep their original exact hashes. The large boundary test
+runs on the ordinary test thread without a stack override. These fixture repairs
+do not alter or broaden the original semantic proof claims.
+
+The final-form CI gate replays this package with Lean 4.30.0 and z3-solver 4.16.0.
+Historical logs retain their original solver versions. Hash identity is a source
+correspondence check, not a replacement for the conditional refinement premises.
 
 `check_no_roll.py` is a fresh abstraction matching the two recorded no-roll Z3
 outcomes; the original no-roll query script was not retained. Its exact Lean
