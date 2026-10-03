@@ -106,6 +106,7 @@ fn exercise_current_offer(
             Poll::Pending
         ));
         // Drop a pending operation without inventing an application message.
+        drop(pending);
     }
     futures::executor::block_on(async {
         client.send::<Msg<55, u32>>(&0x55aa).await.unwrap();

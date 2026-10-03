@@ -73,7 +73,6 @@ impl EventCursor {
             if self
                 .controller_arm_entry_by_arm(scope_id, arm)
                 .is_some_and(|(entry, _)| state_index_to_usize(entry) == idx)
-                || self.route_arm_for_index(scope_id, idx) == Some(arm)
             {
                 return true;
             }

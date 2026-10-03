@@ -1,0 +1,7 @@
+{
+  "source": "tests/security_report_regressions/reentry_colors.rs",
+  "snapshot": "fixture-correspondence/reentry_colors.rs",
+  "original_sha256": "b5fcb9cbac025f4599102e5e143ccaaeacedd8911fcb9d44d90c5af3a2c74453",
+  "current_sha256": "dbbc09024d000c1522b11264c0ea9243d9a06432e7a8677a262440b5fb529d4e",
+  "transformation": "Remove only drop(pending): Pin<&mut Future> has no destructor; the owned pinned future still drops at the same enclosing block boundary. All assertions and other bytes unchanged."
+}
