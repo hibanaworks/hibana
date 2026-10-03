@@ -59,8 +59,8 @@
     "proofs/compiler-participant-mask/z3.log": "7ca27944f1d3f081f5d5285b33e8580e89e70aa9000e23a283fecea23685a89f",
     "proofs/core-followup/RESULTS.md": "b7c8c48be49526efbbfab332fefcfde7750da3396b17427901e9ed30555a046f",
     "proofs/core-followup/check_hygiene.sh": "4febfb5e2f7d7972f7181cc4868c3378841d49c9e427e5e7ad60f9e90bef9c3e",
-    "proofs/core-followup/check_sources.py": "c0d4f98d43cf17f978ac65c1eb196ceadb5b7d9830e93286c68de2a352227faa",
-    "proofs/core-followup/current-source-manifest.json": "f06466922034a65ba5b45aa9dc0e7cf0de4483c5acbd24cbc4c11ab9c9afed56",
+    "proofs/core-followup/check_sources.py": "87428ad8af3891233ed735e0c7d65aff62e58c9e4dc7ddae3332c9c387898579",
+    "proofs/core-followup/current-source-manifest.json": "f810d3c15c9a873da9e52dfea082657b988f32d16daef2e0468cbcbcac595aed",
     "proofs/core-followup/historical/elastic-README.md": "742a88ca3d13683d9c71b61f9bf870132d2ac0254ea52bc5193d428ae0151dc8",
     "proofs/core-followup/historical/elastic-check_all.py": "020bb5b430ca93ebef2d0f69cc28a6a2696fa6a5ecb263183dc19c9c85551207",
     "proofs/core-followup/historical/elastic-package-manifest.json": "f40567c517f7c7c70b3e21c10582aeb08057864e6b70b2751976304fc3618298",
@@ -113,8 +113,8 @@
     "proofs/elastic-roll-colors/LeanRollMembership.lean": "1d47101d899ae0fbe98ebd62770bcad8cd01c32f2494f3defee29a11d3d7fda6",
     "proofs/elastic-roll-colors/LeanRollMembership.log": "8d0f719a1eedea840256377f38900efc7e4a3ca7b0a7e4e9464fd5df70d1446d",
     "proofs/elastic-roll-colors/NoRollFastPath.lean": "d703c60bea5c9492618ee84ff75faf4d2ba0b029a1ff14f16a54c25cac62d4ce",
-    "proofs/elastic-roll-colors/README.md": "e1da21d76f1371a83638651657f9305b6bacf1dfc28b7dd3ae28742ea284c8e1",
-    "proofs/elastic-roll-colors/check_all.py": "b95facce7fa86b32e989645d97cafe014dd3d3ec6719576dbd477cecc9876ca1",
+    "proofs/elastic-roll-colors/README.md": "b9545968cb95854b9d462c4b5e9cb65a3e71bc15dd52dc5dc6911319daaf837f",
+    "proofs/elastic-roll-colors/check_all.py": "d177efe33de0ab3a042ec89a7fc6a77d5bc5b6fa914bae9dc01f9ae9dc818699",
     "proofs/elastic-roll-colors/check_no_roll.py": "d2086876a9acdb1d091879e551ce90ef88f05513a7429ba1330641aa5128159f",
     "proofs/elastic-roll-colors/check_roll_membership_portable.py": "4582e4cfefe3abfbed2ffee3e0ab2b8589acb4b0c3ff256d6359346d2ad86699",
     "proofs/elastic-roll-colors/color-capacity-model.json.gz": "cae665d3e498621c31ed6ab60cf207e21efe14632e54b3cebd20396ca8cda19c",
@@ -270,6 +270,8 @@
     "proofs/route-path-refinement/validation/targeted-tests.log": "a284d45c934731d9284a527751eff573fa1df9dafeae692c321555445e07d5e0",
     "proofs/route-path-refinement/validation.json": "a125d7df055b07b64940e5328ee9c64d55c9426a2dbaf15de7770677318833fa",
     "proofs/route-path-refinement/z3-concrete.log": "756796c42bf63d2a204f9d93e0134b9264664653b8bd92d6f65b24ba146bf6d2",
-    "proofs/route-path-refinement/z3-unbounded.log": "c804899ea605e32f79a1b601d8afb3c9e32d1a05b3ab62b7c850c2f9653f0c3c"
+    "proofs/route-path-refinement/z3-unbounded.log": "c804899ea605e32f79a1b601d8afb3c9e32d1a05b3ab62b7c850c2f9653f0c3c",
+    "proofs/elastic-roll-colors/fixture-correspondence/reentry_colors.rs": "b5fcb9cbac025f4599102e5e143ccaaeacedd8911fcb9d44d90c5af3a2c74453",
+    "proofs/elastic-roll-colors/test-hygiene-followup.json": "5de250096cc94f2afbfacf30141788921825a5d9b74238abfa282055f5dce068"
   }
 }

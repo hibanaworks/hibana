@@ -16,13 +16,25 @@ EXPECTED_PUBLIC_OPERATION_MARKER="hibana Lean public-operation kernel proof pass
 EXPECTED_GENERATED_AXIOM_MARKER="Generated Lean axiom audit passed theorems=506 kernel=466 native=40 contracts=48 obligations=458 native-decisions=16 claims=506"
 EXPECTED_RUNTIME_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=RuntimeGenerated theorems=16 claims=16"
 EXPECTED_PUBLIC_OPERATION_AUDIT_MARKER="Generated Lean kernel artifact audit passed artifact=PublicOperationGenerated theorems=2 claims=2"
-EXPECTED_STATIC_AUDIT_MARKER="Lean static theorem audit passed theorems=709 both=365 propext=247 free=97"
+EXPECTED_STATIC_AUDIT_MARKER="Lean static theorem audit passed theorems=709 both=364 propext=248 free=97"
 GENERATED_CLAIM_SNAPSHOT="${PROOF_DIR}/generated-claim-surface.txt"
 RUNTIME_CLAIM_SNAPSHOT="${PROOF_DIR}/runtime-generated-claim-surface.txt"
 PUBLIC_OPERATION_CLAIM_SNAPSHOT="${PROOF_DIR}/public-operation-generated-claim-surface.txt"
 STATIC_CLAIM_SNAPSHOT="${PROOF_DIR}/all-claim-surface.txt"
 EXAMPLE_CLAIM_SNAPSHOT="${PROOF_DIR}/example-claim-surface.txt"
 TOOLCHAIN="${TOOLCHAIN:-1.95.0}"
+
+# Preserve the auditor's failure evidence even when the caller captures stdout.
+run_audit() {
+  local audit_output audit_status
+  if audit_output="$(python3 "$@")"; then
+    printf '%s\n' "${audit_output}"
+  else
+    audit_status=$?
+    printf '%s\n' "${audit_output}" >&2
+    return "${audit_status}"
+  fi
+}
 
 if [[ ! -f "${PROOF_DIR}/lean-toolchain" ]] \
   || [[ "$(< "${PROOF_DIR}/lean-toolchain")" != "${EXPECTED_TOOLCHAIN}" ]]; then
@@ -55,9 +67,9 @@ python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" --self-test
   lake build
 )
 bash "${ROOT_DIR}/.github/scripts/check_lean_claim_surface.sh"
-static_audit_output="$(python3 \
+static_audit_output="$(run_audit \
   "${ROOT_DIR}/.github/scripts/check_lean_theorem_inventory.py" \
-  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 709 365 247 97)"
+  --static "${PROOF_DIR}" "${STATIC_CLAIM_SNAPSHOT}" 709 364 248 97)"
 printf '%s\n' "${static_audit_output}"
 if [[ "${static_audit_output}" != *"${EXPECTED_STATIC_AUDIT_MARKER}"* ]]; then
   echo "Lean proof gate static theorem boundary mismatch" >&2
@@ -111,7 +123,7 @@ if [[ ! -s "${PARALLEL_GENERATED}" ]]; then
   echo "Lean proof gate parallel exporter did not create a nonempty artifact" >&2
   exit 1
 fi
-parallel_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+parallel_output="$(run_audit "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
   --kernel "${PARALLEL_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/parallel-generated-claim-surface.txt" 182)"
 printf '%s\n' "${parallel_output}"
@@ -119,7 +131,7 @@ if [[ "${parallel_output}" != *"Generated Lean kernel artifact audit passed arti
   echo "Lean proof gate parallel descriptor correspondence mismatch" >&2
   exit 1
 fi
-causal_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+causal_output="$(run_audit "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
   --kernel "${CAUSAL_GENERATED}" "${PROOF_DIR}" \
   "${PROOF_DIR}/causal-generated-claim-surface.txt" 36)"
 printf '%s\n' "${causal_output}"
@@ -127,14 +139,9 @@ if [[ "${causal_output}" != *"Generated Lean kernel artifact audit passed artifa
   echo "Lean proof gate causal correspondence boundary mismatch" >&2
   exit 1
 fi
-if lean_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
-  "${GENERATED}" "${PROOF_DIR}" "${GENERATED_CLAIM_SNAPSHOT}")"; then
-  printf '%s\n' "${lean_output}"
-else
-  lean_status=$?
-  printf '%s\n' "${lean_output}"
-  exit "${lean_status}"
-fi
+lean_output="$(run_audit "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+  "${GENERATED}" "${PROOF_DIR}" "${GENERATED_CLAIM_SNAPSHOT}")"
+printf '%s\n' "${lean_output}"
 if [[ "${lean_output}" != *"${EXPECTED_MARKER}"* ]]; then
   echo "Lean proof gate generated certificate mismatch" >&2
   exit 1
@@ -147,7 +154,7 @@ if [[ "${lean_output}" != *"${EXPECTED_GENERATED_AXIOM_MARKER}"* ]]; then
   echo "Lean proof gate generated axiom boundary mismatch" >&2
   exit 1
 fi
-runtime_lean_output="$(python3 "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
+runtime_lean_output="$(run_audit "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
   --kernel "${RUNTIME_GENERATED}" "${PROOF_DIR}" "${RUNTIME_CLAIM_SNAPSHOT}" 16)"
 printf '%s\n' "${runtime_lean_output}"
 if [[ "${runtime_lean_output}" != *"${EXPECTED_RUNTIME_MARKER}"* ]]; then
@@ -158,7 +165,7 @@ if [[ "${runtime_lean_output}" != *"${EXPECTED_RUNTIME_AUDIT_MARKER}"* ]]; then
   echo "Lean proof gate runtime theorem boundary mismatch" >&2
   exit 1
 fi
-public_operation_lean_output="$(python3 \
+public_operation_lean_output="$(run_audit \
   "${ROOT_DIR}/.github/scripts/check_generated_lean_axioms.py" \
   --kernel "${PUBLIC_OPERATION_GENERATED}" "${PROOF_DIR}" \
   "${PUBLIC_OPERATION_CLAIM_SNAPSHOT}" 2)"

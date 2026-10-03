@@ -1,0 +1,55 @@
+{
+  "passed": false,
+  "started_utc": "2026-10-03T04:06:21.385649+00:00",
+  "command": [
+    "/tmp/hibana-quic-proof-venv/bin/python",
+    "artifacts/external-wire-refinement-gate/check_external_allocator.py",
+    "--repo",
+    "/workspace/scratch/0915e8fbff81/hibana-external-send-followup",
+    "--prior",
+    "/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/proofs/wire-frame-refinement/check_correspondence.py",
+    "--prior-replay",
+    "artifacts/external-wire-refinement-gate/prior-40-query-replay.json",
+    "--output",
+    "artifacts/external-wire-refinement-gate/external-specific-result.json"
+  ],
+  "repository": "/workspace/scratch/0915e8fbff81/hibana-external-send-followup",
+  "head": "731f910a2c8e30844598cd056ab077522333d83c",
+  "checker_sha256": "a6e9588b4ab88920dad519fb4c5db702897e6035a3a9d9a55d39a8cb62b2e1a5",
+  "z3_version": "5.1.0",
+  "source_sha256_before": {
+    "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs": "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8",
+    "src/global/const_dsl/allocation/frame_labels.rs": "219063748f98b22522909c6d083228f1ffddc7bc8701784d858cce2f72f700e2",
+    "src/global/const_dsl/scope.rs": "a62642e819e5d4fceb6aa2a596ef30336902d4873926cd58956aefe82dfee64f",
+    "src/g/source.rs": "79279da8bd3904350757cc01ac039c6d6fc88bacbbcc2e61bb19abe40ab26aae",
+    "proofs/lean/Hibana/DescriptorImage.lean": "bfc5e91f0125654456dac7ddc2bf5eea4c1628f3f859905207da66824e76e10e",
+    "proofs/lean/Hibana/DescriptorRefinement.lean": "a36d949014f29273f937261a28596c7af5f9e28f2f4ab44cbd6e7116b07c1f6c",
+    "proofs/lean/Hibana/Syntax.lean": "4604c81cbbcffbbbe5113a81c1e2272333e57dc9e535555f14b05160a23ce419",
+    "proofs/lean/Hibana/GlobalSyntax.lean": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338"
+  },
+  "prior_checker": "/workspace/scratch/0915e8fbff81/hibana-roll-color-fix/proofs/wire-frame-refinement/check_correspondence.py",
+  "prior_checker_sha256": "334b47f2bc5f0fac25e439a07fe584f3bff8c213c6b0036486ad46b0dbd8c4bb",
+  "prior_descriptor_sha256": "9c239bf4a3c0e428a18b2b902c2680dca51c48ed90a51fa5a516021f453d0127",
+  "prior_40_query_replay": "/workspace/scratch/0915e8fbff81/artifacts/external-wire-refinement-gate/prior-40-query-replay.json",
+  "prior_40_query_replay_sha256": "087202b4cc729d6005b3eaab7dad4c8af40f2c014c740ef99e6a89e24fa397ee",
+  "assumptions": [
+    "Every Roll enter has one unique matching exit in the full marker list, strictly after the enter; its offset equals Rust segment_end.",
+    "Canonical source intervals are valid half-open intervals, laminar with unique source ordinals 0..8191; coextensive inner wrappers have later ordinals.",
+    "Input frame labels are bytes, input row order is the final complete structural-lowering order, and prior original labels are frozen.",
+    "Positive emitted Rust descriptor correspondence assumes successful Rust lowering (no exhausted row anywhere).",
+    "Negative per-role admission rejection requires that the role filter retains an invalid 256 row.",
+    "Concrete runtime Covers/SameClassUnique remains an external premise, not established by this gate."
+  ],
+  "claim_limits": [
+    "This is proof-only Python/Z3 and finite source-transcription evidence, not Lean/Rust execution or universal language refinement.",
+    "Unique exits after enters and Rust segment_end correspondence are explicit bridge premises, not proved for all compiler executions here.",
+    "Arbitrary malformed raw-marker equivalence is false: external full-list find and absent-close handling differ from the former suffix/fallback helper.",
+    "Append/reverse prior list membership agrees; list order itself need not agree.",
+    "Full-source placement is checked against exact pinned declarations, not a generic compiler call-graph theorem.",
+    "Per-role exact admission does not establish global capacity rejection for arbitrary synthetic certificates.",
+    "Fixed greedy-prefix exhaustion does not claim optimal graph coloring."
+  ],
+  "z3_checks": [],
+  "error": "AssertionError('readByte?')",
+  "finished_utc": "2026-10-03T04:06:21.388264+00:00"
+}

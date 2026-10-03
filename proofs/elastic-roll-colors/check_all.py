@@ -49,8 +49,20 @@ assert portable.count(check) == 1 and portable.count(core) == 1
 print('PASS immutable pre-edit records, compressed inputs, and byte-identical 31-query core', flush=True)
 
 source_manifest = json.loads((HERE / 'source-manifest.json').read_text())
+test_followup = json.loads((HERE / 'test-hygiene-followup.json').read_text())
+test_source = 'tests/security_report_regressions/reentry_colors.rs'
+assert test_followup['source'] == test_source
+original_fixture = (HERE / test_followup['snapshot']).read_bytes()
+assert sha(original_fixture) == test_followup['original_sha256']
+assert source_manifest['implementation_snapshot'][test_source] == test_followup['original_sha256']
+assert original_fixture.count(b'        drop(pending);\n') == 1
 for rel, expected_hash in source_manifest['implementation_snapshot'].items():
-    assert sha((REPO / rel).read_bytes()) == expected_hash, ('implementation snapshot', rel)
+    current_source = (REPO / rel).read_bytes()
+    if rel == test_source:
+        assert sha(current_source) == test_followup['current_sha256']
+        assert current_source == original_fixture.replace(b'        drop(pending);\n', b'')
+    else:
+        assert sha(current_source) == expected_hash, ('implementation snapshot', rel)
 print('PASS exact elastic allocator implementation and regression source identity', flush=True)
 for rel, expected_hash in source_manifest['lean_dependencies'].items():
     assert sha((REPO / rel).read_bytes()) == expected_hash, rel

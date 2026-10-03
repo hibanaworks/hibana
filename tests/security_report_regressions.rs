@@ -2,10 +2,12 @@
 //! The final test deliberately violates carrier provenance. It records the
 //! documented limit; it is not a claim of Byzantine agreement enforcement.
 mod common;
-#[path = "security_report_regressions/rolled_routes.rs"]
-mod rolled_routes;
 #[path = "security_report_regressions/reentry_colors.rs"]
 mod reentry_colors;
+#[path = "security_report_regressions/rolled_routes.rs"]
+mod rolled_routes;
+#[path = "security_report_regressions/send_continuations.rs"]
+mod send_continuations;
 
 use common::{TestTransport, TestTx};
 use core::{

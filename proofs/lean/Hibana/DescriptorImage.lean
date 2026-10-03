@@ -1246,11 +1246,76 @@ def canonicalControlSource : Choreo -> CanonicalControlSource
         scopeBudget := 1 + original.scopeBudget
       }
 
+/-- Innermost elastic owner: the narrowest containing Roll interval, with the
+later preorder ordinal resolving coextensive wrappers. Zero means no Roll. -/
+def elasticFrameOwner (markers : List DecodedScopeMarker) (index : Nat) : Nat :=
+  let selected := markers.foldl (fun best marker =>
+    if marker.scope / 8192 == 1 && marker.tag % 4 == 0 && marker.offset ≤ index then
+      match markers.find? (fun closing =>
+          closing.scope == marker.scope && closing.tag % 4 == 2) with
+      | none => best
+      | some closing =>
+          if index < closing.offset then
+            let span := closing.offset - marker.offset
+            let owner := marker.scope % 8192 + 1
+            match best with
+            | none => some (span, owner)
+            | some (oldSpan, oldOwner) =>
+                if span < oldSpan || (span == oldSpan && oldOwner < owner) then
+                  some (span, owner)
+                else best
+          else best
+    else best) (none : Option (Nat × Nat))
+  match selected with
+  | none => 0
+  | some (_, owner) => owner
+
+structure ElasticFrameAssignment where
+  original : ProgramAtomBody
+  owner : Nat
+  color : Nat
+
+/-- 256 is deliberately unencodable, corresponding to Rust's exhausted palette
+rejection. It cannot silently alias any successful byte color. -/
+def firstElasticFrameColor (used : List Nat) : Nat :=
+  match (List.range 256).find? (fun color => !used.contains color) with
+  | some color => color
+  | none => 256
+
+def separateElasticFrameDomainsFrom
+    (markers : List DecodedScopeMarker)
+    (prior : List ElasticFrameAssignment) (index : Nat) :
+    List ProgramAtomBody → List ProgramAtomBody
+  | [] => []
+  | atom :: rest =>
+      let owner := elasticFrameOwner markers index
+      let used := prior.filterMap fun entry =>
+        if entry.original.sender == atom.sender &&
+            entry.original.receiver == atom.receiver && entry.original.lane == atom.lane &&
+            (entry.original.frameLabel != atom.frameLabel || entry.owner != owner) then
+          some entry.color
+        else none
+      let color := if atom.sender == atom.receiver then atom.frameLabel
+        else firstElasticFrameColor used
+      { atom with frameLabel := color } ::
+        separateElasticFrameDomainsFrom markers
+          (prior ++ [{ original := atom, owner, color }]) (index + 1) rest
+
+/-- Final wire allocation refines the route coloring after all source scopes are
+known. Logical events and lanes retain the preceding allocation's identity. -/
+def separateElasticFrameDomains
+    (markers : List DecodedScopeMarker) (atoms : List ProgramAtomBody) :
+    List ProgramAtomBody :=
+  if markers.any (fun marker => marker.scope / 8192 == 1 && marker.tag % 4 == 0) then
+    separateElasticFrameDomainsFrom markers [] 0 atoms
+  else atoms
+
 def canonicalProgramSource (choreo : Choreo) : CanonicalProgramSource :=
   let control := canonicalControlSource choreo
   let compiled := choreo.compiledOccurrences
   {
-    atoms := compiled.occurrences.map CompiledOccurrence.programAtomBody
+    atoms := separateElasticFrameDomains control.markers
+      (compiled.occurrences.map CompiledOccurrence.programAtomBody)
     resolvers := control.resolvers
     markers := control.markers
     scopeBudget := control.scopeBudget
@@ -1493,14 +1558,36 @@ theorem canonical_program_source_lane_span (choreo : Choreo) :
 
 theorem canonical_program_source_frame_labels (choreo : Choreo) :
     (canonicalProgramSource choreo).atoms.map ProgramAtomBody.frameLabel =
-      choreo.compiledOccurrences.occurrences.map CompiledOccurrence.frameLabel := by
-  simp [canonicalProgramSource, CompiledOccurrence.programAtomBody]
+      (separateElasticFrameDomains (canonicalControlSource choreo).markers
+        (choreo.compiledOccurrences.occurrences.map CompiledOccurrence.programAtomBody)).map
+          ProgramAtomBody.frameLabel := rfl
 
 theorem canonical_program_source_global_events_from
     (choreo : Choreo) (laneBase : Nat) :
     (canonicalProgramSource choreo).atoms.map (·.globalEventFrom laneBase) =
       choreo.globalEventsFrom laneBase := by
-  simp [canonicalProgramSource, Choreo.globalEventsFrom,
+  have preserveFrom : ∀ (markers : List DecodedScopeMarker)
+      (prior : List ElasticFrameAssignment) (index : Nat) (atoms : List ProgramAtomBody),
+      (separateElasticFrameDomainsFrom markers prior index atoms).map
+        (·.globalEventFrom laneBase) = atoms.map (·.globalEventFrom laneBase) := by
+    intro markers prior index atoms
+    induction atoms generalizing prior index with
+    | nil => rfl
+    | cons atom rest ih =>
+        simp only [separateElasticFrameDomainsFrom, List.map_cons]
+        rw [ih]
+        rfl
+  have preserve : ∀ (markers : List DecodedScopeMarker) (atoms : List ProgramAtomBody),
+      (separateElasticFrameDomains markers atoms).map (·.globalEventFrom laneBase) =
+        atoms.map (·.globalEventFrom laneBase) := by
+    intro markers atoms
+    unfold separateElasticFrameDomains
+    split
+    · exact preserveFrom markers [] 0 atoms
+    · rfl
+  simp only [canonicalProgramSource]
+  rw [preserve]
+  simp [Choreo.globalEventsFrom,
     CompiledOccurrence.programAtomBody, ProgramAtomBody.globalEventFrom,
     CompiledOccurrence.globalEventFrom, List.map_map, Nat.add_comm]
 
@@ -1535,6 +1622,17 @@ def Choreo.canonicalRoleEffIndices (choreo : Choreo) (role : Nat) : List Nat :=
   choreo.canonicalProgramAtoms.filterMap fun atom =>
     if (atom.localAction? role).isSome then some atom.effIndex else none
 
+def Choreo.canonicalFrameLabel (choreo : Choreo) (index : Nat) : Nat :=
+  match (canonicalProgramSource choreo).atoms[index]? with
+  | some atom => atom.frameLabel
+  | none => 256
+
+def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
+  (canonicalProgramSource choreo).atoms.filterMap fun atom =>
+    if (Choreo.localAction? role atom.sender atom.receiver atom.label atom.schema).isSome then
+      some atom.frameLabel
+    else none
+
 structure ScopeSelection where
   scope : Nat
   start : Nat
@@ -1548,84 +1646,6 @@ def scopeSegmentEnd
       candidate.scope = marker.scope && candidate.tag % 4 = 2 with
   | some exit => exit.offset
   | none => limit
-
-def isRollFrameEnter (marker : DecodedScopeMarker) : Bool :=
-  marker.scope / 8192 == 1 && marker.tag % 4 == 0
-
-def selectRollFrameOwner (event stop : Nat) (marker : DecodedScopeMarker)
-    (selected : Option (Nat × Nat)) : Option (Nat × Nat) :=
-  if isRollFrameEnter marker && marker.offset ≤ event && event < stop then
-    let span := stop - marker.offset
-    let owner := marker.scope % 8192 + 1
-    match selected with
-    | none => some (span, owner)
-    | some (oldSpan, oldOwner) =>
-        if span < oldSpan || (span == oldSpan && oldOwner < owner) then
-          some (span, owner)
-        else selected
-  else selected
-
-def rollFrameOwner (markers : List DecodedScopeMarker) (atomCount event : Nat) : Nat :=
-  let selected := (List.range markers.length).foldl (fun selected index =>
-    match markers[index]? with
-    | none => selected
-    | some marker => selectRollFrameOwner event
-        (scopeSegmentEnd markers index atomCount marker) marker selected) none
-  match selected with
-  | some (_, owner) => owner
-  | none => 0
-
-structure RollFrameAssignment where
-  original : ProgramAtomBody
-  owner : Nat
-  color : Nat
-
-def rollFrameConflict (atom : ProgramAtomBody) (owner : Nat)
-    (prior : RollFrameAssignment) : Bool :=
-  prior.original.sender == atom.sender &&
-    prior.original.receiver == atom.receiver && prior.original.lane == atom.lane &&
-    (prior.original.frameLabel != atom.frameLabel || prior.owner != owner)
-
-def rollFrameUsed (atom : ProgramAtomBody) (owner : Nat)
-    (assigned : List RollFrameAssignment) : List Nat :=
-  (assigned.filter (rollFrameConflict atom owner)).map RollFrameAssignment.color
-
-def separateRollFrameAtomsFrom (markers : List DecodedScopeMarker) (atomCount : Nat) :
-    Nat → List RollFrameAssignment → List ProgramAtomBody → List ProgramAtomBody
-  | _, _, [] => []
-  | index, assigned, atom :: rest =>
-      let owner := rollFrameOwner markers atomCount index
-      let color := if atom.sender == atom.receiver then atom.frameLabel
-        else match firstAvailableFrameLabel (rollFrameUsed atom owner assigned) with
-          | some color => color
-          | none => 256
-      { atom with frameLabel := color } ::
-        separateRollFrameAtomsFrom markers atomCount (index + 1)
-          ({ original := atom, owner, color } :: assigned) rest
-
-/-- The final production phase refines frozen route colors by elastic owner.
-    Failure retains an invalid byte value, 256, in the original event row;
-    exact descriptor equality cannot admit that row as a decoded wire byte. -/
-def separateRollFrameAtoms (markers : List DecodedScopeMarker)
-    (atoms : List ProgramAtomBody) : List ProgramAtomBody :=
-  if markers.any isRollFrameEnter then
-    separateRollFrameAtomsFrom markers atoms.length 0 [] atoms
-  else atoms
-
-def canonicalWireAtoms (choreo : Choreo) : List ProgramAtomBody :=
-  let source := canonicalProgramSource choreo
-  separateRollFrameAtoms source.markers source.atoms
-
-def Choreo.canonicalFrameLabel (choreo : Choreo) (index : Nat) : Nat :=
-  match (canonicalWireAtoms choreo)[index]? with
-  | some atom => atom.frameLabel
-  | none => 256
-
-def Choreo.canonicalRoleFrameLabels (choreo : Choreo) (role : Nat) : List Nat :=
-  (canonicalWireAtoms choreo).filterMap fun atom =>
-    if (Choreo.localAction? role atom.sender atom.receiver atom.label atom.schema).isSome then
-      some atom.frameLabel
-    else none
 
 def selectInnermostScope
     (current : Option ScopeSelection)

@@ -1,0 +1,12 @@
+{
+  "purpose": "Portable wrapper only: exact pinned source bytes still required, current HEAD recorded separately from qualified source HEAD, prior DescriptorImage read from immutable snapshot",
+  "original_checker_sha256": "77cf4fc82a93cc7614ac6af2fd8f7d2276e6e62586c4b5a5a9ec9313bd5b4686",
+  "portable_checker_sha256": "4a3890e12af9e379a65f25a7521e9ef8e61af6234f3b95e0b8ec0bada9a2a0a2",
+  "unchanged_function_sha256": {
+    "run_z3": "008e87d633e70fe2d44e45694889b3a9d5c3346008e0e5a0a3c02e43111d16af",
+    "run_finite": "6039999229011022c01dfce2a3110e012227ef690b44c0ba41929a5514809f73",
+    "run_source_audit": "fe638df2b3e22f24b7a54564b29b98c21d1b5266e41633acaea69e37a2c75cfe",
+    "external_owners": "328ff8065c60aea071bd0c6282545a2de03921891aacc32c470075b8bed80d1d"
+  },
+  "prior_descriptor_sha256": "9c239bf4a3c0e428a18b2b902c2680dca51c48ed90a51fa5a516021f453d0127"
+}

@@ -2,7 +2,7 @@
   "format": 1,
   "scope": "Current integrated source identity: all src/**/*.rs, relocated verification oracle Rust files, workspace manifests and lockfile. Hashes establish identity, not semantic proof; previous qualified source identity is archived under historical/pre-d906-integration.",
   "base_commit": "ff6d167ed23f2f566d16affdeedd3b2ca8569cc2",
-  "tree_sha256": "ff09b0223cf7d0f6b467a18416ca25ba1371a3fbc7e93ea8732ed76f5326a02d",
+  "tree_sha256": "095f011950f272bae8a314996a5a4d7a4c8458d4a72b333b0f12adbb49344b53",
   "tree_hash_encoding": "UTF-8; sorted path entries, SHA-256 + two spaces + repository-relative path + newline",
   "files": {
     ".github/repo-tests/Cargo.toml": "318cd94936dd133123c91f4c7c1bb65538bd22d46a6a0f8ea2454330cf276710",
@@ -262,7 +262,7 @@
     "src/global/typestate/cursor/scope_route/roll/reentry.rs": "7003ada3b89e75bea6e0f0dfa9b3de8e31a2461f07772656fe5ade01880c3c9e",
     "src/global/typestate/cursor/scope_route/roll.rs": "6f8e51efcee8aced30aca96484811c11420232fad4df85f8d1dfdfeccca03089",
     "src/global/typestate/cursor/scope_route/row_completion.rs": "d032580839671fa8faabe22eb67bfbffc414ae7f8e2dba951fe689458e8acaca",
-    "src/global/typestate/cursor/scope_route/send_preview.rs": "06346ff9d7699f5c47e6aec22a40eb3df736385762aa84d6497ac8b2caf17a98",
+    "src/global/typestate/cursor/scope_route/send_preview.rs": "cd95194f95bb500a3586972684375a35f2a9df9c95fe0866390284e0ca53c194",
     "src/global/typestate/cursor/scope_route/send_preview_route.rs": "830d176da027be3bda8675cafd343b883aa563c2a0e25a43ba47666e03d20fff",
     "src/global/typestate/cursor/scope_route/send_preview_start.rs": "184df53ee35697bfef95a6075bcda6c4cbba225622c3b0701b5b908f7e6cc11e",
     "src/global/typestate/cursor/scope_route.rs": "cff5a49d62e91b45a3084f2f761eeb762e9db702a833a210a7ae032ea65a79fa",

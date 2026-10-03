@@ -1,80 +1,68 @@
 # Canonical wire-frame refinement
 
-The Rust compiler applies `separate_roll_frame_domains` after structural
-lowering. The canonical Lean descriptor model now has the same final phase at
-`canonicalWireAtoms`; the structural source and its existing theorems are
-unchanged. Both canonical per-event and per-role wire labels read this phase.
-The exact descriptor equality checks, claim snapshots, and theorem budgets are
-unchanged.
+The canonical source has one final wire-color refinement:
+`canonicalProgramSource` applies `separateElasticFrameDomains` once to the
+structurally compiled atoms. Both per-event and per-role canonical frame labels
+read those final atoms. There is no second `canonicalWireAtoms` allocator.
+`GlobalSyntax` remains the structural lowering source.
 
-The phase freezes each original frame color and chooses its innermost Roll
-owner using the narrowest containing half-open span, then the later source
-ordinal for coextensive scopes. It scans prior assigned colors in the exact
-`(sender, receiver, lane)` partition, blocking a color if either frozen color
-or owner differs. Self sends preserve their original labels, and programs
-without Roll markers preserve the whole structural result.
+The selected external definitions are imported directly. The proofs name small
+predicate and fold-step expressions only to reason about the production code;
+`actual_head_uses_this_predicate` and `actual_owner_is_this_fold` bind those views
+by definitional equality. No copied final allocator is used by the live proofs.
+`canonical_source_applies_exactly_one_refinement` binds the entire final atom
+list, and the nested source fixture checks both complete exact certificates.
 
-Exhaustion retains the invalid value 256 in its original event row. The generic
-`exhausted_row_rejects_exact_decoded_labels` theorem proves a list containing
-that value cannot equal any successfully decoded event-label list. No failed
-allocation turns into an empty list, wraps a byte, or weakens the exact check.
-This admission theorem is role-local: it requires the role's filtered label
-list to retain the invalid row. An unrelated role can omit it. Rust rejects
-overflow globally; equivalence with emitted Rust descriptors assumes successful
-Rust lowering. This package does not claim that existing per-role admission
-globally rejects arbitrary synthetic certificates for an overflowing source.
+The allocator freezes original frame colors and chooses the narrowest enclosing
+Roll, using the later source ordinal for coextensive scopes. It scans prior
+assignments in `(sender, receiver, lane)` and excludes assigned colors when the
+frozen color or owner differs. Self sends retain their label, and no-Roll sources
+remain unchanged. Exhaustion retains invalid byte value 256 in its event row.
 
 ## Replay
 
-With Lean 4.30.0 and Python `z3-solver` installed:
+With Lean 4.30.0 and Python `z3-solver` installed, from the repository root:
 
 ```sh
 python proofs/wire-frame-refinement/check_all.py --lean /path/to/lean
 ```
 
-The runner checks the preserved pre-edit proof records and exact production
-source bridge, builds the current Lean library, replays all regression proofs
-against current production definitions, audits every named theorem, and runs
-the Z3/finite correspondence checker into a temporary directory. The final-form
-CI gate invokes it after the existing Lean and elastic proof gates.
+The runner verifies preserved historical artifacts and the selected production
+source hashes, builds the actual Lean library, and audits all 54 named Lean
+theorems. It runs the unchanged original 40-query Z3 generator, the eight option
+match equivalence checks, and 29 external-specific Z3 obligations/controls.
+Each finite correspondence layer checks 38,840 bounded cases; the external layer
+adds ten fixtures, eleven historical models, five raw-marker controls and two
+rejected source-placement mutants. The existing final-form invocation is kept.
 
-The semantic-surface gate also requires explicit option handling in production
-Lean sources. `explicit-match/` preserves the separate pre-edit Lean/Z3 gate
-for replacing the original two default-extraction calls with exhaustive
-`some`/`none` matches. The owner still defaults to 0 and exhaustion still yields
-256. Four axiom-free Lean theorems prove the replacements in every observing
-context; eight additional Z3 obligations/controls cover both constructors and
-the boundary values. The runner verifies the exact two recorded source rewrites
-and now audits 44 Lean theorems. Original pre-edit records remain unchanged.
-`validation-explicit-match/` records the full Lean replay and all 124 semantic
-surface regressions for this followup; `validation/` preserves the earlier run.
+The portable external checker changes only checkout identity/path handling:
+exact source bytes remain pinned, the actual Git HEAD is recorded separately
+from the qualified source commit, and the former source is read from a preserved
+snapshot. All model/query function bodies remain byte-identical to qualification.
 
-The Lean proofs establish selected-color bounds and exclusion, preservation of
-original inequalities and owner separation, safe same-class reuse at the graph
-level, domain isolation, field/event preservation, self-send and no-Roll
-behavior, owner tie-breaking, and exact exhausted-label rejection. Fixed
-regressions cover ordinary, nested, reverse-nested, coextensive and sibling
-Rolls, existing route inequalities, partitioned domains and all 256 byte colors.
-`WireSourceBridge.lean` retains the exact nested fixture bytes freshly emitted
-by Rust before the repair and proves both roles match the new canonical labels.
+## Scope and history
 
-The Z3 checker has 40 symbolic obligations/controls, 38,840 exhaustive small
-input cases, nine named fixtures, and eleven historical finite source models.
-It compares independently written mask/imperative and list/argmin algorithms,
-including rejection of the first invalid 256 row and concrete mutant controls.
+Rust correspondence requires valid, laminar source intervals and unique Roll
+exits after their enter markers, with offsets matching Rust's `segment_end`.
+The external owner uses the first matching exit from the entire marker list;
+the former helper searched a suffix and supplied a fallback for a missing exit.
+The malformed-marker controls prove that arbitrary-list equivalence is false.
+The positive bridge is qualified source-transcription and finite evidence, not
+an unconditional Rust-to-Lean compiler refinement theorem.
 
-## Claim boundary
+Admission rejection for 256 is role-local: the role filter must retain the
+invalid row. An unrelated role can omit it. Positive emitted-descriptor
+correspondence assumes successful Rust lowering. Runtime `Covers` /
+`SameClassUnique` remains explicit. Capacity failure concerns the fixed greedy
+prefix, not optimal graph coloring. Lean proofs permit only `propext` and
+`Quot.sound`, with no admitted or native-decision proofs in this package.
 
-Runtime `Covers` / `SameClassUnique` remains an explicit external premise.
-Same-class reuse is not an unconditional concrete runtime uniqueness theorem.
-The generic Lean theorems use only `propext` and `Quot.sound`; no admitted,
-native-decision, or additional axioms are allowed by this package's audit.
-The Z3 and Python models are source transcriptions, not extracted Rust or a
-universal Rust-to-Lean refinement proof. Source intervals are valid, laminar,
-and use unique preorder ordinals in the available scope-ID range. Capacity
-failure describes the fixed greedy prefix, not optimal graph coloring.
-
-`pre-edit/` preserves the passing candidate, generated source bridge, commands,
-hashes, and Lean/Z3 logs recorded before editing production Lean definitions.
-Those records describe the historical gate; the current regression proofs
-deliberately import the production definitions rather than the copied candidate.
+`pre-edit/`, `explicit-match/`, `validation/`, and `validation-explicit-match/`
+remain immutable historical evidence for the earlier placement and its style
+repair. `external-binding/before/` preserves the previous live proof package and
+source snapshot. `external-binding/` records the proof-only qualification of the
+single final-source phase before package integration. Its source-binding record
+covers the changed final-color theorem statement; exact descriptor admission
+conjuncts remain unchanged. The public theorem count remains 709; the external
+proof changes one axiom classification from both to propext-only, without adding
+an axiom. These public-surface changes remain subject to the full Lean audit.

@@ -1,0 +1,38 @@
+{
+  "qualified_utc": "2026-10-03T04:18:38.505678+00:00",
+  "external_source_head": "731f910a2c8e30844598cd056ab077522333d83c",
+  "status": "Complete proposal passed before integration; no model/package integration preceded this gate",
+  "theorems": 54,
+  "allowed_axioms": [
+    "propext",
+    "Quot.sound"
+  ],
+  "z3_layers": [
+    40,
+    8,
+    29
+  ],
+  "source_binding": {
+    "qualified_source_head": "731f910a2c8e30844598cd056ab077522333d83c",
+    "source_sha256": {
+      "src/global/const_dsl/allocation/frame_labels/reentry_domains.rs": "da90ce98dec6fc89b1bfc4e281436aa84be3435e5eaf5031a001b70d771fccf8",
+      "src/global/const_dsl/allocation/frame_labels.rs": "219063748f98b22522909c6d083228f1ffddc7bc8701784d858cce2f72f700e2",
+      "src/global/const_dsl/scope.rs": "a62642e819e5d4fceb6aa2a596ef30336902d4873926cd58956aefe82dfee64f",
+      "src/g/source.rs": "79279da8bd3904350757cc01ac039c6d6fc88bacbbcc2e61bb19abe40ab26aae",
+      "proofs/lean/Hibana/DescriptorImage.lean": "bfc5e91f0125654456dac7ddc2bf5eea4c1628f3f859905207da66824e76e10e",
+      "proofs/lean/Hibana/DescriptorRefinement.lean": "a36d949014f29273f937261a28596c7af5f9e28f2f4ab44cbd6e7116b07c1f6c",
+      "proofs/lean/Hibana/Syntax.lean": "4604c81cbbcffbbbe5113a81c1e2272333e57dc9e535555f14b05160a23ce419",
+      "proofs/lean/Hibana/GlobalSyntax.lean": "4ffee9eb9d987bfd11a20388d611c5008e0b991067bff30f0d7b756de3c25338"
+    }
+  },
+  "proof_files": {
+    "WireFrameRefinement.lean": "29c082739e802db272065c0cbcbfd546bfac09866b604a49a9f0d3a34c1251a4",
+    "WireSourceBridge.lean": "f267c4e2c2cd940a9ef39a77e691543b4e32b0889060d6821e71b9a8426e71df",
+    "OptionMatchEquivalence.lean": "4271b416a1940a394e65f8bcb659a64b80bac6fdb9a6346ecaacad4c92286a04",
+    "check_all.py": "1ccb5bd9d7a58b4a430bf55b39a09e71e60625bbe1f76d0f6574e7376df707b8",
+    "check_correspondence.py": "334b47f2bc5f0fac25e439a07fe584f3bff8c213c6b0036486ad46b0dbd8c4bb",
+    "check_external_allocator.py": "4a3890e12af9e379a65f25a7521e9ef8e61af6234f3b95e0b8ec0bada9a2a0a2"
+  },
+  "candidate_replay_log_sha256": "731ff1bb8059df750065563adbd0afee20773aa7575ad20420bdf618b26202c4",
+  "command": "/tmp/hibana-quic-proof-venv/bin/python package-proposal/check_all.py --repo /workspace/scratch/0915e8fbff81/hibana-external-send-followup --lean /workspace/scratch/0915e8fbff81/tools/lean/lean-4.30.0-linux/bin/lean"
+}

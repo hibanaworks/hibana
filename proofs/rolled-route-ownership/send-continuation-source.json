@@ -1,0 +1,16 @@
+{
+  "base_commit": "0f538459b074e82503921383974079a4669e81bc",
+  "pre_edit_source_sha256": "06346ff9d7699f5c47e6aec22a40eb3df736385762aa84d6497ac8b2caf17a98",
+  "production_transformation": "Delete arm membership from the controller entry predicate; preserve every other production byte.",
+  "scope": "Source-linked model and runtime regressions; no universal Rust refinement or QUIC interop claim.",
+  "files": {
+    "src/global/typestate/cursor/scope_route/send_preview.rs": "cd95194f95bb500a3586972684375a35f2a9df9c95fe0866390284e0ca53c194",
+    "tests/security_report_regressions/send_continuations.rs": "83fbb7d656d4a6b1fc96f3835d7a1614962842d6a2a92bc8b3ada7c95ce33dcd",
+    "proofs/rolled-route-ownership/SendContinuation.lean": "62075230dd0e5d654af1fdccc6d7ddad93fbf19414c657306fe87fe3fe92d774",
+    "proofs/rolled-route-ownership/SendContinuation.smt2": "fe514370abf2373fa72f82b50e31d92f39a083d2b32b5208698b4796c173b455"
+  },
+  "pre_edit_checks": {
+    "proofs/rolled-route-ownership/validation/send-continuation-pre-edit-lean.log": "014779e9eb44403803d356810579dd2e066e4964aaf7384d370b079f8c38ae6b",
+    "proofs/rolled-route-ownership/validation/send-continuation-pre-edit-z3.log": "a041620ab60520cf693d639c9d3d715eb37f5e3720c737f748d95d1370958656"
+  }
+}

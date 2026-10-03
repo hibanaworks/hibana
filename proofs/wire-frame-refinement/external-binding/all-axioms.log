@@ -1,0 +1,54 @@
+'Hibana.WireFrameRefinement.actual_head_uses_this_predicate' does not depend on any axioms
+'Hibana.WireFrameRefinement.actual_palette_matches_optional_search' does not depend on any axioms
+'Hibana.WireFrameRefinement.actual_owner_is_this_fold' does not depend on any axioms
+'Hibana.WireFrameRefinement.narrower_roll_owner_wins' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.coextensive_roll_owner_uses_later_source_ordinal' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.canonical_source_applies_exactly_one_refinement' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.chosen_color_bound_and_unused' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.color_exhaustion_is_exact' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.actual_color_is_bounded_or_invalid' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.actual_color_exhaustion_is_exact' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.chosen_color_separates_every_conflicting_prior' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.actual_head_separates_conflicting_prior' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.original_inequality_is_conflict' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.distinct_owner_is_conflict' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.same_class_does_not_block' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.different_domain_does_not_block' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.refinement_preserves_all_noncolor_fields' does not depend on any axioms
+'Hibana.WireFrameRefinement.refinement_preserves_event_inventory' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.no_roll_is_identity' does not depend on any axioms
+'Hibana.WireFrameRefinement.self_send_keeps_original_label' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.exhaustion_retains_invalid_nonempty_row' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.invalid_color_cannot_equal_decoded_byte' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.read_byte_result_is_bounded' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.decoded_frame_label_is_bounded' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.successful_map_has_only_bounded_results' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.exhausted_row_rejects_exact_decoded_labels' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameRefinement.ordinary_ordered_reuse' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.one_roll_ordered_reuse' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.nested_roll_source_correspondence' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.reverse_nested_roll_source_correspondence' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.coextensive_roll_source_correspondence' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.sibling_roll_source_correspondence' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.existing_route_inequality_is_preserved' depends on axioms: [propext]
+'Hibana.WireFrameRefinement.coextensive_owner_uses_later_ordinal' does not depend on any axioms
+'Hibana.WireFrameRefinement.narrowest_owner_overrides_ordinal' does not depend on any axioms
+'Hibana.WireFrameRefinement.all_byte_colors_are_available' does not depend on any axioms
+'Hibana.WireFrameRefinement.all_byte_colors_exhausted' does not depend on any axioms
+'Hibana.WireFrameRefinement.exact_domain_partition_and_self_send' does not depend on any axioms
+'Hibana.WireFrameRefinement.unrelated_role_can_omit_invalid_row' does not depend on any axioms
+'Hibana.WireFrameRefinement.participating_role_retains_invalid_row' does not depend on any axioms
+'Hibana.WireFrameRefinement.retained_overflow_rejects_role_admission' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameSourceBridge.generated_role0_labels_match' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.generated_role1_labels_match' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.generated_event_labels_match' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.generated_role0_exact_accepted' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameSourceBridge.generated_role1_exact_accepted' depends on axioms: [propext, Quot.sound]
+'Hibana.WireFrameSourceBridge.final_source_has_refined_labels' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.structural_baseline_mismatch_is_real' depends on axioms: [propext]
+'Hibana.WireFrameSourceBridge.source_emitted_nested_domains' does not depend on any axioms
+'Hibana.WireFrameSourceBridge.source_owners_are_inner_inner_outer' does not depend on any axioms
+'Hibana.WireOptionMatchEquivalence.owner_explicit_match_exact' does not depend on any axioms
+'Hibana.WireOptionMatchEquivalence.color_explicit_match_exact' does not depend on any axioms
+'Hibana.WireOptionMatchEquivalence.owner_context_exact' does not depend on any axioms
+'Hibana.WireOptionMatchEquivalence.color_context_exact' does not depend on any axioms

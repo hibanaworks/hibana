@@ -704,11 +704,11 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | `SessionKitStorage` | 24 B | 32 B |
 | Fixed per-rendezvous storage, including the 252 B tap records | 412 B | 952 B |
 | Peak live runtime slab across tracked heavy shapes | 2,311 B | 4,323 B |
-| Runtime operation stack high-water | 2,639 B | 3,663 B |
-| Modeled runtime SRAM envelope | 5,322 B | 8,954 B |
+| Runtime operation stack high-water | 2,623 B | 3,663 B |
+| Modeled runtime SRAM envelope | 5,306 B | 8,954 B |
 | Minimal linked protocol artifact | 352 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,824 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 88,874 B | 169,965 B |
+| Complete no-default `libhibana.rlib` sections | 87,968 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release

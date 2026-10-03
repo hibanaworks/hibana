@@ -63,6 +63,13 @@ production sources keep their original exact hashes. The large boundary test
 runs on the ordinary test thread without a stack override. These fixture repairs
 do not alter or broaden the original semantic proof claims.
 
+`test-hygiene-followup.json` separately preserves the original `reentry_colors.rs`
+fixture and permits exactly one byte-level transformation: removal of
+`drop(pending)` on a `Pin<&mut Future>`, which has no destructor. The owned future
+still leaves the same enclosing scope. All other fixture bytes and assertions
+must match; historical manifests validate the preserved original, while current
+replay validates the transformed source. Production allocator hashes are unchanged.
+
 The final-form CI gate replays this package with Lean 4.30.0 and z3-solver 4.16.0.
 Historical logs retain their original solver versions. Hash identity is a source
 correspondence check, not a replacement for the conditional refinement premises.

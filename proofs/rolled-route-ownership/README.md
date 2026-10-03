@@ -1,5 +1,60 @@
 # Rolled-route ownership regressions
 
+## Nested send continuation repair, 2026-10-03
+
+The Path handoff on `ca5a6fc3` exposes a send-preview defect independent of the
+elastic wire-color allocator. An enabled ResultTaken occurrence following Applied
+was classified as a controller decision solely because it belonged to the
+containing arm. The label/schema rescan then replaced that occurrence with an
+earlier, unchosen abandonment acknowledgement having the same logical contract.
+The later eligibility guard correctly rejected that wrong occurrence.
+
+Controller decisions now use the descriptor's actual arm-entry index. Arm
+membership never turns an interior continuation into a new decision. Route-start
+and unlabeled-node decisions remain intact. The existing dependency, conflict,
+lane, reentry, resolver, carrier and commit checks remain in place. No new public
+API, endpoint field, wire byte or capacity is introduced; the preflight/publish
+boundary is unchanged.
+
+`SendContinuation.lean` was checked before the production edit. It proves the
+entry/continuation distinction for the decision abstraction, and executes the
+canonical GlobalSemantics histories for Applied/ResultTaken, opposite-arm same
+label rejection, missing reply, duplicate acknowledgement, alternating reentry
+and first Retire. `SendContinuation.smt2` checks two negated boundary obligations
+as UNSAT, both SAT premises and a SAT witness of the old membership shortcut.
+The full supplemental runner now checks seven Lean files, 12 UNSAT obligations
+and 19 SAT premises/witnesses. These are source-linked abstractions and executable
+histories, not a universal proof of Rust selector refinement.
+
+Permanent Rust tests in `send_continuations.rs` run on ordinary test stacks and
+join the strict-provenance Miri inventory. The handed-off diagnostic matrix is
+also rerun with its original 64 MiB thread setting: all 12 controls and failing
+variants pass, including the complete Path prefix. That diagnostic stack is not
+a Pico stack measurement. Real full-owner QUIC traffic and Neqo interoperability
+remain separate integration qualifications; the supplied Linux HQ adapter and
+Neqo runner cannot be exercised by this Mac-only environment without the absent
+Linux/container/Neqo tooling. No integration success is inferred from core traces.
+
+The previously failed canonical descriptor proof is also repaired: the Lean
+canonical compiler applies the same final innermost elastic-owner color pass as
+Rust. The complete 709 static/506 generated theorem inventory is retained; one
+label theorem now states the final allocation rather than the intermediate
+allocation. Its axiom closure becomes smaller. Captured auditor failures now
+retain their stdout diagnostics and original nonzero exit status.
+
+Fresh local qualification: 865 workspace tests passed (8 explicit internal
+exporters/measurement cases and 3 documented doctests ignored by the default
+workspace run); all 17 security regressions passed; the 3 new tests passed Miri;
+strict workspace/all-target Clippy passed. The canonical Lean gate separately ran
+its exporters and passed 709 static/506 generated theorems, 182 parallel and 36
+causal correspondences. The full portable Lean/Z3 replay passed with Z3 4.16.0.
+Core and projection examples passed no-default checks on thumbv6m and thumbv8m.
+The resource gate measured thumb rlib sections at 87,968 bytes, sample stack at
+2,639 bytes and modeled sample SRAM at 5,306 bytes on this Mac, within unchanged
+ceilings. GNU publication-host SRAM remains a separate README measurement.
+Evidence: `/tmp/hibana-path-residual-evidence/`. Rust products are removed after
+each validation; running body owners are preserved.
+
 The 2026-10-02 handoff targets development commit
 `3aef31ba015c75ea824b8b41f5603b03f5dd336b` (Hibana 0.9.6). Its three
 failures are valid adjacent offers being rejected, a later phase's packet

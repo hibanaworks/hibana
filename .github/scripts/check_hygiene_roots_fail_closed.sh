@@ -58,6 +58,36 @@ if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 
+outside_tests_fixture="${tmp}/outside-tests"
+mkdir -p "${outside_tests_fixture}/src/component/tests/nested"
+printf 'fixture_violation\n' >"${outside_tests_fixture}/src/component/tests/nested/case.rs"
+printf 'fixture_violation\n' >"${outside_tests_fixture}/src/component/tests.rs"
+printf 'fixture_violation\n' >"${outside_tests_fixture}/src/component/case_tests.rs"
+(
+  cd "${outside_tests_fixture}"
+  FAILED=0
+  check_absent_outside_tests "fixture_violation" "test-only source fixture"
+  if [[ "${FAILED}" -ne 0 ]]; then
+    echo "hygiene root self-test violation: test-only source was treated as production" >&2
+    exit 1
+  fi
+
+  printf 'fixture_violation\n' >src/component/production.rs
+  FAILED=0
+  check_absent_outside_tests "fixture_violation" "production source fixture"
+  if [[ "${FAILED}" -eq 0 ]]; then
+    echo "hygiene root self-test violation: test exclusions hid production source" >&2
+    exit 1
+  fi
+
+  FAILED=0
+  check_absent_outside_tests "[" "invalid regex fixture"
+  if [[ "${FAILED}" -eq 0 ]]; then
+    echo "hygiene root self-test violation: test exclusions hid rg failure" >&2
+    exit 1
+  fi
+) >"${selftest_log}" 2>&1
+
 FAILED=0
 {
   check_absent "[" \

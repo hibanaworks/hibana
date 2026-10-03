@@ -282,6 +282,7 @@ check_absent_outside_tests() {
     src
     --glob '!**/tests.rs'
     --glob '!**/*_tests.rs'
+    --glob '!**/tests/**'
     --glob '!**/test_support/**'
   )
   local exclude

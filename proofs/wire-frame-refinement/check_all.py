@@ -13,10 +13,11 @@ import tempfile
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--lean', default=os.environ.get('LEAN', 'lean'))
+parser.add_argument('--repo', type=Path, default=HERE.parents[1])
 args = parser.parse_args()
+REPO = args.repo.resolve()
 lean = shutil.which(args.lean)
 assert lean, f'Lean executable not found: {args.lean}'
 lean = str(Path(lean).absolute())
@@ -38,17 +39,13 @@ for name, digest in manifest['preserved'].items():
     assert sha(HERE / name) == digest, ('preserved pre-edit evidence', name)
 assert sha(HERE / 'check_correspondence.py') == sha(HERE / 'pre-edit/check_correspondence.py'), \
     'The replay must use the exact pre-edit Z3 and finite-query generator'
-candidate = (HERE / 'pre-edit/Candidate.lean').read_text()
-definitions = candidate.split('-- BEGIN PROPOSED DEFINITIONS\n')[1].split(
-    '-- END PROPOSED DEFINITIONS')[0]
-match_gate = json.loads((HERE / manifest['explicit_match_gate']).read_text())
-for rewrite in match_gate['rewrites']:
-    assert definitions.count(rewrite['before']) == 1, rewrite['name']
-    definitions = definitions.replace(rewrite['before'], rewrite['after'])
+binding = manifest['canonical_source_binding']
+for name, digest in binding['source_sha256'].items():
+    assert sha(REPO / name) == digest, ('qualified canonical source', name)
+wrapper = json.loads((HERE / 'external-binding/portable-wrapper.json').read_text())
+assert sha(HERE / 'check_external_allocator.py') == wrapper['portable_checker_sha256']
 assert sha(HERE / 'OptionMatchEquivalence.lean') == \
-    sha(HERE / 'explicit-match/OptionMatchEquivalence.lean'), 'Option equivalence proof changed'
-current = (proof_dir / 'Hibana/DescriptorImage.lean').read_text()
-assert current.count(definitions) == 1, 'Reviewed allocator definitions changed'
+    sha(HERE / 'explicit-match/OptionMatchEquivalence.lean'), 'Historical option proof changed'
 for name, digest in manifest['unchanged_sources'].items():
     assert sha(REPO / name) == digest, ('unchanged source bridge', name)
 print('PASS preserved pre-edit proofs and exact current allocator source bridge', flush=True)
@@ -90,6 +87,11 @@ with tempfile.TemporaryDirectory(prefix='hibana-wire-frame-proof-') as temporary
     run([sys.executable, str(HERE / 'check_correspondence.py'), '--repo', str(REPO),
          '--output', str(build / 'z3-result.json')])
     run([sys.executable, str(HERE / 'explicit-match/check_option_match.py')])
+    run([sys.executable, str(HERE / 'check_external_allocator.py'), '--repo', str(REPO),
+         '--prior', str(HERE / 'check_correspondence.py'),
+         '--prior-replay', str(build / 'z3-result.json'),
+         '--prior-descriptor', str(HERE / 'external-binding/before/DescriptorImage.lean'),
+         '--output', str(build / 'external-z3-result.json')])
 print(f'PASS wire-frame refinement: {len(names)} Lean theorems; unchanged exact admission; '
       'Z3 and finite source correspondence', flush=True)
 print('LIMIT: concrete runtime Covers/SameClassUnique remains an explicit premise', flush=True)

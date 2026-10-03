@@ -74,9 +74,12 @@ print('PASS original seven-source qualification and exact test-hygiene-only mapp
 # The old distributable manifest stays independently checkable after updating
 # its wrapper and README. No original pre-edit records are reissued.
 historical_manifest = read_json(HERE / 'historical/elastic-package-manifest.json')
+fixture_followup = read_json(REPO / 'proofs/elastic-roll-colors/test-hygiene-followup.json')
 for path, expected_hash in historical_manifest['files'].items():
     if path in ['proofs/elastic-roll-colors/check_all.py', 'proofs/elastic-roll-colors/README.md']:
         actual = HERE / 'historical' / ('elastic-' + Path(path).name)
+    elif path == fixture_followup['source']:
+        actual = REPO / 'proofs/elastic-roll-colors' / fixture_followup['snapshot']
     else:
         actual = REPO / path
     check_hash(actual, expected_hash)
