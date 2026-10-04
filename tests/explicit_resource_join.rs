@@ -22,54 +22,46 @@ const RX: u8 = 0;
 const TX: u8 = 1;
 const OWNER: u8 = 2;
 const NEXT: u8 = 3;
-type WaitRx = Msg<0, u64>;
-type RxDone = Msg<1, u64>;
-type RxFailed = Msg<2, u64>;
-type WaitTx = Msg<3, u64>;
-type TxDone = Msg<4, u64>;
-type TxFailed = Msg<5, u64>;
-type Released = Msg<6, u64>;
-type Aborted = Msg<7, u64>;
-type Taken = Msg<8, u64>;
+
 type RxFlow = g::Seq<
-    g::Send<OWNER, RX, WaitRx>,
-    g::Route<g::Send<RX, OWNER, RxDone>, g::Send<RX, OWNER, RxFailed>>,
+    g::Send<OWNER, RX, Msg<0, u64>>,
+    g::Route<g::Send<RX, OWNER, Msg<1, u64>>, g::Send<RX, OWNER, Msg<2, u64>>>,
 >;
 type TxFlow = g::Seq<
-    g::Send<OWNER, TX, WaitTx>,
-    g::Route<g::Send<TX, OWNER, TxDone>, g::Send<TX, OWNER, TxFailed>>,
+    g::Send<OWNER, TX, Msg<3, u64>>,
+    g::Route<g::Send<TX, OWNER, Msg<4, u64>>, g::Send<TX, OWNER, Msg<5, u64>>>,
 >;
 type Flow = g::Seq<
     g::Par<RxFlow, TxFlow>,
     g::Seq<
-        g::Route<g::Send<OWNER, NEXT, Released>, g::Send<OWNER, NEXT, Aborted>>,
-        g::Send<NEXT, OWNER, Taken>,
+        g::Route<g::Send<OWNER, NEXT, Msg<6, u64>>, g::Send<OWNER, NEXT, Msg<7, u64>>>,
+        g::Send<NEXT, OWNER, Msg<8, u64>>,
     >,
 >;
 fn choreography() -> g::Program<Flow> {
     g::seq(
         g::par(
             g::seq(
-                g::send::<OWNER, RX, WaitRx>(),
+                g::send::<OWNER, RX, Msg<0, u64>>(),
                 g::route(
-                    g::send::<RX, OWNER, RxDone>(),
-                    g::send::<RX, OWNER, RxFailed>(),
+                    g::send::<RX, OWNER, Msg<1, u64>>(),
+                    g::send::<RX, OWNER, Msg<2, u64>>(),
                 ),
             ),
             g::seq(
-                g::send::<OWNER, TX, WaitTx>(),
+                g::send::<OWNER, TX, Msg<3, u64>>(),
                 g::route(
-                    g::send::<TX, OWNER, TxDone>(),
-                    g::send::<TX, OWNER, TxFailed>(),
+                    g::send::<TX, OWNER, Msg<4, u64>>(),
+                    g::send::<TX, OWNER, Msg<5, u64>>(),
                 ),
             ),
         ),
         g::seq(
             g::route(
-                g::send::<OWNER, NEXT, Released>(),
-                g::send::<OWNER, NEXT, Aborted>(),
+                g::send::<OWNER, NEXT, Msg<6, u64>>(),
+                g::send::<OWNER, NEXT, Msg<7, u64>>(),
             ),
-            g::send::<NEXT, OWNER, Taken>(),
+            g::send::<NEXT, OWNER, Msg<8, u64>>(),
         ),
     )
 }
@@ -129,34 +121,37 @@ mod resource {
         endpoint: &mut Endpoint<'_, OWNER>,
         operation: &'a Operation,
     ) -> Result<Option<Joined<'a>>, EndpointError> {
-        endpoint.send::<WaitRx>(&operation.serial).await?;
-        endpoint.send::<WaitTx>(&operation.serial).await?;
+        endpoint.send::<Msg<0, u64>>(&operation.serial).await?;
+        endpoint.send::<Msg<3, u64>>(&operation.serial).await?;
         // Parallel branches may arrive in either order. Consume the actual
         // offered label rather than assuming RX precedes TX.
         let first = endpoint.offer().await?;
         let (first_is_rx, first_done) = match first.label() {
-            1 => (true, first.recv::<RxDone>().await? == operation.serial),
+            1 => (true, first.recv::<Msg<1, u64>>().await? == operation.serial),
             2 => {
-                let _ = first.recv::<RxFailed>().await?;
+                let _ = first.recv::<Msg<2, u64>>().await?;
                 (true, false)
             }
-            4 => (false, first.recv::<TxDone>().await? == operation.serial),
+            4 => (
+                false,
+                first.recv::<Msg<4, u64>>().await? == operation.serial,
+            ),
             5 => {
-                let _ = first.recv::<TxFailed>().await?;
+                let _ = first.recv::<Msg<5, u64>>().await?;
                 (false, false)
             }
             other => panic!("unexpected completion label {other}"),
         };
         let second = endpoint.offer().await?;
         let second_done = match (first_is_rx, second.label()) {
-            (true, 4) => second.recv::<TxDone>().await? == operation.serial,
+            (true, 4) => second.recv::<Msg<4, u64>>().await? == operation.serial,
             (true, 5) => {
-                let _ = second.recv::<TxFailed>().await?;
+                let _ = second.recv::<Msg<5, u64>>().await?;
                 false
             }
-            (false, 1) => second.recv::<RxDone>().await? == operation.serial,
+            (false, 1) => second.recv::<Msg<1, u64>>().await? == operation.serial,
             (false, 2) => {
-                let _ = second.recv::<RxFailed>().await?;
+                let _ = second.recv::<Msg<2, u64>>().await?;
                 false
             }
             (_, other) => panic!("duplicate or unexpected completion label {other}"),
@@ -169,11 +164,11 @@ mod resource {
         // These are results of the two actual current-operation receives, not
         // an independently updated lifecycle or a transport acceptance flag.
         if rx_done && tx_done {
-            endpoint.send::<Released>(&operation.serial).await?;
+            endpoint.send::<Msg<6, u64>>(&operation.serial).await?;
         } else {
-            endpoint.send::<Aborted>(&operation.serial).await?;
+            endpoint.send::<Msg<7, u64>>(&operation.serial).await?;
         }
-        let taken = endpoint.recv::<Taken>().await?;
+        let taken = endpoint.recv::<Msg<8, u64>>().await?;
         Ok((rx_done && tx_done && taken == operation.serial).then_some(Joined { operation }))
     }
 }
@@ -208,12 +203,14 @@ fn scenario(rx_ok: bool, tx_ok: bool, stale: bool) {
         let mut completion = pin!(resource::complete(&mut owner_ep, &operation));
         assert!(once(completion.as_mut()).is_pending());
         block_on(async {
-            assert_eq!(rx.recv::<WaitRx>().await.unwrap(), 7);
+            assert_eq!(rx.recv::<Msg<0, u64>>().await.unwrap(), 7);
             rx_use.work();
             if rx_ok {
-                rx.send::<RxDone>(&if stale { 6 } else { 7 }).await.unwrap();
+                rx.send::<Msg<1, u64>>(&if stale { 6 } else { 7 })
+                    .await
+                    .unwrap();
             } else {
-                rx.send::<RxFailed>(&7).await.unwrap();
+                rx.send::<Msg<2, u64>>(&7).await.unwrap();
             }
         });
         assert!(
@@ -221,14 +218,14 @@ fn scenario(rx_ok: bool, tx_ok: bool, stale: bool) {
             "RX completion does not imply TX completion"
         );
         let mut tx_task = pin!(async {
-            assert_eq!(tx.recv::<WaitTx>().await?, 7);
+            assert_eq!(tx.recv::<Msg<3, u64>>().await?, 7);
             // Receiving the request/acceptance is not actual IO completion.
             io_finished.await.unwrap();
             tx_use.work();
             if tx_ok {
-                tx.send::<TxDone>(&7).await?;
+                tx.send::<Msg<4, u64>>(&7).await?;
             } else {
-                tx.send::<TxFailed>(&7).await?;
+                tx.send::<Msg<5, u64>>(&7).await?;
             }
             Ok::<(), EndpointError>(())
         });
@@ -240,12 +237,12 @@ fn scenario(rx_ok: bool, tx_ok: bool, stale: bool) {
                 let branch = next.offer().await?;
                 let success = branch.label() == 6;
                 let value = if success {
-                    branch.recv::<Released>().await?
+                    branch.recv::<Msg<6, u64>>().await?
                 } else {
-                    branch.recv::<Aborted>().await?
+                    branch.recv::<Msg<7, u64>>().await?
                 };
                 assert_eq!(success, rx_ok && tx_ok && !stale);
-                next.send::<Taken>(&value).await?;
+                next.send::<Msg<8, u64>>(&value).await?;
                 Ok::<(), EndpointError>(())
             };
             let (done, tx, received) = join!(completion.as_mut(), tx_task.as_mut(), consumer);
@@ -283,15 +280,14 @@ fn previous_operation_completion_cannot_mint_normal_return() {
 
 #[test]
 fn emergency_stop_does_not_wait_for_a_resident_branch_or_io_join() {
-    type Resident = Msg<20, ()>;
-    type Stopped = Msg<21, ()>;
-    type IoDone = Msg<22, ()>;
-    type Reusable = Msg<23, ()>;
     let global = g::par(
-        g::send::<0, 1, Resident>().roll(),
+        g::send::<0, 1, Msg<20, ()>>().roll(),
         g::par(
-            g::send::<2, 3, Stopped>(),
-            g::seq(g::send::<4, 3, IoDone>(), g::send::<3, 5, Reusable>()),
+            g::send::<2, 3, Msg<21, ()>>(),
+            g::seq(
+                g::send::<4, 3, Msg<22, ()>>(),
+                g::send::<3, 5, Msg<23, ()>>(),
+            ),
         ),
     );
     let rp: RoleProgram<0> = project(&global);
@@ -318,23 +314,23 @@ fn emergency_stop_does_not_wait_for_a_resident_branch_or_io_join() {
         // Model the independent native stop before any communication. This
         // assertion is about the integration's ordering, not hardware timing.
         stopped.set(true);
-        stop.send::<Stopped>(&()).await.unwrap();
-        owner.recv::<Stopped>().await.unwrap();
+        stop.send::<Msg<21, ()>>(&()).await.unwrap();
+        owner.recv::<Msg<21, ()>>().await.unwrap();
         assert!(stopped.get());
         {
-            let mut waiting = pin!(owner.recv::<IoDone>());
+            let mut waiting = pin!(owner.recv::<Msg<22, ()>>());
             assert!(once(waiting.as_mut()).is_pending());
             // A resident command still makes progress while finite cleanup waits.
-            resident.send::<Resident>(&()).await.unwrap();
-            command.recv::<Resident>().await.unwrap();
-            io.send::<IoDone>(&()).await.unwrap();
+            resident.send::<Msg<20, ()>>(&()).await.unwrap();
+            command.recv::<Msg<20, ()>>().await.unwrap();
+            io.send::<Msg<22, ()>>(&()).await.unwrap();
             waiting.await.unwrap();
         }
-        owner.send::<Reusable>(&()).await.unwrap();
-        next.recv::<Reusable>().await.unwrap();
+        owner.send::<Msg<23, ()>>(&()).await.unwrap();
+        next.recv::<Msg<23, ()>>().await.unwrap();
         // Reuse did not require termination of the resident roll.
-        resident.send::<Resident>(&()).await.unwrap();
-        command.recv::<Resident>().await.unwrap();
+        resident.send::<Msg<20, ()>>(&()).await.unwrap();
+        command.recv::<Msg<20, ()>>().await.unwrap();
     });
 }
 
@@ -355,18 +351,19 @@ fn existing_contract_rejects_return_before_actual_receives() {
     let mut rx = rv.enter(id, &rp).unwrap();
     let mut tx = rv.enter(id, &tp).unwrap();
     let mut owner = rv.enter(id, &op).unwrap();
-    let _next = rv.enter(id, &np).unwrap();
+    let next = rv.enter(id, &np).unwrap();
     block_on(async {
-        owner.send::<WaitRx>(&7).await.unwrap();
-        owner.send::<WaitTx>(&7).await.unwrap();
-        rx.recv::<WaitRx>().await.unwrap();
-        tx.recv::<WaitTx>().await.unwrap();
-        rx.send::<RxDone>(&7).await.unwrap();
-        tx.send::<TxDone>(&7).await.unwrap();
+        owner.send::<Msg<0, u64>>(&7).await.unwrap();
+        owner.send::<Msg<3, u64>>(&7).await.unwrap();
+        rx.recv::<Msg<0, u64>>().await.unwrap();
+        tx.recv::<Msg<3, u64>>().await.unwrap();
+        rx.send::<Msg<1, u64>>(&7).await.unwrap();
+        tx.send::<Msg<4, u64>>(&7).await.unwrap();
         // Carrier acceptance of both notifications does not authorize return:
         // OWNER still has to consume the two actual messages.
-        assert!(owner.send::<Released>(&7).await.is_err());
+        assert!(owner.send::<Msg<6, u64>>(&7).await.is_err());
     });
+    drop(next);
 }
 
 static_assertions::assert_not_impl_any!(resource::Owner<'static>: Clone, Copy);
