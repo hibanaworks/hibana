@@ -30,3 +30,11 @@ rules. Publication integration and full QUIC stream reuse remain separate work.
 
 These results do not claim a complete Hibana Rust proof, all embedded hardware
 qualification, all QUIC interop, or completion of remote Kani/final-form CI.
+
+The first remote final-form run reached the UI snapshots and rejected 17
+expectations because local Rust 1.95 lacked `rust-src`, while CI included it.
+The new diagnostic text was identical; the standard-library panic expansion
+backtrace differed. Installed the matching official `rust-src`, regenerated
+only the affected Rust 1.95 stderr expectations, and reran all 90 UI cases
+without overwrite successfully. Production code and accept/reject results are
+unchanged by this follow-up.
