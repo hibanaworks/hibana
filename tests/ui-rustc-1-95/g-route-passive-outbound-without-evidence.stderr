@@ -1,23 +1,18 @@
-error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation
+error[E0080]: evaluation panicked: Route unprojectable for this role: invalid, ambiguous endpoint operation, or ambiguous first-visible endpoint operation; role=1; scope=0; controller=0; arms=0..2|2..4; event#1(1->3 label=5 lane=0); event#3(1->3 label=5 lane=0); help: notify the affected role of the branch, or make its local paths mergeable; keep terminal acknowledgments within the selected arm
  --> src/g.rs
   |
-  |             panic_choreography_error(error);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Resolve<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<2, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>>, 7>, 32>::VALIDATION` failed inside this call
+  |             diagnostic_message::panic_diagnostic(diagnostic);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Resolve<hibana::g::Route<hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<1, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>, hibana::g::Seq<hibana::g::Send<0, 2, hibana::g::Msg<2, ()>>, hibana::g::Send<1, 3, hibana::g::Msg<5, ()>>>>, 7>, 32>::VALIDATION` failed inside this call
   |
-note: inside `g::panic_choreography_error`
+note: inside `g::diagnostic_message::panic_diagnostic`
  --> $RUST/core/src/panic.rs
   |
-  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  = note: the failure occurred here
   |
- ::: src/g.rs
+ ::: src/g/diagnostic_message.rs
   |
-  |           ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
-  |  _____________________________________________________________-
-  | |             "Route unprojectable for this role: invalid, ambiguous endpoint operation, ",
-  | |             "or ambiguous first-visible endpoint operation",
-  | |         )),
-  | |__________- in this macro invocation
+  |         Ok(message) => panic!("{}", message),
+  |                        --------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/g/role_projection.rs

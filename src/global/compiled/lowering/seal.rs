@@ -225,3 +225,6 @@ pub(crate) const fn projection_error_all_roles<const E: usize>(
     }
     validate_route_projection_guarantees(summary, eff_list)
 }
+
+mod diagnostic;
+pub(crate) use diagnostic::projection_diagnostic;

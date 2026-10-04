@@ -20,7 +20,8 @@ check_max_lines() {
 }
 
 check_max_lines ".github/allowlists/lib-public-api.txt" 3
-check_max_lines ".github/allowlists/g-public-api.txt" 18
+# Projection diagnostics deliberately add a read-only explanation surface.
+check_max_lines ".github/allowlists/g-public-api.txt" 45
 check_max_lines ".github/allowlists/endpoint-public-api.txt" 10
 check_max_lines ".github/allowlists/runtime-public-api.txt" 113
 

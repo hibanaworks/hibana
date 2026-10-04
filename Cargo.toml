@@ -198,3 +198,7 @@ path = "tests/visible_route_reentry.rs"
 
 [badges]
 maintenance = { status = "actively-developed" }
+
+[[test]]
+name = "projection_diagnostic"
+path = "tests/projection_diagnostic.rs"

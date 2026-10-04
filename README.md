@@ -805,3 +805,22 @@ with distributed fidelity, progress, and cancellation conclusions stated under
 explicit carrier, deployment, codec, and scheduling requirements.
 
 Hibana is licensed under either Apache-2.0 or MIT, at your option.
+
+### Explaining projection failures
+
+Projection errors identify the affected role, structured scope, arm event ranges,
+and source messages when a witness is available. For example, a receive-lane
+error can name `event#0(8->9 label=168 lane=0)` followed by
+`event#1(27->9 label=190 lane=0)` and request a causal handoff. A rolled error also
+identifies the reentry scope. Missing branch knowledge names the passive role
+and shows which arm has no local event.
+
+For a read-only structured explanation without constructing endpoints, call
+`g::diagnose(&program)`. It returns `Option<g::ProjectionDiagnostic>` and supports
+`Display` and `Debug`. `None` means the existing projection checks accept; it is
+not evidence about payload algorithms or physical I/O. Projection itself remains
+fail-closed and includes the available explanation in its compile-time error.
+Scope and event numbers are zero-based source-order ordinals, not Rust line
+numbers. Some selector/passive-child failures currently have only a category;
+missing witnesses are never guessed. See `proofs/projection-diagnostics` for the
+verification scope and regression checks.

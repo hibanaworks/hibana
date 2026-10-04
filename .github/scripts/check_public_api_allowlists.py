@@ -26,7 +26,7 @@ SURFACES: dict[str, Surface] = {
     ),
     "g": Surface(
         ".github/allowlists/g-public-api.txt",
-        ("src/g.rs", "src/global/message.rs"),
+        ("src/g.rs", "src/g/diagnostic.rs", "src/global/message.rs"),
         ("pub trait Sealed",),
     ),
     "endpoint": Surface(

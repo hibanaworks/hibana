@@ -296,3 +296,4 @@ tests/semantic_surface	tests/semantic_surface/source_residue_route_arm_lane.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_support.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_unsafe_contract.rs
 tests/semantic_surface	tests/semantic_surface/transport_contract.rs
+tests	tests/projection_diagnostic.rs

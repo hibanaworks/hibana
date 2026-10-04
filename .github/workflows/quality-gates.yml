@@ -52,3 +52,7 @@ jobs:
         run: bash ./.github/scripts/run_final_form_gates.sh
       - name: Check rolled-route ownership with Lean and Z3
         run: bash proofs/rolled-route-ownership/check.sh
+      - name: Check projection diagnostic models with Lean and Z3
+        run: |
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/projection-diagnostics/Diagnostics.lean
+          python3 proofs/projection-diagnostics/check_diagnostics.py

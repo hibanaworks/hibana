@@ -310,3 +310,54 @@ fn export_causal_flow_for_lean() {
     fs::write(directory.join("CausalGenerated.lean"), output).unwrap();
     assert_eq!(count, 36);
 }
+
+#[test]
+fn diagnostic_witness_matches_acceptance_for_bounded_structured_sources() {
+    use super::{receive_lane_conflict, validate_receive_lane_causality};
+    for encoding in 0usize..9usize.pow(4) {
+        for shape in 0..5 {
+            let mut remaining = encoding;
+            let mut events = EffList::<20>::new_partitioned(4, 12, 0);
+            for _ in 0..4 {
+                let pair = remaining % 9;
+                remaining /= 9;
+                events.push_event_mut(event((pair / 3) as u8, (pair % 3) as u8));
+            }
+            match shape {
+                0 => {}
+                1 => {
+                    events.push_route_scope_mut(ScopeId::route(0), 1, 2, 3, ReentryMark::SinglePass)
+                }
+                2 => events.push_parallel_scope_mut(ScopeId::parallel(0), 1, 2, 3),
+                3 => events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 4),
+                4 => {
+                    events.push_route_scope_mut(
+                        ScopeId::route(1),
+                        1,
+                        2,
+                        3,
+                        ReentryMark::SinglePass,
+                    );
+                    events.push_roll_scope_mut(ScopeId::roll_scope(0), 0, 4);
+                }
+                _ => unreachable!(),
+            }
+            let valid = validate_receive_lane_causality(&events);
+            let witness = receive_lane_conflict(&events);
+            assert_eq!(
+                witness.is_none(),
+                valid,
+                "encoding={encoding} shape={shape}"
+            );
+            if let Some((first, second, _)) = witness {
+                let a = events.atom_at(first);
+                let b = events.atom_at(second);
+                assert_eq!(a.to, b.to);
+                assert_eq!(a.lane, b.lane);
+                assert_ne!(a.from, b.from);
+                assert_ne!(a.from, a.to);
+                assert_ne!(b.from, b.to);
+            }
+        }
+    }
+}

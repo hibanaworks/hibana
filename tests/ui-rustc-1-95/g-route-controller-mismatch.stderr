@@ -1,19 +1,18 @@
-error[E0080]: evaluation panicked: route arms use different first visible controllers
+error[E0080]: evaluation panicked: route arms use different first visible controllers; scope=0; arms=0..1|1..2; event#0(2->2 label=5 lane=0); event#1(0->0 label=6 lane=0); help: give both route arms the same first-visible controller
  --> src/g.rs
   |
-  |             panic_choreography_error(error);
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Send<2, 2, hibana::g::Msg<5, ()>>, hibana::g::Send<0, 0, hibana::g::Msg<6, ()>>>, 8>::VALIDATION` failed inside this call
+  |             diagnostic_message::panic_diagnostic(diagnostic);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `hibana::g::ProgramProjection::<hibana::g::Route<hibana::g::Send<2, 2, hibana::g::Msg<5, ()>>, hibana::g::Send<0, 0, hibana::g::Msg<6, ()>>>, 8>::VALIDATION` failed inside this call
   |
-note: inside `g::panic_choreography_error`
+note: inside `g::diagnostic_message::panic_diagnostic`
  --> $RUST/core/src/panic.rs
   |
-  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  = note: the failure occurred here
   |
- ::: src/g.rs
+ ::: src/g/diagnostic_message.rs
   |
-  |             panic!("route arms use different first visible controllers")
-  |             ------------------------------------------------------------ in this macro invocation
+  |         Ok(message) => panic!("{}", message),
+  |                        --------------------- in this macro invocation
 
 note: erroneous constant encountered
  --> src/g/role_projection.rs

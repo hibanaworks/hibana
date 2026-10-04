@@ -36,7 +36,12 @@ pub(crate) use source::{
     ProgramShape, ProgramSourceData, ProgramSourceNode, SourceRouteResolver, checked_source_count,
 };
 
+mod diagnostic;
+mod diagnostic_message;
 mod role_projection;
+pub use diagnostic::{
+    DiagnosticEvent, DiagnosticRange, ProjectionDiagnostic, ProjectionProblem, diagnose,
+};
 
 /// Canonical message descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,27 +55,6 @@ pub(crate) enum ProgramSourceError {
     ParallelAmbiguousEndpointSelector,
     ReentryAmbiguousEndpointSelector,
     ProjectionRouteUnprojectable,
-}
-
-pub(crate) const fn panic_choreography_error(error: ProgramSourceError) -> ! {
-    match error {
-        ProgramSourceError::RouteControllerMismatch => {
-            panic!("route arms use different first visible controllers")
-        }
-        ProgramSourceError::ReceiveLaneCausalityConflict => {
-            panic!("receive lane sender change requires a causal handoff or exclusive route arms")
-        }
-        ProgramSourceError::ParallelAmbiguousEndpointSelector => {
-            panic!("parallel endpoint operations must be unambiguous")
-        }
-        ProgramSourceError::ReentryAmbiguousEndpointSelector => {
-            panic!("rolled reentry endpoint operations must be unambiguous")
-        }
-        ProgramSourceError::ProjectionRouteUnprojectable => panic!(concat!(
-            "Route unprojectable for this role: invalid, ambiguous endpoint operation, ",
-            "or ambiguous first-visible endpoint operation",
-        )),
-    }
 }
 
 /// A typed choreography term.
@@ -188,13 +172,25 @@ where
         crate::global::compiled::lowering::CompiledProgramImage::scan_const(source)
     };
 
+    const DIAGNOSTIC: Option<ProjectionDiagnostic> = {
+        Self::IMAGE.validate_projection_program();
+        crate::global::compiled::lowering::projection_diagnostic(
+            &Self::IMAGE,
+            Self::SOURCE_EFF_LIST,
+        )
+    };
+
     const VALIDATION: () = {
         let source = Self::SOURCE_EFF_LIST;
         Self::IMAGE.validate_projection_program();
         if let Some(error) =
             crate::global::compiled::lowering::projection_error_all_roles(&Self::IMAGE, source)
         {
-            panic_choreography_error(error);
+            let diagnostic = match Self::DIAGNOSTIC {
+                Some(diagnostic) => diagnostic,
+                None => ProjectionDiagnostic::from_error(error),
+            };
+            diagnostic_message::panic_diagnostic(diagnostic);
         }
     };
 }

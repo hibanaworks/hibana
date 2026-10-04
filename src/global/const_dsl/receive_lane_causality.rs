@@ -543,6 +543,9 @@ pub(crate) const fn validate_receive_lane_causality<const E: usize>(eff_list: &E
     receive_lanes_are_safe && validate_roll_receive_lane_causality(eff_list)
 }
 
+mod diagnostic;
+pub(crate) use diagnostic::receive_lane_conflict;
+
 #[cfg(kani)]
 mod kani;
 
