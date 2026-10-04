@@ -632,7 +632,7 @@ fn runtime_allowlist_tracks_core_boundary() {
 fn crate_package_artifact_is_a_first_class_gate() {
     let cargo = read("Cargo.toml");
     let package_gate = read(".github/scripts/check_package_artifact.sh");
-    let maintainability_gate = read(".github/scripts/check_maintainability_budgets.sh");
+    let structure_gate = read(".github/scripts/check_source_structure.sh");
     let final_gate = read(".github/scripts/run_final_form_gates.sh");
 
     assert!(
@@ -718,8 +718,8 @@ fn crate_package_artifact_is_a_first_class_gate() {
         );
     }
     assert!(
-        maintainability_gate.contains("repository tests must not path-import src/test_support"),
-        "maintainability gate must keep runtime test support from reaching into src/test_support"
+        structure_gate.contains("repository tests must not path-import src/test_support"),
+        "source structure gate must keep runtime test support from reaching into src/test_support"
     );
     assert!(
         final_gate.contains("bash ./.github/scripts/check_package_artifact.sh"),

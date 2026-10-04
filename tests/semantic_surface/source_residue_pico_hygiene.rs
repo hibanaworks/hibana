@@ -708,8 +708,8 @@ fn kernel_quarantine_extracts_poll_public_recv_by_braces() {
 }
 
 #[test]
-fn final_form_static_gates_run_without_budget_or_regex_false_failure() {
-    run_script(".github/scripts/check_maintainability_budgets.sh");
+fn source_structure_and_safety_gates_remain_executable() {
+    run_script(".github/scripts/check_source_structure.sh");
     run_script(".github/scripts/check_resolver_surface_hygiene.sh");
     run_script(".github/scripts/check_kernel_monomorphization_quarantine.sh");
 }
