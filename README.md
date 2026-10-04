@@ -708,7 +708,7 @@ Hibana API. With Rust `1.95.0`, the tracked release measurements are:
 | Modeled runtime SRAM envelope | 5,290 B | 8,954 B |
 | Minimal linked protocol artifact | 352 B | 2,048 B |
 | Largest linked artifact in the tracked protocol matrix | 1,824 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 87,856 B | 169,965 B |
+| Complete no-default `libhibana.rlib` sections | 88,013 B | 169,965 B |
 | Library `.data + .bss` | 0 B | 0 B |
 
 The linked-artifact and library rows are `thumbv6m-none-eabi` release

@@ -169,6 +169,10 @@ name = "route_with_internal_parallel"
 path = "tests/route_with_internal_parallel.rs"
 
 [[test]]
+name = "rolled_publication_exit"
+path = "tests/rolled_publication_exit.rs"
+
+[[test]]
 name = "rolled_resolver_reentry"
 path = "tests/rolled_resolver_reentry.rs"
 

@@ -1,0 +1,8 @@
+'LiveDescendantPreview.completed_uses_fresh_poll' depends on axioms: [propext]
+'LiveDescendantPreview.completed_without_poll_waits' depends on axioms: [propext]
+'LiveDescendantPreview.live_without_poll_preserves_selection' depends on axioms: [propext]
+'LiveDescendantPreview.live_conflict_rejects' depends on axioms: [propext]
+'LiveDescendantPreview.live_agreement_preserves_selection' depends on axioms: [propext]
+'LiveDescendantPreview.chosen_has_live_or_poll_authority' depends on axioms: [propext]
+'LiveDescendantPreview.old_preview_can_choose_completed_wrong_arm' does not depend on any axioms
+'LiveDescendantPreview.fresh_preview_corrects_completed_wrong_arm' depends on axioms: [propext]

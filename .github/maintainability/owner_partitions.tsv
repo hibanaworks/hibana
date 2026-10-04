@@ -265,6 +265,7 @@ tests	tests/route_multiphase_progress_arm.rs
 tests	tests/route_multiphase_progress_inner.rs
 tests	tests/route_with_internal_parallel.rs
 tests	tests/rolled_resolver_reentry.rs
+tests	tests/rolled_publication_exit.rs
 tests	tests/transport_resolver_signal_surface.rs
 tests	tests/visible_route_reentry.rs
 tests	tests/semantic_surface

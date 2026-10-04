@@ -174,10 +174,20 @@ pub(in crate::endpoint::kernel::core) fn preview_selected_arm_for_scope_from_par
     cursor: &EventCursor,
     scope_id: ScopeId,
 ) -> Option<u8> {
-    if let Some(arm) = selected_arm_for_scope_from_parts(decision_state, cursor, scope_id) {
-        return Some(arm);
-    }
+    // Completed rows describe the previous roll iteration. Match the live
+    // preview used by CursorEndpoint before consulting this iteration's poll.
+    let selected =
+        selected_arm_for_scope_from_parts(decision_state, cursor, scope_id).filter(|&arm| {
+            let mut selected_arm_for_scope =
+                |scope| selected_arm_for_scope_from_parts(decision_state, cursor, scope);
+            !cursor.reentrant_route_arm_event_row_done(scope_id, arm, &mut selected_arm_for_scope)
+        });
     let slot = scope_slot_for_route_from_cursor(cursor, scope_id)?;
     let mask = decision_state.scope_evidence.poll_ready_arm_mask(slot);
-    Arm::from_single_ready_mask(mask).map(Arm::as_u8)
+    let ready = Arm::from_single_ready_mask(mask).map(Arm::as_u8);
+    match (selected, ready) {
+        (Some(selected), Some(ready)) if selected != ready => crate::invariant(),
+        (Some(selected), _) => Some(selected),
+        (None, ready) => ready,
+    }
 }

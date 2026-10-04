@@ -50,9 +50,13 @@ bash ./.github/scripts/check_hibana_public_api.sh --surface-only
 bash ./.github/scripts/check_resolver_context_surface.sh
 bash ./.github/scripts/check_unsafe_contract_hygiene.sh
 bash ./.github/scripts/check_manifest_tests.sh
+CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+  cargo +"${TOOLCHAIN}" test --locked -p hibana --release \
+    --test rolled_publication_exit -- --test-threads=1
 bash ./.github/scripts/check_miri.sh
 bash ./.github/scripts/check_lean_proofs.sh
 bash proofs/controller-offer/check.sh
+bash proofs/live-descendant-preview/check.sh
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
   PYTHONDONTWRITEBYTECODE=1 python3 -B proofs/elastic-roll-colors/check_all.py --lean lean
 ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 \
