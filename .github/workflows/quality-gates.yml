@@ -56,3 +56,5 @@ jobs:
         run: |
           ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/projection-diagnostics/Diagnostics.lean
           python3 proofs/projection-diagnostics/check_diagnostics.py
+      - name: Check explicit resource join integration with Lean and Z3
+        run: bash proofs/explicit-resource-join/check.sh

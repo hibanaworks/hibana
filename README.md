@@ -824,3 +824,9 @@ Scope and event numbers are zero-based source-order ordinals, not Rust line
 numbers. Some selector/passive-child failures currently have only a category;
 missing witnesses are never guessed. See `proofs/projection-diagnostics` for the
 verification scope and regression checks.
+
+### Explicit completion and resource return
+
+For finite RX/TX completion, failure, and resource-return boundaries using the
+existing API, see the [executable explicit-resource-join example and verification](proofs/explicit-resource-join/README.md). This preserves independent emergency
+stop and resident parallel loops; it adds no automatic native-resource guarantee.

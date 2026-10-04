@@ -202,3 +202,7 @@ maintenance = { status = "actively-developed" }
 [[test]]
 name = "projection_diagnostic"
 path = "tests/projection_diagnostic.rs"
+
+[[test]]
+name = "explicit_resource_join"
+path = "tests/explicit_resource_join.rs"
