@@ -22,3 +22,4 @@ src/rendezvous	rendezvous-root	rendezvous association, core, port, tables, and w
 src/rendezvous/core	resident-allocation-authority	access port, endpoint lease, lane lifecycle, and slab layout ownership
 tests	runtime-test-surface	runtime, UI, public surface, semantic surface, and runtime regression ownership
 tests/semantic_surface	semantic-surface-regression-gates	source-shape semantic guards for endpoint runtime, descriptor measurement, docs, and transport ownership
+src/global/compiled/images	immutable-compiled-descriptors	sealed program and role image bytes, descriptor validation, and immutable lookup ownership

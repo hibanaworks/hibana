@@ -297,3 +297,8 @@ tests/semantic_surface	tests/semantic_surface/source_residue_support.rs
 tests/semantic_surface	tests/semantic_surface/source_residue_unsafe_contract.rs
 tests/semantic_surface	tests/semantic_surface/transport_contract.rs
 tests	tests/projection_diagnostic.rs
+tests	tests/explicit_resource_join.rs
+src/global/compiled/images	src/global/compiled/images/mod.rs
+src/global/compiled/images	src/global/compiled/images/program.rs
+src/global/compiled/images	src/global/compiled/images/image.rs
+src/global/compiled/images	src/global/compiled/images/image
