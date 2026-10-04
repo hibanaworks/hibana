@@ -97,6 +97,12 @@ initialization is the assumption; the rewrite does not remove source validation.
   files map through `../compiler-participant-mask/test-hygiene-followup.json`.
   `../core-followup/check_sources.py` checks both sets of hashes and verifies the
   exact naming/stack-wrapper changes, preserving the original boundary assertions
+- `../projection-diagnostics/source-correspondence.json`: separately checked
+  diagnostic-only additions to `const_dsl.rs` and `lowering/seal.rs`. The shared
+  identity checker requires both source hashes and the exact recorded textual
+  addition; every other production byte must match the original qualification.
+  The original manifests remain unchanged. New diagnostic semantics are checked
+  by their own Rust differential tests and scoped Lean/Z3 models.
 - `../passive-child-window/` and `../projection-conflict-reuse/`: original
   separately qualified artifacts, preserved byte-for-byte with fresh current
   source identity checks. Their original absolute paths and results are historical

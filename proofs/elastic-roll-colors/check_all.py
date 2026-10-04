@@ -18,6 +18,10 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+sys.path.insert(0, str(HERE.parent / 'projection-diagnostics'))
+from source_identity import qualified_source, check as check_diagnostic_source_identity
+
+check_diagnostic_source_identity()
 sha = lambda data: hashlib.sha256(data).hexdigest()
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--lean', default=os.environ.get('LEAN', 'lean'))
@@ -62,7 +66,7 @@ for rel, expected_hash in source_manifest['implementation_snapshot'].items():
         assert sha(current_source) == test_followup['current_sha256']
         assert current_source == original_fixture.replace(b'        drop(pending);\n', b'')
     else:
-        assert sha(current_source) == expected_hash, ('implementation snapshot', rel)
+        assert sha(qualified_source(REPO, rel)) == expected_hash, ('implementation snapshot', rel)
 print('PASS exact elastic allocator implementation and regression source identity', flush=True)
 for rel, expected_hash in source_manifest['lean_dependencies'].items():
     assert sha((REPO / rel).read_bytes()) == expected_hash, rel
@@ -89,7 +93,7 @@ if not args.skip_compiler_cost:
             source, re.S) if not token.startswith(('//', '/*'))]
     for rel, expected_hash in qualified['files'].items():
         if rel not in amendments:
-            assert sha((REPO / rel).read_bytes()) == expected_hash, rel
+            assert sha(qualified_source(REPO, rel)) == expected_hash, rel
             continue
         amendment = amendments[rel]
         current_path = amendment['current_path']

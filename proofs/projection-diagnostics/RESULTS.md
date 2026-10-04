@@ -1,5 +1,40 @@
 # Local verification, 2026-10-04
 
+## Qualification-source correspondence followup
+
+Full CI for `5ba54b75` (run `37193216883`) passed Rust and the main Lean
+gate, then rejected the stale elastic-roll implementation snapshot for
+`src/global/const_dsl.rs`. The new diagnostic reexport also changes the
+qualified `lowering/seal.rs` source identity. This is a proof-harness
+integration failure; runtime code is unchanged by this followup.
+
+Original manifests and qualification sources remain intact. The shared
+`source_identity.py` checker permits only the two exact diagnostic-only
+additions, checks original/current hashes, and rejects four altered or
+missing-addition fixtures. Both existing proof runners use the same identity
+bridge. Previous live-source and distributable manifests are archived before
+recording the current 367-file source tree.
+
+Fresh local checks completed successfully:
+
+- Full portable elastic-roll replay, including compiler participant masks,
+  route-path refinement, passive-child windows and projection-conflict reuse;
+  Lean 4.30.0 and Z3 4.16.0, with fresh temporary compiled modules.
+- Rolled-route ownership: seven Lean files; Z3 12 UNSAT obligations and
+  19 SAT premises/historical witnesses.
+- Projection diagnostics: all three Lean theorems and 32 bounded Z3 checks.
+- Original qualification/history correspondence, live source-tree identity,
+  and the two-file/four-mutation diagnostic correspondence check.
+- Text integrity, source-file/maintainability budgets, underscore-discard
+  hygiene and `git diff --check`.
+
+The identity bridge proves exact preservation of the qualified gate bodies;
+it is not a universal Rust refinement theorem for new diagnostic code.
+Full remote CI for the followup is still required. No MCU/runtime API,
+production Rust, acceptance gate, memory reservation or rejection was changed.
+
+## Original diagnostic implementation verification
+
 Base: `9fbb84cdc932cbd0a81ee995a8689393f322763e` on
 `development/rolled-route-ownership`.
 

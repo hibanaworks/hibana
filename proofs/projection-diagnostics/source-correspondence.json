@@ -1,0 +1,16 @@
+{
+  "base_commit": "9fbb84cdc932cbd0a81ee995a8689393f322763e",
+  "scope": "Exact diagnostic-only import/module additions. Original qualification manifests and source bytes remain immutable; this identity bridge is not a semantic proof of the new diagnostic code.",
+  "files": {
+    "src/global/const_dsl.rs": {
+      "snapshot": "proofs/projection-diagnostics/source-correspondence/const_dsl.rs",
+      "qualified_sha256": "49c91488074eb56d40b45d87942811308a217a9da05c06069af66d0359a0aa8d",
+      "current_sha256": "e585cfa837650f6e56e236cccd5d9ecc8a1c5d001ed46e2654c4ebd3c0185261"
+    },
+    "src/global/compiled/lowering/seal.rs": {
+      "snapshot": "proofs/core-followup/historical/qualified-source/src/global/compiled/lowering/seal.rs",
+      "qualified_sha256": "75897cdb082bdb117606d926e1fb358477c9185abbdbcc6754071431007f25ed",
+      "current_sha256": "8650f99a56045862000df4930bad856ffa57cdc7ff2784aa61b992dd4a1c714e"
+    }
+  }
+}

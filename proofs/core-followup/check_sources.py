@@ -4,9 +4,12 @@ from pathlib import Path
 import hashlib
 import json
 import re
+import sys
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+sys.path.insert(0, str(HERE.parent / 'projection-diagnostics'))
+from source_identity import qualified_source
 sha = lambda data: hashlib.sha256(data).hexdigest()
 
 
@@ -40,7 +43,7 @@ for source, qualified_hash in qualified['files'].items():
     assert entry['qualified_sha256'] == qualified_hash, source
     check_hash(REPO / entry['historical_snapshot'], qualified_hash)
     assert entry['current_path'] == (new_oracle if source == old_oracle else source)
-    check_hash(REPO / entry['current_path'], entry['current_sha256'])
+    assert sha(qualified_source(REPO, entry['current_path'])) == entry['current_sha256'], source
     if source not in changed:
         assert entry['current_sha256'] == qualified_hash, source
 assert not (REPO / old_oracle).exists()
