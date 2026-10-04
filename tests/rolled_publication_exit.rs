@@ -15,7 +15,7 @@ use hibana::{
     },
 };
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Wake, Waker},
 };
 mod common;
@@ -67,13 +67,13 @@ async fn yield_now() {
     .await;
 }
 
-struct WakeFlag(std::sync::atomic::AtomicBool);
-impl Wake for WakeFlag {
+struct WakeCount(Mutex<usize>);
+impl Wake for WakeCount {
     fn wake(self: Arc<Self>) {
         self.wake_by_ref();
     }
     fn wake_by_ref(self: &Arc<Self>) {
-        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        *self.0.lock().unwrap() += 1;
     }
 }
 
@@ -257,12 +257,12 @@ fn run_publications(publications: &[u8]) {
         receiver.send::<Seen>(&end).await?;
         Ok::<_, hibana::EndpointError>(())
     };
-    let wake = Arc::new(WakeFlag(std::sync::atomic::AtomicBool::new(true)));
+    let wake = Arc::new(WakeCount(Mutex::new(0)));
     let waker: Waker = wake.clone().into();
     let mut cx = Context::from_waker(&waker);
     let mut joined = Box::pin(futures::future::try_join(send, receive));
     for _ in 0..128 {
-        wake.0.store(false, std::sync::atomic::Ordering::SeqCst);
+        *wake.0.lock().unwrap() = 0;
         match joined.as_mut().poll(&mut cx) {
             Poll::Ready(value) => {
                 value.unwrap_or_else(|error| panic!(
@@ -271,7 +271,7 @@ fn run_publications(publications: &[u8]) {
                 return;
             }
             Poll::Pending => assert!(
-                wake.0.load(std::sync::atomic::Ordering::SeqCst),
+                *wake.0.lock().unwrap() > 0,
                 "parked publication must have a real wake"
             ),
         }

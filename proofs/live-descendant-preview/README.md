@@ -20,6 +20,14 @@ chosen arm, completed-visit rejection as authority, and preservation of live
 conflict rejection. The historical wrong-arm example remains a SAT witness.
 These source-linked models do not prove Rust memory safety or interop success.
 
+The first CI run rejected the regression fixture's atomic wake flag under the
+repository's existing test/runtime hygiene rule. The fixture now records actual
+wake calls through a test-only mutex counter. Every pending poll still requires
+at least one actual wake; the poll bound and all publication assertions remain
+unchanged. Production source, descriptors, resource budgets and proof models are
+unchanged. The source inventory includes the revised fixture, and its debug,
+release/LTO and strict Clippy checks are replayed before publication.
+
 Run `bash proofs/live-descendant-preview/check.sh [evidence-directory]` with
 Lean 4.30.0 and Z3, then both debug and release `rolled_publication_exit` tests.
 The checker audits the exact source inventory, hashes, eight theorem axiom
