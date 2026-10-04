@@ -7,6 +7,7 @@ use crate::{
         role_program::{RoleProgram, project},
     },
 };
+use std::boxed::Box;
 
 const MAX_ROUTE_RESOLVER: u16 = u16::MAX;
 
@@ -292,4 +293,50 @@ fn compiled_program_descriptor_rejects_non_route_scope_query() {
 fn compiled_program_descriptor_rejects_missing_route_scope_query() {
     let descriptor = forged_program_ref(&INTRINSIC, 1, 4);
     let _ = descriptor.route_controller_role(ScopeId::route(1));
+}
+
+#[test]
+fn sealed_resolver_index_matches_linear_lookup_for_gaps_tags_and_fallback() {
+    for scopes in [[1u16, 7, 31], [31, 1, 7], [1, 1, 7]] {
+        let mut bytes = [0u8; 30];
+        for (slot, scope) in scopes.into_iter().enumerate() {
+            let row = encoded_row(
+                dynamic_scope(scope),
+                u16::MAX - slot as u16,
+                0,
+                (slot * 2) as u16,
+                1,
+            );
+            bytes[slot * 8..slot * 8 + 8].copy_from_slice(&row);
+        }
+        // Six role-zero entries follow the three packed descriptor rows.
+        let bytes = Box::leak(Box::new(bytes));
+        let descriptor = CompiledProgramRef::compact(
+            ProgramImageFacts { max_role: 0 },
+            ProgramImageColumns::new(0, 3, 6, 0),
+            bytes,
+        );
+        assert_eq!(
+            descriptor.route_resolver_index_is_sorted(),
+            scopes == [1, 7, 31]
+        );
+        for raw in 0..=u16::MAX {
+            let Some(query) = ScopeId::decode_raw(raw) else {
+                continue;
+            };
+            let expected = scopes.iter().position(|scope| *scope == raw);
+            assert_eq!(descriptor.route_resolver_slot(query), expected, "raw={raw}");
+            if let Some(slot) = expected {
+                let resolver = descriptor.route_resolver(query).unwrap();
+                assert_eq!(resolver.resolver_id(), u16::MAX - slot as u16);
+            }
+        }
+    }
+}
+
+#[test]
+#[should_panic]
+fn sealing_rejects_bad_participants_before_any_lookup() {
+    // Previously this was rediscovered by every selected row lookup.
+    let _ = forged_program_ref(&DUPLICATE_PARTICIPANTS, 1, 4);
 }

@@ -141,7 +141,7 @@ impl RouteResolverRow {
         }
     }
 
-    fn participants_are_canonical(self, program: &CompiledProgramRef) -> bool {
+    const fn participants_are_canonical(self, program: &CompiledProgramRef) -> bool {
         let mut arm = 0u8;
         while arm < 2 {
             let range = self.participant_range(arm);
@@ -151,7 +151,10 @@ impl RouteResolverRow {
             while idx < range.len() {
                 let role = program.participant_role_at(range.start as usize + idx);
                 if role > program.facts.max_role
-                    || previous.is_some_and(|previous| previous >= role)
+                    || match previous {
+                        Some(previous) => previous >= role,
+                        None => false,
+                    }
                 {
                     return false;
                 }
@@ -172,7 +175,7 @@ impl RouteResolverRow {
 
 impl CompiledProgramRef {
     #[inline(always)]
-    fn participant_role_at(&self, row: usize) -> u8 {
+    const fn participant_role_at(&self, row: usize) -> u8 {
         let offset = match self.column_offset(
             self.columns.route_participants(),
             row,
@@ -185,12 +188,15 @@ impl CompiledProgramRef {
     }
 
     #[inline]
-    fn route_resolver_row_at(&self, row: usize) -> Option<RouteResolverRow> {
-        let offset = self.column_offset(
+    const fn route_resolver_row_at(&self, row: usize) -> Option<RouteResolverRow> {
+        let offset = match self.column_offset(
             self.columns.route_resolvers(),
             row,
             PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
-        )?;
+        ) {
+            Some(offset) => offset,
+            None => return None,
+        };
         let participant_end = if row + 1 < self.columns.route_resolver_count() {
             let next_offset = match self.column_offset(
                 self.columns.route_resolvers(),
@@ -219,29 +225,91 @@ impl CompiledProgramRef {
         if row == 0 && decoded.participants[0].start != 0 {
             crate::invariant();
         }
-        if !decoded.participants_are_canonical(self) {
-            crate::invariant();
-        }
         Some(decoded)
     }
 
-    #[inline]
-    fn route_resolver_row(&self, scope_id: ScopeId) -> RouteResolverRow {
-        if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
-            crate::invariant();
-        }
-        let mut row = 0usize;
+    pub(super) const fn validate_route_resolver_rows(&self) -> bool {
+        let mut previous = None;
+        let mut sorted = true;
+        let mut row = 0;
         while row < self.columns.route_resolver_count() {
             let decoded = match self.route_resolver_row_at(row) {
                 Some(decoded) => decoded,
                 None => crate::invariant(),
             };
-            if decoded.scope == scope_id {
-                return decoded;
+            if !decoded.participants_are_canonical(self) {
+                crate::invariant();
             }
+            if let Some(raw) = previous
+                && raw >= decoded.scope.raw()
+            {
+                sorted = false;
+            }
+            previous = Some(decoded.scope.raw());
             row += 1;
         }
-        crate::invariant()
+        sorted
+    }
+
+    #[inline]
+    fn route_scope_raw_at(&self, row: usize) -> u16 {
+        let offset = match self.column_offset(
+            self.columns.route_resolvers(),
+            row,
+            PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE,
+        ) {
+            Some(offset) => offset,
+            None => crate::invariant(),
+        };
+        // Constructor validation has decoded both the authority tag and scope.
+        self.read_u16_at(offset) & !ScopeId::RESERVED_BIT
+    }
+
+    #[inline(never)]
+    fn route_resolver_slot(&self, scope_id: ScopeId) -> Option<usize> {
+        if !matches!(scope_id.kind(), Some(ScopeKind::Route)) {
+            return None;
+        }
+        let query = scope_id.raw();
+        if self.route_resolver_index_is_sorted() {
+            let mut low = 0;
+            let mut high = self.columns.route_resolver_count();
+            while low < high {
+                let middle = low + (high - low) / 2;
+                let candidate = self.route_scope_raw_at(middle);
+                if candidate < query {
+                    low = middle + 1;
+                } else if query < candidate {
+                    high = middle;
+                } else {
+                    return Some(middle);
+                }
+            }
+            None
+        } else {
+            // Preserve first-match semantics for valid unsorted/duplicate
+            // internal descriptors; no speculative dense-ordinal assumption.
+            let mut row = 0;
+            while row < self.columns.route_resolver_count() {
+                if self.route_scope_raw_at(row) == query {
+                    return Some(row);
+                }
+                row += 1;
+            }
+            None
+        }
+    }
+
+    #[inline]
+    fn route_resolver_row(&self, scope_id: ScopeId) -> RouteResolverRow {
+        let slot = match self.route_resolver_slot(scope_id) {
+            Some(slot) => slot,
+            None => crate::invariant(),
+        };
+        match self.route_resolver_row_at(slot) {
+            Some(row) => row,
+            None => crate::invariant(),
+        }
     }
 
     #[inline(always)]

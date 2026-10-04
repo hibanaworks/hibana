@@ -58,3 +58,9 @@ jobs:
           python3 proofs/projection-diagnostics/check_diagnostics.py
       - name: Check explicit resource join integration with Lean and Z3
         run: bash proofs/explicit-resource-join/check.sh
+      - name: Check immutable resolver lookup and dispatch subtree
+        run: |
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-index/SortedRouteIndex.lean
+          python3 proofs/resolver-index/check_lookup.py
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/dispatch-subtree/Dispatch.lean
+          python3 proofs/dispatch-subtree/check_walk.py

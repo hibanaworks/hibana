@@ -34,6 +34,7 @@ pub(crate) struct CompiledProgramRef {
     pub(crate) facts: ProgramImageFacts,
     pub(crate) columns: ProgramImageColumns,
     pub(crate) blob: BlobPtr,
+    routes_sorted: bool,
 }
 
 impl core::fmt::Debug for CompiledProgramRef {
@@ -52,13 +53,21 @@ impl CompiledProgramRef {
         bytes: &'static [u8; N],
     ) -> Self {
         let blob = BlobPtr::from_array(bytes, columns.blob_len());
-        let image = Self {
+        let mut image = Self {
             facts,
             columns,
             blob,
+            routes_sorted: false,
         };
         image.validate_atom_rows();
+        // Immutable descriptor validation belongs at construction, not on
+        // every endpoint lookup. The private certificate is not protocol state.
+        image.routes_sorted = image.validate_route_resolver_rows();
         image
+    }
+
+    pub(super) const fn route_resolver_index_is_sorted(&self) -> bool {
+        self.routes_sorted
     }
 
     pub(crate) fn same_image(&self, other: &Self) -> bool {

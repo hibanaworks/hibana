@@ -85,11 +85,13 @@ fn atom_columns() -> ProgramImageColumns {
 }
 
 fn route_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(0, 1, 1, 0)
+    // Both route arms require a participant. The old one-byte participant
+    // fixture was malformed and is now rejected by constructor validation.
+    ProgramImageColumns::new(0, 1, 2, 7)
 }
 
 fn alternate_columns() -> ProgramImageColumns {
-    ProgramImageColumns::new(1, 0, 0, 0)
+    ProgramImageColumns::new(5, 0, 0, 0)
 }
 
 #[test]
@@ -141,7 +143,7 @@ static VALID: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static VALID_COPY: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, u8::MAX);
 static SCHEMA_DIFFERENT: [u8; 9] = encoded_atom(0, 1, 9, 0x7856_3413, 1, u8::MAX);
 static LAST_BYTE_DIFFERENT: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 1, 0);
-static SAME_COLUMN_BYTES: [u8; 9] = [0; 9];
+static SAME_COLUMN_BYTES: [u8; 45] = [0; 45];
 static FROM_OUT_OF_RANGE: [u8; 9] = encoded_atom(2, 1, 9, VALID_SCHEMA, 1, 0);
 static TO_OUT_OF_RANGE: [u8; 9] = encoded_atom(0, 2, 9, VALID_SCHEMA, 1, 0);
 static ORIGIN_OUT_OF_RANGE: [u8; 9] = encoded_atom(0, 1, 9, VALID_SCHEMA, 2, 0);
@@ -247,4 +249,15 @@ fn compiled_program_atom_descriptor_rejects_origin_out_of_range() {
 fn compiled_program_atom_descriptor_rejects_effect_index_query_out_of_range() {
     let _ =
         forged_program_ref(&VALID, 1).atom_at(crate::eff::meta::COMPACT_EVENT_IDENTITY_CAPACITY);
+}
+
+#[test]
+fn immutable_resolver_certificate_fits_existing_descriptor_padding() {
+    let image = forged_program_ref(&VALID, 1);
+    let prior_fields = (image.facts, image.columns, image.blob);
+    assert_eq!(
+        core::mem::size_of_val(&image),
+        core::mem::size_of_val(&prior_fields),
+        "the immutable index certificate must not enlarge the descriptor"
+    );
 }

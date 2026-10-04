@@ -59,6 +59,23 @@ fn assert_same_lookup(machine: &EventCursorMachine, query: ScopeId) {
     let old = catch_unwind(|| machine.scanned_passive_child_parent_route(query));
     assert_eq!(new.is_err(), old.is_err());
     assert_eq!(new.ok(), old.ok());
+    let collect = |indexed: bool| {
+        catch_unwind(|| {
+            let mut visits = std::vec::Vec::new();
+            let mut visit = |arm, target| visits.push((arm, state_index_to_usize(target)));
+            let status = if indexed {
+                machine.visit_first_recv_dispatch(query, &mut visit)
+            } else {
+                machine.visit_scanned_first_recv_dispatch(query, &mut visit)
+            };
+            visits.sort_unstable();
+            (status, visits)
+        })
+    };
+    let new = collect(true);
+    let old = collect(false);
+    assert_eq!(new.is_err(), old.is_err());
+    assert_eq!(new.ok(), old.ok());
 }
 
 #[test]
@@ -170,5 +187,42 @@ fn unused_cyclic_owners_do_not_create_passive_edges() {
     for query in [root, orphan] {
         assert_eq!(machine.passive_child_parent_route(query), None);
         assert_same_lookup(&machine, query);
+    }
+}
+
+#[test]
+fn indexed_dispatch_visits_exactly_the_original_candidates() {
+    let original = fixture();
+    let variants = [
+        original,
+        rebuild(original, |bytes| {
+            // Invalid inverse ownership must select the old scanner.
+            let offset = original.columns.route_scope_conflicts.offset as usize + 2;
+            let raw = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+            write_u16(bytes, offset, raw ^ 1);
+        }),
+    ];
+    for rows in variants {
+        let machine = machine(rows);
+        for slot in 0..rows.columns.route_scopes.len as usize {
+            let query = rows.route_scope_by_slot(slot).unwrap();
+            let collect = |indexed: bool| {
+                catch_unwind(|| {
+                    let mut visits = std::vec::Vec::new();
+                    let mut visit = |arm, target| visits.push((arm, state_index_to_usize(target)));
+                    let result = if indexed {
+                        machine.visit_first_recv_dispatch(query, &mut visit)
+                    } else {
+                        machine.visit_scanned_first_recv_dispatch(query, &mut visit)
+                    };
+                    visits.sort_unstable();
+                    (result, visits)
+                })
+            };
+            let actual = collect(true);
+            let expected = collect(false);
+            assert_eq!(actual.is_err(), expected.is_err());
+            assert_eq!(actual.ok(), expected.ok());
+        }
     }
 }
