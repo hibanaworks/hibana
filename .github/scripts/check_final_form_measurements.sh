@@ -830,7 +830,6 @@ else
   echo "fixed snapshot runtime budget check omitted by explicit override; worktree size snapshot still runs"
 fi
 
-README_PATH="${ROOT_DIR}/README.md" \
 MEASUREMENT_HOST="${HOST}" \
 SNAPSHOT_FILE="${SNAPSHOT_FILE}" \
 THUMB_SECTION_OUTPUT="${THUMB_SECTION_OUTPUT}" \
@@ -866,7 +865,7 @@ for line in os.environ["STACK_HIGH_WATER_OUTPUT"].splitlines():
         runtime.append(metrics_from(line[line.index(marker):]))
 
 if not artifacts or not runtime:
-    print("README measurement sync missing protocol or runtime measurements", file=sys.stderr)
+    print("live footprint report missing protocol or runtime measurements", file=sys.stderr)
     sys.exit(1)
 
 data_bss = thumb.get(".data", 0) + thumb.get(".bss", 0)
@@ -901,39 +900,11 @@ target_expected = {
     "Library `.data + .bss`": data_bss,
 }
 
-readme = Path(os.environ["README_PATH"]).read_text(encoding="utf-8")
-with open(os.environ["SNAPSHOT_FILE"], "r", encoding="utf-8") as f:
-    publication_host = json.load(f)["runtime_measurement"]["publication_host"]
-measurement_host = os.environ["MEASUREMENT_HOST"]
-host_marker = f"`{publication_host}` measurement host"
-if host_marker not in readme:
-    print(
-        "README measurement host stale or missing: "
-        f"expected {host_marker}",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-expected = dict(target_expected)
-if measurement_host == publication_host:
-    expected.update(host_expected)
-else:
-    print(
-        "README host measurement boundary: "
-        f"live={measurement_host} publication={publication_host}; "
-        "host-sensitive current values remain publication-host measurements"
-    )
-
-for label, value in expected.items():
-    row_prefix = f"| {label} | {value:,} B |"
-    if row_prefix not in readme:
-        print(
-            f"README measurement row stale or missing: expected {row_prefix}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-print("README measurement sync passed")
+# Current measurements belong to this run, not a manually synchronized README.
+# The target and host resource ceilings were checked above without change.
+print(f"Live footprint report: host={os.environ['MEASUREMENT_HOST']}")
+for label, value in {**host_expected, **target_expected}.items():
+    print(f"{label}: {value:,} B")
 PY
 
 if [[ "${HIBANA_OMIT_WORKTREE_SIZE_SNAPSHOT:-0}" != "1" ]]; then

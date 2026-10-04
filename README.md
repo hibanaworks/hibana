@@ -697,24 +697,18 @@ concerns.
 
 The repository compiles the public choreography and projection API for
 `thumbv6m-none-eabi` without an allocator, SDK, host transport, or target-only
-Hibana API. With Rust `1.95.0`, the tracked release measurements are:
+Hibana API. The release gate publishes fresh measurements for each checked
+revision and enforces the tracked resource ceilings. Measured values are not
+copied into a manually synchronized source table here.
 
-| Hibana-owned quantity | Current | Release ceiling |
-| --- | ---: | ---: |
-| `SessionKitStorage` | 24 B | 32 B |
-| Fixed per-rendezvous storage, including the 252 B tap records | 412 B | 952 B |
-| Peak live runtime slab across tracked heavy shapes | 2,311 B | 4,323 B |
-| Runtime operation stack high-water | 2,607 B | 3,663 B |
-| Modeled runtime SRAM envelope | 5,290 B | 8,954 B |
-| Minimal linked protocol artifact | 352 B | 2,048 B |
-| Largest linked artifact in the tracked protocol matrix | 1,824 B | 16,384 B |
-| Complete no-default `libhibana.rlib` sections | 93,899 B | 169,965 B |
-| Library `.data + .bss` | 0 B | 0 B |
-
-The linked-artifact and library rows are `thumbv6m-none-eabi` release
-measurements. The complete rlib is not the flash cost paid by one linked
-protocol. Stack high-water is measured around runtime operations on the pinned
-`aarch64-unknown-linux-gnu` measurement host used by the release gate.
+For example, the [dafdf8a CI measurement](https://github.com/hibanaworks/hibana/actions/runs/37240935107)
+reported a 5,274 B modeled runtime SRAM envelope and a 2,591 B operation-stack
+high-water mark, within the unchanged 8,954 B and 3,663 B ceilings. These are
+revision-specific observations, not promises for arbitrary application state.
+The no-default `thumbv6m-none-eabi` rlib sections were 97,344 B, below the
+169,965 B ceiling. A complete rlib is not the flash cost paid by one linked
+protocol. Host stack observations use the pinned
+`aarch64-unknown-linux-gnu` measurement host.
 
 The modeled SRAM envelope combines the target's Hibana `.data/.bss`, storage
 owners, one measured live slab shape, and runtime operation stack. Component
