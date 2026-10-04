@@ -7,7 +7,6 @@ use crate::{
         role_program::{RoleProgram, project},
     },
 };
-use std::boxed::Box;
 
 const MAX_ROUTE_RESOLVER: u16 = u16::MAX;
 
@@ -295,22 +294,39 @@ fn compiled_program_descriptor_rejects_missing_route_scope_query() {
     let _ = descriptor.route_controller_role(ScopeId::route(1));
 }
 
-#[test]
-fn sealed_resolver_index_matches_linear_lookup_for_gaps_tags_and_fallback() {
-    for scopes in [[1u16, 7, 31], [31, 1, 7], [1, 1, 7]] {
-        let mut bytes = [0u8; 30];
-        for (slot, scope) in scopes.into_iter().enumerate() {
-            let row = encoded_row(
-                dynamic_scope(scope),
-                u16::MAX - slot as u16,
-                0,
-                (slot * 2) as u16,
-                1,
-            );
-            bytes[slot * 8..slot * 8 + 8].copy_from_slice(&row);
+const fn encoded_resolver_index(scopes: [u16; 3]) -> [u8; 30] {
+    let mut bytes = [0u8; 30];
+    let mut slot = 0;
+    while slot < scopes.len() {
+        let row = encoded_row(
+            dynamic_scope(scopes[slot]),
+            u16::MAX - slot as u16,
+            0,
+            (slot * 2) as u16,
+            1,
+        );
+        let mut offset = 0;
+        while offset < row.len() {
+            bytes[slot * 8 + offset] = row[offset];
+            offset += 1;
         }
-        // Six role-zero entries follow the three packed descriptor rows.
-        let bytes = Box::leak(Box::new(bytes));
+        slot += 1;
+    }
+    // Six role-zero entries follow the three packed descriptor rows.
+    bytes
+}
+
+static SORTED_RESOLVER_INDEX: [u8; 30] = encoded_resolver_index([1, 7, 31]);
+static UNSORTED_RESOLVER_INDEX: [u8; 30] = encoded_resolver_index([31, 1, 7]);
+static DUPLICATE_RESOLVER_INDEX: [u8; 30] = encoded_resolver_index([1, 1, 7]);
+
+#[test]
+fn sealed_resolver_index_matches_linear_lookup_for_all_encoded_scopes() {
+    for (scopes, bytes) in [
+        ([1u16, 7, 31], &SORTED_RESOLVER_INDEX),
+        ([31, 1, 7], &UNSORTED_RESOLVER_INDEX),
+        ([1, 1, 7], &DUPLICATE_RESOLVER_INDEX),
+    ] {
         let descriptor = CompiledProgramRef::compact(
             ProgramImageFacts { max_role: 0 },
             ProgramImageColumns::new(0, 3, 6, 0),
