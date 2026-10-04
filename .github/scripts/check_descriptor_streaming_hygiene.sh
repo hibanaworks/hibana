@@ -18,9 +18,11 @@ if [[ "${FAILED}" -ne 0 ]]; then
   exit 1
 fi
 
+# Out-of-line unit-test fixtures are cfg(test) and may allocate synthetic
+# immutable descriptors. They are not part of the core initialization path.
 check_absent 'Box<|alloc::|std::boxed' \
   "heap-backed descriptor storage in core init path" \
-  src/global/compiled
+  src/global/compiled --glob '!**/tests.rs' --glob '!**/tests/**'
 if [[ "${FAILED}" -ne 0 ]]; then
   echo "descriptor streaming hygiene violation: heap-backed descriptor storage in core init path" >&2
   exit 1
