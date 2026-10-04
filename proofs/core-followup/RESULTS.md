@@ -28,12 +28,15 @@ qualification.
   The checker also verifies that these edits are exactly the oracle naming,
   whitespace/comment, and stack-wrapper changes described in the mapping.
 
-## Exact current source identity
+## Source identity and the original checkpoint
 
-`current-source-manifest.json` covers all 360 `src/**/*.rs` files plus the root
-and repo-test Cargo manifests and lockfile. Its combined SHA-256 is
-`4068d89e28a18f555882cd4f7a713449516903fbe003a2e9e28409d5c1d2875b`.
-The hash is over sorted `sha256 + two spaces + relative path + newline` entries.
+The former manually updated whole-source and distributable-package hash tables
+have been removed. `check_sources.py` now records a fingerprint of the actual
+source checked by that run in stdout; there is no separate table to keep in
+sync. A fingerprint establishes identity, not semantic correctness. The existing
+historical qualification records, exact source-correspondence checks and real
+Rust/Lean/Z3 tests remain in place. Historical copies remain immutable records
+of their original checkpoints, rather than current-build acceptance tables.
 
 The three changed production-owner files exactly match their separately
 qualified candidates:

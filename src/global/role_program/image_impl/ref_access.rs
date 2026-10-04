@@ -5,8 +5,8 @@ use super::super::{
 };
 use super::lane_image::invalid_resident_descriptor;
 use super::metadata::{
-    derive_active_lane_metadata, lane_columns_are_coherent, roll_scope_columns_are_coherent,
-    passive_parent_rows_are_coherent, route_commit_capacity_is_exact, route_scopes_are_sorted,
+    derive_active_lane_metadata, lane_columns_are_coherent, passive_parent_rows_are_coherent,
+    roll_scope_columns_are_coherent, route_commit_capacity_is_exact, route_scopes_are_sorted,
 };
 use crate::global::typestate::{LocalAction, LocalDependency, LocalNode, PackedEventConflict};
 
@@ -246,16 +246,24 @@ impl RoleImageRef {
             // The constructor certified valid, strictly increasing raw IDs.
             // Compare full IDs so another kind cannot alias a route ordinal.
             let query = scope.raw();
+            let count = self.columns.route_scopes.len as usize;
+            let start = self.columns.route_scopes.offset as usize;
+            // Check the whole two-byte column once. The sealed sorted index
+            // already certifies every raw ID; probes do not decode it again.
+            if start + 2 * count > self.columns.blob_len() {
+                invalid_resident_descriptor();
+            }
             let mut low = 0usize;
-            let mut high = self.columns.route_scopes.len as usize;
+            let mut high = count;
             while low < high {
                 let middle = low + (high - low) / 2;
-                let Some(candidate) = self.lanes().route_scope_by_slot(middle) else {
-                    invalid_resident_descriptor();
-                };
-                if candidate.raw() < query {
+                let offset = start + 2 * middle;
+                // middle < count, so both bytes satisfy the checked bound.
+                let candidate = self.blob.byte_at(offset) as u16
+                    | ((self.blob.byte_at(offset + 1) as u16) << 8);
+                if candidate < query {
                     low = middle + 1;
-                } else if query < candidate.raw() {
+                } else if query < candidate {
                     high = middle;
                 } else {
                     return Some(middle);
@@ -294,7 +302,8 @@ impl RoleImageRef {
         arm: u8,
     ) -> PackedLaneRange {
         if self.has_passive_parent_index() {
-            self.lanes().certified_route_arm_event_row_by_slot(slot, arm)
+            self.lanes()
+                .certified_route_arm_event_row_by_slot(slot, arm)
         } else {
             self.lanes().route_arm_event_row_by_slot(slot, arm)
         }

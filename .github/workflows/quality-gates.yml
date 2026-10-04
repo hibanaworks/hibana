@@ -64,3 +64,5 @@ jobs:
           python3 proofs/resolver-index/check_lookup.py
           ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/dispatch-subtree/Dispatch.lean
           python3 proofs/dispatch-subtree/check_walk.py
+          ELAN_TOOLCHAIN=leanprover/lean4:v4.30.0 lean proofs/route-column-access/Bounds.lean
+          python3 proofs/route-column-access/check_bounds.py
