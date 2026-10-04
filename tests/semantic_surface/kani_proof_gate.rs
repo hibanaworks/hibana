@@ -801,8 +801,8 @@ fn kani_gate_verifies_production_rust_without_entering_the_package_surface() {
     assert!(program_ref_harnesses.contains(
         "assert!(canonical.columns.blob_len() == different_columns.columns.blob_len());"
     ));
-    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 0, 27, 0)"));
-    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 1, 19, 0)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(0, 1, 2, 7)"));
+    assert!(program_ref_harnesses.contains("ProgramImageColumns::new(5, 0, 0, 0)"));
     assert!(
         program_ref_harnesses
             .contains("usize::from(u16::MAX) / PROGRAM_IMAGE_ROUTE_RESOLVER_STRIDE + 1")
