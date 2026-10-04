@@ -30,7 +30,14 @@ Fresh local checks completed successfully:
 
 The identity bridge proves exact preservation of the qualified gate bodies;
 it is not a universal Rust refinement theorem for new diagnostic code.
-Full remote CI for the followup is still required. No MCU/runtime API,
+Remote followup run `37195668447` passed Kani, Rust, the main Lean gate,
+the full portable proof replay, and target footprint checks. It then rejected
+the stale README rlib measurement: diagnostics changed the complete
+`thumbv6m-none-eabi` archive from 88,013 to 93,899 bytes. The linked matrix,
+5,290-byte modeled runtime SRAM, and release ceilings were unchanged. The
+README now records the exact CI observation; the measurement gate remains
+intact. Full remote CI for this documentation correction is still required.
+No MCU/runtime API,
 production Rust, acceptance gate, memory reservation or rejection was changed.
 
 ## Original diagnostic implementation verification
