@@ -20,3 +20,5 @@ use hibana::runtime::{
 
 #[path = "cursor_send_recv/direct_recv.rs"]
 mod direct_recv;
+#[path = "cursor_send_recv/recv_lane_census.rs"]
+mod recv_lane_census;

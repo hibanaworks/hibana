@@ -12,6 +12,7 @@ use super::{
 };
 use crate::{
     endpoint::{RecvError, RecvResult},
+    global::role_program::LANE_SET_VIEW_WORDS,
     global::typestate::{
         CursorInvariantError, DeterministicInboundKey, EventArmView, EventCommitMeta,
         InboundFrameKey, PackedEventConflict, state_index_to_usize,
@@ -72,30 +73,20 @@ where
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<lane_port::PreambleFrame<'r>>> {
         let lane_limit = self.cursor.logical_lane_count();
-        let mut saw_candidate_lane = false;
-        let mut lane_idx = 0usize;
-        while lane_idx < lane_limit {
-            if self.live_recv_contract_on_lane(lane_idx, target_label, target_schema) {
-                saw_candidate_lane = true;
-                let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
-                match self.poll_received_transport_frame_for_lane(
-                    pending_recv,
-                    lane_idx,
-                    lane_wire,
-                    cx,
-                ) {
-                    Poll::Pending => {}
-                    Poll::Ready(Ok(frame)) => return Poll::Ready(Ok(frame)),
-                    Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                }
+        let mut words = [0; LANE_SET_VIEW_WORDS];
+        let lanes = self.live_recv_lanes(target_label, target_schema, &mut words)?;
+        let mut start = 0usize;
+        while let Some(lane_idx) = lanes.next_set_from(start, lane_limit) {
+            let lane_wire = self.port_for_lane(lane_idx).lane().as_wire();
+            match self.poll_received_transport_frame_for_lane(pending_recv, lane_idx, lane_wire, cx)
+            {
+                Poll::Pending => {}
+                Poll::Ready(Ok(frame)) => return Poll::Ready(Ok(frame)),
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
-            lane_idx += 1;
+            start = lane_idx + 1;
         }
-        if saw_candidate_lane {
-            Poll::Pending
-        } else {
-            Poll::Ready(Err(RecvError::PhaseInvariant))
-        }
+        Poll::Pending
     }
 
     fn accept_framed_recv_frame(
@@ -198,7 +189,6 @@ where
         pending_recv: &mut lane_port::PendingRecv,
         cx: &mut core::task::Context<'_>,
     ) -> Poll<RecvResult<MatchedRecvFrame<'r>>> {
-        self.ensure_live_recv_contract(target_label, target_schema)?;
         let frame = match self.poll_recv_preamble_for_label(
             target_label,
             target_schema,

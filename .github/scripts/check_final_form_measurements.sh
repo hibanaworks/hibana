@@ -55,12 +55,13 @@ run_final_form_test() {
   fi
 }
 
-MEASURE_DIR="${ROOT_DIR}/target/final_form_measurements"
+MEASURE_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}"
+MEASURE_DIR="${MEASURE_TARGET_DIR}/final_form_measurements"
 SNAPSHOT_FILE="${ROOT_DIR}/.github/measurement_snapshots/hibana-size-snapshot.json"
 rm -rf "${MEASURE_DIR}"
 mkdir -p "${MEASURE_DIR}/src"
 
-cat >"${MEASURE_DIR}/Cargo.toml" <<'EOF'
+cat >"${MEASURE_DIR}/Cargo.toml" <<EOF
 [package]
 name = "hibana-final-form-measure"
 version = "0.0.0"
@@ -70,7 +71,7 @@ publish = false
 [workspace]
 
 [dependencies]
-hibana = { path = "../..", default-features = false }
+hibana = { path = "${ROOT_DIR}", default-features = false }
 EOF
 
 cat >"${MEASURE_DIR}/src/main.rs" <<'EOF'
@@ -129,7 +130,7 @@ TERM=dumb \
     --release \
     --lib \
     >/dev/null
-THUMB_RLIB="${ROOT_DIR}/target/thumbv6m-none-eabi/release/libhibana.rlib"
+THUMB_RLIB="${MEASURE_TARGET_DIR}/thumbv6m-none-eabi/release/libhibana.rlib"
 if [[ ! -f "${THUMB_RLIB}" ]]; then
   echo "final-form thumb measurement artifact missing: ${THUMB_RLIB}" >&2
   exit 1
