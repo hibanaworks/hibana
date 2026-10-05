@@ -42,6 +42,17 @@ linked StackChan flash or universal stack proof. Evidence is retained in
 The running generation-92 body remains selected. The touch implementation is not
 yet deployed and no petting reaction is claimed from this core qualification.
 
+Remote run 37380539604 passed Kani and the preceding gates, but the combined
+send-continuation Miri group exceeded its existing 480-second limit while doing
+the new 64-read repetition. The 64-read case is now a separate native stress
+test; initial entry, one completed read, reentry after two reads, the rejecting
+case and the other nested-arm ownership tests remain in Miri. No production
+guard, check, timeout or proof obligation is changed. The seven native cases,
+strict regression Clippy and six strict-provenance Miri cases passed again in
+`/tmp/hibana-send-entry-ci-evidence.Py3UlW/`; Miri reported 259.99 seconds. Both
+native and nested Miri products were cleaned. The revised remote run is required
+before deployment; this local result does not certify its completion.
+
 ## Nested send continuation repair, 2026-10-03
 
 The Path handoff on `ca5a6fc3` exposes a send-preview defect independent of the

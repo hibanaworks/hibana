@@ -154,6 +154,18 @@ fn nested_send_path_accepts_retire_as_its_first_choice() {
 }
 #[test]
 fn completed_read_then_normal_return_uses_the_outer_entry_with_the_reused_contract() {
+    completed_reads_then_return(&[0, 1, 2]);
+}
+
+// Miri checks the initial visit and reentry above. Repeating the same prefix
+// 64 times is a native stress test, independent of that ownership check.
+#[cfg(not(miri))]
+#[test]
+fn normal_return_after_many_completed_reads_uses_the_outer_entry() {
+    completed_reads_then_return(&[64]);
+}
+
+fn completed_reads_then_return(read_counts: &[usize]) {
     let global = g::route(
         g::seq(
             g::send::<0, 1, Msg<90, ()>>(),
@@ -179,7 +191,7 @@ fn completed_read_then_normal_return_uses_the_outer_entry_with_the_reused_contra
     .roll();
     let p0: RoleProgram<0> = project(&global);
     let p1: RoleProgram<1> = project(&global);
-    for reads in [0, 1, 2, 64] {
+    for &reads in read_counts {
         let mut slab = [0; 8192];
         let mut storage = SessionKitStorage::uninit();
         let kit = storage
