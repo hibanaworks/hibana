@@ -701,6 +701,10 @@ Hibana API. The release gate publishes fresh measurements for each checked
 revision and enforces the tracked resource ceilings. Measured values are not
 copied into a manually synchronized source table here.
 
+The gate measures `SessionKitStorage`, fixed per-session storage including tap
+records, peak live runtime slab, operation stack, modeled SRAM, the minimal
+and largest linked protocol artifacts, and complete library sections.
+
 For example, the [dafdf8a CI measurement](https://github.com/hibanaworks/hibana/actions/runs/37240935107)
 reported a 5,274 B modeled runtime SRAM envelope and a 2,591 B operation-stack
 high-water mark, within the unchanged 8,954 B and 3,663 B ceilings. These are

@@ -108,9 +108,10 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "### Failure Semantics",
         "### When Deadlock Freedom Holds",
         "[`examples/pico/src/lib.rs`](examples/pico/src/lib.rs)",
-        "| Modeled runtime SRAM envelope |",
-        "| Runtime operation stack high-water |",
-        "| Largest linked artifact in the tracked protocol matrix |",
+        "The release gate publishes fresh measurements",
+        "modeled runtime SRAM envelope",
+        "operation-stack high-water mark",
+        "and largest linked protocol artifacts",
         "Component maxima may come from different shapes",
         "Application state, concrete transport buffers, executor state, interrupt",
         "bash ./.github/scripts/run_final_form_gates.sh",
@@ -193,6 +194,7 @@ fn readme_stays_self_contained_and_hibana_scoped() {
         "world first",
         "```rust,ignore",
         "<!-- ping-pong-example:",
+        "| Hibana-owned quantity | Current |",
     ] {
         assert_absent(
             &readme,
