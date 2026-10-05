@@ -164,15 +164,11 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
         "HIBANA_COMPILE_PRESSURE_CRATE_NAME=hibana",
         "aggregate refactor gate requires ",
         "max_stack/sram/flash all <= snapshot budget and at least one decrease",
-        "README_PATH=\"${ROOT_DIR}/README.md\"",
         "MEASUREMENT_HOST=\"${HOST}\"",
         "SNAPSHOT_FILE=\"${SNAPSHOT_FILE}\"",
-        "publication_host = json.load(f)[\"runtime_measurement\"][\"publication_host\"]",
-        "if measurement_host == publication_host:",
-        "README host measurement boundary:",
-        "host-sensitive current values remain publication-host measurements",
-        "README measurement row stale or missing",
-        "README measurement sync passed",
+        "live footprint report missing protocol or runtime measurements",
+        "Live footprint report: host=",
+        "for label, value in {**host_measurements, **target_measurements}.items():",
         "Complete no-default `libhibana.rlib` sections",
     ] {
         assert!(
@@ -180,6 +176,13 @@ fn measurement_gates_prevent_recurrent_size_and_stack_regressions() {
             "final-form snapshot gate missing required guard: {required}"
         );
     }
+
+    assert!(
+        !final_gate.contains("README_PATH=")
+            && !final_gate.contains("README measurement sync")
+            && !final_gate.contains("row_prefix not in readme"),
+        "resource ceilings must be checked against measured artifacts, without a second current-value owner in README"
+    );
 
     for required in [
         "local max_mib=\"${HIBANA_COMPILE_PRESSURE_MAX_RSS_MIB:-}\"",

@@ -1,5 +1,8 @@
 # Compile-pressure guardrails are local observations plus explicit headroom.
 # Limit = observed + headroom. This is not a runtime capacity or public contract.
+# Short-case RSS observations are from the pinned Linux ARM CI host; see
+# compile-pressure-observations.md. Keep the existing headroom, not the missed
+# 1MiB/4MiB process samples from the original local baseline.
 label	observed_seconds	observed_rss_mib	seconds_headroom	rss_headroom_mib
 final_form_gate	134	903	46	57
 cold_parallel_route_nesting	9	834	31	190
@@ -10,15 +13,15 @@ huge_choreography_runtime	2	228	30	256
 message_heavy_1	1	87	15	128
 message_heavy_64	1	98	15	128
 message_heavy_256	5	144	20	256
-route_arm_heavy_1	1	4	15	128
+route_arm_heavy_1	1	122	15	128
 route_arm_heavy_64	1	99	15	128
 route_arm_heavy_256	3	153	20	256
-causal_handoff_4	1	1	15	128
+causal_handoff_4	1	131	15	128
 causal_handoff_64	1	83	15	128
 causal_handoff_256	1	117	15	128
-causal_handoff_route_4	1	1	15	128
+causal_handoff_route_4	1	129	15	128
 causal_handoff_route_32	1	110	20	256
 causal_handoff_route_64	5	300	25	384
-causal_handoff_roll_4	1	1	15	128
+causal_handoff_roll_4	1	119	15	128
 causal_handoff_roll_32	1	95	20	256
 causal_handoff_roll_64	3	206	25	384
