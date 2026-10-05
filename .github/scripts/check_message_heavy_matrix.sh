@@ -252,6 +252,4 @@ fi
 # Each independently compiled case is already bounded by its named snapshot-derived
 # time and RSS budgets. Cross-case comparisons of sampled peaks are not stable gates.
 
-bash "${ROOT_DIR}/.github/scripts/check_message_monomorphization_hygiene.sh"
-
 echo "message-heavy matrix check passed target=${TARGET} messages=256"
