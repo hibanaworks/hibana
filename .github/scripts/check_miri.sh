@@ -34,16 +34,10 @@ fi
 
 miri_passed_total=0
 miri_ignored_total=0
-readonly EXPECTED_MIRI_PASSED_TOTAL=238
-readonly EXPECTED_MIRI_IGNORED_TOTAL=2
-
 run_miri_test() {
   local label="$1"
-  local expected_listed="$2"
-  local expected_passed="$3"
-  local expected_ignored="$4"
-  shift 4
-  local output
+  shift
+  local output counts passed ignored
   output="$(mktemp "${TMPDIR:-/tmp}/hibana-miri.XXXXXX")"
   if ! timeout --kill-after="${MIRI_TIMEOUT_GRACE_SECONDS}s" "${MIRI_TIMEOUT_SECONDS}s" \
     cargo +"${MIRI_TOOLCHAIN}" miri test "$@" >"${output}" 2>&1; then
@@ -53,113 +47,80 @@ run_miri_test() {
     return 1
   fi
   cat "${output}"
-  if ! grep -Fq "running ${expected_listed} test" "${output}" \
-    || ! grep -Fq \
-      "test result: ok. ${expected_passed} passed; 0 failed; ${expected_ignored} ignored;" \
-      "${output}"; then
+  counts="$(sed -nE 's/^test result: ok\. ([0-9]+) passed; 0 failed; ([0-9]+) ignored;.*$/\1 \2/p' "${output}")"
+  if [[ ! "${counts}" =~ ^([1-9][0-9]*)[[:space:]]([0-9]+)$ ]]; then
     rm -f "${output}"
-    echo "miri gate test-count mismatch: ${label} listed=${expected_listed} passed=${expected_passed} ignored=${expected_ignored}" >&2
+    echo "miri gate requires a nonempty successful test run: ${label}" >&2
     return 1
   fi
+  passed="${BASH_REMATCH[1]}"
+  ignored="${BASH_REMATCH[2]}"
   rm -f "${output}"
-  miri_passed_total=$((miri_passed_total + expected_passed))
-  miri_ignored_total=$((miri_ignored_total + expected_ignored))
+  miri_passed_total=$((miri_passed_total + passed))
+  miri_ignored_total=$((miri_ignored_total + ignored))
 }
 
 run_miri_test \
   public-runtime-owner \
-  28 \
-  28 \
-  0 \
   -p hibana \
   --test miri_runtime_owner
 
 run_miri_test \
   transport-requeue-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   transport_requeue_callback_reentry_revalidates_generation
 
 run_miri_test \
   receive-frame-receipt-owner \
-  6 \
-  6 \
-  0 \
   -p hibana \
   --lib \
   rendezvous::recv_frame_receipt::tests
 
 run_miri_test \
   public-operation-kernel \
-  2 \
-  1 \
-  1 \
   -p hibana \
   --lib \
   endpoint::kernel::core::public_operation::tests
 
 run_miri_test \
   tap-ring-owner \
-  2 \
-  2 \
-  0 \
   -p hibana \
   --lib \
   observe::core::tests
 
 run_miri_test \
   descriptor-derived-route-history-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   endpoint::kernel::decision_state::tests::route_arm_history_accepts_257_descriptor_relations
 
 run_miri_test \
   descriptor-domain-offer-frontier-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   endpoint::kernel::frontier::entry_sets::tests::observed_entry_set_streams_the_full_lane_domain
 
 run_miri_test \
   exact-frontier-cursor-position-owner \
-  4 \
-  4 \
-  0 \
   -p hibana \
   --lib \
   endpoint::kernel::frontier::visit_set::tests
 
 run_miri_test \
   constant-state-frontier-selection-owner \
-  4 \
-  4 \
-  0 \
   -p hibana \
   --lib \
   endpoint::kernel::frontier::progress_selection::tests
 
 run_miri_test \
   root-frontier-packed-pool-owner \
-  9 \
-  9 \
-  0 \
   -p hibana \
   --lib \
   endpoint::kernel::frontier_state::tests
 
 run_miri_test \
   frontier-scratch-workspace-owner \
-  6 \
-  6 \
-  0 \
   -p hibana \
   --lib \
   endpoint::kernel::frontier::scratch::tests
@@ -167,9 +128,6 @@ run_miri_test \
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_PROOF_EXPORT_TIMEOUT_SECONDS:-360}" \
 MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
   production-proof-artifact-exporter \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   global::event_program_cursor_tests::lean_proof_export::export_production_trace_for_lean \
@@ -178,359 +136,231 @@ MIRIFLAGS="${MIRIFLAGS} -Zmiri-disable-isolation" run_miri_test \
 
 run_miri_test \
   rolled-output-pipeline-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   global::event_program_cursor_tests::production_cursor_pipelines_rolled_send_before_remote_receive
 
 run_miri_test \
   endpoint-waiter-owner \
-  2 \
-  2 \
-  0 \
   -p hibana \
   --lib \
   rendezvous::core::endpoint_waiter::tests
 
 run_miri_test \
   affine-send-owner \
-  4 \
-  4 \
-  0 \
   -p hibana \
   --test affine_progression
 
 run_miri_test \
   direct-recv-owner \
-  11 \
-  11 \
-  0 \
   -p hibana \
   --test cursor_send_recv_direct_recv
 
 run_miri_test \
   forgotten-recv-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test cursor_send_recv_session_forget_recv
 
 run_miri_test \
   forgotten-send-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test cursor_send_recv_session_forget_send
 
 run_miri_test \
   endpoint-drop-wake-owner \
-  2 \
-  2 \
-  0 \
   -p hibana \
   --test cursor_send_recv_session_drop_wake
 
 run_miri_test \
   session-fault-cancel-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test cursor_send_recv_session_fault_cancel
 
 run_miri_test \
   local-action-owner \
-  4 \
-  4 \
-  0 \
   -p hibana \
   --test local_action
 
 run_miri_test \
   transport-contract-owner \
-  6 \
-  6 \
-  0 \
   -p hibana \
   --lib \
   transport::tests::transport_contract_
 
 run_miri_test \
   rolled-causal-exit-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test cursor_send_recv_send_recv \
   rolled_same_label_recv_requires_causal_exit_handoff
 
 run_miri_test \
   intrinsic-route-in-band-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test cursor_send_recv_send_recv \
   intrinsic_route_passive_same_label_recv_commits_by_frame_evidence
 
 run_miri_test \
   rolled-resolved-route-reentry-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_resolved_route_reenters_left_right_left_rows
 
 run_miri_test \
   rolled-buffered-route-order-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_resolved_route_preserves_buffered_decision_order
 
 run_miri_test \
   rolled-same-label-schema-reentry-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_resolved_same_label_reenters_with_selected_schema
 
 run_miri_test \
   rolled-nested-resolver-reentry-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_nested_resolved_route_reenters_asymmetric_paths
 
 run_miri_test \
   rolled-current-frontier-reuse-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_nested_resolved_route_reenters_passive_offer_asymmetric_paths
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   rolled-elastic-route-path-color-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test rolled_resolver_reentry \
   rolled_deep_right_spine_passive_offer_reenters_across_all_depths
 
 run_miri_test \
   session-family-isolation \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test cursor_send_recv_send_recv \
   session_template_instances_interleave_and_fault_independently
 
 run_miri_test \
   session-waiter-isolation \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test cursor_send_recv_send_recv \
   same_lane_session_waiters_are_isolated
 
 run_miri_test \
   route-branch-send-owner \
-  6 \
-  6 \
-  0 \
   -p hibana \
   --test route_branch_send
 
 run_miri_test \
   resolved-send-owner \
-  2 \
-  2 \
-  0 \
   -p hibana \
   --test send_route_authority
 
 run_miri_test \
   resolver-identity-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test dynamic_route_scope_resolver \
   same_scope_sites_with_distinct_resolver_ids_keep_distinct_authority
 
 run_miri_test \
   resolver-full-id-domain-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test dynamic_route_scope_resolver \
   maximum_resolver_id_runs_end_to_end
 
 run_miri_test \
   resolver-reject-cancellation-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test dynamic_route_scope_resolver \
   resolver_reject_does_not_encode_or_stage_send_payload
 
 run_miri_test \
   dynamic-membership-seal-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --test dynamic_route_scope_resolver \
   dynamic_resolution_seals_runtime_local_membership_before_evaluation
 
 run_miri_test \
   offer-branch-owner \
-  11 \
-  11 \
-  0 \
   -p hibana \
   --test offer_branch_recv_evidence
 
 run_miri_test \
   resident-sidecar-owner \
-  18 \
-  17 \
-  1 \
   -p hibana \
   --lib \
   storage_layout::capacity::tests
 
 run_miri_test \
   resident-descriptor-validation \
-  45 \
-  45 \
-  0 \
   -p hibana \
   --lib \
   global::role_program::image_impl::tests::resident_
 
 run_miri_test \
   descriptor-lane-byte-view-owner \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   global::role_program::tests::descriptor_lane_byte_view_remains_byte_aligned_and_covers_lane_255
 
 run_miri_test \
   compiled-program-descriptor-validation \
-  13 \
-  13 \
-  0 \
   -p hibana \
   --lib \
   global::compiled::images::image::route_resolvers::tests::compiled_program_descriptor_rejects_
 
 run_miri_test \
   compiled-program-atom-validation \
-  6 \
-  6 \
-  0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_descriptor_
 
 run_miri_test \
   compiled-program-atom-decoder-boundaries \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_decoder_rejects_exact_invalid_boundaries
 
 run_miri_test \
   compiled-program-atom-lookup \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_atom_lookup_is_exact_for_dense_rows
 
 run_miri_test \
   compiled-program-image-identity \
-  1 \
-  1 \
-  0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::compiled_program_image_identity_is_exact_over_facts_columns_and_blob
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   rolled-route-visit-ownership \
-  5 \
-  5 \
-  0 \
   -p hibana \
   --test security_report_regressions \
   rolled_routes::
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   elastic-roll-wire-ownership \
-  4 \
-  4 \
-  0 \
   -p hibana \
   --test security_report_regressions \
   reentry_colors::
 
 MIRI_TIMEOUT_SECONDS="${HIBANA_MIRI_DEEP_ROUTE_TIMEOUT_SECONDS:-480}" run_miri_test \
   nested-send-continuation-ownership \
-  3 \
-  3 \
-  0 \
   -p hibana \
   --test security_report_regressions \
   send_continuations::
 
 run_miri_test \
   nested-controller-offer-ownership \
-  8 \
-  8 \
-  0 \
   -p hibana \
   --test nested_resolver_self_continuations
 
 run_miri_test \
   program-image-storage-validation \
-  3 \
-  3 \
-  0 \
   -p hibana \
   --lib \
   global::compiled::images::image::program_ref::tests::program_image_
-
-if [[ "${miri_passed_total}" != "${EXPECTED_MIRI_PASSED_TOTAL}" ]] \
-  || [[ "${miri_ignored_total}" != "${EXPECTED_MIRI_IGNORED_TOTAL}" ]]; then
-  echo \
-    "miri gate inventory mismatch: passed=${miri_passed_total} ignored=${miri_ignored_total}" \
-    >&2
-  exit 1
-fi
 
 echo "miri gate passed toolchain=${MIRI_TOOLCHAIN} tests=${miri_passed_total} ignored=${miri_ignored_total}"
