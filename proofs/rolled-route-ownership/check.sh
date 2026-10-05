@@ -15,7 +15,7 @@ if [[ "$FAILED" -ne 0 ]]; then
   exit 1
 fi
 (cd "$ROOT/proofs/lean" && lake +"$TOOLCHAIN" build Hibana.GlobalSemantics) > "$EVIDENCE/build.log" 2>&1
-for proof in TraceValidity PhaseOwnership NestedReentry EligibleIngress ReentryAdmission ResetAlignment SendContinuation; do
+for proof in TraceValidity PhaseOwnership NestedReentry EligibleIngress ReentryAdmission ResetAlignment SendContinuation SendEntry; do
   LEAN_PATH="$ROOT/proofs/lean/.lake/build/lib/lean" \
     lean +"$TOOLCHAIN" "$PROOFS/$proof.lean" > "$EVIDENCE/$proof.log" 2>&1
 done
@@ -33,4 +33,10 @@ awk '
   /^unknown$|\(error/ { failed=1 }
   END { if (failed || sat != 3 || unsat != 2) exit 1 }
 ' "$EVIDENCE/send-continuation-z3.log"
-printf 'Rolled-route proofs passed: Lean 4.30.0, 7 files; Z3 12 UNSAT obligations, 19 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"
+z3 "$PROOFS/SendEntry.smt2" > "$EVIDENCE/send-entry-z3.log"
+awk '
+  BEGIN { split("sat unsat sat unsat sat", expected, " ") }
+  { if ($0 != expected[NR]) failed=1 }
+  END { if (failed || NR != 5) exit 1 }
+' "$EVIDENCE/send-entry-z3.log"
+printf 'Rolled-route proofs passed: Lean 4.30.0, 8 files; Z3 14 UNSAT obligations, 22 SAT premises/witnesses. Logs: %s\n' "$EVIDENCE"

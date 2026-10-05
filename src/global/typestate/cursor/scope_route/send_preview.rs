@@ -103,14 +103,6 @@ impl EventCursor {
             {
                 return Some((arm, entry_idx));
             }
-            if let Some(idx) = self.send_preview_route_arm_contract_index(
-                scope_id,
-                arm,
-                target_label,
-                target_schema,
-            ) {
-                return Some((arm, idx));
-            }
             if arm == 1 {
                 break;
             }

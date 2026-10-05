@@ -1,5 +1,47 @@
 # Rolled-route ownership regressions
 
+## Intrinsic entry selection repair, 2026-10-06
+
+The StackChan touch sampling contract reproduced another entry-selection defect
+on `fac137e3`. An outer rolled route uses Read in its first arm and Return in its
+second. The Read arm contains a nested failed-read Return with the same logical
+label and payload schema. After a successful Read/Sampled/Received cycle, a fresh
+outer Return was rejected as PhaseInvariant even with the ordinary test carrier,
+without I2C or intercore I/O.
+
+Intrinsic send-preview selection scanned the entire first arm before checking
+the second arm's actual entry. That scan selected the unchosen nested Return.
+Intrinsic choice now considers only actual controller entries. The separately
+authorized selected-arm continuation scan and all dependency, conflict, resolver,
+reentry and atomic publication checks remain. There is no public API, stored
+field, wire-format or capacity addition.
+
+`SendEntry.lean` was kernel-checked before the production edit. Three quantified
+selector obligations exclude an arbitrary interior occurrence and preserve a
+matching second entry. Six canonical GlobalSemantics histories cover initial
+Return, successful-read reentry, wrong inner Return rejection, the actual failed
+read return path, early-return rejection and repeated reads. `SendEntry.smt2`
+checks two UNSAT negated obligations with SAT premises and a concrete SAT witness
+of the former body-before-entry selection. These abstractions and histories do
+not claim universal refinement of arbitrary Rust or native hardware behavior.
+The supplemental runner checks eight Lean files and the exact new Z3 result
+sequence, with 14 UNSAT obligations and 22 SAT premises/witnesses overall.
+
+The ordinary workspace run passed 723 tests (12 explicitly ignored cases),
+strict workspace/all-target Clippy and the Pico no-default projection build.
+The canonical Lean gate passed its complete 709 static/506 generated theorem
+inventory, 182 parallel and 36 causal correspondences, and atomic-failure/public
+operation audits. All six send-continuation regressions passed strict-provenance
+Miri, including the 0/1/2/64-read case and either nested initial arm. Miri products
+were cleaned at its actual nested target directory after the generic root clean
+rejected its missing cache tag. The resource gate passed with thumb rlib sections
+97,276 bytes, sample peak stack 2,623 bytes and modeled sample SRAM 5,290 bytes,
+within unchanged limits. These are sample/object-section measurements, not a
+linked StackChan flash or universal stack proof. Evidence is retained in
+`/tmp/hibana-send-entry-evidence.00tMTi/`; disposable Rust products are removed.
+The running generation-92 body remains selected. The touch implementation is not
+yet deployed and no petting reaction is claimed from this core qualification.
+
 ## Nested send continuation repair, 2026-10-03
 
 The Path handoff on `ca5a6fc3` exposes a send-preview defect independent of the
